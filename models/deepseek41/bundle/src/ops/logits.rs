@@ -4,7 +4,7 @@
 //! the rank that owns each row (decode and verify) or gathered to rank 0
 //! (prefill).
 
-use bundle_runtime::logits::shards::{Asker, Bound, Needs, ShardedHead};
+use bundle_runtime::logits::shards::{Asker, Binder, Bound, Needs, ShardedHead};
 use kernel_core::backend::{Need, OpInfo, Refused};
 use kernel_core::contract::Refusal;
 use kernel_core::row_copy::GatherByIndexBuffers;
@@ -36,9 +36,16 @@ impl Asker for Asks {
     }
 }
 
-/// `bound`'s launches through a binder of its own.
-fn launch<B>(bind: Bind, bound: Bound<'_, B>) -> Result<Vec<Lowered>, Refusal> {
-    bind.launch(bound.op, &bound.buffers, bound.counts)
+impl Binder for Bind {
+    type Output = Vec<Lowered>;
+
+    fn view(&mut self, span: DeviceBufferSpanV1) -> kernel_core::backend::View {
+        Bind::view(self, span)
+    }
+
+    fn launch<B>(self, bound: Bound<'_, B>) -> Result<Self::Output, Refusal> {
+        Bind::launch(self, bound.op, &bound.buffers, bound.counts)
+    }
 }
 
 impl LogitsOps {
@@ -89,11 +96,7 @@ impl LogitsOps {
         grid: u32,
         spans: GatherByIndexBuffers<DeviceBufferSpanV1>,
     ) -> Result<Vec<Lowered>, Refusal> {
-        let mut bind = Bind::default();
-        let bound = self
-            .head
-            .head_rows(rows, grid, spans, &mut |span| bind.view(span));
-        launch(bind, bound)
+        self.head.lower_head_rows::<Bind>(rows, grid, spans)
     }
 
     /// Rank `rank`'s exchange of `rows` rows of its `local` shards to their
@@ -105,11 +108,7 @@ impl LogitsOps {
         local: DeviceBufferSpanV1,
         peers: &[PeerViews],
     ) -> Result<Vec<Lowered>, Refusal> {
-        let mut bind = Bind::default();
-        let bound = self
-            .head
-            .exchange(rank, rows, local, peers, &mut |span| bind.view(span))?;
-        launch(bind, bound)
+        self.head.lower_exchange::<Bind>(rank, rows, local, peers)
     }
 
     /// Rank `rank`'s gather of `rows` rows of its `local` shards to rank
@@ -121,10 +120,6 @@ impl LogitsOps {
         local: DeviceBufferSpanV1,
         peers: &[PeerViews],
     ) -> Result<Vec<Lowered>, Refusal> {
-        let mut bind = Bind::default();
-        let bound = self
-            .head
-            .gather(rank, rows, local, peers, &mut |span| bind.view(span))?;
-        launch(bind, bound)
+        self.head.lower_gather::<Bind>(rank, rows, local, peers)
     }
 }

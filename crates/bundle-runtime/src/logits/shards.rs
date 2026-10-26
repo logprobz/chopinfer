@@ -49,6 +49,14 @@ pub struct Bound<'a, B> {
     pub counts: Counts,
 }
 
+/// A model's span bindings and lowering of a prepared head operation.
+pub trait Binder: Default {
+    type Output;
+
+    fn view(&mut self, span: Span) -> View;
+    fn launch<B>(self, bound: Bound<'_, B>) -> Result<Self::Output, Refusal>;
+}
+
 /// The ops around a vocabulary-split head of an instance.
 pub struct ShardedHead {
     head_rows: Prepared<GatherByIndexBuffers<View>>,
@@ -73,6 +81,44 @@ fn ask<B>(
 }
 
 impl ShardedHead {
+    /// Binds and lowers a head-row gather through a fresh model binder.
+    pub fn lower_head_rows<B: Binder>(
+        &self,
+        rows: u32,
+        grid: u32,
+        spans: GatherByIndexBuffers<Span>,
+    ) -> Result<B::Output, Refusal> {
+        let mut bind = B::default();
+        let bound = self.head_rows(rows, grid, spans, &mut |span| bind.view(span));
+        bind.launch(bound)
+    }
+
+    /// Binds and lowers a rank's exchange through a fresh model binder.
+    pub fn lower_exchange<B: Binder>(
+        &self,
+        rank: u32,
+        rows: u32,
+        local: Span,
+        peers: &[PeerSpans],
+    ) -> Result<B::Output, Refusal> {
+        let mut bind = B::default();
+        let bound = self.exchange(rank, rows, local, peers, &mut |span| bind.view(span))?;
+        bind.launch(bound)
+    }
+
+    /// Binds and lowers a rank's gather through a fresh model binder.
+    pub fn lower_gather<B: Binder>(
+        &self,
+        rank: u32,
+        rows: u32,
+        local: Span,
+        peers: &[PeerSpans],
+    ) -> Result<B::Output, Refusal> {
+        let mut bind = B::default();
+        let bound = self.gather(rank, rows, local, peers, &mut |span| bind.view(span))?;
+        bind.launch(bound)
+    }
+
     /// The ops of a head over `ranks` ranks of `shard_rows` F32 vocabulary
     /// rows each, whose input rows `head_rows` gathers.
     pub fn prepare(
@@ -416,5 +462,67 @@ mod tests {
         };
         assert_eq!((rows, padded, destination), (5, 64, 1));
         assert_eq!(bound, [4, 3, 2, 1]);
+    }
+
+    #[derive(Default)]
+    struct BindReport(Vec<u64>);
+
+    impl Binder for BindReport {
+        type Output = (Vec<u64>, Counts);
+
+        fn view(&mut self, span: Span) -> View {
+            self.0.push(span.buffer.raw);
+            View {
+                handle: self.0.len() as u64,
+                bytes: span.length,
+            }
+        }
+
+        fn launch<B>(self, bound: Bound<'_, B>) -> Result<Self::Output, Refusal> {
+            Ok((self.0, bound.counts))
+        }
+    }
+
+    #[test]
+    fn lowering_keeps_binding_order_counts_and_refusals() {
+        let head = head(&Record::default());
+        let spans = GatherByIndexBuffers {
+            source: span(4),
+            row_indices: span(3),
+            count: span(2),
+            destination: span(1),
+        };
+        let (views, counts) = head.lower_head_rows::<BindReport>(5, 64, spans).unwrap();
+        assert_eq!(views, [4, 3, 2, 1]);
+        assert_eq!((counts.rows, counts.padded_rows), (5, 64));
+        let peers = [
+            PeerSpans {
+                output: span(10),
+                flags: span(20),
+                epoch: span(30),
+            },
+            PeerSpans {
+                output: span(11),
+                flags: span(21),
+                epoch: span(31),
+            },
+        ];
+        for (views, counts) in [
+            head.lower_exchange::<BindReport>(1, 3, span(1), &peers)
+                .unwrap(),
+            head.lower_gather::<BindReport>(1, 3, span(1), &peers)
+                .unwrap(),
+        ] {
+            assert_eq!(views, [1, 10, 11, 20, 21, 31, 30]);
+            assert_eq!(counts, Counts::rows(3));
+        }
+        assert!(
+            head.lower_exchange::<BindReport>(2, 3, span(1), &peers)
+                .is_err()
+        );
+        assert!(
+            head.lower_gather::<BindReport>(1, 3, span(1), &peers[..1])
+                .is_err()
+        );
     }
 }

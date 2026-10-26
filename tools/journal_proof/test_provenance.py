@@ -40,6 +40,18 @@ class AuthorityTests(unittest.TestCase):
         self.assertIn(str(self.authority / 'key'), message)
         self.assertIn('python3 tools/journal_proof/provenance.py init', message)
 
+    def test_activation_source_is_bound_in_helper_identity(self):
+        from provenance import HELPER_FILES, helper_identity
+        helper = self.root / 'helper'
+        helper.mkdir()
+        for name in HELPER_FILES:
+            (helper / name).write_bytes((TOOL / name).read_bytes())
+        before, _ = helper_identity(helper)
+        (helper / 'activations.py').write_text('# Changed activation verifier.\n')
+        after, files = helper_identity(helper)
+        self.assertNotEqual(before, after)
+        self.assertEqual(files['activations.py'], hashlib.sha256((helper / 'activations.py').read_bytes()).hexdigest())
+
     def test_seal_without_directory_refuses_and_creates_nothing(self):
         self.refused_seal()
         self.assertEqual(os.listdir(self.root), [])

@@ -1,6 +1,6 @@
 {
   "schema": "chopinfer.journal-proof.layout.v1",
-  "description": "Dense fold whole-bucket simplification: select existing prefetch symbols at 104 explicitly enumerated shape/row cells. Preserve every grid, argument, allocation, module, resolve, launch count and operation order. All other rows keep their symbols.",
+  "description": "Dense fold whole-bucket simplification: select existing prefetch symbols at 99 explicitly enumerated shape/row cells. Preserve every grid, argument, allocation, module, resolve, launch count and operation order. All other rows keep their symbols.",
   "kernels": [
     {
       "name": "ticket_n1280_k5120_g1_f32_v2_initialize_v2",
@@ -41,11 +41,6 @@
       "from_symbol": "chop_deepseek41_mxfp8_ticket_n4096_k1280_g1_f32_v2_initialize_v2",
       "to_symbol": "chop_deepseek41_mxfp8_ticket_n4096_k1280_g1_f32_v2_initialize_v2",
       "cases": [
-        {"when": {"args": {"6": "ScalarU32(9)"}}, "then": {"symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3_initialize_v3"}},
-        {"when": {"args": {"6": "ScalarU32(12)"}}, "then": {"symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3_initialize_v3"}},
-        {"when": {"args": {"6": "ScalarU32(14)"}}, "then": {"symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3_initialize_v3"}},
-        {"when": {"args": {"6": "ScalarU32(15)"}}, "then": {"symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3_initialize_v3"}},
-        {"when": {"args": {"6": "ScalarU32(16)"}}, "then": {"symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3_initialize_v3"}},
         {"when": {"args": {"6": "ScalarU32(17)"}}, "then": {"symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3_initialize_v3"}},
         {"when": {"args": {"6": "ScalarU32(18)"}}, "then": {"symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3_initialize_v3"}},
         {"when": {"args": {"6": "ScalarU32(19)"}}, "then": {"symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3_initialize_v3"}},
@@ -94,11 +89,6 @@
       "from_symbol": "chop_deepseek41_mxfp8_ticket_n4096_k1280_g1_f32_v2_packed_v1",
       "to_symbol": "chop_deepseek41_mxfp8_ticket_n4096_k1280_g1_f32_v2_packed_v1",
       "cases": [
-        {"when": {"args": {"10": "ScalarU32(9)"}}, "then": {"symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3_packed_v1"}},
-        {"when": {"args": {"10": "ScalarU32(12)"}}, "then": {"symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3_packed_v1"}},
-        {"when": {"args": {"10": "ScalarU32(14)"}}, "then": {"symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3_packed_v1"}},
-        {"when": {"args": {"10": "ScalarU32(15)"}}, "then": {"symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3_packed_v1"}},
-        {"when": {"args": {"10": "ScalarU32(16)"}}, "then": {"symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3_packed_v1"}},
         {"when": {"args": {"10": "ScalarU32(17)"}}, "then": {"symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3_packed_v1"}},
         {"when": {"args": {"10": "ScalarU32(18)"}}, "then": {"symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3_packed_v1"}},
         {"when": {"args": {"10": "ScalarU32(19)"}}, "then": {"symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3_packed_v1"}},

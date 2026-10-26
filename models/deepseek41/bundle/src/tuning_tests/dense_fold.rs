@@ -190,7 +190,7 @@ dense_fold.direct.decode mxfp8 groups=2,k=4096,n=1024,paired=0 t64: 1..=64
 dense_fold.direct.decode mxfp8 groups=4,k=4096,n=1024,paired=0 t64: 1..=64
 dense_fold.direct.decode mxfp8 groups=8,k=4096,n=1024,paired=0 t64: 2..=64
 dense_fold.fold.decode mxfp8 groups=1,k=1152,n=5120,paired=0 t64: 3..=8,17..=21,28,33..=47,49..=63
-dense_fold.fold.decode mxfp8 groups=1,k=1280,n=4096,paired=0 t64: 1,3,5..=8
+dense_fold.fold.decode mxfp8 groups=1,k=1280,n=4096,paired=0 t64: 1,3,5..=9,12,14..=16
 dense_fold.fold.decode mxfp8 groups=1,k=1280,n=8192,paired=0 t64: 4,13..=15,17..=64
 dense_fold.fold.decode mxfp8 groups=1,k=1280,n=16384,paired=0 t64: 5..=6,12..=64
 dense_fold.fold.decode mxfp8 groups=1,k=1280,n=32768,paired=0 t64: 1..=64

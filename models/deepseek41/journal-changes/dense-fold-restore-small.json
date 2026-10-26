@@ -1,0 +1,120 @@
+{
+  "schema": "chopinfer.journal-proof.layout.v1",
+  "description": "Restore N4096/K1280 rows 9, 12, 14, 15 and 16 from prefetch to their original ticket symbols after the served C8/R16 regression. Preserve grids, arguments, allocations, modules, resolves, launch count and order.",
+  "kernels": [
+    {
+      "name": "prefetch_n4096_k1280_g1_f32_v3_initialize_v3",
+      "from_symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3_initialize_v3",
+      "to_symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3_initialize_v3",
+      "cases": [
+        {
+          "when": {
+            "args": {
+              "6": "ScalarU32(9)"
+            }
+          },
+          "then": {
+            "symbol": "chop_deepseek41_mxfp8_ticket_n4096_k1280_g1_f32_v2_initialize_v2"
+          }
+        },
+        {
+          "when": {
+            "args": {
+              "6": "ScalarU32(12)"
+            }
+          },
+          "then": {
+            "symbol": "chop_deepseek41_mxfp8_ticket_n4096_k1280_g1_f32_v2_initialize_v2"
+          }
+        },
+        {
+          "when": {
+            "args": {
+              "6": "ScalarU32(14)"
+            }
+          },
+          "then": {
+            "symbol": "chop_deepseek41_mxfp8_ticket_n4096_k1280_g1_f32_v2_initialize_v2"
+          }
+        },
+        {
+          "when": {
+            "args": {
+              "6": "ScalarU32(15)"
+            }
+          },
+          "then": {
+            "symbol": "chop_deepseek41_mxfp8_ticket_n4096_k1280_g1_f32_v2_initialize_v2"
+          }
+        },
+        {
+          "when": {
+            "args": {
+              "6": "ScalarU32(16)"
+            }
+          },
+          "then": {
+            "symbol": "chop_deepseek41_mxfp8_ticket_n4096_k1280_g1_f32_v2_initialize_v2"
+          }
+        }
+      ]
+    },
+    {
+      "name": "prefetch_n4096_k1280_g1_f32_v3_packed_v1",
+      "from_symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3_packed_v1",
+      "to_symbol": "chop_deepseek41_mxfp8_prefetch_n4096_k1280_g1_f32_v3_packed_v1",
+      "cases": [
+        {
+          "when": {
+            "args": {
+              "10": "ScalarU32(9)"
+            }
+          },
+          "then": {
+            "symbol": "chop_deepseek41_mxfp8_ticket_n4096_k1280_g1_f32_v2_packed_v1"
+          }
+        },
+        {
+          "when": {
+            "args": {
+              "10": "ScalarU32(12)"
+            }
+          },
+          "then": {
+            "symbol": "chop_deepseek41_mxfp8_ticket_n4096_k1280_g1_f32_v2_packed_v1"
+          }
+        },
+        {
+          "when": {
+            "args": {
+              "10": "ScalarU32(14)"
+            }
+          },
+          "then": {
+            "symbol": "chop_deepseek41_mxfp8_ticket_n4096_k1280_g1_f32_v2_packed_v1"
+          }
+        },
+        {
+          "when": {
+            "args": {
+              "10": "ScalarU32(15)"
+            }
+          },
+          "then": {
+            "symbol": "chop_deepseek41_mxfp8_ticket_n4096_k1280_g1_f32_v2_packed_v1"
+          }
+        },
+        {
+          "when": {
+            "args": {
+              "10": "ScalarU32(16)"
+            }
+          },
+          "then": {
+            "symbol": "chop_deepseek41_mxfp8_ticket_n4096_k1280_g1_f32_v2_packed_v1"
+          }
+        }
+      ]
+    }
+  ]
+}

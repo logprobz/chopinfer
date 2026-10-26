@@ -78,6 +78,14 @@ also remain separate because they change launch count and arguments.
 Reuse fold-count changes alter a scalar argument, so they cannot pass the
 symbol/grid-only proof used by this evaluation.
 
+The served evaluation restored N4096/K1280 rows 9..16 to their original
+prefetch islands at 10..11 and 13, with ticket elsewhere. All eleven target
+cells passed, but an additional weighted C8/R16 cell regressed: matched-pair
+changes were -2.243% and -1.527%, mean -1.885%, spread 0.716%. This fails
+the simplification rule. The remaining candidate changes 99 cells and
+removes 18 table rows; it still requires served requalification after the
+restoration. No schedule at rows 1..8 changes.
+
 ## Latent, indexer, F32 and dense prefill
 
 These operation sites retain the existing schedule choices:

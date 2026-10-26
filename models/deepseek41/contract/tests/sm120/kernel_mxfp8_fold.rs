@@ -213,11 +213,11 @@ fn measured_entries_bind_all_topologies_and_exact_row_buckets() {
     assert_eq!(flash.len(), 23 * 64);
     assert_eq!(
         flash.iter().filter(|r| r["routing"] == "prefetch").count(),
-        727
+        722
     );
     assert_eq!(
         flash.iter().filter(|r| r["routing"] == "ticket").count(),
-        687
+        692
     );
     assert_eq!(
         flash

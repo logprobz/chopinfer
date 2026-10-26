@@ -30,13 +30,13 @@ def options(arguments, ar=False):
     if ar:
         if any(draft_option(word) for word in arguments):
             raise ValueError('--speculation requires positive --speculative-tokens; AR cannot pass draft flags')
-        return 'off', 0, 32
-    mode, depth, rows = 'balanced', 5, 32
+        return 'off', [(1, 0)], 32
+    mode, depth, rows = 'balanced', [(1, 5)], 32
     for flag, value in zip(arguments, arguments[1:]):
         if flag == '--speculation':
             mode = value
         elif flag == '--speculation-depths':
-            depth = int(value.split(',')[0].split(':')[1])
+            depth = [tuple(int(x) for x in part.split(':')) for part in value.split(',')]
         elif flag == '--speculative-rows':
             rows = int(value)
     return mode, depth, rows
@@ -108,7 +108,8 @@ def stub(args):
         """One step over `keys` (streams) at `positions`; returns each
         stream's emitted token count."""
         items = len(keys)
-        k = 0 if prefill else min(depth, (verify_rows - items) // items)
+        scheduled = [d for i, d in depth if i <= items][-1]
+        k = 0 if prefill else min(scheduled, (verify_rows - items) // items)
         if ignore and not prefill and items >= 16:
             k = 1
         rows = items * (k + 1)

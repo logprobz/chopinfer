@@ -161,6 +161,13 @@ In an external model config with `mode: ab`, select the installs per arm:
 "pairs": [["a", "b"]]
 ```
 
+An arm may carry `depths` in `--speculation-depths` form (for example a
+profile's default schedule `"1:5,8:3,16:3,32:0"`) instead of one uniform
+`depth`, so a comparison runs the production schedule. Its entries start at
+one item and increase; each step's depth check uses the entry for its item
+count. It needs `speculation_mode: "balanced"` and cannot be combined with
+`depth`.
+
 Seal with `--install-dir "$ROUND" --install-name base --install-name head`.
 An arm without `install` uses the first name on the command line. Unknown
 names, unused sealed installs and multiple installs outside `mode: ab` are
@@ -173,6 +180,9 @@ Records and reports name each arm's install and revision. A report with
 install metadata requires a complete, consistent arm map; deleting the map
 does not make the run legacy. Matched-seed ABBA
 order and token/logprob-bit exactness comparisons are unchanged.
+
+A single-install job may also pass `--content-proof NAME=FILE` for its one
+build; the proof is checked against every arm's fresh recipe the same way.
 
 Multi-install jobs require one shared keeper and each build's own
 [content proof](weight-keeper.md#identity-across-builds). Supply existing

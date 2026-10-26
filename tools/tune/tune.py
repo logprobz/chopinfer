@@ -182,7 +182,7 @@ def arm_environment(config, arm):
 def arm_arguments(config, arm, install=None):
     model = config['model']
     speculation = [] if model['speculation_mode'] == 'off' else [
-        '--speculation', model['speculation_mode'], '--speculation-depths', f"1:{arm['depth']}"]
+        '--speculation', model['speculation_mode'], '--speculation-depths', arm.get('depths', f"1:{arm['depth']}")]
     return [*speculation,
             *model.get('extra_arguments', []), *arm['arguments'],
             *(['--weight-keeper-identity', install['weight_keeper_identity']]
@@ -427,13 +427,34 @@ def streams(finishes, tokens):
             'median': statistics.median(rates), 'max': rates[-1]}
 
 
+def schedule_depths(text):
+    """An arm's `depths` in `--speculation-depths` form (ITEMS:DEPTH,...,
+    items strictly increasing from 1), as (items, depth) pairs."""
+    if not isinstance(text, str) or not re.fullmatch(r'[0-9]+:[0-9]+(,[0-9]+:[0-9]+)*', text):
+        raise ValueError(f'invalid depth schedule: {text!r}')
+    pairs = [tuple(int(x) for x in part.split(':')) for part in text.split(',')]
+    items = [i for i, _ in pairs]
+    if items[0] != 1 or any(b <= a for a, b in zip(items, items[1:])):
+        raise ValueError(f'depth schedule items must start at 1 and increase: {text!r}')
+    return pairs
+
+
+def step_depth(depth, items):
+    """The depth bound for a batch of `items`: an int, or a schedule whose
+    last entry at or below `items` applies."""
+    if isinstance(depth, int):
+        return depth
+    return [d for i, d in schedule_depths(depth) if i <= items][-1]
+
+
 def check_depth(name, steps, depth):
     for s in steps:
         if s.get('prefill_items') or not s.get('verify_items'):
             continue
-        if s['verify_rows'] > s['verify_items'] * (depth + 1):
+        bound = step_depth(depth, s['verify_items'])
+        if s['verify_rows'] > s['verify_items'] * (bound + 1):
             raise RuntimeError(f"{name}: batch {s['batch']} verified {s['verify_rows']} rows for "
-                               f"{s['verify_items']} items above depth {depth}")
+                               f"{s['verify_items']} items above depth {bound}")
 
 
 def argument_value(arguments, flag, default=None):
@@ -474,7 +495,7 @@ def allocation_possible(config, arm, items):
     model = config['model']
     args = [*model.get('serve_arguments', []), *model.get('extra_arguments', []), *arm['arguments']]
     capacity = int(argument_value(args, '--speculative-rows', model['verify_rows']))
-    rows = min(items * (arm['depth'] + 1), capacity)
+    rows = min(items * (step_depth(arm.get('depths', arm['depth']), items) + 1), capacity)
     widths = argument_value(args, '--speculation-widths')
     widths = [int(x) for x in widths.split(',')] if widths else model.get('verify_widths', [])
     width = max((w for w in widths if items <= w <= rows), default=rows)
@@ -691,9 +712,17 @@ def arms(config):
             arm_environment(config, arm)
         return declared
     if model.get('arms'):
+        declared = []
         for arm in model['arms']:
             arm_environment(config, arm)
-        return [{'arguments': [], **arm} for arm in model['arms']]
+            if 'depths' in arm:
+                # A production schedule (for example a profile's default)
+                # instead of one uniform depth; `depth` is its deepest entry.
+                if 'depth' in arm or model.get('speculation_mode') != 'balanced':
+                    raise ValueError(f"{arm['label']}: a depth schedule replaces depth and needs balanced mode")
+                arm = {**arm, 'depth': max(d for _, d in schedule_depths(arm['depths']))}
+            declared.append({'arguments': [], **arm})
+        return declared
     depths = model.get('depths') or list(range(model['max_depth'] + 1))
     deepest = max(depths)
     return [{'label': f'd{d}', 'depth': d, 'arguments': []}
@@ -914,7 +943,7 @@ def run_ab_windows(server, arm, state, power, root, cold=None):
             w = closed_loop(server, f"{arm['label']}-{name}",
                             inputs, tokens, config['sampling'], seeds, power,
                             before_measure=cold.prepare if cold else None, one_cohort=bool(matched))
-            check_depth(name, w['steps'], arm['depth'])
+            check_depth(name, w['steps'], arm.get('depths', arm['depth']))
             route = check_fallbacks(name, w['cold_steps'] if cold else w['steps'], config.get('allow_fallbacks', {}))
             full = full_concurrency(w['steps'], c)
             if not full['steps'] and not cold:
@@ -1162,7 +1191,7 @@ def run_windows(server, arm, state, power, root, passes, reference):
             for g in range(groups):
                 w = window(server, f'{name}-{tag}-g{g}', kind, [list(x) for x in inputs[g * c:(g + 1) * c]], tokens,
                            f'tune-{label}-{name}-{tag}-g{g}', config['sampling'])
-                check_depth(f'{label} {name} {tag} group {g}', w['steps'], depth)
+                check_depth(f'{label} {name} {tag} group {g}', w['steps'], arm.get('depths', depth))
                 w['route'] = check_fallbacks(name, w['steps'], config.get('allow_fallbacks', {}))
                 w['allocated_steps'] = check_allocations(
                     f'{label} {name} {tag} group {g}', w['steps'], record['confidence']['enabled'],

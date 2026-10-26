@@ -381,7 +381,7 @@ class Tuner(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'AR'):
                     tune.arms(invalid)
         import stub
-        self.assertEqual(stub.options([], ar=True), ('off', 0, 32))
+        self.assertEqual(stub.options([], ar=True), ('off', [(1, 0)], 32))
         with self.assertRaisesRegex(ValueError, 'requires positive'):
             stub.options(['--speculation', 'balanced'], ar=True)
 
@@ -1252,6 +1252,30 @@ class Tuner(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'without confidence'):
             tune.check_allocations('unrequested', steps, False, False)
         self.assertEqual(tune.check_allocations('full width', [], True, False), 0)
+
+    def test_arms_may_run_a_production_depth_schedule(self):
+        config = {'model': {'speculation_mode': 'balanced', 'mode': 'ab', 'extra_arguments': [],
+                            'arms': [{'label': 'f', 'depths': '1:5,8:3,16:3,32:0', 'install': 'base'},
+                                     {'label': 'h', 'depths': '1:5,8:3,16:3,32:0', 'install': 'head'}]}}
+        declared = tune.arms(config)
+        self.assertEqual([arm['depth'] for arm in declared], [5, 5])
+        arguments = tune.arm_arguments(config, declared[0])
+        self.assertEqual(arguments.count('--speculation-depths'), 1)
+        self.assertEqual(arguments[arguments.index('--speculation-depths') + 1], '1:5,8:3,16:3,32:0')
+        schedule = declared[0]['depths']
+        self.assertEqual([tune.step_depth(schedule, i) for i in (1, 7, 8, 16, 31, 32, 64)], [5, 5, 3, 3, 3, 0, 0])
+        step = {'batch': 1, 'verify_items': 16, 'verify_rows': 64}
+        tune.check_depth('schedule', [step], schedule)
+        with self.assertRaisesRegex(RuntimeError, 'above depth 0'):
+            tune.check_depth('schedule', [{**step, 'verify_items': 32, 'verify_rows': 33}], schedule)
+        for bad in ('8:3', '1:5,1:3', '1:5,8:x', ''):
+            with self.subTest(schedule=bad), self.assertRaisesRegex(ValueError, 'depth schedule'):
+                tune.arms({'model': {**config['model'], 'arms': [{'label': 'f', 'depths': bad}]}})
+        with self.assertRaisesRegex(ValueError, 'replaces depth'):
+            tune.arms({'model': {**config['model'], 'arms': [{'label': 'f', 'depth': 3, 'depths': '1:3'}]}})
+        import stub
+        mode, schedule, rows = stub.options(arguments)
+        self.assertEqual((mode, schedule, rows), ('balanced', [(1, 5), (8, 3), (16, 3), (32, 0)], 32))
 
     def test_stage_files_are_protected_from_other_writers(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1261,34 +1261,34 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (15864, 0x0ecdca5645c278de),
+        (15811, 0xd69c56ab1d969d36),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (15718, 0x7b4ce841cbca7856),
+        (15665, 0xbc96dd7618631322),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (31603, 0x5ac02bac440c0073),
+        (31547, 0xf69c84c79e89b029),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (31311, 0x9174be3bab2de486),
+        (31255, 0x390cf4ba4860ef3a),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (77735, 0x4603e8cae24aac4f),
+        (77673, 0xcb3c3fba758ed672),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (75979, 0x3a2f0a60c34638dd),
+        (75917, 0x26102268a1512c7a),
     ),
 ];
 
@@ -2307,13 +2307,12 @@ fn an_invalid_quantized_input_refuses_its_step_alone() {
     let mut instance = create(&host, 4);
     let mut views = Views::default();
     step(&mut instance, &prompt(9, 1, 0, 3, true), &mut views);
-    // Rank 1 flags row 3 in the next step's prefill: its read back follows
-    // the index sources' and both of rank 0's status planes.
-    let mut status = vec![0_u8; 5 * 4];
-    status[3 * 4] = 1;
+    // Rank 1 flags row 3 in the packet, after the index sources and
+    // both of rank 0's status planes.
+    let sources = FLASH.shape.csa.index_sources.len();
+    let mut status = vec![0_u8; (sources + 2 * 2) * 5 * 4];
+    status[((sources + 2) * 5 + 3) * 4] = 1;
     host.injected.replace(Some(status));
-    host.injected_after
-        .set(FLASH.shape.csa.index_sources.len() + 2);
     let mut refused = Views::default();
     let error = instance
         .execute(&prompt(7, 0, 0, 5, true), &mut refused)
@@ -2349,7 +2348,7 @@ fn a_non_finite_index_score_refuses_its_step_alone() {
     step(&mut instance, &prompt(9, 1, 0, 3, true), &mut views);
     assert_eq!(views.rows(), 1);
     // Row 2 of the first index source fails in the next step's prefill.
-    let mut status = vec![0_u8; 5 * 4];
+    let mut status = vec![0_u8; (FLASH.shape.csa.index_sources.len() + 2 * 2) * 5 * 4];
     status[2 * 4] = 1;
     host.injected.replace(Some(status));
     let mut refused = Views::default();

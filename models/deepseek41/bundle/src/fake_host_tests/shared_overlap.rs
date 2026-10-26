@@ -168,9 +168,10 @@ fn shared_overlap_refuses_invalid_quantized_decode_rows() {
             &prompt(7, 0, 0, 3, true),
             &mut Views::default(),
         );
-        host.injected.replace(Some(vec![1, 0, 0, 0]));
-        host.injected_after
-            .set(FLASH.shape.csa.index_sources.len() + 1 + plane);
+        let sources = FLASH.shape.csa.index_sources.len();
+        let mut status = vec![0_u8; (sources + 2 * 2) * 4];
+        status[(sources + 1 + plane) * 4] = 1;
+        host.injected.replace(Some(status));
         let mut views = Views::default();
         assert_eq!(
             instance
@@ -241,7 +242,7 @@ pub(super) fn audit_regions(lines: &[String]) -> Regions {
         };
         let (main, fork) = record.split_once(' ').unwrap();
         let (side, event) = wait.split_once(' ').unwrap();
-        if fork != event {
+        if fork != event || !lines[at + 2].starts_with("launch ") {
             continue;
         }
         let Some(joined) =
@@ -664,7 +665,15 @@ fn the_window_kv_overlap_changes_only_its_projection() {
                 open = match open {
                     // The side stream records the join.
                     Some(side) if side == recorder => None,
-                    _ => Some(waiter),
+                    None if overlapped
+                        .get(i + 2)
+                        .is_some_and(|next| next.starts_with(&format!("launch {waiter} "))) =>
+                    {
+                        Some(waiter)
+                    }
+                    // Packet joins lead to copies, not a side-stream region.
+                    None => None,
+                    Some(_) => panic!("nested overlap region"),
                 };
             }
             if sided.contains(line) {

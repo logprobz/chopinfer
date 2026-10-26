@@ -83,7 +83,7 @@ fn commands(host: &Host, from: usize) -> Commands {
             let mut parts = line.split(' ').map(str::to_owned).collect::<Vec<_>>();
             match parts[0].as_str() {
                 "launch" | "upload" | "copy" | "readback" | "download" | "zero" | "synchronize"
-                | "capture" => {
+                | "capture" | "peer-copy" => {
                     parts[1] = format!("stream{}", streams[&parts[1]]);
                 }
                 "record" | "wait" => {

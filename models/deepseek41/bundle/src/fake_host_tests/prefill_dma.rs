@@ -280,14 +280,22 @@ fn prefill_dma_keeps_short_prefills_and_decode_on_the_original_schedule() {
         &decode(&[(7, 0, 8192, 9)]),
         &mut Views::default(),
     );
-    assert!(
-        !host
-            .device
-            .journal
-            .borrow()
-            .iter()
-            .any(|s| s.starts_with("peer-copy ") || s.contains(SUM))
-    );
+    let journal = host.device.journal.borrow();
+    assert!(!journal.iter().any(|s| s.contains(SUM)));
+    let copies: Vec<_> = journal
+        .iter()
+        .filter(|s| s.starts_with("peer-copy "))
+        .collect();
+    assert_eq!(copies.len(), 6);
+    for (part, line) in copies.iter().enumerate() {
+        let words: Vec<_> = line.split_whitespace().collect();
+        assert_eq!(words[2], (part / 2 + 2).to_string());
+        assert_eq!(words[3], "1");
+        let spans = super::shared_overlap::journal_spans(line);
+        assert_eq!(spans.len(), 2);
+        assert!(spans.iter().all(|span| span.2 == 4));
+    }
+    drop(journal);
     instance.destroy().unwrap();
 }
 
@@ -363,6 +371,7 @@ fn prefill_dma_owns_peer_buffers_away_from_compute_and_copy_streams() {
             &prompt(7, 0, 0, 8191, true),
             &mut Views::default(),
         );
+        let prefill_end = host.device.journal.borrow().len();
         step(
             &mut instance,
             &decode(&[(7, 0, 8191, 9)]),
@@ -380,7 +389,7 @@ fn prefill_dma_owns_peer_buffers_away_from_compute_and_copy_streams() {
                     .unwrap()
             })
             .collect::<BTreeSet<_>>();
-        let peers = journal
+        let peers = journal[..prefill_end]
             .iter()
             .filter(|line| line.starts_with("peer-copy "))
             .flat_map(|line| {

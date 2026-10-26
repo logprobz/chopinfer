@@ -115,13 +115,13 @@ fn default_ar_readiness_precedes_status_waits_and_releases_every_event() {
             .iter()
             .position(|line| line == "ready-sample")
             .unwrap();
-        let wait = lines
+        let readback = lines
             .iter()
-            .position(|line| line.starts_with("synchronize "))
+            .position(|line| line.starts_with("download "))
             .unwrap();
         assert!(
-            sample < wait,
-            "sampling must be submitted before waiting on status"
+            sample < readback,
+            "sampling must be submitted before the status readback"
         );
         drop(journal);
         instance.commit().unwrap();
@@ -141,7 +141,10 @@ fn invalid_status_after_ready_submission_still_refuses_the_step() {
         &prompt(7, 0, 0, 3, true),
         &mut Views::default(),
     );
-    host.injected.replace(Some(1_u32.to_le_bytes().to_vec()));
+    let parts = FLASH.shape.csa.index_sources.len() + 2 * host.shape.ranks() as usize;
+    let mut packet = vec![0_u8; parts * 4];
+    packet[0] = 1;
+    host.injected.replace(Some(packet));
     let mut sink = ReadySink {
         host: host.clone(),
         epoch: 9,

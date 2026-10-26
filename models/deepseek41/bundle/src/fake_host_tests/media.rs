@@ -117,6 +117,22 @@ impl FakePackage for MediaHost {
     ) -> HostServiceResultV1<()> {
         self.host.on_copy(stream, destination, source)
     }
+    fn copy_peer_to_peer(
+        &self,
+        stream: BundleStreamHandleV1,
+        destination_context: BundleContextHandleV1,
+        destination: DeviceBufferSpanV1,
+        source_context: BundleContextHandleV1,
+        source: DeviceBufferSpanV1,
+    ) -> HostServiceResultV1<()> {
+        self.host.copy_peer_to_peer(
+            stream,
+            destination_context,
+            destination,
+            source_context,
+            source,
+        )
+    }
     fn open_compiled_image(&self, role: &[u8]) -> HostServiceResultV1<BundleCompiledImageHandleV1> {
         if role != views::IMAGE_ROLE {
             return self.host.open_compiled_image(role);
@@ -452,8 +468,8 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// controls reject changed operands, geometry, capture counts and shared
 /// memory. The TP2 history and resource inventory remain byte-identical.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
-    (Ranks::TP2, (19835, 0x7e98b22150ec56f3)),
-    (Ranks::TP4, (50331, 0x847ec07c34b950a1)),
+    (Ranks::TP2, (19803, 0xa542d63d0bf23cd1)),
+    (Ranks::TP4, (50297, 0x05301eea3be68f38)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

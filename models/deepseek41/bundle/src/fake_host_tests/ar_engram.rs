@@ -311,13 +311,12 @@ fn a_refused_step_leaves_its_gathers_for_the_next_step_to_settle() {
             &mut Views::default(),
         );
     }
-    // Rank 1 flags row 1 of the decode: its read back follows the index
-    // sources' and both of rank 0's status planes.
-    let mut status = vec![0_u8; 2 * 4];
-    status[4] = 1;
+    // Rank 1 flags row 1 in the packet, after the index sources and
+    // both of rank 0's status planes.
+    let sources = FLASH.shape.csa.index_sources.len();
+    let mut status = vec![0_u8; (sources + 2 * 2) * 2 * 4];
+    status[((sources + 2) * 2 + 1) * 4] = 1;
     host.injected.replace(Some(status));
-    host.injected_after
-        .set(FLASH.shape.csa.index_sources.len() + 2);
     let begin = host.device.journal.borrow().len();
     let error = instance
         .execute(&decode_step(&[PROMPT, PROMPT], 2), &mut Views::default())

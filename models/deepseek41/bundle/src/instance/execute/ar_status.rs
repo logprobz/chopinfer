@@ -39,9 +39,8 @@ pub(crate) fn enabled() -> bool {
 
 #[cfg(test)]
 thread_local! {
-    /// Tests keep the separate reads unless they switch the packet on, so
-    /// their pinned journals stay those reads' whatever [`SERVED`] says.
-    static IN_TESTS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(Some(false)) };
+    /// Tests exercise the served packet by default.
+    static IN_TESTS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(Some(SERVED)) };
 }
 
 /// Runs `run` with the packet switched on or off.

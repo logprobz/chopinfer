@@ -762,6 +762,12 @@ class MapperTests(unittest.TestCase):
             self.assertEqual(m(f'peer copy 2 1 {span} 2 {span}'),f'peer copy 3 1 {mapped} 2 {mapped}')
             self.assertEqual(m(f'peer-copy 2 2 1 {span} {span}'),f'peer-copy 3 2 1 {mapped} {mapped}')
 
+    def test_removed_buffer_keeps_an_annotation_context_with_the_same_raw(self):
+        import history
+        mapper = history.Mapper({}, {}, {}, {}, closed=False, removed_buffers={4294967300})
+        line = self.view(4294967300, 4294967301)
+        self.assertEqual(mapper(line), line)
+
     def test_a_fixed_stream_may_not_be_the_image_of_a_created_stream(self):
         from engine import Unproven
         # Created stream 2 maps to 3; fixed stream 3 would alias it.

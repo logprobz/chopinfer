@@ -175,7 +175,7 @@ class Mapper:
         return self.ids[value]
 
     def __call__(self, line):
-        require(not (set(map(int, RAW.findall(line))) & self.removed_buffers), 'line uses a removed allocation')
+        require(not ({int(m[2]) for m in BUFFER_HANDLE.finditer(line)} & self.removed_buffers), 'line uses a removed allocation')
         found = form(line)
         if found is None:
             require(not self.closed, f'unrecognized auxiliary operation form: {line[:200]}')

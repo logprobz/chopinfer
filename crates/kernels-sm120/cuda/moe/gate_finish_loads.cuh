@@ -9,7 +9,11 @@
 namespace chop::moe::bandwidth_loads {
 using namespace streamed;
 
-template<class C, uint32_t FloorBits>
+template<class C, uint32_t FloorBits, class Clamp = typename C::clamp,
+    class Quantization = chained_policy::CeilE4M3Group32<FloorBits>,
+    class RouteWeight = chained_policy::BeforeQuantizeRouteWeight,
+    class Output = chained_policy::Bf16IntermediateF32Output,
+    class Reduction = chained_policy::OrderedF32>
 __device__ void gate_finish(const void* scratch, const int32_t* live_tokens,
     const float* route_weights, uint16_t* intermediate, uint8_t* codes,
     uint8_t* scales, uint32_t* status, uint32_t* tickets) {
@@ -39,15 +43,15 @@ __device__ void gate_finish(const void* scratch, const int32_t* live_tokens,
 #pragma unroll
     for (int b = 0; b < Blocks; ++b)
 #pragma unroll
-      for (int h = 0; h < 2; ++h) sum[h] = __fadd_rn(sum[h], value[b][h]);
-    const uint16_t out = convert::bf16_from_f32(
-        chained::before_down<typename C::clamp>(sum[0], sum[1], weight));
+      for (int h = 0; h < 2; ++h) sum[h] = Reduction::add(sum[h], value[b][h]);
+    const uint16_t out = Output::intermediate(
+        RouteWeight::template apply<Clamp>(sum[0], sum[1], weight));
     values[threadIdx.x] = out;
     intermediate[uint64_t(route) * C::n + column] = out;
   } else values[threadIdx.x] = 0;
   __syncthreads();
   if (group < C::n / 32) {
-    auto value = row::block_quantize_parallel::quantize_group<0,false,false,FloorBits>(
+    auto value = Quantization::quantize(
         values, warp * 32 + lane * 2);
     uint32_t flags = value.flags;
 #pragma unroll

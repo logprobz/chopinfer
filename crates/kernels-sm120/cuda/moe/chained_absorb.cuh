@@ -1,5 +1,5 @@
 #pragma once
-#include "chained_streamed.cuh"
+#include "chained_policies.cuh"
 
 // The streamed small queue that also runs the wide queue's experts, so no
 // wide launch follows it. Wide experts take the first slots, so their longer
@@ -20,13 +20,19 @@ namespace chop::moe::absorb {
 using namespace streamed;
 constexpr int Rows = 8;
 
-template<class C, bool Tiled = false, class Scales = RawScales>
+template<class C, bool Tiled = false, class Scales = RawScales, int Strips = 1,
+    class Activation = chained_policy::ExactE4M3Activation,
+    class Scale = chained_policy::ExactMxFp4Scale,
+    class Chain = chained_policy::Bf16Chain128,
+    class Reduction = chained_policy::OrderedF32>
 __device__ void compute(const uint8_t* input, const uint8_t* weight,
     const uint8_t* weight_scales, const uint8_t* activation_scales,
     const int32_t* offsets, const int32_t* sorted_rows, const int32_t* padded_rows,
     const int32_t* live_tokens, void* scratch) {
   using L = Layout<C>;
-  constexpr int H = C::halves;
+  constexpr int H = C::halves * Strips;
+  static_assert(Strips == 1 || (Strips == 2 && !C::gate_up && !Tiled));
+  static_assert(C::n % (Strips * Columns) == 0, "whole strip items");
   static_assert(!Tiled || (C::k % 128 == 0 && C::loop_k == C::k && C::n % 64 == 0 &&
                            C::weight_rows % 64 == 0 && Columns == 64 && Threads == 128),
                 "row tiles need whole 64x128 tiles, one per item");
@@ -42,12 +48,12 @@ __device__ void compute(const uint8_t* input, const uint8_t* weight,
       padded < 0 || padded % 64 || padded > C::tokens_capacity * C::top_k + C::experts * 64) __trap();
   const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
   const int g = lane >> 2, t = lane & 3;
-  const int items = (small + wide) * (C::n / Columns) * L::blocks;
+  const int items = (small + wide) * (C::n / (Strips * Columns)) * L::blocks;
   float* out = partials<C>(scratch);
   for (int item = blockIdx.x; item < items; item += gridDim.x) {
     const int block = item % L::blocks;
-    const int column = (item / L::blocks) % (C::n / Columns) * Columns;
-    const int slot = item / (L::blocks * (C::n / Columns));
+    const int column = (item / L::blocks) % (C::n / (Strips * Columns)) * (Strips * Columns);
+    const int slot = item / (L::blocks * (C::n / (Strips * Columns)));
     const bool is_wide = slot < wide;
     const int at = is_wide ? 2 + 2 * C::experts + 2 * slot : 2 + 2 * (slot - wide);
     const int expert = table[at], count = table[at + 1];
@@ -58,7 +64,7 @@ __device__ void compute(const uint8_t* input, const uint8_t* weight,
 
     const uint32_t* scale_words = nullptr;
     if constexpr (Scales::staged) {
-      scale_words = Scales::template prepare<C, 1>(weight_scales, expert, column, block);
+      scale_words = Scales::template prepare<C, Strips>(weight_scales, expert, column, block);
       __syncthreads();
     }
 
@@ -71,20 +77,20 @@ __device__ void compute(const uint8_t* input, const uint8_t* weight,
     for (int h = 0; h < H; ++h)
 #pragma unroll
       for (int r = 0; r < 2; ++r) {
-        const uint64_t wr = uint64_t(expert) * C::weight_rows + h * C::n + column + warp * 16 + g + r * 8;
+        const uint64_t wr = uint64_t(expert) * C::weight_rows + (h / Strips) * C::n + (h % Strips) * Columns + column + warp * 16 + g + r * 8;
         const bool valid = k < C::k;
         if constexpr (Tiled) {
           // The item's 64 columns are one strip, so wr's tile is the item's
           // and its row in the tile is the lane's.
-          const uint64_t tile = (uint64_t(expert) * C::weight_rows + h * C::n + column) / 64 * L::blocks + block;
+          const uint64_t tile = (uint64_t(expert) * C::weight_rows + (h / Strips) * C::n + (h % Strips) * Columns + column) / 64 * L::blocks + block;
           const int row = warp * 16 + g + r * 8;
           owned[h][r] = valid ? load16(weight + tile * 4096 + row * 64 + t * 16) : make_uint4(0,0,0,0);
           scales[h][r] = valid ? weight_scales[tile * 256 + row * 4 + t] : 127;
         } else {
           owned[h][r] = valid ? load16(weight + wr * (C::k / 2) + k / 2) : make_uint4(0,0,0,0);
           if constexpr (Scales::staged) {
-            static_assert(!C::gate_up && H == 1);
-            scales[h][r] = valid ? ((scale_words[warp * 16 + g + r * 8] >> (8 * t)) & 255) : 127;
+            static_assert(!C::gate_up);
+            scales[h][r] = valid ? ((scale_words[h * Columns + warp * 16 + g + r * 8] >> (8 * t)) & 255) : 127;
           } else {
             scales[h][r] = valid ? weight_scales[wr * (C::k / 32) + k / 32] : 127;
           }
@@ -114,7 +120,7 @@ __device__ void compute(const uint8_t* input, const uint8_t* weight,
             for (int pair = 0; pair < 2; ++pair) {
               const uint16_t bits = uint16_t(words[w] >> (16 * pair));
               if ((bits & 0x7f) == 0x7f || ((bits >> 8) & 0x7f) == 0x7f) __trap();
-              *reinterpret_cast<uint32_t*>(&activations[r][group * 32 + v * 16 + w * 4 + pair * 2]) = chained::scaled_e4m3x2(bits, scale);
+              *reinterpret_cast<uint32_t*>(&activations[r][group * 32 + v * 16 + w * 4 + pair * 2]) = Activation::decode(bits, scale);
             }
         }
       }
@@ -146,15 +152,15 @@ __device__ void compute(const uint8_t* input, const uint8_t* weight,
             for (int r = 0; r < 2; ++r) {
               const uint32_t low = half == 0 ? raw[h][r].x : raw[h][r].z;
               const uint32_t high = half == 0 ? raw[h][r].y : raw[h][r].w;
-              a[h].v[r] = convert::scaled_mxfp4_bf16x2<false>(uint8_t(low >> (8 * t)), uint8_t(scale[h][r]));
-              a[h].v[r + 2] = convert::scaled_mxfp4_bf16x2<false>(uint8_t(high >> (8 * t)), uint8_t(scale[h][r]));
+              a[h].v[r] = Scale::decode(uint8_t(low >> (8 * t)), uint8_t(scale[h][r]));
+              a[h].v[r + 2] = Scale::decode(uint8_t(high >> (8 * t)), uint8_t(scale[h][r]));
             }
           const int col = group * 32 + half * 16 + 2 * t;
           ptx::B2 b;
           b.v[0] = chained::lds32(&activations[g][col]);
           b.v[1] = chained::lds32(&activations[g][col + 8]);
 #pragma unroll
-          for (int h = 0; h < H; ++h) ptx::mma_bf16(chain[h], a[h], b);
+          for (int h = 0; h < H; ++h) Chain::mma(chain[h], a[h], b);
         }
       }
 #pragma unroll
@@ -164,7 +170,7 @@ __device__ void compute(const uint8_t* input, const uint8_t* weight,
         const int n = column + warp * 16 + g + (i >= 2 ? 8 : 0);
 #pragma unroll
         for (int h = 0; h < H; ++h)
-          out[((uint64_t(route) * H + h) * L::blocks + block) * C::n + n] = chain[h].v[i];
+          out[((uint64_t(route) * C::halves + h / Strips) * L::blocks + block) * C::n + n + (h % Strips) * Columns] = chain[h].v[i];
       }
       __syncthreads();
     }

@@ -1,4 +1,4 @@
-//! Lab-only finalizer clocks and cluster transport probes.
+//! The served warp finalizer and its finalizer clock controls.
 use kernel_build::CubinSpec;
 use kernels_sm120::sinkhorn_hc::{Geometry as KernelGeometry, lagged_split, mixer_probe::Entry};
 use model_deepseek41_contract::{geometry::Geometry, hc, serving::DECODE_BATCH};

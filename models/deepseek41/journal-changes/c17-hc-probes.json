@@ -1,0 +1,240 @@
+{
+  "schema": "chopinfer.journal-proof.layout.v1",
+  "description": "Remove the teardown release of each retired HC cluster symbol. Typed release probes bind every removal to its original symbol and note position.",
+  "modules": {},
+  "resources": {},
+  "collectives": [],
+  "kernels": [],
+  "operations": {
+    "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-1.jsonl": [
+      {
+        "remove": {
+          "text": "release",
+          "lines": [
+            14175,
+            14176,
+            14177,
+            14178,
+            14179
+          ]
+        }
+      }
+    ],
+    "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-2.jsonl": [
+      {
+        "remove": {
+          "text": "release",
+          "lines": [
+            14081,
+            14082,
+            14083,
+            14084,
+            14085
+          ]
+        }
+      }
+    ],
+    "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-3.jsonl": [
+      {
+        "remove": {
+          "text": "release",
+          "lines": [
+            28168,
+            28169,
+            28170,
+            28171,
+            28172,
+            29795,
+            29796,
+            29797,
+            29798,
+            29799
+          ]
+        }
+      }
+    ],
+    "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-4.jsonl": [
+      {
+        "remove": {
+          "text": "release",
+          "lines": [
+            27980,
+            27981,
+            27982,
+            27983,
+            27984,
+            29556,
+            29557,
+            29558,
+            29559,
+            29560
+          ]
+        }
+      }
+    ],
+    "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-5.jsonl": [
+      {
+        "remove": {
+          "text": "release",
+          "lines": [
+            63586,
+            63587,
+            63588,
+            63589,
+            63590,
+            66244,
+            66245,
+            66246,
+            66247,
+            66248,
+            68902,
+            68903,
+            68904,
+            68905,
+            68906,
+            71560,
+            71561,
+            71562,
+            71563,
+            71564
+          ]
+        }
+      }
+    ],
+    "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-6.jsonl": [
+      {
+        "remove": {
+          "text": "release",
+          "lines": [
+            66114,
+            66115,
+            66116,
+            66117,
+            66118,
+            68511,
+            68512,
+            68513,
+            68514,
+            68515,
+            70908,
+            70909,
+            70910,
+            70911,
+            70912,
+            73305,
+            73306,
+            73307,
+            73308,
+            73309
+          ]
+        }
+      }
+    ],
+    "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-1.jsonl": [
+      {
+        "remove": {
+          "text": "release",
+          "lines": [
+            16424,
+            16425,
+            16426,
+            16427,
+            16428,
+            18051,
+            18052,
+            18053,
+            18054,
+            18055
+          ]
+        }
+      }
+    ],
+    "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-2.jsonl": [
+      {
+        "remove": {
+          "text": "release",
+          "lines": [
+            37994,
+            37995,
+            37996,
+            37997,
+            37998,
+            40652,
+            40653,
+            40654,
+            40655,
+            40656,
+            43310,
+            43311,
+            43312,
+            43313,
+            43314,
+            45968,
+            45969,
+            45970,
+            45971,
+            45972
+          ]
+        }
+      }
+    ],
+    "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-1.jsonl": [
+      {
+        "remove": {
+          "text": "release",
+          "lines": [
+            63586,
+            63587,
+            63588,
+            63589,
+            63590,
+            66244,
+            66245,
+            66246,
+            66247,
+            66248,
+            68902,
+            68903,
+            68904,
+            68905,
+            68906,
+            71560,
+            71561,
+            71562,
+            71563,
+            71564
+          ]
+        }
+      }
+    ],
+    "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-2.jsonl": [
+      {
+        "remove": {
+          "text": "release",
+          "lines": [
+            66114,
+            66115,
+            66116,
+            66117,
+            66118,
+            68511,
+            68512,
+            68513,
+            68514,
+            68515,
+            70908,
+            70909,
+            70910,
+            70911,
+            70912,
+            73305,
+            73306,
+            73307,
+            73308,
+            73309
+          ]
+        }
+      }
+    ]
+  }
+}

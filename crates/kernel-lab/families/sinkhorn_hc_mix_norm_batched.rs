@@ -1,6 +1,5 @@
 //! The split Sinkhorn mHC mix-collapse fused with the input RMSNorm on
-//! batched loads, its lab mutants and the phase probes of it and of the
-//! exact-sum entry (`sinkhorn_hc::mix_norm_batched::lab_cubin_specs`).
+//! batched loads and its lab mutants (`sinkhorn_hc::mix_norm_batched::lab_cubin_specs`).
 
 use kernel_build::CubinSpec;
 

@@ -1282,34 +1282,34 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
         KvStorage::Native,
-        (15811, 0xd69c56ab1d969d36),
+        (15801, 0x31764f5af9c8c7f6),
     ),
     (
         "deepseek41-flash-tp1",
         KvStorage::Bf16,
-        (15665, 0xbc96dd7618631322),
+        (15655, 0x8dec2871cd0945e7),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Native,
-        (31547, 0xf69c84c79e89b029),
+        (31527, 0x230e0b547ab0ad02),
     ),
     (
         "deepseek41-flash-tp2",
         KvStorage::Bf16,
-        (31255, 0x390cf4ba4860ef3a),
+        (31235, 0x14ea8a4a3e13b9cd),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (74581, 0xb3a1a00d9aed19ec),
+        (74541, 0xd37038dbfe23d0d6),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (76045, 0x9b4f6b218574aa53),
+        (76005, 0x05d7109ef8e8378b),
     ),
 ];
 

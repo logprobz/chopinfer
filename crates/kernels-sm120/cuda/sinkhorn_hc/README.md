@@ -246,18 +246,6 @@ The rest (logits, pre, post, collapse, squares, ordered sum, reciprocal,
 normalized row) is `mix_collapse_norm_exact`'s. 96 registers, 46,340 bytes
 of static shared memory, no local memory; two CTAs per SM as before.
 
-The lab's phase breakdown uses two lab-only copies, statement for statement,
-with the stamps of `mix_phase_probe.cuh`: `mix_norm_exact_probe.cuh` (of
-`mix_collapse_norm_exact`) and `mix_norm_batched_probe.cuh` (of this entry).
-A stamp records the global timer when its thread passes a point. Whole-CTA
-or whole-row phase ends are either stamps after a barrier that covers the
-phase's threads, or the maximum of per-warp stamps: every warp's chain sums,
-and every worker warp's normed stores. Stores count when issued, not
-drained, and the stamps can move the schedule slightly. The batched copy
-takes 116 registers (two CTAs per SM, as served). `mix_probe.cuh`'s stamps
-in `mix_norm_batched.cuh`'s `Probe` instantiation are no longer used by the
-lab; they stay so that the served header's closure is unchanged.
-
 `crates/kernel-lab/tests/sinkhorn_hc_mix_norm_batched.rs` checks the entry
 against `mix_collapse_norm_exact` (outputs and chain sums) at every bucket of
 1 to 32 rows and at 192 rows. The inputs are ordinary, wide, extreme
@@ -265,16 +253,13 @@ common-offset and order-sensitive, plus non-finite rows at 32 and 192 rows:
 NaN streams with several payloads, infinite streams, overflowing streams, a
 NaN sublayer output, and the expand's Inf - Inf. Those rows must produce
 NaN and infinite chain sums and NaN outputs in the reference. The test also
-covers relaunches and the probe entries. It runs poisoned eager, relaunch,
+covers relaunches. It runs poisoned eager, relaunch,
 graph and PDL replays: one capacity-32 graph at every live count 0 to 32 for
 each of three inputs, and sampled counts elsewhere. It has three mutants,
 counted only on changed bits: butterfly levels reversed (the chain sums
 differ), ordered-sum ties away from zero (only `normed` differs) and the
 late dependency wait. With `CHOPINFER_KERNEL_BENCH=1` it times eight
-boundaries against `mix_collapse_norm_exact`. It also reports each phase's
-median duration from both probe entries; it fails unless every CTA's stamps
-are complete and in program order and every phase has one sample per replay
-and boundary.
+boundaries against `mix_collapse_norm_exact`.
 
 ## Split mix-collapse with the tree norm
 

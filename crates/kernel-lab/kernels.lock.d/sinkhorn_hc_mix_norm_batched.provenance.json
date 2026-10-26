@@ -14,9 +14,5 @@
   {
     "name": "sinkhorn_hc_hc4x4096_mix_norm_batched_ties_away_sm120",
     "source_closure_sha256": "d84a1761d371ba778664927146f0a454e9003f0fdd0559dc7271a5671ce56355"
-  },
-  {
-    "name": "sinkhorn_hc_hc4x4096_mix_norm_probe_sm120",
-    "source_closure_sha256": "131437cb33b5599e6b171d7e34d4506b6c95a14e6c98a386adf3def53a34e656"
   }
 ]

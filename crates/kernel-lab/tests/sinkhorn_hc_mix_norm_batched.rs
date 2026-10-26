@@ -2,7 +2,7 @@
 //! loads (`kernels_sm120::sinkhorn_hc::mix_norm_batched`) against the
 //! served entry it replaces, the exact-sum fused entry
 //! (`sinkhorn_hc::mix_norm_exact`), at the served 4 x 4096 mixer, on the
-//! GPU, and the phase breakdown of both entries' critical paths. Run with
+//! GPU. Run with
 //! `CHOPINFER_KERNEL_GPU=<ordinal> cargo test -p kernel-lab --release --test
 //! sinkhorn_hc_mix_norm_batched -- --test-threads=1`; without a GPU only the
 //! CPU contract test runs.
@@ -14,8 +14,7 @@
 //!   chain sums bitwise equal to the exact-sum entry's, written into freshly
 //!   poisoned buffers that alone fail the comparison; inputs of ordinary,
 //!   wide (squares over 2^-60 to 2^60), extreme common offset and
-//!   order-sensitive (column 0 2^13 times the rest) magnitudes; the probe
-//!   entries' outputs too;
+//!   order-sensitive (column 0 2^13 times the rest) magnitudes;
 //! - determinism: relaunches rewrite every output and chain sum with the
 //!   same bits and leave every ticket at zero;
 //! - poisoned replays (eager, relaunch, graph, PDL): at 32 rows (ordinary,
@@ -40,20 +39,16 @@
 //!
 //! With `CHOPINFER_KERNEL_BENCH=1`, `sinkhorn_hc_mix_norm_batched_timing`
 //! times graphs of eight sublayer boundaries (expand, then the exact-sum
-//! entry or this one; PDL as served) at the decode buckets, and
-//! `sinkhorn_hc_mix_norm_batched_phases` replays the same graphs with the
-//! probe entries and reports each phase's median duration from their
-//! global-timer stamps.
+//! entry or this one; PDL as served) at the decode buckets.
 
 use kernel_core::codec::f32_to_bf16;
 use kernel_core::contract::{Argument, ArgumentList, DType, LaunchPlan};
 use kernel_lab::launch::{self, Bindings};
 use kernel_lab::poison::{self, LiveProducer, Phase, Replay, Rewrites, WriteMap};
 use kernel_lab::{LabResult, Session};
-use kernels_sm120::sinkhorn_hc::mix_norm_batched::{
-    self, PROBE_CHAIN_WARPS, PROBE_OUTPUT_WARPS, PROBE_SLOTS, PROBE_WARPS, PROBE_WORKER_WARPS,
+use kernels_sm120::sinkhorn_hc::{
+    self, Op, SERVED, mix_norm, mix_norm_batched, mix_norm_exact, split,
 };
-use kernels_sm120::sinkhorn_hc::{self, Op, SERVED, mix_norm, mix_norm_exact, split};
 use runtime_cuda::{Function, Module};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -92,9 +87,6 @@ const PARTIALS: u64 = 20;
 const TICKETS: u64 = 21;
 /// The streams' image, which the live-count producer restores.
 const X1_IMAGE: u64 = 22;
-/// The probe entries' stamps, one buffer per boundary of a timed graph.
-const STAMPS: u64 = 32;
-
 const OUTPUTS: [u64; 4] = [COLLAPSED, POST, COMB, NORMED];
 const REF_OUTPUTS: [u64; 4] = [REF_COLLAPSED, REF_POST, REF_COMB, REF_NORMED];
 const OUTPUT_NAMES: [&str; 4] = ["collapsed", "post", "comb", "normed"];
@@ -121,10 +113,6 @@ fn exact_cubin() -> String {
 
 fn batched_cubin(suffix: &str) -> String {
     format!("sinkhorn_hc_{}_mix_norm_batched{suffix}_sm120", tag())
-}
-
-fn probe_cubin() -> String {
-    format!("sinkhorn_hc_{}_mix_norm_probe_sm120", tag())
 }
 
 fn mutant(suffix: &str) -> mix_norm_batched::Entry {
@@ -304,22 +292,6 @@ struct Kernel {
     function: Function,
 }
 
-/// Which probe entry a phase replay runs.
-#[derive(Clone, Copy)]
-enum Probe {
-    Exact,
-    Batched,
-}
-
-impl Probe {
-    fn name(self) -> &'static str {
-        match self {
-            Probe::Exact => "exact_sum_entry",
-            Probe::Batched => "batched_entry",
-        }
-    }
-}
-
 struct Fixture {
     rows: usize,
     buffers: BTreeMap<u64, runtime_cuda::DeviceBuffer>,
@@ -329,9 +301,6 @@ struct Fixture {
     batched: Kernel,
     /// The mutants by suffix.
     mutants: BTreeMap<&'static str, Kernel>,
-    /// The probe entries: the exact-sum entry's probed copy, then the
-    /// batched entry's.
-    probes: [Kernel; 2],
 }
 
 impl Fixture {
@@ -339,7 +308,6 @@ impl Fixture {
         let served = session.module(&served_cubin())?;
         let exact_module = session.module(&exact_cubin())?;
         let batched_module = session.module(&batched_cubin(""))?;
-        let probe_module = session.module(&probe_cubin())?;
         let expand = expand_entry();
         let exact_entry = mix_norm_exact::served();
         let batched_entry = mix_norm_batched::served();
@@ -356,14 +324,6 @@ impl Fixture {
             );
             modules.push(module);
         }
-        let [batched_probe, exact_probe] = mix_norm_batched::served_probes();
-        let probe_kernel = |entry: &mix_norm_batched::Entry| -> LabResult<Kernel> {
-            Ok(Kernel {
-                plan: entry.plan(rows as u32, 0).map_err(err)?,
-                function: probe_module.function(&entry.symbol).map_err(err)?,
-            })
-        };
-        let probes = [probe_kernel(&exact_probe)?, probe_kernel(&batched_probe)?];
         let mut buffers = BTreeMap::new();
         buffers.insert(X0, session.upload_bf16(&inputs.x0)?);
         buffers.insert(Y0, session.upload_bf16(&inputs.y0)?);
@@ -393,12 +353,6 @@ impl Fixture {
         ] {
             buffers.insert(handle, session.allocate(bytes)?);
         }
-        for boundary in 0..BOUNDARIES as u64 {
-            buffers.insert(
-                STAMPS + boundary,
-                session.allocate(rows * GROUPS * PROBE_SLOTS * 8)?,
-            );
-        }
         let fixture = Self {
             rows,
             buffers,
@@ -417,9 +371,8 @@ impl Fixture {
                     .map_err(err)?,
             },
             mutants,
-            probes,
             _modules: {
-                modules.extend([served, exact_module, batched_module, probe_module]);
+                modules.extend([served, exact_module, batched_module]);
                 modules
             },
         };
@@ -519,20 +472,6 @@ impl Fixture {
         self.launch(session, kernel, args, pdl)
     }
 
-    /// A probe entry into the tested buffers, stamping into boundary
-    /// `boundary`'s stamps.
-    fn probe(&self, session: &Session, probe: Probe, boundary: usize, pdl: bool) -> LabResult<()> {
-        let [batched, exact] = mix_norm_batched::served_probes();
-        let (entry, kernel) = match probe {
-            Probe::Exact => (exact, &self.probes[0]),
-            Probe::Batched => (batched, &self.probes[1]),
-        };
-        let mut args = Self::fused_handles(false);
-        args.push(Argument::DeviceBuffer(STAMPS + boundary as u64));
-        let args = entry.pack_arguments(args).map_err(err)?;
-        self.launch(session, kernel, args, pdl)
-    }
-
     fn outputs(&self, session: &Session, handles: [u64; 4]) -> LabResult<[Vec<u16>; 4]> {
         let read =
             |i: usize| session.download_bf16(self.buffer(handles[i]), self.rows * PER_ROW[i]);
@@ -549,24 +488,6 @@ impl Fixture {
 
     fn tickets(&self, session: &Session, handle: u64) -> LabResult<Vec<u8>> {
         poison::read(session, self.buffer(handle))
-    }
-
-    /// Boundary `boundary`'s stamps [rows, groups, slots].
-    fn stamps(&self, session: &Session, boundary: usize) -> LabResult<Vec<u64>> {
-        Ok(
-            poison::read(session, self.buffer(STAMPS + boundary as u64))?
-                .chunks_exact(8)
-                .map(|bytes| u64::from_ne_bytes(bytes.try_into().expect("eight bytes")))
-                .collect(),
-        )
-    }
-
-    fn clear_stamps(&self, session: &Session) -> LabResult<()> {
-        for boundary in 0..BOUNDARIES as u64 {
-            let bytes = vec![0_u8; self.rows * GROUPS * PROBE_SLOTS * 8];
-            poison::write(session, self.buffer(STAMPS + boundary), 0, &bytes)?;
-        }
-        Ok(())
     }
 }
 
@@ -677,22 +598,6 @@ fn bitwise_bucket(session: &Session, rows: usize, inputs: &Inputs) -> LabResult<
         )?;
     }
 
-    // The probe entries write the same bits.
-    for probe in [Probe::Exact, Probe::Batched] {
-        poison::poison(session, &outputs)?;
-        fixture.probe(session, probe, 0, false)?;
-        session.stream.synchronize().map_err(err)?;
-        same_outputs(
-            &format!("{} probe", probe.name()),
-            &fixture.outputs(session, OUTPUTS)?,
-            &reference,
-        )?;
-        exact(
-            &format!("{} probe chain sums", probe.name()),
-            &fixture.partials(session, PARTIALS)?,
-            &reference_partials,
-        )?;
-    }
     Ok(json!({
         "rows": rows,
         "grid": fixture.batched.plan.grid,
@@ -700,7 +605,6 @@ fn bitwise_bucket(session: &Session, rows: usize, inputs: &Inputs) -> LabResult<
         "bitwise_exact_sum_entry": true,
         "chain_sums_bitwise": true,
         "relaunches_bitwise": 4,
-        "probes_bitwise": true,
     }))
 }
 
@@ -996,376 +900,8 @@ fn buckets() -> Vec<usize> {
     (1..=32).chain([6 * 32]).collect()
 }
 
-/// The decode buckets the timing and the phase breakdown run at.
+/// The decode buckets the timing runs at.
 const TIMED_BUCKETS: [usize; 6] = [1, 2, 4, 8, 16, 32];
-
-/// The phases every boundary reports, each the largest over the boundary's
-/// rows of that row's duration (ns), plus the SM clock. Whole-CTA or
-/// whole-row ends are stamps after a barrier covering the phase's threads,
-/// or the maximum of per-warp stamps; `launch_before_wait` and
-/// `wait_spread` are thread 0's progress; stores are counted when issued,
-/// not drained.
-const PHASES: [&str; 18] = [
-    "launch_before_wait",
-    "wait_spread",
-    "chains",
-    "ticket",
-    "staged",
-    "logits",
-    "sinkhorn",
-    "pre_post",
-    "collapse",
-    "squares",
-    "ordered_sum",
-    "inv",
-    "output",
-    "finisher",
-    "after_wait",
-    "sm_clock_ghz",
-    "boundary_gap",
-    "boundary_period",
-];
-
-/// The probe slot named `name` (`PROBE_SLOT_NAMES`).
-fn named(name: &str) -> usize {
-    mix_norm_batched::PROBE_SLOT_NAMES
-        .iter()
-        .position(|n| *n == name)
-        .expect("a probe slot")
-}
-
-/// The slots every CTA stamps: its entry, wait, ticket and wait clock, and
-/// each warp's chain sums.
-fn every_cta_slots() -> Vec<(String, usize)> {
-    let mut slots: Vec<(String, usize)> = ["entry", "waited", "ticket", "waited_clock"]
-        .iter()
-        .map(|name| (name.to_string(), named(name)))
-        .collect();
-    slots.extend((0..PROBE_WARPS).map(|w| (format!("chains of warp {w}"), PROBE_CHAIN_WARPS + w)));
-    slots
-}
-
-/// The slots only the finishing CTA stamps.
-fn finisher_slots() -> Vec<(String, usize)> {
-    let mut slots: Vec<(String, usize)> = [
-        "staged",
-        "logits",
-        "sinkhorn",
-        "pre_post",
-        "collapse",
-        "squares",
-        "sum",
-        "inv",
-        "logits_clock",
-    ]
-    .iter()
-    .map(|name| (name.to_string(), named(name)))
-    .collect();
-    slots.extend(
-        (0..PROBE_WORKER_WARPS)
-            .map(|w| (format!("output of warp {}", w + 1), PROBE_OUTPUT_WARPS + w)),
-    );
-    slots
-}
-
-/// The global-timer slots, for the timer's step.
-fn timer_slots() -> Vec<usize> {
-    let clocks = [named("waited_clock"), named("logits_clock")];
-    every_cta_slots()
-        .into_iter()
-        .chain(finisher_slots())
-        .map(|(_, at)| at)
-        .filter(|at| !clocks.contains(at))
-        .collect()
-}
-
-/// The median of `values` (the mean of the middle two for an even count).
-fn median(values: &mut [f64]) -> Option<f64> {
-    if values.is_empty() {
-        return None;
-    }
-    values.sort_by(f64::total_cmp);
-    let mid = values.len() / 2;
-    Some(if values.len() % 2 == 0 {
-        (values[mid - 1] + values[mid]) / 2.0
-    } else {
-        values[mid]
-    })
-}
-
-/// One boundary's phases (`PHASES` but the boundary gap and period) from
-/// its stamps at `rows` live rows, with its first wait release and the end
-/// of its last finisher (the last of its Sinkhorn and per-warp output
-/// stamps). Every CTA of every row must hold every slot it stamps
-/// (`every_cta_slots`); exactly one CTA per row, the finisher, holds the
-/// finisher's slots and no other CTA holds any; each CTA's stamps must be
-/// in program order (stamps of different CTAs are not ordered against each
-/// other: the timer's step and SMs' reads of it are coarse). Any other
-/// boundary is an error.
-fn boundary_phases(
-    stamps: &[u64],
-    rows: usize,
-) -> Result<(BTreeMap<&'static str, f64>, u64, u64), String> {
-    if stamps.len() < rows * GROUPS * PROBE_SLOTS {
-        return Err(format!("{} stamps for {rows} rows", stamps.len()));
-    }
-    let cta = |row: usize, group: usize| {
-        &stamps[(row * GROUPS + group) * PROBE_SLOTS..(row * GROUPS + group + 1) * PROBE_SLOTS]
-    };
-    let every = every_cta_slots();
-    let finishing = finisher_slots();
-    let mut phases: BTreeMap<&'static str, f64> = BTreeMap::new();
-    let mut first_wait = u64::MAX;
-    let mut last_end = 0_u64;
-    for row in 0..rows {
-        let mut finisher = None;
-        for group in 0..GROUPS {
-            let slots = cta(row, group);
-            if let Some((name, _)) = every.iter().find(|(_, at)| slots[*at] == 0) {
-                return Err(format!("row {row}, CTA {group}: no {name} stamp"));
-            }
-            let in_order = |names: &[&str]| {
-                names
-                    .windows(2)
-                    .all(|w| slots[named(w[0])] <= slots[named(w[1])])
-            };
-            // Thread 0 stamps entry, waited, warp 0's chains and the ticket in
-            // that order; every warp's chains precede the ticket's barrier.
-            if !in_order(&["entry", "waited", "ticket"])
-                || slots[PROBE_CHAIN_WARPS] < slots[named("waited")]
-                || (0..PROBE_WARPS).any(|w| slots[PROBE_CHAIN_WARPS + w] > slots[named("ticket")])
-            {
-                return Err(format!("row {row}, CTA {group}: stamps out of order"));
-            }
-            if slots[named("staged")] != 0 {
-                if let Some(other) = finisher {
-                    return Err(format!("row {row}: CTAs {other} and {group} both finished"));
-                }
-                if let Some((name, _)) = finishing.iter().find(|(_, at)| slots[*at] == 0) {
-                    return Err(format!("row {row}, finishing CTA {group}: no {name} stamp"));
-                }
-                // Thread 32 (worker 0, warp 1's lane 0) stamps pre_post to inv,
-                // then warp 1's output; other warps' outputs are not ordered
-                // against its stamps.
-                if !in_order(&["ticket", "staged", "logits", "sinkhorn"])
-                    || !in_order(&["logits", "pre_post", "collapse", "squares", "sum", "inv"])
-                    || slots[PROBE_OUTPUT_WARPS] < slots[named("inv")]
-                {
-                    return Err(format!(
-                        "row {row}, finishing CTA {group}: stamps out of order"
-                    ));
-                }
-                finisher = Some(group);
-            } else if let Some((name, _)) = finishing.iter().find(|(_, at)| slots[*at] != 0) {
-                return Err(format!(
-                    "row {row}, CTA {group} did not finish but stamped {name}"
-                ));
-            }
-        }
-        let f = finisher.ok_or_else(|| format!("row {row}: no finishing CTA"))?;
-        let at = |name: &str| cta(row, f)[named(name)];
-        let row_wait = (0..GROUPS)
-            .map(|g| cta(row, g)[named("waited")])
-            .min()
-            .unwrap_or(0);
-        let last_wait = (0..GROUPS)
-            .map(|g| cta(row, g)[named("waited")])
-            .max()
-            .unwrap_or(0);
-        let entry = (0..GROUPS)
-            .map(|g| cta(row, g)[named("entry")])
-            .min()
-            .unwrap_or(0);
-        let chains = (0..GROUPS)
-            .flat_map(|g| (0..PROBE_WARPS).map(move |w| cta(row, g)[PROBE_CHAIN_WARPS + w]))
-            .max()
-            .unwrap_or(0);
-        let output = (0..PROBE_WORKER_WARPS)
-            .map(|w| cta(row, f)[PROBE_OUTPUT_WARPS + w])
-            .max()
-            .unwrap_or(0);
-        let end = at("sinkhorn").max(output);
-        let span = |from: u64, to: u64| to as f64 - from as f64;
-        for (name, value) in [
-            ("launch_before_wait", span(entry, row_wait)),
-            ("wait_spread", span(row_wait, last_wait)),
-            ("chains", span(row_wait, chains)),
-            ("ticket", span(chains, at("ticket"))),
-            ("staged", span(at("ticket"), at("staged"))),
-            ("logits", span(at("staged"), at("logits"))),
-            ("sinkhorn", span(at("logits"), at("sinkhorn"))),
-            ("pre_post", span(at("logits"), at("pre_post"))),
-            ("collapse", span(at("pre_post"), at("collapse"))),
-            ("squares", span(at("collapse"), at("squares"))),
-            ("ordered_sum", span(at("squares"), at("sum"))),
-            ("inv", span(at("sum"), at("inv"))),
-            ("output", span(at("inv"), output)),
-            ("finisher", span(at("ticket"), end)),
-            ("after_wait", span(row_wait, end)),
-        ] {
-            let largest = phases.entry(name).or_insert(f64::MIN);
-            *largest = largest.max(value);
-        }
-        let cycles = at("logits_clock").wrapping_sub(at("waited_clock")) as f64;
-        let ns = span(at("waited"), at("logits"));
-        if ns <= 0.0 {
-            return Err(format!(
-                "row {row}: no time between the wait and the logits"
-            ));
-        }
-        phases.insert("sm_clock_ghz", cycles / ns);
-        first_wait = first_wait.min(row_wait);
-        last_end = last_end.max(end);
-    }
-    Ok((phases, first_wait, last_end))
-}
-
-/// The median of every phase in `samples`, which must hold exactly
-/// `expected` samples of each of `PHASES`.
-fn summarize(
-    samples: &mut BTreeMap<&'static str, Vec<f64>>,
-    expected: usize,
-) -> Result<BTreeMap<&'static str, f64>, String> {
-    let mut medians = BTreeMap::new();
-    for name in PHASES {
-        let values = samples
-            .get_mut(name)
-            .map(Vec::as_mut_slice)
-            .unwrap_or_default();
-        if values.len() != expected {
-            return Err(format!(
-                "{name}: {} samples, expected {expected}",
-                values.len()
-            ));
-        }
-        medians.insert(
-            name,
-            median(values).ok_or_else(|| format!("{name}: no samples"))?,
-        );
-    }
-    Ok(medians)
-}
-
-/// Replays of eight boundaries (expand, then `probe`'s entry, each launch
-/// PDL after the previous) at `rows` rows: per phase the median over the
-/// replays and boundaries 1 to 7 (boundary 0 follows the graph's launch).
-/// `boundary_gap` is a boundary's first wait release after the previous
-/// boundary's end (the last stamp of its finishers: the next expand, two
-/// handoffs and the stores still draining), and `boundary_period` the
-/// distance between two boundaries' first wait releases. Every boundary
-/// must be complete (`boundary_phases`) and every phase must have one
-/// sample per replay and boundary 1 to 7; otherwise the bucket fails.
-fn phase_bucket(session: &Session, rows: usize, probe: Probe, replays: usize) -> LabResult<Value> {
-    let fixture = Fixture::new(session, rows, &Inputs::new(rows, 0x9a5e + rows as u64))?;
-    let graph = session.capture(|_| {
-        for boundary in 0..BOUNDARIES {
-            fixture.producer(session, boundary > 0)?;
-            fixture.probe(session, probe, boundary, true)?;
-        }
-        Ok(())
-    })?;
-    let mut samples: BTreeMap<&'static str, Vec<f64>> = BTreeMap::new();
-    let mut deltas = Vec::new();
-    let timers = timer_slots();
-    for replay in 0..replays {
-        fixture.clear_stamps(session)?;
-        graph.launch(&session.stream).map_err(err)?;
-        session.stream.synchronize().map_err(err)?;
-        let mut previous: Option<(u64, u64)> = None;
-        for boundary in 0..BOUNDARIES {
-            let stamps = fixture.stamps(session, boundary)?;
-            // The smallest step between a CTA's distinct timer stamps.
-            for cta in stamps.chunks_exact(PROBE_SLOTS) {
-                let mut times: Vec<u64> = timers
-                    .iter()
-                    .map(|&at| cta[at])
-                    .filter(|&t| t != 0)
-                    .collect();
-                times.sort_unstable();
-                deltas.extend(times.windows(2).map(|w| w[1] - w[0]).filter(|&d| d > 0));
-            }
-            let (phases, first_wait, last_end) = boundary_phases(&stamps, rows).map_err(|e| {
-                format!(
-                    "{} at {rows} rows, replay {replay}, boundary {boundary}: {e}",
-                    probe.name()
-                )
-            })?;
-            if let Some((previous_wait, previous_end)) = previous {
-                samples
-                    .entry("boundary_gap")
-                    .or_default()
-                    .push(first_wait as f64 - previous_end as f64);
-                samples
-                    .entry("boundary_period")
-                    .or_default()
-                    .push(first_wait as f64 - previous_wait as f64);
-            }
-            previous = Some((first_wait, last_end));
-            if boundary > 0 {
-                for (name, value) in phases {
-                    samples.entry(name).or_default().push(value);
-                }
-            }
-        }
-    }
-    let medians = summarize(&mut samples, replays * (BOUNDARIES - 1))
-        .map_err(|e| format!("{} at {rows} rows: {e}", probe.name()))?;
-    let resolution = deltas
-        .iter()
-        .copied()
-        .min()
-        .ok_or_else(|| format!("{} at {rows} rows: no timer steps", probe.name()))?;
-    Ok(json!({
-        "rows": rows,
-        "entry": probe.name(),
-        "replays": replays,
-        "samples_per_phase": replays * (BOUNDARIES - 1),
-        "smallest_stamp_step_ns": resolution,
-        "median_ns": medians,
-    }))
-}
-
-/// A complete synthetic boundary of two rows: every CTA's entry, wait,
-/// ticket and chain-warp stamps, CTA 3 finishing row 0 and CTA 15 row 1.
-fn synthetic_stamps() -> Vec<u64> {
-    let mut stamps = vec![0_u64; 2 * GROUPS * PROBE_SLOTS];
-    for row in 0..2 {
-        let base = 1_000 + 100 * row as u64;
-        for group in 0..GROUPS {
-            let cta = &mut stamps[(row * GROUPS + group) * PROBE_SLOTS..][..PROBE_SLOTS];
-            cta[named("entry")] = base;
-            cta[named("waited")] = base + 10 + group as u64;
-            cta[named("ticket")] = base + 70;
-            cta[named("waited_clock")] = 5_000;
-            for warp in 0..PROBE_WARPS {
-                cta[PROBE_CHAIN_WARPS + warp] = base + 40 + (group + warp) as u64;
-            }
-        }
-        let finisher = [3, 15][row];
-        let cta = &mut stamps[(row * GROUPS + finisher) * PROBE_SLOTS..][..PROBE_SLOTS];
-        for (name, offset) in [
-            ("staged", 80),
-            ("logits", 90),
-            ("sinkhorn", 190 + 10 * row as u64),
-            ("pre_post", 95),
-            ("collapse", 100),
-            ("squares", 110),
-            ("sum", 130),
-            ("inv", 135),
-        ] {
-            cta[named(name)] = base + offset;
-        }
-        for warp in 0..PROBE_WORKER_WARPS {
-            cta[PROBE_OUTPUT_WARPS + warp] = base + 140 + warp as u64;
-        }
-        if row == 0 {
-            cta[PROBE_OUTPUT_WARPS + PROBE_WORKER_WARPS - 1] = base + 250;
-        }
-        // Two cycles per ns between the finisher's wait and its logits.
-        cta[named("logits_clock")] = 5_000 + 2 * (90 - 10 - finisher as u64);
-    }
-    stamps
-}
 
 #[test]
 fn sinkhorn_hc_mix_norm_batched_cpu_contract() {
@@ -1381,11 +917,6 @@ fn sinkhorn_hc_mix_norm_batched_cpu_contract() {
             [mutant(suffix).symbol.as_str()]
         );
     }
-    let mut probes = kernel_lab::cubin_entries(&probe_cubin()).unwrap().to_vec();
-    probes.sort_unstable();
-    let mut expected = mix_norm_batched::served_probes().map(|p| p.symbol);
-    expected.sort();
-    assert_eq!(probes, expected);
     assert_eq!(
         kernel_lab::cubin_entries(&exact_cubin()).unwrap(),
         [mix_norm_exact::served().symbol.as_str()]
@@ -1455,72 +986,6 @@ fn sinkhorn_hc_mix_norm_batched_cpu_contract() {
     assert_eq!(counts["comb"], json!({"nan": 0, "inf": 0}));
     assert_eq!(counts["normed"], json!({"nan": 1, "inf": 0}));
     assert_eq!(counts["chain sums"], json!({"nan": 1, "inf": 1}));
-
-    // The phase arithmetic on a synthetic boundary of two rows: CTA 3
-    // finishes row 0, CTA 15 row 1.
-    let stamps = synthetic_stamps();
-    let (phases, first_wait, last_end) = boundary_phases(&stamps, 2).unwrap();
-    assert_eq!(first_wait, 1_010);
-    // Row 0's last output warp ends it at 1,250; row 1's Sinkhorn at 1,300.
-    assert_eq!(last_end, 1_300);
-    assert_eq!(phases["chains"], 52.0);
-    assert_eq!(phases["ticket"], 8.0);
-    assert_eq!(phases["sinkhorn"], 110.0);
-    assert_eq!(phases["output"], 115.0);
-    assert_eq!(phases["after_wait"], 240.0);
-    assert_eq!(phases["sm_clock_ghz"], 2.0);
-    assert_eq!(phases.len(), PHASES.len() - 2);
-    assert!(boundary_phases(&stamps[..GROUPS * PROBE_SLOTS], 1).is_ok());
-    assert!(boundary_phases(&stamps[..GROUPS * PROBE_SLOTS], 2).is_err());
-    // Any missing or misplaced stamp fails the boundary.
-    let at = |row: usize, group: usize, slot: usize| (row * GROUPS + group) * PROBE_SLOTS + slot;
-    let broken = |change: &dyn Fn(&mut Vec<u64>)| {
-        let mut stamps = synthetic_stamps();
-        change(&mut stamps);
-        boundary_phases(&stamps, 2).unwrap_err()
-    };
-    let error = broken(&|s| s[at(0, 5, PROBE_CHAIN_WARPS + 2)] = 0);
-    assert!(error.contains("CTA 5: no chains of warp 2"), "{error}");
-    let error = broken(&|s| s[at(1, 15, PROBE_OUTPUT_WARPS + 4)] = 0);
-    assert!(error.contains("no output of warp 5"), "{error}");
-    let error = broken(&|s| s[at(1, 0, named("sum"))] = 1_200);
-    assert!(
-        error.contains("CTA 0 did not finish but stamped sum"),
-        "{error}"
-    );
-    let error = broken(&|s| s[at(0, 3, named("staged"))] = 0);
-    assert!(error.contains("did not finish"), "{error}");
-    let error = broken(&|s| s[at(0, 9, named("entry"))] = 0);
-    assert!(error.contains("CTA 9: no entry stamp"), "{error}");
-    let error = broken(&|s| s[at(1, 15, named("sum"))] = 1_100 + 500);
-    assert!(error.contains("out of order"), "{error}");
-    let error = broken(&|s| s[at(0, 2, PROBE_CHAIN_WARPS + 7)] = 1_000 + 80);
-    assert!(error.contains("out of order"), "{error}");
-    // Thread 0's chain stamp before its own wait stamp.
-    let error = broken(&|s| s[at(0, 4, PROBE_CHAIN_WARPS)] = 1_000 + 5);
-    assert!(error.contains("CTA 4: stamps out of order"), "{error}");
-    // Worker 0's output stamp before its own reciprocal stamp, while a later
-    // output warp still ends after it.
-    let error = broken(&|s| s[at(0, 3, PROBE_OUTPUT_WARPS)] = 1_000 + 130);
-    assert!(
-        error.contains("finishing CTA 3: stamps out of order"),
-        "{error}"
-    );
-    // Coverage: every phase needs exactly the expected samples.
-    let full = || -> BTreeMap<&'static str, Vec<f64>> {
-        PHASES
-            .iter()
-            .map(|&name| (name, vec![1.0, 2.0, 3.0]))
-            .collect()
-    };
-    assert_eq!(summarize(&mut full(), 3).unwrap()["chains"], 2.0);
-    assert!(summarize(&mut full(), 4).is_err());
-    let mut missing = full();
-    missing.remove("boundary_gap");
-    assert!(summarize(&mut missing, 3).is_err());
-    assert!(summarize(&mut BTreeMap::new(), 0).is_err());
-    assert_eq!(median(&mut [3.0, 1.0, 2.0]), Some(2.0));
-    assert_eq!(median(&mut [1.0, 3.0]), Some(2.0));
 }
 
 #[test]
@@ -1725,32 +1190,4 @@ fn sinkhorn_hc_mix_norm_batched_timing() {
         Ok(())
     })
     .expect("batched Sinkhorn mix and norm timing");
-}
-
-/// The phase breakdown of the exact-sum entry (its probed copy) and of the
-/// batched entry: graphs of eight boundaries as the timing test runs them,
-/// with the probe entries in place of the served ones.
-#[test]
-fn sinkhorn_hc_mix_norm_batched_phases() {
-    if std::env::var("CHOPINFER_KERNEL_BENCH").as_deref() != Ok("1") {
-        kernel_lab::skip("sinkhorn_hc_mix_norm_batched phases: set CHOPINFER_KERNEL_BENCH=1")
-            .unwrap();
-        return;
-    }
-    kernel_lab::gpu_test(3 << 30, |session| {
-        let mut rows = Vec::new();
-        for bucket in TIMED_BUCKETS {
-            for probe in [Probe::Exact, Probe::Batched] {
-                let row = phase_bucket(session, bucket, probe, 30)?;
-                eprintln!("sinkhorn_hc_mix_norm_batched phases: {row}");
-                rows.push(row);
-            }
-        }
-        let mut receipt = BTreeMap::new();
-        receipt.insert("op".into(), json!("sinkhorn_hc_mix_norm_batched_phases"));
-        receipt.insert("buckets".into(), json!(rows));
-        session.receipt("sinkhorn_hc_mix_norm_batched_phases", receipt)?;
-        Ok(())
-    })
-    .expect("Sinkhorn mix and norm phase breakdown");
 }

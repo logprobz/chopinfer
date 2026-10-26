@@ -1,6 +1,5 @@
 //! Direct BF16 copies and an ordered consumed-half PV pipeline.
 use super::*;
-use kernel_core::latent_attention::LatentKvFormat;
 
 pub fn symbol(reference: &sources::Entry, pipeline: bool) -> String {
     format!(
@@ -14,33 +13,17 @@ pub fn cubin_spec(
     entries: &[sources::Entry],
     pipeline: bool,
 ) -> Result<CubinSpec, Refusal> {
-    for e in entries {
-        if !matches!(
-            e.query,
-            LatentAttentionQuery::Attention {
-                kv: LatentKvFormat::Bf16,
-                ..
-            }
-        ) {
-            return Err(Refusal(
-                "asynchronous shared-head staging requires BF16 keys",
-            ));
-        }
-    }
-    let mut spec = super::cubin_spec(profile, entries)?;
+    let mut spec = super::cubin_spec(profile, &[])?;
     spec.name = format!(
         "latent_sources_prefill_head_{}_{}_sm120",
         if pipeline { "pipeline" } else { "async" },
         profile.tag()
     );
     spec.headers = vec!["#include \"latent/sources_prefill_heads_async.cuh\"".into()];
-    for (entry, reference) in spec.entries.iter_mut().zip(entries) {
-        entry.symbol = symbol(reference, pipeline);
-        entry.body = entry.body.replace(
-            "::head_shared_attention<",
-            &format!("::head_async_attention<{pipeline},"),
-        );
-    }
+    spec.entries = entries
+        .iter()
+        .map(|e| head_entry(e, true, pipeline, Mode::Partial, false))
+        .collect::<Result<_, _>>()?;
     Ok(spec)
 }
 

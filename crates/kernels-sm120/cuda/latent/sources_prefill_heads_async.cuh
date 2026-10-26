@@ -7,7 +7,7 @@ namespace chop::latent::sources_prefill {
 // One row and sixteen heads per CTA. Two independent four-warp groups
 // share the key tile. Their QK, softmax, PV and partial-store chains retain
 // the paired body's order; only head/row ownership and key loading change.
-template<bool Pipeline, class T, class Address = NativeAddress, bool Bf16 = false>
+template<HeadMode Mode, bool SkipEmpty, bool Pipeline, class T, class Address = NativeAddress, bool Bf16 = false>
 __device__ void head_async_attention(
     const uint16_t* q, const int32_t* row_batch, const uint32_t* live_rows,
     const uint8_t* window_codes, const uint8_t* window_scales,
@@ -19,7 +19,8 @@ __device__ void head_async_attention(
     uint32_t window_key_stride, uint32_t window_budget,
     uint64_t page_stride, uint32_t max_pages, uint32_t compressed_pages,
     uint32_t compressed_sequences, uint32_t compressed_key_stride,
-    uint32_t compressed_budget, uint32_t scale_bits) {
+    uint32_t compressed_budget, uint32_t scale_bits,
+    const float* sinks, const float* cos_sin, uint16_t* out, uint64_t* stamps) {
   ptx::griddep_launch_dependents();
   extern __shared__ __align__(1024) uint8_t native_latent_smem[];
   ptx::griddep_wait();
@@ -33,6 +34,13 @@ __device__ void head_async_attention(
   const int group = threadIdx.x / T::threads, tid = threadIdx.x % T::threads;
   const uint32_t row = first_row;
   const bool row_live = row < live;
+  const bool sample = Mode == HeadMode::Profile && stamps != nullptr && threadIdx.x == 0;
+  uint64_t global_start = 0;
+  if constexpr (Mode == HeadMode::Profile) {
+    if (sample) asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(global_start));
+  }
+  const uint64_t started = sample ? clock64() : 0;
+  uint64_t last = started, cycles[6] = {};
   const int head0 = blockIdx.y * 16 + group * T::head_tile;
   const int batch = row_live ? row_batch[row] : -1;
   const int state_slot = batch >= 0 && uint32_t(batch) < window_items
@@ -124,8 +132,37 @@ __device__ void head_async_attention(
       __syncthreads();
     }
   }
+  if constexpr (Mode == HeadMode::Profile) profile_clock(sample, cycles, 0, last);
   for (uint32_t unit = begin; unit < end; ++unit) {
+    static_assert(!SkipEmpty || !Pipeline, "empty-unit skipping requires direct staging");
     if constexpr (!Pipeline) resolve(unit);
+    if constexpr (SkipEmpty) {
+    // Empty PV chains start at positive zero. Keep the original rescale
+    // FMAs: even a zero contribution can canonicalize a negative zero.
+    if (!__syncthreads_or(threadIdx.x < T::keys && valid[threadIdx.x] != 0)) {
+      float correction[T::n_tiles];
+#pragma unroll
+      for (int n = 0; n < T::n_tiles; ++n) {
+        const float next = fmaxf(maximum[n], -INFINITY);
+        const float base = next == -INFINITY ? 0.0f : next;
+        correction[n] = exp_of(maximum[n] - base);
+        maximum[n] = next;
+        denominator[n] = fmaf(denominator[n], correction[n], 0.0f);
+      }
+#pragma unroll
+      for (int n = 0; n < T::n_tiles; ++n)
+#pragma unroll
+        for (int r = 0; r < 2; ++r) {
+          const float rescale = __shfl_sync(0xffffffff, correction[n], (2 * c + r) * 4);
+#pragma unroll
+          for (int m = 0; m < column_blocks; ++m)
+#pragma unroll
+            for (int half = 0; half < 2; ++half)
+              output[m][n].v[2 * half + r] = fmaf(output[m][n].v[2 * half + r], rescale, 0.0f);
+        }
+      continue;
+    }
+    }
     // Both eight-head groups read the same ordered 64-key unit.
     {
       if constexpr (!Pipeline) {
@@ -133,6 +170,7 @@ __device__ void head_async_attention(
         attention::cp_async_wait<0>();
         __syncthreads();
       }
+      if constexpr (Mode == HeadMode::Profile) profile_clock(sample, cycles, 1, last);
       const bool active = row_live;
       constexpr int key_base = 0;
       if (active) {
@@ -167,6 +205,7 @@ __device__ void head_async_attention(
         }
       }
       __syncthreads();
+      if constexpr (Mode == HeadMode::Profile) profile_clock(sample, cycles, 2, last);
       if (active) {
         // Scores of keys kt * 16 + {2c, 2c + 1, 2c + 8, 2c + 9} for head
         // n * 8 + g: the block chains added in block order, times the scale.
@@ -233,6 +272,10 @@ __device__ void head_async_attention(
           for (int r = 0; r < 2; ++r)
             rescale[n][r] = __shfl_sync(0xffffffff, correction[n], (2 * c + r) * 4);
 
+        if constexpr (Mode == HeadMode::Profile) {
+          __syncthreads();
+          profile_clock(sample, cycles, 3, last);
+        }
         if constexpr (Pipeline) {
           // Softmax has consumed validity and addresses. All threads must
           // finish those reads before the next unit reuses the metadata.
@@ -312,9 +355,11 @@ __device__ void head_async_attention(
         }
       }
       __syncthreads();
+      if constexpr (Mode == HeadMode::Profile) profile_clock(sample, cycles, 4, last);
     }
   }
   if (!row_live) return;
+  if constexpr (Mode == HeadMode::Finish) __syncthreads();
 
   // Each head's denominator has four lane contributions. Every split
   // writes a complete partial, including empty splits, for poison replay.
@@ -332,14 +377,52 @@ __device__ void head_async_attention(
       const float m_head = __shfl_sync(0xffffffff, maximum[n], source);
       const float l_head = __shfl_sync(0xffffffff, denominator[n], source);
       if (head >= T::heads) continue;
-      float* dest = workspace + partial_index<T>(row, split, head);
-      if (warp == 0 && g == 0) { dest[0] = m_head; dest[1] = l_head; }
+      float* dest;
+      float* audit = nullptr;
+      if constexpr (Mode == HeadMode::Finish) {
+        dest = head_finish_partial<T>(tile, group * T::head_tile + n * 8 + 2 * c + r);
+        audit = workspace ? workspace + partial_index<T>(row, split, head) : nullptr;
+      } else {
+        dest = workspace + partial_index<T>(row, split, head);
+      }
+      if (warp == 0 && g == 0) {
+        dest[0] = m_head; dest[1] = l_head;
+        if constexpr (Mode == HeadMode::Finish) {
+          if (audit) { audit[0] = m_head; audit[1] = l_head; }
+        }
+      }
 #pragma unroll
       for (int m = 0; m < column_blocks; ++m)
 #pragma unroll
         for (int half = 0; half < 2; ++half)
-          dest[2 + warp * 128 + m * 16 + g + half * 8] = output[m][n].v[2 * half + r];
+        {
+          const int dim = warp * 128 + m * 16 + g + half * 8;
+          if constexpr (Mode == HeadMode::Finish) {
+            dest[4 + dim] = output[m][n].v[2 * half + r];
+            if (audit) audit[2 + dim] = output[m][n].v[2 * half + r];
+          } else {
+            dest[2 + dim] = output[m][n].v[2 * half + r];
+          }
+        }
     }
+  if constexpr (Mode == HeadMode::Finish) {
+    head_finish<T>(tile, row, blockIdx.y * 16, sinks, cos_sin, out);
+  }
+  if constexpr (Mode == HeadMode::Profile) {
+    __syncthreads();
+    profile_clock(sample, cycles, 5, last);
+    if (sample) {
+      const uint64_t cta = (uint64_t(blockIdx.z) * gridDim.y + blockIdx.y) * gridDim.x + blockIdx.x;
+      uint64_t* record = stamps + cta * 14;
+      record[0] = started; record[1] = last;
+      uint32_t smid; asm volatile("mov.u32 %0, %%smid;" : "=r"(smid));
+      record[2] = smid;
+      uint64_t global_end; asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(global_end));
+      record[12] = global_start; record[13] = global_end;
+      for (int stage = 0; stage < 6; ++stage) record[3 + stage] = cycles[stage];
+      record[9] = end - begin; record[10] = row; record[11] = blockIdx.y;
+    }
+  }
 }
 
 

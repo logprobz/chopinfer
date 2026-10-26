@@ -932,54 +932,46 @@ pub(super) fn assert_sync_engram(
     );
 }
 
-fn sync_dspark_instance(host: &Rc<Host>, overlap: bool) -> BundleInstanceV1 {
+fn sync_dspark_instance(host: &Rc<Host>) -> BundleInstanceV1 {
     host.drafter.set(true);
     host.speculation.set(Some((3, 32)));
     crate::instance::prefill_engram::with_enabled(false, || {
-        crate::instance::execute::overlap::with_enabled(overlap, || {
-            api()
-                .create(
-                    HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(
-                        host,
-                    )))),
-                    &crate::config::tests::record(&host.shape, host.kv, 4, false),
-                )
-                .unwrap()
-        })
+        api()
+            .create(
+                HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(host)))),
+                &crate::config::tests::record(&host.shape, host.kv, 4, false),
+            )
+            .unwrap()
     })
 }
 
 #[test]
-fn disabled_prefill_engram_keeps_selected_schedule_reason() {
+fn disabled_prefill_engram_reports_its_selected_reason() {
     bundle_runtime::routes::with_logging(|| {
         for dspark in [false, true] {
             let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
             // Expose mapped Engram tables for both AR and DSpark.
             host.drafter.set(true);
             let mut instance = if dspark {
-                sync_dspark_instance(&host, true)
+                sync_dspark_instance(&host)
             } else {
                 crate::instance::prefill_engram::with_enabled(false, || {
-                    crate::instance::execute::overlap::with_mode(2, || {
-                        api()
-                            .create(
-                                HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(
-                                    Rc::clone(&host),
-                                ))),
-                                &crate::config::tests::record(&host.shape, host.kv, 4, false),
-                            )
-                            .unwrap()
-                    })
+                    api()
+                        .create(
+                            HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(
+                                Rc::clone(&host),
+                            ))),
+                            &crate::config::tests::record(&host.shape, host.kv, 4, false),
+                        )
+                        .unwrap()
                 })
             };
             let tokens = vec![7; 1024];
             let batch = step_with_stride(&[(701, 0, 0, &tokens, Phase::Prefill)], dspark, 16, None);
-            // The native BF16 micro plan serves AR. DSpark keeps its full
-            // schedule, so its explicitly disabled gather supplies the reason.
             let reason = if dspark {
                 "prefill_disabled"
             } else {
-                "prefill_schedule"
+                "ar_prefill"
             };
             assert_sync_engram(&host, &mut instance, &batch, &[reason]);
             instance.retire_request(701).unwrap();
@@ -1005,7 +997,7 @@ fn disabled_prefill_engram_keeps_taps_reason() {
     }
     bundle_runtime::routes::with_logging(|| {
         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-        let mut instance = sync_dspark_instance(&host, false);
+        let mut instance = sync_dspark_instance(&host);
         let batch = step_with_stride(&[(701, 0, 0, &[1, 2, 3], Phase::Prefill)], true, 8, None);
         assert_sync_engram(&host, &mut instance, &batch, &["taps"]);
         instance.retire_request(701).unwrap();
@@ -1018,7 +1010,7 @@ fn disabled_prefill_engram_keeps_taps_reason() {
 fn engram_reasons_distinguish_mixed_and_host_targets() {
     bundle_runtime::routes::with_logging(|| {
         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-        let mut instance = sync_dspark_instance(&host, false);
+        let mut instance = sync_dspark_instance(&host);
         let first = step_with_stride(&[(701, 0, 0, &[1, 2, 3], Phase::Prefill)], false, 8, None);
         assert_sync_engram(&host, &mut instance, &first, &["prefill_disabled"]);
         let mixed = step_with_stride(

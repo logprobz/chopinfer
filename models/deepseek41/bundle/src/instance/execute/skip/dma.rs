@@ -124,7 +124,6 @@ impl Plan {
         body: &Programs,
     ) -> Result<Option<Self>, String> {
         if !crate::instance::execute::dma::eligible(instance, run)
-            || !instance.overlap.is_empty()
             || instance.config.kv.storage != KvStorage::Native
         {
             return Ok(None);

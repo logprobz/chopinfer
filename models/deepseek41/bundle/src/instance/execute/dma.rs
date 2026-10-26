@@ -2,11 +2,11 @@
 //! scatter carries the payload of the collective it replaces: F32 partials,
 //! or each rank's partial rounded once to BF16 as the BF16-partial
 //! contract's entries send it.
-use super::{Run, Stage};
+use super::Run;
 use crate::instance::Instance;
 use bundle_runtime::acquire::RankHandles;
 use bundle_runtime::dispatch::{self, DispatchError};
-use bundle_runtime::pipeline::{PoisonOnUnwind, PreparedLaunch};
+use bundle_runtime::pipeline::PreparedLaunch;
 use bundle_runtime::resources::{Held, allocate_span};
 use model_deepseek41_contract::serving::PREFILL_TOKENS;
 use runtime_bundle_abi::{
@@ -126,7 +126,6 @@ pub(crate) fn drain_streams(instance: &Instance) -> Result<(), BundleAbiError> {
         .iter()
         .map(|rank| rank.2)
         .chain(instance.dma.iter().map(|rank| rank.lane))
-        .chain(instance.overlap.iter().map(|rank| rank.lane.stream))
         .chain(instance.side_lanes.iter().map(|lanes| lanes.side))
     {
         instance.services.synchronize_stream(stream)?;
@@ -353,10 +352,6 @@ impl Call {
             gather,
             footprint,
         }))
-    }
-
-    pub(super) fn audit(&self, compute: &[PreparedLaunch]) -> Result<(), String> {
-        crate::shared_overlap::disjoint_copy_spans(&self.footprint, compute)
     }
 
     /// Run the call. With `producers`, each rank's main stream produces and
@@ -629,33 +624,6 @@ impl Call {
     }
 }
 
-#[derive(Default)]
-struct Calls {
-    launches: Vec<PreparedLaunch>,
-    flags: Vec<bool>,
-}
-
-fn copied(run: &Run, rank: usize, range: std::ops::Range<usize>) -> Calls {
-    let mut out = Calls::default();
-    for at in range {
-        let launch = &run.programs[rank][at];
-        out.launches.push(PreparedLaunch {
-            symbol: launch.symbol.clone(),
-            rows: launch.rows,
-            plan: launch.plan,
-            arguments: launch.arguments.clone(),
-            bindings: launch.bindings.clone(),
-        });
-        out.flags.push(run.collectives[rank][at]);
-    }
-    out
-}
-
-pub(super) struct Plan {
-    blocks: Vec<(Vec<Calls>, Call)>,
-    tail: Vec<Calls>,
-}
-
 pub(super) fn eligible(instance: &Instance, run: &Run) -> bool {
     #[cfg(feature = "diagnostic-taps")]
     if instance.taps.text() {
@@ -666,102 +634,6 @@ pub(super) fn eligible(instance: &Instance, run: &Run) -> bool {
         && instance.ops.prefill_dma.enabled()
         && run.media.is_none()
         && run.inputs.request_ids.len() == 1
-}
-
-/// The full-schedule and two-part executors take DMA only when it was
-/// selected explicitly, and never for a DSpark target; the default serves
-/// the upper-skip executor alone.
-pub(super) fn eligible_full_schedule(instance: &Instance, run: &Run) -> bool {
-    eligible(instance, run)
-        && instance.ops.prefill_dma.serves_full_schedule()
-        && instance.dspark.is_none()
-}
-
-impl Plan {
-    pub(super) fn prepare(instance: &Instance, run: &Run) -> Result<Option<Self>, String> {
-        if !eligible_full_schedule(instance, run)
-            || !instance.overlap.is_empty()
-            || run.phase.rows() < 512
-        {
-            return Ok(None);
-        }
-        let stages = crate::program::stages(instance.config.shape.geometry, run.phase);
-        let mut cursors = [0; 4];
-        let mut blocks = Vec::new();
-        for stage in stages
-            .into_iter()
-            .filter(|s| matches!(s, Stage::EmbeddingReduce | Stage::Reduce(..)))
-        {
-            let mut compute = Vec::new();
-            let mut collectives = Vec::new();
-            for (rank, cursor) in cursors.iter_mut().enumerate() {
-                let begin = run.stages[rank]
-                    .iter()
-                    .position(|s| *s == stage)
-                    .ok_or("DMA reduction stage missing")?;
-                let end = begin
-                    + run.stages[rank][begin..]
-                        .iter()
-                        .take_while(|s| **s == stage)
-                        .count();
-                let collective = (begin..end)
-                    .find(|&at| run.collectives[rank][at])
-                    .ok_or("DMA stage has no collective")?;
-                if begin < *cursor || (stage != Stage::EmbeddingReduce && collective != begin) {
-                    return Err("DMA reduction stage order changed".into());
-                }
-                compute.push(copied(run, rank, *cursor..collective));
-                collectives.push(run.programs[rank][collective].symbol.as_str());
-                *cursor = end;
-            }
-            // A collective the transport does not replace keeps the whole
-            // step on the collectives.
-            let Some(call) = Call::prepare(
-                instance,
-                0,
-                run.phase.rows(),
-                stage == Stage::EmbeddingReduce,
-                &collectives,
-                true,
-            )?
-            else {
-                return Ok(None);
-            };
-            blocks.push((compute, call));
-        }
-        let tail = cursors
-            .iter()
-            .enumerate()
-            .map(|(rank, &at)| copied(run, rank, at..run.programs[rank].len()))
-            .collect();
-        Ok(Some(Self { blocks, tail }))
-    }
-
-    pub(super) fn execute(&self, instance: &Instance) -> Result<(), DispatchError> {
-        let streams = instance.ranks.iter().map(|r| r.2).collect::<Vec<_>>();
-        let issue = |calls: &[Calls]| {
-            instance.launch_eager(
-                &streams,
-                &calls
-                    .iter()
-                    .map(|c| c.launches.as_slice())
-                    .collect::<Vec<_>>(),
-                &calls.iter().map(|c| c.flags.as_slice()).collect::<Vec<_>>(),
-            )
-        };
-        let _unwind = PoisonOnUnwind(&instance.collectives);
-        let result = (|| {
-            for (compute, reduction) in &self.blocks {
-                issue(compute)?;
-                reduction.execute(instance, &streams, None, None)?;
-            }
-            issue(&self.tail)
-        })();
-        if result.is_err() {
-            instance.collectives.poison();
-        }
-        result
-    }
 }
 
 mod consume;

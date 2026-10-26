@@ -71,28 +71,20 @@ fn capture_with(
     }));
     let record = record(&host, prefill);
     let profile = Profile::read(prefill).unwrap();
-    let mut instance = {
-        {
-            crate::instance::execute::overlap::with_mode(0, || {
-                api()
-                    .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
-                    .unwrap()
-                    .create(
-                        if dspark {
-                            HostServicesTableV1::new(Rc::new(
-                                super::super::dspark::host::MappedHost::with_peer_copies(
-                                    Rc::clone(&host),
-                                ),
-                            ))
-                        } else {
-                            HostServicesTableV1::new(Rc::clone(&host))
-                        },
-                        &record,
-                    )
-            })
-        }
-    }
-    .unwrap_or_else(|error| panic!("{error:?}: {:?}", host.logs.borrow()));
+    let mut instance = api()
+        .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
+        .unwrap()
+        .create(
+            if dspark {
+                HostServicesTableV1::new(Rc::new(
+                    super::super::dspark::host::MappedHost::with_peer_copies(Rc::clone(&host)),
+                ))
+            } else {
+                HostServicesTableV1::new(Rc::clone(&host))
+            },
+            &record,
+        )
+        .unwrap_or_else(|error| panic!("{error:?}: {:?}", host.logs.borrow()));
     if profile.chunk == 0 {
         step(
             &mut instance,

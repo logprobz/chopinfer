@@ -20,7 +20,6 @@ mod moe_direct;
 mod moe_floor;
 mod norm_prefill;
 mod norm_quantize;
-mod overlap;
 mod query_prefill;
 mod routes;
 

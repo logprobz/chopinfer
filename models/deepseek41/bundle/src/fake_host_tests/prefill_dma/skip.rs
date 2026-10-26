@@ -22,17 +22,11 @@ pub(super) fn create_with_services(
     record.truncate(at + MODEL_OPTIONS_TAG_V1.len());
     record.extend_from_slice(&(options.len() as u32).to_le_bytes());
     record.extend_from_slice(&options);
-    {
-        {
-            crate::instance::execute::overlap::with_mode(0, || {
-                api()
-                    .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
-                    .unwrap()
-                    .create(services, &record)
-                    .unwrap()
-            })
-        }
-    }
+    api()
+        .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
+        .unwrap()
+        .create(services, &record)
+        .unwrap()
 }
 
 fn capture(rows: u64, enabled: Option<bool>) -> Vec<String> {

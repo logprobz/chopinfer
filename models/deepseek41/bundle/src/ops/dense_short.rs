@@ -20,7 +20,7 @@ mod tests {
     use runtime_bundle_abi::{BundleDeviceBufferHandleV1, DeviceBufferSpanV1};
 
     #[test]
-    fn threshold_keeps_unqualified_topologies_and_independent_workspace_free_calls() {
+    fn threshold_keeps_unqualified_topologies_on_full_folds() {
         for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
             let shape = Shape::new(&FLASH, ranks).unwrap();
             let kernels = crate::Kernels::new(&shape).unwrap();
@@ -56,9 +56,6 @@ mod tests {
                         live_rows: span(6, 4),
                         status: span(7, u64::from(rows) * 4),
                     };
-                    let old = ops.project_independent(d.id, rows, &views).unwrap();
-                    assert_eq!(old.len(), 1);
-                    assert!(old[0].launch.symbol.contains("mxfp8_fold_m8192"));
                     let new = ops
                         .project(d.id, Phase::Prefill { rows }, &views, span(99, 1 << 30))
                         .unwrap();
@@ -70,7 +67,7 @@ mod tests {
                         );
                     } else {
                         assert_eq!(new.len(), 1);
-                        assert_eq!(new[0].launch.symbol, old[0].launch.symbol);
+                        assert!(new[0].launch.symbol.contains("mxfp8_fold_m8192"));
                     }
                 }
             }

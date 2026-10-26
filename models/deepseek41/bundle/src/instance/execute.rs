@@ -42,8 +42,6 @@ mod graph_key_tests;
 #[cfg(test)]
 #[path = "indexer_workload_tests.rs"]
 mod indexer_workload_tests;
-mod micro;
-pub(crate) mod overlap;
 pub(crate) mod plan_cache;
 pub(crate) mod skip;
 
@@ -63,10 +61,7 @@ pub(super) struct Run {
     /// The graph bank: the indexer route lowering takes and an allocated
     /// step's tail rows.
     bank: Bank,
-    dma: Option<dma::Plan>,
     skip: Option<std::rc::Rc<skip::Plan>>,
-    overlap: Option<overlap::Plan>,
-    micro: Option<micro::Plan>,
     pub(super) inputs: PhaseInputs,
     cache: Option<crate::ops::latent::CacheRange>,
     arena: usize,
@@ -649,10 +644,7 @@ impl Instance {
             sync_engram: None,
             ar_engram,
             bank,
-            dma: None,
             skip: None,
-            overlap: None,
-            micro: None,
             index,
             engram,
             media,
@@ -676,28 +668,6 @@ impl Instance {
                     self.log(&error);
                     BundleStatusV1::InternalError
                 })?);
-            } else {
-                run.micro = micro::Plan::prepare(self, &run).map_err(|error| {
-                    self.log(&error);
-                    BundleStatusV1::InternalError
-                })?;
-                if run.micro.is_some() {
-                    // The micro plan rebuilds attention with smaller row parts.
-                    // Its prefix and tail contain no cache consumers or producers.
-                    run.cache = None;
-                }
-                if run.micro.is_none() {
-                    run.dma = dma::Plan::prepare(self, &run).map_err(|error| {
-                        self.log(&error);
-                        BundleStatusV1::InternalError
-                    })?;
-                    if run.dma.is_none() {
-                        run.overlap = overlap::Plan::prepare(self, &run).map_err(|error| {
-                            self.log(&error);
-                            BundleStatusV1::InternalError
-                        })?;
-                    }
-                }
             }
             run.sync_engram = if run.phase.prefill() {
                 self.prefill_gather_reason(&run)
@@ -742,11 +712,7 @@ impl Instance {
             Some(SyncReason::Media)
         } else if self.taps.text() {
             Some(SyncReason::Taps)
-        } else if run.dma.is_some()
-            || run.skip.as_ref().is_some_and(|skip| skip.uses_dma())
-            || run.micro.is_some()
-            || run.overlap.is_some()
-        {
+        } else if run.skip.as_ref().is_some_and(|skip| skip.uses_dma()) {
             Some(SyncReason::PrefillSchedule)
         } else if self.prefill_engram.is_none() {
             Some(self.prefill_engram_fallback)
@@ -980,21 +946,6 @@ impl Instance {
         }
         if let Some(plan) = &run.skip {
             return plan.execute(self, run.prefill_engram.as_ref());
-        }
-        if let Some(plan) = &run.dma {
-            return plan
-                .execute(self)
-                .map_err(|error| self.dispatch_failed(error));
-        }
-        if let Some(plan) = &run.micro {
-            return plan
-                .execute(self)
-                .map_err(|error| self.dispatch_failed(error));
-        }
-        if let Some(plan) = &run.overlap {
-            return plan
-                .execute(self, run)
-                .map_err(|error| self.dispatch_failed(error));
         }
         if let Some(plan) = &run.prefill_engram {
             return plan

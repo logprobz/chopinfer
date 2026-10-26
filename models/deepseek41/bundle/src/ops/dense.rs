@@ -699,16 +699,6 @@ impl DenseOps {
         bind.launch(op.at_phase(phase), &buffers, Counts::rows(rows))
     }
 
-    /// Projection `id` of `rows` rows.
-    pub(crate) fn project_independent(
-        &self,
-        id: &str,
-        rows: u32,
-        views: &GemmViews,
-    ) -> Result<Vec<Lowered>, Refusal> {
-        self.project_with(id, Phase::Prefill { rows }, views, None)
-    }
-
     pub(crate) fn project(
         &self,
         id: &str,

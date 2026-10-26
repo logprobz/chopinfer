@@ -275,23 +275,21 @@ fn decoded_prefill_routes_winning_offsets_and_fuses_mixed_outputs() {
     );
 }
 
-pub(super) fn composed_trace(mode: u8, skip: bool, cached: bool) -> Vec<String> {
-    composed_trace_offsets(mode, skip, cached, &[0, 8192])
+pub(super) fn composed_trace(skip: bool, cached: bool) -> Vec<String> {
+    composed_trace_offsets(skip, cached, &[0, 8192])
 }
 
-fn composed_trace_offsets(mode: u8, skip: bool, cached: bool, offsets: &[u64]) -> Vec<String> {
-    composed_trace_capacity(mode, skip, cached, offsets, 1, 0)
+fn composed_trace_offsets(skip: bool, cached: bool, offsets: &[u64]) -> Vec<String> {
+    composed_trace_capacity(skip, cached, offsets, 1, 0)
 }
 
 fn composed_trace_capacity(
-    mode: u8,
     skip: bool,
     cached: bool,
     offsets: &[u64],
     capacity: u32,
     slot: u64,
 ) -> Vec<String> {
-    use crate::instance::execute::overlap::with_mode;
     use runtime_bundle_sdk::prefill::{Boundary, encode};
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
@@ -327,17 +325,11 @@ fn composed_trace_capacity(
         record.extend_from_slice(&(options.len() as u32).to_le_bytes());
         record.extend_from_slice(&options);
     }
-    let mut instance = {
-        {
-            with_mode(mode, || {
-                api()
-                    .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
-                    .unwrap()
-                    .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
-                    .unwrap()
-            })
-        }
-    };
+    let mut instance = api()
+        .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
+        .unwrap()
+        .create(HostServicesTableV1::new(Rc::clone(&host)), &record)
+        .unwrap();
     let cache = crate::instance::prefill_cache_for_test(instance.handle(), cached);
     assert_eq!(cache.len(), 4);
     let mut submitted = Vec::new();
@@ -376,13 +368,7 @@ fn composed_trace_capacity(
             })
             .collect::<Vec<_>>();
         let decoded = attention.iter().filter(|s| s.contains("_decoded_")).count();
-        let full = if skip {
-            20
-        } else if mode == 2 {
-            0
-        } else {
-            40
-        };
+        let full = if skip { 20 } else { 40 };
         assert_eq!(
             decoded,
             if cached && full > 0 && offset < 32768 {
@@ -390,19 +376,8 @@ fn composed_trace_capacity(
             } else {
                 0
             },
-            "mode={mode} skip={skip} offset={offset}"
+            "skip={skip} offset={offset}"
         );
-        if mode == 2 && !skip {
-            assert_eq!(attention.len(), 2 * 4 * 40);
-            for line in &attention {
-                // Offsets past the cache's have no cache range and fuse.
-                let fused =
-                    (matches!(offset, 0 | 24576) || offset >= 32768) && line.contains("_mixed_");
-                assert!(!line.contains("_decoded_"));
-                assert_eq!(line.contains("_head_shared_finish_v1"), fused);
-                assert_eq!(line.contains("_reuse2_"), !fused);
-            }
-        }
         if skip {
             let retained = attention
                 .iter()
@@ -414,7 +389,7 @@ fn composed_trace_capacity(
             assert_eq!(retained, 0, "retained native-key attention");
         }
         assert!(lines.iter().any(|s| s.starts_with("launch ")
-            && s.contains(if skip && mode == 0 {
+            && s.contains(if skip {
                 "chop_comm_owned_sum_bf16_v1"
             } else {
                 "chop_comm_allreduce_phased_turns_bf16_v1"
@@ -430,8 +405,7 @@ fn composed_trace_capacity(
             } else {
                 ""
             };
-            let name =
-                format!("{prefix}mode-{mode}-skip-{skip}-cache-{cached}-offset-{offset}.journal");
+            let name = format!("{prefix}skip-{skip}-cache-{cached}-offset-{offset}.journal");
             std::fs::write(root.join(&name), lines.join("\n")).unwrap();
             super::decode_attention::export_handles(&host.device, root, &name);
             std::fs::write(root.join(format!("{name}.full")), journal.join("\n")).unwrap();
@@ -446,15 +420,10 @@ fn composed_trace_capacity(
 
 #[test]
 fn fused_prefill_checks_later_parts_and_retained_cache_fallbacks() {
-    // The chunk at offset 32768 has no cache range, so every mixed layer of
-    // it fuses too: 2 parts x 38 layers x 4 ranks without skip, 38 x 4 with
-    // retained rows.
-    for (mode, skip, cached, fused) in [
-        (2, false, true, 608 + 304),
-        (0, true, true, 608 + 152),
-        (2, true, false, 392 + 152),
-    ] {
-        let trace = composed_trace_offsets(mode, skip, cached, &[0, 8192, 16384, 24576, 32768]);
+    // The chunk at offset 32768 has no cache range, so every mixed layer
+    // fuses too, including the retained upper-skip rows.
+    for (skip, cached, fused) in [(true, true, 608 + 152), (true, false, 392 + 152)] {
+        let trace = composed_trace_offsets(skip, cached, &[0, 8192, 16384, 24576, 32768]);
         assert_eq!(
             trace
                 .iter()
@@ -465,9 +434,9 @@ fn fused_prefill_checks_later_parts_and_retained_cache_fallbacks() {
     }
 }
 
-fn compare_composed(mode: u8, skip: bool) {
-    let old = composed_trace(mode, skip, false);
-    let new = composed_trace(mode, skip, true);
+fn compare_composed(skip: bool) {
+    let old = composed_trace(skip, false);
+    let new = composed_trace(skip, true);
     compare_traces(old, new);
 }
 
@@ -533,24 +502,20 @@ fn compare_traces(old: Vec<String>, new: Vec<String>) {
 }
 
 #[test]
-fn decoded_prefill_composes_with_overlap_bf16_and_dma() {
-    for mode in [0, 1, 2] {
-        compare_composed(mode, false);
-    }
+fn decoded_prefill_composes_with_bf16_reductions() {
+    compare_composed(false);
 }
 
 #[test]
 fn decoded_prefill_keeps_skipped_row_parts_on_native_attention() {
-    for mode in [0, 2] {
-        compare_composed(mode, true);
-    }
+    compare_composed(true);
 }
 
 #[test]
-fn capacity32_decoded_prefill_composes_with_overlap_and_retained_rows() {
-    for (mode, skip) in [(0, false), (1, false), (2, false), (0, true), (2, true)] {
+fn capacity32_decoded_prefill_composes_with_retained_rows() {
+    for skip in [false, true] {
         let trace =
-            |cached| composed_trace_capacity(mode, skip, cached, &[0, 8192, 16384, 24576], 32, 31);
+            |cached| composed_trace_capacity(skip, cached, &[0, 8192, 16384, 24576], 32, 31);
         compare_traces(trace(false), trace(true));
     }
 }

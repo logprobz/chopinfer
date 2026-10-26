@@ -1,5 +1,4 @@
 use super::*;
-use crate::instance::execute::overlap::with_mode;
 const ROUND_SYMBOL: &str = "chop_comm_allreduce_phased_round_f32_v1";
 
 fn report() -> BundleRawClusterResidencyV1 {
@@ -80,26 +79,10 @@ fn prefill_bf16_gather_falls_back_on_unproven_residency() {
 }
 
 #[test]
-fn prefill_bf16_gather_micro_journal_keeps_all_cross_stream_spans_disjoint() {
-    let host = host();
-    let mut instance = with_mode(2, || create(&host, 4));
-    host.device.journal.borrow_mut().clear();
-    step(
-        &mut instance,
-        &prompt(7, 0, 0, 8191, true),
-        &mut Views::default(),
-    );
-    let journal = host.device.journal.borrow().clone();
-    assert_eq!(count(&journal, ROUND_SYMBOL), 4 * 162);
-    super::prefill_micro::audit_journal(&host, &journal, ROUND_SYMBOL);
-    instance.destroy().unwrap();
-}
-
-#[test]
 fn prefill_bf16_gather_resets_only_its_protocol_after_join() {
     use bundle_runtime::entry::Bundle;
     let host = host();
-    let mut instance = with_mode(2, || create(&host, 4));
+    let mut instance = create(&host, 4);
     step(
         &mut instance,
         &prompt(7, 0, 0, 1024, false),
@@ -156,7 +139,7 @@ fn prefill_bf16_gather_resets_only_its_protocol_after_join() {
 #[test]
 fn prefill_bf16_gather_partial_rank_failure_poisoning_is_terminal() {
     let reference = host();
-    let mut instance = with_mode(2, || create(&reference, 4));
+    let mut instance = create(&reference, 4);
     reference.device.journal.borrow_mut().clear();
     step(
         &mut instance,
@@ -174,7 +157,7 @@ fn prefill_bf16_gather_partial_rank_failure_poisoning_is_terminal() {
         .filter(|s| s.starts_with("launch "))
         .count();
     let host = host();
-    let mut instance = with_mode(2, || create(&host, 4));
+    let mut instance = create(&host, 4);
     host.device.fail_launch.set(Some(before as u32 + 1));
     assert_eq!(
         instance.execute(&prompt(7, 0, 0, 1024, true), &mut Views::default()),

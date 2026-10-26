@@ -884,9 +884,7 @@ fn profile_steps(instance: &mut BundleInstanceV1) {
 
 /// Runs `each` over every traced lifecycle: each topology and KV layout's
 /// short lifecycle; DSpark drafting at each topology; full prefill chunks;
-/// and at four ranks the opt-in prefill schedules (overlapped parts, layer
-/// micro parts, DMA reduction, and the upper-skip profile with
-/// asynchronous Engram gathers).
+/// and the four-rank upper-skip profile with asynchronous Engram gathers.
 fn lifecycles(mut each: impl FnMut(&str, &Scratch, &[String])) {
     let tp4 = Shape::new(&FLASH, Ranks::TP4).unwrap();
     for shape in [Ranks::TP1, Ranks::TP2, Ranks::TP4].map(|r| Shape::new(&FLASH, r).unwrap()) {
@@ -909,17 +907,6 @@ fn lifecycles(mut each: impl FnMut(&str, &Scratch, &[String])) {
         let (scratch, journal) = trace(&host, |host| create(host, 1), long_steps);
         each(&format!("full chunks {:?}", kv.storage), &scratch, &journal);
     }
-    let host = FakeHost::new(tp4, KV_LAYOUTS[0]);
-    let overlapped =
-        |host: &Rc<Host>| crate::instance::execute::overlap::with_enabled(true, || create(host, 4));
-    let (scratch, journal) = trace(&host, overlapped, long_steps);
-    each("overlapped prefill", &scratch, &journal);
-    let host = FakeHost::new(tp4, KV_LAYOUTS[0]);
-    let micro =
-        |host: &Rc<Host>| crate::instance::execute::overlap::with_mode(2, || create(host, 4));
-    let (scratch, journal) = trace(&host, micro, long_steps);
-    each("micro prefill", &scratch, &journal);
-
     let host = FakeHost::new(tp4, KV_LAYOUTS[0]);
     let profile = |host: &Rc<Host>| {
         crate::instance::prefill_engram::with_enabled(true, || {
@@ -944,7 +931,7 @@ fn regions_hold_over_every_lifecycle() {
         assert!(refusals.is_empty(), "{label}: {refusals:#?}");
         traced += 1;
     });
-    assert_eq!(traced, 6 + 3 + 2 + 3);
+    assert_eq!(traced, 6 + 3 + 2 + 1);
 }
 
 /// Regions of `a` and `b`, two 64-byte buffers of one rank.

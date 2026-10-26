@@ -42,31 +42,6 @@ fn bf16_partials_refuse_unadmitted_grids_and_compose_with_dma() {
 }
 
 #[test]
-fn bf16_partials_keep_two_part_workspace_ownership() {
-    use crate::instance::execute::overlap::with_mode;
-    let host = host(true);
-    let mut instance = with_mode(2, || create(&host, 4));
-    host.device.journal.borrow_mut().clear();
-    step(
-        &mut instance,
-        &prompt(7, 0, 0, 8191, true),
-        &mut Views::default(),
-    );
-    let journal = host.device.journal.borrow().clone();
-    let symbol = "chop_comm_allreduce_phased_turns_bf16_v1";
-    assert_eq!(
-        journal
-            .iter()
-            .filter(|line| line.starts_with("launch ") && line.contains(symbol))
-            .count(),
-        4 * 162
-    );
-    super::prefill_micro::audit_journal(&host, &journal, symbol);
-    instance.destroy().unwrap();
-    assert_eq!(host.acquired.get(), host.released.get());
-}
-
-#[test]
 fn prefill_only_partials_keep_f32_draft_and_verify_reductions() {
     check_draft_reductions();
 }

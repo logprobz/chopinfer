@@ -6,7 +6,7 @@ use super::*;
 
 #[test]
 fn fused_prefill_writes_output_without_partial_or_merge_launches() {
-    let trace = super::prefill_cache::composed_trace(0, true, false);
+    let trace = super::prefill_cache::composed_trace(true, false);
     let fused = trace
         .iter()
         .filter(|line| line.starts_with("launch ") && line.contains("_head_shared_finish_v1"))
@@ -24,7 +24,7 @@ fn fused_prefill_writes_output_without_partial_or_merge_launches() {
 
 #[test]
 fn retained_prefill_fuses_every_measured_count_and_small_tail() {
-    let trace = super::prefill_cache::composed_trace(0, true, false);
+    let trace = super::prefill_cache::composed_trace(true, false);
     let attention = trace
         .iter()
         .filter(|line| {

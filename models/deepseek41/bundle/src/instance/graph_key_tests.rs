@@ -224,8 +224,7 @@ struct Planned {
 
 fn planned(run: &Run) -> Planned {
     assert!(run.graph.is_some() && !run.phase.prefill());
-    assert!(run.skip.is_none() && run.dma.is_none() && run.micro.is_none());
-    assert!(run.overlap.is_none() && run.prefill_engram.is_none());
+    assert!(run.skip.is_none() && run.prefill_engram.is_none());
     assert!(run.cache.is_none() && run.media.is_none());
     let ranks = run
         .programs

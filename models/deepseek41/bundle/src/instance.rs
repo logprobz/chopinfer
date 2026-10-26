@@ -116,11 +116,9 @@ pub struct Instance {
     /// prefill uploads its image flags, cleared once every rank's flags
     /// are zero again. While it is clear, every rank's flags are zero.
     image_flags: std::cell::Cell<bool>,
-    overlap: Vec<execute::overlap::Rank>,
     dma: Vec<execute::dma::Rank>,
     /// DMA issues each peer copy on its source's stream.
     dma_push: bool,
-    layer_overlap: bool,
     prefill_reduce_runs: u64,
     /// Per-layer gather IDs, reserved before serving KV sizing.
     prefill_engram_inputs: Vec<runtime_bundle_abi::DeviceBufferSpanV1>,
@@ -897,9 +895,6 @@ impl Instance {
                 });
             }
         }
-        if execute::overlap::enabled() && self.ops.reduce.is_some() {
-            self.overlap = execute::overlap::acquire(services, &ranks, held)?;
-        }
         memory.take("overlap");
         self.memory = memory;
         // Allocations on a private stream must exist before either active
@@ -1057,10 +1052,8 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         },
         steps: std::cell::Cell::new(0),
         image_flags: std::cell::Cell::new(false),
-        overlap: Vec::new(),
         dma: Vec::new(),
         dma_push: false,
-        layer_overlap: execute::overlap::layers_enabled(),
         prefill_reduce_runs: 0,
         prefill_engram_inputs: Vec::new(),
         prefill_engram: None,

@@ -265,36 +265,6 @@ fn strict_spans(launch: &PreparedLaunch) -> Result<Vec<DeviceBufferSpanV1>, Stri
     Ok(spans)
 }
 
-/// Reject every shared byte between two concurrent branches. This includes
-/// tensor-map bases and peer pointer arrays, as in the graph scratch audit.
-pub(crate) fn disjoint_branches(
-    side: &[PreparedLaunch],
-    main: &[PreparedLaunch],
-) -> Result<(), String> {
-    // Resolve each launch once. Repeating this inside the pairwise span
-    // comparison adds hundreds of milliseconds before the first GPU launch.
-    let main = main
-        .iter()
-        .map(|launch| Ok((&launch.symbol, strict_spans(launch)?)))
-        .collect::<Result<Vec<_>, String>>()?;
-    for side in side {
-        let side_spans = strict_spans(side)?;
-        for (symbol, main_spans) in &main {
-            for &a in &side_spans {
-                for &b in main_spans {
-                    if intersects(a, b)? {
-                        return Err(format!(
-                            "unordered scratch alias: {} {a:?} and {} {b:?}",
-                            side.symbol, symbol,
-                        ));
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Copies carry spans directly, so audit their full transfer footprints as
 /// well as the arithmetic launch that consumes a local owner interval.
 pub(crate) fn disjoint_copy_spans(
@@ -659,7 +629,6 @@ mod tests {
                 (span(8, u64::MAX, 1), false),
             ] {
                 let main = [launch(view, kind)];
-                assert_eq!(disjoint_branches(&side, &main).is_ok(), safe);
                 assert_eq!(
                     disjoint_copy_spans(&[span(7, 128, 128)], &main).is_ok(),
                     safe
@@ -668,7 +637,6 @@ mod tests {
         }
         let mut missing = launch(span(8, 0, 128), 0);
         missing.arguments.0 = vec![Argument::DeviceBuffer(u64::MAX)];
-        assert!(disjoint_branches(&side, std::slice::from_ref(&missing)).is_err());
         assert!(disjoint_copy_spans(&[span(7, 128, 128)], &[missing]).is_err());
         assert!(disjoint_copy_spans(&[span(8, u64::MAX, 1)], &side).is_err());
     }

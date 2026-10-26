@@ -140,11 +140,6 @@ impl PrefillDma {
     pub(crate) fn enabled(self) -> bool {
         self != Self::Off
     }
-
-    /// Full-schedule executors do not use DMA.
-    pub(crate) fn serves_full_schedule(self) -> bool {
-        false
-    }
 }
 
 pub(crate) fn dma_requested() -> PrefillDma {
@@ -501,7 +496,6 @@ mod selection_tests {
         ] {
             let policy = dma_requested().admit(Profile { chunk, skip }, gather);
             assert_eq!(policy.enabled(), chunk > 0 && skip && gather);
-            assert!(!policy.serves_full_schedule());
         }
     }
 }

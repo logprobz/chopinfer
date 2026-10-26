@@ -499,13 +499,40 @@ Supported kinds and creator records after `["id", "@id"]`:
   declarations. The existing `resources.added` form retains its rank,
   lifetime, initialization and collective-use checks.
 - `opaque`: only the `id` trace record, with no typed metadata or creator
-  note anywhere in the compared trace. This proves issuance at that point,
-  not a host-service role. Peer access and model-owned host handles without
+  note anywhere in the compared trace. In a run of opaque issuances this
+  attests that one issuance was added or removed, not which one or its
+  host-service role. Peer access and model-owned host handles without
   creator notes use this form. A missing trace record cannot be supplied by
   a declaration. Use a descriptive resource name, but do not claim its type
   was authenticated.
 
-Modules and resolves continue to use the existing locked-module declarations.
+Modules added to or removed from the locks use the existing `modules`
+declarations. A fixture that starts or stops loading an unchanged locked
+module instead lists its name in `module_activations`:
+
+```json
+{"module_activations": {"fixture-name": {"added": ["comm_example"]}},
+ "handles": {"fixture-name": {"added": [
+   {"name": "comm.load", "kind": "module", "at": 241,
+    "records": [["id", "@id"],
+                ["module", "@id", "comm_example", "PAYLOAD_FNV", 1024, "LOCKED_SHA256"]]},
+   {"name": "comm.resolve", "kind": "resolve", "at": 243,
+    "records": [["id", "@id"], ["note", "resolve @id chop_comm_v1"],
+                ["resolve", "@id", 123, "chop_comm_v1"],
+                ["note", "configure @id 64"]]}
+ ]}}}
+```
+
+Here `123` is the actual module ID supplied by the load witness. Use the
+captured payload's FNV, size and SHA-256 in the module record. Each module
+and resolve has its own positional handle declaration; include every load,
+every owned resolve and all its creator/configure notes. Trace-only loads
+or resolves require their actual issuance and metadata records. The payload
+must match its lock, the resolved symbols must belong to that lock, and the
+entire lock entry must be byte-identical in both revisions. `removed` uses
+base positions and records. The opposite side must not load that module in
+this fixture; other fixtures may keep loading it without a declaration.
+
 No kind implicitly authorizes uses or releases of a new or removed handle.
 The spec generator reads declared handle positions before aligning the other
 resources; it does not infer which handle changes are allowed.
@@ -524,8 +551,9 @@ pinned journals, rather than an ordinal in one journal:
 ```
 
 Both texts use their own side's literal handles. Every occurrence is named
-separately with its position and exact line. Missing, additional or shifted
-occurrences fail. Creator records cannot be edited this way, and overlapping
+separately with its position and exact line. Missing or additional occurrences
+fail. A shifted edit fails unless it names an identical line and leaves the
+same retained sequence. Creator records cannot be edited this way, and overlapping
 resource or operation declarations fail. All retained lines still compare
 under the ordered identity map, including their order across create, pinned
 journals and history. These fields require a compared device fixture; unknown

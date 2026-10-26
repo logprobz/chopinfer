@@ -37,7 +37,7 @@ from engine import ALLOC, KERNEL_SYMBOL, Unproven, launch, render, require
 import history
 
 SCHEMA = 'chopinfer.journal-proof.layout.v1'
-FIELDS = {'schema', 'description', 'modules', 'resources', 'collectives', 'kernels', 'text_journals', 'handles', 'operations'}
+FIELDS = {'schema', 'description', 'modules', 'resources', 'collectives', 'kernels', 'text_journals', 'handles', 'operations', 'module_activations'}
 CONFIG_FIELDS = ('flags', 'grid_x', 'grid_y', 'grid_z', 'block_x', 'block_y', 'block_z', 'shared_memory_bytes')
 SYMBOL = re.compile(KERNEL_SYMBOL)
 LITERAL = re.compile(r'(?:Scalar)?(?:U32|U64|I32|F32)\([-+0-9.e]+\)|NullDevicePointer')
@@ -236,8 +236,11 @@ def parse(data):
     texts = _names(d.get('text_journals', []), 'text_journals')
     import handles
     handles.parse(d.get('handles', {}), d.get('operations', {}))
+    import activations
+    activations.parse(d.get('module_activations', {}))
     return dict(description=d['description'], removed_modules=removed, added_modules=added, added_module_rules=rules,
                 resources=resources, handles=d.get('handles', {}), operations=d.get('operations', {}),
+                module_activations=d.get('module_activations', {}),
                 changes=changes, text_journals=texts)
 
 
@@ -260,19 +263,27 @@ def locks(repo, revision, root):
     for path in listed:
         if not path.endswith('.lock'):
             continue
-        rows = json.loads(git(repo, 'show', revision + ':' + path))
+        data = git(repo, 'show', revision + ':' + path).decode()
+        rows = json.loads(data)
         need(isinstance(rows, list), f'{path}: a lock holds a module list')
+        offset = data.index('[') + 1
         for row in rows:
+            while data[offset].isspace() or data[offset] == ',':
+                offset += 1
+            _, end = json.JSONDecoder().raw_decode(data, offset)
+            entry = data[offset:end]
+            offset = end
             need(isinstance(row, dict) and isinstance(row.get('name'), str) and row['name'] not in result, f'{path}: duplicate or unnamed module')
             sha = row.get('cubin_sha256')
             need(isinstance(sha, str) and re.fullmatch('[0-9a-f]{64}', sha), f'{row["name"]}: invalid locked cubin SHA-256')
-            result[row['name']] = dict(path=path, sha256=sha, symbols=[e['symbol'] for e in row.get('entries', [])])
+            result[row['name']] = dict(path=path, sha256=sha, symbols=[e['symbol'] for e in row.get('entries', [])], entry=entry)
     return result
 
 
 def authenticate(repo, base, head, root, decl):
     """Removed modules are locked in the base and not in the head; added
-    modules the reverse. Returns name -> (side, locked record)."""
+    modules the reverse. Activations keep byte-identical lock entries.
+    Returns name -> (side, locked record)."""
     a, b = locks(repo, base, root), locks(repo, head, root)
     out = {}
     for name in decl['removed_modules']:
@@ -285,6 +296,13 @@ def authenticate(repo, base, head, root, decl):
         need(like in a, f'{name}: it loads like {like}, which is not locked in the base')
         unknown = set(decl['added_module_rules'][name]['configures']) - set(b[name]['symbols'])
         need(not unknown, f'{name}: configures name symbols it does not lock: {sorted(unknown)}')
+    for groups in decl.get('module_activations', {}).values():
+        for names in groups.values():
+            for name in names:
+                need(name in a and name in b and a[name]['entry'] == b[name]['entry'],
+                     f'{name}: module activation requires byte-identical lock entries in base and head')
+                need(name not in out or out[name][0] == 'unchanged', f'{name}: overlapping module declarations')
+                out[name] = ('unchanged', a[name])
     return out
 
 
@@ -309,6 +327,8 @@ class Witness:
         self.decl = decl
         import handles
         self.handles = handles.Witness(decl, fixture, rule, ae, be, a, b)
+        import activations
+        activations.check(decl, fixture, modules, self.handles, a, b)
         self.fixture = fixture
         res = decl['resources']
         # Added allocations: head slot -> resource; each a head allocation of

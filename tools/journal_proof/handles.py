@@ -1,8 +1,8 @@
 """Exact, position-bound resource witnesses in authenticated device traces.
 
 Opaque IDs have no recorded resource role. They prove issuance only, never
-an inferred host-service type. Modules and resolves retain their locked
-module declarations in layout.py.
+an inferred host-service type. Positional modules and resolves require
+fixture-scoped activations of unchanged locked modules.
 """
 import re
 
@@ -11,7 +11,7 @@ from engine import require
 import history
 from text import validate as validate_edits
 
-KINDS = {'allocation', 'stream', 'event', 'graph', 'mapped-gather', 'opaque'}
+KINDS = {'allocation', 'stream', 'event', 'graph', 'mapped-gather', 'opaque', 'module', 'resolve'}
 
 
 def parse(handles, operations):
@@ -27,7 +27,7 @@ def parse(handles, operations):
                 name = entry['name']
                 need(isinstance(name, str) and name and name not in names, 'handle names must be distinct within a fixture')
                 names.add(name)
-                need(isinstance(entry['kind'], str) and entry['kind'] in KINDS, 'unknown declared handle kind; modules/resolves use module declarations')
+                need(isinstance(entry['kind'], str) and entry['kind'] in KINDS, 'unknown declared handle kind')
                 need(type(entry['at']) is int and entry['at'] > 0, 'handle at must be a one-based trace record ordinal')
                 rows = entry['records']
                 need(isinstance(rows, list) and rows and rows[0] == ['id', '@id'], 'handle records must start with [id, @id]')
@@ -70,6 +70,20 @@ def creators(events, inv):
         if row[0] != 'note':
             continue
         line = row[1]
+        module = re.match(r'(module|resolve|configure) (\d+) ', line)
+        if module and int(module[2]) in found:
+            ident = int(module[2])
+            entry = found[ident]
+            kind = 'resolve' if module[1] == 'configure' else module[1]
+            require(entry['kind'] == kind and entry['at'] < k, 'module creator disagrees with its issuance')
+            require(history.form(line) is not None, 'module creator has an unknown operation form')
+            if module[1] == 'resolve':
+                require(line == f'resolve {ident} {inv["resolves"][ident][3]}', 'resolve note differs from its metadata')
+            if module[1] == 'module':
+                require(line == f'module {ident} {inv["modules"][ident][2]}', 'module note differs from its metadata')
+            entry['notes'].append((note, k))
+            note += 1
+            continue
         match = re.fullmatch(r'(event|stream) (\d+)', line)
         gather = re.fullmatch(r'async mapped create (\d+)', line)
         graph = re.fullmatch(r'captured \d+ (\d+) \d+', line)
@@ -129,11 +143,12 @@ class Witness:
                 require({at + k for k, row in enumerate(rows) if row[0] == 'note'} == expected_notes,
                         f'{name}: records must contain exactly this handle\'s creator notes')
                 typed = inv['typed'].get(ident)
-                expected_rows = {'allocation': inv['allocations'].get(ident), 'stream': inv['streams'].get(ident)}
+                expected_rows = {'allocation': inv['allocations'].get(ident), 'stream': inv['streams'].get(ident),
+                                 'module': inv['modules'].get(ident), 'resolve': inv['resolves'].get(ident)}
                 metadata = [row for row in rows[1:] if row[0] != 'note']
                 require(metadata == ([expected_rows[typed]] if typed in expected_rows else []),
                         f'{name}: records must contain exactly this handle\'s resource metadata')
-                require(d['kind'] == 'opaque' or expected_notes, f'{name}: no creating journal line')
+                require(d['kind'] in ('opaque', 'module', 'resolve') or expected_notes, f'{name}: no creating journal line')
                 if d['kind'] == 'allocation':
                     require(len(rows) == 3 and rows[1][0] == 'note' and rows[2] == inv['allocations'][ident],
                             f'{name}: allocation creator must follow its allocate note')

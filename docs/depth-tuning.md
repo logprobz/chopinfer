@@ -464,6 +464,53 @@ neither is a tuning key.
 
 ## Cold Engram workload
 
+For matched latency acceptance, opt in with:
+
+```json
+"cold_engram": {
+  "matched": {"lengths": [8192, 32768], "tolerance": 128},
+  "warm_fraction": 0.1,
+  "images": []
+}
+```
+
+Populate `images` with the backing files and Engram views described below.
+Supply enough distinct workload prompts at each target length. Lengths are
+checked after native tokenization, including the chat template; the example
+accepts 8064-8320 and 32640-32896 tokens. Ranges must not overlap. Staging
+checks the total prompt budget, and the runtime refuses a missing length
+pool before timing. Every measured concurrency must have all four visits.
+
+A1/B1 share one prompt set and B2/A2 another, disjoint set. Each cell first
+primes one cohort, then pauses all workers for the acknowledged mapped-row
+reset, page-table release and `POSIX_FADV_DONTNEED`. It submits exactly one
+timed cohort of C new prompts after that eviction. Paired arms therefore
+complete the same requests even when their speeds differ. Each request has
+a distinct cache salt, and zero cached prompt tokens is mandatory. Extra
+warmup requests remain untimed. The observation window stays at 15 seconds;
+TTFT and prefill steps can finish in drain. This is a fixed-cohort latency
+measurement, not a saturated throughput measurement.
+
+Every length cell receives its own eviction. If any post-advice resident
+fraction reaches `warm_fraction`, the entire run is void, retains the
+residency evidence, and cannot be pooled. Missing eviction evidence, length
+violations, differing paired prompts/seeds, reused salts or overlapping
+pair sets also prevent acceptance. All visits must be cold.
+
+`ab.json` and `ab.md` report `d1`, `d2`, mean and spread separately for TTFT
+and prefill step execution time at each concurrency and target length.
+Values use inverse visit medians, so a positive delta means lower latency.
+The prefill metric uses full prefill `step.v1` execution times, including
+chunks when a long prompt spans several steps. Every declared length and
+both metrics are required targets with weight one, using the same gain,
+regression and change-class thresholds as warm cells. Warm `target_cells`,
+`required_shapes` and `cell_weights` overrides are refused in this mode.
+Synthetic runs remain mechanics-only and cannot establish contract A
+acceptance. `TUNE_STUB_TOKEN_LENGTHS` selects synthetic tokenizer lengths;
+`TUNE_STUB_RESIDENCY_LABEL` confines a synthetic warm fraction to one visit.
+
+Without `matched`, the existing unmatched cold behavior below is unchanged.
+
 Select `tools/tune/workloads/cold-engram.json` with `mode: ab`. Cold cells are
 labelled **cold, unmatched prompts**, excluded from automatic timing and
 energy acceptance. They report each arm's TTFT, prefill execution time,

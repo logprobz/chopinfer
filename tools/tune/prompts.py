@@ -79,6 +79,24 @@ def visit_pools(tokens, visits):
     return result
 
 
+def matched_visit_pools(tokens, visits, lengths, tolerance, per_visit):
+    """One disjoint input set per length and ABBA pair, shared across arms."""
+    if len({tuple(p) for p in tokens}) != len(tokens):
+        raise ValueError('matched cold prompt pool contains duplicates')
+    result = {}
+    for length in lengths:
+        indices = [i for i, prompt in enumerate(tokens) if abs(len(prompt) - length) <= tolerance]
+        if len(indices) < 2 * per_visit:
+            raise ValueError(f'matched cold length {length} needs {2 * per_visit} prompts within tolerance {tolerance}')
+        for visit in visits:
+            repeat = visit['passes'][0][0]
+            assigned = indices[repeat * per_visit:(repeat + 1) * per_visit]
+            result[f"{visit['label']}/l{length}"] = VisitPool([tokens[i] for i in assigned], {
+                'indices': assigned, 'lengths': [len(tokens[i]) for i in assigned],
+                'target_length': length, 'tolerance': tolerance, 'repeat': repeat})
+    return result
+
+
 class Unseen:
     """A job-wide tokenized prompt pool, exhausted rather than reused."""
 

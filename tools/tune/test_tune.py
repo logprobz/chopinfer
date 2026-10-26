@@ -162,6 +162,99 @@ def ab_fixture(root, **overrides):
 
 
 class Tuner(unittest.TestCase):
+    def test_matched_cold_reports_latency_cells_and_voids_warm_visits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, summary = ab_fixture(root, concurrencies=[1])
+            config['cold_engram'] = {'warm_fraction': .1, 'matched': {'lengths': [8, 32], 'tolerance': 0}}
+            tune.r.write(root / 'config.json', config)
+            for path in list(root.glob('*/windows/*.json')):
+                row = json.loads(path.read_text())
+                path.unlink()
+                for length in (8, 32):
+                    latency = 1 if row['arm'] == 'a' else .8
+                    prompt = [length, row['repeat']] + [0] * (length - 2)
+                    request = {'prompt': prompt, 'seed': row['seed_set'][0] + 1, 'token_ids': [1],
+                               'cache_salt': f"{row['label'] if 'label' in row else path.parent.parent.name}-{length}",
+                               'cached_prompt_tokens': 0}
+                    value = {**row, 'target_length': length, 'length_tolerance': 0,
+                             'ttft_seconds': [latency], 'prefill_execution_us': [latency * 1000],
+                             'mapped_gather_us': [1], 'prompt_lengths': [length], 'matched_requests': [request],
+                             'cold_engram': {'state': 'cold', 'after_advice': [{'resident_fraction': 0}],
+                                 'acknowledgement': {'reset_cache': True, 'released_mapping_bytes': 4096}}}
+                    tune.r.write(path.with_name(f'l{length}.json'), value)
+            result = report.ab(root)
+            self.assertEqual(result['weighted']['a/b']['verdict'], 'resolved gain')
+            self.assertTrue(result['contract_a_admissible'])
+            self.assertAlmostEqual(result['pairs']['a/b']['c1/l8']['ttft_seconds']['mean'], .25)
+            path = root / 'b-r0/windows/l8.json'
+            value = json.loads(path.read_text())
+            value['cold_engram']['after_advice'][0]['resident_fraction'] = .1
+            tune.r.write(path, value)
+            result = report.ab(root)
+            self.assertEqual(result['status'], 'void')
+            self.assertEqual(result['pairs'], {})
+
+    def test_matched_cold_assigns_disjoint_pairs_at_declared_lengths(self):
+        config = {**CONFIG, 'sampling': {'temperature': 1, 'seed': 1}, 'kinds': {'sampled': 1},
+                  'model': {**MODEL, 'mode': 'ab', 'concurrencies': [1], 'pairs': [['a', 'b']],
+                            'arms': [{'label': label, 'depth': 0} for label in ('a', 'b')]}}
+        tokens = [[i] + [0] * (length - 1) for length in (8192, 32768) for i in range(8)]
+        pools = prompts.matched_visit_pools(tokens, tune.visits(config), [8192, 32768], 0, 2)
+        for length in (8192, 32768):
+            self.assertEqual(pools[f'a-r0/l{length}'].remaining, pools[f'b-r0/l{length}'].remaining)
+            self.assertEqual(pools[f'b-r1/l{length}'].remaining, pools[f'a-r1/l{length}'].remaining)
+            self.assertFalse(set(pools[f'a-r0/l{length}'].assignment['indices'])
+                             & set(pools[f'a-r1/l{length}'].assignment['indices']))
+            self.assertEqual(pools[f'a-r0/l{length}'].assignment['lengths'], [length] * 2)
+        with self.assertRaisesRegex(ValueError, 'within tolerance'):
+            prompts.matched_visit_pools(tokens, tune.visits(config), [16384], 10, 2)
+
+    def test_matched_cold_stub_voids_one_warm_visit_and_refuses_cached_tokens(self):
+        import os
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root)
+            backing = root / 'rank.bin'
+            backing.write_bytes(b'\0' * 4096)
+            model['cold_engram'] = {'warm_fraction': .1, 'matched': {'lengths': [64, 128], 'tolerance': 0},
+                'images': [{'path': str(backing), 'bytes': 4096,
+                            'views': [{'name': 'fixture', 'offset': 0, 'bytes': 4096}]}]}
+            result = stage_fixture(root, model)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            staged = root / 'stage'
+            env = {k: v for k, v in os.environ.items() if not k.startswith('TUNE_')}
+            env.update(CHOPINFER_WEIGHT_KEEPER_DIR=str(root / 'synthetic-keeper'),
+                       TUNE_STUB_TOKEN_LENGTHS='64,128')
+            for case, control, expected in [('valid', {}, 'passed'),
+                ('warm', {'TUNE_STUB_RESIDENCY': '.1', 'TUNE_STUB_RESIDENCY_LABEL': 'b-r0'}, 'void'),
+                ('cached', {'TUNE_STUB_CACHED': 'b-r0'}, 'failed')]:
+                out = root / case
+                result = subprocess.run([sys.executable, '-B', str(staged / 'harness/tune.py'), '--dry-run',
+                    '--output', str(out), '--payload-sha', stage.digest(staged / 'runtime-seal.json')],
+                    env={**env, **control}, text=True, capture_output=True, timeout=90)
+                summary = json.loads((out / 'summary.json').read_text())
+                self.assertEqual(summary['status'], expected, result.stdout + result.stderr)
+                self.assertEqual(result.returncode, 0 if expected == 'passed' else 1)
+                if case == 'valid':
+                    self.assertEqual(summary['windows'], {'planned': 8, 'executed': 8})
+                    self.assertTrue(summary['exactness']['passed'])
+                    result = json.loads((out / 'ab.json').read_text())
+                    self.assertEqual(set(result['pairs']['a/b']), {'c1/l64', 'c1/l128'})
+                    self.assertFalse(result['contract_a_admissible'])
+                    for row in report.load(out)[1]:
+                        self.assertEqual(row['cold_engram']['state'], 'cold')
+                        self.assertEqual(row['cached_prompt_tokens'], 0)
+                        self.assertEqual(row['prompt_lengths'], [row['target_length']])
+                if case == 'warm':
+                    self.assertIn('partly warm', summary['void_reason'])
+                    self.assertEqual(json.loads((out / 'ab.json').read_text())['pairs'], {})
+                    with self.assertRaisesRegex(ValueError, 'void'):
+                        report.load(out)
+                if case == 'cached':
+                    self.assertIn('cached', ' '.join(summary['errors']))
+
     def test_ar_has_no_draft_arguments_and_refuses_depth_controls(self):
         config = {'model': {'mode': 'ab', 'speculation_mode': 'off', 'serve_arguments': [],
                             'arms': [{'label': 'a'}, {'label': 'b'}]}}

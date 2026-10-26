@@ -94,6 +94,10 @@ def cold_budget(config):
     import math
     import tune
     model, plan = config['model'], config['model']['planning']
+    matched = tune.matched_cold(config)
+    if matched:
+        return {'request_budgets': {str(c): 2 * c for c in model['concurrencies']},
+                'prompts_required': 4 * sum(model['concurrencies']) * len(matched['lengths'])}
     budgets = {}
     for c in model['concurrencies']:
         rate = max(plan['tokens_per_second'][str(c)], plan['ar_tokens_per_second'][str(c)])
@@ -125,7 +129,9 @@ def estimate(config):
         rates = rate_for(arm)
         total += startup + sum(c * config['warm_tokens'] / rates[str(c)] + plan['settle_seconds'] for c in config['warm'])
         if model.get('mode') == 'ab':
-            total += sum(closed(c, rates[str(c)]) for _, part in arm['passes'] for _, c in part)
+            matched = tune.matched_cold(config)
+            total += sum(closed(c, rates[str(c)]) for _, part in arm['passes'] for _, c in part) * (
+                len(matched['lengths']) if matched else 1)
             continue
         windows = (tune.windows_for(config, arm['depth'], True) if index == 0 else []) + [w for _, part in arm['passes'] for w in part]
         for _, c in windows:
@@ -143,7 +149,9 @@ def estimate(config):
                 repeats = model.get('concurrency_repeats', {}).get(str(c), model['repeats'])
                 if config.get('cold_engram'):
                     requests = cold_budget(config)['request_budgets'][str(c)]
-                    total += len(arms) * repeats * requests * tokens(c) / rates[str(c)]
+                    matched = tune.matched_cold(config)
+                    total += len(arms) * repeats * requests * tokens(c) / rates[str(c)] * (
+                        len(matched['lengths']) if matched else 1)
                 else:
                     # Matched requests compare directly. Budget a cohort plus
                     # 25% of measured output per pair for unmatched tails.
@@ -161,6 +169,11 @@ def check_budget(config, prompts):
     if config.get('cold_engram'):
         import tune
         needed = cold_budget(config)
+        if tune.matched_cold(config):
+            if prompts < needed['prompts_required']:
+                raise ValueError('matched cold prompt pool is too small')
+            config['cold_engram'].update(needed)
+            return seconds
         sizes = builder.visit_pool_sizes(prompts, tune.visits(config))
         if any(sizes[label] < count for label, count in needed['prompt_needs'].items()):
             raise ValueError(f'balanced cold prompt pool has {prompts}, needs {needed["prompts_required"]}')

@@ -111,6 +111,10 @@ def residency(fd, offset, length):
         libc.munmap(address, size)
 
 
+class PartlyWarm(RuntimeError):
+    """A matched cold visit cannot contribute a timing verdict."""
+
+
 class ColdEngram:
     """Apply the existing host measurement protocol, then advise file pages."""
 
@@ -147,6 +151,9 @@ class ColdEngram:
         if self.server.dry:
             import os
             fraction = float(os.environ.get('TUNE_STUB_RESIDENCY', '0'))
+            label = os.environ.get('TUNE_STUB_RESIDENCY_LABEL')
+            if label and self.server.directory.parent.name != label:
+                fraction = 0
             return [{'name': 'synthetic', 'pages': 100, 'resident_pages': round(fraction * 100),
                      'resident_fraction': fraction}]
         return [{'image': image['path'], 'name': view['name'], **residency(fd, view['offset'], view['bytes'])}
@@ -193,5 +200,10 @@ class ColdEngram:
             os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
         after = self.sample()
         warm = any(v['resident_fraction'] >= self.spec.get('warm_fraction', .1) for v in after)
-        return {'epoch': self.epoch, 'acknowledgement': ack, 'before_advice': before, 'after_advice': after,
-                'state': 'partly warm' if warm else 'cold', 'synthetic': self.server.dry}
+        result = {'epoch': self.epoch, 'acknowledgement': ack, 'before_advice': before, 'after_advice': after,
+                  'state': 'partly warm' if warm else 'cold', 'synthetic': self.server.dry}
+        if self.spec.get('matched'):
+            runner.write(self.server.directory / f'cold-preparation-{self.epoch}.json', result)
+            if warm:
+                raise PartlyWarm('matched cold visit remains partly warm after advice')
+        return result

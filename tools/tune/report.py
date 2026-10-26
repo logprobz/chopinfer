@@ -346,11 +346,13 @@ def ab_validity(config, rows, summary):
     import faults
     import tune
     visits = tune.visits(config)
+    matched = tune.matched_cold(config)
     if summary.get('status', 'passed') != 'passed':
         raise ValueError('A/B job did not pass its runtime checks')
-    expected = {(v['label'], kind, c, repeat): v for v in visits
-                for repeat, windows in v['passes'] for kind, c in windows}
-    actual = [(r['label'], r['kind'], r['concurrency'], r['repeat']) for r in rows]
+    expected = {(v['label'], kind, c, repeat, length): v for v in visits
+                for repeat, windows in v['passes'] for kind, c in windows
+                for length in (matched['lengths'] if matched else [None])}
+    actual = [(r['label'], r['kind'], r['concurrency'], r['repeat'], r.get('target_length')) for r in rows]
     if len(actual) != len(expected) or set(actual) != set(expected):
         raise ValueError('wrong visit or cell counts / visit order')
     processes = summary.get('processes', {})
@@ -397,7 +399,7 @@ def ab_validity(config, rows, summary):
         limits = current if limits is None else limits
         changed |= current != limits
     for row in rows:
-        visit = expected[(row['label'], row['kind'], row['concurrency'], row['repeat'])]
+        visit = expected[(row['label'], row['kind'], row['concurrency'], row['repeat'], row.get('target_length'))]
         if row['arm'] != visit['arm'] or row['visit'] != visit['visit']:
             raise ValueError('wrong visit identity')
         if row.get('seed_set') != tune.seed_set(config, row['repeat'], row['concurrency']):
@@ -440,6 +442,8 @@ def ab_validity(config, rows, summary):
         if any(measured[k] != processes[visit['label']]['faults'][k] for k in ('complete', 'major_faults')):
             raise ValueError('incomplete visit faults')
     control = control_offsets(config, rows)
+    if matched and matched_cold_validity(config, rows, matched):
+        return {'status': 'void', 'reason': 'matched cold visit remains partly warm after advice'}
     return {'status': 'void' if changed else 'invalid' if control['status'] == 'offset' else 'valid',
             'enforced_power_limits_w': limits, 'a1_control_check': control,
             'reason': 'power limits changed within job' if changed else
@@ -579,17 +583,94 @@ def cold_report(selected):
     return result
 
 
+def matched_cold_validity(config, rows, spec):
+    warm, salts, prompts = False, set(), {}
+    for row in rows:
+        cold = row.get('cold_engram', {})
+        views, ack = cold.get('after_advice', []), cold.get('acknowledgement', {})
+        if (not views or ack.get('reset_cache') is not True or ack.get('released_mapping_bytes', 0) <= 0
+                or cold.get('state') not in ('cold', 'partly warm')
+                or any(not isinstance(v.get('resident_fraction'), (int, float))
+                       or not 0 <= v['resident_fraction'] <= 1 for v in views)):
+            raise ValueError('missing matched cold residency or eviction evidence')
+        warm |= cold['state'] != 'cold' or any(v['resident_fraction'] >= config['cold_engram'].get('warm_fraction', .1) for v in views)
+        requests = row.get('matched_requests', [])
+        if len(requests) != row['concurrency'] or row.get('length_tolerance') != spec['tolerance']:
+            raise ValueError('incomplete matched cold cohort')
+        for request in requests:
+            if (abs(len(request['prompt']) - row['target_length']) > spec['tolerance']
+                    or request.get('cached_prompt_tokens') != 0
+                    or not request.get('cache_salt') or request['cache_salt'] in salts):
+                raise ValueError('matched cold length, cache salt or cached token violation')
+            salts.add(request['cache_salt'])
+            key = (row['arm'], row['repeat'])
+            prompts.setdefault(key, set()).add(tuple(request['prompt']))
+    for arm, repeat in prompts:
+        if prompts[(arm, repeat)] & prompts.get((arm, 1 - repeat), set()):
+            raise ValueError('matched cold pair prompt sets overlap')
+    for a, b in config['model']['pairs']:
+        for c in config['model']['concurrencies']:
+            for length in spec['lengths']:
+                group = sorted((r for r in rows if r['arm'] in (a, b) and r['concurrency'] == c
+                                and r['target_length'] == length), key=lambda r: r['visit'])
+                if [r['arm'] for r in group] != [a, b, b, a]:
+                    raise ValueError('matched cold requires ABBA visits')
+                keys = [{(tuple(q['prompt']), q['seed'], len(q['token_ids'])) for q in r['matched_requests']} for r in group]
+                if any(len(k) != c for k in keys) or keys[0] != keys[1] or keys[2] != keys[3]:
+                    raise ValueError('matched cold visits use different prompts or seeds')
+    return warm
+
+
+def matched_cold_report(config, rows, spec, out, lines):
+    model = config['model']
+    change = model.get('change', 'speedup')
+    if change not in ('speedup', 'simplification', 'variant', 'table_row'):
+        raise ValueError('unknown A/B change class')
+    if model.get('target_cells') or model.get('required_shapes') or model.get('cell_weights'):
+        raise ValueError('matched cold targets are all declared length/latency cells, without warm-cell overrides')
+    out['matched_cold'] = spec
+    for a, b in model['pairs']:
+        pair, decisions = {}, []
+        out['pairs'][f'{a}/{b}'] = pair
+        for c in model['concurrencies']:
+            for length in spec['lengths']:
+                group = sorted((r for r in rows if r['arm'] in (a, b) and r['concurrency'] == c
+                                and r['target_length'] == length), key=lambda r: r['visit'])
+                cell = pair[f'c{c}/l{length}'] = {'order': [a, b, b, a], 'all_visits_cold': True,
+                    'prompt_lengths': [r['prompt_lengths'] for r in group]}
+                for field in ('ttft_seconds', 'prefill_execution_us'):
+                    values = [r.get(field, []) for r in group]
+                    if (any(not v or any(not isinstance(n, (int, float)) or not math.isfinite(n) or n <= 0 for n in v)
+                            for v in values) or (field == 'ttft_seconds' and any(len(v) != c for v in values))):
+                        raise ValueError('matched cold latency samples are missing or invalid')
+                    medians = [median(v) for v in values]
+                    verdict = {**paired([1 / v for v in medians], change), 'visit_medians': medians, 'weight': 1}
+                    cell[field] = verdict
+                    decisions.append(verdict)
+                    lines.append(f"| {a}/{b} C{c} L{length} {field} | {verdict['d1']:.2%} | {verdict['d2']:.2%} | "
+                                 f"{verdict['mean']:.2%} | {verdict['spread']:.2%} | {verdict['verdict']} | 1 |")
+        regression = any(v['verdict'] == 'resolved regression' for v in decisions)
+        result = out['weighted'][f'{a}/{b}'] = {
+            'verdict': 'resolved regression' if regression else 'resolved gain' if all(v['verdict'] == 'resolved gain' for v in decisions) else 'neutral',
+            'timing_accepted': not regression and all(v['accepted'] for v in decisions),
+            'mean': sum(v['mean'] for v in decisions) / len(decisions), 'cells': len(decisions), 'weight': len(decisions)}
+        lines += ['', f"{a}/{b}: {result['verdict']}; timing acceptance: {result['timing_accepted']}. "
+                  'All declared lengths and both latency metrics are required; rates are inverse latency.', '']
+
+
 def ab(run):
     """Contract A decisions preserve matched pairs and never pool void jobs."""
     run = Path(run)
     config, rows = load(run, allow_void=True)
     summary = json.loads((run / 'summary.json').read_text())
-    validity = ({'status': 'void', 'reason': 'power limits changed within job'}
+    import tune
+    matched = tune.matched_cold(config)
+    validity = ({'status': 'void', 'reason': summary.get('void_reason', 'power limits changed within job')}
                 if summary.get('status') == 'void' else ab_validity(config, rows, summary))
     cold = bool(config.get('cold_engram'))
     out = {**validity, 'pairs': {}, 'weighted': {}, 'mechanics_only': summary.get('dry_run', False),
            'arm_installs': arm_installs(run, rows),
-           'contract_a_admissible': validity['status'] == 'valid' and not summary.get('dry_run', False) and not cold}
+           'contract_a_admissible': validity['status'] == 'valid' and not summary.get('dry_run', False) and (not cold or bool(matched))}
     if cold:
         out['cold_prompt_assignment'] = summary.get('cold_prompt_assignment', {})
     lines = [f"# {config['name']}: served A/B", '', f"Status: {validity['status']}", '',
@@ -600,7 +681,9 @@ def ab(run):
              'are informational; declared targets and required shapes remain mandatory.', '',
              '| Pair / cell | d1 | d2 | mean | spread | verdict | weight |',
              '|---|---:|---:|---:|---:|---|---:|']
-    if validity['status'] == 'valid':
+    if validity['status'] == 'valid' and matched:
+        matched_cold_report(config, rows, matched, out, lines)
+    elif validity['status'] == 'valid':
         model = config['model']
         validate_cell_weights(model)
         if not set(model.get('required_shapes', {})) <= {str(c) for c in model['concurrencies']}:

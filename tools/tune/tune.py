@@ -670,7 +670,27 @@ def arms(config):
 
 def planned_windows(config):
     """Timed windows the job runs: every arm's windows, `repeats` times."""
-    return sum(len(windows) for visit in visits(config) for _, windows in visit['passes'])
+    matched = matched_cold(config)
+    return sum(len(windows) for visit in visits(config) for _, windows in visit['passes']) * (
+        len(matched['lengths']) if matched else 1)
+
+
+def matched_cold(config):
+    cold = config.get('cold_engram', {})
+    if 'matched' not in cold:
+        return None
+    spec = cold['matched']
+    if not isinstance(spec, dict) or set(spec) != {'lengths', 'tolerance'}:
+        raise ValueError('matched cold needs lengths and tolerance')
+    lengths, tolerance = spec['lengths'], spec['tolerance']
+    model = config['model']
+    if (not isinstance(lengths, list) or not lengths or any(type(n) is not int or n <= 0 for n in lengths)
+            or type(tolerance) is not int or not 0 <= tolerance < min(lengths)
+            or sorted(set(lengths)) != lengths or any(b - a <= 2 * tolerance for a, b in zip(lengths, lengths[1:]))
+            or model.get('mode') != 'ab' or model['repeats'] != 2
+            or any(model.get('concurrency_repeats', {}).get(str(c), 2) != 2 for c in model['concurrencies'])):
+        raise ValueError('matched cold needs disjoint positive length ranges and four visits per cell')
+    return spec
 
 
 def seed_set(config, repeat, count):
@@ -684,7 +704,7 @@ def require_keeper(model, keep):
         raise RuntimeError('A/B speculative visits require weight keeper borrowing')
 
 
-def closed_loop(server, name, inputs, tokens, sampling, seeds, power, seconds=15, before_measure=None):
+def closed_loop(server, name, inputs, tokens, sampling, seeds, power, seconds=15, before_measure=None, one_cohort=False):
     """Prime every slot before opening a fixed-duration replacement window.
 
     Cold measurements pause after priming so the control can run while idle.
@@ -717,7 +737,8 @@ def closed_loop(server, name, inputs, tokens, sampling, seeds, power, seconds=15
                         'top_p': sampling['top_p'], 'seed': seed, 'stream': True,
                         'stream_options': {'include_usage': True}}
                 row = {'index': index, 'slot': number, 'sequence': sequence, 'seed': seed,
-                       'prompt': prompt, 'submitted': time.monotonic(), 'token_ids': [], 'selected_bits': []}
+                       'prompt': prompt, 'cache_salt': body['cache_salt'],
+                       'submitted': time.monotonic(), 'token_ids': [], 'selected_bits': []}
                 usage, finish = None, None
                 for event in r.stream(server.url, '/v1/completions', body, timeout=r.remaining(120)):
                     now = time.monotonic()
@@ -747,6 +768,8 @@ def closed_loop(server, name, inputs, tokens, sampling, seeds, power, seconds=15
                 if sequence == 0 and before_measure is not None:
                     if not resume.wait(timeout=r.remaining(120)):
                         raise RuntimeError('cold priming pause timed out before measurement')
+                if one_cohort and sequence == 1:
+                    break
                 sequence += 1
         except BaseException as error:
             with condition:
@@ -797,7 +820,7 @@ def closed_loop(server, name, inputs, tokens, sampling, seeds, power, seconds=15
     requests.sort(key=lambda x: x['index'])
     in_flight = sum(max(0, min(row['completed'], ended) - max(row['submitted'], started))
                     for row in requests) / duration
-    if not server.dry and in_flight < .95 * count:
+    if not server.dry and not one_cohort and in_flight < .95 * count:
         raise RuntimeError('underfilled closed-loop window')
     energy = power.window(started, ended, max(emitted, 1))
     if not emitted:
@@ -838,22 +861,27 @@ def page_cache_warmup(server, arm, state, power):
 def run_ab_windows(server, arm, state, power, root, cold=None):
     config, model = SEAL['config'], SEAL['config']['model']
     record = state['processes'][arm['label']]
+    matched = matched_cold(config)
     for repeat, windows in arm['passes']:
-        for kind, c in windows:
+        for kind, c, length in ((kind, c, length) for kind, c in windows
+                                for length in (matched['lengths'] if matched else [None])):
             name = f'{kind}-c{c}-r{repeat}'
+            if length is not None:
+                name += f'-l{length}'
             seeds = seed_set(config, repeat, c)
             tokens = config['tokens'].get(str(c), config['tokens']['default'])
             if cold:
-                pool = state['cold_pools'][arm['label']]
+                pool = state['cold_pools'][f"{arm['label']}/l{length}" if matched else arm['label']]
                 remaining_windows = sum(len(part) for _, part in arm['passes'])
-                budget = config['cold_engram'].get('request_budgets', {}).get(str(c), len(pool.remaining) // remaining_windows)
+                budget = 2 * c if matched else config['cold_engram'].get('request_budgets', {}).get(
+                    str(c), len(pool.remaining) // remaining_windows)
                 allocated = pool.reserve(budget)
                 inputs = lambda i: allocated[i] if i < len(allocated) else prompt_builder.exhausted()
             else:
                 inputs = lambda i: state['tokens'][i % len(state['tokens'])]
             w = closed_loop(server, f"{arm['label']}-{name}",
                             inputs, tokens, config['sampling'], seeds, power,
-                            before_measure=cold.prepare if cold else None)
+                            before_measure=cold.prepare if cold else None, one_cohort=bool(matched))
             check_depth(name, w['steps'], arm['depth'])
             route = check_fallbacks(name, w['cold_steps'] if cold else w['steps'], config.get('allow_fallbacks', {}))
             full = full_concurrency(w['steps'], c)
@@ -882,6 +910,11 @@ def run_ab_windows(server, arm, state, power, root, cold=None):
                 value['ttft_seconds'] = [row['first_token'] - row['submitted'] for row in w['requests']
                                          if row['submitted'] >= w['started']]
                 value['prompt_lengths'] = [len(row['prompt']) for row in w['requests'] if row['submitted'] >= w['started']]
+                if matched:
+                    timed = [row for row in w['requests'] if row['sequence'] == 1]
+                    if len(timed) != c or any(abs(len(row['prompt']) - length) > matched['tolerance'] for row in timed):
+                        raise RuntimeError('matched cold cohort is incomplete or outside its length tolerance')
+                    value.update(target_length=length, length_tolerance=matched['tolerance'], matched_requests=timed)
             r.write(root / 'windows' / f'{name}.json', value)
             state.setdefault('deferred', []).append({'arm': arm['arm'], 'concurrency': c, 'repeat': repeat, 'requests': w['requests']})
             record['windows'][name] = value
@@ -1192,22 +1225,25 @@ def run_arm(run, arm, state, dry, keep, reference_pass, warmup_only=False):
         if not state['tokens']:
             state['tokens'] = tokenize(server, SEAL['prompts'])
             if cold:
-                state['cold_pools'] = prompt_builder.visit_pools(state['tokens'], visits(config))
+                matched = matched_cold(config)
+                state['cold_pools'] = (prompt_builder.matched_visit_pools(state['tokens'], visits(config),
+                    matched['lengths'], matched['tolerance'], 2 * sum(model['concurrencies'])) if matched else
+                    prompt_builder.visit_pools(state['tokens'], visits(config)))
                 state['cold_prompt_assignment'] = {label: pool.assignment for label, pool in state['cold_pools'].items()}
                 budgets = config['cold_engram'].get('request_budgets', {})
-                for visit in visits(config):
+                for visit in ([] if matched else visits(config)):
                     needed = sum(config['warm']) + sum(budgets.get(str(c), 2 * c)
                              for _, part in visit['passes'] for _, c in part)
                     if len(state['cold_pools'][visit['label']].remaining) < needed:
                         raise RuntimeError('cold prompt pool is too small after balancing token lengths')
             r.write(run / 'prompt-tokens.json', state['tokens'])
-        pool = state['cold_pools'][label] if cold else None
+        pool = state['cold_pools'][label] if cold and not matched_cold(config) else None
         # Warm windows run the measured kind (sampled when the job measures
         # it) on altered prompts, so they share no cached prefix.
         warm_kind = windows_for(config, depth, True)[0][0]
         for c in config['warm']:
-            warm = [list(p) for p in pool.reserve(c)] if cold else [list(x) for x in state['tokens'][:c]]
-            if not cold:
+            warm = [list(p) for p in pool.reserve(c)] if pool else [list(x) for x in state['tokens'][:c]]
+            if not pool:
                 for x in warm:
                     x[1] = x[0]
             window(server, f'warm-c{c}', warm_kind, warm, config['warm_tokens'], f'tune-{label}-warm-c{c}',
@@ -1328,7 +1364,9 @@ def main(args):
             raise RuntimeError(f'{executed} timed windows executed, {planned} planned')
         state['status'] = 'passed'
     except BaseException as error:
-        state['status'] = 'void' if isinstance(error, r.PowerChanged) else 'failed'
+        state['status'] = 'void' if isinstance(error, (r.PowerChanged, faults.PartlyWarm)) else 'failed'
+        if state['status'] == 'void':
+            state['void_reason'] = str(error)
         state['errors'].append(f'{type(error).__name__}: {error}')
     finally:
         for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):

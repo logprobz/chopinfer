@@ -222,7 +222,12 @@ def stub(args):
                 text = json.dumps(body.get('messages')) if 'messages' in body else body['prompt']
                 base = int.from_bytes(hashlib.sha256(text.encode()).digest()[:2], 'little')
                 token_bytes = int(os.environ.get('TUNE_STUB_TOKEN_BYTES', '64'))
-                self.respond({'tokens': [base + i for i in range(8 + len(text) // token_bytes)]})
+                length = 8 + len(text) // token_bytes
+                if os.environ.get('TUNE_STUB_TOKEN_LENGTHS'):
+                    lengths = [int(n) for n in os.environ['TUNE_STUB_TOKEN_LENGTHS'].split(',')]
+                    length = lengths[base % len(lengths)]
+                    base = int.from_bytes(hashlib.sha256(text.encode()).digest()[:8], 'little')
+                self.respond({'tokens': [base + i for i in range(length)]})
                 return
             assert self.path == '/v1/completions' and body.get('ignore_eos') and body.get('logprobs') == 1
             prompts, out = body['prompt'], body['max_tokens']

@@ -272,6 +272,7 @@ fn a_refused_step_leaves_its_gathers_for_the_next_step_to_settle() {
     assert!(instance.commit().is_err());
     instance.retire_request(7).unwrap();
     instance.retire_request(8).unwrap();
+    let resumed_at = host.device.journal.borrow().len();
     step(
         &mut instance,
         &prompt(9, 0, 0, PROMPT, true),
@@ -280,8 +281,25 @@ fn a_refused_step_leaves_its_gathers_for_the_next_step_to_settle() {
     let settled = order(&host.device.journal.borrow()[begin..]);
     let completes = settled.iter().position(|&k| k == "complete").unwrap();
     assert_eq!(&settled[completes..completes + 2], ["complete", "complete"]);
-    // The prefill's synchronous gathers follow the settled uploads.
-    assert!(settled[completes..].contains(&"sync"));
+    // Settle both old gathers before the prepared prefill stages any rows.
+    {
+        let journal = host.device.journal.borrow();
+        let resumed = &journal[resumed_at..];
+        let completed: Vec<_> = resumed
+            .iter()
+            .enumerate()
+            .filter_map(|(at, line)| line.starts_with("async mapped complete").then_some(at))
+            .collect();
+        assert_eq!(completed.len(), 4, "two old and two prefill gathers");
+        let first_write = resumed
+            .iter()
+            .position(|line| line.starts_with("upload ") || line.starts_with("async mapped ids "))
+            .unwrap();
+        assert!(completed[1] < first_write);
+        let prepared = order(resumed);
+        assert_eq!(prepared.iter().filter(|&&kind| kind == "ids").count(), 2);
+        assert!(!prepared.contains(&"sync"));
+    }
     step(
         &mut instance,
         &prompt(10, 1, 0, PROMPT, true),

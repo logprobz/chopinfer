@@ -28,13 +28,10 @@ use runtime_bundle_abi::{
 /// The preparation gate that kept a bundle-facing gather synchronous.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SyncReason {
-    ArPrefill,
     Media,
     Taps,
     PrefillSchedule,
     NoAsyncService,
-    ArDecodeDisabled,
-    PrefillDisabled,
     MixedTarget,
     HostTarget,
     NoPreparedGather,
@@ -43,14 +40,11 @@ pub enum SyncReason {
 
 impl SyncReason {
     #[cfg(test)]
-    const ALL: [Self; 11] = [
-        Self::ArPrefill,
+    const ALL: [Self; 8] = [
         Self::Media,
         Self::Taps,
         Self::PrefillSchedule,
         Self::NoAsyncService,
-        Self::ArDecodeDisabled,
-        Self::PrefillDisabled,
         Self::MixedTarget,
         Self::HostTarget,
         Self::NoPreparedGather,
@@ -59,13 +53,10 @@ impl SyncReason {
 
     fn entry(self) -> &'static str {
         match self {
-            Self::ArPrefill => "engram/sync/ar_prefill",
             Self::Media => "engram/sync/media",
             Self::Taps => "engram/sync/taps",
             Self::PrefillSchedule => "engram/sync/prefill_schedule",
             Self::NoAsyncService => "engram/sync/no_async_service",
-            Self::ArDecodeDisabled => "engram/sync/ar_decode_disabled",
-            Self::PrefillDisabled => "engram/sync/prefill_disabled",
             Self::MixedTarget => "engram/sync/mixed_target",
             Self::HostTarget => "engram/sync/host_target",
             Self::NoPreparedGather => "engram/sync/no_prepared_gather",

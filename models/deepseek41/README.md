@@ -357,8 +357,9 @@ chunk ends.
 
 DSpark prefill batches commit projections across prompts and overlaps each
 Engram layer's mapped gather with target compute by default.
-`CHOPINFER_DEEPSEEK41_PREFILL_ENGRAM=0` restores synchronous prefill gathers.
-AR prefill gathers remain opt-in. The shared host now reads ahead for both
+AR also prepares per-layer gathers by default on supported schedules;
+upper-skip DMA prefill from 512 rows keeps synchronous gathers.
+The shared host now reads ahead for both
 synchronous and asynchronous mapped gathers, with independent overrides
 ([policy and caller audit](../../docs/mapped-row-read-ahead.md)).
 

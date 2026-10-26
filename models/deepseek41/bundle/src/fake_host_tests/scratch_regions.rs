@@ -908,11 +908,7 @@ fn lifecycles(mut each: impl FnMut(&str, &Scratch, &[String])) {
         each(&format!("full chunks {:?}", kv.storage), &scratch, &journal);
     }
     let host = FakeHost::new(tp4, KV_LAYOUTS[0]);
-    let profile = |host: &Rc<Host>| {
-        crate::instance::prefill_engram::with_enabled(true, || {
-            super::prefill_skip::create_profile(host, 8192, true)
-        })
-    };
+    let profile = |host: &Rc<Host>| super::prefill_skip::create_profile(host, 8192, true);
     let (scratch, journal) = trace(&host, profile, profile_steps);
     each("upper skip with async Engram", &scratch, &journal);
 }

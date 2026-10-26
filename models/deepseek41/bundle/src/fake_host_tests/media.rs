@@ -676,21 +676,17 @@ impl dspark::host::MappedServices for Backend<MediaHost> {
 }
 
 #[test]
-fn disabled_prefill_engram_keeps_media_reason() {
+fn prefill_engram_keeps_media_reason() {
     bundle_runtime::routes::with_logging(|| {
         let host = MediaHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
         host.drafter.set(true);
         host.speculation.set(Some((3, 32)));
-        let mut instance = crate::instance::prefill_engram::with_enabled(false, || {
-            api()
-                .create(
-                    HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(
-                        &host,
-                    )))),
-                    &crate::config::tests::media_record(&host.shape, host.kv, 4),
-                )
-                .unwrap()
-        });
+        let mut instance = api()
+            .create(
+                HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(&host)))),
+                &crate::config::tests::media_record(&host.shape, host.kv, 4),
+            )
+            .unwrap();
         let (batch, _, _) = image_prompt(7, 0);
         super::conformance::assert_sync_engram(&host, &mut instance, &batch, &["media"]);
         instance.retire_request(7).unwrap();

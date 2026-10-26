@@ -101,61 +101,6 @@ pub(super) fn decode_steps(layout: KvLayout) -> (Vec<String>, Vec<Vec<String>>) 
     (cubins, steps)
 }
 
-pub(super) fn stream(line: &str) -> &str {
-    line.split_whitespace().nth(1).unwrap_or_default()
-}
-
-/// A run's steps with every stream and buffer handle renumbered by first
-/// use: first over the launches a twin does not replace (`replaced`), then
-/// over the rest, in order. A twin's module load takes fake handles, so raw
-/// numbers shift between runs while the streams and buffers they name do
-/// not.
-pub(super) fn canonical(
-    steps: &[Vec<String>],
-    replaced: impl Fn(&str) -> bool,
-) -> Vec<Vec<String>> {
-    let mut streams = BTreeMap::<String, usize>::new();
-    let mut buffers = BTreeMap::<String, usize>::new();
-    let mut number = |line: &str| {
-        let next = streams.len();
-        streams.entry(stream(line).to_owned()).or_insert(next);
-        for raw in line.split("raw: ").skip(1) {
-            let raw: String = raw.chars().take_while(char::is_ascii_digit).collect();
-            let next = buffers.len();
-            buffers.entry(raw).or_insert(next);
-        }
-    };
-    steps
-        .iter()
-        .flatten()
-        .filter(|l| !replaced(l))
-        .for_each(|l| number(l));
-    steps.iter().flatten().for_each(|l| number(l));
-    steps
-        .iter()
-        .map(|lines| {
-            lines
-                .iter()
-                .map(|line| {
-                    let rest = line.splitn(3, ' ').nth(2).unwrap_or_default();
-                    let mut parts = rest.split("raw: ");
-                    let mut out = format!(
-                        "launch s{} {}",
-                        streams[stream(line)],
-                        parts.next().unwrap()
-                    );
-                    for part in parts {
-                        let digits = part.chars().take_while(char::is_ascii_digit).count();
-                        out.push_str(&format!("raw: #{}", buffers[&part[..digits]]));
-                        out.push_str(&part[digits..]);
-                    }
-                    out
-                })
-                .collect()
-        })
-        .collect()
-}
-
 #[test]
 fn one_row_decode_uses_twins_and_wider_steps_keep_the_pair() {
     for layout in KV_LAYOUTS {

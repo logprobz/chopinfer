@@ -760,14 +760,9 @@ fn route_records_cover_legacy_and_negotiated_prefill() {
 }
 
 #[test]
-fn engram_route_counts_cover_prepared_and_synchronous_calls() {
+fn engram_route_counts_cover_prepared_prefill_and_decode() {
     use conformance::Startup;
-    for (profile, prepared) in [
-        ("tp4-ar", false),
-        ("tp4-ar", true),
-        ("tp4-dspark", false),
-        ("tp4-dspark", true),
-    ] {
+    for profile in ["tp4-ar", "tp4-dspark"] {
         bundle_runtime::routes::with_logging(|| {
             let serving = Served::servings()
                 .into_iter()
@@ -779,40 +774,20 @@ fn engram_route_counts_cover_prepared_and_synchronous_calls() {
                 host.speculation
                     .set(Some((serving.draft_tokens, serving.verify_rows())));
             }
-            let mut instance = {
-                crate::instance::prefill_engram::with_enabled(prepared, || {
-                    api()
-                        .create(
-                            HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(
-                                Rc::clone(&host),
-                            ))),
-                            &crate::config::tests::record(
-                                &host.shape,
-                                host.kv,
-                                serving.sequences,
-                                false,
-                            ),
-                        )
-                        .unwrap()
-                })
-            };
-            for (phase, start, tokens, sync, fast) in [
-                (
-                    Phase::Prefill,
-                    0,
-                    vec![1, 2, 3],
-                    Some(if serving.draft_tokens > 0 {
-                        "prefill_disabled"
-                    } else {
-                        "ar_prefill"
-                    }),
-                    "prefill",
-                ),
+            let mut instance = api()
+                .create(
+                    HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(
+                        &host,
+                    )))),
+                    &crate::config::tests::record(&host.shape, host.kv, serving.sequences, false),
+                )
+                .unwrap();
+            for (phase, start, tokens, fast) in [
+                (Phase::Prefill, 0, vec![1, 2, 3], "prefill"),
                 (
                     Phase::Decode,
                     3,
                     vec![4],
-                    None,
                     if serving.draft_tokens > 0 {
                         "dspark_undrafted"
                     } else {
@@ -820,7 +795,6 @@ fn engram_route_counts_cover_prepared_and_synchronous_calls() {
                     },
                 ),
             ] {
-                let prepared = prepared || phase == Phase::Decode;
                 let before = host.mapped_gather_calls.get();
                 let from = host.logs.borrow().len();
                 let batch = step_with_stride(
@@ -840,34 +814,19 @@ fn engram_route_counts_cover_prepared_and_synchronous_calls() {
                     .filter(|value: &serde_json::Value| value["schema"] == "chopinfer.route.v1")
                     .collect();
                 assert_eq!(records.len(), 2);
-                let selected: u64 = records
+                let synchronous: u64 = records
                     .iter()
                     .flat_map(|record| record["entries"].as_object().unwrap().values())
                     .filter(|entry| entry["symbol"] == "host.gather_mapped_rows")
                     .map(|entry| entry["launches"].as_u64().unwrap())
                     .sum();
-                assert_eq!(host.mapped_gather_calls.get() - before, selected);
-                let entry = if prepared {
-                    format!("engram/prepared/{fast}")
-                } else {
-                    format!(
-                        "engram/sync/{}",
-                        sync.expect("decode uses prepared gathers")
-                    )
-                };
+                assert_eq!(synchronous, 0);
+                assert_eq!(host.mapped_gather_calls.get() - before, synchronous);
+                let entry = format!("engram/prepared/{fast}");
                 let calls = records[0]["entries"][&entry]["launches"]
                     .as_u64()
-                    .unwrap_or_else(|| panic!("{profile} prepared={prepared}: missing {entry}"));
-                let layers = host.shape.geometry.engram_layers() as u64;
-                assert_eq!(
-                    calls,
-                    if prepared {
-                        layers
-                    } else {
-                        2 * layers * u64::from(serving.tensor_parallel)
-                    }
-                );
-                assert_eq!(selected == 0, prepared);
+                    .unwrap_or_else(|| panic!("{profile}: missing {entry}"));
+                assert_eq!(calls, u64::from(host.shape.geometry.engram_layers()));
             }
             instance.retire_request(701).unwrap();
             instance.destroy().unwrap();
@@ -931,48 +890,45 @@ pub(super) fn assert_sync_engram(
     );
 }
 
-fn sync_dspark_instance(host: &Rc<Host>) -> BundleInstanceV1 {
+fn dspark_instance(host: &Rc<Host>) -> BundleInstanceV1 {
     host.drafter.set(true);
     host.speculation.set(Some((3, 32)));
-    crate::instance::prefill_engram::with_enabled(false, || {
-        api()
-            .create(
-                HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(host)))),
-                &crate::config::tests::record(&host.shape, host.kv, 4, false),
-            )
-            .unwrap()
-    })
+    api()
+        .create(
+            HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(host)))),
+            &crate::config::tests::record(&host.shape, host.kv, 4, false),
+        )
+        .unwrap()
 }
 
 #[test]
-fn disabled_prefill_engram_reports_its_selected_reason() {
+fn prefill_engram_prepares_ar_and_dspark_full_schedules() {
     bundle_runtime::routes::with_logging(|| {
         for dspark in [false, true] {
             let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
             // Expose mapped Engram tables for both AR and DSpark.
             host.drafter.set(true);
             let mut instance = if dspark {
-                sync_dspark_instance(&host)
+                dspark_instance(&host)
             } else {
-                crate::instance::prefill_engram::with_enabled(false, || {
-                    api()
-                        .create(
-                            HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(
-                                Rc::clone(&host),
-                            ))),
-                            &crate::config::tests::record(&host.shape, host.kv, 4, false),
-                        )
-                        .unwrap()
-                })
+                api()
+                    .create(
+                        HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(
+                            Rc::clone(&host),
+                        ))),
+                        &crate::config::tests::record(&host.shape, host.kv, 4, false),
+                    )
+                    .unwrap()
             };
             let tokens = vec![7; 1024];
             let batch = step_with_stride(&[(701, 0, 0, &tokens, Phase::Prefill)], dspark, 16, None);
-            let reason = if dspark {
-                "prefill_disabled"
-            } else {
-                "ar_prefill"
-            };
-            assert_sync_engram(&host, &mut instance, &batch, &[reason]);
+            assert_sync_engram(&host, &mut instance, &batch, &[]);
+            assert!(
+                host.journal
+                    .borrow()
+                    .iter()
+                    .any(|line| line.starts_with("async mapped ids "))
+            );
             instance.retire_request(701).unwrap();
             instance.destroy().unwrap();
             assert_eq!(host.acquired.get(), host.released.get());
@@ -982,12 +938,12 @@ fn disabled_prefill_engram_reports_its_selected_reason() {
 
 #[cfg(feature = "diagnostic-taps")]
 #[test]
-fn disabled_prefill_engram_keeps_taps_reason() {
+fn prefill_engram_keeps_taps_reason() {
     if std::env::var_os(super::TAPS_CHILD).is_none() {
         let directory =
             std::env::temp_dir().join(format!("engram-reason-taps-{}", std::process::id()));
         super::in_child(
-            "fake_host_tests::conformance::disabled_prefill_engram_keeps_taps_reason",
+            "fake_host_tests::conformance::prefill_engram_keeps_taps_reason",
             &directory,
             &[("CHOPINFER_TAPS_SITES", "L02.x.hc.attn.pre")],
         );
@@ -996,7 +952,7 @@ fn disabled_prefill_engram_keeps_taps_reason() {
     }
     bundle_runtime::routes::with_logging(|| {
         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-        let mut instance = sync_dspark_instance(&host);
+        let mut instance = dspark_instance(&host);
         let batch = step_with_stride(&[(701, 0, 0, &[1, 2, 3], Phase::Prefill)], true, 8, None);
         assert_sync_engram(&host, &mut instance, &batch, &["taps"]);
         instance.retire_request(701).unwrap();
@@ -1009,9 +965,9 @@ fn disabled_prefill_engram_keeps_taps_reason() {
 fn engram_reasons_distinguish_mixed_and_host_targets() {
     bundle_runtime::routes::with_logging(|| {
         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-        let mut instance = sync_dspark_instance(&host);
+        let mut instance = dspark_instance(&host);
         let first = step_with_stride(&[(701, 0, 0, &[1, 2, 3], Phase::Prefill)], false, 8, None);
-        assert_sync_engram(&host, &mut instance, &first, &["prefill_disabled"]);
+        assert_sync_engram(&host, &mut instance, &first, &[]);
         let mixed = step_with_stride(
             &[
                 (702, 1, 0, &[1, 2, 3], Phase::Prefill),
@@ -1021,12 +977,7 @@ fn engram_reasons_distinguish_mixed_and_host_targets() {
             8,
             None,
         );
-        assert_sync_engram(
-            &host,
-            &mut instance,
-            &mixed,
-            &["prefill_disabled", "mixed_target"],
-        );
+        assert_sync_engram(&host, &mut instance, &mixed, &["mixed_target"]);
         let verify = step_with_stride(&[(701, 0, 4, &[5, 6, 7, 8], Phase::Verify)], false, 8, None);
         assert_sync_engram(&host, &mut instance, &verify, &["host_target"]);
         for request in [701, 702] {

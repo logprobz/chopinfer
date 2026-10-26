@@ -1,4 +1,4 @@
-//! The candidate changes only transfer scheduling and explicit layer joins.
+//! Prepared gathers keep their launch and state order across completion timing.
 use super::*;
 use crate::engram_rows::{EngramRows, Step};
 use crate::instance::prefill_engram::indices;
@@ -7,35 +7,24 @@ use runtime_bundle_sdk::prefill::{Boundary, encode};
 
 mod defaults;
 
-fn create_mapped(host: &Rc<Host>, on: bool, skip: bool) -> BundleInstanceV1 {
-    try_create_mapped(host, on, skip).unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()))
+fn completion_backend(host: &Rc<Host>, delayed: bool) -> dspark::host::MappedHost {
+    if delayed {
+        dspark::host::MappedHost::with_delayed_completion(Rc::clone(host))
+    } else {
+        dspark::host::MappedHost::new(Rc::clone(host))
+    }
 }
 
-fn try_create_mapped(
-    host: &Rc<Host>,
-    on: bool,
-    skip: bool,
-) -> Result<BundleInstanceV1, BundleAbiError> {
-    create_backend(
-        host,
-        on,
-        skip,
-        dspark::host::MappedHost::with_delayed_completion(Rc::clone(host)),
-    )
+fn create_mapped(host: &Rc<Host>, skip: bool) -> BundleInstanceV1 {
+    try_create_mapped(host, skip).unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()))
+}
+
+fn try_create_mapped(host: &Rc<Host>, skip: bool) -> Result<BundleInstanceV1, BundleAbiError> {
+    create_backend(host, skip, completion_backend(host, true))
 }
 
 fn create_backend(
     host: &Rc<Host>,
-    on: bool,
-    skip: bool,
-    backend: dspark::host::MappedHost,
-) -> Result<BundleInstanceV1, BundleAbiError> {
-    create_backend_with_setting(host, Some(on), skip, backend)
-}
-
-fn create_backend_with_setting(
-    host: &Rc<Host>,
-    on: Option<bool>,
     skip: bool,
     backend: dspark::host::MappedHost,
 ) -> Result<BundleInstanceV1, BundleAbiError> {
@@ -62,12 +51,10 @@ fn create_backend_with_setting(
     let options = serde_json::to_vec(&options).unwrap();
     record.extend_from_slice(&(options.len() as u32).to_le_bytes());
     record.extend_from_slice(&options);
-    crate::instance::prefill_engram::with_setting(on, || {
-        api()
-            .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
-            .unwrap()
-            .create(HostServicesTableV1::new(Rc::new(backend)), &record)
-    })
+    api()
+        .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
+        .unwrap()
+        .create(HostServicesTableV1::new(Rc::new(backend)), &record)
 }
 
 #[test]
@@ -77,7 +64,7 @@ fn dspark_prefill_gather_failures_are_terminal_before_publication() {
         host.speculation.set(Some((5, 32)));
         let backend =
             dspark::host::MappedHost::with_gather_failure(Rc::clone(&host), failure, after);
-        let mut instance = create_backend(&host, true, true, backend).unwrap();
+        let mut instance = create_backend(&host, true, backend).unwrap();
         let request = encode(
             &prompt(7, 0, 0, 193, true),
             &[Boundary {
@@ -128,10 +115,7 @@ fn launches(host: &Host) -> Vec<Vec<String>> {
         let stream = line.split_whitespace().nth(1).unwrap().to_owned();
         result.entry(stream).or_default().push(line.clone());
     }
-    // Reserving the ID spans before KV sizing shifts later resource IDs.
-    // Keep every launch, binding, extent and alias while numbering handles
-    // by first use, as in the other allocation-changing schedule fixtures.
-    super::query_window::canonical(&result.into_values().collect::<Vec<_>>(), |_| false)
+    result.into_values().collect()
 }
 
 #[test]
@@ -144,11 +128,12 @@ fn eager_and_upper_skip_join_each_layer_without_changing_launches() {
         (Ranks::TP1, KV_LAYOUTS[1], 8191, true),
     ] {
         let mut reference = None;
-        for on in [false, true] {
+        for delayed in [false, true] {
             let host = FakeHost::new(Shape::new(&FLASH, ranks).unwrap(), kv);
-            let mut instance = create_mapped(&host, on, skip);
+            let mut instance =
+                create_backend(&host, skip, completion_backend(&host, delayed)).unwrap();
             let spans = indices(instance.handle());
-            assert_eq!(spans.len(), if on { 2 } else { 0 });
+            assert_eq!(spans.len(), 2);
             let begin = host.journal.borrow().len();
             let mapped = host.mapped_gather_calls.get();
             let dma = ranks == Ranks::TP4 && kv.storage == KvStorage::Native && skip;
@@ -178,12 +163,12 @@ fn eager_and_upper_skip_join_each_layer_without_changing_launches() {
                         .all(|line| !line.starts_with("async mapped "))
                 );
             }
-            if on && !dma {
+            if !dma {
                 let logs = host.logs.borrow();
                 let metric: serde_json::Value = serde_json::from_str(
                     logs.iter()
                         .find(|s| s.contains("\"phase\":\"prefill-engram\""))
-                        .expect("candidate actually executed"),
+                        .expect("prepared gathers actually executed"),
                 )
                 .unwrap();
                 assert_eq!(metric["rows"], rows);
@@ -259,7 +244,7 @@ fn eager_and_upper_skip_join_each_layer_without_changing_launches() {
                 .execute(&decode(&[(7, 0, rows, 7)]), &mut Views::default())
                 .unwrap();
             instance.commit().unwrap();
-            // Decode uses its own prepared gathers under either prefill setting.
+            // Decode uses its own prepared gathers after the prefill joins.
             for (prefix, expected) in [
                 ("async mapped ids ", 2),
                 ("async mapped wait ", 2 * ranks.count()),
@@ -290,7 +275,7 @@ fn eager_and_upper_skip_join_each_layer_without_changing_launches() {
 #[test]
 fn layer_handles_reuse_after_partial_prefill_and_cancel() {
     let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-    let mut instance = create_mapped(&host, true, true);
+    let mut instance = create_mapped(&host, true);
     let initial = indices(instance.handle());
     for (start, rows) in [(0, 8192), (8192, 17)] {
         let request = encode(
@@ -352,7 +337,7 @@ fn layer_handles_reuse_after_partial_prefill_and_cancel() {
 fn private_id_allocation_failures_release_prior_resources() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
-    let mut instance = create_mapped(&host, true, true);
+    let mut instance = create_mapped(&host, true);
     let allocations = indices(instance.handle())
         .iter()
         .map(|(_, span)| {
@@ -370,7 +355,7 @@ fn private_id_allocation_failures_release_prior_resources() {
     for at in allocations {
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);
         host.device.fail_allocate.set(Some(at as u32));
-        assert!(try_create_mapped(&host, true, true).is_err());
+        assert!(try_create_mapped(&host, true).is_err());
         assert_eq!(host.device.fail_allocate.get(), None);
         // The fake increments acquisition before injecting allocation failure;
         // no handle is returned for that one counter increment.
@@ -388,12 +373,13 @@ fn dspark_prefill_joins_after_submission_and_finishes_after_status() {
     use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
     for skip in [false, true] {
         let mut reference = None;
-        for on in [false, true] {
+        for delayed in [false, true] {
             let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
             host.speculation.set(Some((5, 32)));
-            let mut instance = create_mapped(&host, on, skip);
+            let mut instance =
+                create_backend(&host, skip, completion_backend(&host, delayed)).unwrap();
             let spans = indices(instance.handle());
-            assert_eq!(spans.len(), if on { 2 } else { 0 });
+            assert_eq!(spans.len(), 2);
             let mut oracle = EngramRows::new(HashTables::of(&FLASH).unwrap());
             let mut starts = [0_u64; 4];
             let slots = [3, 7, 0, 15];
@@ -469,7 +455,7 @@ fn dspark_prefill_joins_after_submission_and_finishes_after_status() {
                 instance
                     .execute_prefill(&request, &mut Views::default())
                     .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
-                if on {
+                {
                     let columns = HashTables::of(&FLASH).unwrap().columns();
                     for (layer, (_, span)) in spans.iter().enumerate() {
                         let expected: Vec<_> = hashed

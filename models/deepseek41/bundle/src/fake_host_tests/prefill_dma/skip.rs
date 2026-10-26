@@ -205,12 +205,10 @@ fn sparse_dma_finishes_mapped_uploads_before_compute() {
                 | BUNDLE_CLUSTER_RESIDENCY_V1_COOPERATIVE_LAUNCH,
             ..BundleRawClusterResidencyV1::unreported()
         }));
-        let mut instance = crate::instance::prefill_engram::with_enabled(true, || {
-            create_with_services(
-                &host,
-                HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(&host)))),
-            )
-        });
+        let mut instance = create_with_services(
+            &host,
+            HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(&host)))),
+        );
         assert_eq!(
             crate::instance::prefill_engram::indices(instance.handle()).len(),
             2
@@ -262,58 +260,42 @@ fn sparse_dma_finishes_mapped_uploads_before_compute() {
 }
 
 #[test]
-fn dspark_sparse_dma_keeps_the_synchronous_engram_destinations() {
-    let capture = |enabled| {
-        crate::instance::prefill_engram::with_enabled(enabled, || {
-            capture_with(8192, Some(true), true)
-        })
-    };
-    let before = capture(false);
-    let after = capture(true);
+fn dspark_sparse_dma_gathers_every_plane_before_compute() {
+    let journal = capture_with(8192, Some(true), true);
     assert!(
-        !after
+        journal
             .iter()
-            .any(|line| line.starts_with("async mapped ids "))
+            .all(|line| !line.starts_with("async mapped ids "))
     );
-    for kind in ["launch ", "upload "] {
-        let select = |journal: &[String]| {
-            let mut lines: Vec<_> = journal
-                .iter()
-                .filter(|line| line.starts_with(kind))
-                .cloned()
-                .collect();
-            // Fallback uploads move into the target's upload scope. They
-            // retain their bytes and destinations before the first consumer.
-            if kind == "upload " {
-                lines.sort();
-            }
-            lines
-        };
-        let expected = select(&before);
-        let actual = select(&after);
-        assert_eq!(expected.len(), actual.len(), "{kind}");
-        for (at, (expected, actual)) in expected.iter().zip(&actual).enumerate() {
-            assert_eq!(expected, actual, "{kind} at {at}");
-        }
-    }
-    let first = after
+    let first = journal
         .iter()
         .position(|line| line.starts_with("launch "))
         .unwrap();
+    let mut observed: Vec<_> = journal
+        .iter()
+        .filter(|line| line.starts_with("mapped gather "))
+        .cloned()
+        .collect();
     assert_eq!(
-        after[..first]
+        journal[..first]
             .iter()
             .filter(|line| line.starts_with("mapped gather "))
             .count(),
         16
     );
-    assert_eq!(
-        after
-            .iter()
-            .filter(|line| line.starts_with("mapped gather "))
-            .count(),
-        16
-    );
+    let mut expected = Vec::new();
+    for rank in 0..4 {
+        for layer in [1, 14] {
+            for plane in ["weight", "scale"] {
+                expected.push(format!(
+                    "mapped gather {rank} layers.{layer}.engram.embed.{plane}"
+                ));
+            }
+        }
+    }
+    observed.sort();
+    expected.sort();
+    assert_eq!(observed, expected);
 }
 
 #[test]

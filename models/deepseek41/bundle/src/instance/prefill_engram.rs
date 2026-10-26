@@ -13,43 +13,7 @@ use runtime_bundle_abi::{
 };
 use std::cell::Cell;
 
-const SWITCH: &str = "CHOPINFER_DEEPSEEK41_PREFILL_ENGRAM";
 const PINNED_LIMIT: u64 = 256 * 1024 * 1024;
-
-pub(super) fn enabled(dspark: bool) -> Result<bool, BundleStatusV1> {
-    #[cfg(test)]
-    if let Some(value) = IN_TESTS.get() {
-        return Ok(value);
-    }
-    match std::env::var(SWITCH).as_deref() {
-        Ok("1") => Ok(true),
-        Ok("0") => Ok(false),
-        Err(std::env::VarError::NotPresent) => Ok(dspark),
-        _ => Err(BundleStatusV1::InvalidArgument),
-    }
-}
-
-#[cfg(test)]
-thread_local! {
-    static IN_TESTS: Cell<Option<bool>> = const { Cell::new(None) };
-}
-
-#[cfg(test)]
-pub(crate) fn with_enabled<T>(value: bool, run: impl FnOnce() -> T) -> T {
-    with_setting(Some(value), run)
-}
-
-#[cfg(test)]
-pub(crate) fn with_setting<T>(value: Option<bool>, run: impl FnOnce() -> T) -> T {
-    struct Restore(Option<bool>);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            IN_TESTS.set(self.0);
-        }
-    }
-    let _restore = Restore(IN_TESTS.replace(value));
-    run()
-}
 
 struct Layer {
     id: u32,

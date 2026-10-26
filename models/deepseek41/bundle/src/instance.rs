@@ -788,20 +788,12 @@ impl Instance {
             self.media = Some(media);
         }
         memory.take("encoder");
-        let prefill_enabled =
-            prefill_engram::enabled(self.dspark.is_some()).map_err(BundleAbiError::Status)?;
         self.prefill_engram_fallback = if !services.has_async_mapped_gather() {
             crate::engram_rows::SyncReason::NoAsyncService
-        } else if !prefill_enabled {
-            if self.dspark.is_some() {
-                crate::engram_rows::SyncReason::PrefillDisabled
-            } else {
-                crate::engram_rows::SyncReason::ArPrefill
-            }
         } else {
             crate::engram_rows::SyncReason::NoPreparedGather
         };
-        if prefill_enabled && services.has_async_mapped_gather() {
+        if services.has_async_mapped_gather() {
             let layers = self
                 .engram
                 .as_ref()

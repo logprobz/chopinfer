@@ -2076,26 +2076,6 @@ reason = "Known-gap ratchet: the complete 36-phase CPU rotation reaches packed-2
 task = "MXFP8-fold-packed-prefill-cone-tails"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-ar-full-prefill"]
-phase = "prefill"
-family = "engram_gather"
-entry = "engram/sync/ar_prefill"
-symbol = "host.gather_mapped_rows"
-rows = [[1, 8192]]
-reason = "Ordinary AR prefill keeps prepared Engram gathers off by default"
-task = "ar-prefill-engram"
-
-[[allow]]
-profiles = ["tp4-ar-upper-skip-2048"]
-phase = "prefill"
-family = "engram_gather"
-entry = "engram/sync/ar_prefill"
-symbol = "host.gather_mapped_rows"
-rows = [[1, 2048]]
-reason = "Ordinary AR prefill keeps prepared Engram gathers off by default"
-task = "ar-prefill-engram"
-
-[[allow]]
 profiles = ["tp4-ar"]
 phase = "prefill"
 family = "engram_gather"

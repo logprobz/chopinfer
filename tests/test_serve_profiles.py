@@ -1,9 +1,11 @@
 """Validate every model-owned preset with the actual model-neutral CLI."""
+import copy
 import json
 import os
 import re
 from pathlib import Path
 import subprocess
+import struct
 import sys
 import tomllib
 import unittest
@@ -20,7 +22,33 @@ def released(profiles_path):
     C64 qualification."""
     return profiles_path.parent.name in model_inventory.released(ROOT)
 
+def profile_comparison(profile):
+    """Compare confidence coefficients at the CLI contract's f32 precision."""
+    value = copy.deepcopy(profile)
+    confidence = value.get('speculation', {}).get('confidence')
+    if confidence is not None:
+        for kind in ('greedy', 'sampled'):
+            confidence[kind] = [[struct.pack('!f', coefficient) for coefficient in pair]
+                                for pair in confidence[kind]]
+    return value
+
+
 class ProfilesTest(unittest.TestCase):
+    def test_confidence_profile_comparison_preserves_f32_bits(self):
+        profile = {'speculation': {'confidence': {
+            'contract': 'fixture.confidence.v1', 'floor': 1,
+            'greedy': [[1.0428173542022705, 0.0]], 'sampled': [[1.0, 0.0]],
+        }}}
+        shown = copy.deepcopy(profile)
+        shown['speculation']['confidence']['greedy'][0][0] = 1.0428174
+        self.assertEqual(profile_comparison(profile), profile_comparison(shown))
+        bits = struct.unpack('!I', struct.pack('!f', 1.0428174))[0]
+        shown['speculation']['confidence']['greedy'][0][0] = struct.unpack('!f', struct.pack('!I', bits + 1))[0]
+        self.assertNotEqual(profile_comparison(profile), profile_comparison(shown))
+        shown = copy.deepcopy(profile)
+        shown['speculation']['confidence']['floor'] = 2
+        self.assertNotEqual(profile_comparison(profile), profile_comparison(shown))
+
     def test_all_model_profiles_enable_prefix_caching(self):
         paths = sorted((ROOT / 'models').glob('*/profiles.json'))
         self.assertTrue(paths)
@@ -325,7 +353,7 @@ print(json.dumps({'result': 'prepared-direct', 'bundle': str(bundle)}))
                     expected.setdefault('prefill_budget', 'fixed')
                     if expected['prefill_budget'] == 'tbt':
                         expected.setdefault('decode_tbt_target_ms', 100)
-                    self.assertEqual(json.loads(result.stdout), expected)
+                    self.assertEqual(profile_comparison(json.loads(result.stdout)), profile_comparison(expected))
             subprocess.run([host, 'profiles', 'list', path], check=True, capture_output=True)
         for name in ['chopinfer-host', 'mimo26-package', 'qwen38-package', 'chopinfer-model-mimo26', 'chopinfer-model-qwen38',
                      'chopinfer-model-glm5next']:

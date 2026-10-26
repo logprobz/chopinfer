@@ -1,15 +1,80 @@
 //! Selected entries qualified for target verification above the default row budget.
+use kernel_build::tuning::Table;
 use kernel_core::backend::{Prepared, PreparedOp};
 use kernel_core::route::{RouteClass, RouteTag};
+use model_deepseek41_contract::{
+    geometry::FLASH,
+    tuning::{self, Family},
+};
 
+/// `first` applies only to Engram's structural admission.
 pub(super) fn tag(symbol: &str, family: &'static str, first: u32) -> RouteTag {
-    kernel_core::route::branch(
-        symbol,
-        RouteClass::Fast,
-        family,
-        "wide-verify",
-        [first..=64],
-    )
+    tag_with_tables(symbol, family, first, |source| {
+        tuning::table(&FLASH, source).expect("Flash wide route table")
+    })
+}
+
+fn tag_with_tables<'a>(
+    symbol: &str,
+    family: &'static str,
+    first: u32,
+    tables: impl Fn(Family) -> &'a Table,
+) -> RouteTag {
+    let key = match family {
+        "f32_projection" => {
+            let entry = super::f32_verify::entries()
+                .expect("wide F32 entries")
+                .into_iter()
+                .find(|entry| entry.symbols().iter().any(|name| name == symbol))
+                .expect("registered wide F32 symbol");
+            let query = entry.entry().query();
+            Some((
+                Family::F32,
+                "f32.cached.verify",
+                "bf16",
+                std::collections::BTreeMap::from([
+                    ("n".to_owned(), query.n),
+                    ("k".to_owned(), query.k),
+                    ("ranks".to_owned(), 4),
+                ]),
+            ))
+        }
+        "indexer_query" => Some((
+            Family::Indexer,
+            "indexer.query.verify",
+            "f32",
+            [("ranks".to_owned(), 4)].into(),
+        )),
+        "latent_query" => Some((
+            Family::Latent,
+            "latent.query.verify",
+            "f32",
+            [("ranks".to_owned(), 4)].into(),
+        )),
+        "mxfp8_prefill" => None,
+        _ => unreachable!("unregistered wide route family"),
+    };
+    // Export the full verification envelope, including for smaller instances.
+    let capacity = model_deepseek41_contract::serving::VERIFY_DECODE_ROWS;
+    let admitted = if let Some((source, op, weights, shape)) = key {
+        tables(source)
+            .rows()
+            .iter()
+            .filter(|row| {
+                row.key.op == op
+                    && row.key.weights == weights
+                    && row.key.shape == shape
+                    && row.key.bucket == capacity
+            })
+            .map(|row| {
+                let [first, last] = row.key.rows.unwrap_or([1, row.key.bucket]);
+                first..=last
+            })
+            .collect::<Vec<_>>()
+    } else {
+        vec![first..=capacity]
+    };
+    kernel_core::route::branch(symbol, RouteClass::Fast, family, "wide-verify", admitted)
 }
 
 pub(super) fn tags<B>(op: &dyn PreparedOp<B>, family: &'static str, first: u32) -> Vec<RouteTag> {
@@ -82,6 +147,105 @@ mod tests {
     };
     use model_deepseek41_contract::{geometry::FLASH, state::KvStorage};
     use runtime_bundle_abi::{BundleDeviceBufferHandleV1, DeviceBufferSpanV1};
+
+    #[test]
+    fn wide_route_ranges_follow_mutated_table_bounds() {
+        let mut cases = 0;
+        for (source, family, op, weights, first) in [
+            (
+                Family::F32,
+                "f32_projection",
+                "f32.cached.verify",
+                "bf16",
+                33,
+            ),
+            (
+                Family::Indexer,
+                "indexer_query",
+                "indexer.query.verify",
+                "f32",
+                33,
+            ),
+            (
+                Family::Latent,
+                "latent_query",
+                "latent.query.verify",
+                "f32",
+                49,
+            ),
+        ] {
+            let table = tuning::table(&FLASH, source).unwrap();
+            for selected in table.rows().iter().filter(|row| {
+                row.key.op == op && row.key.weights == weights && row.key.bucket == 64
+            }) {
+                let mut changed = Table::new(table.target);
+                for mut row in table.rows().iter().cloned() {
+                    if row.key == selected.key {
+                        row.key.rows = Some([first + 1, 64]);
+                    }
+                    changed.upsert(row).unwrap();
+                }
+                assert!(
+                    changed
+                        .select(op, weights, &selected.key.shape, 64, first)
+                        .is_none()
+                );
+                assert!(
+                    changed
+                        .select(op, weights, &selected.key.shape, 64, first + 1)
+                        .is_some()
+                );
+                let symbols = if source == Family::F32 {
+                    super::super::f32_verify::entries()
+                        .unwrap()
+                        .into_iter()
+                        .find(|entry| {
+                            let query = entry.entry().query();
+                            query.n == selected.key.shape["n"] && query.k == selected.key.shape["k"]
+                        })
+                        .unwrap()
+                        .symbols()
+                        .to_vec()
+                } else {
+                    vec![family.to_owned()]
+                };
+                for symbol in symbols {
+                    let mut expected = tag(&symbol, family, first);
+                    assert_eq!(expected.admitted, [first..=64]);
+                    expected.admitted = vec![first + 1..=64];
+                    let observed = tag_with_tables(&symbol, family, first, |requested| {
+                        assert_eq!(requested, source);
+                        &changed
+                    });
+                    assert_eq!(observed, expected, "{op} {:?}", selected.key.shape);
+                }
+                cases += 1;
+            }
+        }
+        assert_eq!(cases, 7);
+    }
+
+    #[test]
+    fn wide_route_ranges_keep_table_segments_and_engram_coverage() {
+        let table = tuning::table(&FLASH, Family::Indexer).unwrap();
+        let mut changed = Table::new(table.target);
+        for mut row in table.rows().iter().cloned() {
+            if row.key.op == "indexer.query.verify" && row.key.bucket == 64 {
+                let mut first = row.clone();
+                first.key.rows = Some([33, 40]);
+                changed.upsert(first).unwrap();
+                row.key.rows = Some([42, 64]);
+            }
+            changed.upsert(row).unwrap();
+        }
+        let observed = tag_with_tables("query", "indexer_query", 33, |_| &changed);
+        assert_eq!(observed.admitted, [33..=40, 42..=64]);
+        let engram = tag_with_tables("engram", "mxfp8_prefill", 33, |_| {
+            panic!("Engram has structural admission")
+        });
+        assert_eq!(engram.admitted, [33..=64]);
+        assert_eq!(engram.wrappers, ["wide-verify"]);
+    }
 
     #[test]
     fn every_wide_query_and_engram_row_reports_the_selected_target_entry() {

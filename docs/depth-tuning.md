@@ -79,6 +79,91 @@ less than the tokens their drafts add. Measure the step costs first (the
    selects a synthetic limit and does not impose a required wattage.
 5. Queue `STAGE/tune.job` on an otherwise idle machine.
 
+## Compare two revisions
+
+Build both revisions into one external round directory. Set `ROUND` under
+`$CHOPINFER_DATA`, `MODEL` to the model directory name, `CHECKPOINT` to the
+checkpoint, `RANKS` to the tensor parallel size, and `BASE_REV` / `HEAD_REV`
+to the two Git revisions. Source `local.env` and use the pinned build setup
+from [contributing](contributing.md#setup). In each revision's source
+snapshot, build the host, model helper and bundle together:
+
+```sh
+set -euo pipefail
+mkdir -p "$ROUND/logs"
+for arm in base head; do
+    if [ "$arm" = base ]; then ref=$BASE_REV; else ref=$HEAD_REV; fi
+    revision=$(git rev-parse "$ref^{commit}")
+    mkdir -p "$ROUND/source-$arm"
+    git archive "$revision" | tar -x -C "$ROUND/source-$arm"
+    printf '%s\n' "$revision" > "$ROUND/source-$arm/.commit"
+    (
+        cd "$ROUND/source-$arm"
+        export CHOPINFER_BUILD_REVISION="$revision"
+        export CARGO_TARGET_DIR="$ROUND/target-$arm"
+        bash tools/dev/heavy.sh cargo build --release --locked --offline \
+            -p runtime-host -p "model-$MODEL" -p "bundle-$MODEL" \
+            --features runtime-host/linux-cuda-host --lib \
+            --bin chopinfer --bin "chopinfer-model-$MODEL"
+        source tools/dev/redeploy-common.sh
+        install_serving_binaries "$CARGO_TARGET_DIR/release" "$ROUND/install-$arm" "$MODEL"
+    )
+    "$ROUND/install-$arm/bin/chopinfer" --version > "$ROUND/logs/version-$arm.txt"
+    bash tools/dev/heavy.sh "$ROUND/install-$arm/bin/chopinfer-model-$MODEL" \
+        prepare --direct --model "$CHECKPOINT" --tensor-parallel-size "$RANKS" \
+        --cache-dir "$ROUND/cache-$arm" > "$ROUND/logs/prepare-$arm.json"
+    find "$ROUND/install-$arm" -type f -print0 | sort -z | xargs -0 sha256sum \
+        > "$ROUND/logs/install-$arm.sha256"
+    chmod -R go-w "$ROUND/install-$arm" "$ROUND/cache-$arm"
+done
+```
+
+Use absolute paths. Keep each helper's `prepared-direct` JSON object in
+`logs/prepare-NAME.json`; if the helper also prints diagnostics, save those
+separately. The package must be directly inside `cache-NAME`. Both builds
+must use the same checkpoint files and package preparation options. Add any
+model-specific preparation flags required by the serve configuration to
+both helper commands.
+
+In an external model config with `mode: ab`, select the installs per arm:
+
+```json
+"arms": [
+  {"label": "a", "install": "base", "depth": 3},
+  {"label": "b", "install": "head", "depth": 3}
+],
+"pairs": [["a", "b"]]
+```
+
+Seal with `--install-dir "$ROUND" --install-name base --install-name head`.
+An arm without `install` uses the first name on the command line. Unknown
+names and unused sealed installs are refused. With one install, the seal
+keeps its existing shape; omitting `--install-name` still means `head`.
+Prompts and reporting helpers come from the first sealed source snapshot,
+so both arms receive the same inputs. Preflight, warmup, every timed visit,
+and unmatched baseline replay use the selected arm's binary and cache.
+Records and reports name each arm's install and revision. Matched-seed ABBA
+order and token/logprob-bit exactness comparisons are unchanged.
+
+Multi-install jobs require one shared keeper, built from the first arm's
+install and options. Staging runs that install's CPU `weights identity`
+command for every arm, using each arm's own cache and options. It seals the
+results and requires identical checkpoint identity and file stamps, image
+roles, ranks, lengths, recipes and physical layouts. Serve options must
+match apart from speculation options; checkpoint, cache and keeper
+overrides in argument lists are refused. Run this staging step through
+`tools/dev/heavy.sh` before reserving GPUs.
+
+The recipe includes shared and bundle-owned weight transforms. A binary
+revision may differ while recipes match, but equal checkpoint bytes alone
+do not suffice. A changed recipe is refused, including a bundle change that
+changes a transform identity without changing its output bytes. Multi-install
+staging does not generate or accept the runtime's separate
+[content proofs](weight-keeper.md#identity-across-builds). Runtime keeper
+validation and required borrowing remain in force. The CPU stub exercises
+two frozen fixture installs with `--dry-run`; it proves harness mechanics,
+not GPU exactness or performance.
+
 ## What the job does and checks
 
 For sweep, costs and exact modes, a depth schedule is fixed for a server's lifetime, so the job runs one

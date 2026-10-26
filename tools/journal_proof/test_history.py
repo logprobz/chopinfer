@@ -762,6 +762,12 @@ class MapperTests(unittest.TestCase):
             self.assertEqual(m(f'peer copy 2 1 {span} 2 {span}'),f'peer copy 3 1 {mapped} 2 {mapped}')
             self.assertEqual(m(f'peer-copy 2 2 1 {span} {span}'),f'peer-copy 3 2 1 {mapped} {mapped}')
 
+    def test_removed_buffer_checks_every_raw_in_operation_forms(self):
+        import history
+        mapper = history.Mapper({}, {}, {}, {}, closed=False, removed_buffers={4294967300})
+        with self.assertRaisesRegex(history.Unproven, 'line uses a removed allocation'):
+            mapper('allocate 64 256 -> raw: 4294967300')
+
     def test_removed_buffer_keeps_an_annotation_context_with_the_same_raw(self):
         import history
         mapper = history.Mapper({}, {}, {}, {}, closed=False, removed_buffers={4294967300})

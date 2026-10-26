@@ -175,12 +175,13 @@ class Mapper:
         return self.ids[value]
 
     def __call__(self, line):
-        require(not ({int(m[2]) for m in BUFFER_HANDLE.finditer(line)} & self.removed_buffers), 'line uses a removed allocation')
         found = form(line)
         if found is None:
+            require(not ({int(m[2]) for m in BUFFER_HANDLE.finditer(line)} & self.removed_buffers), 'line uses a removed allocation')
             require(not self.closed, f'unrecognized auxiliary operation form: {line[:200]}')
             require(any(a.fullmatch(line) for a in ANNOTATIONS), f'unrecognized journal line form: {line[:200]}')
             return BUFFER_HANDLE.sub(lambda r: f'{r[1]}{self.buffers.get(int(r[2]), int(r[2]))}{r[3]}', line)
+        require(not (set(map(int, RAW.findall(line))) & self.removed_buffers), 'line uses a removed allocation')
         kind, m, roles = found
         for group in range(len(roles), 0, -1):
             new = self.identity(roles[group - 1], int(m[group]))

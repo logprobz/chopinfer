@@ -138,8 +138,8 @@ def all_choices(tokens, dspark=True):
     return result
 
 
-def guaranteed(tokens, chunk, dspark, alignment=64):
-    """Complete physical state after every grid chunk, as the opt-in executor.
+def guaranteed(tokens, chunk, dspark, alignment=64, cuts=()):
+    """Complete physical state after every grid or scheduler-selected chunk.
 
     Previous chunks are exact external inputs. A projection touching the
     last window retains its original dispatch shape, including a partial
@@ -147,9 +147,12 @@ def guaranteed(tokens, chunk, dspark, alignment=64):
     """
     if tokens <= 0 or chunk <= 0 or alignment <= 0:
         raise ValueError("positive prompt, chunk and alignment required")
+    if any(not 0 < end < tokens or end % 64 for end in cuts):
+        raise ValueError("extra cuts must be 64-token boundaries inside the prompt")
+    ends = sorted(set(range(chunk, tokens, chunk)) | set(cuts) | {tokens})
     plans = []
-    for first in range(0, tokens, chunk):
-        end = min(first + chunk, tokens)
+    first = 0
+    for end in ends:
         n = end - first
         align = lambda ranges: union(*[[(a // alignment * alignment,
             min(n, (b + alignment - 1) // alignment * alignment))] for a, b in ranges])
@@ -165,6 +168,7 @@ def guaranteed(tokens, chunk, dspark, alignment=64):
             needed = union(keys, taps)
             layers.append({"layer": layer, "outputs": outputs, "keys": keys, "features": taps})
         plans.append({"start": first, "end": end, "layers": list(reversed(layers))})
+        first = end
     outputs = sum(count(layer["outputs"]) for plan in plans for layer in plan["layers"])
     keys = sum(count(layer["keys"]) for plan in plans for layer in plan["layers"])
     return {"tokens": tokens, "chunk": chunk, "dspark": dspark, "alignment": alignment,
@@ -180,12 +184,13 @@ def main():
     parser.add_argument("--tokens", type=int, nargs="+", default=[8192, 32768, 131072])
     parser.add_argument("--contract", choices=["fixed", "all-choices", "guaranteed"], default="fixed")
     parser.add_argument("--alignment", type=int, default=64)
+    parser.add_argument("--cuts", type=int, nargs="*", default=[])
     args = parser.parse_args()
     plans = [all_choices(n) for n in args.tokens] if args.contract == "all-choices" else [
         cold(n, args.chunk, dspark) for n in args.tokens for dspark in [False, True]
     ]
     if args.contract == "guaranteed":
-        plans = [guaranteed(n, args.chunk, dspark, args.alignment) for n in args.tokens for dspark in [False, True]]
+        plans = [guaranteed(n, args.chunk, dspark, args.alignment, args.cuts) for n in args.tokens for dspark in [False, True]]
     print(json.dumps(plans, indent=2))
 
 

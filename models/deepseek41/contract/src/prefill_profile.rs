@@ -33,6 +33,13 @@ pub fn declarations() -> [ModelOptionV1; 2] {
 }
 
 impl Profile {
+    /// Every actual chunk of a guaranteed profile retains complete state,
+    /// including a scheduler-selected shared-prefix cut inside its grid.
+    /// Legacy and full-prefill profiles do not negotiate this capability.
+    pub const fn scheduler_cuts(self) -> bool {
+        self.chunk != 0
+    }
+
     pub fn read(options: &BTreeMap<String, serde_json::Value>) -> Result<Self, String> {
         let chunk = match options.get(CHUNK) {
             None => 0,
@@ -127,8 +134,10 @@ mod tests {
     #[test]
     fn absent_options_preserve_legacy_and_skip_requires_a_grid() {
         assert_eq!(Profile::read(&BTreeMap::new()).unwrap(), Profile::default());
+        assert!(!Profile::default().scheduler_cuts());
         for chunk in [2048, 8192] {
             for skip in [false, true] {
+                assert!(Profile { chunk, skip }.scheduler_cuts());
                 assert_eq!(
                     Profile::read(&BTreeMap::from([
                         (CHUNK.into(), chunk.into()),

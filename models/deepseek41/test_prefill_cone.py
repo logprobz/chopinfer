@@ -32,7 +32,73 @@ def fake_run(plan, sparse):
     return hidden[n - 1], snapshots
 
 
+def fake_chunks(plan, sparse, restored=None):
+    """Execute each actual chunk with persistent physical rings and history."""
+    rings = {layer: [None] * 136 for layer in range(20, 40)}
+    history = {layer: [None] * 134 for layer in [37, 38, 39]}
+    if restored is not None:
+        rings = {layer: list(cells) for layer, cells in zip(rings, restored[0])}
+        history = {layer: list(cells) for layer, cells in zip(history, restored[1])}
+    snapshots = []
+    for chunk in plan["chunks"]:
+        first, end = chunk["start"], chunk["end"]
+        n = end - first
+        hidden = {p: (first + p + 1) * 1234567 for p in range(n)}
+        for row in chunk["layers"]:
+            layer = row["layer"]
+            if plan["dspark"] and layer in history:
+                features = {p: hidden[p] for p in pc.positions(row["features"])} if sparse else hidden
+                for p in range(n - 128 if n > 134 else 0, n):
+                    history[layer][(first + p) % 134] = (first + p, features[p])
+            keys = pc.positions(row["keys"]) if sparse else range(n)
+            kv = {p: ((hidden[p] * 33) ^ layer) & MASK for p in keys}
+            output = pc.positions(row["outputs"]) if sparse else range(n)
+            next_hidden = {}
+            for p in output:
+                total = hidden[p]
+                for position in range(max(0, first + p - 127), first + p + 1):
+                    if position < first:
+                        writer, value = rings[layer][position % 136]
+                        assert writer == position
+                        total += value
+                    else:
+                        total += kv[position - first]
+                next_hidden[p] = total & MASK
+            for p, value in kv.items():
+                rings[layer][(first + p) % 136] = (first + p, value)
+            hidden = next_hidden
+        snapshots.append((tuple(tuple(rings[l]) for l in rings),
+                          tuple(tuple(history[l]) for l in history)))
+    return hidden[n - 1], snapshots
+
+
 class Cone(unittest.TestCase):
+    def test_extra_endpoints_keep_all_physical_cells_and_six_older_features(self):
+        cuts = [64, 192, 4032, 8064]
+        for dspark in [False, True]:
+            plan = pc.guaranteed(8257, 8192, dspark, cuts=cuts)
+            self.assertEqual([c["end"] for c in plan["chunks"]], cuts + [8192, 8257])
+            sparse = fake_chunks(plan, True)
+            self.assertEqual(sparse, fake_chunks(plan, False))
+            for at in [1, 2]:
+                hit = fake_chunks({**plan, "chunks": plan["chunks"][at + 1:]}, True, sparse[1][at])
+                self.assertEqual(hit, (sparse[0], sparse[1][at + 1:]))
+            if dspark:
+                before = sparse[1][1][1]
+                after = sparse[1][2][1]
+                replaced = {p % 134 for p in range(4032 - 128, 4032)}
+                preserved = set(range(134)) - replaced
+                self.assertEqual(len(preserved), 6)
+                for old, new in zip(before, after):
+                    self.assertTrue(all(new[cell] == old[cell] for cell in preserved))
+                writers = pc.history_writers([c["end"] for c in plan["chunks"]], [4032])[4032]
+                self.assertEqual(tuple(cell[0] if cell is not None else None for cell in after[0]), writers)
+
+    def test_extra_endpoints_must_be_internal_granules(self):
+        for cuts in [[0], [63], [8257], [8320]]:
+            with self.assertRaises(ValueError):
+                pc.guaranteed(8257, 8192, True, cuts=cuts)
+
     def test_poisoned_read_schedule_matches_full_fake_kernels_and_copied_cells(self):
         for n, limit, captures in [(521, 256, [256, 512]), (2049, 256, [1024, 2048]),
                                    (8192, 2048, [6144, 8192])]:

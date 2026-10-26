@@ -104,6 +104,9 @@ pub struct Layer {
 pub struct Plan {
     pub rows: u32,
     pub last_source: u32,
+    /// Absolute complete-state endpoint of each packed item. These are the
+    /// actual scheduler cuts, which need not lie on the configured grid.
+    pub endpoints: Vec<u32>,
     pub layers: Vec<Layer>,
     /// Original packed rows, in logits emission order.
     pub logits: Vec<u32>,
@@ -206,6 +209,10 @@ impl Plan {
         Ok(Self {
             rows,
             last_source: source,
+            endpoints: items
+                .iter()
+                .map(|item| item.prefix + item.rows.end - item.rows.start)
+                .collect(),
             layers,
             logits: logits.to_vec(),
             features,
@@ -358,5 +365,78 @@ mod tests {
             assert_eq!(plan.features.count(), count - feature_offset(0, count, 128));
             assert!(plan.layers.iter().all(|l| l.outputs.count() == count));
         }
+    }
+
+    #[test]
+    fn scheduler_endpoint_cones_match_the_python_oracle() {
+        let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../prefill_cone.py");
+        let output = std::process::Command::new("python3")
+            .arg("-B")
+            .arg(script)
+            .args([
+                "--contract",
+                "guaranteed",
+                "--chunk",
+                "8192",
+                "--tokens",
+                "8257",
+                "--cuts",
+                "64",
+                "192",
+                "4032",
+                "8064",
+            ])
+            .output()
+            .expect("the Python dependency oracle starts");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let cases: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let mut checked = 0;
+        for case in cases.as_array().unwrap() {
+            let dspark = case["dspark"].as_bool().unwrap();
+            for chunk in case["chunks"].as_array().unwrap() {
+                let first = chunk["start"].as_u64().unwrap() as u32;
+                let end = chunk["end"].as_u64().unwrap() as u32;
+                let item = Item {
+                    rows: 0..end - first,
+                    prefix: first,
+                };
+                let logits = if end == 8257 {
+                    vec![end - first - 1]
+                } else {
+                    Vec::new()
+                };
+                let plan =
+                    Plan::new(&FLASH, std::slice::from_ref(&item), &logits, dspark, 64).unwrap();
+                assert_eq!(plan.endpoints, [end]);
+                for (layer, expected) in plan.layers.iter().zip(chunk["layers"].as_array().unwrap())
+                {
+                    assert_eq!(layer.id as u64, expected["layer"].as_u64().unwrap());
+                    for (name, rows) in [
+                        ("keys", &layer.keys),
+                        ("outputs", &layer.outputs),
+                        ("features", &layer.features),
+                    ] {
+                        let ranges: Vec<[u32; 2]> =
+                            rows.ranges().iter().map(|r| [r.start, r.end]).collect();
+                        assert_eq!(
+                            serde_json::to_value(ranges).unwrap(),
+                            expected[name],
+                            "end={end}, dspark={dspark}, layer={}, {name}",
+                            layer.id
+                        );
+                    }
+                }
+                assert_eq!(
+                    fake(std::slice::from_ref(&item), &plan, true),
+                    fake(std::slice::from_ref(&item), &plan, false)
+                );
+                checked += 1;
+            }
+        }
+        assert_eq!(checked, 12);
     }
 }

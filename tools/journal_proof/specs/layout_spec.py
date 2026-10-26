@@ -142,8 +142,41 @@ def align(decl, a, b, removed, added_records):
     return added, resizes
 
 
+def fixture_events(fixture, base_aux, head_aux):
+    """The compared prefixes and head create boundary of one device."""
+    names = fixture['journals']
+    ab = [base_aux['manifest']['bindings'][n] for n in names]
+    hb = [head_aux['manifest']['bindings'][n] for n in names]
+    need(len({x['host'] for x in ab}) == len({x['host'] for x in hb}) == 1, f'{fixture["name"]}: not one device lifetime')
+    ae = base_aux['hosts'][ab[0]['host']]['events'][:max(x['records'] for x in ab)]
+    be = head_aux['hosts'][hb[0]['host']]['events'][:max(x['records'] for x in hb)]
+    return ae, be, hb[0]['create']
+
+
+def fixture_rule(decl, fixture, ae, be):
+    """Write witnesses from declared positions before aligning resources."""
+    from auxproof import inventory
+    import handles
+    ai, bi = inventory(ae), inventory(be)
+    rule = dict(added_resolves=[], added_modules=[], create_policy={})
+    removed_modules, removed_resolves, removed = module_entries(ai, set(decl['removed_modules']))
+    added_modules, added_resolves, added_records = module_entries(bi, set(decl['added_modules']))
+    for side, events, inv, ids in (('removed', ae, ai, removed), ('added', be, bi, added_records)):
+        entries = handles.witness_entries(decl, fixture, side, events, inv)
+        if entries:
+            rule[side + '_handles'] = entries
+            ids.update(e['id'] for e in entries)
+    added, resized = align(decl, ai, bi, removed, added_records)
+    for key, value in (('removed_modules', removed_modules), ('removed_resolves', removed_resolves),
+                       ('added_allocations', added), ('resized_allocations', resized)):
+        if value:
+            rule[key] = value
+    rule['added_modules'], rule['added_resolves'] = added_modules, added_resolves
+    return rule
+
+
 def generate(repo, model, base_rev, head_rev, base_index, head_index, path, revision=None):
-    from auxproof import inventory, load
+    from auxproof import load
     from pins import snapshot
     from proof import SCHEMA as SPEC_SCHEMA
     base, bodies_a, origins_a = snapshot(repo, base_rev, model, base_index)
@@ -171,31 +204,13 @@ def generate(repo, model, base_rev, head_rev, base_index, head_index, path, revi
                     totals['text_journals'] += 1
             continue
         need(kinds == {'device'}, f'{fixture["name"]}: journals of binding kinds {sorted(kinds)}')
-        ab = [ba['manifest']['bindings'][n] for n in names]
-        hb = [ha['manifest']['bindings'][n] for n in names]
-        need(len({x['host'] for x in ab}) == len({x['host'] for x in hb}) == 1, f'{fixture["name"]}: not one device lifetime')
-        ae = ba['hosts'][ab[0]['host']]['events'][:max(x['records'] for x in ab)]
-        be = ha['hosts'][hb[0]['host']]['events'][:max(x['records'] for x in hb)]
-        ai, bi = inventory(ae), inventory(be)
-        removed_modules, removed_resolves, removed = module_entries(ai, set(decl['removed_modules']))
-        added_modules, added_resolves, added_records = module_entries(bi, set(decl['added_modules']))
-        import handles
-        for side, events, inv, ids in (('removed', ae, ai, removed), ('added', be, bi, added_records)):
-            entries = handles.witness_entries(decl, fixture['name'], side, events, inv)
-            if entries:
-                rule[side + '_handles'] = entries
-                ids.update(e['id'] for e in entries)
-        added, resized = align(decl, ai, bi, removed, added_records)
-        for key, value in (('removed_modules', removed_modules), ('removed_resolves', removed_resolves),
-                           ('added_allocations', added), ('resized_allocations', resized)):
-            if value:
-                rule[key] = value
-        rule['added_modules'], rule['added_resolves'] = added_modules, added_resolves
+        ae, be, _ = fixture_events(fixture, ba, ha)
+        rule.update(fixture_rule(decl, fixture['name'], ae, be))
         totals['fixtures'] += 1
-        totals['added_allocations'] += len(added)
-        totals['resized_allocations'] += len(resized)
-        totals['removed_modules'] += sum(d['count'] for d in removed_modules)
-        totals['added_modules'] += sum(d['count'] for d in added_modules)
+        totals['added_allocations'] += len(rule.get('added_allocations', []))
+        totals['resized_allocations'] += len(rule.get('resized_allocations', []))
+        totals['removed_modules'] += sum(d['count'] for d in rule.get('removed_modules', []))
+        totals['added_modules'] += sum(d['count'] for d in rule['added_modules'])
     return spec, dict(totals)
 
 

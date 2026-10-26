@@ -560,6 +560,30 @@ journals and history. These fields require a compared device fixture; unknown
 or text-only fixtures fail. `IDENTICAL` still requires byte-identical bodies,
 and `--require identity` still checks the complete identity checklist.
 
+`specs/operation_edits.py` writes these edits for review. Give it a local
+declaration with the intended resources, positional handles and module
+activations. It authenticates both captures, derives the ordered map through
+`auxproof.derive`, applies the automatic resource changes, then diffs the
+retained lines and their owners. The output is a complete declaration with
+fresh `operations`, replacing any existing ones. It checks the proposed
+edits through the fixture prover before writing them; review every edit
+before committing the declaration and generating its witness spec.
+
+```sh
+python3 -B tools/journal_proof/specs/operation_edits.py \
+  --repo . --model MODEL --base BASE --head HEAD \
+  --base-index "$CHOPINFER_DATA/base/index.json" \
+  --head-index "$CHOPINFER_DATA/head/index.json" \
+  --declaration "$CHOPINFER_DATA/layout-input.json" \
+  --out "$CHOPINFER_DATA/layout-review.json"
+```
+
+Positions belong to one base/head capture pair. For a proof on a merged or
+rebased base, recapture, update and review the handle positions, regenerate
+the operation edits, and review the complete declaration again. Commit it
+and use `--declaration-revision` with `layout_spec.py` and `proof.py` when
+the declaration lives after the compared head. The prover derives no edits.
+
 A device that records no allocation ranks (a test that never registers
 its synthetic streams) is keyed per rank by its synthetic stream, which the
 typed mapping keeps fixed; a stream shared by several ranks fails the per-rank

@@ -58,8 +58,9 @@ Its floor is one, and its five greedy coefficient pairs equal its five
 sampled pairs. The profile keeps 64 speculative rows, verify widths
 6, 8, 16, 32 and 64, graph rows 64, and depths `1:5,8:3,16:3,32:0`.
 In the 2026-10-26 comparison, all 290 matched requests were bitwise equal.
-Coding request throughput improved by 8.40% at C4 and 3.57% at C8; chat
-request throughput fell by 1.56% at C4 and 3.48% at C8.
+Coding request throughput improved by 8.40% at C4 and 3.57% at C8, and
+fell by 0.47% at C16. Chat request throughput fell by 1.56% at C4, 3.48%
+at C8 and 0.87% at C16. Adoption of this calibration accepts the measured chat throughput cost.
 
 The drafter keeps a five-row backbone and computes either three or five
 proposal heads as described above. The default profile verifies up to

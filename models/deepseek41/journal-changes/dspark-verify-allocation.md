@@ -21,3 +21,12 @@ operation additions. An independent complete-history and pinned-body audit
 matches every generated edit. The proof authenticates the unchanged locks,
 exact positions and operands, and reads this declaration at the flip commit.
 Regenerate positions and operation edits after a rebase.
+
+The current startup conformance in
+`crates/bundle-runtime/src/fake_host/conformance/startup.rs` constructs no
+allocated warmup shapes. The route sweep derives its verify envelope from
+that conformance, so its passing profiles do not cover the allocated verify
+steps now served by tp4-dspark. The allocated-head unit tests cover selected
+shapes without a route-class audit. GPU fallback bounds cover only their
+measured cells. Extending the shared conformance and route sweep to derive
+allocated shapes from the profile calibration is tracked separately.

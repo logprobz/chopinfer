@@ -95,6 +95,24 @@ struct PairedPrefill {
     entry: sources::Entry,
 }
 
+fn paired_route_rows() -> Vec<std::ops::RangeInclusive<u32>> {
+    use model_deepseek41_contract::tuning::{Family, table};
+    table(&FLASH, Family::Latent)
+        .into_iter()
+        .flat_map(|table| table.rows())
+        .filter(|row| {
+            row.key.op == "latent.paired.prefill"
+                && row.key.weights == "fp8"
+                && row.key.shape == [("ranks".into(), 4)].into()
+                && row.key.bucket == ROWS
+        })
+        .map(|row| {
+            let [first, last] = row.key.rows.unwrap_or([1, row.key.bucket]);
+            first..=last
+        })
+        .collect()
+}
+
 impl PreparedOp<LatentSourcesBuffers<View>> for PairedPrefill {
     fn route(&self, counts: Counts, launch: &Launch) -> Option<kernel_core::route::RouteTag> {
         if launch.symbol == sources_prefill::reuse_symbol(&self.entry, 2) {
@@ -103,7 +121,7 @@ impl PreparedOp<LatentSourcesBuffers<View>> for PairedPrefill {
                 kernel_core::route::RouteClass::Fast,
                 "latent_prefill",
                 "paired",
-                [1..=ROWS],
+                paired_route_rows(),
             ))
         } else {
             self.reference.route(counts, launch)
@@ -133,5 +151,13 @@ impl PreparedOp<LatentSourcesBuffers<View>> for PairedPrefill {
             }
         }
         Ok(launches)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn paired_route_rows_keep_the_full_interval() {
+        assert_eq!(super::paired_route_rows(), [1..=8192]);
     }
 }

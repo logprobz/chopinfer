@@ -1,0 +1,239 @@
+{
+ "schema": "chopinfer.journal-proof.layout.v1",
+ "description": "Reserve the four existing native Flash TP4 result-readiness events at creation.",
+ "handles": {
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-5.jsonl": {
+   "added": [
+    {
+     "name": "device-results.added.event.0",
+     "kind": "event",
+     "at": 18,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "device-results.added.event.1",
+     "kind": "event",
+     "at": 20,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "device-results.added.event.2",
+     "kind": "event",
+     "at": 22,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "device-results.added.event.3",
+     "kind": "event",
+     "at": 24,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-2.jsonl": {
+   "added": [
+    {
+     "name": "device-results.added.event.0",
+     "kind": "event",
+     "at": 18,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "device-results.added.event.1",
+     "kind": "event",
+     "at": 20,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "device-results.added.event.2",
+     "kind": "event",
+     "at": 22,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "device-results.added.event.3",
+     "kind": "event",
+     "at": 24,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-1.jsonl": {
+   "added": [
+    {
+     "name": "device-results.added.event.0",
+     "kind": "event",
+     "at": 18,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "device-results.added.event.1",
+     "kind": "event",
+     "at": 20,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "device-results.added.event.2",
+     "kind": "event",
+     "at": 22,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    },
+    {
+     "name": "device-results.added.event.3",
+     "kind": "event",
+     "at": 24,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "event @id"
+      ]
+     ]
+    }
+   ]
+  }
+ },
+ "operations": {
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-5.jsonl": [
+   {
+    "add": {
+     "text": "release",
+     "lines": [
+      74578,
+      74579,
+      74580,
+      74581
+     ]
+    }
+   }
+  ],
+  "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-2.jsonl": [
+   {
+    "add": {
+     "text": "release",
+     "lines": [
+      48986,
+      48987,
+      48988,
+      48989
+     ]
+    }
+   }
+  ],
+  "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-1.jsonl": [
+   {
+    "add": {
+     "text": "release",
+     "lines": [
+      74578,
+      74579,
+      74580,
+      74581
+     ]
+    }
+   }
+  ]
+ }
+}

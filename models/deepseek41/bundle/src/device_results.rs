@@ -2,7 +2,7 @@
 //! settings so journal tests do not depend on the process environment.
 #[cfg(test)]
 thread_local! {
-    static OVERRIDE: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(Some("0")) };
+    static OVERRIDE: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
 }
 
 pub(crate) fn enabled(

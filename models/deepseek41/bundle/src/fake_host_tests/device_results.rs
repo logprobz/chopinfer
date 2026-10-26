@@ -165,10 +165,31 @@ fn invalid_status_after_ready_submission_still_refuses_the_step() {
 }
 
 #[test]
-fn zero_device_results_restores_the_legacy_journals() {
-    crate::device_results::with_override(Some("0"), || {
-        super::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle();
-    });
+fn zero_device_results_keeps_legacy_rows_without_ready_events() {
+    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+    let mut instance = crate::device_results::with_override(Some("0"), || create(&host, 1));
+    let created = host.device.journal.borrow();
+    let arenas = created
+        .iter()
+        .position(|line| line.starts_with("upload arena "))
+        .unwrap();
+    assert!(
+        created[..arenas]
+            .iter()
+            .all(|line| !line.starts_with("event "))
+    );
+    drop(created);
+    step(
+        &mut instance,
+        &prompt(7, 0, 0, 3, true),
+        &mut Views::default(),
+    );
+    let mut views = Views::default();
+    step(&mut instance, &decode(&[(7, 0, 3, 9)]), &mut views);
+    assert_eq!(views.rows(), 1);
+    instance.retire_request(7).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
 }
 
 #[test]

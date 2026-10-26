@@ -42,7 +42,7 @@ impl Instance {
     /// gathered, read or sampled.
     pub(crate) fn allocated_tail_rows(&self) -> Option<u32> {
         let step = self.allocated_step()?;
-        let prepared = self.dspark.as_ref()?.allocation.as_ref()?.op.reserved_rows;
+        let prepared = self.dspark.as_ref()?.allocation.op.reserved_rows;
         Some(step.reserved_rows.next_multiple_of(TAIL_ROWS).min(prepared))
     }
 
@@ -50,8 +50,7 @@ impl Instance {
     fn allocation_memory(&self, rank: usize) -> Result<Memory, String> {
         self.dspark
             .as_ref()
-            .and_then(|device| device.allocation.as_ref())
-            .and_then(|allocation| allocation.ranks.get(rank).copied())
+            .and_then(|device| device.allocation.ranks.get(rank).copied())
             .ok_or_else(|| "DSpark verify allocation storage is absent".into())
     }
 
@@ -67,10 +66,7 @@ impl Instance {
         text: Span,
     ) -> Result<(), String> {
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
-        let allocation = device
-            .allocation
-            .as_ref()
-            .ok_or("DSpark verify allocation is not prepared")?;
+        let allocation = &device.allocation;
         let words = |values: &[u32]| {
             values
                 .iter()
@@ -154,14 +150,10 @@ impl Instance {
     /// item that reserves more drafts than a block, which the kernel
     /// refuses by its status without writing anything else, and waits for
     /// every rank: a launch the host refuses or a kernel that faults fails
-    /// create instead of the first allocated step. Without the allocation
-    /// it does nothing.
+    /// create instead of the first allocated step. Without a drafter it
+    /// does nothing.
     pub(crate) fn check_dspark_allocation(&self) -> Result<(), String> {
-        let Some(device) = self
-            .dspark
-            .as_ref()
-            .filter(|device| device.allocation.is_some())
-        else {
+        let Some(device) = self.dspark.as_ref() else {
             return Ok(());
         };
         let text = device
@@ -229,10 +221,7 @@ impl Instance {
         tail: u32,
     ) -> Result<Vec<Lowered>, String> {
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
-        let allocation = device
-            .allocation
-            .as_ref()
-            .ok_or("DSpark verify allocation is not prepared")?;
+        let allocation = &device.allocation;
         let memory = self.allocation_memory(rank)?;
         let stored = &device.ranks[rank];
         let width = device.features.row_bytes();
@@ -273,10 +262,7 @@ impl Instance {
         count: u32,
     ) -> Result<Vec<Lowered>, String> {
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
-        let allocation = device
-            .allocation
-            .as_ref()
-            .ok_or("DSpark verify allocation is not prepared")?;
+        let allocation = &device.allocation;
         let memory = self.allocation_memory(0)?;
         let result = device
             .results

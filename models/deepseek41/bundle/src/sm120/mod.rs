@@ -1007,8 +1007,7 @@ impl crate::Kernels {
                 .any(|name| name == cubin)
     }
 
-    /// The allocated verify steps' cubins, which an instance loads only
-    /// when its host allocates (`verify_allocation`).
+    /// The allocated verify steps' cubins, loaded by each DSpark instance.
     pub fn allocation_cubin(cubin: &str) -> bool {
         cubin == allocate_entries::CUBIN || cubin == allocated_acceptance_entries::CUBIN
     }

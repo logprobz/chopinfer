@@ -19,7 +19,6 @@ pub mod prefill_profile;
 pub mod projections;
 pub mod structure;
 pub mod tuning;
-pub mod verify_allocation;
 pub mod verify_graphs;
 
 pub mod moe;

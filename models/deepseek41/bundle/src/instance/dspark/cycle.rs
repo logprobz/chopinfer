@@ -217,11 +217,7 @@ impl Instance {
             return Err("DSpark device cycle is already pending".into());
         }
         if let Some(step) = &allocation {
-            let op = device
-                .allocation
-                .as_ref()
-                .ok_or("DSpark verify allocation is not prepared")?
-                .op;
+            let op = device.allocation.op;
             if step.reserved_rows > op.reserved_rows || step.width > op.width {
                 return Err("DSpark allocated step exceeds the prepared rows".into());
             }

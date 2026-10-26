@@ -1,9 +1,7 @@
-//! Prepared ops and storage of allocated verify steps
-//! (`model_deepseek41_contract::verify_allocation`): an instance whose host
-//! allocates prepares the verify allocation, the gather of packed feature
+//! Prepared ops and storage of allocated verify steps. Each DSpark
+//! instance prepares the verify allocation, the gather of packed feature
 //! rows into the reserved layout and the allocated acceptance at create,
-//! and allocates their storage on every rank before the KV pool. An
-//! instance whose host does not allocate holds none of it.
+//! and allocates their storage on every rank before the KV pool.
 //!
 //! An allocated step keeps the reserved layout everywhere but the target
 //! body: the host uploads its reserved rows, the allocation compacts the

@@ -1,49 +1,11 @@
-//! Allocated verify steps (`chopbatch-v7`): an instance prepares their ops
-//! and storage only when its host allocates and refuses them otherwise; an
-//! allocating instance runs them on the device results path, allocating on
+//! Allocated verify steps (`chopbatch-v7`): each DSpark instance prepares
+//! their ops and storage. It runs them on the device results path, allocating on
 //! every rank after the draft copies and before the hash, computing the
 //! width eagerly, gathering the head and feature rows back into the
 //! reserved layout and walking the verified drafts.
 use super::results::{DeviceSink, metadata};
 use super::*;
 use runtime_bundle_sdk::{SamplingKindV1, VerifyAllocationV1, VerifyCalibrationV1};
-
-/// An instance of `items` slots and `rows` verify rows whose host allocates.
-fn create_with_allocation(
-    shape: Shape,
-    items: u32,
-    rows: u32,
-    allocates: bool,
-) -> (Rc<Host>, BundleInstanceV1) {
-    use model_deepseek41_contract::verify_allocation::OPTION;
-    use runtime_bundle::model_options::{CAPABILITY, ModelOptionsV1};
-    let declared = ModelOptionsV1 {
-        schema: CAPABILITY.into(),
-        options: shape
-            .geometry
-            .model_options(shape.geometry.runtime_defaults()),
-    };
-    let overrides = if allocates {
-        vec![]
-    } else {
-        vec![(OPTION.to_owned(), "false".to_owned())]
-    };
-    let resolved = declared.resolve(&overrides.into_iter().collect()).unwrap();
-    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
-    host.drafter.set(true);
-    host.speculation.set(Some((5, rows)));
-    let record = crate::config::tests::with_options(
-        crate::config::tests::record(&shape, host.kv, items, false),
-        &resolved,
-    );
-    let instance = api()
-        .create(
-            HostServicesTableV1::new(Rc::new(MappedHost::new(Rc::clone(&host)))),
-            &record,
-        )
-        .unwrap_or_else(|e| panic!("drafter create: {e:?} {:?}", host.logs.borrow()));
-    (host, instance)
-}
 
 /// `items` verify items reserving `k` drafts each from position `start`,
 /// allocated to `width` rows.
@@ -155,7 +117,7 @@ fn device_step(
 fn allocated_steps_compute_the_width_and_keep_the_reserved_layout() {
     for shape in crate::shape::topologies() {
         let (items, width) = (8_u32, 16_u32);
-        let (host, mut instance) = create_with_allocation(shape, 8, 48, true);
+        let (host, mut instance) = create_with_limits(shape, 8, 48);
         for slot in 0..items {
             execute(
                 &mut instance,
@@ -335,7 +297,7 @@ fn allocated_heads_route_by_reserved_rows_at_narrow_target_widths() {
         .unwrap()
         .symbols();
     for (items, drafts, width, reserved) in [(8, 3, 16, 32), (8, 5, 16, 48), (16, 3, 32, 64)] {
-        let (host, mut instance) = create_with_allocation(shape, items, reserved, true);
+        let (host, mut instance) = create_with_limits(shape, items, reserved);
         for slot in 0..items {
             execute(
                 &mut instance,
@@ -376,81 +338,45 @@ fn allocated_heads_route_by_reserved_rows_at_narrow_target_widths() {
 }
 
 #[test]
-fn allocated_verify_steps_are_refused_when_preparation_is_disabled() {
-    let (host, mut instance) =
-        create_with_allocation(Shape::new(&FLASH, Ranks::TP4).unwrap(), 4, 32, false);
-    let prefill = BatchRequestV1::new(
-        BatchWireVersionV1::V3,
-        vec![BatchItemV1::new(1, false, 3, true, vec![1, 2, 3])],
-        vec![BatchAppendV1::new(0, 3, 3, vec![0], None)],
-    )
-    .with_state_slots(vec![0])
-    .encode()
-    .unwrap();
-    execute(&mut instance, &host, &prefill);
-    instance.commit().unwrap();
-    let start = state(&instance, 1).end;
-    let step = BatchRequestV1::new(
-        BatchWireVersionV1::V3,
-        vec![BatchItemV1::verify(1, 4, true, vec![7])],
-        vec![BatchAppendV1::new(start, 4, start + 4, vec![0], None)],
-    )
-    .with_state_slots(vec![0]);
-    let calibration = VerifyCalibrationV1::new(&[(1.0, 0.0); 5], &[(1.0, 0.0); 5]).unwrap();
-    let allocated = step
-        .clone()
-        .with_verify_allocation(VerifyAllocationV1::new(
-            3,
-            1,
-            calibration,
-            vec![SamplingKindV1::Greedy],
-        ))
-        .encode()
-        .unwrap();
-    let mut sink = Sink::default();
+fn allocated_verify_steps_are_refused_without_a_drafter_before_io() {
+    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+    let mut instance = super::super::create(&host, 1);
+    let before = host.journal.borrow().len();
     assert_eq!(
-        instance.execute(&allocated, &mut sink).err(),
+        instance
+            .execute(
+                &allocated(1, 0, 3, 3).encode().unwrap(),
+                &mut Sink::default()
+            )
+            .err(),
         Some(BundleAbiError::Status(BundleStatusV1::Unsupported))
     );
-    execute(&mut instance, &host, &step.encode().unwrap());
-    instance.cancel().unwrap();
+    assert_eq!(host.journal.borrow().len(), before);
+    execute(
+        &mut instance,
+        &host,
+        &super::super::prompt(1, 0, 0, 3, true),
+    );
+    instance.commit().unwrap();
+    instance.retire_request(1).unwrap();
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
 }
 
-/// The create record's verify_allocation option makes the drafter prepare
-/// the allocation and the allocated acceptance, hold their storage on every
-/// rank and load their cubins; without it the instance holds none of them.
+/// DSpark prepares the allocation and allocated acceptance, holds their
+/// storage on every rank and loads their cubins. An AR instance holds none.
 #[test]
-fn an_allocating_host_gets_the_allocation_ops_and_storage() {
-    use model_deepseek41_contract::verify_allocation::OPTION;
-    use runtime_bundle::model_options::{CAPABILITY, ModelOptionsV1};
-
+fn allocation_ops_and_storage_are_dspark_only() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-    let declared = ModelOptionsV1 {
-        schema: CAPABILITY.into(),
-        options: shape
-            .geometry
-            .model_options(shape.geometry.runtime_defaults()),
-    };
     let symbols = [
         crate::sm120::allocate_entries::SYMBOL,
         crate::sm120::allocated_acceptance_entries::SYMBOL,
     ];
-    for allocates in [false, true] {
-        let overrides = if allocates {
-            vec![]
-        } else {
-            vec![(OPTION.to_owned(), "false".to_owned())]
-        };
-        let resolved = declared.resolve(&overrides.into_iter().collect()).unwrap();
+    for dspark in [false, true] {
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);
-        host.drafter.set(true);
-        host.speculation.set(Some((5, 32)));
-        let record = crate::config::tests::with_options(
-            crate::config::tests::record(&shape, host.kv, 4, false),
-            &resolved,
-        );
+        host.drafter.set(dspark);
+        host.speculation.set(dspark.then_some((5, 32)));
+        let record = crate::config::tests::record(&shape, host.kv, 4, false);
         let mut instance = api()
             .create(
                 HostServicesTableV1::new(Rc::new(MappedHost::new(Rc::clone(&host)))),
@@ -459,7 +385,7 @@ fn an_allocating_host_gets_the_allocation_ops_and_storage() {
             .unwrap_or_else(|e| panic!("drafter create: {e:?} {:?}", host.logs.borrow()));
         assert_eq!(
             crate::instance::dspark_allocation_ranks(instance.handle()),
-            allocates.then_some(4)
+            dspark.then_some(4)
         );
         // Create launches the allocation once on every rank, then waits.
         let streams = host.rank_streams.borrow().clone();
@@ -476,7 +402,7 @@ fn an_allocating_host_gets_the_allocation_ops_and_storage() {
                     ))
                 })
                 .count();
-            assert_eq!(launches, usize::from(allocates), "rank {rank}");
+            assert_eq!(launches, usize::from(dspark), "rank {rank}");
         }
         for symbol in symbols {
             let resolved = host
@@ -485,7 +411,7 @@ fn an_allocating_host_gets_the_allocation_ops_and_storage() {
                 .values()
                 .filter(|name| name.as_str() == symbol)
                 .count();
-            assert_eq!(resolved, if allocates { 4 } else { 0 }, "{symbol}");
+            assert_eq!(resolved, if dspark { 4 } else { 0 }, "{symbol}");
         }
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());

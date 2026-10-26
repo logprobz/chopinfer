@@ -611,8 +611,7 @@ impl Instance {
                 .iter()
                 .filter(|cubin| {
                     crate::serves(cubin.name, &shape)
-                        || self.dspark.as_ref().is_some_and(|d| d.allocation.is_some())
-                            && crate::Kernels::allocation_cubin(cubin.name)
+                        || self.dspark.is_some() && crate::Kernels::allocation_cubin(cubin.name)
                 })
                 .filter(|cubin| crate::Kernels::loads_indexer(cubin.name, self.config.kv.storage))
                 .filter(|cubin| {
@@ -991,7 +990,6 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
                 } else {
                     crate::lower::dspark::DraftMode::Greedy
                 },
-                config.verify_allocation,
             )
             .map_err(|error| {
                 log(&error);
@@ -1384,7 +1382,6 @@ pub(crate) fn dspark_allocation_ranks(handle: runtime_bundle_abi::BundleHandleV1
                 .dspark
                 .as_ref()?
                 .allocation
-                .as_ref()?
                 .ranks
                 .len(),
         )

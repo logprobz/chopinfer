@@ -379,14 +379,8 @@ impl Instance {
     /// drafts for the DSpark drafter.
     fn pack(&self, request: &[u8]) -> Result<PackedStep, BundleStatusV1> {
         let batch = BatchCodecV1::decode(request).map_err(|_| BundleStatusV1::InvalidArgument)?;
-        // Only a drafter that prepared the allocation (the host's
-        // verify_allocation option) takes an allocated step.
-        if batch.verify_allocation().is_some()
-            && self
-                .dspark
-                .as_ref()
-                .is_none_or(|device| device.allocation.is_none())
-        {
+        // Allocated verify steps require the drafter's prepared storage.
+        if batch.verify_allocation().is_some() && self.dspark.is_none() {
             return Err(BundleStatusV1::Unsupported);
         }
         if !batch.media().is_empty() && self.media.is_none() {

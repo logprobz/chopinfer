@@ -56,6 +56,28 @@ with no row. Missing keys select the existing baseline. The pins enumerate
 the operation, shape, capacity and uncovered launch ranges, so a newly
 untuned bucket produces a test diff.
 
+## Whole-bucket evaluation
+
+Decode graph buckets are 1, 2, 4, 8, 16 and 32. The weighted verify widths
+are 6, 8, 16, 32 and 64, but verification also serves exact intermediate
+widths. The fold registry serves short prefill through 64 rows. A gap
+between decode buckets is therefore not evidence that a row is unserved.
+Keep the measured small-row routes, including rows 2 through 7.
+
+An interval candidate uses a schedule already selected inside that
+interval. Every changed shape and row must pass byte twins, and its journal
+change must contain only declared symbol and grid substitutions. Served
+bitwise comparison and the matched-seed simplification rule decide adoption.
+Lab timing alone does not qualify a table change.
+
+The 2026-10-26 fold pair evaluation retained the finer N5120/K15360 rows
+in 17..32. The candidate's small timing differences were unresolved against
+the in-job A/A control, which reached 6.88%; row 32 regressed on both
+devices. Its existing prefetch islands remain. Split-to-prefetch intervals
+also remain separate because they change launch count and arguments.
+Reuse fold-count changes alter a scalar argument, so they cannot pass the
+symbol/grid-only proof used by this evaluation.
+
 ## Latent, indexer, F32 and dense prefill
 
 These operation sites retain the existing schedule choices:

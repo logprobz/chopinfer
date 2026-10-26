@@ -1434,7 +1434,7 @@ class Tuner(unittest.TestCase):
             (root / 'server.log').write_text('')
             image = root / 'rank.img'
             image.write_bytes(bytes(4096))
-            server = SimpleNamespace(directory=root, env={}, dry=True)
+            server = SimpleNamespace(directory=root, env={}, dry=False)
             control = faults.ColdEngram(server, {'images': [{'path': str(image), 'bytes': 4096,
                 'views': [{'name': 'rows', 'offset': 0, 'bytes': 4096}]}]})
             self.assertEqual(server.env['CHOPINFER_MAPPED_ROW_CONTROL'], str(control.path))
@@ -1452,6 +1452,12 @@ class Tuner(unittest.TestCase):
                     self.assertEqual(control.prepare()['epoch'], 1)
                     self.assertEqual(control.prepare()['epoch'], 2)
                     self.assertEqual(advice.call_count, 2)
+                # A dry run applies the control protocol but never advises real image pages.
+                server.dry = True
+                with patch('faults.time.sleep', side_effect=acknowledge), patch('os.posix_fadvise') as advice:
+                    self.assertTrue(control.prepare()['synthetic'])
+                    advice.assert_not_called()
+                server.dry = False
                 with patch('runner.remaining', return_value=.01), patch('os.posix_fadvise') as advice:
                     with self.assertRaisesRegex(RuntimeError, 'acknowledged'):
                         control.prepare()

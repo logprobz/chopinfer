@@ -196,8 +196,10 @@ class ColdEngram:
         if not ack or ack.get('reset_cache') is not True or ack.get('released_mapping_bytes', 0) <= 0:
             raise RuntimeError('mapped-row control lacks acknowledged cache reset and page-table release')
         before = self.sample()
-        for fd, _ in self.images:
-            os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+        # A dry run must not evict shared checkpoint pages a real job may be using.
+        if not self.server.dry:
+            for fd, _ in self.images:
+                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
         after = self.sample()
         warm = any(v['resident_fraction'] >= self.spec.get('warm_fraction', .1) for v in after)
         result = {'epoch': self.epoch, 'acknowledgement': ack, 'before_advice': before, 'after_advice': after,

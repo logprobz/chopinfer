@@ -171,6 +171,56 @@ fn undrafted_ready_steps_submit_sampling_before_joined_status() {
 }
 
 #[test]
+fn undrafted_joined_status_validates_before_legacy_emission() {
+    for invalid_status in [false, true] {
+        let (host, mut instance) = create(1);
+        prefill(&host, &mut instance, 1);
+        if invalid_status {
+            let mut packet = vec![0; FLASH.shape.csa.index_sources.len() * 4 + 4 * 8];
+            packet[0] = 1;
+            host.injected.replace(Some(packet));
+        }
+        let mut views = Views::default();
+        let from = host.journal.borrow().len();
+        let result = instance.execute(&decode(&[(1, 0, 3, 17)]), &mut views);
+        assert_eq!(result.is_err(), invalid_status);
+        assert_eq!(views.rows(), u32::from(!invalid_status));
+        assert_eq!(
+            host.journal.borrow()[from..]
+                .iter()
+                .filter(|line| line.starts_with("download "))
+                .count(),
+            1
+        );
+        assert!(
+            !host.journal.borrow()[from..]
+                .iter()
+                .any(|line| line == "ready-sample")
+        );
+        if invalid_status {
+            assert!(host.injected.borrow().is_none());
+            assert!(instance.commit().is_err());
+            assert_eq!(
+                crate::instance::dspark_context(instance.handle(), 1)
+                    .unwrap()
+                    .end,
+                3
+            );
+        } else {
+            instance.commit().unwrap();
+            assert_eq!(
+                crate::instance::dspark_context(instance.handle(), 1)
+                    .unwrap()
+                    .end,
+                4
+            );
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+}
+
+#[test]
 fn undrafted_status_errors_refuse_commit_after_private_ready_submission() {
     let index_bytes = FLASH.shape.csa.index_sources.len() * 4;
     let bytes = index_bytes + 4 * 8;

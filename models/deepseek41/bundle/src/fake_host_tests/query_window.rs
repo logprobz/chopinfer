@@ -156,18 +156,6 @@ pub(super) fn canonical(
         .collect()
 }
 
-pub(super) fn first_difference(what: &str, a: &[String], b: &[String]) {
-    if let Some(at) = (0..a.len().max(b.len())).find(|&i| a.get(i) != b.get(i)) {
-        panic!(
-            "{what} differ at {at} of {}/{}:\n{:?}\n{:?}",
-            a.len(),
-            b.len(),
-            a.get(at),
-            b.get(at)
-        );
-    }
-}
-
 #[test]
 fn one_row_decode_uses_twins_and_wider_steps_keep_the_pair() {
     for layout in KV_LAYOUTS {

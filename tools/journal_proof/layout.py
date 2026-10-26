@@ -323,7 +323,7 @@ class Witness:
     """One fixture's declared additions and removals, checked against the
     declaration, the locks and both inventories (auxproof.inventory)."""
 
-    def __init__(self, decl, modules, rule, a, b, ae=(), be=(), fixture=None):
+    def __init__(self, decl, modules, rule, a, b, ae=(), be=(), fixture=None, replacements=()):
         self.decl = decl
         import handles
         self.handles = handles.Witness(decl, fixture, rule, ae, be, a, b)
@@ -392,7 +392,11 @@ class Witness:
             for symbols in lists:
                 require(len(symbols) == len(set(symbols)), f'a load of {name} resolves a symbol twice')
         resolves = {'removed': rule.get('removed_resolves', []), 'added': rule.get('added_resolves', [])}
-        self.removed_resolves = self._resolves(resolves['removed'], a, self.removed_ids, modules, 'removed')
+        self.replacement_resolves = {i for i, row in a['resolves'].items() for replacement in replacements
+                                     if row[2] in a['modules'] and a['modules'][row[2]][2] == replacement['base']['name']
+                                     and row[3] in replacement['declaration'].get('removed_symbols', [])}
+        self.removed_resolves = self._resolves(resolves['removed'], a, self.removed_ids, modules, 'removed',
+                                              self.replacement_resolves)
         self.added_resolves = self._resolves(resolves['added'], b, self.added_ids, modules, 'added')
         # Resized allocations: base slot -> resource.
         self.resized = {}
@@ -419,19 +423,24 @@ class Witness:
                 require(count == res[name]['per_rank'], f'{rank_label(rank)} resizes {count} {name}, the declaration {res[name]["per_rank"]}')
 
     @staticmethod
-    def _resolves(entries, inv, module_ids, modules, side):
+    def _resolves(entries, inv, module_ids, modules, side, replacement_ids=frozenset()):
         ids = set()
         for d in entries:
             need(isinstance(d, dict) and set(d) == {'symbol', 'ids', 'count'} and isinstance(d['ids'], list)
                  and d['count'] == len(d['ids']) == len(set(d['ids'])) > 0, f'invalid {side} resolve entry')
             for i in d['ids']:
                 row = inv['resolves'].get(i)
-                require(row is not None and row[3] == d['symbol'] and row[2] in module_ids,
+                require(row is not None and row[3] == d['symbol'] and (row[2] in module_ids or i in replacement_ids),
                         f'{side} resolve {i} of {d["symbol"]} is not owned by a {side} module')
+                if i in replacement_ids:
+                    # derive checks exact IDs/counts, and module_plans checks
+                    # the authenticated payload, entries and retained order.
+                    ids.add(i)
+                    continue
                 symbols = modules[inv['modules'][row[2]][2]][1]['symbols']
                 require(d['symbol'] in symbols, f'{d["symbol"]} is not an entry of its locked module')
                 ids.add(i)
-        every = {i for i, row in inv['resolves'].items() if row[2] in module_ids}
+        every = {i for i, row in inv['resolves'].items() if row[2] in module_ids} | replacement_ids
         require(every == ids, f'the {side} modules own resolves the witness does not list')
         return ids
 
@@ -801,7 +810,9 @@ class Device:
         resized_notes = {alloc_a[slot][0]: (slot, w) for slot, w in witness.resized.items()}
         self.expected, self.changes = [], []
         last = {}
-        dropped = witness.removed_ids | witness.removed_resolves
+        # Keep replacement runs intact for rewrite_resolves, including its
+        # configure, completeness and provenance checks.
+        dropped = witness.removed_ids | (witness.removed_resolves - witness.replacement_resolves)
         for i, line in enumerate(notes_a):
             self.note_index = i
             tags = collections.Counter()

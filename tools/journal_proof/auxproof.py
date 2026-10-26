@@ -204,7 +204,7 @@ def derive(base_events,head_events,rule,replacements=(),layout=None,fixture=None
     witness=None
     if layout is not None:
         from layout import Witness
-        witness=Witness(layout[0],layout[1],rule,a,b,base_events,head_events,fixture)
+        witness=Witness(layout[0],layout[1],rule,a,b,base_events,head_events,fixture,replacements)
         inserted|=set(witness.added)|witness.handles.added
     deleted=set()
     replacement_by_name={r['base']['name']:r['declaration'] for r in replacements}
@@ -383,6 +383,7 @@ def prove(base,head,fixture,policies,base_aux,head_aux,rule,replacements=(),comp
             expected,trace,originals,observed,kept,changes=declared.owner_lines(device,notes_b,base_positions,head_positions,base_lines)
             validate_spans(expected,context,originals)
             counter.update(changes)
+            expected,trace=rewrite_resolves(expected,plans,counter,trace)
             return [declared.resolve_placeholders(mapper(l)) for l in expected],observed,trace,kept
 
         # One typed mapping for create, pinned and history operations: every

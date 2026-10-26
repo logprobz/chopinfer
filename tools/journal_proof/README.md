@@ -447,7 +447,13 @@ declaration is committed in the change itself. `--declaration-revision` is
 only for replaying a change that has already landed, such as checking an old
 change against a declaration written afterwards. A
 layout spec carries no journal policies other than declared `text_edits`, no
-create, history or allocation policies, module replacements or piece policy.
+create, history or allocation policies, and no graph piece policy.
+An operations-only layout may accompany authenticated `module_replacements`,
+for example to remove exact teardown lines when a retained module loses
+unused symbols. Its removed resolves keep the replacement path's exact
+ID/count, locked payload, symbol ownership, configure and ordering checks.
+This combination admits no layout resources, kernels, collectives, handles,
+module additions/removals or activations.
 
 Each fixture's auxiliary rule holds the witness: `added_allocations`
 (resource, head handle, rank), `resized_allocations` (resource, base and

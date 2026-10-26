@@ -67,8 +67,10 @@ def read_layout(repo,spec,base,head,revision=None):
     at=resolve(repo,revision) if revision is not None else head['commit']
     decl,data=declared.read(repo,at,spec['layout']['path'],spec['layout']['sha256'])
     modules=declared.authenticate(repo,base['commit'],head['commit'],base['root'],decl)
-    need(not spec.get('module_replacements') and 'graph_piece_policy' not in spec,
-         'a layout spec declares module changes in the layout declaration, not module replacements or a piece policy')
+    need('graph_piece_policy' not in spec, 'a layout spec takes exact declarations, not a graph piece policy')
+    if spec.get('module_replacements'):
+        need(not any(decl.get(k) for k in ('removed_modules','added_modules','resources','changes','handles','module_activations')),
+             'module replacements require an operations-only layout')
     for name,policy in spec.get('journals',{}).items():
         need(set(policy)<={'text_edits'} and name in decl['text_journals'],
              f'{name}: under a layout declaration only its declared text journals carry a policy (text_edits)')

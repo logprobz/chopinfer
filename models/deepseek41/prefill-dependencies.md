@@ -16,6 +16,11 @@ unless another selected anchor or the prompt end comes first. This mechanism
 does not enable timing-budget cuts. TBT-selected cuts remain a separate
 opt-in serving policy and are never the default here.
 
+A shorter grid hit does not suppress a longer observed shared-prefix cut,
+even when the request resumes within its final chunk. The next request can
+then restore the longer shared anchor. Bundles without the capability keep
+their existing final-chunk behavior.
+
 Every extra endpoint is an actual chunk end. Its plan closes dependencies
 from all 136 physical target-ring cells and the raw DSpark history, including
 the six cells preserved from an earlier large commit. The aligned input cone

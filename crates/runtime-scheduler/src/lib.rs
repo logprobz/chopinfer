@@ -3612,6 +3612,8 @@ impl Scheduler {
     /// within one chunk of its end captures no such blocks: the anchor it
     /// resumed from serves the prompts that share them, and a capture would
     /// split the final chunk, which would then differ from the first send's.
+    /// A bundle declaring complete scheduler cuts can capture the longer
+    /// observed prefix even after a shorter grid hit within that final chunk.
     fn capture_points(&mut self, index: usize, hit: usize) -> Vec<usize> {
         let Some(chain) = self.requests[index]
             .prefix
@@ -3669,7 +3671,10 @@ impl Scheduler {
             / granule
             * granule;
         let resumes_final_chunk = hit > 0 && prompt - hit <= chunk;
-        if shared > hit && !resumes_final_chunk && absent(shared) {
+        if shared > hit
+            && (!resumes_final_chunk || self.requests[index].prefill_cuts)
+            && absent(shared)
+        {
             points.push(shared);
         }
         // The prompt end, or with a granule the last multiple of it: an

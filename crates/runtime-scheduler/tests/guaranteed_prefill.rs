@@ -307,3 +307,38 @@ fn terminal_decode_publishes_complete_response_state_for_the_next_turn() {
     assert_eq!(s.cached_tokens(RequestId::new(2)).unwrap(), 66);
     s.audit().unwrap();
 }
+
+#[test]
+fn declared_cuts_refresh_shared_prefixes_after_a_shorter_grid_hit() {
+    for (guaranteed, cuts, final_hit) in
+        [(false, false, 384), (true, false, 256), (true, true, 384)]
+    {
+        let mut s = scheduler_with_cuts(256, guaranteed, cuts);
+        let first = (0..449).collect::<Vec<u32>>();
+        submit(&mut s, 1, &first, false);
+        finish(&mut s, 1);
+        let mut second = first[..384].to_vec();
+        second.extend(1000..1065);
+        submit(&mut s, 2, &second, false);
+        s.admit().unwrap();
+        let hit = s.cached_tokens(RequestId::new(2)).unwrap();
+        assert_eq!(hit, if guaranteed { 256 } else { 0 });
+        if hit > 0 {
+            s.complete_prefix_restore(RequestId::new(2)).unwrap();
+        }
+        let (_, captures) = finish(&mut s, 2);
+        assert_eq!(
+            captures.contains(&384),
+            final_hit == 384,
+            "guaranteed={guaranteed}, cuts={cuts}"
+        );
+        let mut third = first[..384].to_vec();
+        third.extend(2000..2065);
+        submit(&mut s, 3, &third, false);
+        s.admit().unwrap();
+        assert_eq!(s.cached_tokens(RequestId::new(3)).unwrap(), final_hit);
+        s.complete_prefix_restore(RequestId::new(3)).unwrap();
+        finish(&mut s, 3);
+        s.audit().unwrap();
+    }
+}

@@ -65,7 +65,6 @@ fn validate(batch: &BatchRequestV1, boundaries: &[Boundary], cuts: bool) -> Resu
             || item.is_decode()
             || item.is_verify()
             || item.prompt_rows()
-            || item.anchor()
             || boundary.prompt_tokens == 0
             || batch
                 .media()
@@ -94,6 +93,12 @@ fn validate(batch: &BatchRequestV1, boundaries: &[Boundary], cuts: bool) -> Resu
             return Err(Error::Contract(
                 "prefill append does not end at its guaranteed boundary",
             ));
+        }
+        // A bundle that declares cuts may keep a prompt-ending item's state at
+        // its anchor inside the item (`BATCH_ITEM_FLAG_ANCHOR_V3`) when the
+        // host offers anchor items on the grid; the grid-only contract never.
+        if item.anchor() && !(cuts && end == boundary.prompt_tokens) {
+            return Err(Error::Contract("invalid prefill boundary item"));
         }
     }
     Ok(())
@@ -428,5 +433,58 @@ mod tests {
         // Each request has one boundary per step.
         let original = cut_batch(&[item(3, 0, 512, false)]);
         assert!(encode_with_cuts(&original, &[cut(3, 9000, 512), cut(3, 9000, 512)]).is_err());
+    }
+
+    /// Only a cuts envelope carries an anchor item, and only one ending its
+    /// prompt: the bundle keeps its state at the granule inside it.
+    #[test]
+    fn anchor_items_need_cuts_and_their_prompt_end() {
+        let anchored = |previous: u64, rows: u32| {
+            BatchRequestV1::new(
+                BatchWireVersionV1::V3,
+                vec![
+                    BatchItemV1::new(7, false, rows, true, vec![1; rows as usize])
+                        .with_anchor(true),
+                ],
+                vec![BatchAppendV1::new(
+                    previous,
+                    u64::from(rows),
+                    previous + u64::from(rows),
+                    vec![1; (previous + u64::from(rows)).div_ceil(64) as usize],
+                    None,
+                )],
+            )
+            .encode()
+            .unwrap()
+        };
+        let end = Boundary {
+            request_id: 7,
+            prompt_tokens: 789,
+            chunk_end: 789,
+            chunk_tokens: 8192,
+        };
+        let original = anchored(0, 789);
+        assert!(encode(&original, &[end]).is_err());
+        let bytes = encode_with_cuts(&original, &[end]).unwrap();
+        assert!(decode(&bytes).is_err());
+        let read = decode_with_cuts(&bytes).unwrap();
+        assert!(read.batch.items()[0].anchor());
+        assert_eq!(read.boundaries, [end]);
+        // The batch codec already refuses an anchor on a chunk that stops
+        // short of its prompt end, and so does the envelope.
+        assert!(
+            BatchRequestV1::new(
+                BatchWireVersionV1::V3,
+                vec![BatchItemV1::new(7, false, 768, false, vec![1; 768]).with_anchor(true)],
+                vec![BatchAppendV1::new(0, 768, 768, vec![1; 12], None)],
+            )
+            .encode()
+            .is_err()
+        );
+        let short = Boundary {
+            prompt_tokens: 8257,
+            ..end
+        };
+        assert!(encode_with_cuts(&original, &[short]).is_err());
     }
 }

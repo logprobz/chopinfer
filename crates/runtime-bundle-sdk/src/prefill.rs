@@ -332,4 +332,101 @@ mod tests {
             }
         }
     }
+
+    /// One prefill item from `previous` taking `rows` rows.
+    fn item(id: u64, previous: u64, rows: u32, logits: bool) -> (BatchItemV1, BatchAppendV1) {
+        (
+            BatchItemV1::new(id, false, rows, logits, vec![1; rows as usize]),
+            BatchAppendV1::new(
+                previous,
+                u64::from(rows),
+                previous + u64::from(rows),
+                vec![1],
+                None,
+            ),
+        )
+    }
+
+    fn cut_batch(items: &[(BatchItemV1, BatchAppendV1)]) -> Vec<u8> {
+        BatchRequestV1::new(
+            BatchWireVersionV1::V3,
+            items.iter().map(|(item, _)| item.clone()).collect(),
+            items.iter().map(|(_, append)| append.clone()).collect(),
+        )
+        .encode()
+        .unwrap()
+    }
+
+    fn cut(id: u64, prompt_tokens: u64, chunk_end: u64) -> Boundary {
+        Boundary {
+            request_id: id,
+            prompt_tokens,
+            chunk_end,
+            chunk_tokens: 8192,
+        }
+    }
+
+    /// Timing cuts end a grid chunk early: small, repeated, off-grid and
+    /// packed earlier ends are admitted only through the cuts entry, and
+    /// an end past the next grid boundary or the prompt, a non-final item
+    /// with logits, a final item without them, an empty item and a
+    /// repeated request are refused.
+    #[test]
+    fn timing_cut_envelopes_admit_only_complete_earlier_ends() {
+        // A 64-row non-final cut, repeated 512-row cuts, an off-grid
+        // restored start and the step that reaches the grid boundary.
+        for (previous, rows, prompt) in [
+            (0, 64, 9000),
+            (512, 512, 9000),
+            (7168, 512, 9000),
+            (529, 495, 2029),
+            (7680, 512, 9000),
+            (8192, 512, 9000),
+        ] {
+            let original = cut_batch(&[item(3, previous, rows, false)]);
+            let boundary = cut(3, prompt, previous + u64::from(rows));
+            let bytes = encode_with_cuts(&original, &[boundary]).unwrap();
+            assert_eq!(decode_with_cuts(&bytes).unwrap().boundaries, [boundary]);
+            let grid = previous / 8192 * 8192 + 8192;
+            assert_eq!(
+                encode(&original, &[boundary]).is_ok(),
+                boundary.chunk_end == grid.min(prompt)
+            );
+            assert_eq!(
+                decode(&bytes).is_ok(),
+                boundary.chunk_end == grid.min(prompt)
+            );
+        }
+        // Two requests cut at different ends in one packed step, beside a
+        // prompt end with logits.
+        let packed = cut_batch(&[
+            item(3, 1024, 512, false),
+            item(4, 529, 31, false),
+            item(5, 7936, 64, true),
+        ]);
+        let boundaries = [cut(3, 9000, 1536), cut(4, 2029, 560), cut(5, 8000, 8000)];
+        let bytes = encode_with_cuts(&packed, &boundaries).unwrap();
+        assert_eq!(decode_with_cuts(&bytes).unwrap().boundaries, boundaries);
+        assert!(decode(&bytes).is_err());
+        for (items, boundary) in [
+            // Past the next grid boundary.
+            (vec![item(3, 7936, 512, false)], cut(3, 9000, 8448)),
+            // Past the prompt end.
+            (vec![item(3, 1024, 512, true)], cut(3, 1300, 1536)),
+            // A non-final cut with logits, and a final chunk without them.
+            (vec![item(3, 0, 512, true)], cut(3, 9000, 512)),
+            (vec![item(3, 1024, 476, false)], cut(3, 1500, 1500)),
+            // An end the append does not reach.
+            (vec![item(3, 0, 512, false)], cut(3, 9000, 576)),
+        ] {
+            let original = cut_batch(&items);
+            assert!(
+                encode_with_cuts(&original, &[boundary]).is_err(),
+                "{boundary:?}"
+            );
+        }
+        // Each request has one boundary per step.
+        let original = cut_batch(&[item(3, 0, 512, false)]);
+        assert!(encode_with_cuts(&original, &[cut(3, 9000, 512), cut(3, 9000, 512)]).is_err());
+    }
 }

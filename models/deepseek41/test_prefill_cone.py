@@ -94,6 +94,46 @@ class Cone(unittest.TestCase):
                 writers = pc.history_writers([c["end"] for c in plan["chunks"]], [4032])[4032]
                 self.assertEqual(tuple(cell[0] if cell is not None else None for cell in after[0]), writers)
 
+    def test_timing_cuts_keep_uncut_outputs_and_differ_only_in_six_unread_cells(self):
+        # Sixteen 512-row timing cuts to the grid and two past it, against
+        # one 8192-row commit and its tail.
+        cuts = list(range(512, 8192, 512)) + [8704, 8960]
+        for dspark in [False, True]:
+            cut = pc.guaranteed(9000, 8192, dspark, cuts=cuts)
+            whole = pc.guaranteed(9000, 8192, dspark)
+            self.assertEqual([c["end"] for c in cut["chunks"]], cuts[:15] + [8192, 8704, 8960, 9000])
+            sparse = fake_chunks(cut, True)
+            self.assertEqual(sparse, fake_chunks(cut, False))
+            uncut = fake_chunks(whole, True)
+            # The prompt's output is the uncut schedule's.
+            self.assertEqual(sparse[0], uncut[0])
+            # A restore at any cut continues to the same output and state.
+            for at in [0, 7, 14, 15, 16]:
+                hit = fake_chunks({**cut, "chunks": cut["chunks"][at + 1:]}, True, sparse[1][at])
+                self.assertEqual(hit, (sparse[0], sparse[1][at + 1:]))
+            # At the grid boundary every target ring cell holds the same
+            # position and value; the raw history differs only in cells
+            # 18-23, which hold 7656-7661 after the cuts and nothing after
+            # one large commit.
+            at_grid, whole_grid = sparse[1][15], uncut[1][0]
+            self.assertEqual(at_grid[0], whole_grid[0])
+            for layer, (left, right) in enumerate(zip(at_grid[1], whole_grid[1])):
+                differing = [cell for cell in range(134) if left[cell] != right[cell]]
+                if not dspark:
+                    self.assertEqual(differing, [])
+                    continue
+                self.assertEqual(differing, list(range(18, 24)), layer)
+                self.assertEqual([left[c][0] for c in differing], list(range(7656, 7662)))
+                self.assertTrue(all(right[c] is None for c in differing))
+                # Every cell a restored drafter reads, the last 128
+                # positions, is equal.
+                self.assertEqual({left[c] for c in range(134) if c not in differing},
+                                 {right[c] for c in range(134) if c not in differing})
+                self.assertTrue(all(8064 <= left[c][0] < 8192 for c in range(134) if c not in differing))
+            self.assertEqual(pc.history_writers([c["end"] for c in cut["chunks"]], [8192])[8192][18:24],
+                             tuple(range(7656, 7662)))
+            self.assertEqual(pc.history_writers([8192, 9000], [8192])[8192][18:24], (None,) * 6)
+
     def test_extra_endpoints_must_be_internal_granules(self):
         for cuts in [[0], [63], [8257], [8320]]:
             with self.assertRaises(ValueError):

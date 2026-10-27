@@ -367,25 +367,18 @@ mod tests {
         }
     }
 
-    #[test]
-    fn scheduler_endpoint_cones_match_the_python_oracle() {
+    /// Plans every chunk of the oracle's guaranteed schedule for `tokens`
+    /// with extra `cuts`, compares each layer's rows with it and checks the
+    /// sparse plan against full fake kernels. Returns the chunks checked.
+    fn matches_the_python_oracle(tokens: u32, cuts: &[u32]) -> usize {
         let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../prefill_cone.py");
         let output = std::process::Command::new("python3")
             .arg("-B")
             .arg(script)
-            .args([
-                "--contract",
-                "guaranteed",
-                "--chunk",
-                "8192",
-                "--tokens",
-                "8257",
-                "--cuts",
-                "64",
-                "192",
-                "4032",
-                "8064",
-            ])
+            .args(["--contract", "guaranteed", "--chunk", "8192", "--tokens"])
+            .arg(tokens.to_string())
+            .arg("--cuts")
+            .args(cuts.iter().map(u32::to_string))
             .output()
             .expect("the Python dependency oracle starts");
         assert!(
@@ -404,7 +397,7 @@ mod tests {
                     rows: 0..end - first,
                     prefix: first,
                 };
-                let logits = if end == 8257 {
+                let logits = if end == tokens {
                     vec![end - first - 1]
                 } else {
                     Vec::new()
@@ -437,6 +430,54 @@ mod tests {
                 checked += 1;
             }
         }
-        assert_eq!(checked, 12);
+        checked
+    }
+
+    #[test]
+    fn scheduler_endpoint_cones_match_the_python_oracle() {
+        assert_eq!(matches_the_python_oracle(8257, &[64, 192, 4032, 8064]), 12);
+    }
+
+    /// Timing cuts end grid chunks at granule multiples the TBT cap
+    /// reaches: repeated 512-row cuts to the grid and past it, and small
+    /// 64-row cuts before the rounded prompt-end anchor.
+    #[test]
+    fn timing_cut_cones_match_the_python_oracle() {
+        let mut repeated: Vec<u32> = (1..16).map(|n| n * 512).collect();
+        repeated.extend([8704, 8960]);
+        assert_eq!(matches_the_python_oracle(9000, &repeated), 2 * 19);
+        assert_eq!(
+            matches_the_python_oracle(1500, &[64, 128, 192, 704, 1216, 1472]),
+            2 * 7
+        );
+    }
+
+    /// Packed timing-cut chunks of several requests, from off-granule and
+    /// grid starts, never read a skipped row.
+    #[test]
+    fn packed_timing_cuts_never_read_a_skipped_row() {
+        let items = [
+            Item {
+                rows: 0..495,
+                prefix: 529,
+            },
+            Item {
+                rows: 495..1007,
+                prefix: 7168,
+            },
+            Item {
+                rows: 1007..1071,
+                prefix: 8192,
+            },
+            Item {
+                rows: 1071..1107,
+                prefix: 1472,
+            },
+        ];
+        for dspark in [false, true] {
+            let plan = Plan::new(&FLASH, &items, &[1106], dspark, 64).unwrap();
+            assert_eq!(plan.endpoints, [1024, 7680, 8256, 1508]);
+            assert_eq!(fake(&items, &plan, true), fake(&items, &plan, false));
+        }
     }
 }

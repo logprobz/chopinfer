@@ -1998,6 +1998,33 @@ const chop_bundle_prefill_table_v1 *chop_bundle_prefill_api_v1(void);
  * new hosts retain the grid contract for bundles that do not enable it. */
 const chop_bundle_prefill_table_v1 *chop_bundle_prefill_cuts_api_v1(void);
 
+/* Optional per-instance anchor-item allowance on a guaranteed grid with
+ * cuts. An instance keeps the state of up to anchor_items prompt-ending
+ * prefill items per step at the last prefill-granule multiple strictly
+ * inside each (the V3 batch item anchor flag), so that anchor needs no
+ * chunk end; such items arrive in the cuts envelope. When the export is
+ * present its value replaces the manifest's anchor_items for the instance;
+ * zero keeps every such anchor at a chunk end. A nonzero allowance needs an
+ * enabled cuts policy. Old hosts ignore this export; hosts use the manifest
+ * value for bundles without it. Queries leave request state unchanged. */
+typedef struct chop_bundle_prefill_anchors_v1 {
+  uint32_t struct_size;
+  chop_bundle_status_v1 status;
+  uint32_t anchor_items;
+  uint32_t reserved;
+} chop_bundle_prefill_anchors_v1;
+
+typedef chop_bundle_prefill_anchors_v1 (*chop_bundle_describe_prefill_anchors_fn_v1)(
+    chop_bundle_handle_v1 handle);
+
+typedef struct chop_bundle_prefill_anchors_table_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  chop_bundle_describe_prefill_anchors_fn_v1 describe_prefill_anchors_v1;
+} chop_bundle_prefill_anchors_table_v1;
+
+const chop_bundle_prefill_anchors_table_v1 *chop_bundle_prefill_anchors_api_v1(void);
+
 #ifdef __cplusplus
 }
 #endif

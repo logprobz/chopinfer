@@ -3221,6 +3221,7 @@ pub struct BundleApiV1 {
     raw: BundleRawApiV1,
     prefill: Option<prefill::BundlePrefillApiV1>,
     prefill_cuts: Option<prefill::BundlePrefillApiV1>,
+    prefill_anchors: Option<prefill::BundlePrefillAnchorsApiV1>,
     device_results: Option<device_results::BundleExecuteDeviceResultsFnV1>,
     mapped_device_results: Option<device_results::BundleExecuteMappedDeviceResultsFnV1>,
     retire_request_v1: Option<BundleRetireRequestFnV1>,
@@ -3236,6 +3237,15 @@ impl BundleApiV1 {
     ) -> Result<Self, BundleAbiError> {
         api.validate()?;
         self.prefill_cuts = Some(api);
+        Ok(self)
+    }
+
+    pub fn with_prefill_anchors_api(
+        mut self,
+        api: prefill::BundlePrefillAnchorsApiV1,
+    ) -> Result<Self, BundleAbiError> {
+        api.validate()?;
+        self.prefill_anchors = Some(api);
         Ok(self)
     }
 
@@ -3286,6 +3296,7 @@ impl BundleApiV1 {
             raw,
             prefill: None,
             prefill_cuts: None,
+            prefill_anchors: None,
             device_results: None,
             mapped_device_results: None,
             retire_request_v1: None,
@@ -3606,6 +3617,24 @@ impl BundleInstanceV1 {
             return Err(BundleAbiError::InvalidRange("prefill cuts policy"));
         }
         Ok(policy)
+    }
+
+    /// The instance's anchor-item allowance on its guaranteed grid, or
+    /// `None` when the bundle does not export one and the manifest's anchor
+    /// items apply. A nonzero allowance needs an enabled cuts policy.
+    pub fn prefill_anchor_items(&self) -> Result<Option<u32>, BundleAbiError> {
+        if self.is_poisoned() {
+            return Err(BundleAbiError::Poisoned);
+        }
+        let Some(api) = self.api.prefill_anchors else {
+            return Ok(None);
+        };
+        let policy = api.describe_prefill_anchors_v1.expect("validated callback")(self.handle);
+        policy.validate()?;
+        if policy.anchor_items != 0 && self.prefill_cuts_policy()?.chunk_tokens == 0 {
+            return Err(BundleAbiError::InvalidRange("prefill anchors policy"));
+        }
+        Ok(Some(policy.anchor_items))
     }
 
     pub fn execute_prefill_cuts<S: LogitsRowSinkV1>(

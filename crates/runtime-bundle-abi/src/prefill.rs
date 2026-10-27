@@ -87,9 +87,113 @@ impl BundlePrefillApiV1 {
     }
 }
 
+/// Optional per-instance anchor-item allowance on a guaranteed grid with
+/// cuts. An instance keeps the state of up to `anchor_items` prompt-ending
+/// prefill items per step at the last prefill-granule multiple strictly
+/// inside each (`BATCH_ITEM_FLAG_ANCHOR_V3`), so that anchor needs no chunk
+/// end. When present it replaces the manifest's `anchor_items` for the
+/// instance; zero keeps every such anchor at a chunk end. A nonzero
+/// allowance requires an enabled cuts policy. Old hosts ignore the export,
+/// and hosts use the manifest value for bundles without it.
+pub const PREFILL_ANCHORS_API_SYMBOL_V1: &[u8] = b"chop_bundle_prefill_anchors_api_v1\0";
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BundlePrefillAnchorsV1 {
+    pub struct_size: u32,
+    pub status: BundleStatusV1,
+    pub anchor_items: u32,
+    pub reserved: u32,
+}
+
+impl BundlePrefillAnchorsV1 {
+    pub const fn kept(anchor_items: u32) -> Self {
+        Self {
+            struct_size: std::mem::size_of::<Self>() as u32,
+            status: BundleStatusV1::Success,
+            anchor_items,
+            reserved: 0,
+        }
+    }
+
+    pub const fn failure(status: BundleStatusV1) -> Self {
+        Self {
+            status,
+            ..Self::kept(0)
+        }
+    }
+
+    pub fn validate(self) -> Result<(), BundleAbiError> {
+        if self.struct_size < std::mem::size_of::<Self>() as u32 || self.reserved != 0 {
+            return Err(BundleAbiError::InvalidRange("prefill anchors policy"));
+        }
+        crate::status_result(self.status)
+    }
+}
+
+pub type BundleDescribePrefillAnchorsFnV1 = extern "C" fn(BundleHandleV1) -> BundlePrefillAnchorsV1;
+/// The caller must retain the native module while calling its getter and
+/// reading its immutable table, as for the prefill table.
+// SAFETY-REVIEWED: this declares the C getter contract; it executes no unsafe
+// operation. The loader retains the module and validates the returned table.
+pub type BundleGetPrefillAnchorsApiFnV1 =
+    unsafe extern "C" fn() -> *const BundlePrefillAnchorsApiV1;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct BundlePrefillAnchorsApiV1 {
+    pub struct_size: u32,
+    pub abi_version: u32,
+    pub describe_prefill_anchors_v1: Option<BundleDescribePrefillAnchorsFnV1>,
+}
+
+impl BundlePrefillAnchorsApiV1 {
+    pub fn validate(self) -> Result<(), BundleAbiError> {
+        crate::validate_table_header(
+            "prefill anchors API",
+            self.struct_size,
+            std::mem::size_of::<Self>() as u32,
+            self.abi_version,
+        )?;
+        if self.describe_prefill_anchors_v1.is_none() {
+            return Err(BundleAbiError::MissingApiCallback("prefill anchors API"));
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn anchor_policies_validate_status_size_and_reserved_fields() {
+        assert_eq!(std::mem::size_of::<BundlePrefillAnchorsV1>(), 16);
+        for items in [0, 1, 8] {
+            let policy = BundlePrefillAnchorsV1::kept(items);
+            policy.validate().unwrap();
+            assert!(
+                BundlePrefillAnchorsV1 {
+                    reserved: 1,
+                    ..policy
+                }
+                .validate()
+                .is_err()
+            );
+            assert!(
+                BundlePrefillAnchorsV1 {
+                    struct_size: 15,
+                    ..policy
+                }
+                .validate()
+                .is_err()
+            );
+        }
+        assert_eq!(
+            BundlePrefillAnchorsV1::failure(BundleStatusV1::InvalidState).validate(),
+            Err(BundleAbiError::Status(BundleStatusV1::InvalidState))
+        );
+    }
 
     #[test]
     fn policies_validate_status_size_and_reserved_fields() {

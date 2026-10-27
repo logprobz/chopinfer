@@ -188,6 +188,7 @@ fn shard<S: Startup>(
     cases: &[Case],
     full: bool,
 ) -> (Vec<audit::Sample>, Vec<audit::Tag>, f64) {
+    let _diagnostics = crate::launch_rows::suspend();
     let mut budget = budget::Budget::begin(&serving.profile, full);
     let setup = Instant::now();
     let _metadata = kernel_core::route::Metadata::enable();

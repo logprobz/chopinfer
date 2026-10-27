@@ -48,6 +48,28 @@ class TraceReviewTests(unittest.TestCase):
             self.assertEqual(call.kwargs['stall_threshold_ms'], 50)
             self.assertEqual(call.kwargs['burst_window_ms'], 20)
 
+    def test_analysis_excludes_prefill_and_control_waits(self):
+        from agentic_trace_analysis import gaps
+        output = [dict(at=at, kinds=['content']) for at in (1, 1.005, 1.15)]
+        row = dict(output_events=output, burst_window_ms=20,
+                   sse_events=[dict(at=at) for at in (0, 1, 1.005, 1.15, 1.9, 2.1)])
+        values = gaps(row, [(0, .99)])['100']
+        self.assertEqual(values['eligible_gaps'], 1)
+        self.assertEqual(values['count'], 1)
+        self.assertAlmostEqual(values['total_gap_ms'], 150)
+        self.assertEqual(values['prefill_overlap_ms'], 0)
+
+    def test_legacy_output_timing_and_missing_evidence(self):
+        from agentic_trace_analysis import gaps, raw_sse_gaps
+        row = dict(started=0, ttft_ms=1000, output_deltas=3,
+                   inter_delta_ms=[5, 145], output_event_kinds=[['content']] * 3,
+                   burst_window_ms=20, sse_events=[dict(at=at) for at in (0, 1, 1.005, 1.15, 2)])
+        self.assertAlmostEqual(gaps(row, [])['100']['total_gap_ms'], 150)
+        self.assertGreater(raw_sse_gaps(row, [])['100']['count'], 1)
+        del row['output_event_kinds']
+        with self.assertRaisesRegex(ValueError, 'output event timing unavailable'):
+            gaps(row, [])
+
 
 
 if __name__ == '__main__':

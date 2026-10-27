@@ -748,6 +748,7 @@ def stream_request(client, body, deadline, stall_threshold_ms=100, burst_window_
     row['inter_delta_summary_ms'] = distribution(row['inter_delta_ms'])
     row.update(burst_metrics(output_events, burst_window_ms, stall_threshold_ms))
     row['output_event_kinds'] = [event['kinds'] for event in output_events]
+    row['output_events'] = output_events
     row['tpot_ms'] = ((row['elapsed_seconds'] * 1000 - row['ttft_ms']) / (row['output_tokens'] - 1)
                       if row['ttft_ms'] is not None and (row['output_tokens'] or 0) > 1 and not row['failure'] else None)
     row['stall_threshold_ms'] = stall_threshold_ms

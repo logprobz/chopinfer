@@ -318,7 +318,7 @@ def stall_stats(gaps, threshold_ms):
                 total_stall_ms=sum(stalls), threshold_ms=threshold_ms)
 
 
-def burst_metrics(events, window_ms, threshold_ms):
+def output_bursts(events, window_ms):
     """Adjacent output within window forms a burst; channel/tool transitions are flagged.
 
     Events from one socket read share a timestamp and are always grouped. The
@@ -336,6 +336,17 @@ def burst_metrics(events, window_ms, threshold_ms):
         else:
             bursts.append(dict(first=at, last=at, events=1, first_kinds=kinds,
                                last_kinds=kinds, transition=len(kinds) > 1))
+    return bursts
+
+
+def burst_intervals(events, window_ms):
+    """Intervals between burst starts, sharing the acceptance grouping rule."""
+    bursts = output_bursts(events, window_ms)
+    return [(a['first'], b['first']) for a, b in zip(bursts, bursts[1:])]
+
+
+def burst_metrics(events, window_ms, threshold_ms):
+    bursts = output_bursts(events, window_ms)
     gaps = []
     for a, b in zip(bursts, bursts[1:]):
         suspect = a['transition'] or b['transition'] or a['last_kinds'] != b['first_kinds']

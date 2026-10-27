@@ -118,7 +118,7 @@ class TraceTests(unittest.TestCase):
 
     def test_analysis_overlap_and_missing_energy(self):
         from agentic_trace_analysis import gaps
-        row = {'sse_events': [{'at': 1}, {'at': 1.2}, {'at': 2.5}]}
+        row = {'output_events': [dict(at=at, kinds=['content']) for at in (1, 1.2, 2.5)]}
         result = gaps(row, [(1.1, 1.3), (1.2, 1.4)])
         self.assertEqual(result['100']['count'], 2)
         self.assertAlmostEqual(result['100']['total_gap_ms'], 1500)

@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from agentic_metrics import distribution
+from agentic_metrics import burst_intervals, distribution
 
 
 def union(intervals):
@@ -19,8 +19,37 @@ def union(intervals):
     return merged
 
 
-def gaps(row, prefills):
-    intervals = list(zip([e['at'] for e in row['sse_events']], [e['at'] for e in row['sse_events']][1:]))
+def output_events(row):
+    """Use output timestamps, or reconstruct an older receipt's output timing.
+
+    A token-ID/control SSE event is not evidence of an emitted text delta.
+    Missing output timing stays unavailable instead of falling back to SSE.
+    """
+    if 'output_events' in row:
+        return row['output_events']
+    count = row.get('output_deltas')
+    if count == 0:
+        return []
+    kinds, deltas = row.get('output_event_kinds', []), row.get('inter_delta_ms', [])
+    if not count or len(kinds) != count or len(deltas) != count - 1 or row.get('ttft_ms') is None:
+        raise ValueError('output event timing unavailable')
+    times = [row['started'] + row['ttft_ms'] / 1000]
+    for delta in deltas:
+        times.append(times[-1] + delta / 1000)
+    return [dict(at=at, kinds=kind) for at, kind in zip(times, kinds)]
+
+
+def gaps(row, prefills, window_ms=None):
+    window_ms = row.get('burst_window_ms', 2) if window_ms is None else window_ms
+    return interval_gaps(burst_intervals(output_events(row), window_ms), prefills)
+
+
+def raw_sse_gaps(row, prefills):
+    times = [event['at'] for event in row['sse_events']]
+    return interval_gaps(list(zip(times, times[1:])), prefills)
+
+
+def interval_gaps(intervals, prefills):
     prefills = union(prefills)
     result = {}
     for threshold in (50, 100, 250, 1000):
@@ -81,10 +110,19 @@ def analyze(level, steps=(), power=()):
     output = sum(t['output_tokens'] or 0 for t in rows)
     valid = [t for t in rows if t['prompt_tokens'] is not None and t['cached_tokens'] is not None]
     verifies = [s for s in selected if s['verify_items']]
+    decoded = []
+    for row in rows:
+        try:
+            value = dict(thresholds=gaps(row, prefills, level.get('burst_window_ms')), unavailable=None)
+        except ValueError as error:
+            value = dict(thresholds=None, unavailable=str(error))
+        decoded.append(dict(turn_index=row['turn_index'], request_sha256=row['request_sha256'], **value))
     return dict(concurrency=level['concurrency'], replica=level['replica'], requests=len(rows),
                 requests_per_second=len(rows) / (end - start), output_tokens_per_second=output / (end - start),
                 ttft_by_append_class={k: distribution(v) for k, v in by_class.items()},
-                gaps=[dict(turn_index=t['turn_index'], request_sha256=t['request_sha256'], thresholds=gaps(t, prefills)) for t in rows],
+                gaps=decoded,
+                raw_sse_gaps=[dict(turn_index=t['turn_index'], request_sha256=t['request_sha256'],
+                                  thresholds=raw_sse_gaps(t, prefills)) for t in rows],
                 step_samples=len(selected), prefill_overlap_available=bool(selected),
                 accepted_drafts_per_step=sum(s['accepted_tokens'] for s in verifies) / len(verifies) if verifies else None,
                 computed_prefill_tokens=sum(t['prompt_tokens'] - t['cached_tokens'] for t in valid) if len(valid) == len(rows) else None,

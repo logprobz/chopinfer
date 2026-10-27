@@ -1964,6 +1964,8 @@ const chop_bundle_prefill_table_v1 *chop_bundle_prefill_api_v1(void);
  * export's chunk_tokens. Its execute callback also admits positive appends
  * ending before the next grid/prompt boundary, at the bundle's declared
  * prefill granule. Every admitted end publishes complete persistent state.
+ * Results at admitted granule ends must match the uncut schedule, including
+ * when a restored final chunk is split again.
  * The original export remains grid-only. Old hosts ignore this export;
  * new hosts retain the grid contract for bundles that do not enable it. */
 const chop_bundle_prefill_table_v1 *chop_bundle_prefill_cuts_api_v1(void);

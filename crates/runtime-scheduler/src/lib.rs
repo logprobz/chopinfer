@@ -487,7 +487,8 @@ impl SchedulerConfig {
     }
 
     /// Allow the ordinary prefix capture points within a guaranteed grid.
-    /// Enable only after the bundle declares complete state at scheduler cuts.
+    /// Enable only after the bundle promises complete state and results
+    /// identical to the uncut schedule at every admitted granule end.
     /// This does not enable timing-selected cuts or change the chunk budget.
     #[must_use]
     pub const fn with_prefill_cuts(mut self, enabled: bool) -> Self {
@@ -3612,7 +3613,8 @@ impl Scheduler {
     /// within one chunk of its end captures no such blocks: the anchor it
     /// resumed from serves the prompts that share them, and a capture would
     /// split the final chunk, which would then differ from the first send's.
-    /// A bundle declaring complete scheduler cuts can capture the longer
+    /// A bundle declaring scheduler cuts promises results identical to the
+    /// uncut schedule at granule ends. It can therefore capture the longer
     /// observed prefix even after a shorter grid hit within that final chunk.
     fn capture_points(&mut self, index: usize, hit: usize, observe: bool) -> Vec<usize> {
         let Some(chain) = self.requests[index]

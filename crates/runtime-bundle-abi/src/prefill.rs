@@ -8,6 +8,8 @@ pub const PREFILL_API_SYMBOL_V1: &[u8] = b"chop_bundle_prefill_api_v1\0";
 /// Optional capability accepting scheduler-selected cuts before the next grid
 /// boundary. It uses the existing table and envelope layouts through a separate
 /// export, so hosts that only know the grid contract keep that contract.
+/// Each admitted end promises complete state and results identical to the
+/// uncut schedule, including another split within a restored final chunk.
 pub const PREFILL_CUTS_API_SYMBOL_V1: &[u8] = b"chop_bundle_prefill_cuts_api_v1\0";
 
 /// Zero chunk_tokens disables the contract. Otherwise the host schedules

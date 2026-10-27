@@ -10,16 +10,31 @@ The bundle declares extra cuts through the optional
 `chop_bundle_prefill_cuts_api_v1` export. Its grid declaration, entry table
 layout and envelope bytes are unchanged. Old hosts use the grid-only export;
 new hosts keep the grid-only contract for bundles without this capability.
-Profiles with no guaranteed grid do not enable it. The scheduler retains
-the absolute grid after an extra cut, so a cut at 4032 is followed by 8192,
-unless another selected anchor or the prompt end comes first. This mechanism
+Declaring cuts promises complete state and results identical to the uncut
+schedule at every admitted 64-token end, including when a restored final
+chunk is split again. Profiles with no guaranteed grid do not enable it. The
+scheduler retains the absolute grid after an extra cut, so a cut at 4032 is
+followed by 8192 unless another selected anchor or the prompt end comes first. This mechanism
 does not enable timing-budget cuts. TBT-selected cuts remain a separate
 opt-in serving policy and are never the default here.
+
+On default `tp4-ar` and `tp4-dspark`, every eligible prompt with a complete
+64-token block and a trailing 1-63 tokens is cut at `prompt / 64 * 64`,
+then executes those last tokens as a separate prefill step. This applies to
+all such cold traffic, including unrelated prompts with no shared prefix.
+It adds a step and snapshot when the rounded end is not already a grid
+boundary. Prompts shorter than 64 tokens have no interior aligned cut; a hit
+at the rounded end only needs the tail step. Full-prefill can capture the
+same point inside a step when its anchor-item allowance permits. Cold TTFT
+therefore includes the extra cone, tail step and snapshot for unaligned
+prompts, as well as any cost of shared-prefix cuts.
 
 A shorter grid hit does not suppress a longer observed shared-prefix cut,
 even when the request resumes within its final chunk. The next request can
 then restore the longer shared anchor. Bundles without the capability keep
-their existing final-chunk behavior.
+their existing final-chunk behavior. A shifted repeat cut is retained only
+when it improves on the last grid anchor before the prompt end. Abandoning a
+restore reinstates cold grid points without observing the same prompt again.
 
 Every extra endpoint is an actual chunk end. Its plan closes dependencies
 from all 136 physical target-ring cells and the raw DSpark history, including
@@ -31,17 +46,33 @@ ordinary complete-state snapshot; no repair pass or approximate state is used.
 Each retained anchor allocates 53 snapshot pages for AR or 125 for DSpark.
 At 56,960 bytes per page this is 2.88 MiB or 6.79 MiB per rank, respectively,
 in addition to the shared token pages. One DSpark restart point consumes the
-pool space of 8000 tokens. For a 32K request, adding one shared endpoint to
-its four grid anchors raises snapshot pages from 212 to 265 for AR and from
-500 to 625 for DSpark. A rounded prompt end or an additional shared boundary
-can add further snapshots. Existing anchor eviction remains in effect;
-superseded-anchor eviction is a separate change.
+pool space of 8000 tokens. Each additional endpoint in a 32K request costs
+one snapshot: four grid anchors plus one endpoint use 265 pages instead of
+212 for AR, or 625 instead of 500 for DSpark. Rounded prompt ends, shared
+boundaries and useful repeat cuts each add this unit cost. Existing anchor
+eviction remains in effect; superseded-anchor eviction is a separate change.
 
 For an added cut at 4032 in an otherwise 8192-chunked 32K prompt, the CPU
 oracle counts 25,536 additional upper-layer output rows and 28,160 additional
 window-key rows, for both AR and DSpark. These counts describe extra cold
-prefill work, not measured latency. GPU bitwise checks and served measurements
-must qualify the added endpoints before making an accuracy or speed claim.
+prefill work, not measured latency.
+
+On 2026-10-27, TP4 full-schedule/skip and cold/hit comparisons passed bitwise
+for full-vocabulary logits, target KV and physical state on AR and DSpark,
+including cuts at 4032, 6080 and 10048. The shared-document and multi-turn
+workload reached a 66.46% cached-prompt-token rate with anchors, versus 66.35%
+for full-prefill and 35.56% for grid-only upper-skip. Matched cache-hit TTFT
+improved by 7.34% for AR and 3.43% for DSpark against full-prefill across two
+paired visits. Current global anchor eviction was used.
+
+On ten matched cold, unaligned requests per profile, rounded-end cuts added
+one endpoint, one tail step and one snapshot each. Mean cold TTFT changed
+from 940.86 to 980.61 ms for AR and 966.41 to 995.67 ms for DSpark: 39.75 and
+29.26 ms per added endpoint, respectively. This combines cone, tail-step
+and snapshot cost. No aligned cold control was measured. The idle anchor
+survived unrelated traffic for 7-8 seconds; long-idle and memory-pressure
+survival remain unmeasured. The route sweep uses the grid-only entry and
+does not yet negotiate cuts or cover non-final grid chunks.
 
 ```sh
 python3 -B models/deepseek41/prefill_cone.py --contract guaranteed --chunk 8192 --tokens 32768 --cuts 4032
@@ -415,7 +446,8 @@ ascending logits order before the head. No skipped hidden row reaches the
 head. Engram remains entirely in the complete lower prefix.
 
 The scheduler's grid and capture rules are in
-`crates/runtime-scheduler/src/lib.rs:3596,3727`. The optional
+`capture_points` and `chunk_tokens` in
+`crates/runtime-scheduler/src/lib.rs`. The optional
 `chop_bundle_prefill_api_v1` export declares the grid and accepts a bounded
 envelope around unchanged batch bytes. Legacy tables and batch schemas
 remain unchanged; a legacy execute call always runs the full schedule.

@@ -157,3 +157,6 @@ with `n_warps` and `k_warps`. Compact and matrix prefill rows name
 tiles retain the existing row-count selection. These choices preserve the
 qualified symbols, launch plans and numerical policies. Staged-scale
 prefill remains a separate schedule.
+
+The `cluster_fused` schedule refuses `distributed: true`; its qualified
+fused entries require CTA-local storage.

@@ -14,14 +14,24 @@ pub(super) fn prepare<const MATRIX_FETCH: bool>(
     let mut selected = BTreeMap::<u32, &Entry<MATRIX_FETCH>>::new();
     for (entry, rows) in entries.iter().filter(|(e, _)| e.base.query == *query) {
         if *rows == 0 || *rows > query.m_capacity {
-            return Err(Refusal("compact prefill registration exceeds query capacity").into());
+            return Err(Refusal(if MATRIX_FETCH {
+                "matrix prefill registration exceeds query capacity"
+            } else {
+                "compact prefill registration exceeds query capacity"
+            })
+            .into());
         }
         if let Some(old) = selected.insert(*rows, entry)
             && (old.base.symbol != entry.base.symbol
                 || old.stages != entry.stages
                 || old.tile_rows != entry.tile_rows)
         {
-            return Err(Refusal("ambiguous compact prefill row registration").into());
+            return Err(Refusal(if MATRIX_FETCH {
+                "ambiguous matrix prefill row registration"
+            } else {
+                "ambiguous compact prefill row registration"
+            })
+            .into());
         }
     }
     selected.retain(|rows, _| *rows <= need.capacity);

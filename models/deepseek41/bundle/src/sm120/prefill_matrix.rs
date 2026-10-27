@@ -78,11 +78,31 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
         )?,
     )])
 }
-pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
+pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
     if !selected(g, ranks) {
         return Ok(backend);
     }
-    for entry in catalog()? {
+    register_catalog(backend, catalog()?)
+}
+
+fn register_catalog(mut backend: Sm120, catalog: Vec<Entry>) -> Result<Sm120, String> {
+    for base in super::mxfp8_fold::prefill_entries(&FLASH, 4)? {
+        for rows in rows() {
+            if let Some((tile_rows, stages)) = choice(base.query, rows)
+                && !catalog.iter().any(|entry| {
+                    entry.base.query == base.query
+                        && entry.tile_rows == tile_rows
+                        && entry.stages == stages
+                })
+            {
+                return Err(format!(
+                    "missing matrix prefill winner for {:?}, rows {rows}, tile {tile_rows}, stages {stages}",
+                    base.query
+                ));
+            }
+        }
+    }
+    for entry in catalog {
         for rows in rows() {
             if choice(entry.base.query, rows) == Some((entry.tile_rows, entry.stages)) {
                 backend = backend.with_mxfp8_prefill_matrix(entry.clone(), rows);
@@ -113,6 +133,23 @@ mod tests {
         backend::{Backend, Counts, Need, View},
         mxfp8_gemm::Mxfp8FoldGemmBuffers,
     };
+
+    #[test]
+    fn reject_missing_catalog_winner() {
+        let mut catalog = catalog().unwrap();
+        catalog.retain(|entry| {
+            (
+                entry.base.query.n,
+                entry.base.query.k,
+                entry.tile_rows,
+                entry.stages,
+            ) != (1280, 5120, 32, 3)
+        });
+        assert!(matches!(
+            register_catalog(Sm120::new(), catalog),
+            Err(error) if error.contains("missing matrix prefill winner")
+        ));
+    }
 
     #[test]
     fn select_only_measured_rows_and_keep_fallback_contracts() {

@@ -348,7 +348,30 @@ fn direct_rows_keep_qualified_warp_layouts() {
             row.knobs["k_warps"].count().unwrap(),
         );
         assert!(matches!(warps, (4, 1) | (1, 4)));
-        *layouts.entry(warps).or_insert(0) += 1;
+        assert_eq!(row.key.op, "dense_fold.direct.decode");
+        assert_eq!(row.key.weights, "mxfp8");
+        assert_eq!(row.key.bucket, 64);
+        let [lo, hi] = row.key.rows.unwrap_or([1, row.key.bucket]);
+        let key = (
+            row.key.shape["n"],
+            row.key.shape["k"],
+            row.key.shape["groups"],
+            row.key.shape["paired"],
+            lo,
+            hi,
+        );
+        assert!(layouts.insert(key, warps).is_none());
     }
-    assert_eq!(layouts, [((4, 1), 3), ((1, 4), 3)].into());
+    assert_eq!(
+        layouts,
+        [
+            ((16384, 1280, 1, 0, 1, 1), (4, 1)),
+            ((5120, 2048, 1, 0, 1, 2), (1, 4)),
+            ((2304, 5120, 1, 1, 1, 2), (1, 4)),
+            ((25600, 6144, 1, 0, 32, 32), (4, 1)),
+            ((25600, 6144, 1, 0, 64, 64), (4, 1)),
+            ((1024, 4096, 8, 0, 1, 1), (1, 4)),
+        ]
+        .into()
+    );
 }

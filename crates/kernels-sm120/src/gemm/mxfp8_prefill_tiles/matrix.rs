@@ -91,7 +91,10 @@ mod tests {
                 assert!(p.dynamic_shared_bytes <= 101376);
                 assert_eq!(e.prepare(rows).unwrap().info().workspace, 0);
             }
-            assert!(e.prepare(0).is_err());
+            assert_eq!(
+                e.prepare(0).err().unwrap().0,
+                "matrix prefill preparation needs nonzero rows"
+            );
         }
         assert!(Entry::new(base.clone(), 3, 128).is_err());
         assert!(Entry::new(base.clone(), 4, 64).is_err());

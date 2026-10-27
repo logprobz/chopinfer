@@ -42,10 +42,18 @@ impl<const MATRIX_FETCH: bool> Entry<MATRIX_FETCH> {
     fn build(base: mxfp8_fold::Entry, stages: u32, tile_rows: u32) -> Result<Self, Refusal> {
         base.validate()?;
         if base.query.k > i32::MAX as u32 - 127 {
-            return Err(Refusal("prefill tiles rounded K exceeds signed bounds"));
+            return Err(Refusal(if MATRIX_FETCH {
+                "matrix prefill rounded K exceeds signed bounds"
+            } else {
+                "compact prefill rounded K exceeds signed bounds"
+            }));
         }
         if !(2..=if MATRIX_FETCH { 4 } else { 3 }).contains(&stages) {
-            return Err(Refusal("prefill tiles have an unsupported ring depth"));
+            return Err(Refusal(if MATRIX_FETCH {
+                "matrix prefill has an unsupported ring depth"
+            } else {
+                "compact prefill has an unsupported ring depth"
+            }));
         }
         let result = Self {
             base,
@@ -108,7 +116,11 @@ impl<const MATRIX_FETCH: bool> Entry<MATRIX_FETCH> {
         })
         .contains(&tile)
         {
-            return Err(Refusal("prefill row tile is unsupported by the fetch mode"));
+            return Err(Refusal(if MATRIX_FETCH {
+                "matrix prefill row tile is unsupported"
+            } else {
+                "compact prefill row tile is unsupported"
+            }));
         }
         let mut plan = self.base.plan(rows)?;
         plan.grid = [
@@ -170,7 +182,11 @@ impl<const MATRIX_FETCH: bool> Entry<MATRIX_FETCH> {
     /// Each concurrently executing op owns its output and sticky row status.
     pub fn prepare(&self, rows: u32) -> Result<Prepared<Buffers<View>>, Refusal> {
         if rows == 0 {
-            return Err(Refusal("compact prefill preparation needs nonzero rows"));
+            return Err(Refusal(if MATRIX_FETCH {
+                "matrix prefill preparation needs nonzero rows"
+            } else {
+                "compact prefill preparation needs nonzero rows"
+            }));
         }
         let compute = self.plan(rows, self.selected_tile(rows))?;
         let admit = mxfp8_prefill::validation_plan(&self.base, rows)?;
@@ -221,9 +237,11 @@ impl<const MATRIX_FETCH: bool> PreparedOp<Buffers<View>> for Op<MATRIX_FETCH> {
     }
     fn launches(&self, b: &Buffers<View>, _: View, counts: Counts) -> Result<Vec<Launch>, Refusal> {
         if counts.rows != self.rows {
-            return Err(Refusal(
-                "compact prefill requires its prepared host row count",
-            ));
+            return Err(Refusal(if MATRIX_FETCH {
+                "matrix prefill requires its prepared host row count"
+            } else {
+                "compact prefill requires its prepared host row count"
+            }));
         }
         let q = self.entry.base.bytes(self.rows);
         for (view, bytes) in [
@@ -241,7 +259,11 @@ impl<const MATRIX_FETCH: bool> PreparedOp<Buffers<View>> for Op<MATRIX_FETCH> {
             .checked_add(u64::from(self.rows))
             .and_then(|n| n.checked_mul(4))
             .filter(|&n| n <= kernel_core::precision::MAX_TENSOR_BYTES)
-            .ok_or(Refusal("compact prefill status extent overflows"))?;
+            .ok_or(Refusal(if MATRIX_FETCH {
+                "matrix prefill status extent overflows"
+            } else {
+                "compact prefill status extent overflows"
+            }))?;
         b.status.covers(end)?;
         let reads = [
             b.activations.handle,
@@ -254,9 +276,11 @@ impl<const MATRIX_FETCH: bool> PreparedOp<Buffers<View>> for Op<MATRIX_FETCH> {
             || reads.contains(&b.status.handle)
             || b.output.handle == b.status.handle
         {
-            return Err(Refusal(
-                "compact prefill output or row status aliases an input",
-            ));
+            return Err(Refusal(if MATRIX_FETCH {
+                "matrix prefill output or row status aliases an input"
+            } else {
+                "compact prefill output or row status aliases an input"
+            }));
         }
         let handles = Buffers {
             activations: b.activations.handle,

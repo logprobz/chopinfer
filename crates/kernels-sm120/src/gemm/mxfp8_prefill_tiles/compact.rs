@@ -154,7 +154,10 @@ mod tests {
             bad.status_row_offset = u64::MAX;
             assert!(op.launches(&bad, View::EMPTY, Counts::rows(rows)).is_err());
         }
-        assert!(e.prepare(0).is_err());
+        assert_eq!(
+            e.prepare(0).err().unwrap().0,
+            "compact prefill preparation needs nonzero rows"
+        );
         assert!(e.prepare(8193).is_err());
         assert!(e.plan(1, 48).is_err());
         assert!(Entry::new(e.base, 1).is_err());

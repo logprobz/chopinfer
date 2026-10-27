@@ -4,7 +4,6 @@ import hashlib
 import json
 import shlex
 from pathlib import Path
-import time
 import unittest
 from unittest.mock import patch
 
@@ -32,6 +31,7 @@ class TraceReviewTests(unittest.TestCase):
         self.assertIsNone(row['failure'])
         self.assertEqual((row['stall_threshold_ms'], row['burst_window_ms']), (50, 20))
         self.assertEqual(row['burst_event_counts'], [2, 1])
+        self.assertEqual([e['at'] for e in row['output_events']], [.1, .11, .25])
         self.assertEqual(row['client_stalls']['eligible_gaps'], 1)
         self.assertAlmostEqual(row['step_gaps'][0]['ms'], 150)
     def test_replay_propagates_controls_to_priming_and_turns(self):
@@ -149,6 +149,30 @@ class TraceReviewTests(unittest.TestCase):
         value = gaps(row, [])['100']
         self.assertAlmostEqual(value['stall_ms_per_1000_gaps'], 100000)
         self.assertEqual(value['per_1000_gaps'], 500)
+
+    def test_append_ttft_tails_require_supported_samples(self):
+        from agentic_trace_analysis import analyze
+        def level(count):
+            rows = [dict(ended=2, append_class='1-63', ttft_ms=100 + i, output_tokens=1,
+                         prompt_tokens=100, cached_tokens=10, sse_events=[], output_events=[],
+                         turn_index=i, request_sha256=str(i), requested_idle_pages=1,
+                         anchor_survived=True) for i in range(count)]
+            return dict(realtime_offset_ns=dict(start=0, end=0), window_start=0, window_end=10,
+                        concurrency=1, replica=0, sessions=[dict(turns=rows)], burst_window_ms=2)
+        small = analyze(level(19))
+        ttft = small['ttft_by_append_class']['1-63']
+        self.assertEqual(ttft['samples'], 19)
+        self.assertIsNone(ttft['p95'])
+        self.assertFalse(ttft['supported']['p95'])
+        self.assertTrue(ttft['unavailable']['p95'])
+        self.assertEqual(ttft['max'], 118)
+        enough = analyze(level(20))['ttft_by_append_class']['1-63']
+        self.assertEqual(enough['p95'], 118)
+        self.assertTrue(enough['supported']['p95'])
+        self.assertIsNone(enough['p99'])
+        # Old trace receipts' first-hit booleans are not newest-frontier evidence.
+        self.assertEqual(small['anchor_survival'], [None] * 19)
+        self.assertEqual(small['first_prefix_retention'], [True] * 19)
 
 
 

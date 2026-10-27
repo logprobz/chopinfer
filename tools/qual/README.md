@@ -481,3 +481,12 @@ window and retain each rank's limits and SM clocks; missing samples yield
 unavailable energy. SSE gaps include transport and parser effects. Profiled
 or busy-host results remain diagnostic. Run fresh-process warmup and ABBA
 visits as described in [stateful replay acceptance](../../docs/contributing.md#stateful-replay-acceptance).
+
+Trace analysis calculates decode stalls from generated output events using
+the recorded burst window. Prompt IDs, usage, finish and DONE events remain
+available as separately labelled raw SSE gaps. Older receipts reconstruct
+output timing from TTFT, output inter-delta times and channel kinds; missing
+evidence stays unavailable. Stall count and total stall time are normalized
+per 1,000 eligible burst gaps, with raw totals retained. Append-class
+p50/p95/p99 values require 2/20/100 observations; unsupported tails are
+unavailable, while sample counts and observed maxima remain visible.

@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from agentic_metrics import burst_intervals, distribution, stall_stats
+from agentic_metrics import TAIL_SAMPLES, burst_intervals, distribution, stall_stats, tail
 
 
 def union(intervals):
@@ -84,6 +84,15 @@ def energy(samples, start, end, output_tokens):
     return dict(joules=total, joules_per_output_token=total / output_tokens if output_tokens else None, unavailable=None)
 
 
+def supported_distribution(values):
+    dist = distribution(values)
+    support = {name: tail(dist, name)['supported'] for name in TAIL_SAMPLES}
+    return {**dist, **{name: dist[name] if good else None for name, good in support.items()},
+            'supported': support,
+            'unavailable': {name: None if support[name] else f'requires {count} samples'
+                            for name, count in TAIL_SAMPLES.items()}}
+
+
 def analyze(level, steps=(), power=()):
     offsets = level['realtime_offset_ns']
     if offsets['start'] is None or offsets['end'] is None or abs(offsets['end'] - offsets['start']) > 10000000:
@@ -119,7 +128,7 @@ def analyze(level, steps=(), power=()):
         decoded.append(dict(turn_index=row['turn_index'], request_sha256=row['request_sha256'], **value))
     return dict(concurrency=level['concurrency'], replica=level['replica'], requests=len(rows),
                 requests_per_second=len(rows) / (end - start), output_tokens_per_second=output / (end - start),
-                ttft_by_append_class={k: distribution(v) for k, v in by_class.items()},
+                ttft_by_append_class={k: supported_distribution(v) for k, v in by_class.items()},
                 gaps=decoded,
                 raw_sse_gaps=[dict(turn_index=t['turn_index'], request_sha256=t['request_sha256'],
                                   thresholds=raw_sse_gaps(t, prefills)) for t in rows],

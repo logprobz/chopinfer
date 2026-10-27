@@ -121,15 +121,23 @@ struct Memory {
     raw: BTreeMap<u64, Feature>,
     rings: BTreeMap<(u32, u32, u64), Feature>,
     journal: Vec<Event>,
+    /// Each raw-history read: its position and the request's
+    /// `retained_start` when it was read.
+    reads: Vec<(u64, u64)>,
 }
 
 impl Memory {
     fn new() -> Self {
+        Self::with_config(config())
+    }
+
+    fn with_config(config: Config) -> Self {
         Self {
-            state: State::new(config()).unwrap(),
+            state: State::new(config).unwrap(),
             raw: BTreeMap::new(),
             rings: BTreeMap::new(),
             journal: Vec::new(),
+            reads: Vec::new(),
         }
     }
 
@@ -147,7 +155,9 @@ impl Memory {
     fn catch_up(&mut self, request: u64) {
         for stage in 0..self.state.config().stages {
             while let Some(pass) = self.state.projection(request, stage, 3).unwrap() {
+                let retained = self.state.context(request).unwrap().retained_start;
                 for position in pass.start..pass.start + u64::from(pass.count) {
+                    self.reads.push((position, retained));
                     let feature = self.raw[&self.state.config().history_cell(pass.slot, position)];
                     assert_eq!(
                         feature.position, position,
@@ -982,4 +992,89 @@ fn batched_catch_up_stays_within_the_one_row_exact_bounds() {
     .with_verify_rows(1);
     assert!(BATCH_PROJECTION_ROWS <= shape.verify_rows);
     assert!(BATCH_PROJECTION_ROWS <= crate::Kernels::dense_decode_capacity());
+}
+
+/// A timing-cut history of sixteen 512-row commits leaves positions
+/// 7656-7661 in raw-history cells 18-23, which one 8192-row commit leaves
+/// unwritten. No read reaches them: every catch-up projection and the
+/// snapshot read at or above `retained_start`, the last window, and each
+/// cell read holds its own position, through AR steps, drafting steps and
+/// a restore in another slot (`prefill-dependencies.md`).
+#[test]
+fn raw_history_cells_older_than_the_window_are_never_read() {
+    use model_deepseek41_contract::geometry::FLASH;
+    let config = Config {
+        slots: 2,
+        stages: FLASH.dspark_stages(),
+        window: FLASH.shape.attention.window,
+        max_prefill_rows: 8192,
+        context_tokens: 16384,
+        position_capacity: 16384,
+    };
+    assert_eq!((config.window, config.history_capacity()), (128, 134));
+    let stale = 18..24;
+    for history in [vec![512_u32; 16], vec![8192]] {
+        let mut memory = Memory::with_config(config);
+        let mut end = 0;
+        for &rows in &history {
+            memory.run(vec![prefill(41, 0, end, rows)], &[], 7);
+            end += u64::from(rows);
+        }
+        assert_eq!(end, 8192);
+        let cells: Vec<_> = stale
+            .clone()
+            .map(|cell| memory.raw.get(&cell).map(|feature| feature.position))
+            .collect();
+        if history.len() == 16 {
+            assert_eq!(cells, (7656..7662).map(Some).collect::<Vec<_>>());
+        } else {
+            assert_eq!(cells, [None; 6]);
+        }
+        let context = memory.state.context(41).unwrap();
+        assert_eq!((context.retained_start, context.end), (8064, 8192));
+        // Preempt right after the history, while the stale cells remain,
+        // restore in the other slot, decode, and do it again.
+        let mut slot = 0;
+        for round in 0..2 {
+            memory.catch_up(41);
+            let snapshot = memory.state.snapshot(41).unwrap();
+            let retained = memory.state.context(41).unwrap().retained_start;
+            assert!(snapshot.start >= retained);
+            let saved = (snapshot.start..snapshot.end)
+                .map(|position| {
+                    memory.reads.push((position, retained));
+                    let feature = memory.raw[&config.history_cell(slot, position)];
+                    assert_eq!(feature.position, position, "snapshot read a stale cell");
+                    feature
+                })
+                .collect::<Vec<_>>();
+            memory.state.retire(41).unwrap();
+            slot = 1 - slot;
+            for feature in saved {
+                memory
+                    .raw
+                    .insert(config.history_cell(slot, feature.position), feature);
+            }
+            memory.state.restore(41, slot, snapshot).unwrap();
+            // AR steps defer projection; drafting steps catch up and verify.
+            for step in 0..20_u64 {
+                let drafts = if step % 4 == 3 { 5 } else { 0 };
+                let kept = if drafts > 0 {
+                    vec![(41, 3)]
+                } else {
+                    Vec::new()
+                };
+                memory.run(vec![decode(41, slot, end, drafts)], &kept, 7);
+                end = memory.state.context(41).unwrap().end;
+            }
+            memory.catch_up(41);
+            memory.assert_ring(41, 7);
+            assert!(end > 8192 + 20 * (round + 1));
+        }
+        assert!(!memory.reads.is_empty());
+        for &(position, retained) in &memory.reads {
+            assert!(position >= retained, "read {position} below {retained}");
+            assert!(!(7656..7662).contains(&position), "read stale {position}");
+        }
+    }
 }

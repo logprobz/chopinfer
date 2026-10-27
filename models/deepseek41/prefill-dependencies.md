@@ -16,8 +16,9 @@ schedule at every admitted 64-token end, including when a restored final
 chunk is split again. Profiles with no guaranteed grid do not enable it. The
 scheduler retains the absolute grid after an extra cut, so a cut at 4032 is
 followed by 8192 unless another selected anchor or the prompt end comes first. This mechanism
-does not enable timing-budget cuts. TBT-selected cuts remain a separate
-opt-in serving policy and are never the default here.
+does not enable timing-budget cuts. TBT-selected timing cuts are a separate
+candidate (`CHOPINFER_PREFILL_TIMING_CUTS=1` with `--prefill-budget tbt`),
+off by default and described below.
 
 On default `tp4-ar` and `tp4-dspark`, every eligible prompt with a complete
 64-token block and a trailing 1-63 tokens is cut at `prompt / 64 * 64`,
@@ -43,6 +44,36 @@ the six cells preserved from an earlier large commit. The aligned input cone
 starts with up to 2624 rows at layer 20 and tapers to 192 at layer 39.
 Compressed and index-key producers still cover every row. A restore uses the
 ordinary complete-state snapshot; no repair pass or approximate state is used.
+
+With the timing-cut candidate, a grid chunk that runs while requests decode
+ends at the last 64-token multiple the TBT cap reaches (at least the
+progress floor), unless the next grid boundary, a capture point or the
+prompt end comes first. A timing cut is an ordinary admitted cut: complete
+state and results identical to the uncut schedule. It publishes no
+snapshot, so it costs no anchor pages; grid, shared, prompt-end and
+response-end anchors are unchanged.
+
+State after a timing-cut history is byte-equal to full arithmetic at the
+same history, but not to the uncut schedule's bytes in six DSpark raw
+feature cells. A large commit retains only its final 128 raw rows, so each
+one leaves 6 of the 134 history cells from the commit before it. After
+sixteen 512-row commits to 8192, cells 18-23 hold positions 7656-7661; after
+one 8192-row commit they keep what the slot held before. These cells are never
+read. The drafter reads raw history only at or above the context's
+`retained_start`, the last 128 positions after a large commit
+(`Context::retained_start` and `projection`, `projected`, `row_projection`
+and `projected_rows` in `bundle/src/dspark/state.rs`), and a snapshot or
+restore covers the same window (`State::snapshot` and `restore` there,
+`retained_projection` and `batched_projection` in
+`bundle/src/dspark/transfers.rs`). The snapshot copies all 134 cells, so a
+restored request carries the six cells too, still unread.
+`raw_history_cells_older_than_the_window_are_never_read` replays both
+histories through AR steps, drafting steps and a restore and fails if any
+read reaches below `retained_start` or a stale cell. The Python oracle
+test `test_timing_cuts_keep_uncut_outputs_and_differ_only_in_six_unread_cells`
+checks the same cells and the equal outputs on fake kernels. Masking or
+zeroing these cells would change snapshot bytes; they are documented
+instead.
 
 Each retained anchor allocates 53 snapshot pages for AR or 125 for DSpark.
 At 56,960 bytes per page this is 2.88 MiB or 6.79 MiB per rank, respectively,

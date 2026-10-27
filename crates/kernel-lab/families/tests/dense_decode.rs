@@ -230,6 +230,12 @@ fn build_synthetic_twins() {
     support::build(&specs(), &directory).unwrap();
 }
 #[test]
+#[ignore = "requires an external directory named by CHOPINFER_DENSE_DECODE_SYNTHETIC_TWINS"]
+fn verify_staged_synthetic_twins() {
+    let directory = std::path::PathBuf::from(std::env::var_os(DIRECTORY).expect(DIRECTORY));
+    support::verify_staged(&directory).unwrap();
+}
+#[test]
 fn synthetic_twins_match_poisoned_replay_on_gpu() {
     kernel_harness::gpu_test(512 << 20, |session| {
         let directory = std::path::PathBuf::from(std::env::var_os(DIRECTORY).ok_or(DIRECTORY)?);

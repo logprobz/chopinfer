@@ -208,6 +208,13 @@ fn build_served_twins() {
 }
 
 #[test]
+#[ignore = "requires an external directory named by CHOPINFER_DENSE_DECODE_TWINS"]
+fn verify_staged_served_twins() {
+    let directory = std::path::PathBuf::from(std::env::var_os(DIRECTORY).expect(DIRECTORY));
+    support::verify_staged(&directory).unwrap();
+}
+
+#[test]
 fn served_twins_match_with_poisoned_replay_on_gpu() {
     kernel_harness::gpu_test(4 << 30, |session| {
         let directory = std::path::PathBuf::from(std::env::var_os(DIRECTORY).ok_or(DIRECTORY)?);

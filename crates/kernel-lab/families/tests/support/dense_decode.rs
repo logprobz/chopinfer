@@ -234,22 +234,35 @@ pub fn build(specs: &[kernel_build::CubinSpec], directory: &std::path::Path) -> 
     let lock =
         LockDir::new(&locks).family("dense_decode_twins", specs.iter().map(|s| s.name.as_str()));
     let initialize = !locks.join("dense_decode_twins.lock").exists();
-    let options = BuildOptions {
-        lock_update: initialize,
-        ..BuildOptions::default()
-    };
+    let toolchain = Toolchain::detect().map_err(|e| e.to_string())?;
+    if initialize {
+        kernel_build::build_in_families(
+            &toolchain,
+            specs,
+            &directory,
+            &lock,
+            BuildOptions {
+                lock_update: true,
+                ..BuildOptions::default()
+            },
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    // Initializing a lock is not verification. Leave a report checked against it.
     let built = kernel_build::build_in_families(
-        &Toolchain::detect().map_err(|e| e.to_string())?,
+        &toolchain,
         specs,
         &directory,
         &lock,
-        options,
+        BuildOptions::default(),
         None,
     )
     .map_err(|e| e.to_string())?;
     if built.len() != specs.len() || built.is_empty() {
         return Err("twin build omitted cubins".into());
     }
+    verify_staged(&directory)?;
     let counts: BTreeMap<_, _> = specs
         .iter()
         .map(|spec| (spec.name.clone(), spec.entries.len()))
@@ -258,10 +271,14 @@ pub fn build(specs: &[kernel_build::CubinSpec], directory: &std::path::Path) -> 
     Ok(())
 }
 
-pub fn load(session: &Session, directory: &std::path::Path, cubin: &str) -> LabResult<Module> {
+pub fn verify_staged(directory: &std::path::Path) -> LabResult<()> {
     kernel_build::report::BuildReport::read(&directory.join("kernel-build-report.json"))
         .and_then(|r| r.verify_current())
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())
+}
+
+pub fn load(session: &Session, directory: &std::path::Path, cubin: &str) -> LabResult<Module> {
+    verify_staged(directory)?;
     session.load_cubin(
         &std::fs::read(directory.join(format!("{cubin}.cubin"))).map_err(|e| e.to_string())?,
     )

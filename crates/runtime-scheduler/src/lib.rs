@@ -1837,7 +1837,7 @@ impl Scheduler {
             self.requests[index].captures = if self.requests[index].replayed_tokens > 0 {
                 Vec::new()
             } else {
-                self.capture_points(index, prefilled)
+                self.capture_points(index, prefilled, true)
             };
             let granule = self.config.prefill_granule;
             let prompt = self.requests[index].spec.prompt_tokens;
@@ -2879,7 +2879,7 @@ impl Scheduler {
                     .then_some(end);
         }
         if self.requests[index].guaranteed_prefill_chunks.is_some() {
-            self.requests[index].captures = self.capture_points(index, 0);
+            self.requests[index].captures = self.capture_points(index, 0, false);
             self.requests[index].end_anchor = None;
         }
         self.drop_own_anchor(index)
@@ -3614,7 +3614,7 @@ impl Scheduler {
     /// split the final chunk, which would then differ from the first send's.
     /// A bundle declaring complete scheduler cuts can capture the longer
     /// observed prefix even after a shorter grid hit within that final chunk.
-    fn capture_points(&mut self, index: usize, hit: usize) -> Vec<usize> {
+    fn capture_points(&mut self, index: usize, hit: usize, observe: bool) -> Vec<usize> {
         let Some(chain) = self.requests[index]
             .prefix
             .as_ref()
@@ -3646,9 +3646,9 @@ impl Scheduler {
             self.config.prefill_chunk_limit,
             self.config.maximum_scored_rows,
         );
-        // A readmitted request already recorded its blocks, so the registry
-        // would only find its own first admission.
-        let seen = if self.requests[index].preemptions == 0 {
+        // Readmission and an abandoned restore must not observe the same
+        // request again: the registry already holds its first admission.
+        let seen = if observe && self.requests[index].preemptions == 0 {
             self.kv.observe_prefix(&chain)
         } else {
             0

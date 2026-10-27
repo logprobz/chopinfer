@@ -398,3 +398,38 @@ fn declared_repeat_cuts_must_improve_on_the_last_grid_anchor() {
         }
     }
 }
+
+#[test]
+fn abandoned_declared_restore_does_not_observe_its_own_prompt() {
+    for (guaranteed, cuts, abandon) in [
+        (true, false, true),
+        (false, false, true),
+        (false, true, true),
+        (true, true, false),
+        (true, true, true),
+    ] {
+        let mut s = scheduler_with_cuts(256, guaranteed, cuts);
+        let first = (0..512).collect::<Vec<u32>>();
+        submit(&mut s, 1, &first, false);
+        finish(&mut s, 1);
+        let mut second = first.clone();
+        second.extend(3000..3512);
+        submit(&mut s, 2, &second, false);
+        s.admit().unwrap();
+        assert_eq!(s.cached_tokens(RequestId::new(2)).unwrap(), 512);
+        if abandon {
+            s.abandon_prefix_restore(RequestId::new(2)).unwrap();
+        } else {
+            s.complete_prefix_restore(RequestId::new(2)).unwrap();
+        }
+        let (rows, captures) = finish(&mut s, 2);
+        if guaranteed && abandon {
+            assert_eq!(rows, [(0, 256), (256, 256), (512, 256), (768, 256)]);
+            assert_eq!(captures, [256, 512, 768, 1024]);
+        } else {
+            assert_eq!(captures, [768, 1024]);
+        }
+        assert!(!captures.contains(&960));
+        s.audit().unwrap();
+    }
+}

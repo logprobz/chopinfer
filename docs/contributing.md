@@ -316,8 +316,10 @@ with an in-job A/A help locate work to improve.
   in a fresh process borrowing the weight keeper, so learned acceptance
   state cannot carry between visits. Assert zero cached prompt tokens in
   measured windows.
-- Record major faults per visit and SM clocks per window. A visit with more
-  than 1,000 major faults is invalid and must be rerun before a verdict.
+- Record major faults per measured window and SM clocks per window. A
+  visit whose measured windows sum to more than 1,000 major faults is
+  invalid and must be rerun before a verdict. Startup, priming and drain
+  are not counted.
 - Report each cell and weight cells by served shapes: decode C1, C2, C4,
   C8, C16 and C32, and DSpark verify widths 6, 8, 16, 32 and 64.
 

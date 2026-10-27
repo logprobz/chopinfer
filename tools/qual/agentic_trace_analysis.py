@@ -127,7 +127,10 @@ def analyze(level, steps=(), power=()):
                 accepted_drafts_per_step=sum(s['accepted_tokens'] for s in verifies) / len(verifies) if verifies else None,
                 computed_prefill_tokens=sum(t['prompt_tokens'] - t['cached_tokens'] for t in valid) if len(valid) == len(rows) else None,
                 reused_prefill_tokens=sum(t['cached_tokens'] for t in valid) if len(valid) == len(rows) else None,
-                anchor_survival=[t.get('anchor_survived') for t in rows if t['requested_idle_pages']],
+                anchor_survival=[None for t in rows if t['requested_idle_pages']],
+                anchor_survival_unavailable='served capture frontier and granularity unavailable',
+                first_prefix_retention=[t.get('first_prefix_retained', t.get('anchor_survived'))
+                                        for t in rows if t['requested_idle_pages']],
                 thinking_lcp_loss_tokens=[t.get('thinking_lcp_loss_tokens') for t in rows],
                 lost_before_previous_answer_tokens=[t.get('lost_before_previous_answer_tokens') for t in rows],
                 energy=energy(power, start, end, output))

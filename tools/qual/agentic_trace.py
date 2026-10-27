@@ -328,8 +328,11 @@ def run_level(client, model, profile, trace, concurrency):
                     pages += math.ceil(used / trace['page_tokens'])
                 if state['baseline_cached'] is None:
                     state['baseline_cached'] = row['cached_tokens']
-                row['anchor_survived'] = (row['cached_tokens'] >= state['baseline_cached']
+                row['first_prefix_retained'] = (row['cached_tokens'] >= state['baseline_cached']
                                           if state['baseline_cached'] and row['cached_tokens'] is not None else None)
+                # Usage and rendered LCP do not reveal which frontier the server captured.
+                row['anchor_survived'] = None
+                row['anchor_survival_unavailable'] = 'served capture frontier and granularity unavailable'
                 state['pages'] = pages
         if pending:
             aborted = 'trace window expired with requests in flight'

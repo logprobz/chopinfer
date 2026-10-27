@@ -434,6 +434,10 @@ The generator uses append shares 31/40/12/7/10 percent for 1-63,
 Balanced output budgets 128/256/550/1266 average 550 tokens. Think times
 0/2/10/60 seconds are declared assumptions. Source files, patches and test
 results are synthesized from seeds, then fitted with the served `/tokenize`.
+Newest-anchor survival is unavailable without served capture frontier and
+granularity evidence. `first_prefix_retained` only compares a return with
+the first measured cache hit; it cannot prove retention of a newer frontier.
+
 No trace field accepts prompt text. The page size is explicit in the trace
 and must match the served model's logical KV page size.
 

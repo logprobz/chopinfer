@@ -70,6 +70,28 @@ class TraceReviewTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'output event timing unavailable'):
             gaps(row, [])
 
+    def test_fallback_to_old_prefix_is_not_newest_anchor_survival(self):
+        from agentic_fake import fake_server
+        workload = trace.generate(1, 3, 'anchor', [64], 0)
+        for turn in workload['sessions'][0]['turns']:
+            turn.update(append_tokens=4, output_tokens=2, think_seconds=0)
+        profile = vars(mixed.parser().parse_args([]))
+        profile.update(seed='anchor', run_id='test', arm='fixed', seconds=3, min_samples=1)
+        original = trace.request
+        cached = iter([0, 10, 30, 10])
+        def request(*args, **kwargs):
+            row, answer, response = original(*args, **kwargs)
+            row['cached_tokens'] = next(cached)
+            return row, answer, response
+        with fake_server({}) as url, patch.object(trace, 'request', side_effect=request):
+            level = trace.run_level(mixed.Transport(url, 2), 'fake-agentic', profile, workload, 1)
+        self.assertTrue(level['verdict']['passed'], level['verdict'])
+        turns = level['sessions'][0]['turns']
+        self.assertEqual([row['cached_tokens'] for row in turns], [10, 30, 10])
+        self.assertEqual([row['anchor_survived'] for row in turns], [None, None, None])
+        self.assertTrue(all(row['anchor_survival_unavailable'] for row in turns))
+        self.assertEqual([row['first_prefix_retained'] for row in turns], [True, True, True])
+
 
 
 if __name__ == '__main__':

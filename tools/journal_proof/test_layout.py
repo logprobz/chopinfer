@@ -638,8 +638,11 @@ class LayoutTests(unittest.TestCase):
         # Each model's declarations (README, Layout declarations).
         for path in sorted(Path(__file__).resolve().parents[2].glob('models/*/journal-changes/*.json')):
             with self.subTest(path.name):
-                decl = layout.parse(path.read_bytes())
-                self.assertTrue(decl['changes'] or decl['resources'] or decl['removed_modules'] or decl['added_modules'])
+                data = path.read_bytes()
+                decl = layout.parse(data)
+                # A description-only identity declaration authorizes no edits.
+                if set(json.loads(data)) - {'schema', 'description'}:
+                    self.assertTrue(any(value for key, value in decl.items() if key != 'description'))
 
     # Review jproof-1 probes: each was PROVEN at d6d677af3.
 

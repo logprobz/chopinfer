@@ -174,6 +174,14 @@ impl EngineConfig {
         self.scheduler.prefill_timing_cuts()
     }
 
+    /// Applies an instance's anchor items on its guaranteed grid, replacing
+    /// the manifest's ([`runtime_scheduler::SchedulerConfig::with_grid_anchor_items`]).
+    #[must_use]
+    pub const fn with_grid_anchor_items(mut self, items: usize) -> Self {
+        self.scheduler = self.scheduler.with_grid_anchor_items(items);
+        self
+    }
+
     /// Enables prefix caching. Each anchor holds a bundle snapshot of
     /// `state_pages` KV pages; the executor must capture and restore them.
     #[must_use]

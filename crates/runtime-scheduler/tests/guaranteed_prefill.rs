@@ -542,3 +542,148 @@ fn aligned_short_capture_does_not_split_media() {
     assert_eq!(rows, [(0, 128)]);
     assert_eq!(captures, [128]);
 }
+
+fn scheduler_with_grid_anchors(
+    chunk: usize,
+    cuts: bool,
+    grid: usize,
+    manifest: usize,
+) -> Scheduler {
+    let config = SchedulerConfig::new(4, 64, 8192, chunk, 1)
+        .unwrap()
+        .with_prefill_granule(64)
+        .unwrap()
+        .with_maximum_scored_rows(64)
+        .unwrap()
+        .with_prefix_cache(1)
+        .with_prefill_cuts(cuts)
+        .with_anchor_items(manifest)
+        .with_guaranteed_prefill_chunks(chunk)
+        .unwrap()
+        .with_grid_anchor_items(grid);
+    Scheduler::new(
+        config.with_lone_prefill_expansion(true),
+        KvGeometry::new(64, 8192).unwrap(),
+    )
+    .unwrap()
+}
+
+/// Each prefill item of the next batch: (request, start, tokens, anchor).
+fn anchored_step(s: &mut Scheduler) -> Vec<(u64, usize, usize, Option<usize>)> {
+    let batch = s.next_batch().unwrap().unwrap();
+    let items = batch
+        .items()
+        .iter()
+        .zip(batch.kv_plan().appends())
+        .filter_map(|(item, append)| match item.phase() {
+            BatchPhase::Prefill { tokens } => Some((
+                item.request_id().get(),
+                append.previous_tokens(),
+                tokens,
+                item.anchor_tokens(),
+            )),
+            _ => None,
+        })
+        .collect();
+    let outcomes = batch
+        .items()
+        .iter()
+        .map(|item| {
+            BatchOutcome::success(
+                item.request_id(),
+                item.phase(),
+                usize::from(item.expects_output()),
+                item.expects_output(),
+            )
+        })
+        .collect::<Vec<_>>();
+    s.commit_batch(batch.id(), &outcomes).unwrap();
+    for capture in s.take_prefix_captures() {
+        let exists = s.has_capture_anchor(&capture);
+        assert!(s.begin_prefix_capture(&capture).unwrap().is_some() || exists);
+        s.end_prefix_capture(&capture).unwrap();
+    }
+    s.audit().unwrap();
+    items
+}
+
+/// An instance that keeps anchors on its grid prefills an unaligned prompt
+/// past its rounded end in one chunk and captures both ends. An anchor on
+/// a grid end, or past a later grid end, keeps its chunk ends.
+#[test]
+fn grid_anchor_items_keep_the_rounded_prompt_end_inside_one_chunk() {
+    for (n, rows, captures) in [
+        (789, vec![(0, 789)], vec![768, 789]),
+        (
+            8192 + 17,
+            vec![(0, 8192), (8192, 17)],
+            vec![8192, 8192 + 17],
+        ),
+        (
+            10000,
+            vec![(0, 8192), (8192, 1808)],
+            vec![8192, 9984, 10000],
+        ),
+        (50, vec![(0, 50)], vec![50]),
+        (768, vec![(0, 768)], vec![768]),
+    ] {
+        let mut s = scheduler_with_grid_anchors(8192, true, 1, 0);
+        submit(&mut s, 1, &(0..n as u32).collect::<Vec<_>>(), false);
+        assert_eq!(finish(&mut s, 1), (rows, captures), "{n}");
+    }
+    let mut s = scheduler_with_grid_anchors(8192, true, 1, 0);
+    submit(&mut s, 1, &(0..789).collect::<Vec<_>>(), false);
+    assert_eq!(anchored_step(&mut s), [(1, 0, 789, Some(768))]);
+}
+
+/// Without an instance allowance, or without cuts, a guaranteed grid keeps
+/// today's ends: the manifest's anchor items alone never span them.
+#[test]
+fn grid_anchor_items_need_an_instance_allowance_and_cuts() {
+    for (cuts, grid, manifest, rows, captures) in [
+        (true, 0, 0, vec![(0, 768), (768, 21)], vec![768, 789]),
+        (true, 0, 2, vec![(0, 768), (768, 21)], vec![768, 789]),
+        (false, 2, 0, vec![(0, 789)], vec![789]),
+    ] {
+        let mut s = scheduler_with_grid_anchors(8192, cuts, grid, manifest);
+        submit(&mut s, 1, &(0..789).collect::<Vec<_>>(), false);
+        assert_eq!(
+            finish(&mut s, 1),
+            (rows, captures),
+            "cuts={cuts} grid={grid} manifest={manifest}"
+        );
+    }
+}
+
+/// The instance allowance replaces the manifest's anchor items and alone
+/// marks the grid's anchors.
+#[test]
+fn grid_anchor_items_replace_the_manifest_value() {
+    let config = SchedulerConfig::new(4, 64, 8192, 8192, 1)
+        .unwrap()
+        .with_anchor_items(2);
+    assert!(!config.grid_anchors());
+    for items in [0, 3] {
+        let grid = config.with_grid_anchor_items(items);
+        assert_eq!(grid.anchor_items(), items);
+        assert_eq!(grid.grid_anchors(), items > 0);
+    }
+}
+
+/// One anchor item a step: a second unaligned prompt in the same step ends
+/// its chunk at its anchor and finishes in a later step.
+#[test]
+fn grid_anchor_items_bound_the_anchored_items_of_a_step() {
+    let mut s = scheduler_with_grid_anchors(8192, true, 1, 0);
+    submit(&mut s, 1, &(0..789).collect::<Vec<_>>(), false);
+    submit(&mut s, 2, &(5000..5789).collect::<Vec<_>>(), false);
+    assert_eq!(
+        anchored_step(&mut s),
+        [(1, 0, 789, Some(768)), (2, 0, 768, None)]
+    );
+    assert!(
+        anchored_step(&mut s)
+            .iter()
+            .any(|&item| item == (2, 768, 21, None))
+    );
+}

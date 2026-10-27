@@ -425,6 +425,7 @@ pub struct SchedulerConfig {
     rewrites_last_page: bool,
     prefix_ancestry: bool,
     anchor_items: usize,
+    grid_anchors: bool,
 }
 
 impl SchedulerConfig {
@@ -481,6 +482,7 @@ impl SchedulerConfig {
             rewrites_last_page: false,
             prefix_ancestry: false,
             anchor_items: 0,
+            grid_anchors: false,
         })
     }
 
@@ -643,6 +645,25 @@ impl SchedulerConfig {
     #[must_use]
     pub const fn anchor_items(self) -> usize {
         self.anchor_items
+    }
+
+    /// The anchor items an instance declares for its guaranteed grid with
+    /// cuts, replacing the manifest's ([`Self::with_anchor_items`]). Only a
+    /// nonzero allowance lets a request on that grid run past its prompt-end
+    /// anchor to the prompt end in one chunk and capture the anchor after
+    /// the step; with zero every such anchor ends a chunk. Grid ends and
+    /// other cuts are unchanged. A host sets the value its bundle instance
+    /// declares.
+    #[must_use]
+    pub const fn with_grid_anchor_items(mut self, items: usize) -> Self {
+        self.anchor_items = items;
+        self.grid_anchors = items > 0;
+        self
+    }
+
+    #[must_use]
+    pub const fn grid_anchors(self) -> bool {
+        self.grid_anchors
     }
 
     /// Selects the mixed-step prefill policy. Fixed preserves competing chunks.
@@ -1367,6 +1388,9 @@ struct RequestRecord {
     spec: RequestSpec,
     guaranteed_prefill_chunks: Option<usize>,
     prefill_cuts: bool,
+    /// A guaranteed-grid request with cuts whose instance keeps prompt-end
+    /// anchors inside an item ([`SchedulerConfig::with_grid_anchor_items`]).
+    grid_anchors: bool,
     state: RequestState,
     handle: Option<SequenceHandle>,
     reserved_blocks: usize,
@@ -1712,6 +1736,9 @@ impl Scheduler {
             spec,
             guaranteed_prefill_chunks,
             prefill_cuts: guaranteed_prefill_chunks.is_some() && self.config.prefill_cuts,
+            grid_anchors: guaranteed_prefill_chunks.is_some()
+                && self.config.prefill_cuts
+                && self.config.grid_anchors,
             state: RequestState::Queued,
             handle: None,
             reserved_blocks: 0,
@@ -2904,7 +2931,7 @@ impl Scheduler {
             return Err(ScheduleError::PreparedCommitMismatch);
         }
         self.captures
-            .try_reserve(prepared.items.len())
+            .try_reserve(prepared.items.len().saturating_mul(2))
             .map_err(|_| ScheduleError::MetadataAllocationFailed)?;
         self.kv
             .apply_prepared_commit(prepared.kv_commit)
@@ -2917,31 +2944,39 @@ impl Scheduler {
             let record = &mut self.requests[item.record_index];
             // A prompt-ending item captures either its end or the anchor it
             // kept inside its rows, never both: the prompt end is a capture
-            // point only when it is its own anchor.
-            let captured = match item.anchor {
-                Some(anchor) => Some((anchor, true)),
-                None => item.capture.then_some((item.prefilled_tokens, false)),
-            };
-            if let Some((tokens, interior)) = captured
-                && let (Some(prefix), Some(handle)) = (&record.prefix, record.handle)
-                && let (Some(key), Some(chain)) = (
-                    prefix.chain.key_at(tokens),
-                    prefix.chain.chain(tokens / prefix.chain.block_tokens()),
-                )
-            {
-                // The capture list was reserved for every item of the batch.
-                self.captures.push(PrefixCaptureV1 {
-                    request_id: record.spec.id,
-                    swap: false,
-                    private: false,
-                    interior,
-                    tokens,
-                    key,
-                    chain,
-                    ancestry: self.config.prefix_ancestry.then(|| prefix.chain.clone()),
-                    handle,
-                    deferred: item.terminal,
-                });
+            // point only when it is its own anchor. On a guaranteed grid every
+            // prompt end is one, so an anchored item there captures both, the
+            // anchor first.
+            let anchor = item.anchor.map(|anchor| (anchor, true));
+            let end = (item.capture && (item.anchor.is_none() || record.grid_anchors))
+                .then_some((item.prefilled_tokens, false));
+            let first = self.captures.len();
+            for (tokens, interior) in anchor.into_iter().chain(end) {
+                if let (Some(prefix), Some(handle)) = (&record.prefix, record.handle)
+                    && let (Some(key), Some(chain)) = (
+                        prefix.chain.key_at(tokens),
+                        prefix.chain.chain(tokens / prefix.chain.block_tokens()),
+                    )
+                {
+                    // The capture list was reserved for two captures an item.
+                    self.captures.push(PrefixCaptureV1 {
+                        request_id: record.spec.id,
+                        swap: false,
+                        private: false,
+                        interior,
+                        tokens,
+                        key,
+                        chain,
+                        ancestry: self.config.prefix_ancestry.then(|| prefix.chain.clone()),
+                        handle,
+                        deferred: false,
+                    });
+                }
+            }
+            // A finished request's sequence is released once its last
+            // capture ends.
+            if let Some(last) = self.captures[first..].last_mut() {
+                last.deferred = item.terminal;
             }
             record.last_scheduled = prepared.next_tick;
             record.prefilled_tokens = item.prefilled_tokens;
@@ -3850,11 +3885,20 @@ impl Scheduler {
         chunk_limit: usize,
         maximum_scored_rows: usize,
     ) -> Option<usize> {
-        if record.guaranteed_prefill_chunks.is_some() {
+        // On a guaranteed grid only an instance that keeps such anchors
+        // spans them, and never one on a grid end. Grid ends are capture
+        // points, so a chunk that runs past an off-grid anchor reached as
+        // the next capture crosses no grid boundary.
+        if record.guaranteed_prefill_chunks.is_some() && !record.grid_anchors {
             return None;
         }
         let start = record.prefilled_tokens;
-        let anchor = record.end_anchor.filter(|&anchor| anchor > start)?;
+        let anchor = record.end_anchor.filter(|&anchor| {
+            anchor > start
+                && record
+                    .guaranteed_prefill_chunks
+                    .is_none_or(|grid| !anchor.is_multiple_of(grid))
+        })?;
         let next = record
             .captures
             .iter()

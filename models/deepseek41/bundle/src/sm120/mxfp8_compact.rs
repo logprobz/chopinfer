@@ -19,7 +19,9 @@ pub fn stages(g: &Geometry, q: Mxfp8FoldGemmQuery, rows: u32) -> Option<u32> {
         q.m_capacity,
         rows,
     )?;
-    assert_eq!(row.schedule, "compact");
+    assert_eq!(row.schedule, "prefill_tiles");
+    assert_eq!(row.knobs["matrix_fetch"].flag(), Some(false));
+    assert_eq!(row.knobs["tile_rows"].count(), Some(Entry::tile(rows)));
     row.knobs["stages"].count()
 }
 

@@ -147,3 +147,13 @@ tail. `lower/dense.rs` retains fused/local precedence, layer and bank gates.
 `ops/dense.rs` retains prefill, short-prefill, wide Engram, stream and workspace
 precedence, including the 128-row prefill threshold and the qualified
 1-64-row short-prefill path. These rules are outside the table lookup.
+
+The shared GEMM templates keep the existing operation keys and row ranges.
+Local rows name `local_wide` with stage count and tile sizes; cluster rows
+name `cluster_fused` with CTA-local storage (`distributed: false`) and the
+existing split, stage and column-tile values. Direct rows name `direct`
+with `n_warps` and `k_warps`. Compact and matrix prefill rows name
+`prefill_tiles` with `matrix_fetch`, `stages` and `tile_rows`; scalar-fetch
+tiles retain the existing row-count selection. These choices preserve the
+qualified symbols, launch plans and numerical policies. Staged-scale
+prefill remains a separate schedule.

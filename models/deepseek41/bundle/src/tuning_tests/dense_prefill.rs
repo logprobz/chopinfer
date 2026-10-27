@@ -148,8 +148,7 @@ fn pin_untuned_served_keys() {
         domain,
         UNTUNED,
         &[
-            ("compact", &["stages"]),
-            ("matrix", &["stages", "tile_rows"]),
+            ("prefill_tiles", &["matrix_fetch", "stages", "tile_rows"]),
             ("tma_scales", &[]),
         ],
     );

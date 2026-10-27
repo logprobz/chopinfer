@@ -20,7 +20,8 @@ pub fn choice(q: Mxfp8FoldGemmQuery, rows: u32) -> Option<(u32, u32)> {
         q.m_capacity,
         rows,
     )?;
-    assert_eq!(row.schedule, "matrix");
+    assert_eq!(row.schedule, "prefill_tiles");
+    assert_eq!(row.knobs["matrix_fetch"].flag(), Some(true));
     Some((
         row.knobs["tile_rows"].count()?,
         row.knobs["stages"].count()?,

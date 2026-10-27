@@ -144,7 +144,13 @@ pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, S
     }
     for entry in candidates(g, ranks)? {
         if SERVED.contains(&(entry.query.width, entry.query.input, entry.split_parts)) {
-            backend = backend.with_block_quantize(entry);
+            let tag = kernel_core::route::RouteTag::new(
+                &entry.symbol,
+                kernel_core::route::RouteClass::Fast,
+                "block_quantize",
+                [ROWS..=ROWS],
+            );
+            backend = backend.with_route_tags([tag]).with_block_quantize(entry);
         }
     }
     Ok(backend)
@@ -153,6 +159,35 @@ pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn route_tags_cover_only_the_served_one_row_twins() {
+        use kernel_core::route::RouteClass;
+
+        let backend = register(Sm120::new(), &FLASH, 4).unwrap();
+        let tags: Vec<_> = backend
+            .route_tags()
+            .into_iter()
+            .filter(|tag| tag.family == "block_quantize")
+            .collect();
+        assert_eq!(tags.len(), 2);
+        for symbol in [
+            "chop_deepseek41_dense_ceil_w8192_split8_v1",
+            "chop_deepseek41_dense_ceil_f32_w2048_split8_v1",
+        ] {
+            let tag = tags.iter().find(|tag| tag.symbol == symbol).unwrap();
+            assert_eq!(tag.entry, format!("block_quantize/{symbol}"));
+            assert_eq!(tag.class, RouteClass::Fast);
+            assert_eq!(tag.admitted, [1..=1]);
+        }
+        assert!(
+            register(Sm120::new(), &FLASH, 1)
+                .unwrap()
+                .route_tags()
+                .iter()
+                .all(|tag| tag.family != "block_quantize")
+        );
+    }
 
     /// Flash TP4 compiles a twin per width and part count, each with its
     /// served entry's query, ABI and early release; other geometries and

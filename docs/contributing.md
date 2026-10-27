@@ -76,6 +76,33 @@ libraries marked `lib-tests-in-one-process` one at a time before nextest.
 `RUST_TEST_THREADS` still limits tests within each such library; nextest's
 `--test-threads` limit does not control those separate processes.
 
+### Landing and release gates
+
+A change lands when these pass. The CPU checks run on its final tip:
+
+- the tests of each touched crate and its dependents, and the Python and
+  shell checks the change affects (`bash ci/quick.sh --base REF` selects
+  them against the landing base);
+- `cargo check --locked --offline --workspace --tests --keep-going`;
+- `python3 -B tests/leak_guard.py`, `bash tests/bundle-boundary.sh` and
+  `bash tests/model-neutral-host.sh`;
+- when the change touches a model's bundle, kernels or routes, that
+  model's quick and CPU [route sweep tiers](kernel-library.md#route-classes-and-served-envelopes)
+  and journal pins;
+- when the change can reach device execution or served output, GPU
+  exactness for each affected model: bitwise equality with the previous
+  output, or the [within-bound gates](numerics.md#a-speedup-that-changes-bits).
+
+GPU exactness and timing may come from the frozen base the change was
+measured on when main moved meanwhile; do not rebuild for the rebase.
+Rebase the range for landing, show with `git range-diff` that its patches
+are unchanged, and run the CPU checks above on the rebased tip. If the
+rebase resolves a conflict in serving code, say so; the integrator decides
+whether the GPU evidence must be rerun.
+
+The full CPU gate (`bash ci/cpu.sh`) is optional per batch; the integrator
+decides whether a batch needs it. It is required before a [release](#release).
+
 ### CPU phases and inventories
 
 The CPU gate runs `portable-build`, `portable-lint`, `portable-test`, then

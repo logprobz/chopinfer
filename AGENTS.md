@@ -8,8 +8,10 @@ Read [BUNDLE_ARCHITECTURE.md](BUNDLE_ARCHITECTURE.md),
 
 ## Checks
 
-- `bash ci/cpu.sh` runs the full CPU checks. Use `bash ci/quick.sh` while
-  iterating.
+- `bash ci/quick.sh` checks a change while iterating. The
+  [landing gate](docs/contributing.md#landing-and-release-gates) lists what
+  a change needs to land; `bash ci/cpu.sh`, the full CPU gate, is optional
+  per batch and required before a release.
 - GPU tests run only when `CHOPINFER_KERNEL_GPU` or `CHOPINFER_KERNEL_GPUS`
   names idle GPUs. CPU results and shared-device measurements are not GPU
   correctness or performance evidence. Served timing also needs an idle

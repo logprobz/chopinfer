@@ -26,8 +26,11 @@ pub fn cubin_spec(bundle: &Path) -> CubinSpec {
         .into_iter()
         .map(|name| EntryParam::U32 { name: name.into() }),
     );
-    CubinSpec { name: CUBIN.into(), sources_root: bundle.into(), include_dirs: vec!["cuda".into()],
-        headers: vec!["#include \"deepseek41_engram_hash.cuh\"".into()], defines: vec![],
-        entries: vec![EntrySpec::new(SYMBOL.into(), params,
-            "chop::deepseek41::engram_hash(tokens,batch,starts,history,text,constants,ids,status,rows,vocab,ngram,heads,layers,items,stride);".into(), THREADS, 1)] }
+    super::single_entry_cubin::cubin_spec(
+        bundle,
+        CUBIN,
+        "deepseek41_engram_hash.cuh",
+        EntrySpec::new(SYMBOL.into(), params,
+            "chop::deepseek41::engram_hash(tokens,batch,starts,history,text,constants,ids,status,rows,vocab,ngram,heads,layers,items,stride);".into(), THREADS, 1),
+    )
 }

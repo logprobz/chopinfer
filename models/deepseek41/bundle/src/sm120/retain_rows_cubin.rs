@@ -19,10 +19,11 @@ pub fn cubin_spec(bundle: &Path) -> CubinSpec {
             .into_iter()
             .map(|name| EntryParam::U32 { name: name.into() }),
     );
-    CubinSpec {
-        name: CUBIN.into(), sources_root: bundle.into(), include_dirs: vec!["cuda".into()],
-        headers: vec!["#include \"deepseek41_retain_rows.cuh\"".into()], defines: vec![],
-        entries: vec![EntrySpec::new(SYMBOL.into(), params,
-            "chop::deepseek41::retain_rows(source,segments,destination,row_bytes,source_rows,destination_rows);".into(), THREADS, 1)],
-    }
+    super::single_entry_cubin::cubin_spec(
+        bundle,
+        CUBIN,
+        "deepseek41_retain_rows.cuh",
+        EntrySpec::new(SYMBOL.into(), params,
+            "chop::deepseek41::retain_rows(source,segments,destination,row_bytes,source_rows,destination_rows);".into(), THREADS, 1),
+    )
 }

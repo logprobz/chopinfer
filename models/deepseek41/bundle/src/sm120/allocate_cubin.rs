@@ -36,13 +36,11 @@ pub fn cubin_spec(bundle: &Path) -> CubinSpec {
         .into_iter()
         .map(|name| EntryParam::U32 { name: name.into() }),
     );
-    CubinSpec {
-        name: CUBIN.into(),
-        sources_root: bundle.into(),
-        include_dirs: vec!["cuda".into()],
-        headers: vec!["#include \"deepseek41_allocate.cuh\"".into()],
-        defines: vec![],
-        entries: vec![EntrySpec::new(
+    super::single_entry_cubin::cubin_spec(
+        bundle,
+        CUBIN,
+        "deepseek41_allocate.cuh",
+        EntrySpec::new(
             SYMBOL.into(),
             params,
             "chop::deepseek41::verify_allocate(items,scores,rule,live_items,status,verified,\
@@ -51,6 +49,6 @@ pub fn cubin_spec(bundle: &Path) -> CubinSpec {
                 .into(),
             THREADS,
             1,
-        )],
-    }
+        ),
+    )
 }

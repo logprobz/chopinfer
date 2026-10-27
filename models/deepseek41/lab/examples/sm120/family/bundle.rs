@@ -139,5 +139,7 @@ pub mod rows;
 pub mod scale_expand;
 #[path = "../../../../bundle/src/sm120/shared.rs"]
 pub mod shared;
+#[path = "../../../../bundle/src/sm120/single_entry_cubin.rs"]
+pub mod single_entry_cubin;
 #[path = "../../../../bundle/src/sm120/window_fused.rs"]
 pub mod window_fused;

@@ -27,8 +27,11 @@ pub fn cubin_spec(bundle: &Path) -> CubinSpec {
         .into_iter()
         .map(|name| EntryParam::U32 { name: name.into() }),
     );
-    CubinSpec { name:CUBIN.into(),sources_root:bundle.into(),include_dirs:vec!["cuda".into()],
-        headers:vec!["#include \"deepseek41_acceptance.cuh\"".into()],defines:vec![],
-        entries:vec![EntrySpec::new(SYMBOL.into(),params,
-            "chop::deepseek41::acceptance(items,proposals,samples,stops,results,count,vocab,sample_capacity,draft_capacity,stop_capacity);".into(),THREADS,1)] }
+    super::single_entry_cubin::cubin_spec(
+        bundle,
+        CUBIN,
+        "deepseek41_acceptance.cuh",
+        EntrySpec::new(SYMBOL.into(),params,
+            "chop::deepseek41::acceptance(items,proposals,samples,stops,results,count,vocab,sample_capacity,draft_capacity,stop_capacity);".into(),THREADS,1),
+    )
 }

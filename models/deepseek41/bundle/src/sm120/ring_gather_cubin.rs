@@ -25,11 +25,12 @@ pub fn cubin_spec(bundle: &Path) -> CubinSpec {
         .into_iter()
         .map(|name| EntryParam::U32 { name: name.into() }),
     );
-    CubinSpec {
-        name: CUBIN.into(), sources_root: bundle.into(), include_dirs: vec!["cuda".into()],
-        headers: vec!["#include \"deepseek41_ring_gather.cuh\"".into()], defines: vec![],
-        entries: vec![EntrySpec::new(SYMBOL.into(), params,
+    super::single_entry_cubin::cubin_spec(
+        bundle,
+        CUBIN,
+        "deepseek41_ring_gather.cuh",
+        EntrySpec::new(SYMBOL.into(), params,
             "chop::deepseek41::ring_gather(source,slots,live,destination,bytes,source_stride,destination_stride,source_slots);".into(),
-            THREADS, 1)],
-    }
+            THREADS, 1),
+    )
 }

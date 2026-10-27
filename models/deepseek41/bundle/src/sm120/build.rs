@@ -122,6 +122,7 @@ mod retain_rows_cubin;
 mod retain_rows_entries;
 mod ring_gather_cubin;
 mod ring_gather_entries;
+mod single_entry_cubin;
 #[allow(dead_code)]
 mod window_fused;
 // The build compiles the entries; the bundle launches them.

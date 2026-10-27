@@ -21,6 +21,8 @@ struct Case {
     rows: u32,
     offset: u32,
     lengths: Vec<u32>,
+    /// Rows each prefill item's prompt continues past its chunk.
+    remaining: Vec<u32>,
     allocated: bool,
 }
 
@@ -100,9 +102,26 @@ fn cases(
                 rows: r,
                 offset,
                 lengths,
+                remaining: Vec::new(),
                 allocated: false,
             });
         }
+    }
+    for cut in &envelope.cuts {
+        assert!(
+            cut.lengths.len() == cut.remaining.len() && cut.lengths.iter().all(|&rows| rows > 0),
+            "invalid cut case {}",
+            cut.mode
+        );
+        cases.push(Case {
+            mode: cut.mode.clone(),
+            phase: Phase::Prefill,
+            rows: cut.lengths.iter().sum(),
+            offset: cut.offset,
+            lengths: cut.lengths.clone(),
+            remaining: cut.remaining.clone(),
+            allocated: false,
+        });
     }
     for &r in &envelope.decode_buckets {
         cases.push(Case {
@@ -111,6 +130,7 @@ fn cases(
             rows: r,
             offset: 5,
             lengths: vec![1; r as usize],
+            remaining: Vec::new(),
             allocated: false,
         });
     }
@@ -121,6 +141,7 @@ fn cases(
             rows: shape.row_bucket as u32,
             offset: 5,
             lengths: shape.drafts.iter().map(|n| *n as u32 + 1).collect(),
+            remaining: Vec::new(),
             allocated: false,
         });
     }
@@ -144,6 +165,7 @@ fn allocated_cases(serving: &Serving, envelope: &Envelope) -> Vec<Case> {
                 .into_iter()
                 .map(|drafts| drafts as u32 + 1)
                 .collect(),
+            remaining: Vec::new(),
             allocated: true,
         })
         .collect()
@@ -218,9 +240,10 @@ fn shard<S: Startup>(
         let prompt_ends: Vec<_> = case
             .lengths
             .iter()
-            .map(|&rows| {
+            .enumerate()
+            .map(|(index, &rows)| {
                 u64::from(if case.phase == Phase::Prefill {
-                    case.offset + rows
+                    case.offset + rows + case.remaining.get(index).copied().unwrap_or(0)
                 } else {
                     case.offset
                 })
@@ -601,6 +624,7 @@ pub fn memory_regression<S: Startup>() {
             rows,
             offset: 0,
             lengths: vec![rows],
+            remaining: Vec::new(),
             allocated: false,
         })
         .collect();
@@ -694,6 +718,7 @@ mod tests {
             verify: vec![],
             allocated: vec![],
             probes: vec![446, 789],
+            cuts: vec![],
         };
         let tags = vec![RouteTag::new(
             "base",

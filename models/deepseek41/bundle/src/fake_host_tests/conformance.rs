@@ -391,6 +391,25 @@ impl conformance::Startup for Served {
             .filter(|&n| n > 0)
         {
             envelope.prefill_tokens = chunk.min(envelope.prefill_tokens);
+            // A grid profile declares scheduler cuts: sweep chunks ending
+            // before their prompt ends inside either grid. A small first
+            // cut, a floor-sized cut, a cut after an earlier cut, a cut
+            // start reaching the grid boundary, and packed items of odd
+            // lengths, two cut and one ending its prompt.
+            let cut =
+                |mode: &str, offset, lengths: &[u32], remaining: &[u32]| conformance::CutCase {
+                    mode: mode.into(),
+                    offset,
+                    lengths: lengths.to_vec(),
+                    remaining: remaining.to_vec(),
+                };
+            envelope.cuts = vec![
+                cut("cut-small", 0, &[64], &[1436]),
+                cut("cut-floor", 0, &[512], &[988]),
+                cut("cut-repeat", 7168, &[512], &[8]),
+                cut("cut-grid", 7680, &[512], &[808]),
+                cut("cut-packed", 576, &[448, 64, 37], &[476, 860, 0]),
+            ];
         }
         envelope.chunk_offsets = vec![8192, 16384, 32768, 40960];
         envelope.probes = vec![446, 789, 1803, 3658, 4542, 7754];
@@ -565,6 +584,8 @@ impl conformance::Startup for Served {
             api()
                 .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
                 .expect("prefill API")
+                .with_prefill_cuts_api(crate::instance::prefill::PREFILL_CUTS_API)
+                .expect("prefill cuts API")
         } else {
             api()
         };
@@ -643,9 +664,14 @@ impl conformance::Startup for Served {
                 },
             )
             .collect();
-        let encoded = runtime_bundle_sdk::prefill::encode(&batch, &boundaries)
-            .expect("served prefill boundaries");
-        instance.execute_prefill(&encoded, sink)
+        // Grid and prompt ends take the grid entry; earlier ends are
+        // scheduler cuts.
+        if let Ok(encoded) = runtime_bundle_sdk::prefill::encode(&batch, &boundaries) {
+            return instance.execute_prefill(&encoded, sink);
+        }
+        let encoded = runtime_bundle_sdk::prefill::encode_with_cuts(&batch, &boundaries)
+            .expect("served prefill cuts");
+        instance.execute_prefill_cuts(&encoded, sink)
     }
 
     fn execute_allocated_step(

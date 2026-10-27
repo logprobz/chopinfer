@@ -4,7 +4,7 @@
 mod accounting;
 pub mod route_guard;
 mod startup;
-pub use route_guard::Envelope;
+pub use route_guard::{CutCase, Envelope};
 
 pub use accounting::ObservedHost;
 pub use startup::{

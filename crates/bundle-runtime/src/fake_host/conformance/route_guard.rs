@@ -21,6 +21,21 @@ pub struct Envelope {
     pub verify: Vec<VerifyShape>,
     pub allocated: Vec<AllocatedShape>,
     pub probes: Vec<u32>,
+    /// Prefill steps whose chunks end before their prompt ends, for a
+    /// bundle that admits scheduler cuts. Every tier sweeps all of them.
+    pub cuts: Vec<CutCase>,
+}
+
+/// One prefill step of cut chunks: items that each prefill `lengths[i]`
+/// rows from `offset` while their prompts continue `remaining[i]` rows past
+/// the chunk (zero ends the prompt). Earlier rows are committed first in
+/// chunks the bundle admits.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CutCase {
+    pub mode: String,
+    pub offset: u32,
+    pub lengths: Vec<u32>,
+    pub remaining: Vec<u32>,
 }
 
 impl Envelope {
@@ -41,6 +56,7 @@ impl Envelope {
                 .verify_warmup()
                 .map_or_else(Vec::new, |v| v.allocated),
             probes: Vec::new(),
+            cuts: Vec::new(),
         }
     }
 }

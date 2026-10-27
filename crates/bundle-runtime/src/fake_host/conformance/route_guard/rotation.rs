@@ -153,6 +153,7 @@ mod tests {
                     verify: vec![],
                     allocated: vec![],
                     probes: vec![17, 47],
+                    cuts: vec![],
                 },
                 tags: vec![RouteTag::new(
                     "base",

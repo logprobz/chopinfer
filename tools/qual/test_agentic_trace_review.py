@@ -92,6 +92,24 @@ class TraceReviewTests(unittest.TestCase):
         self.assertTrue(all(row['anchor_survival_unavailable'] for row in turns))
         self.assertEqual([row['first_prefix_retained'] for row in turns], [True, True, True])
 
+    def test_coding_profile_pairs_with_pre_trace_receipt(self):
+        from agentic_compare import compare
+        from test_agentic_mixed import ReplicaTests
+        receipts = ReplicaTests().sweeps('--replicas', '1',
+                    arms=(('fixed-old', 'fixed'), ('fixed-new', 'fixed')))
+        legacy = copy.deepcopy(receipts['fixed-old'])
+        # The pre-trace coding parser had none of these fields. Its other
+        # defaults, profile additions and digest encoding are unchanged.
+        for key in ('workload', 'trace', 'trace_history'):
+            legacy['profile'].pop(key, None)
+        encoded = json.dumps(legacy['profile'], sort_keys=True, separators=(',', ':'))
+        legacy['profile_digest'] = hashlib.sha256(encoded.encode()).hexdigest()
+        current = receipts['fixed-new']
+        self.assertEqual(encoded, json.dumps(current['profile'], sort_keys=True, separators=(',', ':')))
+        self.assertEqual(legacy['profile_digest'], current['profile_digest'])
+        self.assertEqual(compare(legacy, current)['arms'],
+                         {'baseline': 'fixed-old', 'candidate': 'fixed-new'})
+
 
 
 if __name__ == '__main__':

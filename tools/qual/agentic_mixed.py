@@ -1441,7 +1441,7 @@ def main(argv=None):
     # The corpus is identified by its digest and commit, never its local path.
     profile = {k: v for k, v in vars(args).items()
                if k not in ('url', 'model', 'label', 'arm', 'dry_run', 'fake_prefill_budget', 'frontend', 'model_root',
-                            'corpus')}
+                            'corpus', 'workload', 'trace', 'trace_history')}
     profile['levels'] = levels
     profile.update(max_request_bytes=MAX_REQUEST, max_response_bytes=MAX_RESPONSE,
                    max_tool_result_bytes=max_tool_result_bytes(manifest),

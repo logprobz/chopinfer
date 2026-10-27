@@ -224,17 +224,15 @@ fn latent_required_cases_prepare_and_symbols_are_embedded() {
         &prefill_entries,
     )
     .unwrap();
+    // The served cache cubin keeps only the unprofiled entries; the
+    // profiling controls stay in the model lab.
     let selected_entries = bundle_deepseek41::sm120::latent_scheduled::entries(flash, 4)
         .unwrap()
         .into_iter()
         .filter(|source| !source.name.ends_with("_draft_block"))
-        .flat_map(|source| {
-            [false, true].map(
-                move |profile| kernels_sm120::latent::sources_cached::Entry {
-                    source: source.clone(),
-                    profile,
-                },
-            )
+        .map(|source| kernels_sm120::latent::sources_cached::Entry {
+            source,
+            profile: false,
         })
         .collect::<Vec<_>>();
     let selected = kernels_sm120::latent::sources_cached::cubin_spec(

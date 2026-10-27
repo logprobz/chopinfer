@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::{fs, path::Path, path::PathBuf, sync::OnceLock};
 
 const ARTIFACTS: &str = "CHOPINFER_DEEPSEEK41_DEPENDENCY_PROBES";
-const SYMBOLS: &[&str] = &[LIVE, COPY];
+const SYMBOLS: &[&str] = &[COPY, LIVE];
 
 fn lock() -> Value {
     let records: Vec<Value> = serde_json::from_str(include_str!(concat!(

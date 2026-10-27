@@ -41,3 +41,13 @@ four mapped-gather releases and 72 resource releases. Existing launch order,
 grids, scalar arguments, offsets and lengths are unchanged after removing
 opaque handle labels for the diagnostic comparison. The AR fixture is
 unchanged. This pin audit does not replace the sealed journal proof.
+
+The integrated HC cleanup retires five unused cluster-probe symbols per
+rank. Both added fixtures lose 20 resolves and 20 releases, becoming 70,460
+AR operations and 73,378 DSpark operations. Their 30,252 and 31,024 launches
+retain their symbols, order, geometry, scalar arguments and buffer spans.
+Every retained operation matches after translating allocated IDs by the
+number of retired symbols below them; imported image, KV and state IDs stay
+fixed. Configured symbols retain their dynamic shared-memory sizes. This
+rebase audit changes only the two added pins. Existing journals still use
+strict identity policies, and the declaration has no positional edits.

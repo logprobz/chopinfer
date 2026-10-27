@@ -276,10 +276,15 @@ pub(crate) mod tests {
     /// The block-FP8 options with the coupled drafts option set to `value`
     /// (a JSON value).
     pub(crate) fn options_coupled_drafts(top_k: u32, value: &str) -> Vec<u8> {
+        options_of_coupled_drafts(FP8_BLOCK128.id, top_k, value)
+    }
+
+    /// [`options_of`] with the coupled drafts option set to `value` (a JSON
+    /// value).
+    pub(crate) fn options_of_coupled_drafts(layout: &str, top_k: u32, value: &str) -> Vec<u8> {
         encoded(&format!(
-            "{{\"{LAYOUT_OPTION}\":\"{}\",\"{COUPLED_DRAFTS_OPTION}\":{value},\
-             \"text_config.index_topk\":{top_k}}}",
-            FP8_BLOCK128.id
+            "{{\"{LAYOUT_OPTION}\":\"{layout}\",\"{COUPLED_DRAFTS_OPTION}\":{value},\
+             \"text_config.index_topk\":{top_k}}}"
         ))
     }
 

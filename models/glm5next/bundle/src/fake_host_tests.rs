@@ -3620,9 +3620,22 @@ fn drafted(request: u64, previous: u64, rows: u32, bonus: u32) -> Vec<u8> {
 
 /// [`drafted`] in state slot `slot`.
 fn drafted_in(request: u64, previous: u64, rows: u32, bonus: u32, slot: u64) -> Vec<u8> {
+    drafted_sampling(request, previous, rows, bonus, slot, None)
+}
+
+/// [`drafted_in`] carrying the item's draft sampling `record` (a V6 batch)
+/// when given.
+fn drafted_sampling(
+    request: u64,
+    previous: u64,
+    rows: u32,
+    bonus: u32,
+    slot: u64,
+    record: Option<runtime_bundle_sdk::DraftSamplingV1>,
+) -> Vec<u8> {
     use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
     let end = previous + u64::from(rows);
-    BatchRequestV1::new(
+    let batch = BatchRequestV1::new(
         BatchWireVersionV1::V3,
         vec![BatchItemV1::verify(request, rows, true, vec![bonus])],
         vec![BatchAppendV1::new(
@@ -3633,7 +3646,11 @@ fn drafted_in(request: u64, previous: u64, rows: u32, bonus: u32, slot: u64) -> 
             None,
         )],
     )
-    .with_state_slots(vec![slot])
+    .with_state_slots(vec![slot]);
+    match record {
+        Some(record) => batch.with_draft_sampling(vec![record]),
+        None => batch,
+    }
     .encode()
     .unwrap()
 }

@@ -5,14 +5,17 @@
 //! launch each chained projection and lowered projection in the layout's
 //! format. On the MTP KV format, a prompt chunk and a drafted step launch
 //! the MTP drafter's experts in the layout's MTP format (MXFP8, BF16 or
-//! block FP8). Every journal is pinned per layout.
+//! block FP8); the block-FP8 one drafts a sampled item from the target
+//! sampler's noise (`runtime.mtp_coupled_drafts`). Every journal is pinned
+//! per layout.
 
 use super::*;
-use crate::config::tests::options_of;
+use crate::config::tests::{options_of, options_of_coupled_drafts};
 use model_glm5next_contract::quantization::{
     Encoding, FP8_NVFP4_ROUTED, Layout, NVFP4_DENSE_ROUTED, NVFP4_ROUTED,
     test_support::{config_of, extra_checkpoints},
 };
+use model_glm5next_contract::sm120::engines::DRAFT_NOISE_SYMBOL;
 
 /// One mixed layout's package and its pinned journals.
 pub(super) struct Mix {
@@ -35,7 +38,15 @@ pub(super) struct Mix {
     /// rows.
     prefill: (usize, u64),
     drafted: (usize, u64),
+    /// Whether the drafted fixture couples its drafts: its instance sets
+    /// `runtime.mtp_coupled_drafts` and its drafted step samples its item
+    /// ([`SAMPLED`]).
+    coupled_drafts: bool,
 }
+
+/// The draft sampling record of a coupled fixture's drafted item: its first
+/// verify row samples generated index 1, after the bonus token.
+const SAMPLED: (u64, u64, f64) = (0x5eed_0c0f_fee0_0001, 1, 1.0);
 
 /// Each mix's journals; create, decode, verify and drafted re-pinned when the shared
 /// gate/up overlap became the default (the side streams and events; the
@@ -80,6 +91,7 @@ pub(super) const ROUTED: Mix = Mix {
     verify: (4296, 0x26af_6f1a_cd65_8e92),
     prefill: (6192, 0x0d09_4c3a_bdbc_49cc),
     drafted: (4720, 0x6911_5ce0_cc56_da43),
+    coupled_drafts: false,
 };
 
 pub(super) const DENSE_ROUTED: Mix = Mix {
@@ -101,11 +113,16 @@ pub(super) const DENSE_ROUTED: Mix = Mix {
     verify: (4296, 0x8781_dce1_7fde_5f5a),
     prefill: (6192, 0xe91f_6fb6_bc28_3952),
     drafted: (4720, 0x0c36_7f7e_a707_525f),
+    coupled_drafts: false,
 };
 
 /// Block FP8 everywhere but the main layers' routed experts, which are
 /// NVFP4, from a synthetic config of that mix: its dense MLPs and shared
 /// experts run the block-FP8 chained projections beside the NVFP4 experts.
+/// Its drafted fixture couples its drafts: the prefill and drafted steps
+/// were re-pinned when it did (each drafter run uploads its noise records,
+/// and the draft noise launches before each argmax partial; create's added
+/// module, resolves and records shift the handles after them).
 pub(super) const FP8_ROUTED: Mix = Mix {
     layout: &FP8_NVFP4_ROUTED,
     config: || config_of(&FP8_NVFP4_ROUTED),
@@ -122,8 +139,9 @@ pub(super) const FP8_ROUTED: Mix = Mix {
     create: (3498, 0x328d_459c_e187_80a2),
     decode: (4296, 0xef30_c9cf_123a_856a),
     verify: (4296, 0x21f7_08ff_0b8c_4408),
-    prefill: (6192, 0xb27c_a292_a085_8900),
-    drafted: (4720, 0xb9da_373e_de16_adf3),
+    prefill: (6200, 0x3fe5_9803_33ff_54dd),
+    drafted: (4740, 0x4d20_4f41_6bb8_09ee),
+    coupled_drafts: true,
 };
 
 impl Mix {
@@ -141,13 +159,14 @@ impl Mix {
 
     /// Create from a record naming the layout and the precision component.
     pub(super) fn create(&self, host: &Rc<Host>) -> BundleInstanceV1 {
+        self.create_with(host, &options_of(self.layout.id, 2048))
+    }
+
+    /// [`Self::create`] with model options `options`.
+    fn create_with(&self, host: &Rc<Host>, options: &[u8]) -> BundleInstanceV1 {
         let roles = [crate::projections::COMPONENT_ROLE.as_bytes().to_vec()];
-        let record = crate::config::tests::record_naming(
-            DECODE_BATCH,
-            &options_of(self.layout.id, 2048),
-            host.format,
-            &roles,
-        );
+        let record =
+            crate::config::tests::record_naming(DECODE_BATCH, options, host.format, &roles);
         api()
             .create(HostServicesTableV1::new(Rc::clone(host)), &record)
             .unwrap_or_else(|error| {
@@ -223,7 +242,8 @@ impl Mix {
     /// On the MTP KV format: a prompt chunk (the target's prefill, then the
     /// drafter's extend over the prompt) and a drafted verify step (the
     /// target's verify, the drafter's extend and its draft steps), each
-    /// launching the drafter's experts in the layout's MTP format.
+    /// launching the drafter's experts in the layout's MTP format. A
+    /// coupled fixture's draft argmax adds the draft noise in both.
     fn drafts(&self) {
         self.drafts_on(&self.mtp_host());
     }
@@ -237,7 +257,13 @@ impl Mix {
 
     /// [`Self::drafts`] on `host`.
     fn drafts_on(&self, host: &Rc<Host>) {
-        let mut instance = self.create(host);
+        let mut instance = match self.coupled_drafts {
+            true => self.create_with(
+                host,
+                &options_of_coupled_drafts(self.layout.id, 2048, "true"),
+            ),
+            false => self.create(host),
+        };
         let handle = instance.handle();
         crate::instance::run_lowered_stages_alone(handle);
         // The prompt chunk's journal holds its eager launches.
@@ -252,6 +278,14 @@ impl Mix {
                     self.layout.id
                 );
             }
+            assert_eq!(
+                lines
+                    .iter()
+                    .any(|line| line.starts_with("launch ") && line.contains(DRAFT_NOISE_SYMBOL)),
+                self.coupled_drafts,
+                "{}",
+                self.layout.id
+            );
         };
         let start = host.device.journal.borrow().len();
         instance
@@ -264,8 +298,13 @@ impl Mix {
         assert_eq!(crate::instance::drafter_frontier(handle, 0), Some(9));
         let start = host.device.journal.borrow().len();
         let mut sink = DraftSink::default();
+        let (seed, generated, temperature) = SAMPLED;
+        let record = self.coupled_drafts.then(|| {
+            runtime_bundle_sdk::DraftSamplingV1::new(seed, generated, temperature, 1.0, 0.0, 0, 0)
+                .unwrap()
+        });
         instance
-            .execute(&drafted(7, 10, 4, 21), &mut sink)
+            .execute(&drafted_sampling(7, 10, 4, 21, 0, record), &mut sink)
             .unwrap_or_else(|error| panic!("{error:?} {:?}", host.logs.borrow()));
         assert_eq!(sink.drafts.len(), 1);
         let lines = issued(host, start);

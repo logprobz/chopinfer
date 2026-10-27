@@ -6,9 +6,7 @@
 //! the noise first on every rank. With the option off, or without a
 //! drafter, the instance issues what a record without the option issues.
 
-use runtime_bundle_sdk::{
-    BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1, DraftSamplingV1,
-};
+use runtime_bundle_sdk::DraftSamplingV1;
 
 use super::*;
 use crate::buffers::Buffer;
@@ -18,28 +16,10 @@ use model_glm5next_contract::sm120::engines::DRAFT_NOISE_SYMBOL;
 
 const PARTIAL: &str = "chop_row_argmax_partial_f32_v1";
 
-/// [`drafted`] (`rows` rows the drafter drafts, after `previous` tokens)
-/// carrying draft sampling `record` (a V6 batch) when given.
+/// [`drafted`] of request 7 (`rows` rows the drafter drafts, after
+/// `previous` tokens) carrying draft sampling `record` when given.
 fn sampled(previous: u64, rows: u32, bonus: u32, record: Option<DraftSamplingV1>) -> Vec<u8> {
-    let end = previous + u64::from(rows);
-    let batch = BatchRequestV1::new(
-        BatchWireVersionV1::V3,
-        vec![BatchItemV1::verify(7, rows, true, vec![bonus])],
-        vec![BatchAppendV1::new(
-            previous,
-            u64::from(rows),
-            end,
-            (0..end.div_ceil(64)).collect(),
-            None,
-        )],
-    )
-    .with_state_slots(vec![0]);
-    match record {
-        Some(record) => batch.with_draft_sampling(vec![record]),
-        None => batch,
-    }
-    .encode()
-    .unwrap()
+    drafted_sampling(7, previous, rows, bonus, 0, record)
 }
 
 /// A drafting instance on the MTP KV format, its model options naming the

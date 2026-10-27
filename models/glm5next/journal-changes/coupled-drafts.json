@@ -1,0 +1,847 @@
+{
+ "schema": "chopinfer.journal-proof.layout.v1",
+ "description": "Couple the block-FP8 drafted fixture's MTP drafts to the target sampler's noise (runtime.mtp_coupled_drafts). Each rank loads the unchanged locked draft noise module, resolves its one entry and allocates its noise records. The drafted step's extend and draft step graphs each capture one more node, the draft noise launch, so their creators are declared removed and added. Exact operation edits add each drafter run's record uploads and the draft noise launch before each argmax partial; every retained operation is compared under the ordered handle map.",
+ "handles": {
+  "fake_host_tests::nvfp4::the_block_fp8_and_nvfp4_drafter_runs_its_fp8_experts#tests/fake_host_tests.nvfp4.the_block_fp8_and_nvfp4_drafter_runs_its_fp8_experts/device-1.jsonl": {
+   "added": [
+    {
+     "name": "coupled-drafts.added.allocation.0",
+     "kind": "allocation",
+     "at": 268,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       1024,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.added.allocation.1",
+     "kind": "allocation",
+     "at": 618,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       1024,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.added.allocation.2",
+     "kind": "allocation",
+     "at": 968,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       1024,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.added.allocation.3",
+     "kind": "allocation",
+     "at": 1318,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       1024,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.added.module.4",
+     "kind": "module",
+     "at": 1714,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "draft_noise_glm5next_sm120",
+       "fedc4861b99f9d91",
+       19200,
+       "fd53fa33573f0faa3172a33c205e1d26951096295e41f04d4714459e1d105aae"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.added.resolve.5",
+     "kind": "resolve",
+     "at": 1716,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_row_draft_noise_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       557,
+       "chop_row_draft_noise_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.added.module.6",
+     "kind": "module",
+     "at": 2904,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "draft_noise_glm5next_sm120",
+       "fedc4861b99f9d91",
+       19200,
+       "fd53fa33573f0faa3172a33c205e1d26951096295e41f04d4714459e1d105aae"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.added.resolve.7",
+     "kind": "resolve",
+     "at": 2906,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_row_draft_noise_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       930,
+       "chop_row_draft_noise_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.added.module.8",
+     "kind": "module",
+     "at": 4094,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "draft_noise_glm5next_sm120",
+       "fedc4861b99f9d91",
+       19200,
+       "fd53fa33573f0faa3172a33c205e1d26951096295e41f04d4714459e1d105aae"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.added.resolve.9",
+     "kind": "resolve",
+     "at": 4096,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_row_draft_noise_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       1303,
+       "chop_row_draft_noise_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.added.module.10",
+     "kind": "module",
+     "at": 5284,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "draft_noise_glm5next_sm120",
+       "fedc4861b99f9d91",
+       19200,
+       "fd53fa33573f0faa3172a33c205e1d26951096295e41f04d4714459e1d105aae"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.added.resolve.11",
+     "kind": "resolve",
+     "at": 5286,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_row_draft_noise_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       1676,
+       "chop_row_draft_noise_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.added.graph.0",
+     "kind": "graph",
+     "at": 13952,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 2 @id 43"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.added.graph.1",
+     "kind": "graph",
+     "at": 14015,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 3 @id 43"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.added.graph.2",
+     "kind": "graph",
+     "at": 14078,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 4 @id 43"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.added.graph.3",
+     "kind": "graph",
+     "at": 14141,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 5 @id 43"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.added.graph.4",
+     "kind": "graph",
+     "at": 14233,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 2 @id 37"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.added.graph.5",
+     "kind": "graph",
+     "at": 14289,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 3 @id 37"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.added.graph.6",
+     "kind": "graph",
+     "at": 14345,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 4 @id 37"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.added.graph.7",
+     "kind": "graph",
+     "at": 14401,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 5 @id 37"
+      ]
+     ]
+    }
+   ],
+   "removed": [
+    {
+     "name": "coupled-drafts.removed.graph.0",
+     "kind": "graph",
+     "at": 13907,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 2 @id 42"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.removed.graph.1",
+     "kind": "graph",
+     "at": 13969,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 3 @id 42"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.removed.graph.2",
+     "kind": "graph",
+     "at": 14031,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 4 @id 42"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.removed.graph.3",
+     "kind": "graph",
+     "at": 14093,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 5 @id 42"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.removed.graph.4",
+     "kind": "graph",
+     "at": 14180,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 2 @id 36"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.removed.graph.5",
+     "kind": "graph",
+     "at": 14235,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 3 @id 36"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.removed.graph.6",
+     "kind": "graph",
+     "at": 14290,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 4 @id 36"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts.removed.graph.7",
+     "kind": "graph",
+     "at": 14345,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 5 @id 36"
+      ]
+     ]
+    }
+   ]
+  }
+ },
+ "module_activations": {
+  "fake_host_tests::nvfp4::the_block_fp8_and_nvfp4_drafter_runs_its_fp8_experts#tests/fake_host_tests.nvfp4.the_block_fp8_and_nvfp4_drafter_runs_its_fp8_experts/device-1.jsonl": {
+   "added": [
+    "draft_noise_glm5next_sm120"
+   ]
+  }
+ },
+ "operations": {
+  "fake_host_tests::nvfp4::the_block_fp8_and_nvfp4_drafter_runs_its_fp8_experts#tests/fake_host_tests.nvfp4.the_block_fp8_and_nvfp4_drafter_runs_its_fp8_experts/device-1.jsonl": [
+   {
+    "add": {
+     "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967396 }, offset: 0, length: 1024 } 51d88627df287325",
+     "lines": [
+      9632
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967505 }, offset: 0, length: 1024 } 51d88627df287325",
+     "lines": [
+      9638
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967614 }, offset: 0, length: 1024 } 51d88627df287325",
+     "lines": [
+      9644
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967723 }, offset: 0, length: 1024 } 51d88627df287325",
+     "lines": [
+      9650
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 2 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 32, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967382 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967396 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967388 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967400 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(0), ScalarU32(0)]",
+     "lines": [
+      9819
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 3 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 32, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967491 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967505 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967497 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967509 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(38720), ScalarU32(0)]",
+     "lines": [
+      9826
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 4 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 32, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967600 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967614 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967606 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967618 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(77440), ScalarU32(0)]",
+     "lines": [
+      9833
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 5 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 32, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967709 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967723 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967715 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967727 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(116160), ScalarU32(0)]",
+     "lines": [
+      9840
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967396 }, offset: 0, length: 1024 } 32f8c27d056aec7a",
+     "lines": [
+      9885
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967505 }, offset: 0, length: 1024 } 32f8c27d056aec7a",
+     "lines": [
+      9891
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967614 }, offset: 0, length: 1024 } 32f8c27d056aec7a",
+     "lines": [
+      9897
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967723 }, offset: 0, length: 1024 } 32f8c27d056aec7a",
+     "lines": [
+      9903
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 2 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 1, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967382 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967396 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967388 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967400 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(0), ScalarU32(0)]",
+     "lines": [
+      9958,
+      10227
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 3 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 1, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967491 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967505 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967497 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967509 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(38720), ScalarU32(0)]",
+     "lines": [
+      10018,
+      10280
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 4 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 1, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967600 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967614 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967606 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967618 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(77440), ScalarU32(0)]",
+     "lines": [
+      10078,
+      10333
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 5 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 1, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967709 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967723 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967715 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967727 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(116160), ScalarU32(0)]",
+     "lines": [
+      10138,
+      10386
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 2 1997",
+     "lines": [
+      10128
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 3 2000",
+     "lines": [
+      10129
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 4 2003",
+     "lines": [
+      10130
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 5 2006",
+     "lines": [
+      10131
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 2 2009",
+     "lines": [
+      10152
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 3 2012",
+     "lines": [
+      10153
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 4 2015",
+     "lines": [
+      10154
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 5 2018",
+     "lines": [
+      10155
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967396 }, offset: 0, length: 1024 } 27c4fc3921eb359d",
+     "lines": [
+      10161
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967505 }, offset: 0, length: 1024 } 27c4fc3921eb359d",
+     "lines": [
+      10167
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967614 }, offset: 0, length: 1024 } 27c4fc3921eb359d",
+     "lines": [
+      10173
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967723 }, offset: 0, length: 1024 } 27c4fc3921eb359d",
+     "lines": [
+      10179
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 2 2009",
+     "lines": [
+      10368,
+      10400
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 3 2012",
+     "lines": [
+      10369,
+      10401
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 4 2015",
+     "lines": [
+      10370,
+      10402
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 5 2018",
+     "lines": [
+      10371,
+      10403
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 2 2021",
+     "lines": [
+      10400,
+      10436
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 3 2024",
+     "lines": [
+      10401,
+      10437
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 4 2027",
+     "lines": [
+      10402,
+      10438
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 5 2030",
+     "lines": [
+      10403,
+      10439
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967396 }, offset: 0, length: 1024 } 490831cb8455365c",
+     "lines": [
+      10409
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967505 }, offset: 0, length: 1024 } 490831cb8455365c",
+     "lines": [
+      10415
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967614 }, offset: 0, length: 1024 } 490831cb8455365c",
+     "lines": [
+      10421
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967723 }, offset: 0, length: 1024 } 490831cb8455365c",
+     "lines": [
+      10427
+     ]
+    }
+   }
+  ]
+ }
+}

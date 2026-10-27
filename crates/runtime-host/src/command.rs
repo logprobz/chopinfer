@@ -3613,6 +3613,24 @@ impl ServedEngineV1 {
             u8::from(aligned_prompt_capture)
         );
         let config = config.with_aligned_prompt_capture(aligned_prompt_capture);
+        let anchor_items = grid_anchor_items_v1(
+            instance
+                .prefill_anchor_items()
+                .map_err(|error| format!("invalid bundle prefill anchors declaration: {error}"))?,
+            loaded
+                .manifest()
+                .batch_limits()
+                .map_or(0, runtime_bundle::BundleBatchLimitsV1::maximum_sequences),
+        )?;
+        let config = match anchor_items {
+            None => config,
+            Some(items) => {
+                if items > 0 {
+                    println!("prefill anchor items: {items} per step on the guaranteed grid");
+                }
+                config.with_grid_anchor_items(items)
+            }
+        };
         let snapshot_pages = if prefix_capability
             && (self.prefix_cache || (offload_capability && self.kv_offload.budget_bytes != 0))
         {
@@ -6394,6 +6412,26 @@ const MAXIMUM_PREFILL_DECODE_STEPS_V1: usize = 64;
 /// whose profile may still supply `--prefill-budget`), options that need a
 /// budget the invocation does not name are checked for their own values
 /// only; the parse after the profile's defaults checks the pairing.
+/// The anchor items a bundle instance declares for its guaranteed grid
+/// (`chop_bundle_prefill_anchors_api_v1`), which replace the manifest's, or
+/// `None` when it declares none and the manifest's apply. Like the
+/// manifest's, they cannot exceed the sequences the bundle runs at once.
+fn grid_anchor_items_v1(
+    declared: Option<u32>,
+    maximum_sequences: u32,
+) -> Result<Option<usize>, String> {
+    match declared {
+        Some(items) if items > maximum_sequences => Err(format!(
+            "the bundle keeps {items} prefill anchor items a step, more than its \
+             {maximum_sequences} sequences"
+        )),
+        Some(items) => usize::try_from(items)
+            .map(Some)
+            .map_err(|_| "prefill anchor items do not fit this host".to_owned()),
+        None => Ok(None),
+    }
+}
+
 fn prefill_budget_v1(
     parsed: &ArgumentsV1,
     profile_pending: bool,
@@ -11309,6 +11347,18 @@ mod tests {
             assert!(DeveloperServingEnvelopeV1::new(prompt_tokens, generated_tokens).is_err());
         }
         assert!(DeveloperServingEnvelopeV1::new(usize::MAX, 1).is_err());
+    }
+
+    /// An instance's grid anchor items replace the manifest's only when it
+    /// declares them, within the bundle's sequences.
+    #[test]
+    fn instance_grid_anchor_items_stay_within_the_bundle_sequences() {
+        assert_eq!(super::grid_anchor_items_v1(None, 32), Ok(None));
+        assert_eq!(super::grid_anchor_items_v1(Some(0), 32), Ok(Some(0)));
+        assert_eq!(super::grid_anchor_items_v1(Some(8), 32), Ok(Some(8)));
+        assert_eq!(super::grid_anchor_items_v1(Some(32), 32), Ok(Some(32)));
+        assert!(super::grid_anchor_items_v1(Some(33), 32).is_err());
+        assert!(super::grid_anchor_items_v1(Some(1), 0).is_err());
     }
 
     /// A bundle that declares anchor items keeps its kept-anchor flags on a

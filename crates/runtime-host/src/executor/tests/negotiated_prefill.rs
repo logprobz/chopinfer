@@ -43,6 +43,45 @@ fn extra_endpoints_require_the_separate_bundle_declaration() {
     }
 }
 
+/// A prompt-ending item that keeps its anchor inside its rows reaches the
+/// bundle only in the cuts envelope, which the grid-only contract refuses.
+#[test]
+fn anchored_prompt_ends_need_the_cuts_envelope() {
+    use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
+    let original = BatchRequestV1::new(
+        BatchWireVersionV1::V3,
+        vec![BatchItemV1::new(1, false, 789, true, vec![0; 789]).with_anchor(true)],
+        vec![BatchAppendV1::new(0, 789, 789, (0..13).collect(), None)],
+    )
+    .encode()
+    .unwrap();
+    let items = [ModelBatchItem::new(
+        RequestId::new(1),
+        BatchPhase::Prefill { tokens: 789 },
+        vec![0; 789],
+        true,
+    )
+    .with_prefill_boundary(runtime_engine::PrefillBoundary {
+        chunk_tokens: 8192,
+        prompt_tokens: 789,
+    })];
+    for cuts in [false, true] {
+        let mut instance = FakeExecutionV1::emitting(Vec::new());
+        instance.prefill_chunk = 8192;
+        instance.prefill_cuts = cuts;
+        let encoded =
+            crate::executor::negotiated_prefill_request(&instance, original.clone(), &items);
+        if cuts {
+            let bytes = encoded.unwrap();
+            let read = runtime_bundle_sdk::prefill::decode_with_cuts(&bytes).unwrap();
+            assert!(read.batch.items()[0].anchor());
+            assert_eq!(read.boundaries[0].chunk_end, 789);
+        } else {
+            assert!(encoded.is_err());
+        }
+    }
+}
+
 struct CollectedSampler;
 
 impl DeviceLogitsSamplerV1 for CollectedSampler {

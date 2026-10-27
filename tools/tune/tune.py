@@ -948,6 +948,12 @@ def run_ab_windows(server, arm, state, power, root, cold=None):
             full = full_concurrency(w['steps'], c)
             if not full['steps'] and not cold:
                 raise RuntimeError(f'{name}: no full-concurrency steps')
+            step_cells = cells(w['steps'])
+            if server.dry:
+                # The stub uses wall time to place steps in the window. Its
+                # fixed execution times keep control cycles independent of CPU load.
+                for cell in step_cells.values():
+                    cell['cycle_ms'] = list(cell['execution_ms'])
             value = {'name': name, 'kind': kind, 'concurrency': c, 'depth': arm['depth'], **arm_identity(SEAL, arm),
                      'arm': arm['arm'], 'visit': arm['visit'], 'repeat': repeat, 'seed_set': seeds,
                      'temperature': config['sampling']['temperature'], 'window_seconds': w['window_seconds'],
@@ -956,7 +962,7 @@ def run_ab_windows(server, arm, state, power, root, cold=None):
                      'priming': w['priming'], 'replacement_submissions': w['replacement_submissions'],
                      'prefill_share': w['prefill_share'], 'request_tokens_per_second': w['tokens'] / (w['ended'] - w['started']),
                      'request_seconds': w['ended'] - w['started'], 'synthetic': server.dry,
-                     'full': full, 'cells': cells(w['steps']), 'faults': w['faults'],
+                     'full': full, 'cells': step_cells, 'faults': w['faults'],
                      'fallback_launches': route['fallback_launches'], 'acceptance': w['acceptance'],
                      'allocated_steps': check_allocations(name, w['cold_steps'] if cold else w['steps'], record['confidence']['enabled'],
                                                          allocation_possible(config, arm, c)),

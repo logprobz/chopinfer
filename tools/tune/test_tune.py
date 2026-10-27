@@ -957,6 +957,44 @@ class Tuner(unittest.TestCase):
                 tune.page_cache_warmup(None, {'label': 'w0'}, state, None)
             self.assertEqual([call.args[1] for call in controller.call_args_list], ['w0-c8-r0', 'w0-c16-r0', 'w0-c16-r1'])
 
+    def test_dry_run_control_cycles_ignore_wall_clock_skew(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, _ = ab_fixture(root, concurrencies=[1], speculation_mode='off', max_depth=0,
+                                   arms=[{'label': label} for label in ('a', 'b')])
+            config['tokens'] = {'default': 64}
+            seal = {'config': config, 'install': {'install': 'install-head', 'revision': 'synthetic'}}
+            for dry in (True, False):
+                with self.subTest(dry=dry), patch.object(tune, 'SEAL', seal, create=True):
+                    state = {'tokens': [[1]], 'processes': {}, 'exact': {}}
+                    rows = []
+                    for arm, cycle_ms in zip(tune.visits(config), (11, 10, 10, 10)):
+                        # Inject an A1 wall-clock offset into otherwise identical steps.
+                        steps = [{'batch': i, 'prefill_items': 0, 'decode_rows': 1,
+                                  'verify_items': 0, 'verify_rows': 0,
+                                  'completed_unix_ns': 1_000_000_000 + i * cycle_ms * 1_000_000,
+                                  'execution_us': 1000, 'route': {'fallback_launches': 0, 'families': {}}}
+                                 for i in range(21)]
+                        window = {'steps': steps, 'cold_steps': steps, 'started': 2, 'ended': 17,
+                                  'window_seconds': 15, 'cached_prompt_tokens': 0,
+                                  'priming': priming_fixture(1), 'replacement_submissions': 1,
+                                  'prefill_share': 0, 'tokens': 20,
+                                  'faults': {'complete': True, 'major_faults': 0},
+                                  'acceptance': None, 'energy': {}, 'requests': []}
+                        record = {'windows': {}, 'confidence': {'enabled': False}}
+                        state['processes'][arm['label']] = record
+                        with patch.object(tune, 'closed_loop', return_value=window):
+                            tune.run_ab_windows(SimpleNamespace(dry=dry), arm, state, None, root / arm['label'])
+                        row, = record['windows'].values()
+                        self.assertEqual(row['steps'], steps)
+                        self.assertEqual(row['full']['mean_step_ms'], cycle_ms)
+                        self.assertEqual(row['cells']['i1-r1']['cycle_ms'], [1 if dry else cycle_ms] * 20)
+                        rows.append(row)
+                    control = report.control_offsets(config, rows)
+                    self.assertEqual(control['status'], 'clear' if dry else 'offset')
+
     def test_a1_control_offset_invalidates_timing(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

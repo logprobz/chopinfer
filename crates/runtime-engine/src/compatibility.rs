@@ -221,6 +221,13 @@ pub(crate) struct CompatibilityMetrics {
     mixed_ratio: Histogram,
     /// The TBT model after the latest step that trained it.
     pub(crate) mixed_estimates: Option<runtime_scheduler::MixedEstimates>,
+    /// Steps with grid chunks sized against a timing cap, those chunks by
+    /// where they ended, the steps where a chunk exceeded the cap to
+    /// progress, and those predicted over the target.
+    timing_cut_steps: u64,
+    timing_cut_chunks: BTreeMap<&'static str, u64>,
+    timing_cut_forced: u64,
+    timing_cut_over_target: u64,
     /// `CHOPINFER_STEP_TRACE=1` writes one JSON line per executed step.
     pub(crate) step_trace_enabled: bool,
     pub(crate) step_rows: crate::step_rows::StepRowHistogram,
@@ -259,6 +266,10 @@ impl Default for CompatibilityMetrics {
             mixed_predicted: Histogram::new(STEP),
             mixed_ratio: Histogram::new(PREDICTION_RATIO),
             mixed_estimates: None,
+            timing_cut_steps: 0,
+            timing_cut_chunks: BTreeMap::new(),
+            timing_cut_forced: 0,
+            timing_cut_over_target: 0,
             step_rows: crate::step_rows::StepRowHistogram::default(),
             step_trace_enabled: std::env::var("CHOPINFER_STEP_TRACE")
                 .is_ok_and(|value| value == "1"),
@@ -297,6 +308,57 @@ impl CompatibilityMetrics {
             (u128::from(micros) * 1000 / u128::from(predicted_micros.max(1)))
                 .min(u128::from(u64::MAX)) as u64,
         );
+    }
+
+    /// Records a step's grid chunks sized against a timing cap, and whether
+    /// its predicted time exceeded the target.
+    pub(crate) fn timing_cuts(
+        &mut self,
+        cuts: &runtime_scheduler::TimingCuts,
+        predicted_micros: Option<u64>,
+    ) {
+        self.timing_cut_steps += 1;
+        for chunk in cuts.chunks() {
+            *self
+                .timing_cut_chunks
+                .entry(chunk.reason().as_str())
+                .or_default() += 1;
+        }
+        self.timing_cut_forced += u64::from(cuts.forced());
+        self.timing_cut_over_target +=
+            u64::from(predicted_micros.is_some_and(|predicted| predicted > cuts.target_micros()));
+    }
+
+    fn render_timing_cuts(&self, output: &mut String, labels: &str) {
+        if self.timing_cut_steps == 0 {
+            return;
+        }
+        for (name, value) in [
+            ("chop_prefill_timing_cut_steps_total", self.timing_cut_steps),
+            (
+                "chop_prefill_timing_cut_forced_steps_total",
+                self.timing_cut_forced,
+            ),
+            (
+                "chop_prefill_timing_cut_over_target_steps_total",
+                self.timing_cut_over_target,
+            ),
+        ] {
+            writeln!(output, "# TYPE {name} counter").unwrap();
+            writeln!(output, "{name}{{{labels}}} {value}").unwrap();
+        }
+        writeln!(
+            output,
+            "# TYPE chop_prefill_timing_cut_chunks_total counter"
+        )
+        .unwrap();
+        for (reason, count) in &self.timing_cut_chunks {
+            writeln!(
+                output,
+                "chop_prefill_timing_cut_chunks_total{{{labels},end=\"{reason}\"}} {count}"
+            )
+            .unwrap();
+        }
     }
 
     fn render_mixed_budget(&self, output: &mut String, labels: &str) {
@@ -375,6 +437,7 @@ impl CompatibilityMetrics {
             );
         }
         self.render_mixed_budget(output, labels);
+        self.render_timing_cuts(output, labels);
         let Some(estimates) = &self.step_estimates else {
             return;
         };
@@ -770,6 +833,8 @@ pub(crate) struct StepTrace {
     /// assumed before this step trained them.
     pub(crate) predicted_micros: Option<u64>,
     pub(crate) decode_estimate_micros: Option<u64>,
+    /// The step's grid chunks sized against a timing cap, if any.
+    pub(crate) timing_cuts: Option<runtime_scheduler::TimingCuts>,
     /// Whether the step trained the decode-aware estimator; verify and media
     /// steps do not. The TBT model also learns from verify steps.
     pub(crate) trained: bool,
@@ -787,6 +852,26 @@ impl StepTrace {
         }
         if let Some(rows) = self.reserved_rows {
             record["reserved_rows"] = rows.into();
+        }
+        if let Some(cuts) = &self.timing_cuts {
+            record["timing_cuts"] = serde_json::json!({
+                "cap": cuts.cap(),
+                "target_us": cuts.target_micros(),
+                "forced": cuts.forced(),
+                "predicted_over_target": self
+                    .predicted_micros
+                    .map(|predicted| predicted > cuts.target_micros()),
+                "chunks": cuts
+                    .chunks()
+                    .iter()
+                    .map(|chunk| serde_json::json!({
+                        "request": chunk.request_id().get(),
+                        "start": chunk.start(),
+                        "end": chunk.end(),
+                        "end_reason": chunk.reason().as_str(),
+                    }))
+                    .collect::<Vec<_>>(),
+            });
         }
         record
     }
@@ -1081,6 +1166,7 @@ mod tests {
             completed_unix_ns: Some(1_792_224_301_138_000_123),
             predicted_micros: Some(175_328),
             decode_estimate_micros: Some(16_400),
+            timing_cuts: None,
             trained: true,
             host: HostTiming {
                 outside: Some(40),
@@ -1161,6 +1247,116 @@ mod tests {
         }
         .record();
         assert!(fixed["prefill_cap"].is_null() && fixed["predicted_us"].is_null());
+    }
+
+    /// A batch's timing cuts from a scheduler with the candidate switch on:
+    /// a decoding request, then a 1000-token grid prompt cut at 512 rows.
+    fn timing_cuts() -> runtime_scheduler::TimingCuts {
+        use runtime_scheduler::{
+            BatchOutcome, MixedPolicy, PrefillBudget, RequestId, RequestSpec, Scheduler,
+            SchedulerConfig,
+        };
+        let mut scheduler = Scheduler::new(
+            SchedulerConfig::new(4, 8, 8192, 8192, 1)
+                .unwrap()
+                .with_prefill_granule(64)
+                .unwrap()
+                .with_guaranteed_prefill_chunks(8192)
+                .unwrap()
+                .with_prefill_cuts(true)
+                .with_prefill_budget(PrefillBudget::Tbt(MixedPolicy::new(150, 512, 0).unwrap()))
+                .with_prefill_timing_cuts(true),
+            runtime_kv::KvGeometry::new(64, 1024).unwrap(),
+        )
+        .unwrap();
+        for (id, prompt) in [(1, 1), (2, 1000)] {
+            scheduler
+                .submit(RequestSpec::new(RequestId::new(id), prompt, 100).unwrap())
+                .unwrap();
+            let batch = scheduler.next_batch().unwrap().unwrap();
+            let outcomes = batch
+                .items()
+                .iter()
+                .map(|item| {
+                    BatchOutcome::success(
+                        item.request_id(),
+                        item.phase(),
+                        usize::from(item.expects_output()),
+                        false,
+                    )
+                })
+                .collect::<Vec<_>>();
+            if let Some(cuts) = batch.timing_cuts() {
+                return cuts.clone();
+            }
+            scheduler.commit_batch(batch.id(), &outcomes).unwrap();
+        }
+        unreachable!("the second batch cuts")
+    }
+
+    #[test]
+    fn step_trace_and_metrics_report_timing_cuts() {
+        let cuts = timing_cuts();
+        let trace = StepTrace {
+            route: None,
+            batch: 2,
+            speculation: None,
+            prefill_tokens: 512,
+            prefill_items: 1,
+            completed_prompts: Vec::new(),
+            decode_rows: 1,
+            verify_items: 0,
+            verify_rows: 0,
+            reserved_rows: None,
+            verified: VerifiedTokens::default(),
+            row_capacity: None,
+            prefill_cap: Some(512),
+            execution_micros: 160_000,
+            completed_unix_ns: None,
+            predicted_micros: Some(151_000),
+            decode_estimate_micros: None,
+            timing_cuts: Some(cuts.clone()),
+            trained: true,
+            host: HostTiming::default(),
+        };
+        let record = trace.record();
+        assert_eq!(
+            record["timing_cuts"],
+            serde_json::json!({
+                "cap": 512,
+                "target_us": 150_000,
+                "forced": false,
+                "predicted_over_target": true,
+                "chunks": [{"request": 2, "start": 0, "end": 512, "end_reason": "timing"}],
+            })
+        );
+        // Absent without timing cuts, so a trace without the switch keeps
+        // its fields.
+        let plain = StepTrace {
+            timing_cuts: None,
+            ..trace
+        }
+        .record();
+        assert!(plain.get("timing_cuts").is_none());
+
+        let mut metrics = CompatibilityMetrics::default();
+        let mut text = String::new();
+        metrics.render_timing_cuts(&mut text, "engine=\"0\"");
+        assert!(text.is_empty());
+        metrics.timing_cuts(&cuts, Some(151_000));
+        metrics.timing_cuts(&cuts, Some(149_000));
+        metrics.render_timing_cuts(&mut text, "engine=\"0\"");
+        for line in [
+            "chop_prefill_timing_cut_steps_total{engine=\"0\"} 2",
+            "chop_prefill_timing_cut_forced_steps_total{engine=\"0\"} 0",
+            "chop_prefill_timing_cut_over_target_steps_total{engine=\"0\"} 1",
+            "chop_prefill_timing_cut_chunks_total{engine=\"0\",end=\"timing\"} 2",
+        ] {
+            assert!(
+                text.lines().any(|candidate| candidate == line),
+                "{line}\n{text}"
+            );
+        }
     }
 
     #[test]

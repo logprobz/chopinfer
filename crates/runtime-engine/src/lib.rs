@@ -159,6 +159,21 @@ impl EngineConfig {
         self
     }
 
+    /// Candidate switch for timing-cut grid chunks beside decoding requests
+    /// ([`runtime_scheduler::SchedulerConfig::with_prefill_timing_cuts`]).
+    #[must_use]
+    pub const fn with_prefill_timing_cuts(mut self, enabled: bool) -> Self {
+        self.scheduler = self.scheduler.with_prefill_timing_cuts(enabled);
+        self
+    }
+
+    /// Whether grid chunks take timing cuts: the switch, the TBT budget and
+    /// the bundle's cuts together.
+    #[must_use]
+    pub const fn prefill_timing_cuts(self) -> bool {
+        self.scheduler.prefill_timing_cuts()
+    }
+
     /// Enables prefix caching. Each anchor holds a bundle snapshot of
     /// `state_pages` KV pages; the executor must capture and restore them.
     #[must_use]
@@ -2708,6 +2723,9 @@ impl<E: ModelExecutor> Engine<E> {
                 execution_micros,
                 batch.prefill_cap(),
             );
+            if let Some(cuts) = batch.timing_cuts() {
+                metrics.timing_cuts(cuts, batch.predicted_micros());
+            }
             let mut iteration_tokens = 0_u64;
             for ((item, outcome), verified) in items.iter().zip(&outcomes).zip(&verified) {
                 if let Some((drafted, accepted, _, _)) = *verified {
@@ -2797,6 +2815,7 @@ impl<E: ModelExecutor> Engine<E> {
                 }),
                 decode_estimate_micros: assumed
                     .and_then(|estimates| estimates.decode_micros(decode_rows)),
+                timing_cuts: batch.timing_cuts().cloned(),
                 trained,
                 host: self.host_clock.executed(),
                 speculation: self

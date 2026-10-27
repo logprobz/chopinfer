@@ -873,3 +873,88 @@ fn tbt_budget_publishes_its_model_and_predicted_against_actual_mixed_steps() {
         "chop_prefill_budget_selected_tokens_bucket{{{labels},le=\"512.0\"}}"
     )));
 }
+
+/// Timing cuts of a declared grid beside a decode count their steps, their
+/// chunks by end and the steps forced past the cap; without the switch the
+/// series are absent.
+#[test]
+fn timing_cuts_publish_their_chunks_by_end() {
+    use runtime_scheduler::{MixedPolicy, PrefillBudget};
+    for timing in [false, true] {
+        let clock = Arc::new(TestClock::default());
+        let metrics = EngineMetrics::default();
+        let config = EngineConfig::new(
+            SchedulerConfig::new(4, 64, 8192, 8192, 1)
+                .unwrap()
+                .with_prefill_granule(64)
+                .unwrap()
+                .with_prefill_budget(PrefillBudget::Tbt(MixedPolicy::new(150, 512, 0).unwrap())),
+            KvGeometry::new(64, 4096).unwrap(),
+            ModelVocabulary::new(8).unwrap(),
+            16384,
+            4,
+        )
+        .unwrap()
+        .with_guaranteed_prefill_chunks(8192)
+        .unwrap()
+        .with_prefill_cuts(true)
+        .with_prefill_timing_cuts(timing);
+        assert_eq!(config.prefill_timing_cuts(), timing);
+        let mut engine = Engine::new_with_observability(
+            config,
+            TimedExecutor {
+                clock: clock.clone(),
+                prefills: Vec::new(),
+            },
+            clock,
+            metrics.clone(),
+        )
+        .unwrap();
+        let request = |id, tokens, output| {
+            EngineRequest::new(
+                RequestId::new(id),
+                vec![1; tokens],
+                output,
+                SamplingParameters::new(0.0).unwrap(),
+                id,
+                Vec::new(),
+                ModelVocabulary::new(8).unwrap(),
+            )
+            .unwrap()
+        };
+        engine.submit(request(1, 16, 1000)).unwrap();
+        engine.step().unwrap();
+        engine.submit(request(2, 1100, 1)).unwrap();
+        for _ in 0..8 {
+            engine.step().unwrap();
+        }
+        let prefills = engine.executor().prefills.clone();
+        let text = metrics.prometheus_compatibility("fixture");
+        let labels = "model_name=\"fixture\",engine=\"0\"";
+        if !timing {
+            assert_eq!(prefills[..2], [16, 1100], "{prefills:?}");
+            assert!(!text.contains("chop_prefill_timing_cut"), "{text}");
+            continue;
+        }
+        // Two cuts at the 512-row cap, then the 76-row tail, each beside
+        // the decode.
+        assert_eq!(prefills[..5], [16, 512, 512, 76, 0], "{prefills:?}");
+        for (series, value) in [
+            ("chop_prefill_timing_cut_steps_total", 3),
+            ("chop_prefill_timing_cut_forced_steps_total", 0),
+        ] {
+            assert!(
+                text.contains(&format!("{series}{{{labels}}} {value}\n")),
+                "{series}\n{text}"
+            );
+        }
+        for (end, count) in [("timing", 2), ("prompt", 1)] {
+            assert!(
+                text.contains(&format!(
+                    "chop_prefill_timing_cut_chunks_total{{{labels},end=\"{end}\"}} {count}\n"
+                )),
+                "{end}\n{text}"
+            );
+        }
+    }
+}

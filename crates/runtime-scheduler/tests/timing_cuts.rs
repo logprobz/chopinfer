@@ -363,18 +363,20 @@ fn without_decodes_a_grid_request_takes_whole_chunks() {
     );
 }
 
-/// Caps below, at and between granule multiples, down to one token: a
-/// chunk ends at the last multiple the cap reaches, or the next one.
+/// Floors below, at and between granule multiples, down to one token: a
+/// chunk ends at the last multiple the cap reaches, or at the first one at
+/// or past the floor when that is later, and never takes fewer tokens than
+/// the floor before the rounded prompt-end anchor or the prompt end.
 #[test]
-fn caps_round_to_absolute_granule_multiples_and_always_progress() {
+fn chunks_keep_the_floor_at_absolute_granule_multiples() {
     for (floor, first, reason) in [
-        (1, 64, PrefillEnd::Progress),
-        (63, 64, PrefillEnd::Progress),
+        (1, 64, PrefillEnd::Floor),
+        (63, 64, PrefillEnd::Floor),
         (64, 64, PrefillEnd::Timing),
-        (65, 64, PrefillEnd::Timing),
-        (127, 64, PrefillEnd::Timing),
+        (65, 128, PrefillEnd::Floor),
+        (127, 128, PrefillEnd::Floor),
         (128, 128, PrefillEnd::Timing),
-        (500, 448, PrefillEnd::Timing),
+        (500, 512, PrefillEnd::Floor),
     ] {
         let mut s = scheduler(on(tbt(floor)));
         decoders(&mut s, 1);
@@ -386,8 +388,44 @@ fn caps_round_to_absolute_granule_multiples_and_always_progress() {
         assert_eq!(chunks[0], (0, first), "floor {floor}");
         let cuts = steps[0].cuts.as_ref().unwrap();
         assert_eq!(cuts.chunks()[0].reason(), reason, "floor {floor}");
-        assert_eq!(cuts.forced(), first > floor, "floor {floor}");
+        assert_eq!((cuts.cap(), cuts.floor()), (floor, floor), "floor {floor}");
+        assert!(
+            steps
+                .iter()
+                .all(|step| !step.cuts.as_ref().unwrap().forced())
+        );
+        // Only the natural ends, 960 and 1000, take fewer tokens.
+        for &(start, tokens) in &chunks {
+            assert!(
+                tokens >= floor || [960, 1000].contains(&(start + tokens)),
+                "{chunks:?}"
+            );
+        }
         assert!(steps.iter().all(|step| step.decodes.len() == 1));
+    }
+}
+
+/// When the floor's granule multiple does not fit the room beside the
+/// decoding requests, the chunk ends at the multiple the cap reaches,
+/// below the floor, and still shares the step with the decoders.
+#[test]
+fn a_floor_multiple_beyond_the_room_rounds_down() {
+    let mut s = scheduler(Setup {
+        decode_cost: GRID - 500,
+        ..on(tbt(512))
+    });
+    decoders(&mut s, 1);
+    submit(&mut s, 1, 1000, 4);
+    let steps = prefill(&mut s, 1, 16);
+    assert_eq!(
+        chunks(&steps, 1),
+        [(0, 448), (448, 448), (896, 64), (960, 40)]
+    );
+    for step in &steps {
+        let cuts = step.cuts.as_ref().unwrap();
+        assert_eq!((cuts.cap(), cuts.floor()), (500, 500));
+        assert!(!cuts.forced());
+        assert_eq!(step.decodes, [100]);
     }
 }
 
@@ -395,7 +433,9 @@ fn caps_round_to_absolute_granule_multiples_and_always_progress() {
 /// absolute multiple, so later chunks run between multiples.
 #[test]
 fn a_restored_start_off_the_granule_cuts_at_absolute_multiples() {
-    for (floor, first) in [(512, 495), (1, 47)] {
+    // From 529, 1024 would leave 495 tokens, under the 512 floor: the cut
+    // takes 1088. A one-token floor takes the next multiple, 576.
+    for (floor, first) in [(512, 559), (1, 47)] {
         let mut s = scheduler(on(tbt(floor)));
         let first_turn = tokens(1, 529);
         submit_tokens(&mut s, 1, &first_turn, 1, false);
@@ -411,6 +451,9 @@ fn a_restored_start_off_the_granule_cuts_at_absolute_multiples() {
         let chunks = chunks(&steps, 2);
         assert_eq!(chunks[0], (529, first), "floor {floor}");
         assert_legal(&chunks, second.len());
+        for &(start, tokens) in &chunks {
+            assert!(tokens >= floor || start + tokens >= 2496, "{chunks:?}");
+        }
     }
 }
 
@@ -434,16 +477,30 @@ fn zero_decode_room_still_progresses_one_granule() {
         assert_eq!(step.decodes.len(), 1, "{step:?}");
         assert!(step.cuts.as_ref().unwrap().forced());
     }
+    // The tail ends at the prompt, still forced past the zero cap.
+    let tail = steps
+        .iter()
+        .flat_map(|step| step.cuts.as_ref().unwrap().chunks())
+        .find(|chunk| chunk.end() == 300)
+        .unwrap();
+    assert_eq!((tail.reason(), tail.forced()), (PrefillEnd::Prompt, true));
     // Both decoders keep decoding.
     let decoded = |id| steps.iter().filter(|step| step.decodes == [id]).count();
     assert!(decoded(100) >= 2 && decoded(101) >= 2);
 }
 
-/// Grid chunks share the cap: one chunk at the cap per step, and other
-/// grid chunks only within what it leaves.
+/// Grid chunks share the cap: one chunk at the cap or floor per step,
+/// and other grid chunks only within what it leaves. A floor rounded up to
+/// its granule multiple overruns the cap only for a chunk alone in its step.
 #[test]
 fn grid_chunks_share_one_cap_per_step() {
-    let mut s = scheduler(on(tbt(512)));
+    for floor in [512, 500] {
+        grid_chunks_share_one_cap(floor);
+    }
+}
+
+fn grid_chunks_share_one_cap(floor: usize) {
+    let mut s = scheduler(on(tbt(floor)));
     decoders(&mut s, 1);
     submit(&mut s, 1, 4096, 4);
     submit(&mut s, 2, 4096, 4);
@@ -456,11 +513,12 @@ fn grid_chunks_share_one_cap_per_step() {
     for step in &steps {
         let total: usize = step.prefills.iter().map(|item| item.2).sum();
         assert!(total <= 512, "{step:?}");
+        assert!(total <= floor || step.prefills.len() == 1, "{step:?}");
         let cuts = step.cuts.as_ref().unwrap();
         let timed = cuts
             .chunks()
             .iter()
-            .filter(|chunk| chunk.reason() == PrefillEnd::Timing)
+            .filter(|chunk| matches!(chunk.reason(), PrefillEnd::Timing | PrefillEnd::Floor))
             .count();
         assert!(timed <= 1, "{step:?}");
         assert!(step.decodes.contains(&100), "{step:?}");
@@ -468,6 +526,17 @@ fn grid_chunks_share_one_cap_per_step() {
     for id in [1, 2] {
         assert_legal(&chunks(&steps, id), 4096);
     }
+    // A 500-token floor rounds up to 512-token chunks.
+    let floored = steps
+        .iter()
+        .flat_map(|step| step.cuts.as_ref().unwrap().chunks());
+    assert_eq!(
+        floored
+            .filter(|chunk| chunk.reason() == PrefillEnd::Floor)
+            .count()
+            > 0,
+        floor == 500
+    );
     assert_eq!(chunks(&steps, 3), [(0, 40)]);
     // Rotation serves both long prompts while they prefill together.
     let first_end = |id| {

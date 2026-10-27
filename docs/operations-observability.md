@@ -82,7 +82,7 @@ count lookups; the vLLM ones count tokens.
 | `chop_prefill_budget_decode_estimate_seconds{model_name,engine,rows_le}`, `..._samples` | Decode-aware mode only: the decode step estimate per power-of-two row bucket and its sample count; two samples qualify it |
 | `chop_prefill_budget_prefill_token_seconds{model_name,engine,tokens_le}` | Decode-aware mode only: estimated prefill time per token per power-of-two step-token bucket |
 | `chop_mixed_step_predicted_seconds{model_name,engine}`, `chop_mixed_step_actual_over_predicted{model_name,engine}` | Tbt mode only: histograms of each mixed step's predicted time, for the batch as packed, and of its execution time over that prediction |
-| `chop_prefill_timing_cut_steps_total{model_name,engine}`, `chop_prefill_timing_cut_chunks_total{model_name,engine,end}`, `chop_prefill_timing_cut_forced_steps_total`, `chop_prefill_timing_cut_over_target_steps_total` | Timing cuts only (`CHOPINFER_PREFILL_TIMING_CUTS=1`): steps whose grid chunks were sized against the tbt cap while requests decoded, those chunks by where they ended (`grid`, `capture`, `prompt`, `timing` or `progress`), steps where a chunk exceeded the cap to progress, and steps whose predicted time exceeded the target |
+| `chop_prefill_timing_cut_steps_total{model_name,engine}`, `chop_prefill_timing_cut_chunks_total{model_name,engine,end}`, `chop_prefill_timing_cut_forced_steps_total`, `chop_prefill_timing_cut_over_target_steps_total` | Timing cuts only (`CHOPINFER_PREFILL_TIMING_CUTS=1`): steps whose grid chunks were sized against the tbt cap while requests decoded, those chunks by where they ended (`grid`, `capture`, `prompt`, `timing`, `floor` or `progress`), steps where a chunk exceeded the cap only to progress (neither the cap nor the floor reached a granule multiple within the step's room), and steps whose predicted time exceeded the target |
 | `chop_mixed_budget_term_seconds{model_name,engine,term}`, `chop_mixed_budget_samples`, `chop_mixed_budget_trained`, `chop_mixed_budget_decode_estimate_seconds{items_le}` | Tbt mode only: the fitted fixed, mixed, per-token and per-attention-pair terms, prefill steps in the fit window, whether the fit sets budgets, and the decode estimate per power-of-two item bucket ([mixed scheduling](serving-profiles.md#prefill-policy)) |
 | `chop_prefix_cache_{queries,hits}_total`, `chop_prefix_cache_{queried,reused}_tokens_total` | Prefix-cache lookups and restored hits, and their prompt and reused tokens |
 | `chop_prefix_cache_recomputed_seen_tokens_total` | Prompt tokens a committed prefill computed although an earlier request's committed prefill had computed the same leading full pages, short of the last prompt token: repeats and shared prefixes no anchor covered ([where anchors are captured](numerics.md#kv-offload-and-prefix-state)) |
@@ -443,10 +443,15 @@ Step and request logs are not replay inputs; they omit token contents.
   [mixed scheduling](serving-profiles.md#prefill-policy) cap and estimates; null under the
   fixed budget or before an estimate exists.
 - `timing_cuts`: present only when grid chunks were sized against the tbt
-  cap (`CHOPINFER_PREFILL_TIMING_CUTS=1`): the cap, the target, whether a
-  chunk exceeded the cap to progress (`forced`), whether `predicted_us`
-  exceeded the target, and each such chunk's request, start, end and
-  `end_reason` (`grid`, `capture`, `prompt`, `timing` or `progress`).
+  cap (`CHOPINFER_PREFILL_TIMING_CUTS=1`): the cap, the progress floor
+  (limited to the room beside the decodes), the target, whether a chunk
+  exceeded the cap only to progress because neither the cap nor the floor
+  reached a granule multiple within that room (`forced`), whether
+  `predicted_us` exceeded the target, and each such chunk's request,
+  start, end and `end_reason` (`grid`, `capture`, `prompt`, `timing`,
+  `floor` or `progress`). A
+  `floor` chunk ends at the first granule multiple at or past the floor,
+  so it may exceed the cap by less than one granule.
 - `host`: the engine thread's wall time per phase in microseconds
   (scheduling, execute, commit, gaps between executor calls, and
   `boundary_us`, an upper bound on device idle time between steps). Phases

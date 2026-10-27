@@ -856,6 +856,7 @@ impl StepTrace {
         if let Some(cuts) = &self.timing_cuts {
             record["timing_cuts"] = serde_json::json!({
                 "cap": cuts.cap(),
+                "floor": cuts.floor(),
                 "target_us": cuts.target_micros(),
                 "forced": cuts.forced(),
                 "predicted_over_target": self
@@ -1324,6 +1325,7 @@ mod tests {
             record["timing_cuts"],
             serde_json::json!({
                 "cap": 512,
+                "floor": 512,
                 "target_us": 150_000,
                 "forced": false,
                 "predicted_over_target": true,

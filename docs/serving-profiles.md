@@ -308,8 +308,10 @@ A declared prefill grid keeps whole chunks under every budget. The
 candidate switch `CHOPINFER_PREFILL_TIMING_CUTS=1`, with
 `--prefill-budget tbt` and a bundle that declares prefill cuts, instead
 ends a grid chunk that runs while requests decode at the last prefill
-granule multiple the tbt cap reaches (at least the
-`--mixed-min-prefill-tokens` floor), so the decoders share the step. The
+granule multiple the tbt cap reaches, so the decoders share the step. When
+that multiple leaves fewer tokens than the `--mixed-min-prefill-tokens`
+floor, the chunk ends at the first multiple at or past the floor instead,
+if it fits beside the decoders. The
 server refuses to start with the switch otherwise. Timing cuts capture no
 prefix anchor, and scored and media requests keep their chunks. The switch
 is a candidate under qualification: it is removed when the behavior is

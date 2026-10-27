@@ -48,6 +48,16 @@ pub(super) fn create_profile_with_options(
     skip: bool,
     options: &[(&str, serde_json::Value)],
 ) -> BundleInstanceV1 {
+    try_create_profile_with_options(host, chunk, skip, options)
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()))
+}
+
+pub(super) fn try_create_profile_with_options(
+    host: &Rc<Host>,
+    chunk: u32,
+    skip: bool,
+    options: &[(&str, serde_json::Value)],
+) -> Result<BundleInstanceV1, runtime_bundle_abi::BundleAbiError> {
     let mut record = crate::config::tests::record(&host.shape, host.kv, 4, false);
     let at = record
         .windows(MODEL_OPTIONS_TAG_V1.len())
@@ -74,7 +84,6 @@ pub(super) fn create_profile_with_options(
         .with_device_results_api(crate::api::BUNDLE_DEEPSEEK41_DEVICE_RESULTS_API_V1)
         .unwrap()
         .create(services, &record)
-        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()))
 }
 
 #[test]

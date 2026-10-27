@@ -253,7 +253,6 @@ pub fn cubins() -> Vec<CubinSpec> {
         "mxfp8_prefill",
         "mxfp8_prefill_split",
         "mxfp8_prefill_compact",
-        "mxfp8_prefill_matrix",
         "mxfp8_prefill_tma_scales",
         "mxfp8_fold_cluster_fused",
         "mxfp8_fold_local_wide",

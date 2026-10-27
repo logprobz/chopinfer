@@ -49,3 +49,9 @@ pub static SAMPLING_CUBIN: &[u8] = include_bytes!(env!("RUNTIME_SAMPLING_CUBIN")
 
 #[cfg(not(target_os = "linux"))]
 pub static SAMPLING_CUBIN: &[u8] = &[];
+
+/// Optional mapped-input sampler, loaded only by a mapped sampling submission.
+#[cfg(target_os = "linux")]
+pub static MAPPED_SAMPLING_CUBIN: &[u8] = include_bytes!(env!("RUNTIME_MAPPED_SAMPLING_CUBIN"));
+#[cfg(not(target_os = "linux"))]
+pub static MAPPED_SAMPLING_CUBIN: &[u8] = &[];

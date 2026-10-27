@@ -4,6 +4,8 @@
 //! is usable only after its completion dependency and all sampler rows have
 //! been validated. Request and slot membership are checked by the caller.
 
+mod mapped;
+pub use mapped::*;
 mod sink;
 pub use sink::*;
 mod cycle;

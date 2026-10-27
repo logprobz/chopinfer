@@ -480,6 +480,7 @@ pub(crate) struct DeviceSamplingSession {
     stream: Stream,
     pool: MemoryPool,
     _module: Module,
+    mapped_functions: Option<(Module, BTreeMap<String, Function>)>,
     filtered_f32: Vec<Function>,
     filtered_bf16: Vec<Function>,
     simple_partials_f32: Function,
@@ -538,11 +539,39 @@ pub(crate) struct DeviceSampleTarget<'a> {
     pub done: &'a Event,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct MappedLogits<'a> {
+    pub indices: &'a DeviceBuffer,
+    pub offset: usize,
+    pub source_rows: u32,
+}
+
+fn mapped_arguments<'a>(
+    args: &'a [KernelArgument<'a>],
+    mapping: Option<MappedLogits<'a>>,
+    rows: usize,
+) -> std::borrow::Cow<'a, [KernelArgument<'a>]> {
+    let Some(map) = mapping else {
+        return std::borrow::Cow::Borrowed(args);
+    };
+    let mut result = args.to_vec();
+    result.extend([
+        KernelArgument::Range {
+            buffer: map.indices,
+            offset: map.offset,
+            byte_len: rows * 4,
+        },
+        KernelArgument::U32(map.source_rows),
+    ]);
+    std::borrow::Cow::Owned(result)
+}
+
 struct DeviceSubmission {
     serial: u64,
     done: Option<Event>,
     _logits: DeviceBuffer,
     _output: DeviceBuffer,
+    _row_indices: Option<DeviceBuffer>,
 }
 
 impl DeviceSamplingSession {
@@ -783,6 +812,7 @@ impl DeviceSamplingSession {
             stream,
             pool,
             _module: module,
+            mapped_functions: None,
             filtered_f32,
             filtered_bf16,
             simple_partials_f32,
@@ -831,9 +861,28 @@ impl DeviceSamplingSession {
         stride_bytes: usize,
         row_bytes: usize,
         items: &[&ModelBatchItem],
+        mapping: Option<MappedLogits<'_>>,
     ) -> SamplingResult<()> {
         use std::io::Write;
         let mut pinned = PinnedHostBuffer::new(&self.context, row_bytes).map_err(host_error)?;
+        let indices = if let Some(map) = mapping {
+            let mut pinned =
+                PinnedHostBuffer::new(&self.context, items.len() * 4).map_err(host_error)?;
+            map.indices
+                .copy_to_pinned_at_async(map.offset, &mut pinned, 0, items.len() * 4, &self.stream)
+                .map_err(host_error)?
+                .finish();
+            let indices = pinned.as_slice()[..items.len() * 4]
+                .chunks_exact(4)
+                .map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize)
+                .collect::<Vec<_>>();
+            if indices.iter().any(|&row| row >= map.source_rows as usize) {
+                return Err(BundleStatusV1::InvalidArgument);
+            }
+            Some(indices)
+        } else {
+            None
+        };
         let capture = self.capture.as_mut().expect("capture is enabled");
         for (row, item) in items.iter().enumerate() {
             let sampled = item
@@ -844,7 +893,7 @@ impl DeviceSamplingSession {
             }
             logits
                 .copy_to_pinned_at_async(
-                    offset + row * stride_bytes,
+                    offset + indices.as_ref().map_or(row, |indices| indices[row]) * stride_bytes,
                     &mut pinned,
                     0,
                     row_bytes,
@@ -883,7 +932,7 @@ impl DeviceSamplingSession {
         items: &[&ModelBatchItem],
         dispatch: Option<SamplingDispatch>,
     ) -> SamplingResult<()> {
-        self.issue_inner(logits, view, items, dispatch, None)
+        self.issue_inner(logits, view, items, dispatch, None, None)
     }
 
     pub(crate) fn issue_ready(
@@ -1017,6 +1066,30 @@ impl DeviceSamplingSession {
         dispatch: SamplingDispatch,
         target: DeviceSampleTarget<'_>,
     ) -> SamplingResult<()> {
+        self.issue_to_device_inner(logits, view, items, dispatch, target, None)
+    }
+
+    pub(crate) fn issue_mapped_to_device(
+        &mut self,
+        logits: &DeviceBuffer,
+        view: BundleLogitsViewV1,
+        items: &[&ModelBatchItem],
+        dispatch: SamplingDispatch,
+        target: DeviceSampleTarget<'_>,
+        mapping: MappedLogits<'_>,
+    ) -> SamplingResult<()> {
+        self.issue_to_device_inner(logits, view, items, dispatch, target, Some(mapping))
+    }
+
+    fn issue_to_device_inner(
+        &mut self,
+        logits: &DeviceBuffer,
+        view: BundleLogitsViewV1,
+        items: &[&ModelBatchItem],
+        dispatch: SamplingDispatch,
+        target: DeviceSampleTarget<'_>,
+        mapping: Option<MappedLogits<'_>>,
+    ) -> SamplingResult<()> {
         if self.device_failed || self.pending.is_some() {
             return Err(BundleStatusV1::InvalidState);
         }
@@ -1034,8 +1107,9 @@ impl DeviceSamplingSession {
             done: None,
             _logits: logits.clone(),
             _output: target.output.clone(),
+            _row_indices: mapping.map(|map| map.indices.clone()),
         });
-        let result = self.issue_inner(logits, view, items, Some(dispatch), Some(target));
+        let result = self.issue_inner(logits, view, items, Some(dispatch), Some(target), mapping);
         if result.is_err() {
             self.device_failed = true;
         }
@@ -1049,6 +1123,7 @@ impl DeviceSamplingSession {
         items: &[&ModelBatchItem],
         dispatch: Option<SamplingDispatch>,
         target: Option<DeviceSampleTarget<'_>>,
+        mapping: Option<MappedLogits<'_>>,
     ) -> SamplingResult<()> {
         let _profile =
             runtime_engine::profile::PhaseTimer::new(runtime_engine::profile::StepPhase::Sampling);
@@ -1073,7 +1148,46 @@ impl DeviceSamplingSession {
         };
         let stride = usize::try_from(view.row_stride_elements)
             .map_err(|_| BundleStatusV1::InvalidArgument)?;
-        let required = (rows - 1)
+        let source_rows = mapping.map_or(rows, |map| map.source_rows as usize);
+        if source_rows == 0 {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        if let Some(map) = mapping {
+            map.indices
+                .device_address_at(map.offset, rows * 4)
+                .map_err(host_error)?;
+            if self.mapped_functions.is_none() {
+                let module = self
+                    .context
+                    .load_module(runtime_kernels::MAPPED_SAMPLING_CUBIN)
+                    .map_err(host_error)?;
+                let symbols = runtime_kernels::SAMPLING_FILTERED_F32_SYMBOLS
+                    .into_iter()
+                    .chain(runtime_kernels::SAMPLING_FILTERED_BF16_SYMBOLS)
+                    .chain([
+                        runtime_kernels::SAMPLING_SIMPLE_PARTIALS_F32_SYMBOL,
+                        runtime_kernels::SAMPLING_SIMPLE_TOP_PARTIALS_F32_SYMBOL,
+                        runtime_kernels::SAMPLING_SIMPLE_FINISH_F32_SYMBOL,
+                        runtime_kernels::SAMPLING_SIMPLE_PARTIALS_BF16_SYMBOL,
+                        runtime_kernels::SAMPLING_SIMPLE_TOP_PARTIALS_BF16_SYMBOL,
+                        runtime_kernels::SAMPLING_SIMPLE_FINISH_BF16_SYMBOL,
+                        runtime_kernels::SAMPLING_GREEDY_PARTIALS_1024_F32_SYMBOL,
+                        runtime_kernels::SAMPLING_GREEDY_PARTIALS_1024_BF16_SYMBOL,
+                    ]);
+                let functions = symbols
+                    .map(|symbol| {
+                        Ok((
+                            symbol.to_owned(),
+                            module
+                                .function(&symbol.replace("_v1", "_mapped_v1"))
+                                .map_err(host_error)?,
+                        ))
+                    })
+                    .collect::<SamplingResult<BTreeMap<_, _>>>()?;
+                self.mapped_functions = Some((module, functions));
+            }
+        }
+        let required = (source_rows - 1)
             .checked_mul(stride)
             .and_then(|value| value.checked_add(live))
             .and_then(|value| value.checked_mul(element_bytes))
@@ -1203,6 +1317,7 @@ impl DeviceSamplingSession {
                 stride * element_bytes,
                 live * element_bytes,
                 items,
+                mapping,
             )?;
         }
         ensure_device(
@@ -1286,20 +1401,90 @@ impl DeviceSamplingSession {
             ];
             let (partial_function, finish_function) =
                 match (view.element_type, encoded.top, encoded.greedy) {
-                    (BUNDLE_LOGITS_ELEMENT_V1_F32, _, true) => {
-                        (&self.greedy_partials_1024_f32, &self.simple_finish_f32)
-                    }
-                    (BUNDLE_LOGITS_ELEMENT_V1_BF16, _, true) => {
-                        (&self.greedy_partials_1024_bf16, &self.simple_finish_bf16)
-                    }
-                    (BUNDLE_LOGITS_ELEMENT_V1_F32, false, _) => {
-                        (&self.simple_partials_f32, &self.simple_finish_f32)
-                    }
-                    (BUNDLE_LOGITS_ELEMENT_V1_F32, true, _) => {
-                        (&self.simple_top_partials_f32, &self.simple_finish_f32)
-                    }
-                    (_, false, _) => (&self.simple_partials_bf16, &self.simple_finish_bf16),
-                    (_, true, _) => (&self.simple_top_partials_bf16, &self.simple_finish_bf16),
+                    (BUNDLE_LOGITS_ELEMENT_V1_F32, _, true) => (
+                        if mapping.is_some() {
+                            &self.mapped_functions.as_ref().unwrap().1
+                                [runtime_kernels::SAMPLING_GREEDY_PARTIALS_1024_F32_SYMBOL]
+                        } else {
+                            &self.greedy_partials_1024_f32
+                        },
+                        if mapping.is_some() {
+                            &self.mapped_functions.as_ref().unwrap().1
+                                [runtime_kernels::SAMPLING_SIMPLE_FINISH_F32_SYMBOL]
+                        } else {
+                            &self.simple_finish_f32
+                        },
+                    ),
+                    (BUNDLE_LOGITS_ELEMENT_V1_BF16, _, true) => (
+                        if mapping.is_some() {
+                            &self.mapped_functions.as_ref().unwrap().1
+                                [runtime_kernels::SAMPLING_GREEDY_PARTIALS_1024_BF16_SYMBOL]
+                        } else {
+                            &self.greedy_partials_1024_bf16
+                        },
+                        if mapping.is_some() {
+                            &self.mapped_functions.as_ref().unwrap().1
+                                [runtime_kernels::SAMPLING_SIMPLE_FINISH_BF16_SYMBOL]
+                        } else {
+                            &self.simple_finish_bf16
+                        },
+                    ),
+                    (BUNDLE_LOGITS_ELEMENT_V1_F32, false, _) => (
+                        if mapping.is_some() {
+                            &self.mapped_functions.as_ref().unwrap().1
+                                [runtime_kernels::SAMPLING_SIMPLE_PARTIALS_F32_SYMBOL]
+                        } else {
+                            &self.simple_partials_f32
+                        },
+                        if mapping.is_some() {
+                            &self.mapped_functions.as_ref().unwrap().1
+                                [runtime_kernels::SAMPLING_SIMPLE_FINISH_F32_SYMBOL]
+                        } else {
+                            &self.simple_finish_f32
+                        },
+                    ),
+                    (BUNDLE_LOGITS_ELEMENT_V1_F32, true, _) => (
+                        if mapping.is_some() {
+                            &self.mapped_functions.as_ref().unwrap().1
+                                [runtime_kernels::SAMPLING_SIMPLE_TOP_PARTIALS_F32_SYMBOL]
+                        } else {
+                            &self.simple_top_partials_f32
+                        },
+                        if mapping.is_some() {
+                            &self.mapped_functions.as_ref().unwrap().1
+                                [runtime_kernels::SAMPLING_SIMPLE_FINISH_F32_SYMBOL]
+                        } else {
+                            &self.simple_finish_f32
+                        },
+                    ),
+                    (_, false, _) => (
+                        if mapping.is_some() {
+                            &self.mapped_functions.as_ref().unwrap().1
+                                [runtime_kernels::SAMPLING_SIMPLE_PARTIALS_BF16_SYMBOL]
+                        } else {
+                            &self.simple_partials_bf16
+                        },
+                        if mapping.is_some() {
+                            &self.mapped_functions.as_ref().unwrap().1
+                                [runtime_kernels::SAMPLING_SIMPLE_FINISH_BF16_SYMBOL]
+                        } else {
+                            &self.simple_finish_bf16
+                        },
+                    ),
+                    (_, true, _) => (
+                        if mapping.is_some() {
+                            &self.mapped_functions.as_ref().unwrap().1
+                                [runtime_kernels::SAMPLING_SIMPLE_TOP_PARTIALS_BF16_SYMBOL]
+                        } else {
+                            &self.simple_top_partials_bf16
+                        },
+                        if mapping.is_some() {
+                            &self.mapped_functions.as_ref().unwrap().1
+                                [runtime_kernels::SAMPLING_SIMPLE_FINISH_BF16_SYMBOL]
+                        } else {
+                            &self.simple_finish_bf16
+                        },
+                    ),
                 };
             partial_function
                 .launch(
@@ -1311,7 +1496,7 @@ impl DeviceSamplingSession {
                         cluster: LaunchConfig::NO_CLUSTER,
                         programmatic_stream_serialization: true,
                     },
-                    &common,
+                    &mapped_arguments(&common, mapping, rows),
                 )
                 .map_err(host_error)?;
             let finish_args = [
@@ -1341,7 +1526,7 @@ impl DeviceSamplingSession {
                         cluster: LaunchConfig::NO_CLUSTER,
                         programmatic_stream_serialization: true,
                     },
-                    &finish_args,
+                    &mapped_arguments(&finish_args, mapping, rows),
                 )
                 .map_err(host_error)?;
         } else {
@@ -1414,6 +1599,16 @@ impl DeviceSamplingSession {
             };
             let tiles = simple_tiles as u32;
             for (stage, function) in functions.iter().enumerate() {
+                let function = if mapping.is_some() {
+                    let symbols = if view.element_type == BUNDLE_LOGITS_ELEMENT_V1_F32 {
+                        runtime_kernels::SAMPLING_FILTERED_F32_SYMBOLS
+                    } else {
+                        runtime_kernels::SAMPLING_FILTERED_BF16_SYMBOLS
+                    };
+                    &self.mapped_functions.as_ref().unwrap().1[symbols[stage]]
+                } else {
+                    function
+                };
                 let finish = stage == functions.len() - 1;
                 let grid = match stage {
                     1 => (
@@ -1434,7 +1629,11 @@ impl DeviceSamplingSession {
                             cluster: LaunchConfig::NO_CLUSTER,
                             programmatic_stream_serialization: true,
                         },
-                        if finish { &finish_args } else { &tile_args },
+                        &mapped_arguments(
+                            if finish { &finish_args } else { &tile_args },
+                            mapping,
+                            rows,
+                        ),
                     )
                     .map_err(host_error)?;
             }
@@ -1585,6 +1784,73 @@ mod tests {
         let grammar = regex_grammar(pattern).unwrap();
         let grammar = Arc::new(CompiledGrammar::new(&grammar, vocabulary).unwrap());
         RowConstraint::new(ConstraintState::new(grammar, None, vec![width as u32 - 1]))
+    }
+
+    #[test]
+    fn mapped_suffix_rows_keep_the_expanded_distribution_and_rng() {
+        use kernel_core::sampling::{RowSettings, SamplingRow};
+        // Only the first four physical rows exist in the compact view. The
+        // old reserved layout repeats each item's last computed distribution.
+        let computed = [
+            vec![9.0, -2.0, 0.0, 1.0],
+            vec![-1.0, 8.0, 2.0, 0.0],
+            vec![0.0, -3.0, 7.0, 1.0],
+            vec![1.0, 0.0, -4.0, 10.0],
+        ];
+        let map = [0, 1, 1, 1, 2, 3, 3, 3];
+        let mut storage = computed.to_vec();
+        storage.resize(8, vec![f32::NAN; 4]);
+        let expanded = [
+            computed[0].clone(),
+            computed[1].clone(),
+            computed[1].clone(),
+            computed[1].clone(),
+            computed[2].clone(),
+            computed[3].clone(),
+            computed[3].clone(),
+            computed[3].clone(),
+        ];
+        for temperature in [0.0, 1.0] {
+            for (logical, &physical) in map.iter().enumerate() {
+                let mut settings = RowSettings::new(
+                    temperature,
+                    37 + (logical / 4) as u64,
+                    100 + (logical % 4) as u64,
+                );
+                settings.top_logprobs = 2;
+                let sample = |values| {
+                    runtime_sampling::oracle::sample_row(&SamplingRow {
+                        logits: values,
+                        settings,
+                        counts: &[],
+                        biases: &[],
+                        eos: &[],
+                        mask: None,
+                    })
+                    .unwrap()
+                };
+                assert!(physical < computed.len());
+                let actual = sample(&storage[physical]).unwrap();
+                let expected = sample(&expanded[logical]).unwrap();
+                assert_eq!(actual.token_id, expected.token_id);
+                assert_eq!(actual.logprob.to_bits(), expected.logprob.to_bits());
+                assert_eq!(
+                    actual
+                        .top
+                        .iter()
+                        .map(|(id, p)| (*id, p.to_bits()))
+                        .collect::<Vec<_>>(),
+                    expected
+                        .top
+                        .iter()
+                        .map(|(id, p)| (*id, p.to_bits()))
+                        .collect::<Vec<_>>()
+                );
+                if logical >= computed.len() {
+                    assert!(sample(&storage[logical]).is_err());
+                }
+            }
+        }
     }
 
     #[test]
@@ -2257,6 +2523,7 @@ mod device_submission_lifetime_tests {
             done: Some(done),
             _logits: logits.clone(),
             _output: output.clone(),
+            _row_indices: None,
         });
         let ready = context.event().unwrap();
         ready.record(&sampler.stream).unwrap();
@@ -2290,6 +2557,7 @@ mod device_submission_lifetime_tests {
                 done: None,
                 _logits: logits.clone(),
                 _output: output.clone(),
+                _row_indices: None,
             });
             let ready = context.event().unwrap();
             ready.record(&sampler.stream).unwrap();

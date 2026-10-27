@@ -71,6 +71,84 @@ static TEST_LOCK: Mutex<()> = Mutex::new(());
 #[test]
 fn c_header_and_rust_layouts_match() {
     let c_layouts = c_layouts();
+    assert_layout(
+        &c_layouts,
+        "mapped-sampling",
+        size_of::<abi::device_results::BundleMappedDeviceSamplingRequestV1>(),
+        &[
+            offset_of!(
+                abi::device_results::BundleMappedDeviceSamplingRequestV1,
+                struct_size
+            ),
+            offset_of!(
+                abi::device_results::BundleMappedDeviceSamplingRequestV1,
+                reserved
+            ),
+            offset_of!(
+                abi::device_results::BundleMappedDeviceSamplingRequestV1,
+                source
+            ),
+            offset_of!(
+                abi::device_results::BundleMappedDeviceSamplingRequestV1,
+                first_sample_row
+            ),
+            offset_of!(
+                abi::device_results::BundleMappedDeviceSamplingRequestV1,
+                sample_rows
+            ),
+            offset_of!(
+                abi::device_results::BundleMappedDeviceSamplingRequestV1,
+                row_indices
+            ),
+            offset_of!(
+                abi::device_results::BundleMappedDeviceSamplingRequestV1,
+                output
+            ),
+            offset_of!(
+                abi::device_results::BundleMappedDeviceSamplingRequestV1,
+                done
+            ),
+        ],
+    );
+    assert_layout(
+        &c_layouts,
+        "mapped-result-sink",
+        size_of::<abi::device_results::BundleMappedDeviceResultSinkV1>(),
+        &[
+            offset_of!(
+                abi::device_results::BundleMappedDeviceResultSinkV1,
+                struct_size
+            ),
+            offset_of!(
+                abi::device_results::BundleMappedDeviceResultSinkV1,
+                abi_version
+            ),
+            offset_of!(abi::device_results::BundleMappedDeviceResultSinkV1, base),
+            offset_of!(
+                abi::device_results::BundleMappedDeviceResultSinkV1,
+                sample_mapped_device_logits_v1
+            ),
+        ],
+    );
+    assert_layout(
+        &c_layouts,
+        "mapped-result-api",
+        size_of::<abi::device_results::BundleMappedDeviceResultsApiV1>(),
+        &[
+            offset_of!(
+                abi::device_results::BundleMappedDeviceResultsApiV1,
+                struct_size
+            ),
+            offset_of!(
+                abi::device_results::BundleMappedDeviceResultsApiV1,
+                abi_version
+            ),
+            offset_of!(
+                abi::device_results::BundleMappedDeviceResultsApiV1,
+                execute_mapped_device_results_v1
+            ),
+        ],
+    );
 
     assert_layout(
         &c_layouts,
@@ -4002,6 +4080,9 @@ int main(void) {
   printf("host-mapped-gather-service-tail %zu %zu\n", sizeof(chop_bundle_host_services_v1), P(chop_bundle_host_services_v1, gather_mapped_rows_v1));
   printf("api-header %zu %zu %zu\n", sizeof(chop_bundle_api_header_v1), P(chop_bundle_api_header_v1, struct_size), P(chop_bundle_api_header_v1, abi_version));
   printf("api %zu %zu %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_api_v1), P(chop_bundle_api_v1, struct_size), P(chop_bundle_api_v1, abi_version), P(chop_bundle_api_v1, create), P(chop_bundle_api_v1, execute), P(chop_bundle_api_v1, commit), P(chop_bundle_api_v1, cancel), P(chop_bundle_api_v1, destroy));
+  printf("mapped-sampling %zu %zu %zu %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_mapped_device_sampling_request_v1), P(chop_bundle_mapped_device_sampling_request_v1, struct_size), P(chop_bundle_mapped_device_sampling_request_v1, reserved), P(chop_bundle_mapped_device_sampling_request_v1, source), P(chop_bundle_mapped_device_sampling_request_v1, first_sample_row), P(chop_bundle_mapped_device_sampling_request_v1, sample_rows), P(chop_bundle_mapped_device_sampling_request_v1, row_indices), P(chop_bundle_mapped_device_sampling_request_v1, output), P(chop_bundle_mapped_device_sampling_request_v1, done));
+  printf("mapped-result-sink %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_mapped_device_result_sink_v1), P(chop_bundle_mapped_device_result_sink_v1, struct_size), P(chop_bundle_mapped_device_result_sink_v1, abi_version), P(chop_bundle_mapped_device_result_sink_v1, base), P(chop_bundle_mapped_device_result_sink_v1, sample_mapped_device_logits_v1));
+  printf("mapped-result-api %zu %zu %zu %zu\n", sizeof(chop_bundle_mapped_device_results_api_v1), P(chop_bundle_mapped_device_results_api_v1, struct_size), P(chop_bundle_mapped_device_results_api_v1, abi_version), P(chop_bundle_mapped_device_results_api_v1, execute_mapped_device_results_v1));
   return 0;
 }
 "#

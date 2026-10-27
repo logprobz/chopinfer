@@ -300,6 +300,61 @@ impl CudaHostDeviceV1 {
             )
     }
 
+    pub(crate) fn sample_mapped_device_logits(
+        &mut self,
+        context_object: DeviceObjectV1,
+        objects: [DeviceObjectV1; 5],
+        request: runtime_bundle_abi::device_results::BundleMappedDeviceSamplingRequestV1,
+        items: &[&ModelBatchItem],
+        dispatch: crate::executor::SamplingDispatch,
+    ) -> HostDeviceResultV1<()> {
+        let [
+            logits_object,
+            indices_object,
+            output_object,
+            ready_object,
+            done_object,
+        ] = objects;
+        let logits = self.buffer(logits_object)?.clone();
+        let output = self.buffer(output_object)?.clone();
+        let indices = self.buffer(indices_object)?.clone();
+        let mut logical = request.source.logits;
+        logical.first_item_index = request.first_sample_row;
+        logical.row_count = request.sample_rows;
+        let context = self.context(context_object)?.clone();
+        if let std::collections::btree_map::Entry::Vacant(entry) =
+            self.samplers.entry(context_object.get())
+        {
+            entry.insert(DeviceSamplingSession::new(context)?);
+        }
+        let Some(CudaObjectV1::Event(ready)) = self.objects.get(&ready_object.get()) else {
+            return Err(BundleStatusV1::InvalidArgument);
+        };
+        let Some(CudaObjectV1::Event(done)) = self.objects.get(&done_object.get()) else {
+            return Err(BundleStatusV1::InvalidArgument);
+        };
+        self.samplers
+            .get_mut(&context_object.get())
+            .expect("sampler exists")
+            .issue_mapped_to_device(
+                &logits,
+                logical,
+                items,
+                dispatch,
+                crate::sampling::DeviceSampleTarget {
+                    ready,
+                    output: &output,
+                    offset: request.output.offset as usize,
+                    done,
+                },
+                crate::sampling::MappedLogits {
+                    indices: &indices,
+                    offset: request.row_indices.offset as usize,
+                    source_rows: request.source.logits.row_count,
+                },
+            )
+    }
+
     pub(crate) fn issue_ready_logits(
         &mut self,
         context_object: DeviceObjectV1,

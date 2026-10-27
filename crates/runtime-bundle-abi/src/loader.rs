@@ -250,6 +250,7 @@ pub struct BundleLibraryV1 {
     /// The optional chat frontend export.
     frontend: Option<crate::BundleFrontendApiFnV1>,
     device_results: Option<crate::device_results::BundleGetDeviceResultsApiFnV1>,
+    mapped_device_results: Option<crate::device_results::BundleGetMappedDeviceResultsApiFnV1>,
     prefill: Option<crate::prefill::BundleGetPrefillApiFnV1>,
     prefill_cuts: Option<crate::prefill::BundleGetPrefillApiFnV1>,
 }
@@ -360,6 +361,16 @@ impl BundleLibraryV1 {
                     crate::device_results::BundleGetDeviceResultsApiFnV1,
                 >(symbol)
             });
+        // SAFETY-REVIEWED: the optional export is resolved by its exact name and C signature.
+        let mapped_device_results = optional(
+            crate::device_results::MAPPED_DEVICE_RESULTS_API_SYMBOL_V1,
+        )
+        .map(|symbol| unsafe {
+            std::mem::transmute::<
+                *mut c_void,
+                crate::device_results::BundleGetMappedDeviceResultsApiFnV1,
+            >(symbol)
+        });
         // SAFETY-REVIEWED: this exact optional export has the V1 C getter signature.
         let prefill = optional(crate::prefill::PREFILL_API_SYMBOL_V1).map(|symbol| unsafe {
             std::mem::transmute::<*mut c_void, crate::prefill::BundleGetPrefillApiFnV1>(symbol)
@@ -377,6 +388,7 @@ impl BundleLibraryV1 {
             weight_census,
             frontend,
             device_results,
+            mapped_device_results,
             prefill,
             prefill_cuts,
         })
@@ -506,6 +518,34 @@ impl BundleLibraryV1 {
         Ok(api)
     }
 
+    /// Validate the optional export only after the caller admits its manifest capability.
+    pub fn validate_mapped_device_results_api_v1(
+        &self,
+    ) -> Result<crate::device_results::BundleMappedDeviceResultsApiV1, BundleAbiError> {
+        let getter = self
+            .mapped_device_results
+            .ok_or(BundleAbiError::MissingApiCallback(
+                "mapped device results export",
+            ))?;
+        // SAFETY-REVIEWED: the loaded module owns this immutable table for the library lifetime.
+        let pointer = unsafe { getter() };
+        if pointer.is_null() {
+            return Err(BundleAbiError::InvalidHandle);
+        }
+        // SAFETY-REVIEWED: a native table provides its header before its optional tail is read.
+        let header = unsafe { pointer.cast::<BundleApiHeaderV1>().read() };
+        crate::validate_table_header(
+            "mapped device results API",
+            header.struct_size,
+            std::mem::size_of::<crate::device_results::BundleMappedDeviceResultsApiV1>() as u32,
+            header.abi_version,
+        )?;
+        // SAFETY-REVIEWED: the validated header covers the known table prefix.
+        let api = unsafe { pointer.read() };
+        api.validate()?;
+        Ok(api)
+    }
+
     /// Create an explicitly opted-in instance. Ordinary create does not invoke
     /// or enable the separate export, even when the module offers it.
     pub fn create_device_results_v1(
@@ -513,9 +553,13 @@ impl BundleLibraryV1 {
         host_services: HostServicesTableV1,
         configuration: &[u8],
     ) -> Result<LoadedBundleInstanceV1, BundleAbiError> {
-        let api = self
+        let mut api = self
             .api_with_prefill()?
             .with_device_results_api(self.validate_device_results_api_v1()?)?;
+        if self.mapped_device_results.is_some() {
+            api =
+                api.with_mapped_device_results_api(self.validate_mapped_device_results_api_v1()?)?;
+        }
         Ok(LoadedBundleInstanceV1 {
             instance: api.create(host_services, configuration)?,
             library: Arc::clone(&self.library),

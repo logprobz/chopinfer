@@ -316,6 +316,66 @@ impl CollectingSinkV1<'_> {
         Ok(())
     }
 
+    pub(super) fn device_sample_mapped(
+        &mut self,
+        request: BundleMappedDeviceSamplingRequestV1,
+    ) -> HostServiceResultV1<()> {
+        request
+            .validate()
+            .map_err(|_| BundleStatusV1::InvalidArgument)?;
+        let sampler = self.sampler.as_ref().ok_or(BundleStatusV1::Unsupported)?;
+        if !sampler.supports_mapped_sampling() {
+            return Err(BundleStatusV1::Unsupported);
+        }
+        let device = self.device.as_mut().ok_or(BundleStatusV1::Unsupported)?;
+        device.require_epoch(request.source.cycle_epoch)?;
+        let start = request.first_sample_row as usize;
+        let end = start + request.sample_rows as usize;
+        let rows = device
+            .expanded
+            .get(start..end)
+            .ok_or(BundleStatusV1::InvalidArgument)?;
+        if u64::from(request.source.logits.row_count) > self.limits.maximum_rows
+            || u64::from(request.source.logits.live_width) != self.limits.maximum_logits_per_row
+            || (start..end).any(|i| self.sampled_indices.contains(&i))
+            || !self.rows.is_empty()
+            || rows.iter().any(|item| {
+                item.draft().is_some() && !device.drafts.contains_key(&item.request_id())
+            })
+        {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let groups = device.groups.clone();
+        let mut submitted_rows = 0;
+        for (range, dispatch) in groups {
+            let first = start.max(range.start);
+            let last = end.min(range.end);
+            for at in (first..last).step_by(SAMPLER_VIEW_ROWS) {
+                let count = (last - at).min(SAMPLER_VIEW_ROWS);
+                let mut part = request;
+                part.first_sample_row = at as u32;
+                part.sample_rows = count as u32;
+                part.row_indices.offset += (at - start) as u64 * 4;
+                part.row_indices.length = count as u64 * 4;
+                part.output.offset += (at - start) as u64 * DEVICE_SAMPLE_RECORD_BYTES_V1;
+                part.output.length = count as u64 * DEVICE_SAMPLE_RECORD_BYTES_V1;
+                device.retain_context(part.source.logits.context, part.source.logits.rank);
+                sampler.sample_mapped_device_logits(
+                    part,
+                    &device.expanded[at..at + count].iter().collect::<Vec<_>>(),
+                    dispatch,
+                )?;
+                submitted_rows += count;
+            }
+        }
+        if submitted_rows != end - start {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        device.external_rows.extend(start..end);
+        self.sampled_indices.extend(start..end);
+        Ok(())
+    }
+
     pub(super) fn device_ready(
         &mut self,
         view: BundleReadyLogitsViewV1,
@@ -583,6 +643,26 @@ mod tests {
         ) -> HostServiceResultV1<Box<dyn std::any::Any>> {
             Ok(Box::new(()))
         }
+        fn supports_mapped_sampling(&self) -> bool {
+            true
+        }
+        fn sample_mapped_device_logits(
+            &self,
+            request: BundleMappedDeviceSamplingRequestV1,
+            items: &[&ModelBatchItem],
+            dispatch: SamplingDispatch,
+        ) -> HostServiceResultV1<()> {
+            request.validate().unwrap();
+            self.issued.borrow_mut().push((
+                request.first_sample_row,
+                items
+                    .iter()
+                    .map(|item| item.sampling().unwrap().state.generated())
+                    .collect(),
+                dispatch,
+            ));
+            Ok(())
+        }
         fn sample_device_logits(
             &self,
             request: BundleDeviceSamplingRequestV1,
@@ -769,6 +849,53 @@ mod tests {
             logits: logits(first, rows),
             output: buffer(8, u64::from(rows) * 256),
             done: BundleEventHandleV1::from_parts(1, 9),
+        }
+    }
+
+    #[test]
+    fn mapped_sampling_preserves_reserved_rng_and_rejects_duplicate_rows() {
+        for concurrency in [1, 4, 8, 32] {
+            let items = (1..=concurrency).map(|id| item(id, 5)).collect::<Vec<_>>();
+            let sampler = Rc::new(Sampler::default());
+            let mut sink = sink(&items, sampler.clone());
+            sink.device_dependency(1).unwrap();
+            for id in 1..=concurrency {
+                sink.device_drafts(draft(id, 5)).unwrap();
+            }
+            let total = concurrency as u32 * 6;
+            let request = BundleMappedDeviceSamplingRequestV1 {
+                struct_size: size_of::<BundleMappedDeviceSamplingRequestV1>() as u32,
+                reserved: 0,
+                source: logits(0, (concurrency as u32 * 3).min(64)),
+                first_sample_row: 0,
+                sample_rows: total,
+                row_indices: buffer(10, u64::from(total) * 4),
+                output: buffer(8, u64::from(total) * 256),
+                done: BundleEventHandleV1::from_parts(1, 9),
+            };
+            sink.device_sample_mapped(request).unwrap();
+            assert!(sink.device_sample_mapped(request).is_err());
+            let issued = sampler.issued.borrow();
+            assert_eq!(
+                issued.iter().map(|(_, rows, _)| rows.len()).sum::<usize>(),
+                total as usize
+            );
+            let groups = gathered_ranges(&items);
+            for (first, generated, dispatch) in issued.iter() {
+                let group = groups
+                    .iter()
+                    .find(|group| group.contains(&(*first as usize)))
+                    .unwrap();
+                assert_eq!(dispatch.rows, group.len() as u32);
+                for (i, generated) in generated.iter().enumerate() {
+                    assert_eq!(*generated, (*first as u64 + i as u64) % 6);
+                }
+            }
+            assert_eq!(sink.sampled_indices.len(), total as usize);
+            assert_eq!(
+                sink.device.as_ref().unwrap().external_rows.len(),
+                total as usize
+            );
         }
     }
 

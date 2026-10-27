@@ -7467,6 +7467,10 @@ mod frontend_tests {
     }
 }
 
+use crate::device_results::{
+    BundleExecuteMappedDeviceResultsFnV1, BundleMappedDeviceResultSinkV1,
+    BundleMappedDeviceSamplingRequestV1,
+};
 // The device-result extension keeps the legacy by-value sink unchanged.
 use crate::device_results::{
     BundleDeviceCompletionV1, BundleDeviceCycleViewV1, BundleDeviceDraftsV1,
@@ -7485,6 +7489,36 @@ pub(crate) fn invoke_bundle_device_results_v1<S: LogitsRowSinkV1>(
     handle: BundleHandleV1,
     request: &[u8],
     sink: &mut S,
+) -> Result<BundleStatusV1, BundleAbiError> {
+    with_device_result_sink(sink, |raw| {
+        // SAFETY-REVIEWED: the request and sink table live through this call.
+        unsafe { execute(handle, BundleByteViewV1::from_bytes(request), &raw) }
+    })
+}
+
+pub(crate) fn invoke_bundle_mapped_device_results_v1<S: LogitsRowSinkV1>(
+    execute: BundleExecuteMappedDeviceResultsFnV1,
+    handle: BundleHandleV1,
+    request: &[u8],
+    sink: &mut S,
+) -> Result<BundleStatusV1, BundleAbiError> {
+    let enabled = sink.mapped_sampling_enabled();
+    with_device_result_sink(sink, |base| {
+        let raw = BundleMappedDeviceResultSinkV1 {
+            struct_size: struct_size_v1::<BundleMappedDeviceResultSinkV1>(),
+            abi_version: BUNDLE_ABI_VERSION_V1,
+            base,
+            sample_mapped_device_logits_v1: enabled
+                .then_some(sample_mapped_device_logits_trampoline_v1::<S>),
+        };
+        // SAFETY-REVIEWED: this separate entry receives its own sink type and borrowed request.
+        unsafe { execute(handle, BundleByteViewV1::from_bytes(request), &raw) }
+    })
+}
+
+fn with_device_result_sink<S: LogitsRowSinkV1>(
+    sink: &mut S,
+    execute: impl FnOnce(BundleDeviceResultSinkV1) -> BundleStatusV1,
 ) -> Result<BundleStatusV1, BundleAbiError> {
     let metadata = match sink.device_cycle_metadata() {
         Ok(metadata) => {
@@ -7519,8 +7553,7 @@ pub(crate) fn invoke_bundle_device_results_v1<S: LogitsRowSinkV1>(
             emit_ready_logits_view_v1: Some(emit_ready_logits_trampoline_v1::<S>),
             emit_device_completion_v1: Some(emit_device_completion_trampoline_v1::<S>),
         };
-        // SAFETY-REVIEWED: request, table, metadata and user_data live through this exact call.
-        Ok(unsafe { execute(handle, BundleByteViewV1::from_bytes(request), &raw) })
+        Ok(execute(raw))
     })
 }
 
@@ -7558,6 +7591,38 @@ pub unsafe fn dispatch_bundle_execute_device_results_v1(
         let mut sink = ExecuteResultSinkV1::new(table.base)?.with_device_results(table)?;
         with_byte_view_v1(request, |request| execute(handle, request, &mut sink))
     })
+}
+
+/// Decode the separate mapped-result entry without extending either existing table.
+/// # Safety
+/// The native caller lends the request and complete mapped sink for this call.
+// SAFETY-REVIEWED: validates the native size prefix before reading the table.
+pub unsafe fn dispatch_bundle_execute_mapped_device_results_v1(
+    handle: BundleHandleV1,
+    request: BundleByteViewV1,
+    sink: *const BundleMappedDeviceResultSinkV1,
+    execute: impl FnOnce(BundleHandleV1, &[u8], &mut ExecuteResultSinkV1) -> BundleStatusV1,
+) -> BundleStatusV1 {
+    catch_panic_callback_status_v1(|| {
+        // SAFETY-REVIEWED: the size-prefixed table is borrowed from the native caller.
+        let table = unsafe { read_device_result_record_v1(sink)? };
+        table.validate()?;
+        let mut sink =
+            ExecuteResultSinkV1::new(table.base.base)?.with_device_results(table.base)?;
+        sink.mapped_device_results = Some(table);
+        with_byte_view_v1(request, |request| execute(handle, request, &mut sink))
+    })
+}
+
+pub(crate) fn device_results_sample_mapped(
+    table: &BundleMappedDeviceResultSinkV1,
+    request: BundleMappedDeviceSamplingRequestV1,
+) -> Result<(), BundleAbiError> {
+    let callback = table
+        .sample_mapped_device_logits_v1
+        .ok_or(BundleAbiError::MissingExecuteResultCallback)?;
+    // SAFETY-REVIEWED: the enclosing execute owns the callback and borrowed record.
+    status_result(unsafe { callback(table.base.base.user_data, &request) })
 }
 
 pub(crate) fn device_results_describe(
@@ -7722,6 +7787,23 @@ receive_device_result_record!(
     }
 );
 receive_device_result_record!(
+    sample_mapped_device_logits_trampoline_v1,
+    BundleMappedDeviceSamplingRequestV1,
+    |record: BundleMappedDeviceSamplingRequestV1| record.validate(),
+    |state: &mut ResultSinkStateV1<'_, S>, record: BundleMappedDeviceSamplingRequestV1| {
+        charge_result_capacity_rows_v1(
+            state.limits,
+            &mut state.emitted_rows,
+            &mut state.emitted_logits,
+            u64::from(record.sample_rows),
+            u64::from(record.source.logits.live_width),
+        )?;
+        Ok(host_unit_status_v1(
+            state.sink.sample_mapped_device_logits(record),
+        ))
+    }
+);
+receive_device_result_record!(
     emit_ready_logits_trampoline_v1,
     BundleReadyLogitsViewV1,
     |record: BundleReadyLogitsViewV1| record.validate(),
@@ -7776,6 +7858,44 @@ macro_rules! export_bundle_device_results_v1 {
         #[allow(unsafe_code)]
         #[unsafe(no_mangle)]
         pub extern "C" fn chop_bundle_get_device_results_api_v1() -> *const $crate::device_results::BundleDeviceResultsApiV1 {
+            &$api
+        }
+    };
+}
+
+/// Export the optional execute entry without changing the legacy API table.
+#[macro_export]
+macro_rules! export_bundle_mapped_device_results_v1 {
+    ($api:ident, $execute:expr $(,)?) => {
+        // SAFETY-REVIEWED: the generated entry delegates its borrowed pointers to the ABI decoder.
+        #[allow(unsafe_code)]
+        unsafe extern "C" fn __bundle_execute_mapped_device_results_v1(
+            handle: $crate::BundleHandleV1,
+            request: $crate::BundleByteViewV1,
+            sink: *const $crate::device_results::BundleMappedDeviceResultSinkV1,
+        ) -> $crate::BundleStatusV1 {
+            // SAFETY-REVIEWED: these are the exact arguments received from the native host.
+            let execute = $execute;
+            // SAFETY-REVIEWED: the native entry lends its request and sink for this call.
+            unsafe {
+                $crate::dispatch_bundle_execute_mapped_device_results_v1(
+                    handle, request, sink, execute,
+                )
+            }
+        }
+        pub static $api: $crate::device_results::BundleMappedDeviceResultsApiV1 =
+            $crate::device_results::BundleMappedDeviceResultsApiV1 {
+                struct_size: ::core::mem::size_of::<
+                    $crate::device_results::BundleMappedDeviceResultsApiV1,
+                >() as u32,
+                abi_version: $crate::BUNDLE_ABI_VERSION_V1,
+                execute_mapped_device_results_v1: Some(__bundle_execute_mapped_device_results_v1),
+            };
+        // SAFETY-REVIEWED: this export returns a live immutable static table with the declared C layout.
+        #[allow(unsafe_code)]
+        #[unsafe(no_mangle)]
+        pub extern "C" fn chop_bundle_get_mapped_device_results_api_v1()
+        -> *const $crate::device_results::BundleMappedDeviceResultsApiV1 {
             &$api
         }
     };

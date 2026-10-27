@@ -453,8 +453,19 @@ pub trait DeviceLogitsSamplerV1 {
         Err(BundleStatusV1::Unsupported)
     }
 
-    /// Enqueue the ordinary sampler into a caller-owned result span. The
-    /// callback returns after submission and records the supplied done event.
+    /// Whether the sampler accepts a device map while retaining logical metadata.
+    fn supports_mapped_sampling(&self) -> bool {
+        false
+    }
+    fn sample_mapped_device_logits(
+        &self,
+        _request: runtime_bundle_abi::device_results::BundleMappedDeviceSamplingRequestV1,
+        _items: &[&ModelBatchItem],
+        _dispatch: SamplingDispatch,
+    ) -> HostServiceResultV1<()> {
+        Err(BundleStatusV1::Unsupported)
+    }
+
     fn sample_device_logits(
         &self,
         _request: BundleDeviceSamplingRequestV1,
@@ -608,6 +619,19 @@ impl LogitsRowSinkV1 for CollectingSinkV1<'_> {
     }
     fn emit_device_drafts(&mut self, drafts: BundleDeviceDraftsV1) -> HostServiceResultV1<()> {
         self.device_drafts(drafts)
+    }
+    fn mapped_sampling_enabled(&self) -> bool {
+        self.device.is_some()
+            && self
+                .sampler
+                .as_ref()
+                .is_some_and(|s| s.supports_mapped_sampling())
+    }
+    fn sample_mapped_device_logits(
+        &mut self,
+        request: runtime_bundle_abi::device_results::BundleMappedDeviceSamplingRequestV1,
+    ) -> HostServiceResultV1<()> {
+        self.device_sample_mapped(request)
     }
     fn sample_device_logits(
         &mut self,

@@ -34,7 +34,10 @@ pub use trampoline::{
     dispatch_custom_operation_v1, dispatch_weight_census_v1, dispatch_weight_plan_v1,
     dispatch_weight_transform_v1,
 };
-pub use trampoline::{call_weight_transform_v1, dispatch_bundle_execute_device_results_v1};
+pub use trampoline::{
+    call_weight_transform_v1, dispatch_bundle_execute_device_results_v1,
+    dispatch_bundle_execute_mapped_device_results_v1,
+};
 
 use std::ffi::c_void;
 use std::fmt;
@@ -1597,6 +1600,7 @@ impl BundleExecuteResultSinkV1 {
 pub struct ExecuteResultSinkV1 {
     raw: BundleExecuteResultSinkV1,
     device_results: Option<device_results::BundleDeviceResultSinkV1>,
+    mapped_device_results: Option<device_results::BundleMappedDeviceResultSinkV1>,
     emitted_rows: u64,
     emitted_logits: u64,
 }
@@ -1607,6 +1611,7 @@ impl ExecuteResultSinkV1 {
         Ok(Self {
             raw,
             device_results: None,
+            mapped_device_results: None,
             emitted_rows: 0,
             emitted_logits: 0,
         })
@@ -3210,6 +3215,7 @@ pub struct BundleApiV1 {
     prefill: Option<prefill::BundlePrefillApiV1>,
     prefill_cuts: Option<prefill::BundlePrefillApiV1>,
     device_results: Option<device_results::BundleExecuteDeviceResultsFnV1>,
+    mapped_device_results: Option<device_results::BundleExecuteMappedDeviceResultsFnV1>,
     retire_request_v1: Option<BundleRetireRequestFnV1>,
     commit_accepted_v1: Option<BundleCommitAcceptedFnV1>,
     prefix_cache_v1: Option<PrefixCacheCallbacksV1>,
@@ -3234,6 +3240,14 @@ impl BundleApiV1 {
         self.prefill = Some(api);
         Ok(self)
     }
+    pub fn with_mapped_device_results_api(
+        mut self,
+        api: device_results::BundleMappedDeviceResultsApiV1,
+    ) -> Result<Self, BundleAbiError> {
+        self.mapped_device_results = Some(api.validate()?);
+        Ok(self)
+    }
+
     pub fn with_device_results_api(
         mut self,
         api: device_results::BundleDeviceResultsApiV1,
@@ -3266,6 +3280,7 @@ impl BundleApiV1 {
             prefill: None,
             prefill_cuts: None,
             device_results: None,
+            mapped_device_results: None,
             retire_request_v1: None,
             commit_accepted_v1: None,
             prefix_cache_v1: None,
@@ -3388,6 +3403,14 @@ impl BundleApiV1 {
             return Err(BundleAbiError::InvalidHandle);
         }
         if result_sink.device_results_enabled() {
+            if let Some(execute) = self.mapped_device_results {
+                return status_result(trampoline::invoke_bundle_mapped_device_results_v1(
+                    execute,
+                    handle,
+                    request,
+                    result_sink,
+                )?);
+            }
             let execute = self
                 .device_results
                 .ok_or(BundleAbiError::MissingApiCallback(
@@ -3511,6 +3534,15 @@ impl<S: LogitsRowSinkV1> LogitsRowSinkV1 for ObservedExecuteSinkV1<'_, S> {
     ) -> HostServiceResultV1<()> {
         self.emitted = true;
         self.sink.emit_device_drafts(drafts)
+    }
+    fn mapped_sampling_enabled(&self) -> bool {
+        self.sink.mapped_sampling_enabled()
+    }
+    fn sample_mapped_device_logits(
+        &mut self,
+        request: device_results::BundleMappedDeviceSamplingRequestV1,
+    ) -> HostServiceResultV1<()> {
+        self.sink.sample_mapped_device_logits(request)
     }
     fn sample_device_logits(
         &mut self,

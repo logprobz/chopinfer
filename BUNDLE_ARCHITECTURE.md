@@ -90,6 +90,17 @@ not a sandbox ([security boundary](SECURITY.md)). A process
 selects one bundle until exit. Hot reload, automatic network fetching, and
 runtime JIT are outside the initial contract.
 
+The optional `chop_bundle_get_mapped_device_results_api_v1` export adds a
+separate sink for mapped sampler input. It leaves existing C tables unchanged.
+A request supplies a bounded computed-logits view and device U32 indices for
+logical sampling rows. Each logical row keeps its host sampling metadata,
+seed, generated index, stop policy and output position; repeated indices
+repeat distributions, not random counters. The sampler validates source and
+map ownership, retains both buffers through completion, and rejects invalid
+map entries through failed sample records without reading beyond the source.
+The bundle must check mapped-sampling support before requesting this path.
+Ordinary packages and ordinary sampling continue through their existing APIs.
+
 ## Frontend export
 
 A bundle owns its chat format. Its native module exports

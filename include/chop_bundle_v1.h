@@ -1436,6 +1436,34 @@ typedef struct chop_bundle_device_results_api_v1 {
  * execution: the host must explicitly admit the package and select this path. */
 const chop_bundle_device_results_api_v1 *chop_bundle_get_device_results_api_v1(void);
 
+/* Optional mapped input, retaining the original logical sampling rows. */
+typedef struct chop_bundle_mapped_device_sampling_request_v1 {
+  uint32_t struct_size;
+  uint32_t reserved;
+  chop_bundle_ready_logits_view_v1 source;
+  uint32_t first_sample_row;
+  uint32_t sample_rows;
+  chop_bundle_device_buffer_view_v1 row_indices;
+  chop_bundle_device_buffer_view_v1 output;
+  chop_bundle_event_handle_v1 done;
+} chop_bundle_mapped_device_sampling_request_v1;
+typedef chop_bundle_status_v1 (*chop_bundle_sample_mapped_device_logits_fn_v1)(void *, const chop_bundle_mapped_device_sampling_request_v1 *);
+typedef struct chop_bundle_mapped_device_result_sink_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  chop_bundle_device_result_sink_v1 base;
+  chop_bundle_sample_mapped_device_logits_fn_v1 sample_mapped_device_logits_v1;
+} chop_bundle_mapped_device_result_sink_v1;
+typedef chop_bundle_status_v1 (*chop_bundle_execute_mapped_device_results_fn_v1)(
+    chop_bundle_handle_v1, chop_bundle_byte_view_v1, const chop_bundle_mapped_device_result_sink_v1 *);
+typedef struct chop_bundle_mapped_device_results_api_v1 {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  chop_bundle_execute_mapped_device_results_fn_v1 execute_mapped_device_results_v1;
+} chop_bundle_mapped_device_results_api_v1;
+const chop_bundle_mapped_device_results_api_v1 *chop_bundle_get_mapped_device_results_api_v1(void);
+
+
 
 /*
  * Once the host calls create, it keeps that service table, every callback in it,

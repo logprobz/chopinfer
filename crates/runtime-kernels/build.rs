@@ -56,4 +56,16 @@ fn main() {
         "cargo:rustc-env=RUNTIME_SAMPLING_CUBIN={}",
         sampling_cubin.path.display()
     );
+    let mapped = build(
+        &toolchain,
+        &[kernels_sm120::sampling::mapped::cubin_spec()],
+        &artifact_dir,
+        &manifest.join("sampling-mapped.lock"),
+        BuildOptions::from_env(),
+    )
+    .expect("compile and audit the mapped sampling cubin");
+    println!(
+        "cargo:rustc-env=RUNTIME_MAPPED_SAMPLING_CUBIN={}",
+        mapped[0].path.display()
+    );
 }

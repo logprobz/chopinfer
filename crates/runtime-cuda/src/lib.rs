@@ -2085,6 +2085,7 @@ fn device_pointer_array(addresses: &[u64]) -> Result<ffi::DevicePointerArray, Cu
     Ok(array)
 }
 
+#[derive(Clone, Copy)]
 pub enum KernelArgument<'a> {
     Buffer(&'a DeviceBuffer),
     /// One bounded byte range of an allocation, with no ownership vocabulary.

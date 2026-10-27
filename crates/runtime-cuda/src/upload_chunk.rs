@@ -225,7 +225,7 @@ mod tests {
             assert_eq!(fake_driver::call_count(5), syncs);
             while !transfer.ready().unwrap() {}
             assert_eq!(transfer.elapsed_seconds().unwrap(), timed.then_some(0.012));
-            drop(transfer.finish());
+            let _ = transfer.finish();
             let mut bytes = [0; 8];
             destination.copy_to_bytes(&mut bytes, &stream).unwrap();
             assert_eq!(bytes, [0, 0, 3, 5, 7, 9, 0, 0]);

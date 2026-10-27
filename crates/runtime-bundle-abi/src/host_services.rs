@@ -738,6 +738,15 @@ pub trait LogitsRowSinkV1 {
     ) -> HostServiceResultV1<()> {
         Err(BundleStatusV1::Unsupported)
     }
+    fn mapped_sampling_enabled(&self) -> bool {
+        false
+    }
+    fn sample_mapped_device_logits(
+        &mut self,
+        _request: crate::device_results::BundleMappedDeviceSamplingRequestV1,
+    ) -> HostServiceResultV1<()> {
+        Err(BundleStatusV1::Unsupported)
+    }
     fn sample_device_logits(
         &mut self,
         _request: crate::device_results::BundleDeviceSamplingRequestV1,

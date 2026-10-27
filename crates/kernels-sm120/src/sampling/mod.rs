@@ -1,5 +1,7 @@
 //! Model-neutral SM120 device sampling entry and launch contract.
 
+pub mod mapped;
+
 use std::path::PathBuf;
 
 use crate::Profile;

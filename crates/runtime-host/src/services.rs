@@ -2657,6 +2657,91 @@ impl crate::executor::DeviceLogitsSamplerV1
         Ok(())
     }
 
+    fn supports_mapped_sampling(&self) -> bool {
+        true
+    }
+
+    fn sample_mapped_device_logits(
+        &self,
+        request: runtime_bundle_abi::device_results::BundleMappedDeviceSamplingRequestV1,
+        items: &[&runtime_engine::ModelBatchItem],
+        dispatch: crate::executor::SamplingDispatch,
+    ) -> HostServiceResultV1<()> {
+        request
+            .validate()
+            .map_err(|_| BundleStatusV1::InvalidArgument)?;
+        let mut state = self.state.borrow_mut();
+        // Capture may have joined a stream through an event on another device.
+        // No new private-stream consumer may join any open service capture.
+        if !state.captures.is_empty() {
+            return Err(BundleStatusV1::InvalidState);
+        }
+        let raw = request.source.logits;
+        let context_key = slot_key_v1(raw.context.generation(), raw.context.slot())?;
+        let (context, logits) = state.resolve_logits_view(raw)?;
+        let output = state.buffers.get(slot_key_v1(
+            request.output.buffer.generation(),
+            request.output.buffer.slot(),
+        )?)?;
+        let ready = state.events.get(slot_key_v1(
+            request.source.ready.generation(),
+            request.source.ready.slot(),
+        )?)?;
+        let done = state
+            .events
+            .get(slot_key_v1(request.done.generation(), request.done.slot())?)?;
+        if output.origin.map(|origin| origin.context) != Some(context_key)
+            || ready.context != context_key
+            || !ready.recorded
+            || done.context != context_key
+        {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let index_buffer = state.buffers.get(slot_key_v1(
+            request.row_indices.buffer.generation(),
+            request.row_indices.buffer.slot(),
+        )?)?;
+        if index_buffer.origin.map(|origin| origin.context) != Some(context_key) {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        let ready_object = ready.object;
+        let done_object = done.object;
+        let output = state.resolve_range(DeviceBufferSpanV1::new(
+            request.output.buffer,
+            request.output.offset,
+            request.output.length,
+        ))?;
+        let indices = state.resolve_range(DeviceBufferSpanV1::new(
+            request.row_indices.buffer,
+            request.row_indices.offset,
+            request.row_indices.length,
+        ))?;
+        if indices.object == output.object {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        if logits.object == output.object {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        state.device.sample_mapped_device_logits(
+            context,
+            [
+                logits.object,
+                indices.object,
+                output.object,
+                ready_object,
+                done_object,
+            ],
+            request,
+            items,
+            dispatch,
+        )?;
+        state
+            .events
+            .get_mut(slot_key_v1(request.done.generation(), request.done.slot())?)?
+            .recorded = true;
+        Ok(())
+    }
+
     fn enqueue_device_readback(
         &self,
         view: runtime_bundle_abi::device_results::BundleReadyDeviceViewV1,
@@ -7516,12 +7601,49 @@ mod device_result_service_tests {
             greedy: true,
         };
         let setup_waits = fake_driver::call_count(5);
+        let mapped = BundleMappedDeviceSamplingRequestV1 {
+            struct_size: size_of::<BundleMappedDeviceSamplingRequestV1>() as u32,
+            reserved: 0,
+            source: request.logits,
+            first_sample_row: 0,
+            sample_rows: 1,
+            row_indices: view(logits, 4),
+            output: request.output,
+            done,
+        };
+        assert_eq!(
+            backend.sample_mapped_device_logits(mapped, &[], dispatch),
+            Err(BundleStatusV1::InvalidArgument),
+            "mapped input needs a recorded producer event"
+        );
         assert_eq!(
             backend.sample_device_logits(request, &[], dispatch),
             Err(BundleStatusV1::InvalidArgument),
             "unrecorded producer event"
         );
         backend.record_event(ready, stream).unwrap();
+        for invalid in [
+            BundleMappedDeviceSamplingRequestV1 {
+                done: other,
+                ..mapped
+            },
+            BundleMappedDeviceSamplingRequestV1 {
+                row_indices: BundleDeviceBufferViewV1 {
+                    offset: 32,
+                    ..mapped.row_indices
+                },
+                ..mapped
+            },
+            BundleMappedDeviceSamplingRequestV1 {
+                output: view(output, 255),
+                ..mapped
+            },
+        ] {
+            assert_eq!(
+                backend.sample_mapped_device_logits(invalid, &[], dispatch),
+                Err(BundleStatusV1::InvalidArgument)
+            );
+        }
         for invalid in [
             BundleDeviceSamplingRequestV1 {
                 done: other,
@@ -7561,6 +7683,10 @@ mod device_result_service_tests {
         backend.begin_graph_capture(stream).unwrap();
         backend.record_event(capture_event, stream).unwrap();
         backend.wait_event(joined, capture_event).unwrap();
+        assert_eq!(
+            backend.sample_mapped_device_logits(mapped, &[], dispatch),
+            Err(BundleStatusV1::InvalidState)
+        );
         assert_eq!(
             backend.sample_device_logits(request, &[], dispatch),
             Err(BundleStatusV1::InvalidState)

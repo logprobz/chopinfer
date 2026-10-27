@@ -203,10 +203,10 @@ def body_for(model, profile, messages, turn, cache_salt):
     return body
 
 
-def request(client, body, deadline, expected=None, previous=None):
+def request(client, body, deadline, expected=None, previous=None, stall_threshold_ms=100, burst_window_ms=2):
     expected = tokenize(client, body, deadline) if expected is None else expected
     evidence = PromptEvidence()
-    row, answer = mixed.stream_request(client, body, deadline, evidence=evidence)
+    row, answer = mixed.stream_request(client, body, deadline, stall_threshold_ms, burst_window_ms, evidence=evidence)
     row['request_sha256'] = digest({k: v for k, v in body.items() if k != 'cache_salt'})
     row['answer_sha256'] = digest(answer)
     row['output_ids_sha256'] = digest(evidence.ids)
@@ -233,6 +233,7 @@ def run_level(client, model, profile, trace, concurrency):
     """
     validate(trace)
     profile = {**profile, 'seed': f"{profile['seed']}/C{concurrency}"}
+    timing = {key: profile[key] for key in ('stall_threshold_ms', 'burst_window_ms')}
     setup_deadline = time.monotonic() + profile['session_timeout_seconds']
     contexts = {g['id']: fitted(client, model, [trace['seed'], g['id']], g['context_tokens'], setup_deadline)
                 for g in trace['groups']}
@@ -246,7 +247,7 @@ def run_level(client, model, profile, trace, concurrency):
         prime_body = body_for(model, profile, prime_messages, dict(output_tokens=1, seed=0), cache_salt)
         key = (session['group'], cache_salt)
         if key not in primed:
-            row, _, ids = request(client, prime_body, setup_deadline)
+            row, _, ids = request(client, prime_body, setup_deadline, **timing)
             if row['failure']:
                 raise ValueError('prefix priming failed: ' + row['failure'])
             priming.append(row)
@@ -277,7 +278,7 @@ def run_level(client, model, profile, trace, concurrency):
         body = body_for(model, profile, messages, turn, state['salt'])
         request_deadline = min(deadline + client.timeout, at + client.timeout)
         ids = tokenize(client, body, request_deadline)
-        row, answer, response = request(client, body, request_deadline, ids, state['previous'])
+        row, answer, response = request(client, body, request_deadline, ids, state['previous'], **timing)
         row.update(turn_index=index, seed=turn['seed'], append_class=append_class(turn['append_tokens']),
                    append_tokens=turn['append_tokens'], requested_output_tokens=turn['output_tokens'],
                    submitted=at, idle_seconds=at - state['end'], intervening_token_pages=page_clock - state['pages'],

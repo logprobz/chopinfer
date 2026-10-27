@@ -78,7 +78,12 @@ route allowlist. See [Engram gathers](lab/prefill-engram.md) and
 
 Flash selection uses nine [schedule tables](contract/tuning/README.md),
 with inclusive row ranges. Other geometries do not inherit Flash tuning.
-Missing rows select the model's baseline; geometry, bank, graph, storage,
+Missing optional rows select the model's baseline. Required descriptors are
+`dense_fold.status.decode` at row 32 and `dense_fold.status_wide.verify`,
+`dense_fold.attention_q_a_status.verify`, `dense_fold.attention_o_a_status.verify`
+and `dense_fold.attention_o_b_status.verify` at row 64, all with `mxfp8` weights,
+`ranks=4` and bucket equal to that row count. Table loading refuses missing
+descriptors and unsupported schedules or knobs. Geometry, bank, graph, storage,
 workspace and precedence checks remain code gates. Route declarations use
 the table admissions, and untuned-key tests pin uncovered served ranges.
 

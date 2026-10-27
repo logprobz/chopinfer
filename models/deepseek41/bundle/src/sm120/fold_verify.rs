@@ -89,7 +89,9 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
     if !geometries.iter().any(|g| g.id == FLASH.id) {
         return Ok(vec![]);
     }
-    let entries = IDS.map(|id| entry(id).unwrap());
+    let entries = IDS.into_iter().map(|id| {
+        entry(id).ok_or_else(|| format!("missing required tuning row: dense_fold.{}_status.verify mxfp8 ranks=4 bucket=64 row 64", id.replace(['.', '-'], "_")))
+    }).collect::<Result<Vec<_>, _>>()?;
     let mut spec = mxfp8_fold_cluster_fused::cubin_spec(CUBIN, &entries, &[], true)
         .map_err(|e| e.to_string())?;
     spec.entries.extend(

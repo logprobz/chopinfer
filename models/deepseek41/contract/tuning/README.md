@@ -2,8 +2,9 @@
 
 The `flash/` directory holds one `chopinfer-tuning-v1` table per family.
 `model_deepseek41_contract::tuning::table` returns these tables only for
-FLASH. Other geometries do not inherit them. A missing row means the
-model's baseline schedule. The bundle build parses and validates every
+FLASH. Other geometries do not inherit them. Missing optional admission
+rows select the model's baseline schedule. Required descriptor rows must
+remain present, even when no launch selects them (see below). The bundle build parses and validates every
 family table before compiling kernels, so malformed tables fail the build.
 The contract build generates `Family`, its names and the embedded texts
 from one family-to-file list.
@@ -24,7 +25,10 @@ Operation names are `<family>.<site>.<phase>`. Replace `-` in a projection
 or stage ID with `_`, for example `dense_fold.attention_q_b.verify`.
 Shape keys come from `n`, `k`, `groups`, `paired`, `ranks`, `experts`,
 `top_k` and `width`. The loader checks this set and the exact three-part
-operation name, including its family prefix. Weight format, shape and
+operation name, including its family prefix. Each site also declares its
+supported schedules and exact knob names, types and catalog choices. Unknown
+sites, ignored knobs and unimplemented schedules are refused at table load.
+Kernel validators still check shape and resource constraints. Weight format, shape and
 bucket match exactly. Shape queries accept any order and reject duplicate
 names. Once the tables are initialized, lookup uses stack storage and
 allocates nothing.
@@ -35,7 +39,7 @@ For a given operation, weights, shape and bucket, either one row omits
 `rows` and covers the whole bucket, or all rows specify ascending,
 disjoint ranges. A range `[1, bucket]` is refused: omit `rows` for
 whole-bucket coverage. A query outside every range or outside `1..=bucket`
-returns no row and uses the baseline. Exact-key `get` and `require` retain exact-key lookup;
+returns no row and uses the baseline for an optional admission. Exact-key `get` and `require` retain exact-key lookup;
 use `select` to match a launch row count.
 
 Rows sort by operation, weights, shape, bucket, then range. Shape entries
@@ -52,9 +56,36 @@ BF16 all-reduce partials. A row may choose only schedules that preserve
 the operation's arithmetic.
 
 Each family's `bundle/src/tuning_tests/<family>.rs` pins the served keys
-with no row. Missing keys select the existing baseline. The pins enumerate
+with no row. Missing optional keys select the existing baseline. The pins enumerate
 the operation, shape, capacity and uncovered launch ranges, so a newly
 untuned bucket produces a test diff.
+
+## Required descriptors
+
+These rows construct cubin descriptors unconditionally. Each uses weight
+format `mxfp8` and shape `ranks=4`; its range must include the named launch row.
+Deleting it or excluding that row is a table-load error naming the missing key.
+
+| Operation | Bucket | Required launch row |
+| --- | --- | --- |
+| `dense_fold.status.decode` | 32 | 32 |
+| `dense_fold.status_wide.verify` | 64 | 64 |
+| `dense_fold.attention_q_a_status.verify` | 64 | 64 |
+| `dense_fold.attention_o_a_status.verify` | 64 | 64 |
+| `dense_fold.attention_o_b_status.verify` | 64 | 64 |
+
+Status and tail admissions using tile 16 or 32 also require the matching
+`dense_fold.status.decode` descriptor in bucket 32 and the
+`dense_fold.attention_{q_a,kv,o_a,o_b}_cluster.decode` descriptors at that
+tile row. Tail admissions do not require the KV descriptor. Earlier status
+ranges must carry the same knobs as their tile descriptor.
+
+The three cluster status verify sites use their row-64 descriptor for every
+admitted launch, so their ranges must carry the same schedule and knobs.
+`dense_fold.status_wide_tails.decode` must match the required wide verify
+descriptor. Latent staging rows must be singletons; preparation includes
+every admitted singleton that fits its capacity. Paired prefill substitution
+uses only the launch ranges declared by `latent.paired.prefill`.
 
 ## Dense decode knobs
 

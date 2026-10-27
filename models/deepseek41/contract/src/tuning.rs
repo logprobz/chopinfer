@@ -1,5 +1,5 @@
-//! Flash schedule choices. A missing row uses the model's baseline;
-//! other geometries never inherit Flash's rows.
+//! Flash schedule choices. Missing optional rows use the model's baseline.
+//! Required descriptor rows are checked at load; other geometries inherit no rows.
 use crate::geometry::{FLASH, Geometry};
 use kernel_build::tuning::{Row, Table, TuningError};
 use std::collections::BTreeMap;
@@ -7,6 +7,9 @@ use std::sync::OnceLock;
 
 // Family, its names and the embedded texts come from one build-time list.
 include!(concat!(env!("OUT_DIR"), "/tuning.rs"));
+
+mod descriptors;
+mod sites;
 
 const SHAPE_KEYS: [&str; 8] = [
     "n", "k", "groups", "paired", "ranks", "experts", "top_k", "width",
@@ -48,6 +51,10 @@ fn parse_family(family: Family, text: &str) -> Result<Table, TuningError> {
                 row.key
             )));
         }
+        sites::validate(row)?;
+    }
+    if family == Family::DenseFold {
+        descriptors::validate(&table)?;
     }
     Ok(table)
 }
@@ -101,7 +108,8 @@ fn select_from<'a>(
 }
 
 /// The schedule for this exact operation, format, shape and bucket at
-/// `rows` launch rows. `None` means the model's baseline schedule.
+/// `rows` launch rows. Missing optional admissions use the baseline; required
+/// descriptor rows have already been checked when loading the table.
 /// Shape order is immaterial; duplicate names return `None`. Lookup allocates
 /// nothing once the embedded tables have been initialized.
 pub fn select(
@@ -139,7 +147,170 @@ mod tests {
                 knobs: BTreeMap::new(),
             })
             .unwrap();
-        parse_family(family, &table.render()).unwrap()
+        Table::parse(&table.render()).unwrap()
+    }
+
+    #[test]
+    fn presence_only_sites_refuse_unknown_schedules_and_knobs() {
+        let source = TABLES
+            .iter()
+            .find(|(f, _)| *f == Family::Indexer)
+            .unwrap()
+            .1;
+        let full = Table::parse(source).unwrap();
+        let original = full
+            .rows()
+            .iter()
+            .find(|r| r.key.op == "indexer.cached.prefill")
+            .unwrap();
+        for mode in 0..3 {
+            let mut row = original.clone();
+            match mode {
+                0 => row.schedule = "unknown".into(),
+                1 => {
+                    row.knobs
+                        .insert("ignored".into(), kernel_build::tuning::Knob::Count(1));
+                }
+                _ => row.key.op = "indexer.unknown.prefill".into(),
+            }
+            let mut table = Table::new(full.target);
+            table.upsert(row.clone()).unwrap();
+            let error = parse_family(Family::Indexer, &table.render()).unwrap_err();
+            assert!(error.0.contains(&row.key.op), "{error}");
+        }
+    }
+
+    #[test]
+    fn missing_required_descriptor_names_its_row() {
+        let source = TABLES
+            .iter()
+            .find(|(f, _)| *f == Family::DenseFold)
+            .unwrap()
+            .1;
+        let full = Table::parse(source).unwrap();
+        for narrow in [false, true] {
+            let mut table = Table::new(full.target);
+            for mut row in full.rows().iter().cloned() {
+                if row.key.op == "dense_fold.status_wide.verify" {
+                    if !narrow {
+                        continue;
+                    }
+                    row.key.rows = Some([32, 63]);
+                }
+                table.upsert(row).unwrap();
+            }
+            let error = parse_family(Family::DenseFold, &table.render()).unwrap_err();
+            assert!(error.0.contains("dense_fold.status_wide.verify"), "{error}");
+            assert!(error.0.contains("row 64"), "{error}");
+        }
+    }
+
+    #[test]
+    fn every_site_checks_schedule_and_knob_schema() {
+        let mut sites_by_name = BTreeMap::new();
+        for &(_, text) in TABLES {
+            for row in Table::parse(text).unwrap().rows() {
+                sites_by_name.insert(row.key.op.clone(), row.clone());
+            }
+        }
+        assert!(sites_by_name.len() > 100);
+        for original in sites_by_name.values() {
+            sites::validate(original).unwrap();
+            let mut row = original.clone();
+            row.schedule = "unsupported".into();
+            assert!(sites::validate(&row).is_err(), "{}", row.key);
+            let mut row = original.clone();
+            row.knobs
+                .insert("unused".into(), kernel_build::tuning::Knob::Count(1));
+            assert!(sites::validate(&row).is_err(), "{}", row.key);
+            for (name, value) in &original.knobs {
+                let mut row = original.clone();
+                row.knobs.remove(name);
+                assert!(sites::validate(&row).is_err(), "{} missing {name}", row.key);
+                row.knobs.insert(
+                    name.clone(),
+                    match value {
+                        kernel_build::tuning::Knob::Count(_) => {
+                            kernel_build::tuning::Knob::Flag(false)
+                        }
+                        kernel_build::tuning::Knob::Flag(_) => kernel_build::tuning::Knob::Count(0),
+                    },
+                );
+                assert!(
+                    sites::validate(&row).is_err(),
+                    "{} mistyped {name}",
+                    row.key
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn prefill_norm_strategies_keep_both_implemented_choices() {
+        let full =
+            Table::parse(TABLES.iter().find(|(f, _)| *f == Family::Norm).unwrap().1).unwrap();
+        for (op, schedules) in [
+            ("norm.input_strategy.prefill", ["cached", "recompute"]),
+            ("norm.query_strategy.prefill", ["cached", "reread"]),
+        ] {
+            let mut row = full.rows().iter().find(|r| r.key.op == op).unwrap().clone();
+            for schedule in schedules {
+                row.schedule = schedule.into();
+                sites::validate(&row).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn site_knobs_refuse_unimplemented_catalog_values() {
+        use kernel_build::tuning::Knob::{Count, Flag};
+        for (family, op, knob, value) in [
+            (
+                Family::Latent,
+                "latent.staging.decode",
+                "stage_keys",
+                Count(32),
+            ),
+            (
+                Family::Latent,
+                "latent.staging.verify",
+                "head_group",
+                Count(1),
+            ),
+            (
+                Family::Latent,
+                "latent.cache.decode",
+                "head_group",
+                Count(8),
+            ),
+            (
+                Family::DensePrefill,
+                "dense_prefill.matrix.prefill",
+                "stages",
+                Count(4),
+            ),
+            (
+                Family::DensePrefill,
+                "dense_prefill.compact.prefill",
+                "matrix_fetch",
+                Flag(true),
+            ),
+            (
+                Family::DenseFold,
+                "dense_fold.split.decode",
+                "finish",
+                Count(0),
+            ),
+            (Family::F32, "f32.blocked.prefill", "tile", Count(64)),
+            (Family::Hc, "hc.expand_mix.prefill", "chains", Count(16)),
+            (Family::Norm, "norm.query_cached.decode", "warps", Count(4)),
+        ] {
+            let full = Table::parse(TABLES.iter().find(|(f, _)| *f == family).unwrap().1).unwrap();
+            let mut row = full.rows().iter().find(|r| r.key.op == op).unwrap().clone();
+            row.knobs.insert(knob.into(), value);
+            let error = sites::validate(&row).unwrap_err();
+            assert!(error.0.contains(op), "{error}");
+        }
     }
 
     #[test]

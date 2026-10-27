@@ -177,7 +177,9 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
     }
     let mut spec = mxfp8_fold_cluster_fused::cubin_spec(CUBIN, &entries(), &quantizers(), false)
         .map_err(|e| e.to_string())?;
-    let wide = wide(32).unwrap();
+    let wide = wide(32).ok_or(
+        "missing required tuning row: dense_fold.status.decode mxfp8 ranks=4 bucket=32 row 32",
+    )?;
     wide.validate().map_err(|e| e.to_string())?;
     spec.headers
         .push("#include \"gemm/mxfp8_fold_local_wide.cuh\"".into());

@@ -172,8 +172,9 @@ change.
 
 A candidate starts as a kernel-lab family or behind one declared opt-in
 model option. Establish the required [accuracy](numerics.md#a-speedup-that-changes-bits)
-and [step-time acceptance](contributing.md#step-time-acceptance) evidence
-before adoption.
+and [step-time](contributing.md#step-time-acceptance) or
+[stateful replay](contributing.md#stateful-replay-acceptance) acceptance
+evidence before adoption.
 
 Adoption is one commit series that completes all of these steps:
 
@@ -182,7 +183,7 @@ Adoption is one commit series that completes all of these steps:
 2. Flip the test default to the served route and audit its journal pin
    change. Make one switch or route flip per commit, with a proof for that
    commit, so each pin change is attributable.
-3. Delete the candidate option, its test overrides and any old-path code
+3. Delete the candidate switch, its test overrides and any old-path code
    that serves nothing else. The default tests must exercise the adopted
    route.
 
@@ -205,6 +206,39 @@ scale loads cannot express GLM's BF16 operands, eight K16 MMAs per chain
 and F32 block-scale FMA. Adoption would require porting GLM's compute body
 and TMA staging. The shared policy interface stays available; GLM keeps its
 current entries. No GPU twins or step-time measurements were run.
+
+### Serving options and candidate switches
+
+Adoption deletes candidate switches, not serving options.
+
+- A candidate switch selects the old or new path of one change for tests
+  and A/Bs: an environment variable, a test override, or a model option
+  or flag added for the candidate. Step 3 deletes it.
+- A serving option is a documented `serve` flag with a profile field that
+  selects between policies with different tradeoffs, such as
+  `--prefill-budget fixed|tbt|decode-aware` (`prefill_budget`) and its
+  `--decode-tbt-target-ms` target. It stays after adoption, and an
+  explicit flag still overrides the profile default.
+
+A scheduling candidate stays operator-selectable only when its
+[stateful replay](contributing.md#stateful-replay-acceptance) verdict
+resolves a tradeoff: better in some metrics or cells and worse in others,
+so no single choice serves every deployment. It becomes a value of an
+existing serving option, or a new option when none covers it. A
+candidate with resolved gains and no resolved regression replaces the old
+behavior inside the existing value, and its switch is deleted like any
+other.
+
+Adopting a serving-option value is also one commit series:
+
+1. Document the value in the serving docs and test every value of the
+   option at its current behavior.
+2. Set the default in each profile whose own evidence supports it, one
+   profile per commit with that evidence. Other profiles keep their
+   default.
+3. Delete the candidate switches inside the policy, for example a
+   variable that turned a new cut rule on within `tbt`, with their test
+   overrides and old paths, as in step 3 above.
 
 ## Adding a GPU backend
 

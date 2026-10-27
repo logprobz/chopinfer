@@ -44,9 +44,12 @@ Read [BUNDLE_ARCHITECTURE.md](BUNDLE_ARCHITECTURE.md),
   `runtime-*` crates free of model and bundle dependencies; bundles do not link
   `runtime-cuda`. Model-specific work lives in the owning model directory.
 - Follow [candidate adoption](docs/kernel-library.md#adopting-a-candidate):
-  use knobs before variants, require served step-time acceptance, and adopt
-  in one commit series that audits test-default pin changes and removes the
-  option, test overrides and unused old paths.
+  use knobs before variants, require served step-time acceptance for kernel
+  and route changes and stateful replay acceptance for scheduler and
+  prefix-cache changes, and adopt in one commit series that audits
+  test-default pin changes and removes the candidate switch, test overrides
+  and unused old paths. Declared serving options stay; adoption sets their
+  profile defaults.
 - Never regenerate a kernel lock or golden file to hide a mismatch. Find and
   fix the cause.
 - Preserve C ABI symbols, schema and bundle IDs, locks, no-follow file checks

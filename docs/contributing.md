@@ -335,8 +335,11 @@ helps locate the cost; profiling bypasses do not qualify release artifacts.
 ### Step-time acceptance
 
 Use the in-tree `tools/tune` `mode: ab` for the following paired method.
-Arm A is the baseline and arm B is the candidate. Only served full-graph
-timing of the affected bucket decides adoption. [Pair-lab kernel timings](#pair-lab-kernel-timing)
+It judges kernel and route changes. Scheduler and prefix-cache changes use
+[stateful replay acceptance](#stateful-replay-acceptance); a change that
+does both needs both verdicts. Arm A is the baseline and arm B is the
+candidate. Only served full-graph timing of the affected bucket decides
+adoption of a kernel or route change. [Pair-lab kernel timings](#pair-lab-kernel-timing)
 with an in-job A/A help locate work to improve.
 
 - Use sampled coding and chat prompts at temperature 1.0.
@@ -370,6 +373,90 @@ variant or deleted path) if any weighted cell has both d1 and d2 negative
 and a mean below `-max(spread, 0.5%)`. Keep cell verdicts separate so a gain
 elsewhere cannot hide that regression. An A1/A2 or B1/B2 comparison counts
 as A/A only when both visits used identical seeds and prompts.
+
+### Stateful replay acceptance
+
+Step-time acceptance asserts zero cached prompt tokens, so it cannot see a
+change that acts through serving state across steps and turns: prefix-cache
+eviction order, cache points captured on cancel or stop, decode-aware
+prefill chunk cuts, or CUDA graphs for short prefill continuations. Judge
+such scheduler and prefix-cache changes on stateful multi-turn traffic.
+
+Establish exactness before any timing:
+
+- Greedy and fixed-seed sampled output of single requests and fixed-batch
+  replays must equal the previous output bit for bit
+  ([batch shape](numerics.md#batch-shape)).
+- A change that moves prefix anchors, cache points or chunk cuts must
+  pass `tools/qual/prefix_exact.py` and the correctness runner's
+  determinism screen ([prefix-cache accuracy](numerics.md#prefix-cache-accuracy)).
+- A change to preemption capture or restore must pass
+  `preempt_compare.py compare --exact` ([preemption resume](numerics.md#preemption-resume)).
+
+Concurrent multi-turn arms may still diverge once batch composition
+differs. Report how many matched turns agree (`agentic_compare.py`
+reports it); that divergence is not an accuracy failure.
+
+Method:
+
+- Replay sessions with `tools/qual/agentic_mixed.py` at temperature 1.0
+  with per-session cache salts (`--cache-salt session`), so each turn can
+  hit only its own session's prefix.
+- Run one untimed warm-up process on the same install and workload, then
+  visit A1, B1, B2, A2 in that order. Each visit is a fresh server
+  process (it may borrow the [weight keeper](weight-keeper.md)), so no
+  cache or learned policy state carries between visits. A1/B1 share one
+  seed and B2/A2 share another.
+- Keep the profile, KV pool size, concurrency levels, window length and
+  session limits identical in every visit. Record preemptions and
+  prefix-cache evictions per visit instead of asserting zero; eviction
+  and cache-point changes act through them.
+- Record the [power and clock evidence](#power-and-energy) and major
+  faults of step-time acceptance. The 1,000 major-fault budget applies to
+  each visit's measured windows.
+- Run on an idle host and idle GPUs.
+
+Before running, declare the metrics and concurrencies the change should
+improve. Report each concurrency (a cell) for every visit:
+
+- the cache-hit rate (cached over prompt tokens) and cached prompt tokens;
+- TTFT p50 and p95;
+- decode event-gap p50 and p95; stalls (gaps above the stall threshold,
+  100 ms by default) per 1,000 gaps and stall time per 1,000 gaps, with
+  the stall count, total stall time and eligible gaps;
+- output tokens per second and valid sessions per minute.
+
+Arms complete different numbers of turns in a fixed window, so judge
+rates, not visit totals. Report raw cached prompt tokens, the stall
+count and total stall time as evidence; do not judge them.
+
+For each metric and cell compute d1, d2, mean and spread with the
+step-time formulas, inverting lower-is-better metrics (TTFT, event gaps)
+so a positive d is an improvement. Three rates can be zero in the
+baseline, so use differences for them, positive when better:
+
+- cache-hit rate, in percentage points (d1 = B1 - A1, d2 = B2 - A2);
+- stalls per 1,000 gaps and stall time per 1,000 gaps
+  (d1 = A1 - B1, d2 = A2 - B2).
+
+A metric is unavailable in a cell when either visit of a pair lacks its
+samples: a percentile below the harness's supported sample count (20
+for p95), or a rate with no prompt tokens or no eligible gaps. An
+unavailable metric gives no verdict in that cell; report it as
+unavailable, never as a tie.
+
+- A gain is resolved when d1 and d2 have the same sign and the mean
+  exceeds the spread, in a declared metric and cell.
+- A regression is resolved when d1 and d2 are both negative and the mean
+  is below `-max(spread, 0.5%)` for ratio metrics, or below `-spread`
+  for difference metrics, in any metric and cell.
+- Keep metric and cell verdicts separate so a gain elsewhere cannot hide
+  a regression.
+
+A change with a resolved gain and no resolved regression replaces the
+old behavior. A change that resolves gains and regressions in different
+metrics or cells is a tradeoff: it may be adopted only as a
+[serving option value](kernel-library.md#serving-options-and-candidate-switches).
 
 ### Pair-lab kernel timing
 

@@ -40,11 +40,13 @@ copy receives cache buffers.
 
 For cache-range contexts, the fused finish keeps its measured admissions:
 native full chunks at offset zero, decoded full chunks at the later three
-offsets, 4096-row parts at offsets 0/24576, and mixed64 retained tails from
-320 through 2496 in steps of 128 at those two offsets. Other retained sizes
-and origins use their qualified paired route. Upper-skip keeps the cache
-only in the full-width prefix before the final compressed source; its
-retained upper-layer rows preserve their native key and query origins.
+offsets, 4096-row parts at offsets 0/24576, and, on layers with compression
+ratio 1, mixed64 retained tails from 64 through 2496 rows in steps of 128 at
+all four offsets 0/8192/16384/24576, when the tail ends at the chunk end
+(row origin plus row count is 8192). Other retained sizes and origins use
+their qualified paired route. Upper-skip keeps the cache only in the
+full-width prefix before the final compressed source; its retained
+upper-layer rows preserve their native key and query origins.
 See [prefill dependencies](prefill-dependencies.md).
 
 Selection is recorded in the latent schedule table and checked together

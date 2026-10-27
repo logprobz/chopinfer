@@ -38,6 +38,16 @@ fn parse_family(family: Family, text: &str) -> Result<Table, TuningError> {
                 row.key
             )));
         }
+        if matches!(
+            row.key.op.as_str(),
+            "latent.staging.decode" | "latent.staging.verify"
+        ) && !matches!(row.key.rows, Some([lo, hi]) if lo == hi)
+        {
+            return Err(TuningError(format!(
+                "{}: staging requires a singleton launch row",
+                row.key
+            )));
+        }
     }
     Ok(table)
 }
@@ -130,6 +140,19 @@ mod tests {
             })
             .unwrap();
         parse_family(family, &table.render()).unwrap()
+    }
+
+    #[test]
+    fn staging_ranges_are_refused_with_the_row_name() {
+        let text = TABLES.iter().find(|(f, _)| *f == Family::Latent).unwrap().1;
+        let widened = text.replace(
+            "\"rows\": [8, 8], \"schedule\": \"staged\"",
+            "\"rows\": [8, 9], \"schedule\": \"staged\"",
+        );
+        assert_ne!(text, widened);
+        let error = parse_family(Family::Latent, &widened).unwrap_err();
+        assert!(error.0.contains("latent.staging.decode"), "{error}");
+        assert!(error.0.contains("8..=9"), "{error}");
     }
 
     #[test]

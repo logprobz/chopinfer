@@ -56,29 +56,33 @@ pub fn loads(cubin: &str, g: &Geometry, ranks: u32, storage: KvStorage) -> bool 
     cubin != CUBIN || (super::latent_scheduled::qualified(g, ranks) && storage == KvStorage::Native)
 }
 
-pub fn selection(phase: AttentionPhase) -> Option<(u32, u32, u32, bool)> {
+fn selections(
+    table: &kernel_build::tuning::Table,
+    phase: AttentionPhase,
+) -> Vec<(u32, u32, u32, bool)> {
     let (op, bucket) = match phase {
         AttentionPhase::Decode => ("latent.staging.decode", 32),
         AttentionPhase::Verify => ("latent.staging.verify", 192),
-        _ => return None,
+        _ => return vec![],
     };
-    use model_deepseek41_contract::{
-        geometry::FLASH,
-        tuning::{Family, table},
-    };
-    let row = table(&FLASH, Family::Latent)?
+    table
         .rows()
         .iter()
-        .find(|row| row.key.op == op && row.key.bucket == bucket && row.key.shape["ranks"] == 4)?;
-    assert_eq!(row.schedule, "staged");
-    let [lo, hi] = row.key.rows?;
-    assert_eq!(lo, hi, "staging prepares one measured launch size");
-    Some((
-        lo,
-        row.knobs["stage_keys"].count()?,
-        row.knobs["head_group"].count()?,
-        row.knobs["packed"].flag()?,
-    ))
+        .filter(|row| {
+            row.key.op == op
+                && row.key.weights == "fp8"
+                && row.key.bucket == bucket
+                && row.key.shape == [("ranks".into(), 4)].into()
+        })
+        .map(|row| {
+            (
+                row.key.rows.unwrap()[0],
+                row.knobs["stage_keys"].count().unwrap(),
+                row.knobs["head_group"].count().unwrap(),
+                row.knobs["packed"].flag().unwrap(),
+            )
+        })
+        .collect()
 }
 
 /// Only these exact phase/row pairs were timed. In particular, 16 rows and
@@ -90,6 +94,18 @@ pub fn prepare(
     query: &LatentAttentionQuery,
     need: Need,
 ) -> Result<Prepared<LatentSourcesBuffers<View>>, Refused> {
+    use model_deepseek41_contract::tuning::{Family, table};
+    prepare_with_table(reference, g, ranks, query, need, table(g, Family::Latent))
+}
+
+fn prepare_with_table(
+    reference: Prepared<LatentSourcesBuffers<View>>,
+    g: &Geometry,
+    ranks: u32,
+    query: &LatentAttentionQuery,
+    need: Need,
+    table: Option<&kernel_build::tuning::Table>,
+) -> Result<Prepared<LatentSourcesBuffers<View>>, Refused> {
     #[cfg(test)]
     if REFERENCE.with(std::cell::Cell::get) {
         return Ok(reference);
@@ -100,10 +116,14 @@ pub fn prepare(
     let LatentAttentionQuery::Attention { phase, .. } = query else {
         return Ok(reference);
     };
-    let Some((rows, stage_keys, head_group, packed)) = selection(*phase) else {
+    let Some(table) = table else {
         return Ok(reference);
     };
-    if need.capacity < rows {
+    let selected: Vec<_> = selections(table, *phase)
+        .into_iter()
+        .filter(|&(rows, ..)| rows <= need.capacity)
+        .collect();
+    if selected.is_empty() {
         return Ok(reference);
     }
     let Some(source) = super::latent_scheduled::serving_entries(g, ranks)
@@ -113,16 +133,22 @@ pub fn prepare(
     else {
         return Ok(reference);
     };
-    // Two GPUs, 250 W: the full tile with ordinary F32 widening won every
-    // measured context/format at these rows. Keep all eight ordered splits.
-    let entry = Entry {
-        source,
-        stage_keys,
-        head_group,
-        packed,
-        profile: false,
-    };
-    sources_decode::prepare(reference, need, &[(rows, entry)])
+    let routes: Vec<_> = selected
+        .into_iter()
+        .map(|(rows, stage_keys, head_group, packed)| {
+            (
+                rows,
+                Entry {
+                    source: source.clone(),
+                    stage_keys,
+                    head_group,
+                    packed,
+                    profile: false,
+                },
+            )
+        })
+        .collect();
+    sources_decode::prepare(reference, need, &routes)
 }
 
 #[cfg(test)]
@@ -153,6 +179,71 @@ mod tests {
         admission::{SUPPORTED_RANKS, check_ranks},
         geometry::GEOMETRIES,
     };
+
+    #[test]
+    fn prepares_every_admitted_staging_singleton() {
+        use model_deepseek41_contract::{
+            geometry::FLASH,
+            tuning::{Family, table},
+        };
+        let mut table = table(&FLASH, Family::Latent).unwrap().clone();
+        let mut added = table
+            .rows()
+            .iter()
+            .find(|r| r.key.op == "latent.staging.decode")
+            .unwrap()
+            .clone();
+        added.key.rows = Some([16, 16]);
+        added
+            .knobs
+            .insert("stage_keys".into(), kernel_build::tuning::Knob::Count(32));
+        added
+            .knobs
+            .insert("packed".into(), kernel_build::tuning::Knob::Flag(true));
+        table.upsert(added).unwrap();
+        let source = super::super::latent_scheduled::serving_entries(&FLASH, 4)
+            .unwrap()
+            .into_iter()
+            .find(|e| {
+                matches!(
+                    e.query,
+                    LatentAttentionQuery::Attention {
+                        phase: AttentionPhase::Decode,
+                        ..
+                    }
+                ) && !e.name.ends_with("_draft_block")
+            })
+            .unwrap();
+        let backend =
+            super::super::latent_scheduled::register_sources(Sm120::new(), &FLASH, 4).unwrap();
+        for capacity in [8, 16, 32] {
+            let need = Need::rows(capacity);
+            let reference = backend
+                .latent_attention_sources(&source.query, need)
+                .unwrap();
+            let routed =
+                prepare_with_table(reference, &FLASH, 4, &source.query, need, Some(&table))
+                    .unwrap();
+            let symbols: Vec<_> = routed
+                .info()
+                .symbols
+                .iter()
+                .filter(|(s, _)| s.contains("_stage"))
+                .collect();
+            assert_eq!(symbols.len(), if capacity < 16 { 1 } else { 2 });
+            assert!(
+                symbols
+                    .iter()
+                    .any(|(s, _)| s.ends_with("_stage64_h0_b0_profile0_v1"))
+            );
+            assert_eq!(
+                symbols
+                    .iter()
+                    .any(|(s, _)| s.ends_with("_stage32_h0_b1_profile0_v1")),
+                capacity >= 16
+            );
+        }
+    }
 
     #[test]
     fn selects_only_measured_native_target_queries() {

@@ -509,31 +509,3 @@ fn flash_timing_choices_do_not_bind_another_geometry() {
         }
     }
 }
-
-#[test]
-#[ignore = "requires an external directory named by CHOPINFER_DENSE_DECODE_BUILD"]
-fn build_dense_decode_lock_family() {
-    let out = std::path::PathBuf::from(
-        std::env::var_os("CHOPINFER_DENSE_DECODE_BUILD").expect("CHOPINFER_DENSE_DECODE_BUILD"),
-    );
-    let specs = registration::dense_cubins(geometry::GEOMETRIES)
-        .unwrap()
-        .into_iter()
-        .map(|(_, spec)| spec)
-        .collect::<Vec<_>>();
-    let lock = kernel_build::LockDir::new(out.join("locks"))
-        .family(registration::DENSE_FAMILY, specs.iter().map(|s| &s.name));
-    kernel_build::build_in_families(
-        &kernel_build::Toolchain::detect().unwrap(),
-        &specs,
-        &out,
-        &lock,
-        kernel_build::BuildOptions {
-            lock_update: true,
-            emit_cargo_directives: false,
-            profile_line_info: false,
-        },
-        None,
-    )
-    .unwrap();
-}

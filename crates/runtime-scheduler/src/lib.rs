@@ -365,6 +365,22 @@ struct PrefillRows<'a> {
     media_arena: usize,
     /// Media arena pages left in this batch.
     media_budget: &'a mut usize,
+    /// What grid chunks with cuts may take under a timing cap.
+    timing: &'a mut Option<TimingBudget>,
+}
+
+/// The timing cap of one batch's grid chunks
+/// ([`SchedulerConfig::with_prefill_timing_cuts`]).
+#[derive(Clone, Copy, Debug)]
+struct TimingBudget {
+    /// The cap each chunk is sized from.
+    cap: usize,
+    /// Tokens the chunks may still take together.
+    tokens: usize,
+    /// Whether a chunk was taken.
+    taken: bool,
+    /// Whether a chunk already ended at the cap.
+    cut: bool,
 }
 
 /// A prefill item's claim on the batch, held for it until it is visited.
@@ -383,6 +399,7 @@ pub struct SchedulerConfig {
     prefill_chunk_limit: usize,
     guaranteed_prefill_chunks: Option<usize>,
     prefill_cuts: bool,
+    prefill_timing_cuts: bool,
     lone_prefill_expansion: bool,
     maximum_scored_rows: usize,
     decode_cost: usize,
@@ -432,6 +449,7 @@ impl SchedulerConfig {
             prefill_chunk_limit,
             guaranteed_prefill_chunks: None,
             prefill_cuts: false,
+            prefill_timing_cuts: false,
             lone_prefill_expansion: false,
             maximum_scored_rows: usize::MAX,
             decode_cost,
@@ -494,6 +512,28 @@ impl SchedulerConfig {
     pub const fn with_prefill_cuts(mut self, enabled: bool) -> Self {
         self.prefill_cuts = enabled;
         self
+    }
+
+    /// Candidate switch, off by default: with [`PrefillBudget::Tbt`] and
+    /// [`Self::with_prefill_cuts`], a grid request prefilling beside
+    /// decoding requests ends its chunk early, at the granule multiple the
+    /// TBT cap reaches, so the decoders share the step. Such a timing cut is
+    /// complete state but captures no anchor. Scored and media requests,
+    /// and bundles without cuts, are unaffected.
+    #[must_use]
+    pub const fn with_prefill_timing_cuts(mut self, enabled: bool) -> Self {
+        self.prefill_timing_cuts = enabled;
+        self
+    }
+
+    /// Whether grid requests take timing cuts: the candidate switch, the
+    /// TBT budget and the bundle's cuts together.
+    #[must_use]
+    pub const fn prefill_timing_cuts(self) -> bool {
+        self.prefill_timing_cuts
+            && self.prefill_cuts
+            && self.guaranteed_prefill_chunks.is_some()
+            && matches!(self.prefill_budget, PrefillBudget::Tbt(_))
     }
 
     /// Positions a chunk may end at before the prompt end: multiples of
@@ -877,6 +917,107 @@ impl BatchItem {
     }
 }
 
+/// Where a grid request's prefill chunk ends, earliest first.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PrefillEnd {
+    /// The next absolute grid boundary.
+    Grid,
+    /// A capture point before it.
+    Capture,
+    /// The prefill target: the prompt end, or the end of the replayed
+    /// tokens after a preemption.
+    Prompt,
+    /// The last granule multiple the step's timing cap reaches.
+    Timing,
+    /// The next granule multiple, when the timing cap reaches none.
+    Progress,
+}
+
+impl PrefillEnd {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Grid => "grid",
+            Self::Capture => "capture",
+            Self::Prompt => "prompt",
+            Self::Timing => "timing",
+            Self::Progress => "progress",
+        }
+    }
+}
+
+/// One grid chunk sized against a timing cap.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TimedChunk {
+    request_id: RequestId,
+    start: usize,
+    end: usize,
+    reason: PrefillEnd,
+}
+
+impl TimedChunk {
+    #[must_use]
+    pub const fn request_id(self) -> RequestId {
+        self.request_id
+    }
+
+    /// The first prefilled position.
+    #[must_use]
+    pub const fn start(self) -> usize {
+        self.start
+    }
+
+    /// The position after the last prefilled one.
+    #[must_use]
+    pub const fn end(self) -> usize {
+        self.end
+    }
+
+    #[must_use]
+    pub const fn reason(self) -> PrefillEnd {
+        self.reason
+    }
+}
+
+/// The grid chunks of one batch sized against the TBT cap
+/// ([`SchedulerConfig::with_prefill_timing_cuts`]).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TimingCuts {
+    cap: usize,
+    target_micros: u64,
+    chunks: Vec<TimedChunk>,
+}
+
+impl TimingCuts {
+    /// The prefill tokens the TBT budget selected beside the decoding
+    /// requests. The chunks take at most this many together, except a
+    /// chunk alone in its batch whose cap reaches no granule multiple.
+    #[must_use]
+    pub const fn cap(&self) -> usize {
+        self.cap
+    }
+
+    /// The TBT target the cap was selected for.
+    #[must_use]
+    pub const fn target_micros(&self) -> u64 {
+        self.target_micros
+    }
+
+    #[must_use]
+    pub fn chunks(&self) -> &[TimedChunk] {
+        &self.chunks
+    }
+
+    /// Whether a chunk took more tokens than the cap so that its request
+    /// progresses.
+    #[must_use]
+    pub fn forced(&self) -> bool {
+        self.chunks
+            .iter()
+            .any(|chunk| chunk.end - chunk.start > self.cap)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BatchOutcome {
     request_id: RequestId,
@@ -946,6 +1087,7 @@ pub struct Batch {
     prefill_cap: Option<usize>,
     shape: StepShape,
     predicted_micros: Option<u64>,
+    timing_cuts: Option<TimingCuts>,
 }
 
 impl Batch {
@@ -989,6 +1131,13 @@ impl Batch {
     #[must_use]
     pub const fn predicted_micros(&self) -> Option<u64> {
         self.predicted_micros
+    }
+
+    /// The grid chunks sized against a timing cap, when the batch prefills
+    /// such a chunk while requests decode.
+    #[must_use]
+    pub const fn timing_cuts(&self) -> Option<&TimingCuts> {
+        self.timing_cuts.as_ref()
     }
 }
 
@@ -2007,9 +2156,13 @@ impl Scheduler {
             }
             _ => None,
         };
-        // A declared chunk cannot shrink with a timing estimate. It waits
-        // for a step with enough room, using the existing whole-chunk
-        // admission and starvation protection.
+        // With timing cuts, a grid request whose bundle declares cuts sizes
+        // its chunk from the selected cap instead (`grid_chunk`), so it
+        // runs beside the decoding requests. Other declared chunks cannot
+        // shrink with a timing estimate. They wait for a step with enough
+        // room, using the existing whole-chunk admission and starvation
+        // protection.
+        let timing = selected.filter(|_| self.config.prefill_timing_cuts());
         let selected = selected.filter(|_| self.config.guaranteed_prefill_chunks.is_none());
         let aware = selected.is_some();
         let mut prefill_budget = selected.unwrap_or(self.config.scheduled_token_budget);
@@ -2046,8 +2199,14 @@ impl Scheduler {
         let granule = self.config.prefill_granule;
         prefill.retain(|index| {
             let record = &self.requests[*index];
-            Self::chunk_tokens(record, chunk_limit, maximum_scored_rows, granule, false)
-                <= self.config.scheduled_token_budget
+            Self::chunk_tokens(
+                record,
+                chunk_limit,
+                timing,
+                maximum_scored_rows,
+                granule,
+                false,
+            ) <= self.config.scheduled_token_budget
         });
         if prefill.is_empty() && decode.is_empty() {
             if let Some(overload) = admission.blocked {
@@ -2055,7 +2214,9 @@ impl Scheduler {
             }
             return Ok(None);
         }
-        if matches!(self.config.prefill_budget, PrefillBudget::Tbt(_)) && aware {
+        if matches!(self.config.prefill_budget, PrefillBudget::Tbt(_))
+            && (aware || timing.is_some())
+        {
             // A capped step fits few chunks, and new arrivals, which never
             // ran, would otherwise always sort first. Alternate steps serve
             // the earliest arrival first, so a stream of new prompts cannot
@@ -2104,6 +2265,7 @@ impl Scheduler {
                 Self::chunk_tokens(
                     &self.requests[index],
                     chunk_limit,
+                    timing,
                     maximum_scored_rows,
                     granule,
                     false,
@@ -2113,7 +2275,15 @@ impl Scheduler {
             decode.clear();
             prefill_budget = self.config.scheduled_token_budget;
         }
-        let prefill_cap = aware.then_some(prefill_budget);
+        let prefill_cap = aware.then_some(prefill_budget).or(timing);
+        // Timing-cut chunks of one step share the cap, and at most one of
+        // them ends at it.
+        let mut timing_budget = timing.map(|cap| TimingBudget {
+            cap,
+            tokens: cap,
+            taken: false,
+            cut: false,
+        });
         // A prompt-ending chunk that reaches its prompt-end anchor runs past
         // it while the bundle's anchor items last (`push_prefill`).
         let mut anchors = self.config.anchor_items;
@@ -2151,6 +2321,7 @@ impl Scheduler {
                     let tokens = Self::chunk_tokens(
                         record,
                         chunk_limit,
+                        timing,
                         maximum_scored_rows,
                         granule,
                         false,
@@ -2182,8 +2353,14 @@ impl Scheduler {
         };
         let mix_position = prefill.iter().position(|&index| {
             let record = &self.requests[index];
-            let tokens =
-                Self::chunk_tokens(record, chunk_limit, maximum_scored_rows, granule, false);
+            let tokens = Self::chunk_tokens(
+                record,
+                chunk_limit,
+                timing,
+                maximum_scored_rows,
+                granule,
+                false,
+            );
             Self::logit_rows(record, tokens) <= scored_budget.saturating_sub(held(index).1)
         });
         let can_mix = both
@@ -2193,8 +2370,14 @@ impl Scheduler {
             && mix_position.is_some_and(|position| {
                 let index = prefill[position];
                 let record = &self.requests[index];
-                Self::chunk_tokens(record, chunk_limit, maximum_scored_rows, granule, false)
-                    + held(index).0
+                Self::chunk_tokens(
+                    record,
+                    chunk_limit,
+                    timing,
+                    maximum_scored_rows,
+                    granule,
+                    false,
+                ) + held(index).0
                     <= budget - self.config.decode_cost
             });
         macro_rules! push_prefill_at {
@@ -2213,6 +2396,7 @@ impl Scheduler {
                         reserve: &mut reserve,
                         media_arena,
                         media_budget: &mut media_budget,
+                        timing: &mut timing_budget,
                     },
                     0,
                     &mut chunk_media,
@@ -2298,6 +2482,10 @@ impl Scheduler {
         }
         self.apply_draft_plan(&mut items, budget, limits, plan)?;
         let shape = self.step_shape(&items)?;
+        let timing_cuts = match (timing, self.config.prefill_budget) {
+            (Some(cap), PrefillBudget::Tbt(policy)) => self.timing_cuts(&items, cap, policy)?,
+            _ => None,
+        };
         // What the model expects of the batch as packed, for metrics.
         let predicted_micros = (matches!(self.config.prefill_budget, PrefillBudget::Tbt(_))
             && shape.prefill_tokens() > 0
@@ -2354,6 +2542,7 @@ impl Scheduler {
             prefill_cap,
             shape,
             predicted_micros,
+            timing_cuts,
         };
         self.pending = Some(PendingBatch {
             generation: pending_generation,
@@ -3757,6 +3946,53 @@ impl Scheduler {
         (tick, record.arrival)
     }
 
+    /// A grid request's next chunk and why it ends there; `None` for other
+    /// requests.
+    ///
+    /// The chunk ends at the earliest of the next absolute grid boundary
+    /// and, with cuts, the next capture point and the prefill target. A
+    /// `timing` cap applies only with cuts: a longer chunk ends at the last
+    /// granule multiple (in sequence position) the cap reaches instead, or,
+    /// when the cap reaches none, at the next one, so it always progresses.
+    fn grid_chunk(
+        record: &RequestRecord,
+        timing: Option<usize>,
+        granule: usize,
+    ) -> Option<(usize, PrefillEnd)> {
+        let chunk = record.guaranteed_prefill_chunks?;
+        let start = record.prefilled_tokens;
+        let target = Self::prefill_target(record);
+        let grid = (start / chunk)
+            .saturating_add(1)
+            .saturating_mul(chunk)
+            .min(target);
+        if !record.prefill_cuts {
+            return Some((grid - start, PrefillEnd::Grid));
+        }
+        let capture = start + Self::chunk_remaining(record, false);
+        let (end, reason) = if capture < grid {
+            (capture, PrefillEnd::Capture)
+        } else if grid == target {
+            (grid, PrefillEnd::Prompt)
+        } else {
+            (grid, PrefillEnd::Grid)
+        };
+        let Some(cap) = timing.filter(|&cap| end - start > cap) else {
+            return Some((end - start, reason));
+        };
+        let aligned = (start + cap) / granule * granule;
+        Some(if aligned > start {
+            (aligned - start, PrefillEnd::Timing)
+        } else {
+            let next = (start / granule + 1) * granule;
+            if next < end {
+                (next - start, PrefillEnd::Progress)
+            } else {
+                (end - start, reason)
+            }
+        })
+    }
+
     /// Tokens one prefill item must take for the model side to execute it.
     ///
     /// Use the full chunk selected for this step or the authenticated tail
@@ -3767,24 +4003,21 @@ impl Scheduler {
     /// one it reaches, or the next one when a limit below the granule
     /// reaches none (chunks start on multiples, and capture points are
     /// multiples, so that end is within the remaining tokens).
+    ///
+    /// A grid request ends its chunk at the next absolute grid boundary, or
+    /// with cuts at an earlier capture point or its prefill target; with a
+    /// `timing` cap ([`SchedulerConfig::with_prefill_timing_cuts`]) also
+    /// where [`Self::grid_chunk`] cuts it.
     fn chunk_tokens(
         record: &RequestRecord,
         chunk_limit: usize,
+        timing: Option<usize>,
         maximum_scored_rows: usize,
         granule: usize,
         spans: bool,
     ) -> usize {
-        if let Some(chunk) = record.guaranteed_prefill_chunks {
-            let start = record.prefilled_tokens;
-            let end = (start / chunk)
-                .saturating_add(1)
-                .saturating_mul(chunk)
-                .min(Self::prefill_target(record));
-            return if record.prefill_cuts {
-                (end - start).min(Self::chunk_remaining(record, false))
-            } else {
-                end - start
-            };
+        if let Some((tokens, _)) = Self::grid_chunk(record, timing, granule) {
+            return tokens;
         }
         let remaining = Self::chunk_remaining(record, spans);
         let limit = Self::request_chunk_limit(record, chunk_limit, maximum_scored_rows);
@@ -3847,8 +4080,12 @@ impl Scheduler {
         let media_budget = rows.media_budget;
         let remaining = Self::prefill_target(record) - record.prefilled_tokens;
         let available = budget.saturating_sub(reserved_budget.saturating_add(held_tokens));
+        // A grid chunk with cuts under a timing cap. An anchor item never
+        // spans past a timing cut.
+        let timing = rows.timing.as_mut().filter(|_| record.prefill_cuts);
+        let cap = timing.as_ref().map(|timing| timing.cap);
         if let Some(anchor) = Self::spannable_anchor(record, chunk_limit, rows.maximum_scored_rows)
-            .filter(|_| *anchors > 0)
+            .filter(|_| *anchors > 0 && cap.is_none())
         {
             let tokens = remaining;
             let scored_rows = Self::logit_rows(record, tokens);
@@ -3876,10 +4113,26 @@ impl Scheduler {
             }
         }
         let chunk = |limit| {
-            Self::chunk_tokens(record, limit, rows.maximum_scored_rows, rows.granule, false)
+            Self::chunk_tokens(
+                record,
+                limit,
+                cap,
+                rows.maximum_scored_rows,
+                rows.granule,
+                false,
+            )
         };
         let tokens = chunk(chunk_limit);
         if tokens == 0 {
+            return false;
+        }
+        // Chunks share the cap, but the first may exceed it to progress.
+        // One that ends at the cap is the only one in its batch.
+        let timed = Self::grid_chunk(record, cap, rows.granule).map(|(_, reason)| reason);
+        if let Some(timing) = &timing
+            && ((tokens > timing.tokens && timing.taken)
+                || (timing.cut && timed == Some(PrefillEnd::Timing)))
+        {
             return false;
         }
         let Some((tokens, media)) =
@@ -3916,6 +4169,11 @@ impl Scheduler {
             expects_output: tokens == remaining,
             anchor: None,
         });
+        if let Some(timing) = timing {
+            timing.tokens = timing.tokens.saturating_sub(tokens);
+            timing.taken = true;
+            timing.cut |= timed == Some(PrefillEnd::Timing);
+        }
         *prefill_budget -= tokens;
         *budget -= token_cost;
         *scored_budget -= scored_rows;
@@ -3955,6 +4213,48 @@ impl Scheduler {
             }
         }
         fitting
+    }
+
+    /// The grid chunks with cuts among `items`, sized against the timing
+    /// cap `cap`; `None` when there are none.
+    fn timing_cuts(
+        &self,
+        items: &[BatchItem],
+        cap: usize,
+        policy: MixedPolicy,
+    ) -> Result<Option<TimingCuts>, ScheduleError> {
+        let mut chunks = Vec::new();
+        for item in items {
+            let BatchPhase::Prefill { tokens } = item.phase else {
+                continue;
+            };
+            let record = self.record(item.request_id)?;
+            if !record.prefill_cuts {
+                continue;
+            }
+            let (expected, reason) =
+                Self::grid_chunk(record, Some(cap), self.config.prefill_granule)
+                    .ok_or(ScheduleError::InvariantViolation)?;
+            if expected != tokens {
+                return Err(ScheduleError::InvariantViolation);
+            }
+            if chunks.is_empty() {
+                chunks
+                    .try_reserve_exact(items.len())
+                    .map_err(|_| ScheduleError::MetadataAllocationFailed)?;
+            }
+            chunks.push(TimedChunk {
+                request_id: item.request_id,
+                start: record.prefilled_tokens,
+                end: record.prefilled_tokens + tokens,
+                reason,
+            });
+        }
+        Ok((!chunks.is_empty()).then(|| TimingCuts {
+            cap,
+            target_micros: u64::from(policy.target_millis()) * 1000,
+            chunks,
+        }))
     }
 
     /// The prefill tokens, attention pairs and decode items of `items`.
@@ -4809,6 +5109,7 @@ mod tests {
                     reserve: &mut None,
                     media_arena: 0,
                     media_budget: &mut 0,
+                    timing: &mut None,
                 },
                 0,
                 &mut |_, _, _| ChunkMedia::default(),

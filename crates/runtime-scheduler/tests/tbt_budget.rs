@@ -741,9 +741,12 @@ fn a_pessimistic_tbt_fit_keeps_the_progress_floor() {
     }
 }
 
+/// Declared cuts alone never size a grid chunk by time; the timing-cut
+/// switch does, and only with cuts. Without both, a decoder waits for whole
+/// 2048-token chunks.
 #[test]
-fn shared_prefix_cut_capability_does_not_enable_tbt_cuts() {
-    for cuts in [false, true] {
+fn only_the_timing_cut_switch_with_declared_cuts_sizes_grid_chunks() {
+    for (cuts, timing) in [(false, false), (true, false), (false, true), (true, true)] {
         let mut s = Scheduler::new(
             SchedulerConfig::new(64, 128, 8192, 2048, 1)
                 .unwrap()
@@ -752,7 +755,8 @@ fn shared_prefix_cut_capability_does_not_enable_tbt_cuts() {
                 .with_guaranteed_prefill_chunks(2048)
                 .unwrap()
                 .with_prefill_cuts(cuts)
-                .with_prefill_budget(tbt(1, 0)),
+                .with_prefill_budget(tbt(1, 0))
+                .with_prefill_timing_cuts(timing),
             KvGeometry::new(64, 65536).unwrap(),
         )
         .unwrap();
@@ -761,13 +765,32 @@ fn shared_prefix_cut_capability_does_not_enable_tbt_cuts() {
         let batch = s.next_batch().unwrap().unwrap();
         commit_only(&mut s, &batch);
         submit(&mut s, 2, 4096, 8);
-        for _ in 0..2 {
+        let (chunk, steps) = if cuts && timing { (512, 8) } else { (2048, 2) };
+        for _ in 0..steps {
             let batch = s.next_batch().unwrap().unwrap();
-            assert_eq!(batch.prefill_cap(), None);
-            assert_eq!(prefill_tokens(&batch), 2048);
+            if cuts && timing {
+                // The 1 ms target selects the 512-token floor.
+                assert_eq!(batch.prefill_cap(), Some(512));
+                assert_eq!(batch.shape().decode_items(), 1);
+                assert!(batch.timing_cuts().is_some());
+            } else {
+                assert_eq!(batch.prefill_cap(), None);
+                assert!(batch.timing_cuts().is_none());
+            }
+            if prefill_tokens(&batch) > 0 {
+                assert_eq!(
+                    prefill_tokens(&batch),
+                    chunk,
+                    "cuts {cuts}, timing {timing}"
+                );
+            }
             commit_only(&mut s, &batch);
         }
-        assert!(!prefilling(&s, 2..3));
+        while prefilling(&s, 2..3) {
+            let batch = s.next_batch().unwrap().unwrap();
+            assert!(prefill_tokens(&batch) == 0, "cuts {cuts}, timing {timing}");
+            commit_only(&mut s, &batch);
+        }
     }
 }
 

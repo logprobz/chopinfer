@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 type Backend = HostServicesV1Backend<crate::cuda::CudaHostDeviceV1>;
+mod allocation;
 mod lifecycle;
 
 fn write_replay_request(
@@ -32,15 +33,46 @@ fn write_replay_request(
     slots: Option<&crate::recurrent::StateSlotPoolV1>,
     draft_sampling: bool,
 ) -> std::result::Result<(), runtime_engine::ExecutorError> {
-    crate::executor::write_draft_sampling_v1(request, items, draft_sampling, |request, trailing| {
-        if let Some(slots) = slots {
-            write_state_slots_v1(request, items, slots, trailing, |request, trailing| {
-                write_batch_request_v1(request, items, plan, wire, trailing)
-            })
-        } else {
-            write_batch_request_v1(request, items, plan, wire, trailing)
-        }
-    })
+    write_allocated_replay_request(request, items, plan, wire, slots, draft_sampling, None)
+}
+
+fn write_allocated_replay_request(
+    request: &mut Vec<u8>,
+    items: &[ModelBatchItem],
+    plan: &runtime_kv::PreparedAppendBatch,
+    wire: BatchWireCapabilityV1,
+    slots: Option<&crate::recurrent::StateSlotPoolV1>,
+    draft_sampling: bool,
+    allocation: Option<&runtime_engine::StepAllocation>,
+) -> std::result::Result<(), runtime_engine::ExecutorError> {
+    crate::executor::write_verify_allocation_v1(
+        request,
+        items,
+        allocation,
+        |request, allocation_trailing| {
+            crate::executor::write_draft_sampling_v1(
+                request,
+                items,
+                draft_sampling,
+                |request, trailing| {
+                    let trailing = trailing + allocation_trailing;
+                    if let Some(slots) = slots {
+                        write_state_slots_v1(
+                            request,
+                            items,
+                            slots,
+                            trailing,
+                            |request, trailing| {
+                                write_batch_request_v1(request, items, plan, wire, trailing)
+                            },
+                        )
+                    } else {
+                        write_batch_request_v1(request, items, plan, wire, trailing)
+                    }
+                },
+            )
+        },
+    )
 }
 
 fn memory(backend: &Backend) -> Result<Value> {
@@ -63,6 +95,10 @@ fn memory(backend: &Backend) -> Result<Value> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
+    #[serde(default)]
+    model_options: BTreeMap<String, String>,
+    #[serde(default)]
+    allocation: Option<allocation::AllocationConfig>,
     bundle: PathBuf,
     /// The checkpoint the package's weight plans load.
     checkpoint: PathBuf,
@@ -124,6 +160,9 @@ impl Config {
         if let Some(temperature) = self.temperature {
             invariants["sampling_temperature_bits"] = temperature.to_bits().into();
         }
+        if let Some(allocation) = &self.allocation {
+            invariants["verify_allocation"] = serde_json::to_value(allocation).unwrap();
+        }
         if self.transitions {
             invariants["capacity"]["kv_pages"] = pages.into();
             invariants["drafter_sampling_wire"] = "native-v6-when-declared".into();
@@ -152,6 +191,9 @@ impl Config {
         }
         if let Some(policy) = &self.weight_keeper_policy {
             arguments.extend(["--weight-keeper-policy".into(), policy.clone()]);
+        }
+        for (name, value) in &self.model_options {
+            arguments.extend(["--model-option".into(), format!("{name}={value}")]);
         }
         arguments
     }
@@ -304,6 +346,8 @@ struct RecordingSampler {
     backend: Rc<Backend>,
     capture: RefCell<Capture>,
     budget: Option<RefCell<Budget>>,
+    device_results: bool,
+    device_drafts: RefCell<Vec<(u64, Vec<u32>)>>,
 }
 impl RecordingSampler {
     fn raw(
@@ -351,6 +395,78 @@ fn refusal(error: Box<dyn std::error::Error>) -> BundleStatusV1 {
     BundleStatusV1::HostError
 }
 impl DeviceLogitsSamplerV1 for RecordingSampler {
+    fn supports_device_results(&self) -> bool {
+        self.device_results
+    }
+    fn supports_mapped_sampling(&self) -> bool {
+        self.device_results && self.backend.supports_mapped_sampling()
+    }
+    fn drain_device_results(
+        &self,
+        context: runtime_bundle_abi::BundleContextHandleV1,
+        rank: u32,
+    ) -> HostServiceResultV1<()> {
+        self.backend.drain_device_results(context, rank)
+    }
+    fn retain_device_drafts(
+        &self,
+        drafts: runtime_bundle_abi::device_results::BundleDeviceDraftsV1,
+    ) -> HostServiceResultV1<Box<dyn std::any::Any>> {
+        let lease = self.backend.retain_device_drafts(drafts)?;
+        self.capture_drafts(drafts)?;
+        Ok(lease)
+    }
+    fn sample_device_logits(
+        &self,
+        request: runtime_bundle_abi::device_results::BundleDeviceSamplingRequestV1,
+        items: &[&ModelBatchItem],
+        dispatch: SamplingDispatch,
+    ) -> HostServiceResultV1<()> {
+        self.capture_ready(
+            request.logits,
+            request.logits.logits.first_item_index,
+            items,
+            dispatch,
+            None,
+        )?;
+        self.backend.sample_device_logits(request, items, dispatch)
+    }
+    fn sample_mapped_device_logits(
+        &self,
+        request: runtime_bundle_abi::device_results::BundleMappedDeviceSamplingRequestV1,
+        items: &[&ModelBatchItem],
+        dispatch: SamplingDispatch,
+    ) -> HostServiceResultV1<()> {
+        self.capture_ready(
+            request.source,
+            request.first_sample_row,
+            items,
+            dispatch,
+            Some(request.row_indices),
+        )?;
+        self.backend
+            .sample_mapped_device_logits(request, items, dispatch)
+    }
+    fn enqueue_device_readback(
+        &self,
+        view: runtime_bundle_abi::device_results::BundleReadyDeviceViewV1,
+    ) -> HostServiceResultV1<u64> {
+        self.backend.enqueue_device_readback(view)
+    }
+    fn collect_device_readback(
+        &self,
+        view: runtime_bundle_abi::device_results::BundleReadyDeviceViewV1,
+        ticket: u64,
+    ) -> HostServiceResultV1<Vec<u8>> {
+        self.backend.collect_device_readback(view, ticket)
+    }
+    fn cancel_device_readback(
+        &self,
+        view: runtime_bundle_abi::device_results::BundleReadyDeviceViewV1,
+        ticket: u64,
+    ) -> HostServiceResultV1<()> {
+        self.backend.cancel_device_readback(view, ticket)
+    }
     fn sample_view(
         &self,
         _: OwnedLogitsViewV1,
@@ -426,6 +542,9 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
     let max_sequences = config.max_sequences.unwrap_or(config.concurrency);
     let mixed = config.mixed;
     let transitions = config.transitions;
+    if config.allocation.is_some() && !transitions {
+        return Err("allocation capture requires a transition replay".into());
+    }
     if transitions
         && (!config.trace_input
             || !config.verify
@@ -507,6 +626,9 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
     }
     crate::direct::select_checkpoint_v1(&config.checkpoint)?;
     let loaded = crate::load_selected_topology_bundle_v1(&selection, &host, &config.topology)?;
+    if !config.model_options.is_empty() {
+        loaded.with_model_options(&config.model_options)?;
+    }
     let deployment =
         crate::deployment_from_bundle_v1(loaded, runtime_server::ServerConfig::default())?;
     let vocabulary = deployment.policy().vocabulary().get();
@@ -576,6 +698,8 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
         0
     } else if compare_packages {
         trace.verify_capacity(max_sequences)?
+    } else if let Some(allocation) = &config.allocation {
+        allocation.capacity(&trace)?
     } else if config.draft_tokens.is_some() || transitions {
         trace.steps.iter().map(|step| step.rows()).max().unwrap()
     } else {
@@ -698,11 +822,16 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
         options.limits.check_metadata(metadata)?;
         eprintln!("fixed trace maximum frame metadata: {metadata} bytes");
     }
+    let allocation = config
+        .allocation
+        .as_ref()
+        .map(|a| a.resolve(&trace, loaded.manifest()))
+        .transpose()?;
     if std::env::var_os("CHOPINFER_BATCH_REPLAY_DRY_RUN").is_some_and(|v| v == "1") {
         // Everything above runs without a device; nothing is written.
         println!(
             "fixed trace dry run: {}",
-            json!({"identity":identity,"steps":trace.steps.len(),
+            json!({"identity":identity,"model_options":config.model_options,"steps":trace.steps.len(),
                 "rows":trace.steps.iter().map(|s| s.rows()).sum::<usize>(),
                 "prefill_tokens":trace.prefill_tokens(),"quota":quota,"kv_pages":pages,
                 "page_tokens":page_tokens,"vocabulary":vocabulary})
@@ -844,6 +973,8 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
     let sampler = Rc::new(RecordingSampler {
         backend: backend.clone(),
         capture: RefCell::new(Capture::default()),
+        device_results: allocation.is_some(),
+        device_drafts: RefCell::new(Vec::new()),
         budget: config
             .diagnostic
             .as_ref()
@@ -880,7 +1011,15 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
             }
             let materialized = history.as_ref().map(|h| h.materialize(step)).transpose()?;
             let step = materialized.as_ref().unwrap_or(step);
+            let allocated = allocation
+                .as_ref()
+                .filter(|_| step.items.iter().all(|i| !i.prefill));
             let items = step.model_items_at_temperature(Some(&constraint), temperature);
+            let items = if allocated.is_some() {
+                allocation::cycle_items(items, index as u64 + 1)
+            } else {
+                items
+            };
             let appends = step
                 .items
                 .iter()
@@ -905,21 +1044,54 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
                 batch_wire_capability_v1(loaded.manifest())
             };
             let mut request = Vec::new();
-            write_replay_request(
-                &mut request,
-                &items,
-                &plan,
-                wire,
-                slots.as_ref(),
-                draft_sampling,
-            )?;
+            if allocated.is_none() {
+                write_replay_request(
+                    &mut request,
+                    &items,
+                    &plan,
+                    wire,
+                    slots.as_ref(),
+                    draft_sampling,
+                )?;
+            } else {
+                write_allocated_replay_request(
+                    &mut request,
+                    &items,
+                    &plan,
+                    wire,
+                    slots.as_ref(),
+                    draft_sampling,
+                    allocated,
+                )?;
+            }
             let limits = ResultSinkLimitsV1::new(
                 step.rows() as u64,
                 vocabulary as u64,
                 (step.rows() * vocabulary) as u64,
             );
-            let emitted =
-                instance.execute_with_sampling(&request, limits, &items, Some(sampler.clone()))?;
+            let metadata = allocated
+                .map(|_| {
+                    crate::executor::cycle_metadata(&items, slots.as_ref())
+                        .ok_or("allocation replay metadata is unavailable")
+                })
+                .transpose()?;
+            let emitted = allocation::execute_replay(
+                &mut instance,
+                &request,
+                limits,
+                &items,
+                Some(sampler.clone()),
+                metadata,
+            )?;
+            if allocated.is_some() {
+                sampler.capture.borrow_mut().samples(0, &emitted.sampled)?;
+            }
+            let accepted = allocated
+                .map(|allocation| {
+                    allocation::accepted_step(step, &emitted.accepted_prefixes, allocation.width)
+                })
+                .transpose()?;
+            let step = accepted.as_ref().unwrap_or(step);
             if !emitted.rows.is_empty() || !emitted.prompt_view_rows.is_empty() {
                 return Err("trace bypassed device sampling".into());
             }
@@ -964,11 +1136,15 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
                 .iter()
                 .map(|item| (item.slot as u64 + 1, item.kept))
                 .collect::<Vec<_>>();
-            let drafts = emitted
-                .drafts
-                .iter()
-                .map(|d| (d.request_id, d.tokens.clone()))
-                .collect();
+            let drafts = if allocated.is_some() {
+                std::mem::take(&mut *sampler.device_drafts.borrow_mut())
+            } else {
+                emitted
+                    .drafts
+                    .iter()
+                    .map(|d| (d.request_id, d.tokens.clone()))
+                    .collect()
+            };
             let frame = Frame::from_rows(
                 request,
                 kept,

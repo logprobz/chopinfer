@@ -306,6 +306,20 @@ index and temperature envelope when the package declares sampled drafting.
 Their comparison invariants bind that wire behavior. Versions 1 through 5
 retain their existing rules and wire records.
 
+An allocated replay accepts `model_options` as a map of option names to
+string values and `allocation` as `{ "width": N, "confidence": CALIBRATION }`,
+using the serving calibration schema. An optional `capacity` in `allocation`
+sets the instance's maximum verify rows; omit it to use the trace's maximum.
+Use the serving capacity and `max_sequences` when comparing padded layouts.
+It requires a version-6 trace with
+prefills followed by one final drafted step, using greedy, seeded or top-logprob
+sampling. The width must cover the calibration's floor and be smaller than
+the reserved rows. The recorder submits serving's allocation and device-result
+metadata, records every reserved row and proposal, and commits the actual
+device acceptance instead of the trace's prescribed `kept` counts. Configurations
+without `allocation` keep the existing replay path. Model options must also
+be included in the executable's keeper proof.
+
 Version 7 adds bounded request lifetimes to transition traces. Its optional
 `lifecycle` list contains ordered, one-based `before_step` boundaries, each
 with `actions` and an optional `cancel: true`. Actions are `capture {slot}`,

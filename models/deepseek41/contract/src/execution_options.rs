@@ -21,7 +21,8 @@ pub const MAX_PREFILL_GRAPH_PROGRAMS: usize = 64;
 /// for completion tails that serving captures lazily.
 pub const DEFAULT_GRAPH_HANDLES_PER_RANK: usize = 512;
 /// The most prompt-ending items one upper-skip step keeps at their rounded
-/// prompt end in anchor spares. Each spare holds one slot's rings and tails.
+/// prompt end in anchor spares. Each spare holds one slot's captured state:
+/// rings, tails and, with DSpark, the raw feature history.
 pub const MAX_ANCHOR_ITEMS: u32 = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

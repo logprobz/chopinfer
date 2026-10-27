@@ -8,7 +8,8 @@
 //! group's row. The Engram history needs no pages: a restore names every
 //! prefix token, and the history takes the last of them. A capture at an
 //! anchor kept inside a prompt-ending item copies that anchor's spares
-//! instead of a slot (`execute::anchors`).
+//! instead of a slot (`execute::anchors`), DSpark's raw feature history
+//! included; a restore rebuilds the drafter's rings from those rows.
 
 use bundle_runtime::prefix::{
     Header, HeaderLayout, PrefixInstance, Stamp, layout_digest, may_restore,
@@ -141,7 +142,13 @@ impl PrefixInstance for Instance {
                 .state()
                 .snapshot(request.request_id)
                 .map_err(|_| BundleStatusV1::InvalidState)?;
-            if snapshot.end != request.tokens {
+            // The drafter keeps only raw rows in a snapshot, and an anchor's
+            // spare holds those of its anchor, inside the slot's history.
+            let kept = match holder {
+                Holder::Slot(_) => snapshot.end == request.tokens,
+                Holder::Anchor(_) => request.tokens < snapshot.end,
+            };
+            if !kept {
                 return Err(BundleStatusV1::InvalidState);
             }
         }

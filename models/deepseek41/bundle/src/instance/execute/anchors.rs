@@ -13,6 +13,15 @@
 //! anchor, from the same key rows. The spare thus holds the bytes the slot
 //! would hold after a chunk ending at the anchor, and a capture there copies
 //! it (`Holder::Anchor`).
+//!
+//! With DSpark the spare also holds a raw feature history. The step packs
+//! the raw rows a chunk ending at the anchor retains
+//! (`prefill_cone::anchor_feature_start`), and the drafter's commit, before
+//! its own retention, copies the slot's history entry and then those rows
+//! into the spare. It also retains in the slot the rows such a chunk leaves
+//! there that the item's last window does not, so both histories match the
+//! item cut at the anchor (`dspark::transfers::anchor_copies`). Snapshots
+//! hold no drafter rings; a restore rebuilds them from the raw rows.
 
 use bundle_runtime::inputs::PhaseInputs;
 use bundle_runtime::resources::{Held, allocate_span};

@@ -161,10 +161,17 @@ impl Plan {
             items
                 .iter()
                 .zip(&cone.endpoints)
-                .map(|(item, &end)| {
+                .enumerate()
+                .map(|(index, (item, &end))| {
                     let rows = item.rows.end - item.rows.start;
-                    let keep = rows
-                        - prefill_cone::feature_offset(item.prefix, rows, g.shape.attention.window);
+                    let window = g.shape.attention.window;
+                    let mut keep = rows - prefill_cone::feature_offset(item.prefix, rows, window);
+                    // An anchor item also packs the raw rows a chunk ending at
+                    // its anchor retains, for the anchor's history spare.
+                    if let Some(&Some(anchor)) = ends.get(index) {
+                        let first = prefill_cone::anchor_feature_start(item.prefix, anchor, window);
+                        keep = keep.max(end - first);
+                    }
                     PrefillFeatureRange {
                         packed_start: item.rows.end - keep,
                         rows: keep,

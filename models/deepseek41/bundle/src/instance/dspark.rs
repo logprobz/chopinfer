@@ -397,6 +397,15 @@ impl Instance {
         sink: &mut ExecuteResultSinkV1,
         step: PackedStep,
     ) -> BundleStatusV1 {
+        // Anchor items are refused before the drafter opens its step, as
+        // the target refuses them (`execute_packed_timed`).
+        if self.skip_prefill
+            && let Err(error) =
+                super::execute::anchors::anchors(&step.prefill, self.anchor_spare_count())
+        {
+            self.log(&error);
+            return BundleStatusV1::InvalidArgument;
+        }
         let prepare = || -> Result<(Vec<Input>, TextMasks), String> {
             let batch =
                 BatchCodecV1::decode(request).map_err(|e| format!("DSpark batch: {e:?}"))?;

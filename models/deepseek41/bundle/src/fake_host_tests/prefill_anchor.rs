@@ -355,9 +355,9 @@ fn an_anchor_near_its_item_start_seeds_the_rings_and_restores() {
 /// Without spares an anchor flag is ignored and a capture inside the item
 /// is refused, so the host drops that anchor. With spares, an anchor item
 /// must hold a granule multiple strictly inside it and end off the granule,
-/// and DSpark or a full schedule refuses spares at create.
+/// and a full schedule refuses spares at create; DSpark takes them.
 #[test]
-fn anchor_flags_need_spares_an_interior_granule_and_an_ar_upper_skip() {
+fn anchor_flags_need_spares_an_interior_granule_and_an_upper_skip() {
     let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP1).unwrap(), KV_LAYOUTS[0]);
     let mut plain = create(&host, 0);
     plain
@@ -392,23 +392,33 @@ fn anchor_flags_need_spares_an_interior_granule_and_an_ar_upper_skip() {
     }
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
-    let dspark = FakeHost::new(Shape::new(&FLASH, Ranks::TP1).unwrap(), KV_LAYOUTS[0]);
-    dspark.drafter.set(true);
-    dspark.speculation.set(Some((5, 32)));
-    for (host, chunk, skip) in [(&dspark, 8192, true), (&host, 0, false)] {
-        assert_eq!(
-            try_create_profile_with_options(
-                host,
-                chunk,
-                skip,
-                &[("prefill_anchor_items", 1.into())]
-            )
-            .err(),
-            Some(runtime_bundle_abi::BundleAbiError::Status(
-                BundleStatusV1::Unsupported
-            ))
-        );
+    let dspark = dspark_host(Ranks::TP1);
+    for (host, chunk, skip, created) in [
+        (&dspark, 8192, true, true),
+        (&dspark, 0, false, false),
+        (&host, 0, false, false),
+    ] {
+        match try_create_profile_with_options(
+            host,
+            chunk,
+            skip,
+            &[("prefill_anchor_items", 1.into())],
+        ) {
+            Ok(mut instance) => {
+                assert!(created);
+                assert_eq!(instance.prefill_anchor_items(), Ok(Some(1)));
+                instance.destroy().unwrap();
+            }
+            Err(error) => {
+                assert!(!created);
+                assert_eq!(
+                    error,
+                    runtime_bundle_abi::BundleAbiError::Status(BundleStatusV1::Unsupported)
+                );
+            }
+        }
     }
+    assert_eq!(dspark.acquired.get(), dspark.released.get());
 }
 
 /// Spares change nothing a step launches unless an item keeps an anchor:
@@ -542,62 +552,452 @@ fn anchor_seeds_precede_the_tails_own_seed_copies() {
     assert_eq!(host.acquired.get(), host.released.get());
 }
 
-/// The diagnostic state dump of a capture at an anchor reads the anchor's
-/// spares: the snapshot payload at the anchor and the pages up to it.
-#[cfg(feature = "diagnostic-taps")]
+fn dspark_host(ranks: Ranks) -> Rc<Host> {
+    let host = FakeHost::new(Shape::new(&FLASH, ranks).unwrap(), KV_LAYOUTS[0]);
+    host.drafter.set(true);
+    host.speculation.set(Some((5, 32)));
+    host
+}
+
+/// The bytes of one raw feature row, and the cells of a raw history.
+fn feature_row() -> (u64, u64) {
+    let row = FLASH.shape.dspark.targets.len() as u64 * u64::from(FLASH.shape.hidden) * 2;
+    let cells = u64::from(FLASH.shape.attention.window)
+        + u64::from(model_deepseek41_contract::serving::MAX_VERIFY_ROWS);
+    (row, cells)
+}
+
+/// The slot features and their anchor spare of rank 0.
+fn feature_spans(instance: &BundleInstanceV1) -> (DeviceBufferSpanV1, DeviceBufferSpanV1) {
+    let (spares, states) = crate::instance::anchor_spans(instance.handle());
+    let index = model_deepseek41_contract::state::request_state(&FLASH, KvStorage::Native, true)
+        .buffers
+        .iter()
+        .position(|buffer| buffer.name == "dspark.features")
+        .unwrap();
+    (
+        states[0].named("dspark.features").unwrap(),
+        spares[0].buffers[index].unwrap(),
+    )
+}
+
+/// History rows from `position` in entry `entry` of `buffer`.
+fn history(buffer: DeviceBufferSpanV1, entry: u64, position: u64, rows: u64) -> Span {
+    let (row, cells) = feature_row();
+    (
+        raw(buffer).0,
+        buffer.offset + (entry * cells + position % cells) * row,
+        rows * row,
+    )
+}
+
+/// The copies of `lines` that write either feature history, in order.
+fn feature_writes(
+    lines: &[String],
+    features: DeviceBufferSpanV1,
+    spare: DeviceBufferSpanV1,
+) -> Vec<(Span, Span)> {
+    copies(lines)
+        .into_iter()
+        .filter(|&(_, destination)| inside(destination, features) || inside(destination, spare))
+        .collect()
+}
+
+/// A DSpark prompt keeps its rounded end inside one step: the commit
+/// copies the slot's raw history entry into the anchor's spare, then the
+/// rows a chunk ending at 768 retains (640 to 768), and leaves in the slot
+/// the six rows such a chunk keeps there that the item's last window does
+/// not (655 to 661), before the item's own retention. Both histories then
+/// match the item cut at 768. A capture at the anchor reads only spares, it
+/// restores into another slot and continues to the prompt end.
 #[test]
-fn anchor_state_dumps_read_their_spares() {
-    let root = std::path::PathBuf::from(std::env::var_os("CHOPINFER_DATA").unwrap())
-        .join("deepseek41-tests")
-        .join(format!("anchor-state-{}", std::process::id()));
-    std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(root.join("enabled"), []).unwrap();
-    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP1).unwrap(), KV_LAYOUTS[0]);
+fn dspark_anchored_prompt_keeps_its_raw_history_at_the_anchor() {
+    let host = dspark_host(Ranks::TP1);
     let mut instance = create(&host, 1);
-    crate::instance::set_dspark_state_capture_root_for_test(instance.handle(), Some(root.clone()));
+    let (features, spare) = feature_spans(&instance);
     instance
         .execute_prefill_cuts(
             &cuts(&anchored(1, 0, 0, 789, true), 1, 789, 789),
             &mut Sink::default(),
         )
-        .unwrap();
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+    let before = host.device.journal.borrow().len();
     instance.commit().unwrap();
+    let lines = host.device.journal.borrow()[before..].to_vec();
+    let writes = feature_writes(&lines, features, spare);
+    let (_, cells) = feature_row();
+    assert_eq!(
+        writes
+            .iter()
+            .map(|&(_, destination)| destination)
+            .collect::<Vec<_>>(),
+        [
+            history(spare, 0, 0, cells),
+            history(spare, 0, 640, 30),
+            history(spare, 0, 670, 98),
+            history(features, 0, 655, 6),
+            history(features, 0, 661, 9),
+            history(features, 0, 670, 119),
+        ]
+    );
+    assert_eq!(writes[0].0, history(features, 0, 0, cells));
+    assert!(
+        writes[1..]
+            .iter()
+            .all(|&(source, _)| !inside(source, features) && !inside(source, spare))
+    );
     let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
-    for tokens in [768, 789] {
-        instance
-            .capture_prefix_state(1, tokens, &pages)
-            .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+    let (spares, states) = crate::instance::anchor_spans(instance.handle());
+    // The anchor's capture comes last, so its snapshot is the one restored.
+    for (tokens, from_spares) in [(789, false), (768, true)] {
+        let before = host.device.journal.borrow().len();
+        instance.capture_prefix_state(1, tokens, &pages).unwrap();
+        let captured = copies(&host.device.journal.borrow()[before..]);
+        let read = |buffers: &[DeviceBufferSpanV1]| {
+            captured
+                .iter()
+                .filter(|(source, _)| buffers.iter().any(|&buffer| inside(*source, buffer)))
+                .map(|(source, _)| source.2)
+                .sum::<u64>()
+        };
+        let slot: Vec<_> = ["window.ring", "compressor.tail", "dspark.features"]
+            .iter()
+            .map(|name| states[0].named(name).unwrap())
+            .collect();
+        let kept: Vec<_> = spares[0].buffers.iter().flatten().copied().collect();
+        let payload = LAYERS * (CODES + SCALES) + 3 * 32768 + cells * feature_row().0;
+        assert_eq!(read(if from_spares { &kept } else { &slot }), payload);
+        assert_eq!(read(if from_spares { &slot } else { &kept }), 0);
     }
-    let read = |name: &str| {
-        let directory = root.join(name).join("request-1");
-        let metadata: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(directory.join("state.json")).unwrap()).unwrap();
-        let pieces = metadata["pieces"].as_array().unwrap();
-        let bytes: u64 = pieces
-            .iter()
-            .map(|piece| piece["bytes"].as_u64().unwrap())
-            .sum();
-        assert_eq!(
-            std::fs::metadata(directory.join("rank-0.bin"))
-                .unwrap()
-                .len(),
-            bytes
-        );
-        let rings = pieces
-            .iter()
-            .filter(|piece| piece["buffer"] == "window.ring")
-            .count();
-        assert_eq!(rings, 80);
-        metadata
-    };
-    let anchor = read("snapshot-768");
-    assert_eq!(anchor["end"], 768);
-    assert_eq!(anchor["retained_start"], 640);
-    assert_eq!(read("snapshot-789")["end"], 789);
-    assert!(root.join("chunk-789/request-1/state.json").is_file());
-    assert!(!root.join("chunk-768").exists());
     instance.retire_request(1).unwrap();
+    instance
+        .restore_prefix_state_in_slot(2, &(0..768).collect::<Vec<_>>(), &pages, 1)
+        .unwrap();
+    let mut sink = Sink::default();
+    instance
+        .execute_prefill_cuts(
+            &cuts(&anchored(2, 1, 768, 21, false), 2, 789, 789),
+            &mut sink,
+        )
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+    assert_eq!(sink.views.iter().map(|v| v.raw().row_count).sum::<u32>(), 1);
+    instance.commit().unwrap();
+    let context = crate::instance::dspark_context(instance.handle(), 2).unwrap();
+    assert_eq!((context.slot, context.end), (1, 789));
+    instance.retire_request(2).unwrap();
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
-    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// An anchor within the drafter's history of its item's start keeps every
+/// row of the item before it. Such an item retains all of its rows, so the
+/// slot needs no further row.
+#[test]
+fn dspark_anchor_near_its_item_start_keeps_every_earlier_row() {
+    let host = dspark_host(Ranks::TP1);
+    let mut instance = create(&host, 1);
+    let (features, spare) = feature_spans(&instance);
+    instance
+        .execute_prefill_cuts(
+            &cuts(&chunk(1, 0, 0, 8192, false, false), 1, 8257, 8192),
+            &mut Sink::default(),
+        )
+        .unwrap();
+    instance.commit().unwrap();
+    instance
+        .execute_prefill_cuts(
+            &cuts(&anchored(1, 0, 8192, 65, true), 1, 8257, 8257),
+            &mut Sink::default(),
+        )
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+    let before = host.device.journal.borrow().len();
+    instance.commit().unwrap();
+    let lines = host.device.journal.borrow()[before..].to_vec();
+    let (_, cells) = feature_row();
+    assert_eq!(
+        feature_writes(&lines, features, spare)
+            .iter()
+            .map(|&(_, destination)| destination)
+            .collect::<Vec<_>>(),
+        [
+            history(spare, 0, 0, cells),
+            history(spare, 0, 8192, 64),
+            history(features, 0, 8192, 65),
+        ]
+    );
+    let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
+    instance.capture_prefix_state(1, 8256, &pages).unwrap();
+    instance.retire_request(1).unwrap();
+    instance
+        .restore_prefix_state_in_slot(2, &(0..8256).collect::<Vec<_>>(), &pages, 1)
+        .unwrap();
+    instance
+        .execute_prefill_cuts(
+            &cuts(&anchored(2, 1, 8256, 1, false), 2, 8257, 8257),
+            &mut Sink::default(),
+        )
+        .unwrap();
+    instance.commit().unwrap();
+    assert_eq!(
+        crate::instance::dspark_context(instance.handle(), 2)
+            .unwrap()
+            .end,
+        8257
+    );
+    instance.retire_request(2).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
+/// Two prompt-ending items of one step that each keep an anchor.
+fn two_anchored() -> Vec<u8> {
+    use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
+    let batch = BatchRequestV1::new(
+        BatchWireVersionV1::V3,
+        vec![
+            BatchItemV1::new(1, false, 789, true, (0..789).collect()).with_anchor(true),
+            BatchItemV1::new(2, false, 200, true, (0..200).collect()).with_anchor(true),
+        ],
+        vec![
+            BatchAppendV1::new(0, 789, 789, (0..13).collect(), None),
+            BatchAppendV1::new(0, 200, 200, (16..20).collect(), None),
+        ],
+    )
+    .with_state_slots(vec![0, 1])
+    .encode()
+    .unwrap();
+    encode_with_cuts(
+        &batch,
+        &[
+            Boundary {
+                request_id: 1,
+                prompt_tokens: 789,
+                chunk_end: 789,
+                chunk_tokens: 8192,
+            },
+            Boundary {
+                request_id: 2,
+                prompt_tokens: 200,
+                chunk_end: 200,
+                chunk_tokens: 8192,
+            },
+        ],
+    )
+    .unwrap()
+}
+
+/// Each anchored item of a step takes its own spare, in item order, and a
+/// capture at either anchor reads that spare's entry. A step with more
+/// anchored items than spares is refused.
+#[test]
+fn anchored_items_of_one_step_each_keep_their_own_spare() {
+    let host = dspark_host(Ranks::TP1);
+    let mut short = create(&host, 1);
+    assert_eq!(
+        short.execute_prefill_cuts(&two_anchored(), &mut Sink::default()),
+        Err(runtime_bundle_abi::BundleAbiError::Status(
+            BundleStatusV1::InvalidArgument
+        ))
+    );
+    short.destroy().unwrap();
+    let mut instance = create(&host, 2);
+    let (features, spare) = feature_spans(&instance);
+    instance
+        .execute_prefill_cuts(&two_anchored(), &mut Sink::default())
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+    let before = host.device.journal.borrow().len();
+    instance.commit().unwrap();
+    let lines = host.device.journal.borrow()[before..].to_vec();
+    let (row, cells) = feature_row();
+    // The second item's chunk ending at 192 retains 64 to 192, and its own
+    // last window 72 to 200 leaves 66 to 72 of it in the slot.
+    let anchor_writes: Vec<_> = feature_writes(&lines, features, spare)
+        .iter()
+        .map(|&(_, destination)| destination)
+        .take(8)
+        .collect();
+    assert_eq!(
+        anchor_writes,
+        [
+            history(spare, 0, 0, cells),
+            history(spare, 0, 640, 30),
+            history(spare, 0, 670, 98),
+            history(features, 0, 655, 6),
+            history(spare, 1, 0, cells),
+            history(spare, 1, 64, 70),
+            history(spare, 1, 134, 58),
+            history(features, 1, 66, 6),
+        ]
+    );
+    let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
+    for (request, tokens, entry) in [(1, 768, 0), (2, 192, 1)] {
+        let before = host.device.journal.borrow().len();
+        instance
+            .capture_prefix_state(request, tokens, &pages)
+            .unwrap();
+        let captured = copies(&host.device.journal.borrow()[before..]);
+        let entry_span = DeviceBufferSpanV1::new(
+            spare.buffer,
+            spare.offset + entry * cells * row,
+            cells * row,
+        );
+        assert_eq!(
+            captured
+                .iter()
+                .filter(|(source, _)| inside(*source, spare))
+                .map(|(source, _)| {
+                    assert!(inside(*source, entry_span));
+                    source.2
+                })
+                .sum::<u64>(),
+            cells * row
+        );
+    }
+    for request in [1, 2] {
+        instance.retire_request(request).unwrap();
+    }
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
+/// A cancelled anchored step publishes neither its anchor nor its end; the
+/// next step runs as before, and a later anchored step keeps its anchor.
+#[test]
+fn a_cancelled_anchored_step_keeps_no_anchor() {
+    for dspark in [false, true] {
+        let host = if dspark {
+            dspark_host(Ranks::TP1)
+        } else {
+            FakeHost::new(Shape::new(&FLASH, Ranks::TP1).unwrap(), KV_LAYOUTS[0])
+        };
+        let mut instance = create(&host, 1);
+        let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
+        instance
+            .execute_prefill_cuts(
+                &cuts(&anchored(1, 0, 0, 789, true), 1, 789, 789),
+                &mut Sink::default(),
+            )
+            .unwrap();
+        instance.cancel().unwrap();
+        for tokens in [768, 789] {
+            assert_eq!(
+                instance.capture_prefix_state(1, tokens, &pages),
+                Err(runtime_bundle_abi::BundleAbiError::Status(
+                    BundleStatusV1::InvalidState
+                )),
+                "{dspark} {tokens}"
+            );
+        }
+        instance
+            .execute_prefill_cuts(
+                &cuts(&anchored(2, 0, 0, 789, true), 2, 789, 789),
+                &mut Sink::default(),
+            )
+            .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+        instance.commit().unwrap();
+        for tokens in [768, 789] {
+            instance.capture_prefix_state(2, tokens, &pages).unwrap();
+        }
+        // The next step ends the anchor: its spare may be rewritten.
+        instance
+            .execute_prefill_cuts(
+                &cuts(&anchored(3, 1, 0, 70, true), 3, 70, 70),
+                &mut Sink::default(),
+            )
+            .unwrap();
+        instance.commit().unwrap();
+        assert!(instance.capture_prefix_state(2, 768, &pages).is_err());
+        for request in [2, 3] {
+            instance.retire_request(request).unwrap();
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+}
+
+/// The diagnostic state dump of a capture at an anchor reads the anchor's
+/// spares: the snapshot payload at the anchor, without the drafter rings
+/// a restore rebuilds, and the pages up to it.
+#[cfg(feature = "diagnostic-taps")]
+#[test]
+fn anchor_state_dumps_read_their_spares() {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    for dspark in [false, true] {
+        let root = std::path::PathBuf::from(std::env::var_os("CHOPINFER_DATA").unwrap())
+            .join("deepseek41-tests")
+            .join(format!(
+                "anchor-state-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("enabled"), []).unwrap();
+        let host = if dspark {
+            dspark_host(Ranks::TP1)
+        } else {
+            FakeHost::new(Shape::new(&FLASH, Ranks::TP1).unwrap(), KV_LAYOUTS[0])
+        };
+        let mut instance = create(&host, 1);
+        crate::instance::set_dspark_state_capture_root_for_test(
+            instance.handle(),
+            Some(root.clone()),
+        );
+        instance
+            .execute_prefill_cuts(
+                &cuts(&anchored(1, 0, 0, 789, true), 1, 789, 789),
+                &mut Sink::default(),
+            )
+            .unwrap();
+        instance.commit().unwrap();
+        let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
+        for tokens in [768, 789] {
+            instance
+                .capture_prefix_state(1, tokens, &pages)
+                .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+        }
+        let read = |name: &str| {
+            let directory = root.join(name).join("request-1");
+            let metadata: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(directory.join("state.json")).unwrap())
+                    .unwrap();
+            let buffers: Vec<String> = metadata["pieces"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|piece| piece["buffer"].as_str().unwrap().to_owned())
+                .collect();
+            let bytes: u64 = metadata["pieces"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|piece| piece["bytes"].as_u64().unwrap())
+                .sum();
+            assert_eq!(
+                std::fs::metadata(directory.join("rank-0.bin"))
+                    .unwrap()
+                    .len(),
+                bytes
+            );
+            (metadata, buffers)
+        };
+        let (anchor, buffers) = read("snapshot-768");
+        assert_eq!(anchor["end"], 768);
+        assert_eq!(anchor["retained_start"], 640);
+        assert!(anchor["projected"].as_array().unwrap().is_empty());
+        assert!(!buffers.iter().any(|name| name == "dspark.ring"));
+        assert_eq!(buffers.iter().any(|name| name == "dspark.features"), dspark);
+        assert_eq!(
+            buffers.iter().filter(|name| *name == "window.ring").count(),
+            80
+        );
+        let (end, buffers) = read("snapshot-789");
+        assert_eq!(end["end"], 789);
+        assert_eq!(buffers.iter().any(|name| name == "dspark.ring"), dspark);
+        assert!(root.join("chunk-789/request-1/state.json").is_file());
+        assert!(!root.join("chunk-768").exists());
+        instance.retire_request(1).unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

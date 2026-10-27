@@ -335,3 +335,53 @@ fn batched_gathers_copy_retained_rows_into_contiguous_staging() {
             .is_err()
     );
 }
+
+/// An anchor spare is a history of the same rows: a seed copies a slot's
+/// whole entry, and the spare binds staged retention like a slot.
+#[test]
+fn anchor_spares_seed_whole_entries_and_bind_like_a_history() {
+    let (config, layout, retained, staged) = setup();
+    let history = config.history_capacity();
+    let bound = layout.bind(retained, staged).unwrap();
+    let spares = layout.with_slots(2).unwrap();
+    assert_eq!(
+        spares.retained_bytes().unwrap(),
+        2 * history * layout.row_bytes()
+    );
+    assert!(spares.bind(retained, staged).is_err());
+    let spare_span = span(4, 64, spares.retained_bytes().unwrap());
+    let spare = spares.bind(spare_span, staged).unwrap();
+    let copy = bound.seed_spare(2, spare, 1).unwrap();
+    assert_eq!(
+        copy.source,
+        layout.rows(retained, 2 * history, history as u32).unwrap()
+    );
+    assert_eq!(
+        copy.destination,
+        layout.rows(spare_span, history, history as u32).unwrap()
+    );
+    assert!(bound.seed_spare(3, spare, 0).is_err());
+    assert!(bound.seed_spare(0, spare, 2).is_err());
+    assert!(bound.seed_spare(0, bound, 0).is_err());
+    assert!(layout.with_slots(0).is_err());
+    let copies = spare
+        .retain(&[RetainCopy {
+            staged_row: 9,
+            history_row: history + 130,
+            rows: 4,
+        }])
+        .unwrap();
+    assert_eq!(
+        copies[0].destination,
+        layout.rows(spare_span, history + 130, 4).unwrap()
+    );
+    assert!(
+        spare
+            .retain(&[RetainCopy {
+                staged_row: 9,
+                history_row: history + 131,
+                rows: 4,
+            }])
+            .is_err()
+    );
+}

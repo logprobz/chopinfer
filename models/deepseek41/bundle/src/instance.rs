@@ -969,8 +969,8 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         && config.kv.storage == model_deepseek41_contract::state::KvStorage::Native
         && shape.geometry.dspark_stages() > 0;
     let anchors = config.execution.prefill_anchor_items;
-    if anchors > 0 && (!config.prefill.skip || has_drafter) {
-        log("prefill_anchor_items needs an upper-skip profile without DSpark");
+    if anchors > 0 && !config.prefill.skip {
+        log("prefill_anchor_items needs an upper-skip profile");
         return Err(BundleStatusV1::Unsupported.into());
     }
     let state = model_deepseek41_contract::state::request_state_with_anchors(

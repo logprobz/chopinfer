@@ -19,6 +19,7 @@ use runtime_bundle_abi::{
 
 mod budget;
 pub use budget::{GraphReservation, GraphStats};
+pub mod programs;
 
 use crate::geometry::{BundleGeometry, Items, Ranks};
 

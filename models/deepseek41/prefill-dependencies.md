@@ -31,6 +31,27 @@ same point inside a step when its anchor-item allowance permits. Cold TTFT
 therefore includes the extra cone, tail step and snapshot for unaligned
 prompts, as well as any cost of shared-prefix cuts.
 
+The `prefill_anchor_items` model option (default 0, at most 8) is a
+prototype that keeps such a rounded end inside one upper-skip step
+instead. Only AR upper-skip instances accept it; DSpark and full-schedule
+profiles refuse it at create. Each allowed anchor item gets one spare entry
+of every captured state buffer (window rings and compressor tails), in
+separate buffers per rank. Before any write of the step reaches the slot,
+the spare is seeded from the slot's tails, and from its rings when the item
+starts less than 136 rows before the anchor. Every layer's window write is
+then repeated into the spare ring for the rows within a ring of the anchor,
+and the cone also roots those rows. The spare then holds the bytes a chunk
+ending at the anchor leaves in its slot, and a capture at the anchor copies
+it. The instance reports its allowance through the optional
+`chop_bundle_prefill_anchors_api_v1` export: its spare count when cuts are
+enabled, otherwise 0. The host applies it to the guaranteed grid in place
+of the manifest's anchor items and keeps the manifest value for bundles
+without the export. With a nonzero allowance an off-grid rounded end runs
+in the same step as the prompt end, and the scheduler captures both after
+that step. Grid ends, shared-prefix cuts and the default schedule are
+unchanged. Only CPU fake-host, scheduler and engine tests cover the
+prototype; served bitwise equality and throughput are not yet measured.
+
 A shorter grid hit does not suppress a longer observed shared-prefix cut,
 even when the request resumes within its final chunk. The next request can
 then restore the longer shared anchor. Bundles without the capability keep

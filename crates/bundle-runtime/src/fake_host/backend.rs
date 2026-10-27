@@ -603,11 +603,17 @@ impl<P: FakePackage> HostServicesBackendV1 for Backend<P> {
         self.0.admit_upload(stream, destination, source)?;
         let device = self.0.device();
         device.snapshot_op(|| SnapshotOp::Upload(stream.slot(), destination, source.to_vec()));
-        device.note(format!(
-            "upload {} {destination:?} {:016x}",
-            stream.slot(),
-            fnv1a(self.0.journaled(source))
-        ));
+        if device.symbols_only.get() {
+            // Route counts do not consume upload digests. Keep the service
+            // record and simulation while avoiding a scan of every byte.
+            device.note(format!("upload {} {destination:?}", stream.slot()));
+        } else {
+            device.note(format!(
+                "upload {} {destination:?} {:016x}",
+                stream.slot(),
+                fnv1a(self.0.journaled(source))
+            ));
+        }
         self.0.on_upload(stream, destination, source)
     }
     /// Gathers the rows from the package's mapped view and uploads them,
@@ -875,10 +881,33 @@ mod tests {
     /// the newest, and refuses a synchronization when its countdown fires.
     /// Its one mapped view, `rows` of rank 1, holds `0..32`.
     #[derive(Default)]
-    struct Empty(FakeDevice, RefCell<Vec<String>>, Countdown);
+    struct Empty(
+        FakeDevice,
+        RefCell<Vec<String>>,
+        Countdown,
+        RefCell<Vec<u8>>,
+    );
 
     impl FakePackage for Empty {
         type Observer = NoObserver;
+
+        fn journaled<'a>(&self, source: &'a [u8]) -> &'a [u8] {
+            assert!(
+                !self.0.symbols_only.get(),
+                "route uploads must not hash bytes"
+            );
+            source
+        }
+
+        fn on_upload(
+            &self,
+            _stream: BundleStreamHandleV1,
+            _destination: DeviceBufferSpanV1,
+            source: &[u8],
+        ) -> HostServiceResultV1<()> {
+            self.3.replace(source.to_vec());
+            Ok(())
+        }
 
         fn device(&self) -> &FakeDevice {
             &self.0
@@ -1021,6 +1050,26 @@ mod tests {
             shared_memory_bytes: bytes,
             flags: runtime_bundle_abi::BUNDLE_LAUNCH_FLAG_V1_PROGRAMMATIC_STREAM_SERIALIZATION,
             cluster: runtime_bundle_abi::LaunchClusterV1::NONE,
+        }
+    }
+
+    #[test]
+    fn route_upload_keeps_bytes_without_hashing_the_journal() {
+        for symbols_only in [false, true] {
+            let (host, stream, buffer) = host();
+            host.device().symbols_only.set(symbols_only);
+            let span = DeviceBufferSpanV1::new(buffer, 8, 4);
+            host.copy_host_to_device(stream, span, &[1, 2, 3, 4])
+                .unwrap();
+            assert_eq!(*host.3.borrow(), [1, 2, 3, 4]);
+            let prefix = format!("upload {} {span:?}", stream.slot());
+            let expected = if symbols_only {
+                prefix
+            } else {
+                format!("{prefix} {:016x}", fnv1a(&[1, 2, 3, 4]))
+            };
+            assert_eq!(host.device().journal.borrow().last(), Some(&expected));
+            assert!(host.device().launch_symbols(0).is_empty());
         }
     }
 

@@ -116,6 +116,25 @@ fn simulated_bytes_keep_small_transfers_small() {
 }
 
 #[test]
+fn simulated_word_tables_match_scalar_reads() {
+    let buffer = BundleDeviceBufferHandleV1::from_parts(1, 1);
+    let extents = BTreeMap::from([(buffer.slot(), 64)]);
+    let span = |offset, length| DeviceBufferSpanV1::new(buffer, offset, length);
+    let mut sim = Sim::default();
+    sim.write(span(5, 9), &[1, 2, 3, 4, 5, 6, 7, 8, 255], &extents);
+    for offset in [0, 1, 4, 8, 59, 60, 64] {
+        let count = (64 - offset) / 4;
+        let input = span(offset, count * 4);
+        let expected = (0..count)
+            .map(|index| sim.word(input, index, &extents))
+            .collect::<Vec<_>>();
+        assert_eq!(sim.words(input, count, &extents), expected);
+    }
+    assert_eq!(sim.words(span(0, 8), 2, &BTreeMap::new()), [0, 0]);
+    assert!(std::panic::catch_unwind(|| sim.words(span(60, 8), 2, &extents)).is_err());
+}
+
+#[test]
 fn released_fake_buffers_drop_bytes_and_preserve_live_buffers() {
     let host = FakeHost::default();
     let pool = BundleMemoryPoolHandleV1::from_parts(1, 1);
@@ -211,6 +230,25 @@ impl Sim {
             extents,
         );
         i32::from_le_bytes(bytes.try_into().unwrap())
+    }
+
+    fn words(
+        &self,
+        span: DeviceBufferSpanV1,
+        count: u64,
+        extents: &BTreeMap<u32, u64>,
+    ) -> Vec<i32> {
+        self.read(
+            DeviceBufferSpanV1::new(
+                span.buffer,
+                span.offset,
+                count.checked_mul(4).expect("word table byte length"),
+            ),
+            extents,
+        )
+        .chunks_exact(4)
+        .map(|bytes| i32::from_le_bytes(bytes.try_into().unwrap()))
+        .collect()
     }
 
     fn put_word(
@@ -403,14 +441,20 @@ impl Sim {
                     (0, 1)
                 };
                 let live = self.word(span(6), 0, extents) as u64;
-                let rows = (0..live)
-                    .map(|row| {
-                        let item = self.word(span(4), row, extents) as u64;
-                        (
-                            self.word(span(7), item, extents) as u32,
-                            self.word(span(5), row, extents) as u32,
-                        )
-                    })
+                // These tables repeat across layers. Read each contiguous
+                // table once instead of allocating three byte vectors per row.
+                let items = self.words(span(4), live, extents);
+                let positions = self.words(span(5), live, extents);
+                let item_count = items
+                    .iter()
+                    .map(|&item| item as u64)
+                    .max()
+                    .map_or(0, |last| last.checked_add(1).expect("item index overflow"));
+                let slots = self.words(span(7), item_count, extents);
+                let rows = items
+                    .iter()
+                    .zip(positions)
+                    .map(|(&item, position)| (slots[item as usize] as u32, position as u32))
                     .collect::<Vec<_>>();
                 let program = self.programs.entry(stream).or_default().clone();
                 if self.track_qsa {

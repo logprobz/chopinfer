@@ -725,7 +725,7 @@ mod tests {
             .chained_mlp_projection(&query, usage, Need::rows(8))
             .unwrap();
         let symbols = base.info().symbols.clone();
-        let op = { prepare(&FLASH, 4, set, GatedMlpProjection::Down, usage, base) }.unwrap();
+        let op = prepare(&FLASH, 4, set, GatedMlpProjection::Down, usage, base).unwrap();
         assert_eq!(op.info().symbols, symbols);
     }
 }

@@ -120,66 +120,64 @@ fn compute_without_consumers_by_stream(
 /// phased reductions become owner sums and ordered peer copies.
 #[test]
 fn sparse_dma_serves_dspark_target_prefill() {
-    {
-        for rows in [8192, 8191] {
-            let reference = capture_with(rows, Some(false), true);
-            let candidate = capture_with(rows, None, true);
-            assert!(
-                reference
-                    .iter()
-                    .any(|line| line.starts_with("launch ") && line.contains("dspark"))
-            );
-            let phased = |journal: &[String]| {
-                journal
-                    .iter()
-                    .filter(|line| {
-                        line.starts_with("launch ")
-                            && (line.contains("chop_comm_allreduce_phased_bf16_v1")
-                                || line.contains("chop_comm_allreduce_phased_turns_bf16_v1"))
-                    })
-                    .count()
-            };
-            // Eight short cone calls retain the phased BF16 transport.
-            assert_eq!(phased(&reference), 81 * 4);
-            assert_eq!(phased(&candidate), 8 * 4);
-            let reductions = (phased(&reference) - phased(&candidate)) / 4;
-            assert_eq!(reductions, 73);
-            assert!(!reference.iter().any(|line| line.starts_with("peer-copy ")));
-            // Default asynchronous Engram gathers can change the interleaving
-            // of independent streams around the transport joins. Each stream
-            // must retain every launch, operand, extent and alias in order.
-            // The dependency audit below still checks all cross-stream joins.
-            assert_eq!(
-                compute_without_consumers_by_stream(&reference),
-                compute_without_consumers_by_stream(&candidate)
-            );
-            assert_eq!(
-                split_chains(&reference, &candidate),
-                if rows == 8192 {
-                    (40 * 4, 20 * 4)
-                } else {
-                    (0, 0)
-                }
-            );
-            assert_eq!(
-                split_producers(&reference, &candidate).unwrap(),
-                if rows == 8192 { 36 * 4 } else { 0 }
-            );
-            assert_eq!(
-                candidate
-                    .iter()
-                    .filter(|line| line.starts_with("peer-copy "))
-                    .count(),
-                reductions * 24
-            );
-            assert_eq!(audit(&candidate).unwrap(), reductions * (24 * 2 + 4 * 3));
-            let missing = candidate
-                .into_iter()
-                .filter(|line| !line.starts_with("wait "))
-                .collect::<Vec<_>>();
-            assert!(audit(&missing).is_err());
-        }
-    };
+    for rows in [8192, 8191] {
+        let reference = capture_with(rows, Some(false), true);
+        let candidate = capture_with(rows, None, true);
+        assert!(
+            reference
+                .iter()
+                .any(|line| line.starts_with("launch ") && line.contains("dspark"))
+        );
+        let phased = |journal: &[String]| {
+            journal
+                .iter()
+                .filter(|line| {
+                    line.starts_with("launch ")
+                        && (line.contains("chop_comm_allreduce_phased_bf16_v1")
+                            || line.contains("chop_comm_allreduce_phased_turns_bf16_v1"))
+                })
+                .count()
+        };
+        // Eight short cone calls retain the phased BF16 transport.
+        assert_eq!(phased(&reference), 81 * 4);
+        assert_eq!(phased(&candidate), 8 * 4);
+        let reductions = (phased(&reference) - phased(&candidate)) / 4;
+        assert_eq!(reductions, 73);
+        assert!(!reference.iter().any(|line| line.starts_with("peer-copy ")));
+        // Default asynchronous Engram gathers can change the interleaving
+        // of independent streams around the transport joins. Each stream
+        // must retain every launch, operand, extent and alias in order.
+        // The dependency audit below still checks all cross-stream joins.
+        assert_eq!(
+            compute_without_consumers_by_stream(&reference),
+            compute_without_consumers_by_stream(&candidate)
+        );
+        assert_eq!(
+            split_chains(&reference, &candidate),
+            if rows == 8192 {
+                (40 * 4, 20 * 4)
+            } else {
+                (0, 0)
+            }
+        );
+        assert_eq!(
+            split_producers(&reference, &candidate).unwrap(),
+            if rows == 8192 { 36 * 4 } else { 0 }
+        );
+        assert_eq!(
+            candidate
+                .iter()
+                .filter(|line| line.starts_with("peer-copy "))
+                .count(),
+            reductions * 24
+        );
+        assert_eq!(audit(&candidate).unwrap(), reductions * (24 * 2 + 4 * 3));
+        let missing = candidate
+            .into_iter()
+            .filter(|line| !line.starts_with("wait "))
+            .collect::<Vec<_>>();
+        assert!(audit(&missing).is_err());
+    }
 }
 
 #[test]
@@ -194,69 +192,67 @@ fn sparse_dma_keeps_small_cones_on_the_existing_transport() {
 
 #[test]
 fn sparse_dma_finishes_mapped_uploads_before_compute() {
-    {
-        let host = host();
-        host.drafter.set(true);
-        host.device.residency.set(Some(BundleRawClusterResidencyV1 {
-            multiprocessor_count: 188,
-            usable_multiprocessors: 188,
-            max_active_clusters: 188,
-            flags: BUNDLE_CLUSTER_RESIDENCY_V1_CLUSTERS_REPORTED
-                | BUNDLE_CLUSTER_RESIDENCY_V1_COOPERATIVE_LAUNCH,
-            ..BundleRawClusterResidencyV1::unreported()
-        }));
-        let mut instance = create_with_services(
-            &host,
-            HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(&host)))),
-        );
-        assert_eq!(
-            crate::instance::prefill_engram::indices(instance.handle()).len(),
-            2
-        );
-        host.journal.borrow_mut().clear();
-        let request = encode(
-            &prompt(7, 0, 0, 8192, true),
-            &[Boundary {
-                request_id: 7,
-                prompt_tokens: 8192,
-                chunk_end: 8192,
-                chunk_tokens: 8192,
-            }],
-        )
+    let host = host();
+    host.drafter.set(true);
+    host.device.residency.set(Some(BundleRawClusterResidencyV1 {
+        multiprocessor_count: 188,
+        usable_multiprocessors: 188,
+        max_active_clusters: 188,
+        flags: BUNDLE_CLUSTER_RESIDENCY_V1_CLUSTERS_REPORTED
+            | BUNDLE_CLUSTER_RESIDENCY_V1_COOPERATIVE_LAUNCH,
+        ..BundleRawClusterResidencyV1::unreported()
+    }));
+    let mut instance = create_with_services(
+        &host,
+        HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(&host)))),
+    );
+    assert_eq!(
+        crate::instance::prefill_engram::indices(instance.handle()).len(),
+        2
+    );
+    host.journal.borrow_mut().clear();
+    let request = encode(
+        &prompt(7, 0, 0, 8192, true),
+        &[Boundary {
+            request_id: 7,
+            prompt_tokens: 8192,
+            chunk_end: 8192,
+            chunk_tokens: 8192,
+        }],
+    )
+    .unwrap();
+    instance
+        .execute_prefill(&request, &mut Views::default())
         .unwrap();
-        instance
-            .execute_prefill(&request, &mut Views::default())
-            .unwrap();
-        instance.commit().unwrap();
-        let journal = host.journal.borrow();
-        assert!(
-            !journal
-                .iter()
-                .any(|line| line.starts_with("async mapped ids "))
-        );
-        let first = journal
+    instance.commit().unwrap();
+    let journal = host.journal.borrow();
+    assert!(
+        !journal
             .iter()
-            .position(|line| line.starts_with("launch "))
-            .unwrap();
-        assert_eq!(
-            journal[..first]
-                .iter()
-                .filter(|line| line.starts_with("mapped gather "))
-                .count(),
-            16
-        );
-        assert_eq!(
-            journal
-                .iter()
-                .filter(|line| line.starts_with("launch ") && line.contains(BF16_SUM))
-                .count(),
-            73 * 4
-        );
-        drop(journal);
-        instance.retire_request(7).unwrap();
-        instance.destroy().unwrap();
-        assert_eq!(host.acquired.get(), host.released.get());
-    };
+            .any(|line| line.starts_with("async mapped ids "))
+    );
+    let first = journal
+        .iter()
+        .position(|line| line.starts_with("launch "))
+        .unwrap();
+    assert_eq!(
+        journal[..first]
+            .iter()
+            .filter(|line| line.starts_with("mapped gather "))
+            .count(),
+        16
+    );
+    assert_eq!(
+        journal
+            .iter()
+            .filter(|line| line.starts_with("launch ") && line.contains(BF16_SUM))
+            .count(),
+        73 * 4
+    );
+    drop(journal);
+    instance.retire_request(7).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
 }
 
 #[test]

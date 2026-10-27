@@ -333,7 +333,7 @@ fn adopted_ar_buffers_precede_serving_kv_sizing() {
     for serving in Served::servings() {
         let fixture = Served::new(&serving);
         fixture.host.drafter.set(true);
-        let mut instance = { fixture.create().unwrap() };
+        let mut instance = fixture.create().unwrap();
         let logs = fixture.host.logs.borrow();
         let memory: Vec<serde_json::Value> = logs
             .iter()

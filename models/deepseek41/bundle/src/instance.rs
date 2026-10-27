@@ -830,12 +830,10 @@ impl Instance {
                         Some(allocate_span(services, pool, stream, bytes, held)?);
                 }
             }
-            {
-                let sources = shape.geometry.shape.csa.index_sources.len() as u64;
-                let planes = 2 * ranks.len() as u64;
-                let bytes = (sources + planes) * u64::from(execute::ar_status::ROWS) * 4;
-                self.ar_status_buffer = Some(allocate_span(services, pool, stream, bytes, held)?);
-            }
+            let sources = shape.geometry.shape.csa.index_sources.len() as u64;
+            let planes = 2 * ranks.len() as u64;
+            let bytes = (sources + planes) * u64::from(execute::ar_status::ROWS) * 4;
+            self.ar_status_buffer = Some(allocate_span(services, pool, stream, bytes, held)?);
         }
         memory.take("ar_engram");
         let (pages, pools) = acquire::serving_kv(

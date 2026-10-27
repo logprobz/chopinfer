@@ -499,8 +499,9 @@ def outside_strings(text, marker, start=0):
 
 
 class HTTPStatusError(Exception):
-    def __init__(self, status):
+    def __init__(self, status, response_body=b''):
         self.status = status
+        self.response_body = response_body
         super().__init__(f'HTTP {status}')
 
 
@@ -557,7 +558,7 @@ class Transport:
             response = conn.getresponse()
             self.observed.status = response.status
             if response.status != 200:
-                raise HTTPStatusError(response.status)
+                raise HTTPStatusError(response.status, response.read(min(cap, 4096)))
             size = 0
             while not response.isclosed():
                 remaining = deadline - time.monotonic()

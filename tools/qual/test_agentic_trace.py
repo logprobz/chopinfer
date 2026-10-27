@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from agentic_fake import fake_server
-from agentic_mixed import Transport, parser
+from agentic_mixed import HTTPStatusError, Transport, parser
 import agentic_trace as trace
 
 
@@ -27,6 +27,14 @@ class TraceTests(unittest.TestCase):
         bad['sessions'][0]['content'] = 'private input'
         with self.assertRaises(ValueError):
             trace.validate(bad)
+
+    def test_http_refusal_retains_bounded_body(self):
+        with fake_server({}) as url:
+            with self.assertRaises(HTTPStatusError) as caught:
+                Transport(url, 2).get('/absent')
+        self.assertEqual(caught.exception.status, 404)
+        self.assertIn(b'404', caught.exception.response_body)
+        self.assertLessEqual(len(caught.exception.response_body), 4096)
 
     def test_dependencies_are_strict_and_bounded(self):
         workload = trace.generate(2, 2, 'schedule', [64], 0)
@@ -59,6 +67,32 @@ class TraceTests(unittest.TestCase):
             self.assertIsNotNone(second['response_lcp_tokens'])
             self.assertTrue(all('at' in event for event in second['sse_events']))
             self.assertEqual(second['token_ids'], 8)
+
+    def test_priming_has_an_answerable_turn_and_uses_template_kwargs(self):
+        preserved = []
+        class CheckedTransport(Transport):
+            def chunks(self, path, body, deadline, cap):
+                if body and 'messages' in body:
+                    if not any(m['role'] == 'user' for m in body['messages']):
+                        raise ValueError('DeepSeek chat has no turn to answer')
+                    if body.get('chat_template_kwargs', {}).get('preserve_thinking'):
+                        preserved.append(body)
+                    if 'preserve_thinking' in body:
+                        raise ValueError('preserve_thinking belongs in chat_template_kwargs')
+                yield from super().chunks(path, body, deadline, cap)
+        workload = trace.generate(1, 2, 'wire', [64], 0)
+        for turn in workload['sessions'][0]['turns']:
+            turn.update(think_seconds=0, append_tokens=20, output_tokens=8)
+        profile = vars(parser().parse_args([]))
+        profile.update(seconds=5, min_samples=1, trace_history='generated', cache_salt='group',
+                       arm='fixed', seed='wire', run_id='test', session_timeout_seconds=5)
+        with fake_server({}) as url:
+            level = trace.run_level(CheckedTransport(url, 2), 'fake-agentic', profile, workload, 1)
+        self.assertTrue(level['verdict']['passed'], level['verdict'])
+        second = level['sessions'][0]['turns'][1]
+        self.assertIsNotNone(second['thinking_lcp_loss_tokens'])
+        self.assertEqual(len(preserved), 1)
+        self.assertEqual(preserved[0]['messages'][-1]['role'], 'user')
 
     def test_scheduler_releases_slots_during_think_and_waits_for_pressure(self):
         # Eligibility uses completed predecessor time and traffic from other sessions.

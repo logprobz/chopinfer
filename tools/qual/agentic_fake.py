@@ -104,7 +104,7 @@ def trace_tokens(request):
     rendered = ''
     for i, message in enumerate(messages):
         rendered += '<' + message['role'] + '>'
-        if request.get('preserve_thinking') or i > last_user:
+        if request.get('chat_template_kwargs', {}).get('preserve_thinking') or i > last_user:
             rendered += message.get('reasoning_content', '')
         rendered += message.get('content', '') + '</turn>'
     if request.get('add_generation_prompt', True):

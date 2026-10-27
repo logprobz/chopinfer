@@ -451,7 +451,9 @@ usage and completion events. Every served prompt must equal `/tokenize`
 token for token, and usage/output-ID counts must agree. `canonical` history
 keeps later requests matched when outputs diverge. `--trace-history generated`
 instead appends the actual answer and measures LCP against the previous
-prompt plus emitted IDs. A preserve-thinking render provides the diagnostic
+prompt plus emitted IDs. Priming includes an answerable user turn; later
+turns reuse its shared system prefix. A render with
+`chat_template_kwargs.preserve_thinking=true` provides the diagnostic
 counterfactual, including loss before the previous answer. Canonical history
 replacement can also lose LCP, so do not attribute its whole loss to thinking.
 

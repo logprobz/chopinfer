@@ -128,7 +128,7 @@ def synthetic(seed, characters, kind='code'):
 
 
 def tokenize(client, body, deadline):
-    keys = ('model', 'messages', 'prompt', 'thinking', 'preserve_thinking', 'add_generation_prompt')
+    keys = ('model', 'messages', 'prompt', 'thinking', 'chat_template_kwargs', 'add_generation_prompt')
     request = {k: body[k] for k in keys if k in body}
     data = b''.join(chunk for _, chunk in client.chunks('/tokenize', request,
                        min(deadline, time.monotonic() + client.timeout), mixed.MAX_RESPONSE))
@@ -240,7 +240,10 @@ def run_level(client, model, profile, trace, concurrency):
     for session in trace['sessions']:
         cache_salt = salt(profile, session['group'], session['id'])
         messages = [dict(role='system', content='Review the synthetic code and describe the change.\n' + contexts[session['group']])]
-        prime_body = body_for(model, profile, messages, dict(output_tokens=1, seed=0), cache_salt)
+        # The served frontend refuses a system-only chat. The priming user
+        # turn is not retained, so sessions reuse the shared system prefix.
+        prime_messages = messages + [dict(role='user', content='Read the synthetic files and prepare to review a patch.')]
+        prime_body = body_for(model, profile, prime_messages, dict(output_tokens=1, seed=0), cache_salt)
         key = (session['group'], cache_salt)
         if key not in primed:
             row, _, ids = request(client, prime_body, setup_deadline)
@@ -281,7 +284,7 @@ def run_level(client, model, profile, trace, concurrency):
                    requested_idle_pages=turn['idle_pages'],
                    lost_before_previous_answer_tokens=max(0, state['previous_prompt'] - lcp(state['previous'], ids)))
         if index:
-            kept = tokenize(client, {**body, 'preserve_thinking': True}, request_deadline)
+            kept = tokenize(client, {**body, 'chat_template_kwargs': {**body.get('chat_template_kwargs', {}), 'preserve_thinking': True}}, request_deadline)
             row['preserved_thinking_lcp_tokens'] = lcp(state['previous'], kept)
             row['thinking_lcp_loss_tokens'] = max(0, lcp(state['previous'], kept) - lcp(state['previous'], ids))
         if profile['trace_history'] == 'canonical':

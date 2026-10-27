@@ -1,14 +1,15 @@
 //! Paired old/new measurements on every serving Flash dense shape.
 pub(super) mod concurrent;
 pub(super) mod modules;
-use bundle_deepseek41::sm120::{fold_cubin_for_symbol, mxfp8_fold as registration};
+use crate::dense_decode_reference as registration;
+use crate::dense_decode_reference::frozen::ReferenceBackend as Sm120;
+use crate::dense_decode_reference::frozen::mxfp8_fold_decode::Entry;
+use bundle_deepseek41::sm120::fold_cubin_for_symbol;
 use kernel_core::backend::{Backend, Counts, Launch, Need, View};
 use kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers;
 use kernel_harness::kit::{self, OpResult, Outcome, Required, cases::mxfp8_fold as cases};
 use kernel_harness::launch::{Bindings, launch};
 use kernel_harness::{LabResult, Session};
-use kernels_sm120::backend::Sm120;
-use kernels_sm120::gemm::mxfp8_fold_decode::Entry;
 use model_deepseek41_contract::{
     admission::SUPPORTED_RANKS, geometry::FLASH, serving::PREFILL_TOKENS,
 };
@@ -129,7 +130,13 @@ fn decode_fold_dry_run() {
     let cubins = modules::timing_cubins().unwrap();
     assert!(!cubins.bytes("probe_sm120").unwrap().is_empty());
     let (backend, required) = required();
-    let report = kit::conform(&backend, &super::mxfp8_fold::ModelModules, None, &required).unwrap();
+    let report = kit::conform(
+        &backend,
+        &super::mxfp8_fold_decode::modules::ReferenceModules,
+        None,
+        &required,
+    )
+    .unwrap();
     check(&report, required.len(), false);
     for &ranks in SUPPORTED_RANKS {
         let registered = registration::decode_registrations(&FLASH, ranks, 0).unwrap();
@@ -175,7 +182,10 @@ fn decode_fold_dry_run() {
             };
             assert_eq!(info.workspace, entry.workspace(rows).unwrap());
             for (symbol, _) in info.symbols {
-                assert!(fold_cubin_for_symbol(&symbol).is_some());
+                assert!(
+                    fold_cubin_for_symbol(&symbol).is_some()
+                        || crate::dense_decode_reference::owns(&symbol)
+                );
             }
         }
     }
@@ -195,7 +205,7 @@ pub(super) fn functions(session: &Session, calls: &[Launch]) -> LabResult<Vec<Fu
             let (name, bytes) = if call.symbol.contains("_mxfp8_stream_") {
                 super::mxfp8_fold_stream::cubin()?
             } else {
-                fold_cubin_for_symbol(&call.symbol).ok_or("missing serving fold cubin")?
+                crate::dense_decode_reference::load_symbol(&call.symbol)?
             };
             let mut modules = cached.0.borrow_mut();
             let module = match modules.entry(name.into()) {
@@ -294,7 +304,7 @@ pub(super) fn compare_with(
     session: &Session,
     entry: &Entry,
     rows: u32,
-    ticket: Option<&kernels_sm120::gemm::mxfp8_fold_ticket::Entry>,
+    ticket: Option<&crate::dense_decode_reference::frozen::mxfp8_fold_ticket::Entry>,
     weights: Option<&Weights>,
     timed: bool,
     profile: bool,
@@ -314,7 +324,14 @@ pub(super) fn compare_stream(
         session,
         entry,
         rows,
-        Some(&candidate.ticket),
+        Some(
+            &crate::dense_decode_reference::frozen::mxfp8_fold_ticket::Entry::new(
+                candidate.ticket.query,
+                candidate.ticket.symbol.clone(),
+                candidate.ticket.paired,
+            )
+            .map_err(|e| e.to_string())?,
+        ),
         Some(weights),
         true,
         profile,
@@ -333,7 +350,14 @@ pub(super) fn compare_stream_deferred(
         session,
         entry,
         rows,
-        Some(&candidate.ticket),
+        Some(
+            &crate::dense_decode_reference::frozen::mxfp8_fold_ticket::Entry::new(
+                candidate.ticket.query,
+                candidate.ticket.symbol.clone(),
+                candidate.ticket.paired,
+            )
+            .map_err(|e| e.to_string())?,
+        ),
         Some(weights),
         false,
         false,
@@ -346,7 +370,7 @@ fn compare_impl(
     session: &Session,
     entry: &Entry,
     rows: u32,
-    ticket: Option<&kernels_sm120::gemm::mxfp8_fold_ticket::Entry>,
+    ticket: Option<&crate::dense_decode_reference::frozen::mxfp8_fold_ticket::Entry>,
     weights: Option<&Weights>,
     timed: bool,
     profile: bool,
@@ -385,8 +409,12 @@ fn compare_impl(
         .with_packed_fold_weights()
         .with_mxfp8_fold_decode(entry.clone());
     let baseline_query = if stream_entry.is_some() {
-        baseline_backend =
-            registration::register(Sm120::new().with_packed_fold_weights(), &FLASH, ranks[0])?;
+        baseline_backend = Sm120::from(registration::register(
+            kernels_sm120::backend::Sm120::new().with_packed_fold_weights(),
+            &FLASH,
+            ranks[0],
+        )?)
+        .with_packed_fold_weights();
         registration::routed_query(q, rows)
     } else if prefetch {
         let previous = registration::ticket_catalog(&FLASH)?
@@ -917,7 +945,7 @@ fn decode_fold_gpu() {
         let (backend, required) = required();
         let report = kit::conform(
             &backend,
-            &super::mxfp8_fold::ModelModules,
+            &super::mxfp8_fold_decode::modules::ReferenceModules,
             Some(&sessions[0]),
             &required,
         )?;

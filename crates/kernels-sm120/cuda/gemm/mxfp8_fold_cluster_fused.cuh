@@ -117,7 +117,7 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
           ? mxfp8_fold_packed::fold_offset((g * N + row) / 8, fold, K) + (row % 8) * 128
               + (chunk % 8) * 16
           : (uint64_t(g) * N + row) * K + fold * 128 + (chunk % 8) * 16;
-      mxfp8_fold_ticket::copy16(codes(f) + fold_row_chunk(Rows + chunk / 8, chunk % 8),
+      dense_decode::copy16(codes(f) + fold_row_chunk(Rows + chunk / 8, chunk % 8),
                                 weights + (valid ? at : 0), valid);
     }
     if (threadIdx.x < TileN) {
@@ -136,7 +136,7 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
       const bool valid = valid_fold(f) && !failed[row];
       const uint64_t at = uint64_t(row) * RowStride + uint64_t(g) * GroupStride
           + fold * 128 + (chunk % 8) * 16;
-      mxfp8_fold_ticket::copy16(codes(f) + fold_row_chunk(row, chunk % 8),
+      dense_decode::copy16(codes(f) + fold_row_chunk(row, chunk % 8),
                                 activations + (valid ? at : 0), valid);
     }
     for (uint32_t row = threadIdx.x; row < Rows; row += Threads) {

@@ -16,10 +16,10 @@ __device__ void admit_task(uint32_t row, const uint8_t* codes,
       const uint64_t at = uint64_t(row) * RowStride + uint64_t(g) * GroupStride + k;
       const uint4 packed = *reinterpret_cast<const uint4*>(codes + at);
       const uint8_t scale = scales[at / 32];
-      invalid |= !(mxfp8_fold_ticket::admitted4(packed.x, scale) &&
-                   mxfp8_fold_ticket::admitted4(packed.y, scale) &&
-                   mxfp8_fold_ticket::admitted4(packed.z, scale) &&
-                   mxfp8_fold_ticket::admitted4(packed.w, scale));
+      invalid |= !(dense_decode::admitted4(packed.x, scale) &&
+                   dense_decode::admitted4(packed.y, scale) &&
+                   dense_decode::admitted4(packed.z, scale) &&
+                   dense_decode::admitted4(packed.w, scale));
     }
   }
   const bool bad = __syncthreads_or(invalid);

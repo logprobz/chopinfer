@@ -100,7 +100,9 @@ fn staged_tiles() {
             .iter()
             .filter(|l| {
                 l.starts_with("launch ")
-                    && (l.contains("chop_deepseek41_mxfp8_") || l.contains("chop_mxfp8_dual_"))
+                    && (l.contains("chop_deepseek41_mxfp8_")
+                        || l.contains("chop_deepseek41_dense_decode_")
+                        || l.contains("chop_mxfp8_dual_"))
                     && !l.contains("_prepare_v1")
             })
             .collect();
@@ -116,9 +118,19 @@ fn staged_tiles() {
                     || symbol.contains("mxfp8_dual_")
                     || symbol.contains("mxfp8_direct_")
                     || symbol.contains("mxfp8_fused_")
-                    || ((symbol.contains("mxfp8_ticket_") || symbol.contains("mxfp8_prefetch_"))
-                        && !symbol.contains("_initialize_"))
-                    || (symbol.contains("mxfp8_decode_")
+                    || (symbol.starts_with("chop_deepseek41_dense_decode_")
+                        && symbol.contains("_e4m3_ue8m0_k32x4_f32_f32_")
+                        && [
+                            "_n32r1s3w0f0_v1",
+                            "_n64r1s3w0f0_v1",
+                            "_n32r1s3w1f0_v1",
+                            "_n64r1s3w1f0_v1",
+                        ]
+                        .iter()
+                        .any(|tag| symbol.contains(tag))
+                        && !symbol.ends_with("_admit_v1"))
+                    || (symbol.starts_with("chop_deepseek41_dense_decode_")
+                        && symbol.contains("_e4m3_ue8m0_k32x4_f32_f32_n16r1s2w0f1_v1")
                         && !symbol.ends_with("_admit_v1")
                         && !symbol.ends_with("_partials_v1"))
             })

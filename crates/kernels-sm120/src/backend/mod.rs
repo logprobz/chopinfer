@@ -91,6 +91,7 @@ mod attention;
 mod bf16_all_reduce;
 mod block_quantize;
 mod context_parallel;
+mod dense_decode;
 mod draft_noise;
 mod f32_projection;
 mod fp4_key_write;
@@ -109,11 +110,8 @@ mod moe_experts;
 mod moe_route;
 mod multimodal;
 mod mxfp8_fold;
-mod mxfp8_fold_decode;
 mod mxfp8_fold_direct;
-mod mxfp8_fold_reuse;
 mod mxfp8_fold_stream;
-mod mxfp8_fold_ticket;
 mod mxfp8_prefill;
 mod mxfp8_prefill_compact;
 mod mxfp8_prefill_tma_matrix;
@@ -269,11 +267,9 @@ pub struct Sm120 {
         crate::gemm::mxfp8_fold::Entry,
         crate::gemm::mxfp8_prefill_split::TailPolicy,
     )>,
-    mxfp8_fold_decodes: Vec<crate::gemm::mxfp8_fold_decode::Entry>,
-    mxfp8_fold_tickets: Vec<crate::gemm::mxfp8_fold_ticket::Entry>,
+    dense_decodes: Vec<(crate::gemm::dense_decode::Entry, Option<u32>)>,
     mxfp8_fold_streams: Vec<crate::gemm::mxfp8_fold_stream::Entry>,
     mxfp8_fold_directs: Vec<crate::gemm::mxfp8_fold_direct::Entry>,
-    mxfp8_fold_reuse: Vec<(crate::gemm::mxfp8_fold_reuse::Entry, u32)>,
     packed_fold_weights: bool,
 }
 
@@ -350,26 +346,17 @@ impl Sm120 {
     }
 
     /// Register one explicit row bucket with its qualified fold allocation.
-    pub fn with_mxfp8_fold_reuse(
+    pub fn with_dense_decode(
         mut self,
-        entry: crate::gemm::mxfp8_fold_reuse::Entry,
-        folds: u32,
+        entry: crate::gemm::dense_decode::Entry,
+        folds: Option<u32>,
     ) -> Self {
-        self.mxfp8_fold_reuse.push((entry, folds));
+        self.dense_decodes.push((entry, folds));
         self
     }
 
     pub fn with_mxfp8_fold_stream(mut self, entry: crate::gemm::mxfp8_fold_stream::Entry) -> Self {
         self.mxfp8_fold_streams.push(entry);
-        self
-    }
-
-    pub fn with_mxfp8_fold_ticket(mut self, entry: crate::gemm::mxfp8_fold_ticket::Entry) -> Self {
-        self.mxfp8_fold_tickets.push(entry);
-        self
-    }
-    pub fn with_mxfp8_fold_decode(mut self, entry: crate::gemm::mxfp8_fold_decode::Entry) -> Self {
-        self.mxfp8_fold_decodes.push(entry);
         self
     }
 
@@ -1488,37 +1475,25 @@ impl Backend for Sm120 {
         need: Need,
     ) -> Result<Prepared<kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers<View>>, Refused> {
         let prepared = if self
-            .mxfp8_fold_reuse
+            .dense_decodes
             .iter()
-            .any(|(e, _)| e.ticket.query == *op)
+            .any(|(e, _)| e.query == *op && !e.paired)
         {
-            mxfp8_fold_reuse::prepare(&self.mxfp8_fold_reuse, op, need)
-        } else if self
-            .mxfp8_fold_tickets
-            .iter()
-            .any(|e| e.query == *op && !e.paired)
-        {
-            mxfp8_fold_ticket::prepare(&self.mxfp8_fold_tickets, op, need)
-        } else if self
-            .mxfp8_fold_decodes
-            .iter()
-            .any(|e| e.query == *op && !e.paired)
-        {
-            mxfp8_fold_decode::prepare(&self.mxfp8_fold_decodes, op, need)
+            dense_decode::prepare(&self.dense_decodes, op, need)
         } else {
             mxfp8_fold::prepare(&self.mxfp8_folds, op, need)
         };
         let prepared = prepared?;
         let rows: Vec<_> = self
-            .mxfp8_fold_reuse
+            .dense_decodes
             .iter()
-            .filter(|(e, _)| routes::same_fold_shape(e.ticket.query, *op))
-            .map(|(e, _)| e.ticket.query.m_capacity)
+            .filter(|(e, _)| e.knobs.row_groups == 2 && routes::same_fold_shape(e.query, *op))
+            .map(|(e, _)| e.query.m_capacity)
             .collect();
         let selected = self
-            .mxfp8_fold_reuse
+            .dense_decodes
             .iter()
-            .any(|(e, _)| e.ticket.query == *op);
+            .any(|(e, _)| e.knobs.row_groups == 2 && e.query == *op);
         let (class, wrapper, admitted) = if rows.is_empty() {
             (
                 kernel_core::route::RouteClass::Fast,
@@ -1608,22 +1583,7 @@ impl Backend for Sm120 {
         op: &kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery,
         need: Need,
     ) -> Result<Prepared<[kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers<View>; 2]>, Refused> {
-        if self
-            .mxfp8_fold_tickets
-            .iter()
-            .any(|e| e.query == *op && e.paired)
-        {
-            return self.fold_weights(mxfp8_fold_ticket::prepare_pair(
-                &self.mxfp8_fold_tickets,
-                op,
-                need,
-            )?);
-        }
-        self.fold_weights(mxfp8_fold_decode::prepare_pair(
-            &self.mxfp8_fold_decodes,
-            op,
-            need,
-        )?)
+        self.fold_weights(dense_decode::prepare_pair(&self.dense_decodes, op, need)?)
     }
 
     fn mxfp8_fold_gemm_stream(

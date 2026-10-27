@@ -1,5 +1,5 @@
 #pragma once
-#include "mxfp8_fold_ticket.cuh"
+#include "dense_decode.cuh"
 #include "weight_prefetch.cuh"
 
 namespace chop::gemm::mxfp8_fold_stream {
@@ -101,7 +101,7 @@ __device__ void merge_task(Task task, uint32_t bank, uint32_t g,
   const uint32_t token_base = task.y * 16;
   const uint32_t column_base = task.x * TileN;
   const auto* failed = reinterpret_cast<const uint32_t*>(workspace);
-  auto* partials = reinterpret_cast<float*>(workspace + mxfp8_fold_ticket::header<N, Groups, TileN, Paired>(rows));
+  auto* partials = reinterpret_cast<float*>(workspace + dense_decode::header<N, Groups, dense_decode::Knobs{TileN, 1, 3, false, dense_decode::Finish::ticket}, Paired>(rows));
   partials += uint64_t(bank) * Folds * rows * Groups * N;
   if constexpr (Paired) if (bank) output = output2;
   for (uint32_t i = threadIdx.x; i < 16 * TileN; i += Threads) {
@@ -151,7 +151,7 @@ __device__ void run_task(Task task, Shared& shared, Fragments current,
   auto* done = ready + 1;
   auto* tickets = state + 64;
   auto* failed = reinterpret_cast<uint32_t*>(workspace);
-  auto* partials = reinterpret_cast<float*>(workspace + mxfp8_fold_ticket::header<N, Groups, TileN, Paired>(rows));
+  auto* partials = reinterpret_cast<float*>(workspace + dense_decode::header<N, Groups, dense_decode::Knobs{TileN, 1, 3, false, dense_decode::Finish::ticket}, Paired>(rows));
   partials += uint64_t(bank) * Folds * rows * Groups * N;
   // Exactly one virtual tile per row tile checks all groups. No other
   // task reads its flags until the release below is acquired. Computation
@@ -168,8 +168,8 @@ __device__ void run_task(Task task, Shared& shared, Fragments current,
           const uint64_t at = uint64_t(row) * RowStride + uint64_t(group) * GroupStride + k;
           const uint4 code = *reinterpret_cast<const uint4*>(activations + at);
           const uint8_t scale = activation_scales[at / 32];
-          invalid |= !(mxfp8_fold_ticket::admitted4(code.x, scale) && mxfp8_fold_ticket::admitted4(code.y, scale) &&
-                       mxfp8_fold_ticket::admitted4(code.z, scale) && mxfp8_fold_ticket::admitted4(code.w, scale));
+          invalid |= !(dense_decode::admitted4(code.x, scale) && dense_decode::admitted4(code.y, scale) &&
+                       dense_decode::admitted4(code.z, scale) && dense_decode::admitted4(code.w, scale));
         }
       }
       const bool bad = __syncthreads_or(invalid);
@@ -198,7 +198,7 @@ __device__ void run_task(Task task, Shared& shared, Fragments current,
         const uint32_t k = (base + p) * 128 + (chunk % 8) * 16;
         const bool valid = base + p < end && row < live && k < K;
         const uint64_t at = uint64_t(row) * RowStride + uint64_t(g) * GroupStride + k;
-        mxfp8_fold_ticket::copy16(shared.codes[p] + chunk * 16, activations + (valid ? at : 0), valid);
+        dense_decode::copy16(shared.codes[p] + chunk * 16, activations + (valid ? at : 0), valid);
       }
       for (uint32_t i = threadIdx.x; i < 64; i += Threads) {
         const uint32_t row = token_base + i / 4;

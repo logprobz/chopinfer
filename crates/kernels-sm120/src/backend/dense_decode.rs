@@ -1,38 +1,69 @@
 use super::select::{Candidate, choose};
-use crate::gemm::mxfp8_fold_decode::Entry;
+use crate::gemm::dense_decode::{Entry, Finish};
 use kernel_core::backend::{Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View};
 use kernel_core::contract::{Argument, ArgumentList, Refusal};
 use kernel_core::mxfp8_gemm::{Mxfp8FoldGemmBuffers, Mxfp8FoldGemmQuery};
 use kernel_core::properties::Invariance;
 
 fn prepare_op(
-    entries: &[Entry],
+    entries: &[(Entry, Option<u32>)],
     query: &Mxfp8FoldGemmQuery,
     need: Need,
     paired: bool,
 ) -> Result<Op, Refused> {
+    let reuse = entries
+        .iter()
+        .any(|(e, _)| e.query == *query && !paired && e.knobs.row_groups == 2);
+    if reuse
+        && entries
+            .iter()
+            .filter(|(e, _)| e.query == *query && e.knobs.row_groups == 2)
+            .count()
+            != 1
+    {
+        return Err(Refused::Rule(
+            "row-reuse folds require one exact row bucket".into(),
+        ));
+    }
     let chosen = choose(
-        "split MXFP8 folds",
+        "dense decode folds",
         entries
             .iter()
-            .filter(|e| e.query == *query && e.paired == paired)
-            .map(|e| {
+            .filter(|(e, _)| {
+                e.query == *query && e.paired == paired && (e.knobs.row_groups == 2) == reuse
+            })
+            .map(|(e, folds)| {
                 Candidate::new(
-                    e.clone(),
+                    (e.clone(), *folds),
                     &e.symbol,
-                    format!("{e:?}"),
+                    format!("{e:?}:folds={folds:?}"),
                     Invariance::any_rows(e.query.m_capacity),
                 )
                 .capacity(e.query.m_capacity)
             }),
         need,
     )?;
-    let entry = chosen.entry;
+    let (entry, folds) = chosen.entry;
     entry.validate()?;
+    if reuse {
+        if paired || need.capacity != query.m_capacity || !matches!(folds, Some(2 | 4 | 8)) {
+            return Err(Refused::Rule(
+                "row-reuse folds require one exact row bucket and partition".into(),
+            ));
+        }
+    } else if folds.is_some() {
+        return Err(Refused::Rule(
+            "runtime fold overrides are only for row reuse".into(),
+        ));
+    }
+    entry.plans(
+        need.capacity,
+        folds.unwrap_or_else(|| entry.folds_per_cta(need.capacity)),
+    )?;
     let legacy = super::mxfp8_fold::prepare(&[entry.legacy()?], query, need)?;
     let mut info = legacy.info().clone();
-    info.implementation = format!("sm120.mxfp8-fold.split.v1:{entry:?}");
-    info.symbols = entry.symbols().into_iter().map(|s| (s, 0)).collect();
+    info.implementation = format!("sm120.dense-decode.v1:{entry:?}:folds={folds:?}");
+    info.symbols = entry.specs()?.into_iter().map(|s| (s.symbol, 0)).collect();
     info.workspace = entry.workspace(need.capacity)?;
     if paired {
         info.bytes = ["0", "1"]
@@ -59,13 +90,14 @@ fn prepare_op(
     need.check(&info)?;
     Ok(Op {
         entry,
+        folds,
         legacy,
         info,
     })
 }
 
 pub(super) fn prepare(
-    entries: &[Entry],
+    entries: &[(Entry, Option<u32>)],
     query: &Mxfp8FoldGemmQuery,
     need: Need,
 ) -> Result<Prepared<Mxfp8FoldGemmBuffers<View>>, Refused> {
@@ -73,7 +105,7 @@ pub(super) fn prepare(
 }
 
 pub(super) fn prepare_pair(
-    entries: &[Entry],
+    entries: &[(Entry, Option<u32>)],
     query: &Mxfp8FoldGemmQuery,
     need: Need,
 ) -> Result<Prepared<[Mxfp8FoldGemmBuffers<View>; 2]>, Refused> {
@@ -82,6 +114,7 @@ pub(super) fn prepare_pair(
 
 struct Op {
     entry: Entry,
+    folds: Option<u32>,
     legacy: Prepared<Mxfp8FoldGemmBuffers<View>>,
     info: OpInfo,
 }
@@ -146,6 +179,11 @@ impl Op {
         workspace: View,
         counts: Counts,
     ) -> Result<Vec<Launch>, Refusal> {
+        if self.folds.is_some() && counts.rows != self.entry.query.m_capacity {
+            return Err(Refusal(
+                "row-reuse launch differs from its selected row bucket",
+            ));
+        }
         validate_launch(
             &self.legacy,
             self.info.workspace,
@@ -181,14 +219,36 @@ impl Op {
             second.map_or(Argument::NullDevicePointer, |s| d(s.output)),
         ];
         merge.extend(tail());
+        let folds = self
+            .folds
+            .unwrap_or_else(|| self.entry.folds_per_cta(counts.rows));
+        let arguments = if self.entry.knobs.finish == Finish::Merge {
+            vec![admit, partials, merge]
+        } else {
+            let compute = vec![
+                d(b.activations),
+                d(b.activation_scales),
+                d(b.weights),
+                d(b.weight_scales),
+                second.map_or(Argument::NullDevicePointer, |s| d(s.weights)),
+                second.map_or(Argument::NullDevicePointer, |s| d(s.weight_scales)),
+                d(b.output),
+                second.map_or(Argument::NullDevicePointer, |s| d(s.output)),
+                d(workspace),
+                d(b.live_rows),
+                Argument::U32(counts.rows),
+                Argument::U32(folds),
+            ];
+            vec![admit, compute]
+        };
         Ok(self
             .entry
-            .symbols()
+            .specs()?
             .into_iter()
-            .zip(self.entry.plans(counts.rows)?)
-            .zip([admit, partials, merge])
-            .map(|((symbol, plan), arguments)| Launch {
-                symbol,
+            .zip(self.entry.plans(counts.rows, folds)?)
+            .zip(arguments)
+            .map(|((spec, plan), arguments)| Launch {
+                symbol: spec.symbol,
                 plan,
                 arguments: ArgumentList(arguments),
                 rows: counts.rows,
@@ -229,6 +289,7 @@ impl PreparedOp<[Mxfp8FoldGemmBuffers<View>; 2]> for Op {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
     use crate::backend::Sm120;
     use kernel_core::backend::Backend;
@@ -255,8 +316,14 @@ mod tests {
                 m_capacity: 32,
                 ..baseline.query
             };
-            let entry = Entry::new(query, "split_fold_test_v1", false).unwrap();
-            let backend = Sm120::new().with_mxfp8_fold_decode(entry.clone());
+            let entry = Entry::new(
+                query,
+                "split_fold_test_v1",
+                false,
+                crate::gemm::dense_decode::Knobs::SPLIT,
+            )
+            .unwrap();
+            let backend = Sm120::new().with_dense_decode(entry.clone(), None);
             for capacity in [1, 2, 4, 8, 16, 32] {
                 let op = backend
                     .mxfp8_fold_gemm(&query, Need::rows(capacity))
@@ -322,7 +389,8 @@ mod tests {
                         ..query
                     },
                     "too_wide_v1",
-                    false
+                    false,
+                    crate::gemm::dense_decode::Knobs::SPLIT
                 )
                 .is_err()
             );
@@ -332,8 +400,14 @@ mod tests {
     #[test]
     fn paired_folds_share_admission_and_refuse_cross_bank_aliases() {
         let base = crate::gemm::mxfp8_fold::lab_entries().remove(0);
-        let entry = Entry::new(base.query, "split_pair_test_v1", true).unwrap();
-        let backend = Sm120::new().with_mxfp8_fold_decode(entry.clone());
+        let entry = Entry::new(
+            base.query,
+            "split_pair_test_v1",
+            true,
+            crate::gemm::dense_decode::Knobs::SPLIT,
+        )
+        .unwrap();
+        let backend = Sm120::new().with_dense_decode(entry.clone(), None);
         let op = backend
             .mxfp8_fold_gemm_pair(&entry.query, Need::rows(1))
             .unwrap();
@@ -364,5 +438,150 @@ mod tests {
                 .mxfp8_fold_gemm(&entry.query, Need::rows(1))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn prefetch_uses_only_the_supplied_workspace_without_growing_it() {
+        for old in crate::gemm::mxfp8_fold::lab_entries() {
+            let q = Mxfp8FoldGemmQuery {
+                m_capacity: 64,
+                ..old.query
+            };
+            for paired in [false, true] {
+                let ticket = Entry::new(
+                    q,
+                    "ticket_test_v2",
+                    paired,
+                    crate::gemm::dense_decode::Knobs::ticket(q.n),
+                )
+                .unwrap();
+                let mut prefetch = Entry::new(
+                    q,
+                    "prefetch_test_v3",
+                    paired,
+                    crate::gemm::dense_decode::Knobs::ticket(q.n),
+                )
+                .unwrap();
+                prefetch.knobs.weight_prefetch = true;
+                for rows in 0..=64 {
+                    assert_eq!(prefetch.workspace(rows), ticket.workspace(rows));
+                    assert_eq!(
+                        prefetch.plans(rows, prefetch.folds_per_cta(rows)),
+                        ticket.plans(rows, ticket.folds_per_cta(rows))
+                    );
+                }
+                if paired {
+                    continue;
+                }
+                let backend = Sm120::new().with_dense_decode(prefetch, None);
+                let op = backend.mxfp8_fold_gemm(&q, Need::rows(64)).unwrap();
+                let bytes = old.bytes(64);
+                let view = |handle, bytes| View { handle, bytes };
+                let buffers = Mxfp8FoldGemmBuffers {
+                    activations: view(1, bytes.activations),
+                    activation_scales: view(2, bytes.activation_scales),
+                    weights: view(3, bytes.weights),
+                    weight_scales: view(4, bytes.weight_scales),
+                    output: view(5, bytes.output),
+                    live_rows: view(6, 4),
+                    status: view(7, bytes.status),
+                    status_row_offset: 0,
+                };
+                for workspace in [11, 31] {
+                    let calls = op
+                        .launches(
+                            &buffers,
+                            view(workspace, op.info().workspace),
+                            Counts::rows(64),
+                        )
+                        .unwrap();
+                    assert_eq!(calls[0].arguments.0[2], Argument::DeviceBuffer(workspace));
+                    assert_eq!(calls[1].arguments.0[8], Argument::DeviceBuffer(workspace));
+                    assert!(calls.iter().all(|call| !call.arguments.0.contains(
+                        &Argument::DeviceBuffer(if workspace == 11 { 31 } else { 11 })
+                    )));
+                }
+                assert!(
+                    op.launches(&buffers, view(5, op.info().workspace), Counts::rows(64))
+                        .is_err()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tickets_cover_every_row_count_and_refuse_uninitialized_workspace() {
+        for old in crate::gemm::mxfp8_fold::lab_entries() {
+            let q = Mxfp8FoldGemmQuery {
+                m_capacity: 64,
+                ..old.query
+            };
+            for paired in [false, true] {
+                let entry = Entry::new(
+                    q,
+                    "ticket_test_v2",
+                    paired,
+                    crate::gemm::dense_decode::Knobs::ticket(q.n),
+                )
+                .unwrap();
+                let backend = Sm120::new().with_dense_decode(entry.clone(), None);
+                let sizes = entry.legacy().unwrap().bytes(64);
+                let v = |handle, bytes| View { handle, bytes };
+                let b = Mxfp8FoldGemmBuffers {
+                    activations: v(1, sizes.activations),
+                    activation_scales: v(2, sizes.activation_scales),
+                    weights: v(3, sizes.weights),
+                    weight_scales: v(4, sizes.weight_scales),
+                    output: v(5, sizes.output),
+                    live_rows: v(6, 4),
+                    status: v(7, sizes.status + 12),
+                    status_row_offset: 3,
+                };
+                let second = Mxfp8FoldGemmBuffers {
+                    weights: v(8, sizes.weights),
+                    weight_scales: v(9, sizes.weight_scales),
+                    output: v(10, sizes.output),
+                    ..b
+                };
+                for rows in 0..=64 {
+                    let need = Need::rows(rows.max(1));
+                    let workspace = v(11, entry.workspace(rows.max(1)).unwrap());
+                    let calls = if paired {
+                        backend
+                            .mxfp8_fold_gemm_pair(&q, need)
+                            .unwrap()
+                            .launches(&[b, second], workspace, Counts::rows(rows))
+                            .unwrap()
+                    } else {
+                        backend
+                            .mxfp8_fold_gemm(&q, need)
+                            .unwrap()
+                            .launches(&b, workspace, Counts::rows(rows))
+                            .unwrap()
+                    };
+                    assert_eq!(calls.len(), 2);
+                    assert_eq!(
+                        calls[1].plan.grid[2],
+                        q.groups
+                            * if paired { 2 } else { 1 }
+                            * q.k.div_ceil(128).div_ceil(entry.folds_per_cta(rows))
+                    );
+                    assert!(matches!(entry.folds_per_cta(rows), 2 | 4 | 8 | 16));
+                    assert!(entry.header(rows).unwrap() >= 256 + 4 * entry.tiles(rows));
+                }
+                if !paired {
+                    let op = backend.mxfp8_fold_gemm(&q, Need::rows(64)).unwrap();
+                    assert!(op.launches(&b, View::EMPTY, Counts::rows(1)).is_err());
+                    assert!(
+                        op.launches(&b, v(1, op.info().workspace), Counts::rows(1))
+                            .is_err()
+                    );
+                    assert!(
+                        op.launches(&b, v(11, op.info().workspace), Counts::rows(65))
+                            .is_err()
+                    );
+                }
+            }
+        }
     }
 }

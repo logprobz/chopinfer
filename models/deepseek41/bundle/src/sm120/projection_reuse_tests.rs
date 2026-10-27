@@ -13,9 +13,13 @@ fn qualified_buckets_bind_the_measured_plans_and_private_scratch() {
             ranks,
         )
         .unwrap();
-        for entry in entries().unwrap().into_iter().filter(|e| e.tile_n == 32) {
+        for entry in super::super::mxfp8_fold::decode_entries(&FLASH, 4)
+            .unwrap()
+            .into_iter()
+            .filter(|e| !e.paired)
+        {
             for rows in 1..=64 {
-                let q = super::super::mxfp8_fold::routed_query(entry.ticket.query, rows);
+                let q = super::super::mxfp8_fold::routed_query(entry.query, rows);
                 let Ok(op) = backend.mxfp8_fold_gemm(&q, Need::rows(rows)) else {
                     assert_ne!(ranks, 4);
                     continue;
@@ -25,16 +29,13 @@ fn qualified_buckets_bind_the_measured_plans_and_private_scratch() {
                     op.info()
                         .symbols
                         .iter()
-                        .any(|(s, _)| s.contains("_reuse32_")),
+                        .any(|(s, _)| s.contains("r2s3w0f0")),
                     selected.is_some()
                 );
                 let Some((tile, folds)) = selected else {
                     continue;
                 };
-                let mut entry = entry.clone();
-                entry.tile_n = tile;
-                entry.ticket.query = q;
-                let sizes = entry.ticket.legacy().unwrap().bytes(rows);
+                let sizes = entry.legacy().unwrap().bytes(rows);
                 let v = |handle, bytes| View { handle, bytes };
                 let b = Mxfp8FoldGemmBuffers {
                     activations: v(1, sizes.activations),
@@ -46,11 +47,41 @@ fn qualified_buckets_bind_the_measured_plans_and_private_scratch() {
                     status: v(7, sizes.status + 12),
                     status_row_offset: 3,
                 };
-                let work = v(8, entry.workspace(rows).unwrap());
+                let expected_workspace = 256
+                    + (u64::from(q.n.div_ceil(tile)) * u64::from(q.groups) * 4).div_ceil(256) * 256
+                    + u64::from(q.k.div_ceil(128))
+                        * u64::from(rows)
+                        * u64::from(q.n)
+                        * u64::from(q.groups)
+                        * 4;
+                let work = v(8, expected_workspace);
                 let calls = op.launches(&b, work, Counts::rows(rows)).unwrap();
                 assert_eq!(calls.len(), 2);
-                let plans = entry.plans(rows, folds).unwrap();
-                for (call, (spec, plan)) in calls.iter().zip(entry.specs().into_iter().zip(plans)) {
+
+                let template = super::super::mxfp8_fold::dense_entry(
+                    q,
+                    false,
+                    kernels_sm120::gemm::dense_decode::Knobs {
+                        tile_n: tile,
+                        row_groups: 2,
+                        ..kernels_sm120::gemm::dense_decode::Knobs::ticket(q.n)
+                    },
+                )
+                .unwrap();
+                let plans = template.plans(rows, folds).unwrap();
+                assert_eq!(plans[0].grid, [rows, 1, 1]);
+                assert_eq!(
+                    plans[1].grid,
+                    [
+                        q.n.div_ceil(tile),
+                        1,
+                        q.k.div_ceil(128).div_ceil(folds) * q.groups
+                    ]
+                );
+                for (call, (spec, plan)) in calls
+                    .iter()
+                    .zip(template.specs().unwrap().into_iter().zip(plans))
+                {
                     assert_eq!(call.symbol, spec.symbol);
                     assert_eq!(call.plan, plan);
                 }

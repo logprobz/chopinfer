@@ -294,6 +294,16 @@ pub fn modules(symbol: &str) -> LabResult<(&'static str, bool)> {
         .or_else(|| fold_cubin_for_symbol(&kernels_sm120::gemm::mxfp8_fold_packed::symbol(symbol)))
         .map(|(name, _)| name)
         .or_else(|| fused::reference_module(symbol).map(|(name, _)| name))
+        .or_else(|| {
+            crate::dense_decode_reference::modules()
+                .iter()
+                .find(|m| {
+                    m.symbols.contains(symbol)
+                        || m.symbols
+                            .contains(&kernels_sm120::gemm::mxfp8_fold_packed::symbol(symbol))
+                })
+                .map(|m| m.name.as_str())
+        })
         .ok_or_else(|| format!("missing served {symbol}"))?;
     let plain = format!("{}{name}", plain_family::PREFIX);
     Ok((name, plain_names().contains(&plain)))
@@ -327,6 +337,14 @@ fn load(s: &Session, calls: &[Launch], arm: usize) -> LabResult<Functions> {
         if !loaded.contains_key(&name) {
             let bytes = if fold_cubin_for_symbol(&call.symbol).is_some_and(|(n, _)| n == name) {
                 fold_cubin_for_symbol(&call.symbol).unwrap().1.to_vec()
+            } else if crate::dense_decode_reference::owns(&call.symbol)
+                && crate::dense_decode_reference::modules()
+                    .iter()
+                    .any(|m| m.name == name && m.symbols.contains(&call.symbol))
+            {
+                crate::dense_decode_reference::load_symbol(&call.symbol)?
+                    .1
+                    .to_vec()
             } else if let Some((reference, hash)) = fused::reference_module(&call.symbol)
                 && reference == name
             {

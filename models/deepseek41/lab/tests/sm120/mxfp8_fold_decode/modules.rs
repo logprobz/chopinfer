@@ -1,5 +1,6 @@
 //! CPU validation of every module used by the fold comparison job.
-use bundle_deepseek41::sm120::{dependency_probes, fold_cubin_for_symbol, mxfp8_fold};
+use crate::dense_decode_reference as mxfp8_fold;
+use bundle_deepseek41::sm120::{dependency_probes, fold_cubin_for_symbol};
 use kernel_harness::{Cubins, LabResult};
 use model_deepseek41_contract::{geometry::FLASH, serving::PREFILL_TOKENS};
 use serde_json::{Value, json};
@@ -25,14 +26,21 @@ struct Expected {
 fn expected() -> LabResult<BTreeMap<String, Expected>> {
     let mut result = BTreeMap::<String, Expected>::new();
     let mut add = |symbol: String| -> LabResult<()> {
-        let (name, bytes) = fold_cubin_for_symbol(&symbol)
-            .ok_or_else(|| format!("missing embedded fold symbol {symbol}"))?;
+        let (name, digest, embedded) = if let Some((name, bytes)) = fold_cubin_for_symbol(&symbol) {
+            (name.to_owned(), kernel_build::digest(bytes), Some(bytes))
+        } else {
+            let module = mxfp8_fold::modules()
+                .iter()
+                .find(|m| m.symbols.contains(&symbol))
+                .ok_or_else(|| format!("missing fold symbol {symbol}"))?;
+            (module.name.clone(), module.digest.clone(), None)
+        };
         result
-            .entry(name.into())
+            .entry(name)
             .or_insert_with(|| Expected {
-                digest: kernel_build::digest(bytes),
+                digest,
                 symbols: BTreeSet::new(),
-                embedded: Some(bytes),
+                embedded,
             })
             .symbols
             .insert(symbol);
@@ -174,7 +182,9 @@ pub(crate) fn timing_cubins() -> LabResult<Cubins> {
 
 #[test]
 fn dry_run_refuses_missing_or_wrong_timing_probe() {
-    let required = expected().unwrap();
+    let mut required = expected().unwrap();
+    assert!(required.values().filter(|m| m.embedded.is_none()).count() >= 4);
+    required.retain(|name, module| name == TIMING || module.embedded.is_some());
     let dir = std::env::temp_dir().join(format!("fold-module-check-{}", std::process::id()));
     std::fs::create_dir(&dir).unwrap();
     for (name, module) in &required {
@@ -192,4 +202,28 @@ fn dry_run_refuses_missing_or_wrong_timing_probe() {
     );
     std::fs::remove_dir_all(dir).unwrap();
     assert!(Cubins::NONE.bytes(TIMING).is_err());
+}
+
+pub(crate) struct ReferenceModules;
+impl kernel_harness::kit::Modules for ReferenceModules {
+    fn load<'s>(
+        &'s self,
+        session: &'s kernel_harness::Session,
+    ) -> LabResult<kernel_harness::kit::modules::Functions<'s>> {
+        let loaded = std::cell::RefCell::new(BTreeMap::new());
+        Ok(Box::new(move |symbol| {
+            let (name, bytes) = crate::dense_decode_reference::load_symbol(symbol)?;
+            let mut modules = loaded.borrow_mut();
+            if !modules.contains_key(name) {
+                modules.insert(name, session.load_cubin(bytes)?);
+            }
+            modules[name].function(symbol).map_err(|e| e.to_string())
+        }))
+    }
+    fn probes(
+        &self,
+        session: &kernel_harness::Session,
+    ) -> LabResult<Option<kernel_harness::conformance::Probes>> {
+        kernel_harness::kit::Modules::probes(&super::super::mxfp8_fold::ModelModules, session)
+    }
 }

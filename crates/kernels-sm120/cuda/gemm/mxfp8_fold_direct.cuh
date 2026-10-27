@@ -90,8 +90,8 @@ __device__ void task(Task coord, Shared& shared, float* local, Fragments current
           const uint64_t at = uint64_t(row) * RowStride + uint64_t(group) * GroupStride + k;
           const uint4 a = *reinterpret_cast<const uint4*>(activations + at);
           const uint8_t s = activation_scales[at / 32];
-          bad |= !(mxfp8_fold_ticket::admitted4(a.x, s) && mxfp8_fold_ticket::admitted4(a.y, s)
-                   && mxfp8_fold_ticket::admitted4(a.z, s) && mxfp8_fold_ticket::admitted4(a.w, s));
+          bad |= !(dense_decode::admitted4(a.x, s) && dense_decode::admitted4(a.y, s)
+                   && dense_decode::admitted4(a.z, s) && dense_decode::admitted4(a.w, s));
         }
       const bool invalid = __syncthreads_or(bad);
       if (threadIdx.x == 0) {

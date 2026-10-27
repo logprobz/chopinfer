@@ -1,10 +1,13 @@
 //! Exact Flash TP1/TP2/TP4 fold catalogs and their packed twins.
-use bundle_deepseek41::sm120::{self, mxfp8_fold as catalog};
+use crate::dense_decode_reference as catalog;
+use crate::dense_decode_reference::frozen::{
+    mxfp8_fold_decode, mxfp8_fold_reuse, mxfp8_fold_ticket,
+};
+use bundle_deepseek41::sm120;
 use kernel_build::{CubinSpec, EntrySpec};
 use kernels_sm120::gemm::{
-    mxfp8_fold, mxfp8_fold_cluster_fused, mxfp8_fold_decode, mxfp8_fold_local_wide,
-    mxfp8_fold_reuse, mxfp8_fold_ticket, mxfp8_prefill, mxfp8_prefill_compact,
-    mxfp8_prefill_matrix, mxfp8_prefill_split, mxfp8_prefill_tma_scales,
+    mxfp8_fold, mxfp8_fold_cluster_fused, mxfp8_fold_local_wide, mxfp8_prefill,
+    mxfp8_prefill_compact, mxfp8_prefill_matrix, mxfp8_prefill_split, mxfp8_prefill_tma_scales,
 };
 use model_deepseek41_contract::geometry::FLASH;
 use std::collections::{BTreeMap, BTreeSet};
@@ -210,7 +213,7 @@ pub fn cases() -> Vec<Case> {
             }
         }
     }
-    for e in sm120::projection_reuse::entries().unwrap() {
+    for e in crate::dense_decode_reference::reuse_entries().unwrap() {
         add(Entry::Reuse(e), 4);
     }
     for e in sm120::prefill_matrix::catalog().unwrap() {
@@ -260,5 +263,5 @@ pub fn cubins() -> Vec<CubinSpec> {
     .map(|header| format!("#include \"gemm/{header}.cuh\""))
     .to_vec();
     spec.entries = entries.into_values().collect();
-    vec![spec]
+    vec![crate::dense_decode_reference::frozen::configure(spec)]
 }

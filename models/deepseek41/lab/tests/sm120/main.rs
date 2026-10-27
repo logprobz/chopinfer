@@ -1,6 +1,8 @@
 //! Kernel GPU correctness tests of the model's catalog instances, own ops
 //! and encoder, on `kernel_harness`. Each engine adds its test file and its
 //! module line here.
+#[path = "../../sm120/dense_decode_reference.rs"]
+mod dense_decode_reference;
 
 mod ceil_parallel;
 mod dense_decode;

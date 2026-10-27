@@ -172,7 +172,7 @@ impl PreparedOp<Mxfp8FoldStreamBuffers<View>> for Op {
         counts: Counts,
     ) -> Result<Vec<Launch>, Refusal> {
         self.persistent(b, Some(workspace))?;
-        super::mxfp8_fold_decode::validate_launch(
+        super::dense_decode::validate_launch(
             &self.legacy,
             self.info.workspace,
             &b.first,
@@ -184,7 +184,10 @@ impl PreparedOp<Mxfp8FoldStreamBuffers<View>> for Op {
         let first = b.first;
         Ok(vec![Launch {
             symbol: self.entry.ticket.symbol.clone(),
-            plan: self.entry.ticket.plans(counts.rows)?[1],
+            plan: self
+                .entry
+                .ticket
+                .plans(counts.rows, self.entry.ticket.folds_per_cta(counts.rows))?[1],
             arguments: ArgumentList(vec![
                 d(first.activations),
                 d(first.activation_scales),

@@ -1,5 +1,5 @@
 //! Fold up to 32 rows in one CTA per column tile, without global partials.
-use super::{mxfp8_fold, mxfp8_fold_ticket};
+use super::{dense_decode, mxfp8_fold};
 use kernel_build::{CubinSpec, EntrySpec};
 use kernel_core::{
     backend::{Backend, Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View},
@@ -197,8 +197,11 @@ impl Entry {
     }
     pub fn specs(&self) -> Vec<EntrySpec> {
         let q = self.base.query;
-        let ticket = mxfp8_fold_ticket::Entry::new(q, self.symbol(), false).unwrap();
-        let mut specs = ticket.specs();
+        let ticket =
+            dense_decode::Entry::new(q, &self.symbol(), false, dense_decode::Knobs::ticket(q.n))
+                .unwrap();
+        let mut specs = ticket.specs().unwrap();
+        specs[1].symbol = self.symbol();
         let ns = "chop::gemm::mxfp8_fold_local_wide";
         specs[0].symbol = format!("{}_admit_v1", self.symbol());
         specs[0].body = format!(

@@ -11,6 +11,7 @@ struct Knobs {
   int tile_n;
   int row_groups;
   int stages;
+  // Weights and scales must persist and be ready before any PDL predecessor.
   bool weight_prefetch;
   Finish finish;
 };
@@ -41,6 +42,7 @@ struct Policies {
   static_assert(std::is_same_v<Chain, FourK32>);
   static_assert(std::is_same_v<Reduction, AscendingF32>);
   static_assert(S.finish == Finish::ticket || S.finish == Finish::merge);
+  // Ticket slot reuse, prefetch distance and wait_group require exactly 3 stages.
   static_assert(S.finish == Finish::merge
       ? S.tile_n == 16 && S.row_groups == 1 && S.stages == 2 && !S.weight_prefetch
       : (S.tile_n == 32 || S.tile_n == 64) &&

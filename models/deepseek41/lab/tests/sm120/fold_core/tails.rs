@@ -257,11 +257,10 @@ fn tail_catalog_uses_current_packed_modules() {
                     );
                 }
                 if rows == 35 && id == "attention.q-a" {
-                    assert!(
-                        case.served
-                            .iter()
-                            .any(|call| call.symbol.contains("prefetch_n1280"))
-                    );
+                    assert!(case.served.iter().any(|call| {
+                        call.symbol.contains("dense_decode_n1280")
+                            && call.symbol.contains("_n32r1s3w1f0_")
+                    }));
                 }
             }
             {

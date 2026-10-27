@@ -1,4 +1,5 @@
 //! Template twins cover padded groups, half folds and both output formats.
+use kernel_lab_families::dense_decode_reference::ReferenceBackend as Sm120;
 #[path = "support/packed_row_readers.rs"]
 #[allow(dead_code, reason = "the shared fixtures also serve timing tests")]
 mod fixtures;
@@ -6,21 +7,25 @@ mod fixtures;
 mod support;
 use kernel_build::{CubinSpec, EntrySpec};
 use kernel_core::backend::{Backend, Counts, Launch, Need, View};
-use kernel_lab_families::{mxfp8_fold_decode_packed as split, mxfp8_fold_ticket_packed as ticket};
-use kernels_sm120::{
-    backend::Sm120,
-    gemm::{
-        dense_decode::{self, Entry, Finish, Knobs},
-        mxfp8_fold_packed,
-    },
+use kernel_lab_families::{
+    mxfp8_fold_decode_packed as split, mxfp8_fold_reuse_packed as reuse,
+    mxfp8_fold_ticket_packed as ticket,
+};
+use kernels_sm120::gemm::{
+    dense_decode::{self, Entry, Finish, Knobs},
+    mxfp8_fold_packed,
 };
 use std::collections::BTreeMap;
 const CUBIN: &str = "dense_decode_synthetic_twins";
 const DIRECTORY: &str = "CHOPINFER_DENSE_DECODE_SYNTHETIC_TWINS";
 #[derive(Clone)]
 enum Old {
-    Split(kernels_sm120::gemm::mxfp8_fold_decode::Entry),
-    Ticket(kernels_sm120::gemm::mxfp8_fold_ticket::Entry),
+    Split(kernel_lab_families::dense_decode_reference::mxfp8_fold_decode::Entry),
+    Ticket(kernel_lab_families::dense_decode_reference::mxfp8_fold_ticket::Entry),
+    Reuse(
+        kernel_lab_families::dense_decode_reference::mxfp8_fold_reuse::Entry,
+        u32,
+    ),
 }
 struct Case {
     old: Old,
@@ -31,25 +36,45 @@ impl Case {
         let mut specs = match &self.old {
             Old::Split(e) => e.specs(),
             Old::Ticket(e) => e.specs(),
+            Old::Reuse(e, _) => e.specs(),
         };
         specs[1] = match &self.old {
             Old::Split(e) => e.packed_spec().unwrap(),
             Old::Ticket(e) => e.packed_spec().unwrap(),
+            Old::Reuse(e, _) => e.packed_spec().unwrap(),
         };
         specs
+    }
+    fn rows(&self) -> [u32; 4] {
+        if matches!(self.old, Old::Reuse(..)) {
+            [6, 8, 17, 32]
+        } else {
+            [1, 7, 17, self.new.query.m_capacity]
+        }
+    }
+    fn folds(&self, rows: u32) -> u32 {
+        if let Old::Reuse(_, folds) = self.old {
+            folds
+        } else {
+            self.new.folds_per_cta(rows)
+        }
     }
     fn calls(&self, rows: u32) -> Vec<Launch> {
         let backend = match &self.old {
             Old::Split(e) => Sm120::new().with_mxfp8_fold_decode(e.clone()),
             Old::Ticket(e) => Sm120::new().with_mxfp8_fold_ticket(e.clone()),
+            Old::Reuse(e, _) => Sm120::new().with_mxfp8_fold_ticket(e.ticket.clone()),
         };
         let q = self.new.query;
         let buffers = fixtures::buffers(q, rows);
         let work = View {
             handle: 11,
-            bytes: self.new.workspace(rows).unwrap(),
+            bytes: match &self.old {
+                Old::Reuse(e, _) => e.ticket.workspace(rows).unwrap(),
+                _ => self.new.workspace(rows).unwrap(),
+            },
         };
-        let calls = if self.new.paired {
+        let mut calls = if self.new.paired {
             backend
                 .mxfp8_fold_gemm_pair(&q, Need::rows(rows))
                 .unwrap()
@@ -62,9 +87,21 @@ impl Case {
                 .launches(&buffers[0], work, Counts::rows(rows))
                 .unwrap()
         };
+        if let Old::Reuse(entry, folds) = &self.old {
+            for ((call, spec), plan) in calls
+                .iter_mut()
+                .zip(entry.specs())
+                .zip(entry.plans(rows, *folds).unwrap())
+            {
+                call.symbol = spec.symbol;
+                call.plan = plan;
+            }
+            calls[1].arguments.0[11] = kernel_core::contract::Argument::U32(*folds);
+        }
         let symbol = match &self.old {
             Old::Split(e) => e.specs()[1].symbol.clone(),
             Old::Ticket(e) => e.specs()[1].symbol.clone(),
+            Old::Reuse(e, _) => e.specs()[1].symbol.clone(),
         };
         mxfp8_fold_packed::launches(calls, |s| s == symbol)
     }
@@ -111,6 +148,25 @@ fn cases() -> Vec<Case> {
             });
         }
     }
+    for old in reuse::entries() {
+        for folds in [2, 4, 8] {
+            let new = Entry::new(
+                old.ticket.query,
+                &format!("{}_template", old.symbol()),
+                old.ticket.paired,
+                Knobs {
+                    tile_n: old.tile_n,
+                    row_groups: 2,
+                    ..Knobs::ticket(old.ticket.query.n)
+                },
+            )
+            .unwrap();
+            cases.push(Case {
+                old: Old::Reuse(old.clone(), folds),
+                new,
+            });
+        }
+    }
     cases
 }
 fn specs() -> Vec<CubinSpec> {
@@ -131,11 +187,15 @@ fn specs() -> Vec<CubinSpec> {
             "mxfp8_fold_ticket",
             "mxfp8_fold_prefetch",
             "mxfp8_fold_decode",
+            "mxfp8_fold_reuse",
         ]
         .map(|h| format!("#include \"gemm/{h}.cuh\"")),
     );
     spec.entries = entries.into_values().collect();
-    vec![spec, support::producer_spec()]
+    vec![
+        kernel_lab_families::dense_decode_reference::configure(spec),
+        support::producer_spec(),
+    ]
 }
 #[test]
 fn synthetic_twins_preserve_launch_abis_and_grids() {
@@ -151,8 +211,8 @@ fn synthetic_twins_preserve_launch_abis_and_grids() {
             assert_eq!(old.max_threads, new.max_threads);
             assert_eq!(old.min_blocks, new.min_blocks);
         }
-        for rows in [1, 7, 17, case.new.query.m_capacity] {
-            let plans = case.new.plans(rows, case.new.folds_per_cta(rows)).unwrap();
+        for rows in case.rows() {
+            let plans = case.new.plans(rows, case.folds(rows)).unwrap();
             for (call, plan) in case.calls(rows).iter().zip(plans) {
                 assert_eq!(call.plan, plan);
             }
@@ -183,7 +243,7 @@ fn synthetic_twins_match_poisoned_replay_on_gpu() {
         let expected: usize = cases
             .iter()
             .map(|case| {
-                [1, 7, 17, case.new.query.m_capacity]
+                case.rows()
                     .into_iter()
                     .map(|rows| kernel_harness::poison::live_counts(rows).len())
                     .sum::<usize>()
@@ -191,7 +251,7 @@ fn synthetic_twins_match_poisoned_replay_on_gpu() {
             .sum();
         let mut count = 0;
         for (index, case) in cases.iter().enumerate() {
-            for rows in [1, 7, 17, case.new.query.m_capacity] {
+            for rows in case.rows() {
                 let old = case.calls(rows);
                 let mut new = old.clone();
                 for (call, spec) in new.iter_mut().zip(case.new.packed_specs().unwrap()) {
@@ -223,8 +283,9 @@ fn synthetic_twins_match_poisoned_replay_on_gpu() {
                     )?;
                     count += 1;
                     println!(
-                        "DENSE_SYNTHETIC_PASS {} rows={rows} live={live}",
-                        case.new.symbol
+                        "DENSE_SYNTHETIC_PASS {} rows={rows} live={live} folds={}",
+                        case.new.symbol,
+                        case.folds(rows)
                     );
                 }
             }

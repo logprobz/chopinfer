@@ -4,10 +4,10 @@ mod support;
 mod timing_probe;
 use kernel_core::backend::{Backend, Counts, Launch, Need, View};
 use kernel_harness::packed_fold;
+use kernel_lab_families::dense_decode_reference::ReferenceBackend as Sm120;
+use kernel_lab_families::dense_decode_reference::mxfp8_fold_ticket::Entry;
 use kernel_lab_families::mxfp8_fold_ticket_packed as family;
-use kernels_sm120::backend::Sm120;
 use kernels_sm120::gemm::mxfp8_fold_packed;
-use kernels_sm120::gemm::mxfp8_fold_ticket::Entry;
 
 const CUBINS: &str = "CHOPINFER_MXFP8_FOLD_TICKET_PACKED_CUBINS";
 

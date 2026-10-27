@@ -1,5 +1,6 @@
 //! Compare existing fold schedules independently of the serving selector.
 use super::*;
+use crate::dense_decode_reference::frozen::ReferenceBackend as Sm120;
 use kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery;
 use std::{collections::BTreeSet, io::Read, os::unix::fs::OpenOptionsExt};
 
@@ -68,7 +69,7 @@ fn parse(value: &Value) -> LabResult<Vec<Case>> {
             1 => true,
             _ => return Err("paired must be zero or one".into()),
         };
-        let base = sm120::mxfp8_fold::decode_catalog(&FLASH)?
+        let base = crate::dense_decode_reference::decode_catalog(&FLASH)?
             .into_iter()
             .find(|e| (e.query.n, e.query.k, e.query.groups, e.paired) == (n, k, groups, paired))
             .ok_or("shape has no existing fold entry")?
@@ -132,7 +133,7 @@ fn backend(case: &Case, rows: u32, schedule: &Schedule) -> LabResult<Sm120> {
     let backend = Sm120::new().with_packed_fold_weights();
     Ok(match schedule.name.as_str() {
         "split" => {
-            let mut entry = sm120::mxfp8_fold::decode_catalog(&FLASH)?
+            let mut entry = crate::dense_decode_reference::decode_catalog(&FLASH)?
                 .into_iter()
                 .find(|e| matches(q, e.query) && e.paired == case.paired)
                 .ok_or("missing existing split entry")?;
@@ -141,9 +142,9 @@ fn backend(case: &Case, rows: u32, schedule: &Schedule) -> LabResult<Sm120> {
         }
         "ticket" | "prefetch" => {
             let entries = if schedule.name == "prefetch" {
-                sm120::mxfp8_fold::prefetch_catalog(&FLASH)?
+                crate::dense_decode_reference::prefetch_catalog(&FLASH)?
             } else {
-                sm120::mxfp8_fold::ticket_catalog(&FLASH)?
+                crate::dense_decode_reference::ticket_catalog(&FLASH)?
             };
             let mut entry = entries
                 .into_iter()
@@ -153,7 +154,7 @@ fn backend(case: &Case, rows: u32, schedule: &Schedule) -> LabResult<Sm120> {
             backend.with_mxfp8_fold_ticket(entry)
         }
         "reuse" => {
-            let mut entry = sm120::projection_reuse::entries()?
+            let mut entry = crate::dense_decode_reference::reuse_entries()?
                 .into_iter()
                 .find(|e| {
                     matches(q, e.ticket.query)
@@ -202,11 +203,12 @@ fn prepare(
         (calls, workspace)
     };
     if calls.is_empty()
-        || calls
-            .iter()
-            .any(|c| fold_cubin_for_symbol(&c.symbol).is_none())
+        || calls.iter().any(|c| {
+            fold_cubin_for_symbol(&c.symbol).is_none()
+                && !crate::dense_decode_reference::owns(&c.symbol)
+        })
     {
-        return Err("schedule requires a kernel outside the existing bundle".into());
+        return Err("schedule requires a kernel outside the served and reference catalogs".into());
     }
     Ok(Prepared { calls, workspace })
 }

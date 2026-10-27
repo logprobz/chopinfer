@@ -9,6 +9,8 @@ use kernel_build::{CubinSpec, FAMILY_LOCK_SUFFIX, FAMILY_PROVENANCE_SUFFIX};
 use std::collections::BTreeSet;
 use std::path::Path;
 
+pub mod dense_decode_reference;
+
 include!(concat!(env!("OUT_DIR"), "/families.rs"));
 
 /// Whether two names are equal, in a constant (each family's `FAMILY`

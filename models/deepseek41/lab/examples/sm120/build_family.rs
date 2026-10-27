@@ -1,4 +1,6 @@
 //! Build one locked DeepSeek family and its qualification dependencies.
+#[path = "../../sm120/dense_decode_reference.rs"]
+mod dense_decode_reference;
 mod family;
 
 use family::{Export, Recipe, Result, Root};

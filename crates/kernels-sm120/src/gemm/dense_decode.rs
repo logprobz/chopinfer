@@ -17,6 +17,7 @@ pub struct Knobs {
     pub tile_n: u32,
     pub row_groups: u32,
     pub stages: u32,
+    /// Weights and scales must persist and be ready before any PDL predecessor.
     pub weight_prefetch: bool,
     pub finish: Finish,
 }
@@ -46,6 +47,45 @@ pub enum Reduction {
     AscendingF32,
 }
 
+impl Arithmetic {
+    fn identity(self) -> String {
+        format!(
+            "{}_{}_{}_{}",
+            match self.activation {
+                Activation::E4m3CeilUe8m0 => "e4m3",
+            },
+            match self.scale {
+                Scale::Ue8m0PerK32 => "ue8m0",
+            },
+            match self.chain {
+                Chain::FourK32 => "k32x4",
+            },
+            match self.reduction {
+                Reduction::AscendingF32 => "f32",
+            }
+        )
+    }
+
+    fn cxx(self) -> String {
+        [
+            match self.activation {
+                Activation::E4m3CeilUe8m0 => "E4m3CeilUe8m0",
+            },
+            match self.scale {
+                Scale::Ue8m0PerK32 => "Ue8m0PerK32",
+            },
+            match self.chain {
+                Chain::FourK32 => "FourK32",
+            },
+            match self.reduction {
+                Reduction::AscendingF32 => "AscendingF32",
+            },
+        ]
+        .map(|name| format!("chop::gemm::dense_decode::{name}"))
+        .join(",")
+    }
+}
+
 impl Knobs {
     pub const SPLIT: Self = Self {
         tile_n: 16,
@@ -54,6 +94,17 @@ impl Knobs {
         weight_prefetch: false,
         finish: Finish::Merge,
     };
+
+    /// Baseline for a shape without a tuning row.
+    pub fn ticket(n: u32) -> Self {
+        Self {
+            tile_n: if n <= 2048 { 32 } else { 64 },
+            row_groups: 1,
+            stages: 3,
+            weight_prefetch: false,
+            finish: Finish::Ticket,
+        }
+    }
 
     pub fn validate(self) -> Result<(), Refusal> {
         let valid = match self.finish {
@@ -95,7 +146,9 @@ impl Knobs {
         .into()
     }
 
-    pub fn from_row(row: &tuning::Row) -> Result<Self, String> {
+    /// Parse scheduling knobs and the separate runtime partition. Reuse rows
+    /// require 2, 4 or 8 folds; other schedules choose their partition at launch.
+    pub fn from_row(row: &tuning::Row) -> Result<(Self, Option<u32>), String> {
         if row.schedule != "dense_decode" {
             return Err(format!("{}: expected dense_decode schedule", row.key));
         }
@@ -120,11 +173,20 @@ impl Knobs {
                 _ => return Err(format!("{}: finish must be 0 or 1", row.key)),
             },
         };
-        if row.knobs.len() != parsed.row_knobs().len() {
+        let folds = if parsed.row_groups == 2 {
+            let folds = count("folds")?;
+            if ![2, 4, 8].contains(&folds) {
+                return Err(format!("{}: reuse folds must be 2, 4 or 8", row.key));
+            }
+            Some(folds)
+        } else {
+            None
+        };
+        if row.knobs.len() != parsed.row_knobs().len() + usize::from(folds.is_some()) {
             return Err(format!("{}: unknown dense decode knobs", row.key));
         }
         parsed.validate().map_err(|e| format!("{}: {e}", row.key))?;
-        Ok(parsed)
+        Ok((parsed, folds))
     }
 
     pub fn tag(self) -> String {
@@ -174,7 +236,16 @@ impl Entry {
     ) -> Result<Self, Refusal> {
         let entry = Self {
             query,
-            symbol: format!("{stem}_e4m3_ue8m0_k32x4_f32_{}_v1", knobs.tag()),
+            symbol: format!(
+                "{stem}_{}_{}_{}_v1",
+                knobs.arithmetic().identity(),
+                match query.output {
+                    DType::F32 => "f32",
+                    DType::Bf16 => "bf16",
+                    _ => return Err(Refusal("unsupported dense decode output")),
+                },
+                knobs.tag()
+            ),
             paired,
             knobs,
         };
@@ -201,6 +272,19 @@ impl Entry {
             return Err(Refusal("dense decode row reuse requires F32 output"));
         }
         self.workspace(self.query.m_capacity)?;
+        if self.knobs.row_groups == 2 {
+            // A catalog may carry a wider host bound than the reuse row range.
+            for rows in [6, self.query.m_capacity.min(32)]
+                .into_iter()
+                .filter(|&r| r <= self.query.m_capacity && supported_reuse_rows(r))
+            {
+                self.plans_checked(rows, 2)?;
+            }
+        } else {
+            for rows in [0, 1, self.query.m_capacity] {
+                self.plans_checked(rows, self.folds_per_cta(rows))?;
+            }
+        }
         Ok(())
     }
 
@@ -259,6 +343,10 @@ impl Entry {
 
     pub fn plans(&self, rows: u32, folds: u32) -> Result<Vec<LaunchPlan>, Refusal> {
         self.validate()?;
+        self.plans_checked(rows, folds)
+    }
+
+    fn plans_checked(&self, rows: u32, folds: u32) -> Result<Vec<LaunchPlan>, Refusal> {
         if rows > self.query.m_capacity
             || (self.knobs.finish == Finish::Merge && folds != 2)
             || (self.knobs.row_groups == 2
@@ -320,7 +408,7 @@ impl Entry {
         let q = self.query;
         let ns = "chop::gemm::dense_decode";
         let args = format!(
-            "{},{},{},{},{},{},{},{},{},{ns}::E4m3CeilUe8m0,{ns}::Ue8m0PerK32,{ns}::FourK32,{ns}::AscendingF32",
+            "{},{},{},{},{},{},{},{},{},{}",
             q.n,
             q.k,
             q.groups,
@@ -329,7 +417,8 @@ impl Entry {
             self.knobs.cxx(),
             q.output == DType::F32,
             self.paired,
-            packed
+            packed,
+            self.arithmetic().cxx()
         );
         let ptr = |name: &str, ty: &str| EntryParam::DevicePointer {
             name: name.into(),
@@ -467,7 +556,6 @@ pub fn cubin_spec(name: &str, entries: &[Entry], packed: bool) -> Result<CubinSp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gemm::{mxfp8_fold_decode, mxfp8_fold_reuse, mxfp8_fold_ticket};
     use kernel_core::precision::execution::BlockScaledExecution;
 
     fn query(n: u32, k: u32, groups: u32, output: DType) -> Mxfp8FoldGemmQuery {
@@ -503,7 +591,7 @@ mod tests {
     fn rows_require_exact_knobs_and_preserve_policy_identity() {
         let mut tags = std::collections::BTreeSet::new();
         for knobs in schedules() {
-            let row = tuning::Row {
+            let mut row = tuning::Row {
                 key: tuning::Key {
                     op: "dense.decode".into(),
                     weights: "mxfp8".into(),
@@ -514,7 +602,11 @@ mod tests {
                 schedule: "dense_decode".into(),
                 knobs: knobs.row_knobs(),
             };
-            assert_eq!(Knobs::from_row(&row).unwrap(), knobs);
+            let folds = (knobs.row_groups == 2).then_some(4);
+            if let Some(folds) = folds {
+                row.knobs.insert("folds".into(), tuning::Knob::Count(folds));
+            }
+            assert_eq!(Knobs::from_row(&row).unwrap(), (knobs, folds));
             assert_eq!(knobs.arithmetic(), Knobs::SPLIT.arithmetic());
             assert!(tags.insert(knobs.tag()));
             for name in row.knobs.keys() {
@@ -562,115 +654,49 @@ mod tests {
         }
     }
 
-    fn same_specs(old: &[EntrySpec], new: &[EntrySpec]) {
-        assert_eq!(old.len(), new.len());
-        for (old, new) in old.iter().zip(new) {
-            assert_ne!(old.symbol, new.symbol);
-            assert_eq!(old.params, new.params);
-            assert_eq!(old.max_threads, new.max_threads);
-            assert_eq!(old.min_blocks, new.min_blocks);
-            assert_eq!(old.allowed_local_bytes, new.allowed_local_bytes);
-            assert!(new.body.contains("Knobs{.tile_n="));
-            for policy in ["E4m3CeilUe8m0", "Ue8m0PerK32", "FourK32", "AscendingF32"] {
-                assert!(new.body.contains(policy));
-            }
-        }
-    }
-
     #[test]
-    fn template_preserves_reference_abis_workspaces_and_every_row_grid() {
-        for (n, k, groups) in [
-            (40, 576, 2),
-            (72, 1280, 1),
-            (2304, 576, 2),
-            (1152, 2048, 1),
-            (5120, 2048, 1),
-            (8192, 1280, 1),
-        ] {
-            for output in [DType::F32, DType::Bf16] {
-                for paired in [false, true] {
-                    let q = query(n, k, groups, output);
-                    let split = mxfp8_fold_decode::Entry::new(q, "old_split", paired).unwrap();
-                    let entry = Entry::new(q, "new_split", paired, Knobs::SPLIT).unwrap();
-                    same_specs(&split.specs(), &entry.specs().unwrap());
-                    let mut old = split.specs();
-                    old[1] = split.packed_spec().unwrap();
-                    same_specs(&old, &entry.packed_specs().unwrap());
-                    for rows in 0..=32 {
-                        assert_eq!(
-                            split.workspace(rows).unwrap(),
-                            entry.workspace(rows).unwrap()
-                        );
-                        assert_eq!(
-                            split.plans(rows).unwrap().as_slice(),
-                            entry.plans(rows, 2).unwrap()
-                        );
-                    }
-                    for prefetch in [false, true] {
-                        let mut old =
-                            mxfp8_fold_ticket::Entry::new(q, "old_ticket", paired).unwrap();
-                        if prefetch {
-                            old = old.with_weight_prefetch();
-                        }
-                        let knobs = Knobs {
-                            tile_n: old.tile_n(),
-                            row_groups: 1,
-                            stages: 3,
-                            weight_prefetch: prefetch,
-                            finish: Finish::Ticket,
-                        };
-                        let entry = Entry::new(q, "new_ticket", paired, knobs).unwrap();
-                        same_specs(&old.specs(), &entry.specs().unwrap());
-                        let mut packed = old.specs();
-                        packed[1] = old.packed_spec().unwrap();
-                        same_specs(&packed, &entry.packed_specs().unwrap());
-                        for rows in 0..=32 {
-                            assert_eq!(old.folds_per_cta(rows), entry.folds_per_cta(rows));
-                            assert_eq!(
-                                old.workspace(rows).unwrap(),
-                                entry.workspace(rows).unwrap()
-                            );
-                            assert_eq!(
-                                old.plans(rows).unwrap().as_slice(),
-                                entry.plans(rows, entry.folds_per_cta(rows)).unwrap()
-                            );
-                        }
-                        if output == DType::F32 && !prefetch {
-                            for tile_n in [32, 64] {
-                                let old = mxfp8_fold_reuse::Entry {
-                                    ticket: old.clone(),
-                                    tile_n,
-                                };
-                                let entry = Entry::new(
-                                    q,
-                                    "new_reuse",
-                                    paired,
-                                    Knobs {
-                                        tile_n,
-                                        row_groups: 2,
-                                        ..knobs
-                                    },
-                                )
-                                .unwrap();
-                                same_specs(&old.specs(), &entry.specs().unwrap());
-                                for rows in (1..=32).filter(|&r| supported_reuse_rows(r)) {
-                                    assert_eq!(
-                                        old.workspace(rows).unwrap(),
-                                        entry.workspace(rows).unwrap()
-                                    );
-                                    for folds in [2, 4, 8] {
-                                        assert_eq!(
-                                            old.plans(rows, folds).unwrap().as_slice(),
-                                            entry.plans(rows, folds).unwrap()
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    fn runtime_partition_and_output_type_are_not_implicit() {
+        let knobs = Knobs {
+            row_groups: 2,
+            ..Knobs::ticket(512)
+        };
+        let mut row = tuning::Row {
+            key: tuning::Key {
+                op: "reuse.fold.decode".into(),
+                weights: "mxfp8".into(),
+                shape: [("n".into(), 512)].into(),
+                bucket: 32,
+                rows: None,
+            },
+            schedule: "dense_decode".into(),
+            knobs: knobs.row_knobs(),
+        };
+        assert!(Knobs::from_row(&row).is_err());
+        for folds in [0, 1, 3, 16] {
+            row.knobs.insert("folds".into(), tuning::Knob::Count(folds));
+            assert!(Knobs::from_row(&row).is_err());
         }
+        for folds in [2, 4, 8] {
+            row.knobs.insert("folds".into(), tuning::Knob::Count(folds));
+            assert_eq!(Knobs::from_row(&row).unwrap(), (knobs, Some(folds)));
+        }
+        row.knobs
+            .insert("row_groups".into(), tuning::Knob::Count(1));
+        assert!(Knobs::from_row(&row).is_err());
+        let q = query(512, 576, 1, DType::F32);
+        let a = Entry::new(q, "same_shape", false, Knobs::SPLIT).unwrap();
+        let b = Entry::new(
+            Mxfp8FoldGemmQuery {
+                output: DType::Bf16,
+                ..q
+            },
+            "same_shape",
+            false,
+            Knobs::SPLIT,
+        )
+        .unwrap();
+        assert_ne!(a.symbol, b.symbol);
+        cubin_spec("both_outputs", &[a, b], true).unwrap();
     }
 
     #[test]

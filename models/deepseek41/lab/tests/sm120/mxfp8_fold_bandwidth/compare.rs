@@ -1,10 +1,11 @@
 use super::*;
+use crate::dense_decode_reference::frozen::mxfp8_fold_decode::Entry as OldEntry;
 use kernel_core::backend::{Backend, Counts, Launch, Need, View};
 use kernel_core::contract::{Argument, ArgumentList, LaunchPlan};
 use kernel_core::mxfp8_gemm::{Mxfp8FoldGemmBuffers, Mxfp8FoldStreamBuffers};
 use kernel_harness::launch::Bindings;
 use kernels_sm120::backend::Sm120;
-use kernels_sm120::gemm::{mxfp8_fold_decode::Entry as OldEntry, mxfp8_fold_direct::Entry};
+use kernels_sm120::gemm::mxfp8_fold_direct::Entry;
 use previous::{Weights, pattern, run, scales};
 use runtime_cuda::Function;
 

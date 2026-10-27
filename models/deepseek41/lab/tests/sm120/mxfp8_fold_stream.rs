@@ -4,7 +4,7 @@ mod packed_layout;
 mod sublayer;
 mod worker;
 use super::mxfp8_fold_decode::{self as previous, modules};
-use bundle_deepseek41::sm120::mxfp8_fold as registration;
+use crate::dense_decode_reference as registration;
 use bundle_deepseek41::sm120::mxfp8_fold_stream as catalog;
 use kernel_core::backend::{Backend, Need};
 use kernel_harness::LabResult;

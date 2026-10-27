@@ -1,7 +1,8 @@
 //! Direct ordered-fold qualification against the current serving route.
 mod compare;
 use super::mxfp8_fold_decode as previous;
-use bundle_deepseek41::sm120::{mxfp8_fold as registration, mxfp8_fold_stream as catalog};
+use crate::dense_decode_reference as registration;
+use bundle_deepseek41::sm120::mxfp8_fold_stream as catalog;
 use kernel_core::backend::{Backend, Need};
 use kernel_harness::{LabResult, Session};
 use kernels_sm120::backend::Sm120;

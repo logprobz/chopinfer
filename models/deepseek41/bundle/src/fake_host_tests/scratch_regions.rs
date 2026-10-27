@@ -49,8 +49,22 @@ const OUTPUTS: &[Listed] = &[
     // element once, zero for a refused row; split partials stay in the
     // workspace.
     ("chop_deepseek41_mxfp8_stream_*_f32_v1", 6),
-    ("chop_deepseek41_mxfp8_prefetch_*_f32_v3", 6),
-    ("chop_deepseek41_mxfp8_ticket_*_f32_v2", 6),
+    (
+        "chop_deepseek41_dense_decode_*_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1",
+        6,
+    ),
+    (
+        "chop_deepseek41_dense_decode_*_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w1f0_v1",
+        6,
+    ),
+    (
+        "chop_deepseek41_dense_decode_*_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1",
+        6,
+    ),
+    (
+        "chop_deepseek41_dense_decode_*_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1",
+        6,
+    ),
     ("chop_deepseek41_mxfp8_direct_*_single_n8k4_v1", 6),
     ("chop_deepseek41_mxfp8_direct_*_single_n32k1_v1", 6),
     ("chop_deepseek41_mxfp8_fold_m*_f32_v2", 4),
@@ -60,7 +74,10 @@ const OUTPUTS: &[Listed] = &[
         "chop_deepseek41_mxfp8_fold_m*_f32_v2_matrix_m#_n128_s#_v1",
         4,
     ),
-    ("chop_deepseek41_mxfp8_decode_*_f32_v1", 1),
+    (
+        "chop_deepseek41_dense_decode_n#_k#_g#_single_e4m3_ue8m0_k32x4_f32_f32_n16r1s2w0f1_v1",
+        1,
+    ),
     // The status folds (`sm120::fold_fused`): the cluster form's owning split
     // and the 48-column row-local form's thread store each output element
     // once, zero for a failed row. WO_a's also stores every block of each

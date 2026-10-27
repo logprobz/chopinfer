@@ -87,10 +87,19 @@ fn concurrent_router_and_shared_expert_workspace_ranges_are_disjoint() {
     let side: Vec<_> = lines
         .iter()
         .filter(|l| {
+            let symbol = l.split_whitespace().nth(2).unwrap_or_default();
             l.starts_with("launch ")
-                && (l.contains("_pair_v1_admit_v1")
-                    || l.contains("_pair_f32_v2_initialize_v2")
-                    || l.contains("_pair_f32_v3_initialize_v3"))
+                && symbol.starts_with("chop_deepseek41_dense_decode_")
+                && symbol.contains("_pair_e4m3_ue8m0_k32x4_f32_f32_")
+                && [
+                    "_n16r1s2w0f1_v1_admit_v1",
+                    "_n32r1s3w0f0_v1_admit_v1",
+                    "_n64r1s3w0f0_v1_admit_v1",
+                    "_n32r1s3w1f0_v1_admit_v1",
+                    "_n64r1s3w1f0_v1_admit_v1",
+                ]
+                .iter()
+                .any(|suffix| symbol.ends_with(suffix))
         })
         .map(|l| spans(l)[2])
         .collect();

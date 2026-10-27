@@ -3,7 +3,7 @@ use kernel_build::CubinSpec;
 use kernel_core::contract::DType;
 use kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery;
 use kernel_core::precision::execution::BlockScaledExecution;
-use kernels_sm120::gemm::mxfp8_fold_decode::{self, Entry};
+use crate::dense_decode_reference::mxfp8_fold_decode::{self, Entry};
 
 pub const FAMILY: &str = "mxfp8_fold_decode_packed";
 pub const CUBIN: &str = "chop_mxfp8_fold_decode_packed_lab";

@@ -845,21 +845,28 @@ mod tests {
         }
     }
 
-    fn expected_family(
-        ranks: u32,
-        query: Mxfp8FoldGemmQuery,
-        rows: u32,
-        paired: bool,
-    ) -> &'static str {
-        if ranks == 4 && !paired && crate::sm120::projection_reuse::choice(query, rows).is_some() {
-            return "_reuse32_";
-        }
+    fn expected_family(ranks: u32, query: Mxfp8FoldGemmQuery, rows: u32, paired: bool) -> String {
         use crate::sm120::mxfp8_fold::{DecodePath, decode_path};
-        match decode_path(&FLASH, query, rows, paired) {
-            DecodePath::Split => "mxfp8_decode_",
-            DecodePath::Ticket => "mxfp8_ticket_",
-            DecodePath::Prefetch => "mxfp8_prefetch_",
-        }
+        let tile_n = if query.n <= 2048 { 32 } else { 64 };
+        let tag = if ranks == 4
+            && !paired
+            && let Some((tile_n, _)) = crate::sm120::projection_reuse::choice(query, rows)
+        {
+            format!("n{tile_n}r2s3w0f0")
+        } else {
+            match decode_path(&FLASH, query, rows, paired) {
+                DecodePath::Split => "n16r1s2w0f1".into(),
+                DecodePath::Ticket => format!("n{tile_n}r1s3w0f0"),
+                DecodePath::Prefetch => format!("n{tile_n}r1s3w1f0"),
+            }
+        };
+        format!(
+            "chop_deepseek41_dense_decode_n{}_k{}_g{}_{}_e4m3_ue8m0_k32x4_f32_f32_{tag}_v1",
+            query.n,
+            query.k,
+            query.groups,
+            if paired { "pair" } else { "single" },
+        )
     }
 
     #[test]
@@ -999,7 +1006,7 @@ mod tests {
                     op.info()
                         .symbols
                         .iter()
-                        .all(|(s, _)| s.contains(expected_family(shape.ranks(), q, *rows, false)))
+                        .all(|(s, _)| s.contains(&expected_family(shape.ranks(), q, *rows, false)))
                 );
             }
             assert_eq!(ops.decode.len(), projections(&shape).len() * 64);
@@ -1087,25 +1094,21 @@ mod tests {
                             2
                         }
                     );
+                    let expected = if packed {
+                        if crate::sm120::mxfp8_fold_direct::selected(&FLASH, q, phase.rows(), false)
+                            .is_some()
+                        {
+                            "mxfp8_direct_".into()
+                        } else {
+                            "mxfp8_stream_".into()
+                        }
+                    } else {
+                        expected_family(shape.ranks(), q, phase.rows(), false)
+                    };
                     assert!(
                         calls
                             .iter()
-                            .all(|call| call.launch.symbol.contains(if packed {
-                                if crate::sm120::mxfp8_fold_direct::selected(
-                                    &FLASH,
-                                    q,
-                                    phase.rows(),
-                                    false,
-                                )
-                                .is_some()
-                                {
-                                    "mxfp8_direct_"
-                                } else {
-                                    "mxfp8_stream_"
-                                }
-                            } else {
-                                expected_family(shape.ranks(), q, phase.rows(), false)
-                            }))
+                            .all(|call| call.launch.symbol.contains(&expected))
                     );
                 } else if phase.prefill() && phase.rows() >= 128 {
                     let matrix = (shape.ranks() == 4)
@@ -1176,8 +1179,8 @@ mod tests {
                         .unwrap();
                     assert_eq!(calls.len(), 2);
                     assert!(calls.iter().all(|c| {
-                        c.launch.symbol.contains("_pair_f32_")
-                            && c.launch.symbol.contains(expected_family(
+                        c.launch.symbol.contains("_pair_e4m3_ue8m0_k32x4_f32_f32_")
+                            && c.launch.symbol.contains(&expected_family(
                                 shape.ranks(),
                                 q,
                                 phase.rows(),

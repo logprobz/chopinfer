@@ -10,11 +10,11 @@ pub use routing::qualified;
 
 pub const FAMILY: &str = "mxfp8_fold_stream";
 pub fn catalog(g: &Geometry) -> Result<Vec<Entry>, String> {
-    previous::ticket_catalog(g)?
-        .into_iter()
-        .map(|old| {
-            let q = old.query;
-            Entry::new(
+    let mut entries = std::collections::BTreeMap::new();
+    for &ranks in model_deepseek41_contract::admission::SUPPORTED_RANKS {
+        for old in previous::decode_entries(g, ranks)? {
+            let q = previous::routed_query(old.query, previous::SMALL_CAPACITY);
+            let entry = Entry::new(
                 q,
                 format!(
                     "chop_deepseek41_mxfp8_stream_n{}_k{}_g{}_{}_v1",
@@ -25,10 +25,13 @@ pub fn catalog(g: &Geometry) -> Result<Vec<Entry>, String> {
                 ),
                 old.paired,
             )
-            .map_err(|e| e.to_string())
-        })
-        .collect()
+            .map_err(|e| e.to_string())?;
+            entries.insert(entry.ticket.symbol.clone(), entry);
+        }
+    }
+    Ok(entries.into_values().collect())
 }
+
 pub fn deferred_entry(g: &Geometry) -> Result<Entry, String> {
     let entries = catalog(g)?;
     let mut entry = entries
@@ -70,7 +73,8 @@ pub fn register(
     if g.id != model_deepseek41_contract::geometry::FLASH.id {
         return Ok(backend);
     }
-    for old in previous::ticket_entries(g, ranks)? {
+    for mut old in previous::decode_entries(g, ranks)? {
+        old.query = previous::routed_query(old.query, previous::SMALL_CAPACITY);
         let entry = catalog(g)?
             .into_iter()
             .find(|e| e.ticket.query == old.query && e.ticket.paired == old.paired)
@@ -98,7 +102,7 @@ mod tests {
         other.id = "unmeasured";
         for &ranks in SUPPORTED_RANKS {
             let backend = register(kernels_sm120::backend::Sm120::new(), &FLASH, ranks).unwrap();
-            for entry in previous::ticket_entries(&FLASH, ranks).unwrap() {
+            for entry in previous::decode_entries(&FLASH, ranks).unwrap() {
                 for rows in 1..=64 {
                     let q = previous::routed_query(entry.query, rows);
                     let enabled = qualified(&FLASH, q, rows, entry.paired);

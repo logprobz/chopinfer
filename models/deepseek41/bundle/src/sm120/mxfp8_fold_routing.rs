@@ -10,19 +10,13 @@ pub enum DecodePath {
 }
 
 pub fn decode_path(g: &Geometry, q: Mxfp8FoldGemmQuery, rows: u32, paired: bool) -> DecodePath {
-    match super::tuning_row(
-        g,
-        model_deepseek41_contract::tuning::Family::DenseFold,
-        "dense_fold.fold.decode",
-        q,
-        paired,
-        rows,
-    )
-    .map(|r| r.schedule.as_str())
-    {
-        Some("split") => DecodePath::Split,
-        Some("prefetch") => DecodePath::Prefetch,
-        None => DecodePath::Ticket,
-        Some(schedule) => panic!("unknown fold schedule {schedule}"),
+    use kernels_sm120::gemm::dense_decode::Finish;
+    let knobs = super::dense_knobs(g, q, rows, paired).expect("valid dense decode row");
+    if knobs.finish == Finish::Merge {
+        DecodePath::Split
+    } else if knobs.weight_prefetch {
+        DecodePath::Prefetch
+    } else {
+        DecodePath::Ticket
     }
 }

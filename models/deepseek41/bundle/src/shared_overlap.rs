@@ -571,7 +571,7 @@ mod tests {
             };
             PreparedLaunch {
                 // Even a const input may not alias in the strict prefill audit.
-                symbol: "chop_deepseek41_mxfp8_prefetch_n576_k5120_g1_pair_f32_v3".into(),
+                symbol: "chop_deepseek41_dense_decode_n576_k5120_g1_pair_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1".into(),
                 rows: 1,
                 plan: LaunchPlan {
                     grid: [1; 3],
@@ -665,7 +665,7 @@ mod tests {
         let input = span(9, 512, 1024);
         let bind_at = |launch: &mut PreparedLaunch, index, view| {
             launch.symbol =
-                "chop_deepseek41_mxfp8_prefetch_n576_k5120_g1_pair_f32_v3_packed_v1".into();
+                "chop_deepseek41_dense_decode_n576_k5120_g1_pair_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_packed_v1".into();
             let id = launch.bindings.bind(view);
             launch.arguments = ArgumentList(vec![Argument::U32(0); 12]);
             launch.arguments.0[index] = Argument::DeviceBuffer(id);

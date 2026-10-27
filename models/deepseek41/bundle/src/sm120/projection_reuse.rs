@@ -1,24 +1,11 @@
 //! Flash TP4 row buckets qualified with captured AR and verify operands.
 use kernel_build::CubinSpec;
 use kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery;
-use kernels_sm120::{
-    backend::Sm120,
-    f32_projection,
-    gemm::mxfp8_fold_reuse::{self, Entry},
-};
+use kernels_sm120::{backend::Sm120, f32_projection};
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
 
-pub const FOLD_FAMILY: &str = "mxfp8_fold_reuse";
 pub const HEAD_FAMILY: &str = "f32_decode_reuse";
-pub const FOLD_CUBIN: &str = "mxfp8_fold_reuse_deepseek41_sm120";
 pub const HEAD_CUBIN: &str = "f32_decode_reuse_deepseek41_sm120";
-const SHAPES: [(u32, u32, u32); 4] = [
-    (8192, 1280, 1),
-    (5120, 2048, 1),
-    (1024, 4096, 2),
-    (1280, 5120, 1),
-];
-
 // SM120, 250 W, 2026-10-20. Every selected tuple is bitwise in eager and
 // graph execution, and candidate/current is below 0.97 in all twelve
 // paired samples: three real input sets, two devices, cold and warm L2.
@@ -32,71 +19,34 @@ pub fn choice(q: Mxfp8FoldGemmQuery, rows: u32) -> Option<(u32, u32)> {
         false,
         rows,
     )?;
-    Some((
-        super::mxfp8_fold::tuning_count(row, "tile_n"),
-        super::mxfp8_fold::tuning_count(row, "folds"),
-    ))
+    let (knobs, folds) =
+        kernels_sm120::gemm::dense_decode::Knobs::from_row(row).expect("valid reuse row");
+    Some((knobs.tile_n, folds.expect("reuse row has runtime folds")))
 }
 
 pub fn enabled(g: &Geometry, ranks: u32) -> bool {
     g.id == FLASH.id && ranks == 4
 }
 
-pub fn entries() -> Result<Vec<Entry>, String> {
-    let mut entries = Vec::new();
-    for stream in super::mxfp8_fold_stream::catalog(&FLASH)? {
-        let q = stream.ticket.query;
-        if !stream.ticket.paired && SHAPES.contains(&(q.n, q.k, q.groups)) {
-            for tile_n in [32, 64] {
-                entries.push(Entry {
-                    ticket: stream.ticket.clone(),
-                    tile_n,
-                });
-            }
-        }
-    }
-    if entries.len() != 8 {
-        return Err("missing qualified projection reuse shapes".into());
-    }
-    Ok(entries)
-}
-
 pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
     if !geometries.iter().any(|g| g.id == FLASH.id) {
         return Ok(Vec::new());
     }
-    Ok(vec![
-        (
-            FOLD_FAMILY,
-            super::mxfp8_fold::packed(
-                mxfp8_fold_reuse::cubin_spec(FOLD_CUBIN, &entries()?),
-                entries()?.iter().map(|e| e.packed_spec()),
-            )?,
-        ),
-        (
-            HEAD_FAMILY,
-            f32_projection::reuse::cubin_spec(
-                HEAD_CUBIN,
-                &[super::f32_head::decode_entry(&FLASH, 4)?],
-            )
+    Ok(vec![(
+        HEAD_FAMILY,
+        f32_projection::reuse::cubin_spec(HEAD_CUBIN, &[super::f32_head::decode_entry(&FLASH, 4)?])
             .map_err(|e| e.to_string())?,
-        ),
-    ])
+    )])
+}
+
+pub fn dense_entries() -> Result<Vec<(kernels_sm120::gemm::dense_decode::Entry, u32)>, String> {
+    super::mxfp8_fold::dense_reuse_entries(&FLASH, 4)
 }
 
 pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
-    if !selected(g, ranks) {
-        return Ok(backend);
-    }
-    for entry in entries()? {
-        for rows in 9..=32 {
-            if let Some((tile, folds)) = choice(entry.ticket.query, rows)
-                && tile == entry.tile_n
-            {
-                let mut entry = entry.clone();
-                entry.ticket.query = super::mxfp8_fold::routed_query(entry.ticket.query, rows);
-                backend = backend.with_mxfp8_fold_reuse(entry, folds);
-            }
+    if selected(g, ranks) {
+        for (entry, folds) in dense_entries()? {
+            backend = backend.with_dense_decode(entry, Some(folds));
         }
     }
     Ok(backend)

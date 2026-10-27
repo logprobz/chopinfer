@@ -21,6 +21,7 @@ pub mod compact;
 
 #[path = "mxfp8_fold_routing.rs"]
 mod routing;
+#[allow(unused_imports, reason = "the lab compares selected schedule classes")]
 pub use routing::{DecodePath, decode_path};
 
 #[derive(Clone, Debug)]
@@ -164,38 +165,145 @@ pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, Strin
             }
         }
     }
-    // Bind one existing implementation per exact row bucket, independently
-    // for single and paired projections. Capacity is a host bound; it is
-    // absent from these kernels' template parameters and launch arguments.
-    for ((split, ticket), prefetch) in decode_entries(g, ranks)?
-        .into_iter()
-        .zip(ticket_entries(g, ranks)?)
-        .zip(prefetch_entries(g, ranks)?)
-    {
-        for rows in 1..=SMALL_CAPACITY {
-            match decode_path(g, ticket.query, rows, ticket.paired) {
-                DecodePath::Split => {
-                    let mut entry = split.clone();
-                    entry.query = routed_query(entry.query, rows);
-                    backend = backend.with_mxfp8_fold_decode(entry);
-                }
-                path => {
-                    let mut entry = if path == DecodePath::Prefetch {
-                        prefetch.clone()
-                    } else {
-                        ticket.clone()
-                    };
-                    entry.query = routed_query(entry.query, rows);
-                    backend = backend.with_mxfp8_fold_ticket(entry);
-                }
-            }
-        }
+    for entry in dense_entries(g, ranks)? {
+        backend = backend.with_dense_decode(entry, None);
     }
     Ok(backend)
 }
 
-pub const TICKET_FAMILY: &str = "mxfp8_fold_ticket";
-pub const PREFETCH_FAMILY: &str = "mxfp8_fold_prefetch";
+pub const DENSE_FAMILY: &str = "dense_decode";
+
+pub fn dense_knobs(
+    g: &Geometry,
+    q: Mxfp8FoldGemmQuery,
+    rows: u32,
+    paired: bool,
+) -> Result<kernels_sm120::gemm::dense_decode::Knobs, String> {
+    use kernels_sm120::gemm::dense_decode::Knobs;
+    match tuning_row(
+        g,
+        model_deepseek41_contract::tuning::Family::DenseFold,
+        "dense_fold.fold.decode",
+        q,
+        paired,
+        rows,
+    ) {
+        Some(row) => {
+            let (knobs, folds) = Knobs::from_row(row)?;
+            if folds.is_some() {
+                return Err(format!("{}: runtime folds belong to reuse", row.key));
+            }
+            Ok(knobs)
+        }
+        None => Ok(Knobs::ticket(q.n)),
+    }
+}
+
+pub fn dense_entry(
+    q: Mxfp8FoldGemmQuery,
+    paired: bool,
+    knobs: kernels_sm120::gemm::dense_decode::Knobs,
+) -> Result<kernels_sm120::gemm::dense_decode::Entry, String> {
+    kernels_sm120::gemm::dense_decode::Entry::new(
+        q,
+        &format!(
+            "chop_deepseek41_dense_decode_n{}_k{}_g{}_{}",
+            q.n,
+            q.k,
+            q.groups,
+            if paired { "pair" } else { "single" }
+        ),
+        paired,
+        knobs,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// One exact-row registration per shape and bank choice. Missing tuning rows
+/// retain the ticket baseline; present rows supply every compile-time knob.
+pub fn dense_entries(
+    g: &Geometry,
+    ranks: u32,
+) -> Result<Vec<kernels_sm120::gemm::dense_decode::Entry>, String> {
+    let mut result = Vec::new();
+    for base in decode_entries(g, ranks)? {
+        for rows in 1..=SMALL_CAPACITY {
+            result.push(dense_entry(
+                routed_query(base.query, rows),
+                base.paired,
+                dense_knobs(g, base.query, rows, base.paired)?,
+            )?);
+        }
+    }
+    Ok(result)
+}
+
+pub fn dense_reuse_entries(
+    g: &Geometry,
+    ranks: u32,
+) -> Result<Vec<(kernels_sm120::gemm::dense_decode::Entry, u32)>, String> {
+    if g.id != model_deepseek41_contract::geometry::FLASH.id || ranks != 4 {
+        return Ok(Vec::new());
+    }
+    let mut result = Vec::new();
+    for base in decode_entries(g, ranks)?.into_iter().filter(|e| !e.paired) {
+        for rows in 9..=32 {
+            if let Some(row) = tuning_row(
+                g,
+                model_deepseek41_contract::tuning::Family::Reuse,
+                "reuse.fold.decode",
+                base.query,
+                false,
+                rows,
+            ) {
+                let (knobs, folds) = kernels_sm120::gemm::dense_decode::Knobs::from_row(row)?;
+                let folds = folds
+                    .ok_or_else(|| format!("{}: reuse requires a runtime partition", row.key))?;
+                let entry = dense_entry(routed_query(base.query, rows), false, knobs)?;
+                entry.plans(rows, folds).map_err(|e| e.to_string())?;
+                result.push((entry, folds));
+            }
+        }
+    }
+    Ok(result)
+}
+
+pub fn dense_catalog(
+    g: &Geometry,
+) -> Result<Vec<kernels_sm120::gemm::dense_decode::Entry>, String> {
+    let mut entries = BTreeMap::new();
+    for &ranks in admission::SUPPORTED_RANKS {
+        for entry in dense_entries(g, ranks)? {
+            entries.insert(entry.symbol.clone(), entry);
+        }
+        for (entry, _) in dense_reuse_entries(g, ranks)? {
+            entries.insert(entry.symbol.clone(), entry);
+        }
+    }
+    Ok(entries.into_values().collect())
+}
+
+pub fn dense_cubin_name(g: &Geometry) -> String {
+    format!("dense_decode_{}_sm120_v1", g.kernel_tag)
+}
+
+pub fn dense_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
+    geometries
+        .iter()
+        .map(|g| {
+            Ok((
+                DENSE_FAMILY,
+                kernels_sm120::gemm::dense_decode::cubin_spec(
+                    &dense_cubin_name(g),
+                    &dense_catalog(g)?,
+                    true,
+                )
+                .map_err(|e| e.to_string())?,
+            ))
+        })
+        .collect()
+}
+
 pub const SMALL_CAPACITY: u32 = 64;
 
 /// Exact graph capacity selects the qualified single or paired registration.
@@ -222,70 +330,6 @@ pub fn small_query(g: &Geometry, query: Mxfp8FoldGemmQuery, rows: u32) -> Mxfp8F
         m_capacity: if split { 32 } else { SMALL_CAPACITY },
         ..query
     }
-}
-
-pub fn ticket_entries(
-    g: &Geometry,
-    ranks: u32,
-) -> Result<Vec<kernels_sm120::gemm::mxfp8_fold_ticket::Entry>, String> {
-    decode_entries(g, ranks)?
-        .into_iter()
-        .map(|old| {
-            let query = Mxfp8FoldGemmQuery {
-                m_capacity: SMALL_CAPACITY,
-                ..old.query
-            };
-            kernels_sm120::gemm::mxfp8_fold_ticket::Entry::new(
-                query,
-                format!(
-                    "chop_deepseek41_mxfp8_ticket_n{}_k{}_g{}_{}_v2",
-                    query.n,
-                    query.k,
-                    query.groups,
-                    if old.paired { "pair_f32" } else { "f32" }
-                ),
-                old.paired,
-            )
-            .map_err(|e| e.to_string())
-        })
-        .collect()
-}
-
-pub fn prefetch_entries(
-    g: &Geometry,
-    ranks: u32,
-) -> Result<Vec<kernels_sm120::gemm::mxfp8_fold_ticket::Entry>, String> {
-    ticket_entries(g, ranks)?
-        .into_iter()
-        .map(|old| {
-            let q = old.query;
-            kernels_sm120::gemm::mxfp8_fold_ticket::Entry::new(
-                q,
-                format!(
-                    "chop_deepseek41_mxfp8_prefetch_n{}_k{}_g{}_{}_v3",
-                    q.n,
-                    q.k,
-                    q.groups,
-                    if old.paired { "pair_f32" } else { "f32" }
-                ),
-                old.paired,
-            )
-            .map(|entry| entry.with_weight_prefetch())
-            .map_err(|e| e.to_string())
-        })
-        .collect()
-}
-
-pub fn prefetch_catalog(
-    g: &Geometry,
-) -> Result<Vec<kernels_sm120::gemm::mxfp8_fold_ticket::Entry>, String> {
-    let mut all = BTreeMap::new();
-    for &ranks in admission::SUPPORTED_RANKS {
-        for entry in prefetch_entries(g, ranks)? {
-            all.insert(entry.symbol.clone(), entry);
-        }
-    }
-    Ok(all.into_values().collect())
 }
 
 /// `spec` with its weight readers replaced by their packed `twins`: the
@@ -316,80 +360,24 @@ pub fn packed_all(
     .map_err(|e| e.to_string())
 }
 
-pub fn prefetch_cubin_name(g: &Geometry) -> String {
-    format!("mxfp8_fold_prefetch_{}_sm120_v3", g.kernel_tag)
-}
-
-pub fn prefetch_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
-    geometries
-        .iter()
-        .map(|g| {
-            Ok((
-                PREFETCH_FAMILY,
-                packed(
-                    kernels_sm120::gemm::mxfp8_fold_ticket::cubin_spec(
-                        &prefetch_cubin_name(g),
-                        &prefetch_catalog(g)?,
-                    ),
-                    prefetch_catalog(g)?.iter().map(|e| e.packed_spec()),
-                )?,
-            ))
-        })
-        .collect()
-}
-pub fn ticket_catalog(
-    g: &Geometry,
-) -> Result<Vec<kernels_sm120::gemm::mxfp8_fold_ticket::Entry>, String> {
-    let mut all = BTreeMap::new();
-    for &ranks in admission::SUPPORTED_RANKS {
-        for entry in ticket_entries(g, ranks)? {
-            all.insert(entry.symbol.clone(), entry);
-        }
-    }
-    Ok(all.into_values().collect())
-}
-pub fn ticket_cubin_name(g: &Geometry) -> String {
-    format!("mxfp8_fold_ticket_{}_sm120_v2", g.kernel_tag)
-}
-pub fn ticket_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
-    geometries
-        .iter()
-        .map(|g| {
-            Ok((
-                TICKET_FAMILY,
-                packed(
-                    kernels_sm120::gemm::mxfp8_fold_ticket::cubin_spec(
-                        &ticket_cubin_name(g),
-                        &ticket_catalog(g)?,
-                    ),
-                    ticket_catalog(g)?.iter().map(|e| e.packed_spec()),
-                )?,
-            ))
-        })
-        .collect()
-}
-
 pub use model_deepseek41_contract::serving::DECODE_BUCKETS;
-pub const DECODE_FAMILY: &str = "mxfp8_fold_decode";
 
 #[derive(Clone, Debug)]
 pub struct DecodeRegistered {
     pub projection: String,
     pub operand: u32,
     pub usage: OperationUse,
-    pub entry: kernels_sm120::gemm::mxfp8_fold_decode::Entry,
+    pub entry: kernels_sm120::gemm::dense_decode::Entry,
 }
 
-/// Bind every exact decode bucket to its declared projection. The same
-/// compiled entry supports all six buckets, with a separately prepared
-/// grid and workspace at each capacity. Prefill and verify keep v2.
+/// Enumerate every decode bucket and declared projection. Registration
+/// applies the selected row's schedule to this geometry and bank choice.
 pub fn decode_registrations(
     g: &Geometry,
     ranks: u32,
     rank: u32,
 ) -> Result<Vec<DecodeRegistered>, String> {
     use kernel_core::precision::ExecutionPhase;
-    use kernels_sm120::gemm::mxfp8_fold_decode::Entry as DecodeEntry;
     let mut result = Vec::new();
     for r in registrations(g, ranks, rank)?
         .into_iter()
@@ -399,12 +387,11 @@ pub fn decode_registrations(
             m_capacity: 32,
             ..r.entry.query
         };
-        let q = query;
-        let symbol = format!(
-            "chop_deepseek41_mxfp8_decode_n{}_k{}_g{}_f32_v1",
-            q.n, q.k, q.groups
-        );
-        let entry = DecodeEntry::new(query, symbol, false).map_err(|e| e.to_string())?;
+        let entry = dense_entry(
+            query,
+            false,
+            kernels_sm120::gemm::dense_decode::Knobs::ticket(query.n),
+        )?;
         for capacity in DECODE_BUCKETS {
             result.push(DecodeRegistered {
                 projection: r.projection.clone(),
@@ -416,8 +403,7 @@ pub fn decode_registrations(
                 entry: entry.clone(),
             });
             if r.projection == "layer.shared.gate-up" && r.operand == 0 {
-                let paired = DecodeEntry::new(query, format!("{}_pair_v1", entry.symbol), true)
-                    .map_err(|e| e.to_string())?;
+                let paired = dense_entry(query, true, entry.knobs)?;
                 result.push(DecodeRegistered {
                     projection: r.projection.clone(),
                     operand: r.operand,
@@ -436,7 +422,7 @@ pub fn decode_registrations(
 pub fn decode_entries(
     g: &Geometry,
     ranks: u32,
-) -> Result<Vec<kernels_sm120::gemm::mxfp8_fold_decode::Entry>, String> {
+) -> Result<Vec<kernels_sm120::gemm::dense_decode::Entry>, String> {
     let mut entries = BTreeMap::new();
     for rank in 0..ranks {
         for r in decode_registrations(g, ranks, rank)? {
@@ -448,38 +434,6 @@ pub fn decode_entries(
         }
     }
     Ok(entries.into_values().collect())
-}
-
-pub fn decode_catalog(
-    g: &Geometry,
-) -> Result<Vec<kernels_sm120::gemm::mxfp8_fold_decode::Entry>, String> {
-    let mut all = BTreeMap::new();
-    for &ranks in admission::SUPPORTED_RANKS {
-        for entry in decode_entries(g, ranks)? {
-            all.insert(entry.symbol.clone(), entry);
-        }
-    }
-    Ok(all.into_values().collect())
-}
-
-pub fn decode_cubin_name(g: &Geometry) -> String {
-    format!("mxfp8_fold_decode_{}_sm120_v1", g.kernel_tag)
-}
-
-pub fn decode_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {
-    geometries
-        .iter()
-        .map(|g| {
-            let spec = packed(
-                kernels_sm120::gemm::mxfp8_fold_decode::cubin_spec(
-                    &decode_cubin_name(g),
-                    &decode_catalog(g)?,
-                ),
-                decode_catalog(g)?.iter().map(|e| e.packed_spec()),
-            )?;
-            Ok((DECODE_FAMILY, spec))
-        })
-        .collect()
 }
 
 /// The lock family of every geometry's fold cubin.

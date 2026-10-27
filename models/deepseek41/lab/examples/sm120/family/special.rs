@@ -11,15 +11,33 @@ fn probes() -> Step {
     .pinned()
 }
 
-fn fold_baselines(decode: bool, ticket: bool) -> Result<Step> {
-    let mut specs = bundle::mxfp8_fold::cubins(GEOMETRIES)?;
+fn fold_baselines(decode: bool, ticket: bool) -> Result<Vec<Step>> {
+    let mut steps = vec![
+        ordered(Root::Bundle, bundle::mxfp8_fold::cubins(GEOMETRIES)?)
+            .at("baseline")
+            .pinned(),
+    ];
     if decode {
-        specs.extend(bundle::mxfp8_fold::decode_cubins(GEOMETRIES)?);
+        steps.push(
+            ordered(
+                Root::Lab,
+                crate::dense_decode_reference::decode_cubins(GEOMETRIES)?,
+            )
+            .at("decode")
+            .pinned(),
+        );
     }
     if ticket {
-        specs.extend(bundle::mxfp8_fold::ticket_cubins(GEOMETRIES)?);
+        steps.push(
+            ordered(
+                Root::Lab,
+                crate::dense_decode_reference::ticket_cubins(GEOMETRIES)?,
+            )
+            .at("ticket")
+            .pinned(),
+        );
     }
-    Ok(ordered(Root::Bundle, specs).at("baseline").pinned())
+    Ok(steps)
 }
 
 fn attention() -> Result<Vec<Step>> {
@@ -135,40 +153,76 @@ pub fn recipes() -> Vec<Recipe> {
         own!(engram_hash_entries, engram_hash_cubin),
         own!(confidence_parallel, confidence_parallel),
         recipe(
-            Root::Bundle,
-            bundle::mxfp8_fold::DECODE_FAMILY,
+            Root::Lab,
+            crate::dense_decode_reference::DECODE_FAMILY,
             || {
-                Ok(vec![
-                    ordered(Root::Bundle, bundle::mxfp8_fold::decode_cubins(GEOMETRIES)?)
-                        .at("decode"),
-                    fold_baselines(false, false)?,
-                ])
+                let mut steps = vec![
+                    ordered(
+                        Root::Lab,
+                        crate::dense_decode_reference::decode_cubins(GEOMETRIES)?,
+                    )
+                    .at("decode")
+                    .pinned(),
+                ];
+                steps.extend(fold_baselines(false, false)?);
+                Ok(steps)
             },
             Export::None,
         ),
         recipe(
-            Root::Bundle,
-            bundle::mxfp8_fold::TICKET_FAMILY,
+            Root::Lab,
+            crate::dense_decode_reference::TICKET_FAMILY,
             || {
-                Ok(vec![
-                    ordered(Root::Bundle, bundle::mxfp8_fold::ticket_cubins(GEOMETRIES)?)
-                        .at("ticket"),
-                    fold_baselines(true, false)?,
-                ])
+                let mut steps = vec![
+                    ordered(
+                        Root::Lab,
+                        crate::dense_decode_reference::ticket_cubins(GEOMETRIES)?,
+                    )
+                    .at("ticket")
+                    .pinned(),
+                ];
+                steps.extend(fold_baselines(true, false)?);
+                Ok(steps)
             },
             Export::None,
         ),
         recipe(
-            Root::Bundle,
-            bundle::mxfp8_fold::PREFETCH_FAMILY,
+            Root::Lab,
+            crate::dense_decode_reference::PREFETCH_FAMILY,
+            || {
+                let mut steps = vec![
+                    ordered(
+                        Root::Lab,
+                        crate::dense_decode_reference::prefetch_cubins(GEOMETRIES)?,
+                    )
+                    .at("prefetch")
+                    .pinned(),
+                ];
+                steps.extend(fold_baselines(true, true)?);
+                Ok(steps)
+            },
+            Export::None,
+        ),
+        recipe(
+            Root::Lab,
+            crate::dense_decode_reference::REUSE_FAMILY,
             || {
                 Ok(vec![
                     ordered(
-                        Root::Bundle,
-                        bundle::mxfp8_fold::prefetch_cubins(GEOMETRIES)?,
+                        Root::Lab,
+                        crate::dense_decode_reference::reuse_cubins(GEOMETRIES)?,
                     )
-                    .at("prefetch"),
-                    fold_baselines(true, true)?,
+                    .pinned(),
+                ])
+            },
+            Export::None,
+        ),
+        recipe(
+            Root::Bundle,
+            bundle::mxfp8_fold::DENSE_FAMILY,
+            || {
+                Ok(vec![
+                    ordered(Root::Bundle, bundle::mxfp8_fold::dense_cubins(GEOMETRIES)?).pinned(),
                 ])
             },
             Export::None,

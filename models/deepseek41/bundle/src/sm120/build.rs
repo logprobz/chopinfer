@@ -537,7 +537,6 @@ pub fn selection(
         owners.push((f32_dense::cubin_name(geometry), geometry.id));
         owners.push((f32_decode::cubin_name(geometry), geometry.id));
         if geometry.id == model_deepseek41_contract::geometry::FLASH.id {
-            owners.push((projection_reuse::FOLD_CUBIN.into(), geometry.id));
             owners.push((projection_reuse::HEAD_CUBIN.into(), geometry.id));
             owners.push((fold_fused::CUBIN.into(), geometry.id));
             owners.push((fold_verify::CUBIN.into(), geometry.id));
@@ -561,12 +560,10 @@ pub fn selection(
             owners.push((router_norm_entries::CUBIN.into(), geometry.id));
         }
         owners.push((shared::cubin_name(geometry), geometry.id));
+        owners.push((mxfp8_fold::dense_cubin_name(geometry), geometry.id));
         owners.push((mxfp8_fold::cubin_name(geometry), geometry.id));
-        owners.push((mxfp8_fold::decode_cubin_name(geometry), geometry.id));
-        owners.push((mxfp8_fold::ticket_cubin_name(geometry), geometry.id));
         owners.push((mxfp8_fold::prefill_cubin_name(geometry), geometry.id));
         owners.push((mxfp8_fold::prefill_split_cubin_name(geometry), geometry.id));
-        owners.push((mxfp8_fold::prefetch_cubin_name(geometry), geometry.id));
         if geometry.id == model_deepseek41_contract::geometry::FLASH.id {
             owners.push((mxfp8_fold_stream::cubin_name(geometry), geometry.id));
             owners.push((mxfp8_fold_direct_entries::CUBIN.into(), geometry.id));
@@ -755,14 +752,11 @@ pub fn selection(
     specs.extend(latent_window_stage::cubins(geometries).expect("window stage cubins"));
     specs.extend(latent_window_bf16::cubins(geometries).expect("BF16 window cubins"));
     specs.extend(latent_window_stage::key_cubins(geometries).expect("staged window key cubins"));
+    specs.extend(mxfp8_fold::dense_cubins(geometries).expect("dense decode template cubins"));
     specs.extend(mxfp8_fold::cubins(geometries).expect("deepseek41 MXFP8 fold cubins"));
-    specs.extend(mxfp8_fold::decode_cubins(geometries).expect("deepseek41 MXFP8 decode cubins"));
-    specs.extend(mxfp8_fold::ticket_cubins(geometries).expect("deepseek41 MXFP8 ticket cubins"));
     specs.extend(mxfp8_fold::prefill_cubins(geometries).expect("MXFP8 prefill cubins"));
     specs.extend(mxfp8_fold::prefill_split_cubins(geometries).expect("MXFP8 split prefill cubins"));
     specs.extend(mxfp8_fold::compact::cubins(geometries).expect("compact MXFP8 prefill cubins"));
-    specs
-        .extend(mxfp8_fold::prefetch_cubins(geometries).expect("deepseek41 MXFP8 prefetch cubins"));
     specs.extend(mxfp8_fold_stream::cubins(geometries).expect("MXFP8 packed fold cubins"));
     if geometries
         .iter()

@@ -1021,7 +1021,6 @@ impl crate::Kernels {
     /// Streamed MoE modules load only for the qualified topology.
     pub fn loads(cubin: &str, shape: &crate::shape::Shape) -> bool {
         (![
-            projection_reuse::FOLD_CUBIN,
             projection_reuse::HEAD_CUBIN,
             head_last::CUBIN,
             prefill_matrix::CUBIN,

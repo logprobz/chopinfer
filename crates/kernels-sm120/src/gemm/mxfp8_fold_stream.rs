@@ -1,12 +1,12 @@
 //! Packed MMA fragments and per-op persistent counters for one-launch folds.
-use super::mxfp8_fold_ticket;
+use super::dense_decode;
 use kernel_build::{CubinSpec, EntryParam, EntrySpec};
 use kernel_core::contract::{LaunchPlan, Refusal};
 use kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery;
 
 #[derive(Clone, Debug)]
 pub struct Entry {
-    pub ticket: mxfp8_fold_ticket::Entry,
+    pub ticket: dense_decode::Entry,
     /// Qualification probe: force output tiles to finish before admission.
     pub defer_admission: bool,
 }
@@ -17,7 +17,12 @@ impl Entry {
         paired: bool,
     ) -> Result<Self, Refusal> {
         let result = Self {
-            ticket: mxfp8_fold_ticket::Entry::new(query, symbol, paired)?,
+            ticket: dense_decode::Entry {
+                query,
+                symbol: symbol.into(),
+                paired,
+                knobs: dense_decode::Knobs::ticket(query.n),
+            },
             defer_admission: false,
         };
         result.validate()?;
@@ -27,7 +32,7 @@ impl Entry {
         self.ticket.validate()?;
         if self.ticket.query.n % 8 != 0
             || self.ticket.query.k % 64 != 0
-            || self.ticket.prefetch_weights
+            || self.ticket.knobs.weight_prefetch
         {
             return Err(Refusal(
                 "packed folds require eight-column tiles and complete 64-K groups",
@@ -118,12 +123,12 @@ impl Entry {
                     q.groups,
                     q.activation_row_stride,
                     q.activation_group_stride,
-                    self.ticket.tile_n(),
+                    self.ticket.knobs.tile_n,
                     q.output == kernel_core::contract::DType::F32,
                     self.ticket.paired,
                     self.defer_admission
                 ),
-                self.ticket.tile_n() * 4,
+                self.ticket.knobs.tile_n * 4,
                 1,
             ),
         ]

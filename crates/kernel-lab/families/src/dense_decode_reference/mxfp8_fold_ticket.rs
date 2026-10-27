@@ -142,7 +142,7 @@ impl Entry {
             ),
         ];
         for plan in &plans {
-            crate::backend::check_plan(plan)?;
+            kernels_sm120::backend::check_plan(plan)?;
         }
         Ok(plans)
     }
@@ -263,12 +263,12 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
     }
     Ok(CubinSpec {
         name: name.into(),
-        sources_root: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
-        include_dirs: vec![],
+        sources_root: super::sources_root(),
+        include_dirs: super::include_dirs(),
         headers: vec![if entries.iter().any(|entry| entry.prefetch_weights) {
-            "#include \"gemm/mxfp8_fold_prefetch.cuh\"".into()
+            "#include \"kernel-lab/cuda/baselines/dense_decode/mxfp8_fold_prefetch.cuh\"".into()
         } else {
-            "#include \"gemm/mxfp8_fold_ticket.cuh\"".into()
+            "#include \"kernel-lab/cuda/baselines/dense_decode/mxfp8_fold_ticket.cuh\"".into()
         }],
         defines: vec![],
         entries: entries.iter().flat_map(Entry::specs).collect(),

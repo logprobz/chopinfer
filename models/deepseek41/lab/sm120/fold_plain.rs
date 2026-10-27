@@ -2,7 +2,8 @@
 //! `CHOP_FOLD_PLAIN_ROWS`: the unswizzled placement, as the lab reference for
 //! the served entries. Each cubin is the bundle's spec with a `plain_` name
 //! prefix and the define; its symbols are the served symbols.
-use bundle_deepseek41::sm120::{fold_local_rows, mxfp8_fold, projection_reuse};
+use crate::dense_decode_reference as mxfp8_fold;
+use bundle_deepseek41::sm120::fold_local_rows;
 use kernel_build::CubinSpec;
 use model_deepseek41_contract::geometry::FLASH;
 pub const FAMILY: &str = "fold_plain";
@@ -16,7 +17,7 @@ pub fn served() -> Vec<(&'static str, CubinSpec)> {
     let mut specs = vec![
         (
             mxfp8_fold::TICKET_FAMILY,
-            kernels_sm120::gemm::mxfp8_fold_ticket::cubin_spec(
+            crate::dense_decode_reference::frozen::mxfp8_fold_ticket::cubin_spec(
                 &mxfp8_fold::ticket_cubin_name(&FLASH),
                 &mxfp8_fold::ticket_catalog(&FLASH).unwrap(),
             )
@@ -24,7 +25,7 @@ pub fn served() -> Vec<(&'static str, CubinSpec)> {
         ),
         (
             mxfp8_fold::PREFETCH_FAMILY,
-            kernels_sm120::gemm::mxfp8_fold_ticket::cubin_spec(
+            crate::dense_decode_reference::frozen::mxfp8_fold_ticket::cubin_spec(
                 &mxfp8_fold::prefetch_cubin_name(&FLASH),
                 &mxfp8_fold::prefetch_catalog(&FLASH).unwrap(),
             )
@@ -32,17 +33,17 @@ pub fn served() -> Vec<(&'static str, CubinSpec)> {
         ),
         (
             mxfp8_fold::DECODE_FAMILY,
-            kernels_sm120::gemm::mxfp8_fold_decode::cubin_spec(
+            crate::dense_decode_reference::frozen::mxfp8_fold_decode::cubin_spec(
                 &mxfp8_fold::decode_cubin_name(&FLASH),
                 &mxfp8_fold::decode_catalog(&FLASH).unwrap(),
             )
             .unwrap(),
         ),
         (
-            projection_reuse::FOLD_FAMILY,
-            kernels_sm120::gemm::mxfp8_fold_reuse::cubin_spec(
-                projection_reuse::FOLD_CUBIN,
-                &projection_reuse::entries().unwrap(),
+            mxfp8_fold::REUSE_FAMILY,
+            crate::dense_decode_reference::frozen::mxfp8_fold_reuse::cubin_spec(
+                mxfp8_fold::REUSE_CUBIN,
+                &mxfp8_fold::reuse_entries().unwrap(),
             )
             .unwrap(),
         ),

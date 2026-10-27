@@ -94,7 +94,7 @@ impl Entry {
             plan([merge_grid, 1, 1], 128),
         ];
         for p in &plans {
-            crate::backend::check_plan(p)?;
+            kernels_sm120::backend::check_plan(p)?;
         }
         Ok(plans)
     }
@@ -239,9 +239,11 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
     }
     Ok(CubinSpec {
         name: name.into(),
-        sources_root: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
-        include_dirs: vec![],
-        headers: vec!["#include \"gemm/mxfp8_fold_decode.cuh\"".into()],
+        sources_root: super::sources_root(),
+        include_dirs: super::include_dirs(),
+        headers: vec![
+            "#include \"kernel-lab/cuda/baselines/dense_decode/mxfp8_fold_decode.cuh\"".into(),
+        ],
         defines: vec![],
         entries: entries.iter().flat_map(Entry::specs).collect(),
     })

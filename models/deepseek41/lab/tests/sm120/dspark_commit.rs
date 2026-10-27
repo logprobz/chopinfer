@@ -1,13 +1,13 @@
 //! Compare original commit chunks with one contiguous projection launch.
 //! This covers GEMM output and status bits; served captures cover the chain.
 use super::mxfp8_fold_decode as fixture;
+use crate::dense_decode_reference::frozen::mxfp8_fold_decode::Entry;
 use bundle_deepseek41::sm120::{mxfp8_fold as registration, prefill_matrix, prefill_tma_scales};
 use kernel_core::backend::{Backend, Counts, Need, Prepared, View};
 use kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers;
 use kernel_harness::launch::Bindings;
 use kernel_harness::{LabResult, Session};
 use kernels_sm120::backend::Sm120;
-use kernels_sm120::gemm::mxfp8_fold_decode::Entry;
 use model_deepseek41_contract::{geometry::FLASH, serving::PREFILL_TOKENS};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -44,7 +44,7 @@ fn entries() -> Vec<Entry> {
     [(5120, 15360), (512, 5120)]
         .into_iter()
         .map(|(n, k)| {
-            registration::decode_entries(&FLASH, 4)
+            crate::dense_decode_reference::decode_entries(&FLASH, 4)
                 .unwrap()
                 .into_iter()
                 .find(|entry| {

@@ -10,7 +10,7 @@ pub fn symbol(entry: &Entry) -> String {
 pub fn plan(entry: &Entry, rows: u32) -> Result<LaunchPlan, Refusal> {
     if !entry.uses_cached_weights()
         || entry.query().weight != WeightFormat::Bf16
-        || !crate::gemm::mxfp8_fold_reuse::supported_rows(rows)
+        || !crate::gemm::dense_decode::supported_reuse_rows(rows)
     {
         return Err(Refusal(
             "exact weight reuse requires cached BF16 weights and a supported row bucket",

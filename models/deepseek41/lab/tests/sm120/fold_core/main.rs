@@ -1,4 +1,6 @@
 //! Compare isolated fold cores with the complete served selector.
+#[path = "../../../sm120/dense_decode_reference.rs"]
+mod dense_decode_reference;
 use bundle_deepseek41::sm120::{self, fold_cubin_for_symbol};
 use kernel_core::{
     backend::{Backend, Counts, Launch, Need, View},
@@ -314,8 +316,7 @@ fn functions(s: &Session, calls: &[Launch]) -> LabResult<Functions> {
                     .map_err(|e| e.to_string())?,
             )
         } else {
-            let (name, bytes) = fold_cubin_for_symbol(&call.symbol)
-                .ok_or_else(|| format!("missing served {}", call.symbol))?;
+            let (name, bytes) = crate::dense_decode_reference::load_symbol(&call.symbol)?;
             (name, bytes.to_vec())
         };
         if !modules.contains_key(name) {

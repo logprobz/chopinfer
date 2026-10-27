@@ -1,9 +1,9 @@
 //! Exact comparisons at every row count, paired graph timing, and stage profiles.
 use super::mxfp8_fold_decode::{self as previous, modules};
-use bundle_deepseek41::sm120::mxfp8_fold as registration;
+use crate::dense_decode_reference as registration;
+use crate::dense_decode_reference::frozen::ReferenceBackend as Sm120;
 use kernel_core::backend::{Backend, Need};
 use kernel_harness::kit::{self, Required, cases::mxfp8_fold as cases};
-use kernels_sm120::backend::Sm120;
 use model_deepseek41_contract::{admission::SUPPORTED_RANKS, geometry::FLASH};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -42,7 +42,13 @@ fn prefetch_fold_dry_run() {
         .bytes("probe_sm120")
         .unwrap();
     let (backend, required) = required();
-    let report = kit::conform(&backend, &super::mxfp8_fold::ModelModules, None, &required).unwrap();
+    let report = kit::conform(
+        &backend,
+        &super::mxfp8_fold_decode::modules::ReferenceModules,
+        None,
+        &required,
+    )
+    .unwrap();
     previous::check(&report, required.len(), false);
     let tested = registration::prefetch_catalog(&FLASH).unwrap();
     for &ranks in SUPPORTED_RANKS {
@@ -119,7 +125,7 @@ fn compare_device(session: &kernel_harness::Session) -> kernel_harness::LabResul
     let (backend, required) = required();
     let report = kit::conform(
         &backend,
-        &super::mxfp8_fold::ModelModules,
+        &super::mxfp8_fold_decode::modules::ReferenceModules,
         Some(session),
         &required,
     )?;

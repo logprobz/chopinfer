@@ -1,7 +1,7 @@
 //! Split-K folds of up to 64 rows whose K splits form one thread-block
 //! cluster: every fold's loads are issued at once, and the ranks sum the
 //! tile's fold partials in increasing K order after one cluster barrier.
-use super::{mxfp8_fold, mxfp8_fold_ticket};
+use super::{dense_decode, mxfp8_fold};
 use kernel_build::{CubinSpec, EntrySpec};
 use kernel_core::{
     backend::{Backend, Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View},
@@ -248,8 +248,11 @@ impl Entry {
     /// Admission, then the fold.
     pub fn specs(&self) -> Vec<EntrySpec> {
         let q = self.base.query;
-        let ticket = mxfp8_fold_ticket::Entry::new(q, self.symbol(), false).unwrap();
-        let mut specs = ticket.specs();
+        let ticket =
+            dense_decode::Entry::new(q, &self.symbol(), false, dense_decode::Knobs::ticket(q.n))
+                .unwrap();
+        let mut specs = ticket.specs().unwrap();
+        specs[1].symbol = self.symbol();
         specs[0].symbol = format!("{}_admit_v1", self.symbol());
         specs[0].body = format!(
             "chop::gemm::mxfp8_fold_admit::admit<{},{},{},{},false>(activations,activation_scales,workspace,live_rows,status,status_row_offset,rows);",

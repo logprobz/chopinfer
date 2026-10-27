@@ -13,11 +13,15 @@ use std::collections::{BTreeMap, BTreeSet};
 fn measured_prefetch_ties_keep_ticket_at_sixty_four_rows() {
     let backend = registration::register(Sm120::new(), &geometry::FLASH, 2).unwrap();
     for (n, k, paired) in [(16384, 1280, false), (1152, 5120, true)] {
-        let entry = registration::ticket_entries(&geometry::FLASH, 2)
+        let entry = registration::dense_entries(&geometry::FLASH, 2)
             .unwrap()
             .into_iter()
-            .find(|e| (e.query.n, e.query.k, e.paired) == (n, k, paired))
+            .find(|e| (e.query.n, e.query.k, e.paired, e.query.m_capacity) == (n, k, paired, 64))
             .unwrap();
+        assert_eq!(
+            entry.knobs,
+            kernels_sm120::gemm::dense_decode::Knobs::ticket(n)
+        );
         let info = if paired {
             backend
                 .mxfp8_fold_gemm_pair(&entry.query, Need::rows(64))
@@ -36,68 +40,55 @@ fn measured_prefetch_ties_keep_ticket_at_sixty_four_rows() {
                 .iter()
                 .map(|(s, _)| s.clone())
                 .collect::<Vec<_>>(),
-            entry.symbols(),
-            "N={n} K={k} paired={paired}"
+            entry
+                .specs()
+                .unwrap()
+                .into_iter()
+                .map(|s| s.symbol)
+                .collect::<Vec<_>>()
         );
     }
 }
 
 #[test]
 fn exact_row_bounds_keep_compiled_fold_entries_unchanged() {
-    let cubins = registration::ticket_cubins(geometry::GEOMETRIES)
-        .unwrap()
-        .into_iter()
-        .chain(registration::prefetch_cubins(geometry::GEOMETRIES).unwrap())
-        .collect::<Vec<_>>();
+    let cubins = registration::dense_cubins(geometry::GEOMETRIES).unwrap();
     for g in geometry::GEOMETRIES {
-        for entry in registration::ticket_catalog(g)
-            .unwrap()
-            .into_iter()
-            .chain(registration::prefetch_catalog(g).unwrap())
-        {
-            let (family, name) = if entry.prefetch_weights {
-                (
-                    registration::PREFETCH_FAMILY,
-                    registration::prefetch_cubin_name(g),
-                )
-            } else {
-                (
-                    registration::TICKET_FAMILY,
-                    registration::ticket_cubin_name(g),
-                )
-            };
-            let (owner, cubin) = cubins.iter().find(|(_, s)| s.name == name).unwrap();
-            assert_eq!(*owner, family);
-            assert_eq!(
-                cubin.entries.len(),
-                registration::ticket_catalog(g).unwrap().len() * 2
-            );
-            let mut symbols = entry.symbols();
-            symbols[1] = entry.packed_spec().unwrap().symbol;
+        let (family, cubin) = cubins
+            .iter()
+            .find(|(_, s)| s.name == registration::dense_cubin_name(g))
+            .unwrap();
+        assert_eq!(*family, registration::DENSE_FAMILY);
+        let catalog = registration::dense_catalog(g).unwrap();
+        assert_eq!(
+            cubin.entries.len(),
+            catalog
+                .iter()
+                .map(|e| e.specs().unwrap().len())
+                .sum::<usize>()
+        );
+        for entry in catalog {
+            let specs = format!("{:?}", entry.specs().unwrap());
+            let packed = format!("{:?}", entry.packed_specs().unwrap());
             assert!(
-                symbols
+                entry
+                    .packed_specs()
+                    .unwrap()
                     .iter()
-                    .all(|symbol| cubin.entries.iter().any(|s| s.symbol == *symbol))
+                    .all(|s| cubin.entries.iter().any(|built| s.symbol == built.symbol))
             );
-            let specs = format!("{:?}", entry.specs());
-            let packed = format!("{:?}", entry.packed_spec().unwrap());
-            for rows in 1..=64 {
+            let maximum = if entry.knobs.finish == kernels_sm120::gemm::dense_decode::Finish::Merge
+            {
+                32
+            } else {
+                64
+            };
+            for rows in 1..=maximum {
                 let mut bounded = entry.clone();
                 bounded.query = registration::routed_query(entry.query, rows);
                 bounded.validate().unwrap();
-                assert_eq!(format!("{:?}", bounded.specs()), specs);
-                assert_eq!(format!("{:?}", bounded.packed_spec().unwrap()), packed);
-            }
-        }
-        for entry in registration::decode_catalog(g).unwrap() {
-            let specs = format!("{:?}", entry.specs());
-            let packed = format!("{:?}", entry.packed_spec().unwrap());
-            for rows in 1..=32 {
-                let mut bounded = entry.clone();
-                bounded.query = registration::routed_query(entry.query, rows);
-                bounded.validate().unwrap();
-                assert_eq!(format!("{:?}", bounded.specs()), specs);
-                assert_eq!(format!("{:?}", bounded.packed_spec().unwrap()), packed);
+                assert_eq!(format!("{:?}", bounded.specs().unwrap()), specs);
+                assert_eq!(format!("{:?}", bounded.packed_specs().unwrap()), packed);
             }
         }
     }
@@ -108,50 +99,47 @@ fn measured_entries_bind_all_topologies_and_exact_row_buckets() {
     use registration::DecodePath;
     let mut records = BTreeMap::new();
     for g in geometry::GEOMETRIES {
-        let prefetch = registration::prefetch_catalog(g).unwrap();
-        let ticket = registration::ticket_catalog(g).unwrap();
-        let split = registration::decode_catalog(g).unwrap();
+        use kernel_lab_families::dense_decode_reference::{mxfp8_fold_decode, mxfp8_fold_ticket};
         for &ranks in admission::SUPPORTED_RANKS {
             let backend = registration::register(Sm120::new(), g, ranks).unwrap();
-            for entry in registration::prefetch_entries(g, ranks).unwrap() {
+            for entry in registration::decode_entries(g, ranks).unwrap() {
                 for rows in 1..=64 {
                     let q = registration::routed_query(entry.query, rows);
                     let path = registration::decode_path(g, q, rows, entry.paired);
-                    let (symbols, workspace, plans) = match path {
+                    let (workspace, plans) = match path {
                         DecodePath::Split => {
-                            let old = split
-                                .iter()
-                                .find(|old| {
-                                    old.paired == entry.paired
-                                        && registration::routed_query(old.query, rows) == q
-                                })
-                                .unwrap();
+                            let old =
+                                mxfp8_fold_decode::Entry::new(q, "reference_split", entry.paired)
+                                    .unwrap();
                             (
-                                old.symbols().to_vec(),
                                 old.workspace(rows).unwrap(),
                                 old.plans(rows).unwrap().to_vec(),
                             )
                         }
                         _ => {
-                            let catalog = if path == DecodePath::Prefetch {
-                                &prefetch
-                            } else {
-                                &ticket
-                            };
-                            let old = catalog
-                                .iter()
-                                .find(|old| {
-                                    old.paired == entry.paired
-                                        && registration::routed_query(old.query, rows) == q
-                                })
-                                .unwrap();
+                            let mut old =
+                                mxfp8_fold_ticket::Entry::new(q, "reference_ticket", entry.paired)
+                                    .unwrap();
+                            if path == DecodePath::Prefetch {
+                                old = old.with_weight_prefetch();
+                            }
                             (
-                                old.symbols().to_vec(),
                                 old.workspace(rows).unwrap(),
                                 old.plans(rows).unwrap().to_vec(),
                             )
                         }
                     };
+                    let symbols = registration::dense_entry(
+                        q,
+                        entry.paired,
+                        registration::dense_knobs(g, q, rows, entry.paired).unwrap(),
+                    )
+                    .unwrap()
+                    .specs()
+                    .unwrap()
+                    .into_iter()
+                    .map(|s| s.symbol)
+                    .collect::<Vec<_>>();
                     let b = entry.legacy().unwrap().bytes(rows);
                     let view = |handle, bytes| View { handle, bytes };
                     let buffers = Mxfp8FoldGemmBuffers {
@@ -234,30 +222,39 @@ fn measured_entries_bind_all_topologies_and_exact_row_buckets() {
 #[test]
 fn decode_uses_bind_every_bucket_and_pair_only_the_shared_operands() {
     use kernel_core::precision::ExecutionPhase;
-    let specs = registration::decode_cubins(geometry::GEOMETRIES).unwrap();
+    let specs = registration::dense_cubins(geometry::GEOMETRIES).unwrap();
     assert!(
         specs
             .iter()
-            .all(|(family, _)| *family == registration::DECODE_FAMILY)
+            .all(|(family, _)| *family == registration::DENSE_FAMILY)
     );
     for g in geometry::GEOMETRIES {
         let spec = &specs
             .iter()
-            .find(|(_, s)| s.name == registration::decode_cubin_name(g))
+            .find(|(_, s)| s.name == registration::dense_cubin_name(g))
             .unwrap()
             .1;
-        let catalog = registration::decode_catalog(g).unwrap();
-        assert_eq!(spec.entries.len(), catalog.len() * 3);
+        let catalog = registration::dense_catalog(g).unwrap();
+        assert_eq!(
+            spec.entries.len(),
+            catalog
+                .iter()
+                .map(|e| e.specs().unwrap().len())
+                .sum::<usize>()
+        );
         for &ranks in admission::SUPPORTED_RANKS {
-            let backend = registration::decode_entries(g, ranks)
-                .unwrap()
-                .into_iter()
-                .fold(Sm120::new(), Sm120::with_mxfp8_fold_decode)
-                .with_packed_fold_weights();
+            let backend =
+                registration::register(Sm120::new().with_packed_fold_weights(), g, ranks).unwrap();
             for r in registration::decode_registrations(g, ranks, 0).unwrap() {
                 assert_eq!(r.usage.phase, ExecutionPhase::Decode);
                 assert!(registration::DECODE_BUCKETS.contains(&r.usage.capacity));
-                let q = r.entry.query;
+                let q = registration::routed_query(r.entry.query, r.usage.capacity);
+                let entry = registration::dense_entry(
+                    q,
+                    r.entry.paired,
+                    registration::dense_knobs(g, q, r.usage.capacity, r.entry.paired).unwrap(),
+                )
+                .unwrap();
                 let op = if r.entry.paired {
                     assert_eq!(r.projection, "layer.shared.gate-up");
                     assert_eq!(r.operand, 0);
@@ -273,15 +270,18 @@ fn decode_uses_bind_every_bucket_and_pair_only_the_shared_operands() {
                         .info()
                         .clone()
                 };
-                assert_eq!(op.workspace, r.entry.workspace(r.usage.capacity).unwrap());
-                assert_eq!(op.symbols.len(), 3);
+                assert_eq!(op.workspace, entry.workspace(r.usage.capacity).unwrap());
+                assert_eq!(op.symbols.len(), entry.specs().unwrap().len());
                 assert!(
                     op.symbols
                         .iter()
                         .all(|(symbol, _)| spec.entries.iter().any(|e| e.symbol == *symbol))
                 );
                 if g.id == "flash" && ranks == 4 && r.projection == "layer.wkv" {
-                    let grid = r.entry.plans(r.usage.capacity).unwrap()[1].grid;
+                    let grid = entry
+                        .plans(r.usage.capacity, entry.folds_per_cta(r.usage.capacity))
+                        .unwrap()[1]
+                        .grid;
                     assert!(grid.into_iter().product::<u32>() >= kernels_sm120::gemm::SM_COUNT);
                 }
             }
@@ -467,7 +467,7 @@ fn flash_timing_choices_do_not_bind_another_geometry() {
     other.id = "unmeasured";
     for &ranks in admission::SUPPORTED_RANKS {
         let backend = registration::register(Sm120::new(), &other, ranks).unwrap();
-        for entry in registration::ticket_entries(&other, ranks).unwrap() {
+        for entry in registration::decode_entries(&other, ranks).unwrap() {
             for rows in 1..=64 {
                 let query = registration::routed_query(entry.query, rows);
                 let info = if entry.paired {
@@ -488,7 +488,17 @@ fn flash_timing_choices_do_not_bind_another_geometry() {
                         .iter()
                         .map(|(s, _)| s.clone())
                         .collect::<Vec<_>>(),
-                    entry.symbols(),
+                    registration::dense_entry(
+                        query,
+                        entry.paired,
+                        kernels_sm120::gemm::dense_decode::Knobs::ticket(query.n)
+                    )
+                    .unwrap()
+                    .specs()
+                    .unwrap()
+                    .into_iter()
+                    .map(|s| s.symbol)
+                    .collect::<Vec<_>>(),
                     "TP{ranks} N={} K={} G={} paired={} rows={rows}",
                     query.n,
                     query.k,
@@ -498,4 +508,32 @@ fn flash_timing_choices_do_not_bind_another_geometry() {
             }
         }
     }
+}
+
+#[test]
+#[ignore = "requires an external directory named by CHOPINFER_DENSE_DECODE_BUILD"]
+fn build_dense_decode_lock_family() {
+    let out = std::path::PathBuf::from(
+        std::env::var_os("CHOPINFER_DENSE_DECODE_BUILD").expect("CHOPINFER_DENSE_DECODE_BUILD"),
+    );
+    let specs = registration::dense_cubins(geometry::GEOMETRIES)
+        .unwrap()
+        .into_iter()
+        .map(|(_, spec)| spec)
+        .collect::<Vec<_>>();
+    let lock = kernel_build::LockDir::new(out.join("locks"))
+        .family(registration::DENSE_FAMILY, specs.iter().map(|s| &s.name));
+    kernel_build::build_in_families(
+        &kernel_build::Toolchain::detect().unwrap(),
+        &specs,
+        &out,
+        &lock,
+        kernel_build::BuildOptions {
+            lock_update: true,
+            emit_cargo_directives: false,
+            profile_line_info: false,
+        },
+        None,
+    )
+    .unwrap();
 }

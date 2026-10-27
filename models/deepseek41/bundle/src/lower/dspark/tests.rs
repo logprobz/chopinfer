@@ -141,13 +141,16 @@ fn main_projection_binds_only_measured_packed_fold_rows() {
             let selected = if packed {
                 "mxfp8_stream"
             } else if matches!(count, 17..=21 | 23..=25) {
-                "mxfp8_prefetch"
+                "_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w1f0_v1"
             } else {
-                "mxfp8_ticket"
+                "_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1"
             };
             let ticket = launches
                 .iter()
-                .filter(|l| l.launch.symbol.contains(selected))
+                .filter(|l| {
+                    l.launch.symbol.contains(selected)
+                        && (packed || l.launch.symbol.starts_with("chop_deepseek41_dense_decode_"))
+                })
                 .count();
             assert_eq!(
                 ticket,

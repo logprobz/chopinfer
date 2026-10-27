@@ -2,7 +2,8 @@
 use super::packed_serving::{self, family::Entry as Old};
 #[path = "../../../../../crates/kernel-lab/families/tests/support/dense_decode.rs"]
 mod support;
-use bundle_deepseek41::sm120::{mxfp8_fold as catalog, projection_reuse};
+use crate::dense_decode_reference as catalog;
+use bundle_deepseek41::sm120::projection_reuse;
 use kernel_build::{CubinSpec, EntrySpec};
 use kernels_sm120::gemm::dense_decode::{self, Entry, Finish, Knobs};
 use model_deepseek41_contract::geometry::FLASH;
@@ -16,70 +17,65 @@ struct Case {
     rows: Vec<u32>,
 }
 fn cases() -> Vec<Case> {
-    packed_serving::family::cases()
-        .into_iter()
-        .filter_map(|case| {
-            let old = case.entry;
-            let q = old.base().query;
+    let mut result = Vec::new();
+    for case in packed_serving::family::cases() {
+        let old = case.entry;
+        let q = old.base().query;
+        if !matches!(&old, Old::Ticket(_) | Old::Decode(_) | Old::Reuse(_)) {
+            continue;
+        }
+        let mut schedules = BTreeMap::<Knobs, Vec<u32>>::new();
+        for rows in 1..=q.m_capacity {
             let knobs = match &old {
-                Old::Ticket(e) => Knobs {
-                    tile_n: e.tile_n(),
-                    row_groups: 1,
-                    stages: 3,
-                    weight_prefetch: e.prefetch_weights,
-                    finish: Finish::Ticket,
-                },
-                Old::Decode(_) => Knobs::SPLIT,
-                Old::Reuse(e) => Knobs {
-                    tile_n: e.tile_n,
-                    row_groups: 2,
-                    stages: 3,
-                    weight_prefetch: false,
-                    finish: Finish::Ticket,
-                },
-                _ => return None,
+                Old::Reuse(e) => {
+                    let Some(row) = catalog::tuning_row(
+                        &FLASH,
+                        model_deepseek41_contract::tuning::Family::Reuse,
+                        "reuse.fold.decode",
+                        q,
+                        false,
+                        rows,
+                    ) else {
+                        continue;
+                    };
+                    let (knobs, folds) = Knobs::from_row(row).unwrap();
+                    assert!(folds.is_some());
+                    if knobs.tile_n != e.tile_n {
+                        continue;
+                    }
+                    knobs
+                }
+                Old::Ticket(e) => {
+                    let knobs = catalog::dense_knobs(&FLASH, q, rows, e.paired).unwrap();
+                    if knobs.finish != Finish::Ticket || knobs.weight_prefetch != e.prefetch_weights
+                    {
+                        continue;
+                    }
+                    knobs
+                }
+                Old::Decode(e) => {
+                    let knobs = catalog::dense_knobs(&FLASH, q, rows, e.paired).unwrap();
+                    if knobs.finish != Finish::Merge {
+                        continue;
+                    }
+                    knobs
+                }
+                _ => unreachable!(),
             };
-            let rows = (1..=q.m_capacity)
-                .filter(|&rows| match &old {
-                    Old::Ticket(e) => {
-                        catalog::decode_path(&FLASH, q, rows, e.paired)
-                            == if e.prefetch_weights {
-                                catalog::DecodePath::Prefetch
-                            } else {
-                                catalog::DecodePath::Ticket
-                            }
-                    }
-                    Old::Decode(e) => {
-                        catalog::decode_path(&FLASH, q, rows, e.paired)
-                            == catalog::DecodePath::Split
-                    }
-                    Old::Reuse(e) => {
-                        projection_reuse::choice(q, rows).is_some_and(|(tile, _)| tile == e.tile_n)
-                    }
-                    _ => unreachable!(),
-                })
-                .collect::<Vec<_>>();
-            // Catalog entries outside the selected rows remain compiled references.
-            if rows.is_empty() {
-                return None;
-            }
-            let new = Entry::new(
-                q,
-                &format!(
-                    "chop_dense_decode_n{}_k{}_g{}_{}",
-                    q.n,
-                    q.k,
-                    q.groups,
-                    if old.paired() { "pair" } else { "single" }
-                ),
-                old.paired(),
-                knobs,
-            )
-            .unwrap();
-            Some(Case { old, new, rows })
-        })
-        .collect()
+            schedules.entry(knobs).or_default().push(rows);
+        }
+        for (knobs, rows) in schedules {
+            let new = catalog::dense_entry(q, old.paired(), knobs).unwrap();
+            result.push(Case {
+                old: old.clone(),
+                new,
+                rows,
+            });
+        }
+    }
+    result
 }
+
 fn specs() -> (Vec<CubinSpec>, Vec<serde_json::Value>) {
     let mut entries = BTreeMap::<String, EntrySpec>::new();
     let mut pairs = Vec::new();
@@ -107,7 +103,13 @@ fn specs() -> (Vec<CubinSpec>, Vec<serde_json::Value>) {
         .map(|h| format!("#include \"gemm/{h}.cuh\"")),
     );
     spec.entries = entries.into_values().collect();
-    (vec![spec, support::producer_spec()], pairs)
+    (
+        vec![
+            crate::dense_decode_reference::frozen::configure(spec),
+            support::producer_spec(),
+        ],
+        pairs,
+    )
 }
 
 #[test]
@@ -147,6 +149,39 @@ fn served_twins_preserve_every_selected_grid_and_abi() {
             count += 1;
         }
     }
+    let mut table_rows = 0;
+    for family in [
+        model_deepseek41_contract::tuning::Family::DenseFold,
+        model_deepseek41_contract::tuning::Family::Reuse,
+    ] {
+        for row in model_deepseek41_contract::tuning::table(&FLASH, family)
+            .unwrap()
+            .rows()
+            .iter()
+            .filter(|r| r.schedule == "dense_decode")
+        {
+            let (knobs, _) = Knobs::from_row(row).unwrap();
+            for rows in row.key.rows.unwrap_or([1, row.key.bucket])[0]
+                ..=row.key.rows.unwrap_or([1, row.key.bucket])[1]
+            {
+                assert!(
+                    cases.iter().any(|case| {
+                        let q = case.new.query;
+                        case.new.knobs == knobs
+                            && case.rows.contains(&rows)
+                            && row.key.shape.get("n") == Some(&q.n)
+                            && row.key.shape.get("k") == Some(&q.k)
+                            && row.key.shape.get("groups") == Some(&q.groups)
+                            && row.key.shape.get("paired") == Some(&u32::from(case.new.paired))
+                    }),
+                    "uncovered dense decode row {} at {rows}",
+                    row.key
+                );
+            }
+            table_rows += 1;
+        }
+    }
+    assert_eq!(table_rows, 72);
     assert!(count > 0);
     let (specs, pairs) = specs();
     for spec in &specs {
@@ -220,8 +255,18 @@ fn served_twins_match_with_poisoned_replay_on_gpu() {
                 }
                 let ([_, old], workspace) = packed_serving::launches(&case.old, rows)?;
                 let mut new = old.clone();
-                for (call, spec) in new.iter_mut().zip(&new_specs) {
+                let folds = if matches!(case.old, Old::Reuse(_)) {
+                    projection_reuse::choice(case.new.query, rows).unwrap().1
+                } else {
+                    case.new.folds_per_cta(rows)
+                };
+                for ((call, spec), plan) in new
+                    .iter_mut()
+                    .zip(&new_specs)
+                    .zip(case.new.plans(rows, folds).map_err(|e| e.to_string())?)
+                {
                     call.symbol = spec.symbol.clone();
+                    call.plan = plan;
                 }
                 let sizes = case.old.base().bytes(rows);
                 for image in &mut images {

@@ -12,6 +12,20 @@ the former package cubin bytes and all 62 entry symbols. Fold-core fixtures
 load these staged modules by their original names and verify their locked
 hashes; served modules still come from the bundle.
 
+Dense decode now serves one policy-based template. Its retired ticket,
+prefetch, reuse and split-fold modules are lab-only references, built with
+`lab/mxfp8_fold_ticket_reference`, `lab/mxfp8_fold_prefetch_reference`,
+`lab/mxfp8_fold_reuse_reference` and `lab/mxfp8_fold_decode_reference`.
+Their lock pairs move unchanged from the bundle, and staged module reads
+check the original hashes. The old CUDA bodies and builders live only in
+kernel-lab's reference sources.
+
+The `dense_decode` twins parse the selected table rows, including the
+separate runtime fold partition, and compare every selected row count.
+Synthetic reuse cases cover half folds, padded group strides, paired banks
+and partial live rows at partitions 2, 4 and 8. Relaunch, graph and PDL
+phases poison outputs and partials and compare the complete workspace.
+
 The fold conformance, decode, stream, compact and fused suites keep their
 oracle, poison, PDL, status and invariance checks. Stream permutation checks
 still compare the load-time transform with the historical prepare kernel.
@@ -20,7 +34,7 @@ Shared-expert MoE comparisons pack all three dense fold banks.
 ## Production-shape parity
 
 `packed_serving` owns one cubin with row-major and packed twins from the
-bundle catalogs. It covers 367 distinct packed compute symbols in 506
+bundle catalogs and the retained decode reference catalogs. It covers 367 distinct packed compute symbols in 506
 comparisons across Flash TP1/TP2/TP4, deduplicating symbols shared by
 multiple topologies. Decode entries exercise one row, a partial tile and
 capacity. Large v2/prefill entries use 129 rows, which exercises full and

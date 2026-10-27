@@ -4,7 +4,7 @@
 //! runs. That equals the admission kernel's result for operands of an E4M3
 //! ceil block quantizer that zeroes the rows it rejects (see
 //! `mxfp8_fold_cluster_fused.cuh`).
-use super::{mxfp8_fold, mxfp8_fold_packed, mxfp8_fold_ticket};
+use super::{dense_decode, mxfp8_fold, mxfp8_fold_packed};
 use kernel_build::{CubinSpec, EntrySpec};
 use kernel_core::{
     backend::{Backend, Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View},
@@ -91,8 +91,10 @@ impl Entry {
     }
     fn spec_impl(&self, symbol: String, packed: &str) -> EntrySpec {
         let q = self.base.query;
-        let ticket = mxfp8_fold_ticket::Entry::new(q, self.symbol(), false).unwrap();
-        let mut spec = ticket.specs().swap_remove(1);
+        let ticket =
+            dense_decode::Entry::new(q, &self.symbol(), false, dense_decode::Knobs::ticket(q.n))
+                .unwrap();
+        let mut spec = ticket.specs().unwrap().swap_remove(1);
         let shape = format!(
             "{},{},{},{},{},{}",
             q.n, q.k, q.groups, q.activation_row_stride, q.activation_group_stride, self.tile_n

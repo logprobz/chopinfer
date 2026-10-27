@@ -54,14 +54,16 @@ impl Conversions {
         for e in &b.mxfp8_folds {
             twin(&|| e.packed_spec(), e.symbol.clone());
         }
-        for e in &b.mxfp8_fold_tickets {
-            twin(&|| e.packed_spec(), e.symbols()[1].clone());
-        }
-        for e in &b.mxfp8_fold_decodes {
-            twin(&|| e.packed_spec(), e.symbols()[1].clone());
-        }
-        for (e, _) in &b.mxfp8_fold_reuse {
-            twin(&|| e.packed_spec(), e.symbol());
+        for (e, _) in &b.dense_decodes {
+            let symbol = if e.knobs.finish == crate::gemm::dense_decode::Finish::Merge {
+                format!("{}_partials_v1", e.symbol)
+            } else {
+                e.symbol.clone()
+            };
+            twin(
+                &|| e.packed_specs().map(|mut specs| specs.remove(1)),
+                symbol,
+            );
         }
         for (e, _) in &b.mxfp8_prefill_compacts {
             for tile in [16, 32, 64] {
@@ -290,7 +292,7 @@ impl<B> PreparedOp<B> for Op<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gemm::{mxfp8_fold_stream, mxfp8_fold_ticket};
+    use crate::gemm::{dense_decode, mxfp8_fold_stream};
     use kernel_core::backend::{Backend, Need};
     use kernel_core::contract::{Argument, DType};
     use kernel_core::mxfp8_gemm::{
@@ -335,12 +337,16 @@ mod tests {
     fn packed_mode_renames_weight_readers_and_declares_the_packed_layout() {
         let q = query(8, 64, 576);
         let fold = mxfp8_fold::Entry::new(q, "chop_packed_mode_fold_v2").unwrap();
-        let ticket =
-            mxfp8_fold_ticket::Entry::new(query(16, 64, 576), "chop_packed_mode_ticket_v2", false)
-                .unwrap();
+        let ticket = dense_decode::Entry::new(
+            query(16, 64, 576),
+            "chop_packed_mode_ticket_v2",
+            false,
+            dense_decode::Knobs::ticket(64),
+        )
+        .unwrap();
         let backend = Sm120::new()
             .with_mxfp8_fold(fold.clone())
-            .with_mxfp8_fold_ticket(ticket.clone());
+            .with_dense_decode(ticket.clone(), None);
         for (packed_mode, expected) in [
             (false, fold.symbol.clone()),
             (true, packed::symbol(&fold.symbol)),
@@ -348,7 +354,7 @@ mod tests {
             let backend = if packed_mode {
                 Sm120::new()
                     .with_mxfp8_fold(fold.clone())
-                    .with_mxfp8_fold_ticket(ticket.clone())
+                    .with_dense_decode(ticket.clone(), None)
                     .with_packed_fold_weights()
             } else {
                 Sm120::new().with_mxfp8_fold(fold.clone())
@@ -367,7 +373,14 @@ mod tests {
             .mxfp8_fold_gemm(&ticket.query, Need::rows(16))
             .unwrap();
         let symbols: Vec<_> = op.info().symbols.iter().map(|(s, _)| s.clone()).collect();
-        let [first, second] = ticket.symbols();
+        let [first, second]: [String; 2] = ticket
+            .specs()
+            .unwrap()
+            .into_iter()
+            .map(|s| s.symbol)
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
         assert!(symbols.contains(&first) && symbols.contains(&packed::symbol(&second)));
         assert!(!symbols.contains(&second));
         let launches = op.launches(&buffers(), view(9), Counts::rows(16)).unwrap();

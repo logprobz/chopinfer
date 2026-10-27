@@ -34,7 +34,8 @@ pub fn register(
         return Ok(backend);
     }
     let catalog = entries::catalog()?;
-    for old in previous::ticket_entries(g, ranks)? {
+    for mut old in previous::decode_entries(g, ranks)? {
+        old.query = previous::routed_query(old.query, previous::SMALL_CAPACITY);
         for rows in 1..=previous::SMALL_CAPACITY {
             if let Some(schedule) = selected(g, old.query, rows, old.paired) {
                 let mut entry = catalog
@@ -65,7 +66,7 @@ mod tests {
         other.id = "unmeasured";
         for ranks in [1, 2, 4] {
             let backend = register(kernels_sm120::backend::Sm120::new(), &FLASH, ranks).unwrap();
-            for old in previous::ticket_entries(&FLASH, ranks).unwrap() {
+            for old in previous::decode_entries(&FLASH, ranks).unwrap() {
                 for rows in 1..=64 {
                     let q = previous::routed_query(old.query, rows);
                     let selected = selected(&FLASH, q, rows, old.paired);

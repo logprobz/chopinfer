@@ -310,12 +310,12 @@ fn shared_prefix_endpoint_captures_restores_and_returns_to_the_grid() {
         let (name, expected) = if dspark {
             (
                 "flash-tp4-dspark-shared-anchor.journal",
-                (73378, 0x15cc7b2aa0c3a019),
+                (72654, 0xc837e5934733c248),
             )
         } else {
             (
                 "flash-tp4-ar-shared-anchor.journal",
-                (70460, 0x3155842a95ecc807),
+                (69736, 0xff8d3251d1236238),
             )
         };
         if let Err(error) =

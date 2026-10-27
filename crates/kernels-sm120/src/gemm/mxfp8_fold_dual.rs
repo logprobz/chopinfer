@@ -23,7 +23,7 @@ impl Entry {
             || b.ticket.paired
             || a.defer_admission
             || b.defer_admission
-            || a.ticket.tile_n() != b.ticket.tile_n()
+            || a.ticket.knobs.tile_n != b.ticket.knobs.tile_n
             || (
                 x.k,
                 x.groups,
@@ -52,7 +52,7 @@ impl Entry {
         self.validate()?;
         let mut total = 0u64;
         for e in &self.projections {
-            let p = e.ticket.plans(rows)?[1];
+            let p = e.ticket.plans(rows, e.ticket.folds_per_cta(rows))?[1];
             total += p.grid.into_iter().map(u64::from).product::<u64>();
         }
         let plan = LaunchPlan {
@@ -61,7 +61,7 @@ impl Entry {
                 1,
                 1,
             ],
-            block: [self.projections[0].ticket.tile_n() * 4, 1, 1],
+            block: [self.projections[0].ticket.knobs.tile_n * 4, 1, 1],
             dynamic_shared_bytes: 0,
             workspace_bytes: 0,
             cluster: [1, 1, 1],
@@ -201,11 +201,11 @@ impl Entry {
                 q.groups,
                 q.activation_row_stride,
                 q.activation_group_stride,
-                self.projections[0].ticket.tile_n(),
+                self.projections[0].ticket.knobs.tile_n,
                 q.output == DType::F32,
                 delayed
             ),
-            self.projections[0].ticket.tile_n() * 4,
+            self.projections[0].ticket.knobs.tile_n * 4,
             1,
         )
     }
@@ -301,7 +301,7 @@ mod tests {
                 .projections
                 .iter()
                 .map(|p| {
-                    p.ticket.plans(rows).unwrap()[1]
+                    p.ticket.plans(rows, p.ticket.folds_per_cta(rows)).unwrap()[1]
                         .grid
                         .into_iter()
                         .product::<u32>()

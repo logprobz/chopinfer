@@ -131,9 +131,11 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
     }
     Ok(CubinSpec {
         name: name.into(),
-        sources_root: std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
-        include_dirs: vec![],
-        headers: vec!["#include \"gemm/mxfp8_fold_reuse.cuh\"".into()],
+        sources_root: super::sources_root(),
+        include_dirs: super::include_dirs(),
+        headers: vec![
+            "#include \"kernel-lab/cuda/baselines/dense_decode/mxfp8_fold_reuse.cuh\"".into(),
+        ],
         defines: vec![],
         entries: entries.iter().flat_map(Entry::specs).collect(),
     })

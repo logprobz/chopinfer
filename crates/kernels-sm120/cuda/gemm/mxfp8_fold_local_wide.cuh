@@ -47,7 +47,7 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
           ? mxfp8_fold_packed::fold_offset((g * N + row) / 8, fold, K) + (row % 8) * 128
               + (chunk % 8) * 16
           : (uint64_t(g) * N + row) * K + fold * 128 + (chunk % 8) * 16;
-      mxfp8_fold_ticket::copy16(codes[slot] + fold_row_chunk(32 + chunk / 8, chunk % 8),
+      dense_decode::copy16(codes[slot] + fold_row_chunk(32 + chunk / 8, chunk % 8),
                               weights + (valid ? at : 0), valid);
     }
     if (threadIdx.x < TileN) {
@@ -78,7 +78,7 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
       const bool valid = fold < Folds && row < live && !failed[row];
       const uint64_t at = uint64_t(row) * RowStride + uint64_t(g) * GroupStride
           + fold * 128 + (chunk % 8) * 16;
-      mxfp8_fold_ticket::copy16(codes[slot] + fold_row_chunk(chunk / 8, chunk % 8),
+      dense_decode::copy16(codes[slot] + fold_row_chunk(chunk / 8, chunk % 8),
                               activations + (valid ? at : 0), valid);
     }
     for (uint32_t row = threadIdx.x; row < 32; row += Threads) {
@@ -212,7 +212,7 @@ __device__ void run_deep(const uint8_t* activations, const uint8_t* activation_s
           ? mxfp8_fold_packed::fold_offset((g * N + row) / 8, fold, K) + (row % 8) * 128
               + (chunk % 8) * 16
           : (uint64_t(g) * N + row) * K + fold * 128 + (chunk % 8) * 16;
-      mxfp8_fold_ticket::copy16(codes[slot] + at_chunk(32 + chunk / 8, chunk % 8),
+      dense_decode::copy16(codes[slot] + at_chunk(32 + chunk / 8, chunk % 8),
                               weights + (valid ? at : 0), valid);
     }
     if (threadIdx.x < TileN) {
@@ -243,7 +243,7 @@ __device__ void run_deep(const uint8_t* activations, const uint8_t* activation_s
       const bool valid = fold < Folds && row < live && !failed[row];
       const uint64_t at = uint64_t(row) * RowStride + uint64_t(g) * GroupStride
           + fold * 128 + (chunk % 8) * 16;
-      mxfp8_fold_ticket::copy16(codes[slot] + at_chunk(chunk / 8, chunk % 8),
+      dense_decode::copy16(codes[slot] + at_chunk(chunk / 8, chunk % 8),
                               activations + (valid ? at : 0), valid);
     }
     for (uint32_t row = threadIdx.x; row < 32; row += Threads) {

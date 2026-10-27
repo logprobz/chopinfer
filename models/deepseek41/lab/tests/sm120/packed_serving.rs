@@ -1,6 +1,7 @@
 //! Every production fold symbol against its row-major twin at exact shapes.
 #[path = "../../sm120/packed_serving.rs"]
 pub(super) mod family;
+use crate::dense_decode_reference::frozen::ReferenceBackend as Sm120;
 use family::Entry;
 use kernel_core::backend::{Backend, Counts, Launch, Need, Prepared, View};
 use kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers as Buffers;
@@ -9,7 +10,6 @@ use kernel_harness::{
     LabResult, Session,
     packed_fold::{self, Image},
 };
-use kernels_sm120::backend::Sm120;
 use kernels_sm120::gemm::mxfp8_fold_cluster_fused::{FusedBuffers, Quantized};
 use kernels_sm120::gemm::{mxfp8_fold_packed, mxfp8_prefill, mxfp8_prefill_split};
 use std::collections::{BTreeMap, BTreeSet};

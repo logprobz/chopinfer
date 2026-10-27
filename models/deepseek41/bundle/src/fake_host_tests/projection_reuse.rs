@@ -4,6 +4,7 @@ use super::*;
 fn projection(line: &str) -> bool {
     line.starts_with("launch ")
         && (line.contains("chop_deepseek41_mxfp8_")
+            || line.contains("chop_deepseek41_dense_decode_")
             || line.contains("head_f32_") && line.contains("_decode_v1"))
 }
 fn run_case(reference: bool) -> Vec<String> {
@@ -68,7 +69,9 @@ fn run_without_last(reference: bool) -> Vec<String> {
         let lines = host.device.journal.borrow()[from..].to_vec();
         let changed = lines
             .iter()
-            .filter(|l| l.starts_with("launch ") && l.contains("_reuse32_"))
+            .filter(|l| {
+                l.starts_with("launch ") && (l.contains("_reuse32_") || l.contains("r2s3w0f0"))
+            })
             .count();
         // One verify graph serves every item count of its rows: a repeated
         // key replays the graph checked at its capture.
@@ -144,32 +147,19 @@ fn reuse_preserves_non_projection_launches_and_graph_bindings() {
 
 #[test]
 fn modules_retain_the_gpu_qualified_bytes() {
-    for (name, expected) in [
-        // The qualified folds' packed twins (kernel-lab
-        // mxfp8_fold_reuse_packed: bitwise equal to the row-major folds).
-        (
-            "mxfp8_fold_reuse_deepseek41_sm120",
-            "9da32c34c8febb52b367b9e11e0b303b26d08e141358ea962c9e785ef0c44bbb",
-        ),
-        (
-            "f32_decode_reuse_deepseek41_sm120",
-            "5822024aceddb2e6064580c326b8281518289b2884cbf93b07200bc8982727de",
-        ),
-    ] {
-        let module = crate::CUBINS.iter().find(|c| c.name == name).unwrap();
-        assert_eq!(kernel_build::digest(module.bytes), expected);
-    }
+    let name = "f32_decode_reuse_deepseek41_sm120";
+    let expected = "5822024aceddb2e6064580c326b8281518289b2884cbf93b07200bc8982727de";
+    let module = crate::CUBINS.iter().find(|c| c.name == name).unwrap();
+    assert_eq!(kernel_build::digest(module.bytes), expected);
 }
 
 #[test]
 fn reuse_modules_load_only_for_flash_tp4() {
     for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
         let shape = Shape::new(&FLASH, ranks).unwrap();
-        for cubin in [
-            crate::sm120::projection_reuse::HEAD_CUBIN,
-            crate::sm120::projection_reuse::FOLD_CUBIN,
-        ] {
-            assert_eq!(crate::Kernels::loads(cubin, &shape), ranks == Ranks::TP4);
-        }
+        assert_eq!(
+            crate::Kernels::loads(crate::sm120::projection_reuse::HEAD_CUBIN, &shape),
+            ranks == Ranks::TP4
+        );
     }
 }

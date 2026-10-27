@@ -60,7 +60,13 @@ fn audit(lines: &[String], at: usize) -> (u32, Vec<(String, String)>) {
         .collect::<Vec<_>>();
     let init = shared
         .iter()
-        .find(|l| l.1.contains("_pair_") && l.1.ends_with("_initialize_v3"))
+        .find(|l| {
+            l.1.starts_with("chop_deepseek41_dense_decode_")
+                && l.1.contains("_pair_e4m3_ue8m0_k32x4_f32_f32_")
+                && ["_n32r1s3w1f0_v1_admit_v1", "_n64r1s3w1f0_v1_admit_v1"]
+                    .iter()
+                    .any(|suffix| l.1.ends_with(suffix))
+        })
         .unwrap();
     let inputs = [init.3[0], init.3[1], init.3[3]];
     let mut routed = Vec::new();

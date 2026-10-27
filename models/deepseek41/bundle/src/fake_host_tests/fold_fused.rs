@@ -304,10 +304,7 @@ fn served(line: &str) -> Option<(&'static str, Kind)> {
 /// Every symbol `served` names, built once: each catalog is a full
 /// registration, and the audit asks for thousands of lines.
 fn served_symbols() -> BTreeMap<String, (&'static str, Kind)> {
-    let prefetch = crate::sm120::mxfp8_fold::prefetch_entries(&FLASH, 4).unwrap();
-    let ticket = crate::sm120::mxfp8_fold::ticket_entries(&FLASH, 4).unwrap();
-    let split = crate::sm120::mxfp8_fold::decode_entries(&FLASH, 4).unwrap();
-    let reuse = crate::sm120::projection_reuse::entries().unwrap();
+    let dense = crate::sm120::mxfp8_fold::dense_catalog(&FLASH).unwrap();
     let streams = crate::sm120::mxfp8_fold_stream::catalog(&FLASH).unwrap();
     let directs = crate::sm120::mxfp8_fold_direct_entries::catalog().unwrap();
     let mut map = BTreeMap::new();
@@ -329,30 +326,14 @@ fn served_symbols() -> BTreeMap<String, (&'static str, Kind)> {
         {
             symbols.push((e.symbol.clone(), Kind::Packed { states: 1 }));
         }
-        for e in prefetch
-            .iter()
-            .chain(&ticket)
-            .filter(|e| matches(e.query, e.paired))
-        {
-            let [initialize, fold] = e.symbols();
-            symbols.extend([(initialize, Kind::Admit), (fold, Kind::Fold)]);
-        }
-        for e in split.iter().filter(|e| matches(e.query, e.paired)) {
-            let [admit, partials, merge] = e.symbols();
-            symbols.extend([
-                (admit, Kind::Admit),
-                (partials, Kind::Fold),
-                (merge, Kind::Fold),
-            ]);
-        }
-        for e in reuse
-            .iter()
-            .filter(|e| matches(e.ticket.query, e.ticket.paired))
-        {
-            symbols.extend([
-                (format!("{}_admit_v1", e.symbol()), Kind::Admit),
-                (e.symbol(), Kind::Fold),
-            ]);
+        for e in dense.iter().filter(|e| matches(e.query, e.paired)) {
+            symbols.extend(
+                e.specs()
+                    .unwrap()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, s)| (s.symbol, if i == 0 { Kind::Admit } else { Kind::Fold })),
+            );
         }
         for (symbol, kind) in symbols {
             let packed = crate::sm120::test_symbols::packed_fold_symbol(&symbol);

@@ -4,9 +4,9 @@
 //! fold decode entry, and the split fold against the prefetch ticket that
 //! serving selects.
 use super::mxfp8_fold_decode as previous;
-use bundle_deepseek41::sm120::mxfp8_fold as registration;
+use crate::dense_decode_reference as registration;
+use crate::dense_decode_reference::frozen::{mxfp8_fold_decode, mxfp8_fold_ticket};
 use kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery;
-use kernels_sm120::gemm::{mxfp8_fold_decode, mxfp8_fold_ticket};
 use model_deepseek41_contract::geometry::FLASH;
 use serde_json::json;
 use std::collections::BTreeMap;

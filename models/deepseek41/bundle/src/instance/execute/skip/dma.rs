@@ -1,8 +1,8 @@
 //! Replace only the existing cone's rounded reductions with ordered DMA.
 //! Every compute launch and persistent mutation retains its original rows.
 use super::{Instance, Programs, Run, Stage};
+use crate::instance::execute::Executor;
 use crate::instance::execute::dma::{Call, Consumers, Producers};
-use bundle_runtime::pipeline::PoisonOnUnwind;
 use kernel_core::contract::Argument;
 use model_deepseek41_contract::state::KvStorage;
 use runtime_bundle_abi::BundleAbiError;
@@ -223,9 +223,9 @@ impl Plan {
         body: &Programs,
     ) -> Result<(), BundleAbiError> {
         let streams = instance.ranks.iter().map(|rank| rank.2).collect::<Vec<_>>();
+        let executor = Executor::new(instance, &streams);
         let issue = |spans: &[Range<usize>]| {
-            instance.launch_eager(
-                &streams,
+            executor.issue(
                 &spans
                     .iter()
                     .enumerate()
@@ -238,8 +238,7 @@ impl Plan {
                     .collect::<Vec<_>>(),
             )
         };
-        let _unwind = PoisonOnUnwind(&instance.collectives);
-        let result = (|| {
+        let result = executor.run(|| {
             for block in &self.blocks {
                 issue(&block.compute)?;
                 block.reduce.execute(
@@ -250,7 +249,7 @@ impl Plan {
                 )?;
             }
             issue(&self.tail)
-        })();
+        });
         if result.is_err() {
             instance.collectives.poison();
         }

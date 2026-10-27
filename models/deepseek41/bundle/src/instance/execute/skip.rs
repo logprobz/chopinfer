@@ -374,6 +374,10 @@ impl Plan {
         &self.body
     }
 
+    pub(super) fn head(&self) -> &Programs {
+        &self.head
+    }
+
     pub(super) fn uses_dma(&self) -> bool {
         self.dma.is_some()
     }

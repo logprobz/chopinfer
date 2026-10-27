@@ -171,7 +171,7 @@ them. A non-default value is unqualified.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `diagnostic_step_logs` | `false` | Emit DSpark phase, prefetch, Engram, commit and drafter-confidence JSON records. |
+| `diagnostic_step_logs` | `false` | Emit DSpark phase, prefetch, Engram, commit and drafter-confidence JSON records, and each upper-skip prefill's program record (`chopinfer.deepseek41.prefill-program.v1`: rows, start, graph segments and program digests). |
 | `dspark_coupled_drafts` | `true` | Couple sampled drafts to the target sampler's noise. |
 | `dspark_compact_allocation` | `false` | Candidate: score and exchange only computed rows for allocated steps up to 64 rows; sample the reserved rows through an index map and reuse allocation metadata staging. |
 | `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |

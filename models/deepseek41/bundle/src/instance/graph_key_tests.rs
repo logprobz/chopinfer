@@ -485,3 +485,238 @@ fn route_banks_plan_different_launches_at_the_same_rows_and_items() {
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
 }
+
+/// One prefill item of `rows` rows after `prefix` positions in `slot`,
+/// its pages offset by `seed`, scoring its last row.
+fn prefill_inputs(rows: u32, prefix: u32, slot: i32, seed: u32) -> PhaseInputs {
+    let end = prefix + rows;
+    PhaseInputs {
+        item_order: vec![0],
+        request_ids: vec![1],
+        emits_row: vec![true],
+        prompt_rows: vec![false],
+        anchors: vec![false],
+        token_ids: (0..rows).map(|n| 7 + n).collect(),
+        positions: (prefix as i32..end as i32).collect(),
+        token_batch: vec![0; rows as usize],
+        block_tables: vec![
+            (0..end.div_ceil(64))
+                .map(|page| (page * 32 + (slot as u32 + seed) % 32) as i32)
+                .collect(),
+        ],
+        slot_ids: vec![slot],
+        q_start: vec![0],
+        q_len: vec![rows as i32],
+        prefix_len: vec![prefix as i32],
+        last_positions: vec![i64::from(end - 1)],
+        seq_lens: vec![end as i32],
+        ..PhaseInputs::default()
+    }
+}
+
+/// A planned eligible prefill's split, its body and head keys, the stages
+/// of its eager sections and its joins.
+struct PrefillPlanned {
+    split: prefill_graphs::Split,
+    body: prefill_graphs::Key,
+    head: prefill_graphs::Key,
+    eager: Vec<Stage>,
+    joins: usize,
+}
+
+fn plan_prefill(live: &Instance, inputs: PhaseInputs) -> PrefillPlanned {
+    let run = live.plan_run(inputs, None, None).unwrap();
+    let skip = run.execution.skip().expect("an upper-skip plan");
+    assert!(prefill_graphs::eligible(&run, skip));
+    let joins = run.execution.prefill_engram().map(|plan| plan.joins());
+    let split = prefill_graphs::split(live, skip.body(), joins.as_deref()).unwrap();
+    let rows = run.inputs.live_tokens();
+    let body = prefill_graphs::Key::of(rows, &skip.body().0, &split).unwrap();
+    let head = prefill_graphs::Key::of(
+        run.head_rows,
+        &skip.head().0,
+        &prefill_graphs::whole(&skip.head().0),
+    )
+    .unwrap();
+    let mut eager = Vec::new();
+    for gap in &split.gaps {
+        if let prefill_graphs::Gap::Eager(ranges) = gap {
+            for (rank, range) in ranges.iter().enumerate() {
+                for &stage in &skip.body().2[rank][range.clone()] {
+                    if !eager.contains(&stage) {
+                        eager.push(stage);
+                    }
+                }
+            }
+        }
+    }
+    PrefillPlanned {
+        split,
+        body,
+        head,
+        eager,
+        joins: joins.map_or(0, |joins| joins[0].len()),
+    }
+}
+
+/// Rows of eligible prefills at every row band and admitted boundary
+/// below 512.
+const PREFILL_ROWS: [u32; 12] = [1, 2, 31, 63, 64, 65, 127, 129, 256, 257, 401, 511];
+
+/// Contexts before the rows, with their slot and page offset: prefix zero,
+/// odd and ring-boundary offsets, both sides of the 32K block-selection
+/// class, and long contexts.
+fn prefill_cases(rows: u32) -> Vec<(u32, i32, u32)> {
+    let mut cases = vec![
+        (0, 0, 0),
+        (0, 5, 3),
+        (1, 1, 0),
+        (63, 2, 0),
+        (127, 7, 9),
+        (128, 3, 1),
+        (129, 3, 2),
+        (4093, 6, 4),
+        (32768 - rows, 4, 5),
+        (32769 - rows, 4, 6),
+        (146_001, 2, 3),
+        (400_017, 6, 4),
+    ];
+    cases.dedup();
+    cases
+}
+
+/// The context class of a prefill ending at `end`: the block selections of
+/// the reindexed sources take their early-exit route past 32K positions.
+fn context_class(end: u32) -> bool {
+    end > 32768
+}
+
+/// An eligible prefill's graph segments are a function of its rows, its
+/// context class and, for a DSpark target, the retained feature offset:
+/// the same key at every other context, slot and page placement, and a
+/// different key for every other rows. Only the full index sources'
+/// selections run eagerly between the segments.
+#[test]
+fn prefill_graph_keys_follow_rows_and_context_class() {
+    use model_deepseek41_contract::prefill_cone::feature_offset;
+    for dspark in [false, true] {
+        let (host, mut instance) =
+            crate::fake_host_tests::indexer_workloads::skip_host(Ranks::TP4, dspark, true, 8, &[]);
+        super::super::INSTANCES.with(|table| {
+            let mut table = table.borrow_mut();
+            let live = table.get_mut(instance.handle()).unwrap();
+            live.skip_prefill = true;
+            let window = live.config.shape.geometry.shape.attention.window;
+            let mut bodies: Vec<prefill_graphs::Key> = Vec::new();
+            let mut heads = Vec::new();
+            for rows in PREFILL_ROWS {
+                let mut classes: BTreeMap<(bool, u32), prefill_graphs::Key> = BTreeMap::new();
+                for (prefix, slot, seed) in prefill_cases(rows) {
+                    let planned = plan_prefill(live, prefill_inputs(rows, prefix, slot, seed));
+                    // AR joins its two prepared Engram gathers between
+                    // segments. Planned without the Engram hashes a DSpark
+                    // step stages, the DSpark target prepares no gather
+                    // here; served, it joins two as well.
+                    let (segments, joins) = if dspark { (5, 0) } else { (7, 2) };
+                    assert_eq!(planned.split.graphs.len(), segments);
+                    assert_eq!(planned.split.handles(), segments);
+                    assert_eq!(planned.joins, joins);
+                    assert_eq!(
+                        planned.eager,
+                        [2, 8, 14, 20].map(Stage::IndexSelect),
+                        "rows {rows} prefix {prefix}"
+                    );
+                    let offset = if dspark {
+                        feature_offset(prefix, rows, window)
+                    } else {
+                        0
+                    };
+                    let class = (context_class(prefix + rows), offset);
+                    match classes.get(&class) {
+                        None => {
+                            assert!(
+                                !classes.values().any(|key| *key == planned.body),
+                                "dspark {dspark} rows {rows} prefix {prefix}: another class \
+                                 shares the key"
+                            );
+                            classes.insert(class, planned.body);
+                        }
+                        Some(key) => assert!(
+                            *key == planned.body,
+                            "dspark {dspark} rows {rows} prefix {prefix} slot {slot} seed \
+                             {seed}: the key of class {class:?} changed"
+                        ),
+                    }
+                    if !heads.contains(&planned.head) {
+                        heads.push(planned.head);
+                    }
+                }
+                for key in classes.into_values() {
+                    assert!(
+                        !bodies.contains(&key),
+                        "rows {rows} repeat another rows' key"
+                    );
+                    bodies.push(key);
+                }
+            }
+            // One head below and one above the 256-row input layout.
+            assert_eq!(heads.len(), 2, "dspark {dspark}");
+        });
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+}
+
+/// A launch inside a graph segment is part of the key, so a lowering that
+/// changed it would capture anew instead of replaying a stale graph. The
+/// eager sections lower afresh at every step and are no part of it.
+#[test]
+fn a_changed_graph_launch_changes_the_prefill_key() {
+    let (host, mut instance) =
+        crate::fake_host_tests::indexer_workloads::skip_host(Ranks::TP4, false, true, 8, &[]);
+    super::super::INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let live = table.get_mut(instance.handle()).unwrap();
+        live.skip_prefill = true;
+        let run = live
+            .plan_run(prefill_inputs(31, 146_001, 2, 3), None, None)
+            .unwrap();
+        let skip = run.execution.skip().unwrap();
+        let joins = run.execution.prefill_engram().map(|plan| plan.joins());
+        let split = prefill_graphs::split(live, skip.body(), joins.as_deref()).unwrap();
+        let key = |programs: &Vec<Vec<PreparedLaunch>>| {
+            prefill_graphs::Key::of(31, programs, &split).unwrap()
+        };
+        let base = key(&skip.body().0);
+        let rebuilt = || -> Vec<Vec<PreparedLaunch>> {
+            skip.body()
+                .0
+                .iter()
+                .map(|program| program.iter().map(clone_launch).collect())
+                .collect()
+        };
+        assert_eq!(key(&rebuilt()), base);
+        let in_graph = split.graphs[3][2].start + 1;
+        let mut changed = rebuilt();
+        changed[2][in_graph].plan.grid[0] += 1;
+        assert_ne!(key(&changed), base);
+        let prefill_graphs::Gap::Eager(ranges) = &split.gaps[1] else {
+            panic!("the second gap is an eager selection");
+        };
+        let mut eager = rebuilt();
+        eager[2][ranges[2].start].plan.grid[0] += 1;
+        assert_eq!(key(&eager), base);
+    });
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
+fn clone_launch(launch: &PreparedLaunch) -> PreparedLaunch {
+    PreparedLaunch {
+        symbol: launch.symbol.clone(),
+        rows: launch.rows,
+        plan: launch.plan,
+        arguments: launch.arguments.clone(),
+        bindings: launch.bindings.clone(),
+    }
+}

@@ -43,6 +43,7 @@ mod graph_key_tests;
 #[path = "indexer_workload_tests.rs"]
 mod indexer_workload_tests;
 pub(crate) mod plan_cache;
+mod prefill_graphs;
 pub(crate) mod skip;
 
 /// Phase-arena indexes (`Instance::arenas`).
@@ -1037,7 +1038,12 @@ impl Instance {
             self.activate_indexer_graphs(run.bank);
         }
         match &run.execution {
-            Execution::Skip { plan, engram } => return plan.execute(self, engram.as_ref()),
+            Execution::Skip { plan, engram } => {
+                if self.config.execution.diagnostic_step_logs {
+                    self.log_prefill_program(run, plan, engram.as_ref());
+                }
+                return plan.execute(self, engram.as_ref());
+            }
             Execution::PrefillEngram(plan) => {
                 return plan
                     .execute(self, &run.programs, &run.collectives)

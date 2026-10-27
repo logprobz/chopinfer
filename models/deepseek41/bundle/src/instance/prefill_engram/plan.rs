@@ -157,6 +157,15 @@ impl Plan {
         self.ranges[0].len() - 1
     }
 
+    /// Each rank's first consumer of each gather layer, in layer order: the
+    /// launch its join precedes.
+    pub(in crate::instance) fn joins(&self) -> Vec<Vec<usize>> {
+        self.ranges
+            .iter()
+            .map(|sections| sections[1..].iter().map(|section| section.start).collect())
+            .collect()
+    }
+
     pub(in crate::instance) fn execute(
         &self,
         instance: &Instance,

@@ -31,6 +31,29 @@ previous collective. Other default configurations keep their existing path.
 The [schedule audit and served comparison](journal-changes/prefill-dma.md)
 record the scope, bitwise checks and 8K/32K TTFT results.
 
+### Coupled sampled drafts
+
+The model option `runtime.mtp_coupled_drafts` (default `false`) makes the
+MTP drafter propose each sampled item's drafts from the target sampler's
+own noise ([coupled sampled drafts](../../docs/numerics.md#coupled-sampled-drafts)).
+Draft position `j` of a verify item proposes the argmax of the drafter's
+logits divided by the item's temperature plus the Gumbel noise of the
+generated index the target samples that position at. Each drafter run
+uploads one record per draft row (seed, temperature and that index), so
+one captured draft step serves every position, and the draft argmax adds
+the noise to each rank's logits shard before its partial. Greedy items
+draft what they drafted before. A draft is kept only when it equals the
+target's sample at its row, so every emitted token is the target's sample;
+GLM's verify rows are not bitwise AR rows, so other drafts (and with them
+other verify shapes) can change a sample at a near tie, as any change of
+drafts can.
+
+Only an instance that runs the drafter and sets the option loads the draft
+noise cubin (the shared entry, byte-identical to DeepSeek's) and allocates
+its records; with the option off an instance issues exactly what it issued
+before the option existed. The option stays off until served timings at
+temperature 1.0 resolve a gain.
+
 ### Layer reference
 
 `text_layers` holds the served build's taps of one sequence

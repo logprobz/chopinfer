@@ -448,7 +448,9 @@ and top-p are not applied, and a draft they exclude is rejected. The
 device adds the sampler's F32 pruning noise, within
 `draft_noise::NOISE_ERROR` of the f64 noise, so a near tie between two
 Gumbel scores can change a proposal but never an emitted token. Greedy
-items' logits keep their bits.
+items' logits keep their bits. A model option selects it: DeepSeek's
+`dspark_coupled_drafts` (default on) and GLM's `runtime.mtp_coupled_drafts`
+(default off).
 
 ### Top-one device fast path
 

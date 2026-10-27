@@ -5,21 +5,24 @@ use kernels_sm120::gemm::mxfp8_fold_direct::Schedule;
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
 
 pub fn selected(g: &Geometry, q: Mxfp8FoldGemmQuery, rows: u32, paired: bool) -> Option<Schedule> {
-    match previous::tuning_row(
+    let row = previous::tuning_row(
         g,
         model_deepseek41_contract::tuning::Family::DenseFold,
         "dense_fold.direct.decode",
         q,
         paired,
         rows,
-    )
-    .map(|r| r.schedule.as_str())
-    {
-        Some("n32k1") => Some(Schedule::Block),
-        Some("n8k4") => Some(Schedule::LocalSplit),
-        None => None,
-        Some(schedule) => panic!("unknown direct fold schedule {schedule}"),
-    }
+    )?;
+    assert_eq!(row.schedule, "direct");
+    let warps = (
+        previous::tuning_count(row, "n_warps"),
+        previous::tuning_count(row, "k_warps"),
+    );
+    Some(match warps {
+        (4, 1) => Schedule::Block,
+        (1, 4) => Schedule::LocalSplit,
+        _ => panic!("unqualified direct fold warp layout {warps:?}"),
+    })
 }
 
 pub fn register(

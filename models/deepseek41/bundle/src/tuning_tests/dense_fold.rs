@@ -333,3 +333,22 @@ fn cluster_rows_keep_cta_local_storage() {
     }
     assert_eq!(checked, 11);
 }
+
+#[test]
+fn direct_rows_keep_qualified_warp_layouts() {
+    let table = tuning::table(&FLASH, Family::DenseFold).unwrap();
+    let mut layouts = BTreeMap::new();
+    for row in table.rows().iter().filter(|row| row.schedule == "direct") {
+        assert_eq!(
+            row.knobs.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["k_warps", "n_warps"]
+        );
+        let warps = (
+            row.knobs["n_warps"].count().unwrap(),
+            row.knobs["k_warps"].count().unwrap(),
+        );
+        assert!(matches!(warps, (4, 1) | (1, 4)));
+        *layouts.entry(warps).or_insert(0) += 1;
+    }
+    assert_eq!(layouts, [((4, 1), 3), ((1, 4), 3)].into());
+}

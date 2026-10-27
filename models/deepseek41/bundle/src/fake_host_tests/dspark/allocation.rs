@@ -417,3 +417,185 @@ fn allocation_ops_and_storage_are_dspark_only() {
         assert_eq!(host.acquired.get(), host.released.get());
     }
 }
+
+struct MappedSink {
+    inner: DeviceSink,
+    mapped: Vec<runtime_bundle_abi::device_results::BundleMappedDeviceSamplingRequestV1>,
+}
+impl LogitsRowSinkV1 for MappedSink {
+    fn device_results_enabled(&self) -> bool {
+        true
+    }
+    fn mapped_sampling_enabled(&self) -> bool {
+        true
+    }
+    fn limits(&self) -> ResultSinkLimitsV1 {
+        self.inner.limits()
+    }
+    fn emit_row(&mut self, row: OwnedLogitsRowV1) -> HostServiceResultV1<()> {
+        self.inner.emit_row(row)
+    }
+    fn emit_view(&mut self, view: OwnedLogitsViewV1) -> HostServiceResultV1<()> {
+        self.inner.emit_view(view)
+    }
+    fn emit_draft_tokens(&mut self, drafts: OwnedDraftTokensV1) -> HostServiceResultV1<()> {
+        self.inner.emit_draft_tokens(drafts)
+    }
+    fn device_cycle_metadata(
+        &self,
+    ) -> HostServiceResultV1<runtime_bundle_abi::device_results::DeviceCycleMetadataV1> {
+        self.inner.device_cycle_metadata()
+    }
+    fn declare_input_dependency(&mut self, dependency: u32) -> HostServiceResultV1<()> {
+        self.inner.declare_input_dependency(dependency)
+    }
+    fn emit_device_drafts(
+        &mut self,
+        drafts: runtime_bundle_abi::device_results::BundleDeviceDraftsV1,
+    ) -> HostServiceResultV1<()> {
+        self.inner.emit_device_drafts(drafts)
+    }
+    fn sample_device_logits(
+        &mut self,
+        request: runtime_bundle_abi::device_results::BundleDeviceSamplingRequestV1,
+    ) -> HostServiceResultV1<()> {
+        self.inner.sample_device_logits(request)
+    }
+    fn sample_mapped_device_logits(
+        &mut self,
+        request: runtime_bundle_abi::device_results::BundleMappedDeviceSamplingRequestV1,
+    ) -> HostServiceResultV1<()> {
+        request.validate().unwrap();
+        for view in [
+            request.row_indices,
+            request.source.logits.buffer,
+            request.output,
+        ] {
+            self.inner.host.check_span(DeviceBufferSpanV1::new(
+                view.buffer,
+                view.offset,
+                view.length,
+            ));
+        }
+        let stream = BundleStreamHandleV1::from_parts(
+            1,
+            self.inner.host.rank_streams.borrow()[&request.source.logits.rank],
+        );
+        self.inner.host.record_event(request.done, stream)?;
+        self.mapped.push(request);
+        Ok(())
+    }
+    fn emit_device_completion(
+        &mut self,
+        packet: runtime_bundle_abi::device_results::BundleDeviceCompletionV1,
+    ) -> HostServiceResultV1<()> {
+        for request in &self.mapped {
+            assert!(
+                self.inner
+                    .host
+                    .journal
+                    .borrow()
+                    .iter()
+                    .any(|line| line.starts_with("wait ")
+                        && line.ends_with(&format!(" {}", request.done.slot())))
+            );
+        }
+        self.inner.emit_device_completion(packet)
+    }
+}
+
+#[test]
+fn compact_allocation_scores_only_computed_rows_and_keeps_reserved_samples() {
+    use model_deepseek41_contract::dspark_options::COMPACT_ALLOCATION;
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    for (items, width) in [(4, 16), (8, 32)] {
+        let (host, mut instance) =
+            create_with_options(shape, 32, 64, &[(COMPACT_ALLOCATION, true.into())]);
+        for slot in 0..items {
+            execute(
+                &mut instance,
+                &host,
+                &super::super::prompt(u64::from(slot + 1), u64::from(slot), 0, 3, true),
+            );
+            instance.commit().unwrap();
+        }
+        for cycle in 1..=2 {
+            let mut sink = MappedSink {
+                inner: DeviceSink {
+                    host: host.clone(),
+                    metadata: Some(metadata(items, 5, cycle)),
+                    legacy: Sink::default(),
+                    drafts: vec![],
+                    samples: vec![],
+                    completion: None,
+                },
+                mapped: vec![],
+            };
+            if cycle == 1 {
+                let before = host.journal.borrow().len();
+                assert_eq!(
+                    instance
+                        .execute(
+                            &allocated(items, cycle + 2, 5, width).encode().unwrap(),
+                            &mut sink.inner,
+                        )
+                        .err(),
+                    Some(BundleAbiError::Status(BundleStatusV1::Unsupported)),
+                );
+                assert_eq!(host.journal.borrow().len(), before);
+            }
+            let start = host.journal.borrow().len();
+            instance
+                .execute(
+                    &allocated(items, cycle + 2, 5, width).encode().unwrap(),
+                    &mut sink,
+                )
+                .unwrap_or_else(|e| panic!("{e:?} {:?}", host.logs.borrow()));
+            assert_eq!(sink.mapped.len(), 1);
+            assert!(sink.inner.samples.is_empty());
+            let mapped = sink.mapped[0];
+            assert_eq!(mapped.source.logits.row_count, width);
+            assert_eq!(mapped.sample_rows, items * 6);
+            assert_eq!(
+                mapped.source.logits.buffer.length,
+                u64::from(width) * u64::from(shape.dims().vocab) * 4
+            );
+            assert_eq!(mapped.row_indices.length, u64::from(items * 6) * 4);
+            assert_eq!(sink.inner.completion.unwrap().sample_rows, items * 6);
+            assert!(sink.inner.drafts.iter().all(|d| d.computed_tokens == 5));
+            let journal = host.journal.borrow();
+            if cycle == 1 {
+                let hash = launch_of(
+                    &journal[start..],
+                    host.rank_streams.borrow()[&0],
+                    crate::sm120::engram_hash_rows::SYMBOL,
+                )
+                .unwrap();
+                for stream in host.rank_streams.borrow().values() {
+                    let head: Vec<_> = journal[start + hash..]
+                        .iter()
+                        .filter(|line| {
+                            line.starts_with(&format!("launch {stream} chop_deepseek41_head_f32"))
+                        })
+                        .collect();
+                    assert!(!head.is_empty());
+                    assert!(
+                        head.iter()
+                            .all(|line| line.contains(&format!("ScalarU32({width})"))),
+                        "{head:#?}"
+                    );
+                }
+            }
+            drop(journal);
+            instance
+                .commit_accepted(
+                    &(1..=items)
+                        .map(|id| super::kept(u64::from(id), 1))
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap();
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+}

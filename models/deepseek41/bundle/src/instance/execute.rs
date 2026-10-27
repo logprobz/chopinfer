@@ -521,6 +521,11 @@ impl Instance {
                     (true, _, Stage::DsparkFeature(layer)) => {
                         self.dspark_feature(&lowering, phase, layer).map(Some)
                     }
+                    (true, _, Stage::GatherLogits)
+                        if allocated.is_some() && self.compact_allocated_step().is_some() =>
+                    {
+                        lowering.gather_compact_logits()
+                    }
                     (true, _, Stage::LmHead) if allocated.is_some() => {
                         self.dspark_allocated_head(&lowering, phase)
                     }
@@ -639,7 +644,11 @@ impl Instance {
         } else {
             // An allocated step's head scores its tail rows.
             (
-                allocated.unwrap_or(phase.rows()),
+                if self.compact_allocated_step().is_some() {
+                    phase.rows()
+                } else {
+                    allocated.unwrap_or(phase.rows())
+                },
                 crate::buffers::head_rows(&self.config.shape),
             )
         };
@@ -1682,7 +1691,11 @@ impl Instance {
             .as_ref()
             .is_some_and(|device| device.results.metadata.is_some());
         if device_results {
-            let views = self.logits_views(runs)?;
+            let views = if self.compact_allocated_step().is_some() {
+                Vec::new()
+            } else {
+                self.logits_views(runs)?
+            };
             self.submit_dspark_results(sink, &views).map_err(|error| {
                 self.log(&error);
                 BundleAbiError::Status(BundleStatusV1::BundleError)

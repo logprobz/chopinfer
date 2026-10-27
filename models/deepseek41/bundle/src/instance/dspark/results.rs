@@ -43,7 +43,7 @@ impl Instance {
         validate_metadata(
             &metadata,
             inputs,
-            device.shape.geometry.shape.vocab,
+            device.shape.dims().vocab,
             device.results.last_epoch,
         )?;
         let state = device
@@ -151,6 +151,74 @@ impl Instance {
             .as_ref()
             .ok_or("DSpark result metadata absent")?;
         let memory = result.memory.ok_or("DSpark result storage absent")?;
+        if let Some(step) = self.compact_allocated_step() {
+            if !sink.mapped_sampling_enabled() {
+                return Err("compact allocation requires mapped sampling".into());
+            }
+            let rank = 0;
+            self.services
+                .record_event(result.target_ready[rank], self.ranks[rank].2)
+                .map_err(|e| e.to_string())?;
+            let source = slice(
+                self.buffers[rank].scratch.decode_logits,
+                0,
+                u64::from(step.width) * u64::from(device.shape.dims().vocab) * 4,
+            )?;
+            let allocation = device.allocation.ranks[rank];
+            sink.sample_mapped_device_logits(BundleMappedDeviceSamplingRequestV1 {
+                struct_size: size_of::<BundleMappedDeviceSamplingRequestV1>() as u32,
+                reserved: 0,
+                source: BundleReadyLogitsViewV1 {
+                    struct_size: size_of::<BundleReadyLogitsViewV1>() as u32,
+                    flags: 0,
+                    cycle_epoch: metadata.cycle_epoch,
+                    logits: BundleLogitsViewV1 {
+                        struct_size: size_of::<BundleLogitsViewV1>() as u32,
+                        reserved: 0,
+                        reserved_tail: 0,
+                        rank: 0,
+                        first_item_index: 0,
+                        row_count: step.width,
+                        live_width: device.shape.dims().vocab,
+                        row_stride_elements: u64::from(device.shape.dims().vocab),
+                        element_type: runtime_bundle_abi::BUNDLE_LOGITS_ELEMENT_V1_F32,
+                        context: self.ranks[rank].0,
+                        buffer: view(source),
+                    },
+                    ready: result.target_ready[rank],
+                },
+                first_sample_row: 0,
+                sample_rows: step.reserved_rows,
+                row_indices: view(slice(
+                    allocation.expand,
+                    0,
+                    u64::from(step.reserved_rows) * 4,
+                )?),
+                output: view(slice(
+                    result.samples[rank],
+                    0,
+                    u64::from(step.reserved_rows) * 256,
+                )?),
+                done: result.sampled[rank],
+            })
+            .map_err(|e| e.to_string())?;
+            let stream = self.ranks[0].2;
+            self.services
+                .wait_event(stream, result.sampled[rank])
+                .map_err(|e| e.to_string())?;
+            self.services
+                .copy_device_to_device(
+                    stream,
+                    slice(
+                        memory.packet,
+                        SAMPLE_OFFSET,
+                        u64::from(step.reserved_rows) * 256,
+                    )?,
+                    slice(result.samples[rank], 0, u64::from(step.reserved_rows) * 256)?,
+                )
+                .map_err(|e| e.to_string())?;
+            return self.finish_dspark_results(sink, step.reserved_rows);
+        }
         let owners = views
             .iter()
             .map(|view| view.rank as usize)
@@ -212,6 +280,22 @@ impl Instance {
             }
             .map_err(|e| e.to_string())?;
         }
+        self.finish_dspark_results(sink, rows)
+    }
+
+    fn finish_dspark_results(
+        &self,
+        sink: &mut ExecuteResultSinkV1,
+        rows: u32,
+    ) -> Result<(), String> {
+        let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
+        let result = &device.results;
+        let metadata = result
+            .metadata
+            .as_ref()
+            .ok_or("DSpark result metadata absent")?;
+        let memory = result.memory.ok_or("DSpark result storage absent")?;
+        let stream = self.ranks[0].2;
         let expected: u32 = metadata
             .items
             .iter()

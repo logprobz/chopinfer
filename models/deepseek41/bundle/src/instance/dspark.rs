@@ -429,6 +429,10 @@ impl Instance {
         // the device results path takes it.
         let allocated =
             BatchCodecV1::decode(request).is_ok_and(|batch| batch.verify_allocation().is_some());
+        if allocated && self.config.dspark_compact_allocation && !sink.mapped_sampling_enabled() {
+            self.log("compact allocation requires mapped sampling");
+            return BundleStatusV1::Unsupported;
+        }
         if allocated && !sink.device_results_enabled() {
             self.log("DSpark allocated verify steps need device results");
             return BundleStatusV1::Unsupported;

@@ -46,6 +46,13 @@ impl Instance {
         Some(step.reserved_rows.next_multiple_of(TAIL_ROWS).min(prepared))
     }
 
+    pub(crate) fn compact_allocated_step(&self) -> Option<&Step> {
+        self.allocated_step().filter(|step| {
+            self.config.dspark_compact_allocation
+                && step.width <= model_deepseek41_contract::serving::SCORED_ROWS
+        })
+    }
+
     /// Rank `rank`'s allocation storage.
     fn allocation_memory(&self, rank: usize) -> Result<Memory, String> {
         self.dspark
@@ -73,24 +80,67 @@ impl Instance {
                 .flat_map(|value| value.to_le_bytes())
                 .collect::<Vec<_>>()
         };
-        let items = words(&step.item_words());
+        let items = if allocation.compact {
+            Vec::new()
+        } else {
+            words(&step.item_words())
+        };
+        let mut staging = allocation.staging.borrow_mut();
+        if allocation.compact {
+            let bytes = &mut staging.bytes;
+            bytes.fill(0);
+            for (word, value) in step.items.iter().flat_map(|item| item.encode()).enumerate() {
+                bytes[word * 4..word * 4 + 4].copy_from_slice(&value.to_le_bytes());
+            }
+            let count = allocation.op.items as usize
+                * model_deepseek41_contract::own_ops::allocation::ITEM_WORDS
+                * 4;
+            for (at, value) in [
+                step.items.len() as u32,
+                step.reserved_rows,
+                step.width,
+                step.rule[1],
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                bytes[count + at * 4..count + (at + 1) * 4].copy_from_slice(&value.to_le_bytes());
+            }
+        }
         let live = step.items.len() as u32;
         for (rank, (target, stored)) in targets.iter().zip(&device.ranks).enumerate() {
             let memory = self.allocation_memory(rank)?;
             let stream = self.ranks[rank].2;
-            for (span, bytes) in [
-                (memory.items, items.clone()),
-                (memory.rule, words(&step.rule)),
-                (memory.live_items, live.to_le_bytes().to_vec()),
-                (memory.reserved, step.reserved_rows.to_le_bytes().to_vec()),
-            ] {
-                upload_bytes(
-                    &self.services,
-                    stream,
-                    slice(span, 0, bytes.len() as u64)?,
-                    &bytes,
-                )
-                .map_err(|e| e.to_string())?;
+            if let Some(metadata) = memory.metadata {
+                upload_bytes(&self.services, stream, metadata, &staging.bytes)
+                    .map_err(|e| e.to_string())?;
+                let calibration: [u32; RULE_WORDS - 2] = step.rule[2..].try_into().unwrap();
+                if staging.calibration[rank] != Some(calibration) {
+                    let bytes = words(&calibration);
+                    upload_bytes(
+                        &self.services,
+                        stream,
+                        slice(memory.rule, 8, bytes.len() as u64)?,
+                        &bytes,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    staging.calibration[rank] = Some(calibration);
+                }
+            } else {
+                for (span, bytes) in [
+                    (memory.items, items.clone()),
+                    (memory.rule, words(&step.rule)),
+                    (memory.live_items, live.to_le_bytes().to_vec()),
+                    (memory.reserved, step.reserved_rows.to_le_bytes().to_vec()),
+                ] {
+                    upload_bytes(
+                        &self.services,
+                        stream,
+                        slice(span, 0, bytes.len() as u64)?,
+                        &bytes,
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
             }
             let scratch = &self.buffers[rank].scratch;
             let mut bind = Bind::default();
@@ -135,13 +185,19 @@ impl Instance {
                 )
                 .map_err(|e| format!("DSpark verify allocation launch: {e:?}"))?;
             }
-            upload_bytes(
-                &self.services,
-                stream,
-                target.live_tokens,
-                &step.width.to_le_bytes(),
-            )
-            .map_err(|e| e.to_string())?;
+            if memory.metadata.is_some() {
+                self.services
+                    .copy_device_to_device(stream, target.live_tokens, slice(memory.rule, 0, 4)?)
+                    .map_err(|e| e.to_string())?;
+            } else {
+                upload_bytes(
+                    &self.services,
+                    stream,
+                    target.live_tokens,
+                    &step.width.to_le_bytes(),
+                )
+                .map_err(|e| e.to_string())?;
+            }
         }
         Ok(())
     }
@@ -195,6 +251,14 @@ impl Instance {
         base: &Lowering<'_>,
         phase: Phase,
     ) -> Result<Option<Vec<Lowered>>, String> {
+        if self.compact_allocated_step().is_some() {
+            return base.lm_head_over(
+                phase,
+                crate::buffers::rows(base.buffers.scratch.normed_wide, phase.rows()),
+                phase.rows(),
+                base.inputs.live_tokens,
+            );
+        }
         let memory = self.allocation_memory(base.rank as usize)?;
         let Some(mut launches) =
             base.reserved_head_rows(phase, memory.expand, memory.reserved, memory.head)?

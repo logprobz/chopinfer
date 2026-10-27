@@ -6,8 +6,10 @@ use crate::dspark::state::BLOCK_ROWS;
 use model_deepseek41_contract::geometry::FLASH;
 use model_deepseek41_contract::serving::DECODE_BATCH;
 
-fn compact_heads(inputs: &[DraftInput]) -> bool {
-    (3..=8).contains(&inputs.len()) && inputs.iter().all(|input| input.block.emit_rows == 3)
+fn compact_heads(inputs: &[DraftInput], allocated: bool) -> bool {
+    !allocated
+        && (3..=8).contains(&inputs.len())
+        && inputs.iter().all(|input| input.block.emit_rows == 3)
 }
 
 fn chunk_ranges(items: usize, maximum: usize) -> impl Iterator<Item = std::ops::Range<usize>> {
@@ -37,8 +39,15 @@ impl Instance {
         if inputs.len() <= chunk_items {
             let positions = if device.shape.geometry.id == FLASH.id
                 && device.shape.ranks() == 4
-                && compact_heads(inputs)
-            {
+                && compact_heads(
+                    inputs,
+                    self.config.dspark_compact_allocation
+                        && device
+                            .cycle
+                            .pending
+                            .as_ref()
+                            .is_some_and(|p| p.allocation.is_some()),
+                ) {
                 3
             } else {
                 BLOCK_ROWS
@@ -133,12 +142,16 @@ mod tests {
                     noise: Noise::GREEDY,
                 })
                 .collect::<Vec<_>>();
-            assert_eq!(compact_heads(&inputs), (3..=8).contains(&items));
+            assert_eq!(compact_heads(&inputs, false), (3..=8).contains(&items));
+            assert!(
+                !compact_heads(&inputs, true),
+                "allocated drafts retain all five heads"
+            );
             for index in 0..inputs.len() {
                 for depth in [1, 2, 4, 5] {
                     inputs[index].block.emit_rows = depth;
                     assert!(
-                        !compact_heads(&inputs),
+                        !compact_heads(&inputs, false),
                         "items={items} mixed index={index} depth={depth}"
                     );
                 }

@@ -9,6 +9,8 @@
 //! computes the width, and its final-norm rows and packed features are
 //! gathered back into the reserved rows by `expand` before the head and
 //! the commit read them.
+//! The compact-allocation candidate instead scores computed rows and gives
+//! the sampler `expand`; feature rows and commit retain the reserved layout.
 use super::results::{ITEMS, ROWS, STOP_CAPACITY};
 use bundle_runtime::inputs::PhaseInputs;
 use bundle_runtime::resources::{Held, allocate_span};
@@ -27,6 +29,29 @@ use runtime_bundle_abi::{
 };
 use runtime_bundle_sdk::{BatchRequestV1, VerifyAllocationV1};
 
+#[derive(Default)]
+pub(crate) struct RuleCache {
+    calibration: Option<runtime_bundle_sdk::VerifyCalibrationV1>,
+    words: [u32; RULE_WORDS],
+}
+impl RuleCache {
+    fn encode(&mut self, allocation: &VerifyAllocationV1) -> [u32; RULE_WORDS] {
+        if self.calibration.as_ref() != Some(allocation.calibration()) {
+            self.words = encode_rule(allocation);
+            self.calibration = Some(allocation.calibration().clone());
+        }
+        self.words[0] = allocation.width();
+        self.words[1] = allocation.floor();
+        self.words
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct MetadataStaging {
+    pub bytes: Vec<u8>,
+    pub calibration: Vec<Option<[u32; RULE_WORDS - 2]>>,
+}
+
 pub(crate) struct Allocation {
     pub op: VerifyAllocate,
     pub allocate: Prepared<VerifyAllocateBuffers<View>>,
@@ -36,6 +61,9 @@ pub(crate) struct Allocation {
     /// The bytes of one F32 final-norm row.
     head_row_bytes: u64,
     pub ranks: Vec<Memory>,
+    pub compact: bool,
+    pub rule_cache: std::cell::RefCell<RuleCache>,
+    pub staging: std::cell::RefCell<MetadataStaging>,
 }
 
 /// One rank's allocation inputs and outputs (`VerifyAllocateBuffers`), the
@@ -54,6 +82,7 @@ pub(crate) struct Memory {
     pub expand: Span,
     pub reserved: Span,
     pub head: Span,
+    pub metadata: Option<Span>,
 }
 
 impl Allocation {
@@ -107,6 +136,9 @@ impl Allocation {
             acceptance,
             head_row_bytes: u64::from(hidden) * 4,
             ranks: Vec::new(),
+            compact: false,
+            rule_cache: Default::default(),
+            staging: Default::default(),
         })
     }
 
@@ -120,17 +152,51 @@ impl Allocation {
     ) -> Result<(), BundleAbiError> {
         let mut alloc = |bytes| allocate_span(services, pool, stream, bytes, held);
         let items = u64::from(self.op.items);
+        let metadata = if self.compact {
+            Some(alloc(
+                items * ITEM_WORDS as u64 * 4 + 8 + RULE_WORDS as u64 * 4,
+            )?)
+        } else {
+            None
+        };
+        let (item_data, rule, live_items, reserved) = if let Some(span) = metadata {
+            let item_bytes = items * ITEM_WORDS as u64 * 4;
+            let sub = |offset, length| Span::new(span.buffer, span.offset + offset, length);
+            self.staging
+                .borrow_mut()
+                .bytes
+                .resize(item_bytes as usize + 16, 0);
+            self.staging.borrow_mut().calibration.push(None);
+            (
+                sub(0, item_bytes),
+                sub(item_bytes + 8, RULE_WORDS as u64 * 4),
+                sub(item_bytes, 4),
+                Some(sub(item_bytes + 4, 4)),
+            )
+        } else {
+            // Preserve the original allocation order for the disabled candidate.
+            (
+                alloc(items * ITEM_WORDS as u64 * 4)?,
+                alloc(RULE_WORDS as u64 * 4)?,
+                alloc(4)?,
+                None,
+            )
+        };
         self.ranks.push(Memory {
-            items: alloc(items * ITEM_WORDS as u64 * 4)?,
-            rule: alloc(RULE_WORDS as u64 * 4)?,
-            live_items: alloc(4)?,
+            items: item_data,
+            rule,
+            live_items,
             status: alloc(4)?,
             verified: alloc(items * 4)?,
             starts: alloc(items * 4)?,
             rows: alloc(u64::from(self.op.width) * 4)?,
             expand: alloc(u64::from(self.op.reserved_rows) * 4)?,
-            reserved: alloc(4)?,
+            reserved: match reserved {
+                Some(span) => span,
+                None => alloc(4)?,
+            },
             head: alloc(u64::from(self.op.reserved_rows) * self.head_row_bytes)?,
+            metadata,
         });
         Ok(())
     }
@@ -153,6 +219,14 @@ impl Step {
     /// drafts, and the items with drafts take the drafter's confidence rows
     /// in order. A step with no allocation is `None`.
     pub fn of(batch: &BatchRequestV1, decode: &PhaseInputs) -> Result<Option<Self>, String> {
+        Self::with_rule_cache(batch, decode, None)
+    }
+
+    pub fn with_rule_cache(
+        batch: &BatchRequestV1,
+        decode: &PhaseInputs,
+        cache: Option<&std::cell::RefCell<RuleCache>>,
+    ) -> Result<Option<Self>, String> {
         let Some(allocation) = batch.verify_allocation() else {
             return Ok(None);
         };
@@ -193,7 +267,10 @@ impl Step {
             width: allocation.width(),
             reserved_rows: first_row,
             items,
-            rule: encode_rule(allocation),
+            rule: cache.map_or_else(
+                || encode_rule(allocation),
+                |cache| cache.borrow_mut().encode(allocation),
+            ),
         }))
     }
 
@@ -266,6 +343,18 @@ mod tests {
             first += 1 + drafts as i32;
         }
         (batch, decode)
+    }
+
+    #[test]
+    fn cached_calibration_keeps_width_and_floor_step_local() {
+        let cache = std::cell::RefCell::new(RuleCache::default());
+        for width in [7, 8, 7] {
+            let (batch, decode) = step(width);
+            let expected = Step::of(&batch, &decode).unwrap();
+            let actual = Step::with_rule_cache(&batch, &decode, Some(&cache)).unwrap();
+            assert_eq!(actual, expected);
+            assert_eq!(actual.unwrap().rule[0], width);
+        }
     }
 
     /// Each item reserves its drafts at its packed first row, with its own

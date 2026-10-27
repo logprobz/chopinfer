@@ -24,16 +24,33 @@ pub const SMALL_DRAFT_ITEMS: u32 = 12;
 /// The block rows of [`SMALL_DRAFT_ITEMS`]: five per drafting item.
 pub const SMALL_DRAFT_ROWS: u32 = SMALL_DRAFT_ITEMS * MAX_DRAFT_TOKENS;
 
-pub fn declarations() -> [ModelOptionV1; 1] {
-    [ModelOptionV1 {
-        name: DRAFT_CHUNK_ITEMS.into(),
-        definition: OptionDefinitionV1::Integer {
-            default: i64::from(DEFAULT_DRAFT_CHUNK_ITEMS),
-            minimum: 1,
-            maximum: i64::from(DECODE_BATCH),
+/// Default-off candidate: compact allocated vocabulary heads and mapped sampling.
+pub const COMPACT_ALLOCATION: &str = "dspark_compact_allocation";
+
+pub fn compact_allocation(options: &BTreeMap<String, serde_json::Value>) -> Result<bool, String> {
+    options.get(COMPACT_ALLOCATION).map_or(Ok(false), |v| {
+        v.as_bool()
+            .ok_or_else(|| format!("{COMPACT_ALLOCATION} must be boolean"))
+    })
+}
+
+pub fn declarations() -> [ModelOptionV1; 2] {
+    [
+        ModelOptionV1 {
+            name: COMPACT_ALLOCATION.into(),
+            definition: OptionDefinitionV1::Boolean { default: false },
+            default_is_qualified: true,
         },
-        default_is_qualified: true,
-    }]
+        ModelOptionV1 {
+            name: DRAFT_CHUNK_ITEMS.into(),
+            definition: OptionDefinitionV1::Integer {
+                default: i64::from(DEFAULT_DRAFT_CHUNK_ITEMS),
+                minimum: 1,
+                maximum: i64::from(DECODE_BATCH),
+            },
+            default_is_qualified: true,
+        },
+    ]
 }
 
 /// The drafting items per drafter forward that resolved `options` name.
@@ -86,5 +103,18 @@ mod tests {
             let options = BTreeMap::from([(DRAFT_CHUNK_ITEMS.to_owned(), bad)]);
             assert!(draft_chunk_items(&options).is_err());
         }
+    }
+
+    #[test]
+    fn compact_allocation_is_an_explicit_default_off_candidate() {
+        assert_eq!(compact_allocation(&resolve(&[])), Ok(false));
+        assert_eq!(compact_allocation(&BTreeMap::new()), Ok(false));
+        assert_eq!(
+            compact_allocation(&resolve(&[(COMPACT_ALLOCATION, "true")])),
+            Ok(true)
+        );
+        assert!(
+            compact_allocation(&BTreeMap::from([(COMPACT_ALLOCATION.into(), 1.into())])).is_err()
+        );
     }
 }

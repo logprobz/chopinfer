@@ -144,6 +144,19 @@ impl Lowering<'_> {
             .map_err(|refusal| format!("rank {}'s logits move: {refusal}", self.rank))
     }
 
+    /// A compact allocated head gathers only computed rows to the sampler owner.
+    pub(crate) fn gather_compact_logits(&self) -> Result<Option<Vec<Lowered>>, String> {
+        let Some(ops) = &self.ops.logits else {
+            return Ok(None);
+        };
+        let peers = self.logits_peers(|scratch, comm| {
+            (scratch.decode_logits, comm.gather_flags, comm.gather_epoch)
+        })?;
+        ops.gather(self.rank, self.head_rows, self.buffers.scratch.head, &peers)
+            .map(Some)
+            .map_err(|e| format!("compact logits gather: {e}"))
+    }
+
     /// Every rank's views of a logits move: its full rows, flags and epoch.
     fn logits_peers(
         &self,

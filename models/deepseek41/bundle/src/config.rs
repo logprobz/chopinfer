@@ -45,6 +45,7 @@ pub struct Configuration {
     /// Drafting items per drafter forward
     /// (`model_deepseek41_contract::dspark_options`).
     pub dspark_draft_chunk_items: u32,
+    pub dspark_compact_allocation: bool,
     /// Whether sampled requests draft from the target sampler's noise
     /// (`model_deepseek41_contract::dspark_coupling`).
     pub dspark_coupled_drafts: bool,
@@ -157,6 +158,11 @@ pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleS
             log(&e);
             BundleStatusV1::InvalidArgument
         })?;
+    let dspark_compact_allocation =
+        model_deepseek41_contract::dspark_options::compact_allocation(&options).map_err(|e| {
+            log(&e);
+            BundleStatusV1::InvalidArgument
+        })?;
     let dspark_coupled_drafts =
         model_deepseek41_contract::dspark_coupling::coupled_drafts(&options).map_err(|e| {
             log(&e);
@@ -247,6 +253,7 @@ pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleS
         execution,
         prefill,
         dspark_draft_chunk_items,
+        dspark_compact_allocation,
         dspark_coupled_drafts,
         verify_graph_rows,
         shape,

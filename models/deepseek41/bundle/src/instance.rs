@@ -968,7 +968,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         BundleStatusV1::Unsupported
     })?;
     let ops = Ops::prepare(&kernels, &shape, config.kv.storage, config.prefill);
-    let dspark = if has_drafter {
+    let mut dspark = if has_drafter {
         Some(
             crate::dspark::device::Device::new(
                 &kernels,
@@ -993,6 +993,9 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
     } else {
         None
     };
+    if let Some(device) = &mut dspark {
+        device.allocation.compact = config.dspark_compact_allocation;
+    }
     verify.bundle_drafter = has_drafter;
     let media = config.media;
     let engram = engram::Engram::new(shape.geometry, media).map_err(|error| {

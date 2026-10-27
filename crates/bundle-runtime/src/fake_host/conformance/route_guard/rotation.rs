@@ -1,5 +1,4 @@
-//! Bounded CPU coverage. Every boundary triple visits every eligible secondary
-//! profile/mode combination within one printed, deterministic rotation period.
+//! Every CPU run covers all boundaries; only extra dense probes rotate.
 
 use super::{Envelope, Tier, boundary_probes, probes, sweep::modes};
 use kernel_core::route::RouteTag;
@@ -13,9 +12,9 @@ pub(super) struct Profile {
     pub tags: Vec<RouteTag>,
 }
 
-pub(super) struct Rotation {
+pub(super) struct CpuPlan {
     rows: BTreeMap<Key, BTreeSet<u32>>,
-    centers: BTreeMap<Key, Vec<u32>>,
+    dense: BTreeMap<String, BTreeSet<u32>>,
     pub period: usize,
     seed: u64,
 }
@@ -30,129 +29,107 @@ fn pick(point: u32, phase: u64, count: usize) -> usize {
     ((point_offset(point) % count as u64 + phase) % count as u64) as usize
 }
 
-impl Rotation {
+impl CpuPlan {
     pub fn new(profiles: &[Profile], seed: u64) -> Self {
         assert!(!profiles.is_empty());
-        let mut rows = BTreeMap::<Key, BTreeSet<u32>>::new();
-        let mut boundaries = BTreeSet::new();
-        for profile in profiles {
-            let envelope = &profile.envelope;
-            boundaries.extend(
-                super::boundary_points(envelope, &profile.tags)
+        // Secondary modes retain boundaries from every profile, including
+        // points the current profile did not declare itself.
+        let boundaries: BTreeSet<_> = profiles
+            .iter()
+            .flat_map(|profile| {
+                super::boundary_points(&profile.envelope, &profile.tags)
                     .into_iter()
-                    .filter(|&row| row > 0 && row <= envelope.prefill_tokens),
-            );
-            rows.insert(
-                (profile.name.clone(), "single".into()),
-                boundary_probes(envelope, &profile.tags),
-            );
-            for (mode, _, prompts) in modes(envelope).into_iter().skip(1) {
-                let mut fixed: BTreeSet<_> = envelope.probes.iter().copied().collect();
-                fixed.extend([
-                    prompts,
-                    prompts.saturating_add(1),
-                    envelope.prefill_tokens.saturating_sub(1),
-                    envelope.prefill_tokens,
-                ]);
-                fixed.retain(|&row| row >= prompts && row <= envelope.prefill_tokens);
-                rows.insert((profile.name.clone(), mode), fixed);
-            }
-        }
-        let choices: Vec<_> = boundaries
-            .into_iter()
-            .map(|point| {
-                let eligible: Vec<_> = profiles
-                    .iter()
-                    .flat_map(|profile| {
-                        modes(&profile.envelope).into_iter().skip(1).filter_map(
-                            move |(mode, _, prompts)| {
-                                (point >= prompts && point <= profile.envelope.prefill_tokens).then(
-                                    || {
-                                        (
-                                            (profile.name.clone(), mode),
-                                            prompts,
-                                            profile.envelope.prefill_tokens,
-                                        )
-                                    },
-                                )
-                            },
-                        )
-                    })
-                    .collect();
-                (point, eligible)
+                    .filter(|&row| row > 0 && row <= profile.envelope.prefill_tokens)
             })
             .collect();
-        // A common phase makes the entire plan repeat after `period` runs.
-        // Every eligible list is no longer than the phase's domain, so each
-        // boundary visits all its combinations within any full period.
-        let period = choices
+        let mut rows = BTreeMap::new();
+        for profile in profiles {
+            let envelope = &profile.envelope;
+            let maximum = envelope.prefill_tokens;
+            let single = boundary_probes(envelope, &profile.tags);
+            rows.insert((profile.name.clone(), "single".into()), single);
+            for (mode, _, prompts) in modes(envelope).into_iter().skip(1) {
+                let mut selected: BTreeSet<_> = envelope.probes.iter().copied().collect();
+                selected.extend([
+                    prompts,
+                    prompts.saturating_add(1),
+                    maximum.saturating_sub(1),
+                    maximum,
+                ]);
+                for &point in boundaries.range(prompts..=maximum) {
+                    selected.extend([point.saturating_sub(1), point, point.saturating_add(1)]);
+                }
+                selected.retain(|&row| row >= prompts && row <= maximum);
+                rows.insert((profile.name.clone(), mode), selected);
+            }
+        }
+        // Preserve the old phase domain so the dense assignment is identical
+        // for every seed, even when profiles have different row limits.
+        let period = boundaries
             .iter()
-            .map(|(_, eligible)| eligible.len())
+            .map(|&point| {
+                profiles
+                    .iter()
+                    .map(|profile| {
+                        modes(&profile.envelope)
+                            .into_iter()
+                            .skip(1)
+                            .filter(|(_, _, prompts)| {
+                                point >= *prompts && point <= profile.envelope.prefill_tokens
+                            })
+                            .count()
+                    })
+                    .sum::<usize>()
+            })
             .max()
             .unwrap_or(0)
             .max(profiles.len());
         let phase = seed % period as u64;
-        let mut centers = BTreeMap::<Key, Vec<u32>>::new();
-        for (point, eligible) in choices {
-            if eligible.is_empty() {
-                continue;
-            }
-            let (key, prompts, maximum) = &eligible[pick(point, phase, eligible.len())];
-            rows.get_mut(key).unwrap().extend(
-                [point.saturating_sub(1), point, point.saturating_add(1)]
-                    .into_iter()
-                    .filter(|row| row >= prompts && row <= maximum),
-            );
-            centers.entry(key.clone()).or_default().push(point);
-        }
-        // Dense probes need no repeated long-prefix reconstruction. Rotate
-        // them among the eligible single-prompt profiles instead.
         let dense: BTreeSet<_> = profiles
             .iter()
             .flat_map(|profile| probes(&profile.envelope, &profile.tags, Tier::Cpu))
             .collect();
+        let mut assigned = BTreeMap::<String, BTreeSet<u32>>::new();
         for point in dense {
             let eligible: Vec<_> = profiles
                 .iter()
                 .filter(|profile| point <= profile.envelope.prefill_tokens)
                 .collect();
             let profile = eligible[pick(point, phase, eligible.len())];
-            rows.get_mut(&(profile.name.clone(), "single".into()))
-                .unwrap()
+            assigned
+                .entry(profile.name.clone())
+                .or_default()
                 .insert(point);
         }
         Self {
             rows,
-            centers,
+            dense: assigned,
             period,
             seed,
         }
     }
 
     pub fn rows(&self, profile: &str, mode: &str) -> Vec<u32> {
-        self.rows[&(profile.into(), mode.into())]
-            .iter()
-            .copied()
-            .collect()
+        let mut rows = self.rows[&(profile.into(), mode.into())].clone();
+        if mode == "single" {
+            rows.extend(self.dense.get(profile).into_iter().flatten());
+        }
+        rows.into_iter().collect()
     }
 
     pub fn report(&self, bundle: &str, profile: &str) {
-        let selected: Vec<_> = self
+        let combinations: Vec<_> = self
             .rows
             .iter()
-            .filter(|((name, mode), _)| name == profile && mode != "single")
-            .map(|(key, rows)| {
-                serde_json::json!({
-                    "mode": key.1,
-                    "rows": rows,
-                    "boundary_centers": self.centers.get(key).cloned().unwrap_or_default(),
-                })
-            })
+            .filter(|((name, _), _)| name == profile)
+            .map(|((_, mode), rows)| serde_json::json!({"mode": mode, "boundary_rows": rows,
+                "dense_rows": if mode == "single" { self.dense.get(profile).cloned().unwrap_or_default() } else { BTreeSet::new() }}))
             .collect();
         println!(
             "{}",
-            serde_json::json!({"schema": "chopinfer.route-rotation.v1", "bundle": bundle,
-            "profile": profile, "seed": self.seed, "rotation_period": self.period, "selected_combinations": selected})
+            serde_json::json!({"schema": "chopinfer.route-plan.v1", "bundle": bundle,
+                "profile": profile, "tier": "cpu", "seed": self.seed,
+                "dense_rotation_period": self.period, "combinations": combinations})
         );
     }
 }
@@ -188,61 +165,84 @@ mod tests {
     }
 
     #[test]
-    fn every_eligible_triple_visits_every_secondary_combination_in_one_period() {
+    fn one_plan_covers_every_eligible_boundary_triple() {
         let profiles = profiles();
-        let first = Rotation::new(&profiles, 0);
-        let mut seen = BTreeSet::new();
-        for seed in 0..first.period as u64 {
-            let rotation = Rotation::new(&profiles, seed);
-            assert_eq!(rotation.period, first.period);
-            for (key, points) in &rotation.centers {
-                let profile = profiles.iter().find(|p| p.name == key.0).unwrap();
-                let (_, _, minimum) = modes(&profile.envelope)
-                    .into_iter()
-                    .find(|m| m.0 == key.1)
-                    .unwrap();
-                for &point in points {
-                    for row in [point.saturating_sub(1), point, point.saturating_add(1)] {
-                        if row >= minimum && row <= profile.envelope.prefill_tokens {
-                            assert!(rotation.rows[key].contains(&row));
+        let plan = CpuPlan::new(&profiles, 0);
+        for profile in &profiles {
+            let maximum = profile.envelope.prefill_tokens;
+            let single = plan.rows(&profile.name, "single");
+            for row in [
+                1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 47, 63, 64, 65, 95, 96, 97, 127,
+                128,
+            ] {
+                if row <= maximum {
+                    assert!(single.contains(&row), "{} single {row}", profile.name);
+                }
+            }
+            for (mode, _, minimum) in modes(&profile.envelope).into_iter().skip(1) {
+                let rows = plan.rows(&profile.name, &mode);
+                for point in [1_u32, 2, 4, 8, 16, 32, 64, 96, 128] {
+                    if point < minimum || point > maximum {
+                        continue;
+                    }
+                    for row in [point.saturating_sub(1), point, point + 1] {
+                        if row >= minimum && row <= maximum {
+                            assert!(rows.contains(&row), "{} {mode} {row}", profile.name);
                         }
                     }
-                    seen.insert((key.clone(), point));
                 }
+                for row in [minimum, minimum + 1, 17, 47, maximum - 1, maximum] {
+                    assert!(rows.contains(&row), "{} {mode} {row}", profile.name);
+                }
+                assert!(rows.iter().all(|&row| row >= minimum && row <= maximum));
             }
-            for profile in &profiles {
-                let single = rotation.rows(&profile.name, "single");
-                assert!(
-                    boundary_probes(&profile.envelope, &profile.tags)
-                        .iter()
-                        .all(|r| single.contains(r))
-                );
-                for (mode, _, minimum) in modes(&profile.envelope).into_iter().skip(1) {
-                    let rows = rotation.rows(&profile.name, &mode);
-                    assert!(
-                        rows.contains(&minimum) && rows.contains(&profile.envelope.prefill_tokens)
-                    );
-                    assert!(profile.envelope.probes.iter().all(|r| rows.contains(r)));
+        }
+    }
+
+    #[test]
+    fn boundaries_are_fixed_while_dense_probes_keep_the_old_rotation() {
+        let profiles = profiles();
+        let first = CpuPlan::new(&profiles, 0);
+        assert_eq!(first.period, 8);
+        assert!(!first.rows("profile-0", "single").contains(&6));
+        assert!(first.rows("profile-1", "single").contains(&6));
+        let next = CpuPlan::new(&profiles, 1);
+        assert!(next.rows("profile-0", "single").contains(&6));
+        assert!(!next.rows("profile-1", "single").contains(&6));
+        for seed in 0..first.period as u64 {
+            let plan = CpuPlan::new(&profiles, seed);
+            assert_eq!(first.rows, plan.rows);
+            assert_eq!(
+                plan.dense,
+                CpuPlan::new(&profiles, seed + first.period as u64).dense
+            );
+        }
+    }
+
+    #[test]
+    fn boundaries_reach_other_eligible_secondary_profiles() {
+        let mut profiles = profiles();
+        profiles[1].tags.push(RouteTag::new(
+            "other",
+            RouteClass::Baseline,
+            "projection",
+            [53..=53],
+        ));
+        for seed in 0..8 {
+            let plan = CpuPlan::new(&profiles, seed);
+            for (mode, _, _) in modes(&profiles[0].envelope).into_iter().skip(1) {
+                for row in [52, 53, 54] {
+                    assert!(plan.rows("profile-0", &mode).contains(&row));
                 }
             }
         }
-        let points: BTreeSet<_> = profiles
-            .iter()
-            .flat_map(|p| super::super::boundary_points(&p.envelope, &p.tags))
-            .filter(|&p| p > 0 && p <= 128)
-            .collect();
-        for profile in &profiles {
-            for (mode, _, minimum) in modes(&profile.envelope).into_iter().skip(1) {
-                for &point in points
-                    .iter()
-                    .filter(|&&p| p >= minimum && p <= profile.envelope.prefill_tokens)
-                {
-                    assert!(seen.contains(&((profile.name.clone(), mode.clone()), point)));
-                }
-            }
-        }
-        let repeated = Rotation::new(&profiles, first.period as u64);
-        assert_eq!(first.rows, repeated.rows);
-        assert_eq!(first.centers, repeated.centers);
+    }
+
+    #[test]
+    fn profile_order_does_not_change_the_deterministic_boundaries() {
+        let mut profiles = profiles();
+        let plan = CpuPlan::new(&profiles, 0);
+        profiles.reverse();
+        assert_eq!(plan.rows, CpuPlan::new(&profiles, 0).rows);
     }
 }

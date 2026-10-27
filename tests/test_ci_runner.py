@@ -806,19 +806,17 @@ class Qualification(unittest.TestCase):
 
 
 class RouteSweeps(unittest.TestCase):
-    def test_recorded_model_seeds_reach_children_without_advancing_rotation(self):
+    def test_explicit_dense_seed_reaches_every_child(self):
         output = ('12 cases, 0.1s\npeak_rss_bytes=1024\n'
-                  '{"rotation_period": 2, "selected_combinations": []}\n'
+                  '{"dense_rotation_period": 2, "boundary_rows": [1, 2], "dense_rows": [6]}\n'
                   'test result: ok. 1 passed; 0 failed; 0 ignored;')
-        env = {"CHOPINFER_ROUTE_SEEDS": json.dumps({"first": 3, "second": 9})}
+        env = {"CHOPINFER_ROUTE_SEED": "41"}
         binaries = {name: ("fixture", ".", env) for name in ("first", "second")}
         with patch.object(route_sweeps.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, output)) as run, \
                 patch("sys.stdout", new_callable=io.StringIO):
             self.assertEqual(route_sweeps.run(binaries, "cpu"), 0)
-        self.assertEqual([call.kwargs["env"]["CHOPINFER_ROUTE_SEED"] for call in run.call_args_list], ["3", "9"])
-        self.assertNotIn("CHOPINFER_ROUTE_SEED", env)
-        with patch("sys.stdout", new_callable=io.StringIO), self.assertRaisesRegex(ValueError, "no integer route seed"):
-            route_sweeps.run({"missing": ("fixture", ".", env)}, "cpu")
+        self.assertEqual([call.kwargs["env"]["CHOPINFER_ROUTE_SEED"] for call in run.call_args_list], ["41", "41"])
+        self.assertEqual(env, {"CHOPINFER_ROUTE_SEED": "41"})
 
     def test_new_model_is_discovered_from_its_required_allowlist(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -861,31 +859,34 @@ class RouteSweeps(unittest.TestCase):
                     '''))
                 binary.chmod(0o755)
                 env = {key: value for key, value in os.environ.items()
-                       if key not in ("CHOPINFER_ROUTE_SEED", "CHOPINFER_ROUTE_SEEDS")}
+                       if key != "CHOPINFER_ROUTE_SEED"}
                 binaries[name] = (str(binary), str(root), env)
             with patch.object(sys, "stdout", new_callable=io.StringIO) as output:
                 self.assertEqual(route_sweeps.run(binaries, "quick"), 0)
                 self.assertIn("parallel_models=2", output.getvalue())
                 self.assertIn("added_wall_seconds=", output.getvalue())
 
-    def test_cpu_runs_advance_per_model_and_pinned_reproductions_do_not(self):
-        with tempfile.TemporaryDirectory() as directory:
+    def test_dense_seed_uses_the_utc_day_without_persistent_counters(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(route_sweeps.time, "time", return_value=86400 * 41 + 17):
             env = {"CHOPINFER_DATA": directory}
-            self.assertEqual(route_sweeps.rotation_seed("first", "cpu", env), 0)
-            self.assertEqual(route_sweeps.rotation_seed("first", "cpu", env), 1)
-            self.assertEqual(route_sweeps.rotation_seed("second", "cpu", env), 0)
-            self.assertEqual(route_sweeps.rotation_seed("first", "cpu", {**env, "CHOPINFER_ROUTE_SEED": "41"}), 41)
-            self.assertEqual(route_sweeps.rotation_seed("first", "cpu", env), 2)
-            with route_sweeps.concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-                values = list(pool.map(lambda _: route_sweeps.rotation_seed("parallel", "cpu", env), range(8)))
-            self.assertEqual(sorted(values), list(range(8)))
-            root = pathlib.Path(directory) / "route-guard" / "rotation"
-            key = route_sweeps.hashlib.sha256(b"linked").hexdigest()
-            (root / (key + ".lock")).symlink_to(root / (key + ".json"))
-            with self.assertRaises(OSError):
-                route_sweeps.rotation_seed("linked", "cpu", env)
-        with self.assertRaises(ValueError):
-            route_sweeps.rotation_seed("first", "cpu", {})
+            self.assertEqual(route_sweeps.dense_seed(env), 41)
+            self.assertEqual(route_sweeps.dense_seed(env), 41)
+            self.assertEqual(route_sweeps.dense_seed({}), 41)
+            self.assertEqual(list(pathlib.Path(directory).iterdir()), [])
+            self.assertEqual(route_sweeps.dense_seed({"CHOPINFER_ROUTE_SEED": "7"}), 7)
+            self.assertEqual(route_sweeps.dense_seed({"CHOPINFER_ROUTE_SEED": str(2 ** 64 - 1)}), 2 ** 64 - 1)
+        for seed in ("-1", str(2 ** 64), "invalid"):
+            with self.assertRaises(ValueError):
+                route_sweeps.dense_seed({"CHOPINFER_ROUTE_SEED": seed})
+
+    def test_cpu_requires_boundary_and_dense_probe_evidence(self):
+        output = '12 cases, 0.1s\npeak_rss_bytes=1024\ntest result: ok. 1 passed; 0 failed; 0 ignored;'
+        fields = ['"dense_rotation_period": 2', '"boundary_rows": [1, 2]', '"dense_rows": [6]']
+        for omitted in range(len(fields)):
+            evidence = "{" + ", ".join(field for i, field in enumerate(fields) if i != omitted) + "}"
+            with self.assertRaisesRegex(RuntimeError, "missing deterministic boundaries"):
+                route_sweeps.check("future", output + evidence, 0, 1, "cpu")
+        self.assertEqual(route_sweeps.check("future", output + "{" + ", ".join(fields) + "}", 0, 1, "cpu"), 1)
 
     def test_separate_sweeps_are_excluded_from_both_normal_runners(self):
         cargo = rust_tests.commands(["--workspace"], "cargo", 8, skip_routes=True)[0]

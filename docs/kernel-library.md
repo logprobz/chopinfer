@@ -505,11 +505,12 @@ Every model declares the shapes it serves through the required
 through the bundle ABI, including lowering-time choices and graph replays.
 The quick tier selects an autoregressive and a speculating profile per
 topology; the CPU tier includes every profile, packed prompts and chunk
-continuations. CPU single-prompt probes retain every admission boundary and
-its neighbours in every profile. Every secondary mode keeps fixture probes
-and its smallest and largest shapes. Complete boundary triples rotate among
-eligible secondary profile/mode combinations; extra dense probes rotate
-among single-prompt profiles. No triple is split between combinations.
+continuations. Every CPU run keeps every admission boundary and its neighbours
+in every profile and every eligible single-prompt, packed and chunk mode. It also
+keeps fixture probes, mode endpoints, decode buckets, verify shapes and
+allocated-verify shapes. Secondary modes include boundaries declared by
+other profiles whenever their rows fit. Extra dense single-prompt probes
+rotate by seed; boundary and packed coverage is independent of the seed.
 
 Verify capacity and warmup widths follow the profile's `speculation.rows`,
 `widths` and `graph_rows` together with the package's row limits. Changing a
@@ -517,19 +518,18 @@ profile's default row budget changes its envelope automatically. Supported
 nondefault serving overrides and their ranges are a separate envelope
 extension; explicit override route tests do not establish full-profile coverage.
 
-The CPU plan repeats after the printed `rotation_period`: currently 36 runs
-for DeepSeek and Qwen, 30 for GLM, and 24 for MiMo. Every eligible combination
-of every boundary triple is covered within that many consecutive seeds for a
-fixed envelope. CI assigns consecutive seeds per model using counters under
-`$CHOPINFER_DATA/route-guard/rotation`. It prints the seed, selected combinations
-and a one-command reproduction. An explicit `CHOPINFER_ROUTE_SEED` reproduces
-a run without advancing the counter. Direct Cargo runs default to the UTC
-day, so use explicit consecutive seeds when exercising a rotation manually.
+The CPU plan reports fixed `boundary_rows`, seeded `dense_rows` and the
+`dense_rotation_period`. The period preserves the previous dense assignment:
+12 seeds for DeepSeek, 36 for Qwen, 30 for GLM and 24 for MiMo. Boundary and
+packed coverage no longer requires executing every CPU seed per integration
+wave. CI and direct Cargo runs default to the UTC day and print a reproduction
+command; `CHOPINFER_ROUTE_SEED` selects an explicit dense-probe seed. There
+are no persistent per-model counters or per-model seed maps.
 
 `CHOPINFER_ROUTE_SWEEP=full` checks every single-prompt prefill row count and
 adds the untagged-symbol island backstop. Its secondary modes retain every
 admission boundary and fixture probe in every profile, plus seeded dense
-probes. The full tier does not use the CPU rotation.
+probes. Full-tier secondary probes use their own seed assignment.
 `CHOPINFER_ROUTE_SWEEP=exhaustive` checks the full Cartesian set, including
 all rows in every packed and chunk mode. Run the full tier before release
 qualification, before landing a route change, and when adding a model or a
@@ -540,10 +540,13 @@ separate libtest process, and excludes them from its ordinary Rust test pass.
 It discovers models through their required allowlist file. Quick sweeps run
 up to four models in parallel. The runner warns loudly when a model exceeds
 20 seconds in quick or 60 seconds in CPU, and prints the route stage's total
-added wall time. The CPU stage runs models serially. Its measured added time
-on eight admitted CPUs is 184 to 194 seconds: DeepSeek 85 to 91, GLM 27 to
-29, MiMo 33 to 34 and Qwen 40 to 42 seconds (2026-10-25). The model warnings
-remain active. `ci/quick.sh` always selects quick; `ci/cpu.sh` selects CPU.
+added wall time. The CPU stage runs models serially. On a shared host with
+eight admitted CPUs, the CPU stage took 244 seconds at seed 7: DeepSeek 99,
+GLM 46, MiMo 44 and Qwen 55 seconds (2026-10-27).
+Route workers reuse upload backing, omit unused upload digests and suspend
+unused launch-plan diagnostics; simulator table reads retain their values
+without allocating each scalar. The model warnings remain active.
+`ci/quick.sh` always selects quick; `ci/cpu.sh` selects CPU.
 Missing executed cases or peak RSS reports fail the stage.
 
 Full and exhaustive sweeps run only in bounded pieces. Build the bundle test

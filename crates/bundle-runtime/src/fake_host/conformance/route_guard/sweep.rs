@@ -51,7 +51,7 @@ fn cases(
     group: usize,
     groups: usize,
     seed: u64,
-    rotation: Option<(&rotation::Rotation, &str)>,
+    rotation: Option<(&rotation::CpuPlan, &str)>,
 ) -> Vec<Case> {
     let mut cases = Vec::new();
     let mandatory = boundary_probes(envelope, tags);
@@ -61,7 +61,7 @@ fn cases(
         }
         let full = tier == Tier::Exhaustive || (tier == Tier::Full && index == 0);
         let rows = if tier == Tier::Cpu {
-            let (rotation, profile) = rotation.expect("CPU rotation plan");
+            let (rotation, profile) = rotation.expect("CPU case plan");
             rotation.rows(profile, &mode)
         } else {
             probes(
@@ -426,7 +426,7 @@ pub fn sweep<S: Startup>(profile: &str, allowlist: &str, bundle: &str) {
                 },
             })
             .collect();
-        rotation::Rotation::new(&profiles, seed)
+        rotation::CpuPlan::new(&profiles, seed)
     });
     if let Some(rotation) = &rotation {
         rotation.report(bundle, profile);

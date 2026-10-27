@@ -292,10 +292,12 @@ impl Engines {
         for symbol in selected::COMM_SYMBOLS {
             bytes.insert(symbol.into(), 0);
         }
-        // The shared argmax entries the drafter's argmax runs.
+        // The shared argmax entries the drafter's argmax runs, and the
+        // draft noise a coupled one adds first.
         for entry in selected::argmax_entries() {
             bytes.insert(entry.symbol, 0);
         }
+        bytes.insert(selected::DRAFT_NOISE_SYMBOL.into(), 0);
         bytes.insert(selected::LL_SYMBOL.into(), 0);
         for symbol in selected::PHASED_SYMBOLS {
             bytes.insert(symbol.into(), 0);

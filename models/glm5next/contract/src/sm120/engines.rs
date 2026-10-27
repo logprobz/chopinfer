@@ -25,8 +25,8 @@ use kernels_sm120::latent;
 use kernels_sm120::linear::channel_decay;
 use kernels_sm120::moe::chained;
 use kernels_sm120::row::RowInstantiation;
-use kernels_sm120::row::argmax;
 use kernels_sm120::row::rmsnorm::{RmsNorm, RmsNormTarget};
+use kernels_sm120::row::{argmax, draft_noise};
 use kernels_sm120::{Profile, ProfileNames, pooled_indexer, sinkhorn_hc};
 
 use crate::contract::{PAGE_TOKENS, PREFILL_TOKENS, Shape};
@@ -136,6 +136,13 @@ pub const PHASED_F32_CUBIN: &str = "comm_phased_f32_glm5next_sm120";
 /// (`crate::draft_argmax`), under their shared symbols.
 pub const ARGMAX_FAMILY: &str = "row_argmax";
 pub const ARGMAX_CUBIN: &str = "row_argmax_glm5next_sm120";
+/// The shared draft noise (`kernels_sm120::row::draft_noise`) a coupled
+/// drafter argmax adds to its logits first (`crate::draft_argmax`), under
+/// its shared symbol, in its own family: only an instance that couples its
+/// drafts loads it.
+pub const DRAFT_NOISE_FAMILY: &str = "draft_noise";
+pub const DRAFT_NOISE_CUBIN: &str = "draft_noise_glm5next_sm120";
+pub const DRAFT_NOISE_SYMBOL: &str = draft_noise::SYMBOL;
 
 /// The latent attention geometry of `shape`: its local heads over the
 /// shared latent, the key list of the indexer's compiled top-k plus the
@@ -1069,6 +1076,10 @@ pub fn cubin_specs(shape: Shape) -> Result<Vec<(&'static str, CubinSpec)>, Strin
         ARGMAX_FAMILY,
         argmax::cubin_spec(ARGMAX_CUBIN, &argmax_entries()),
     ));
+    specs.push((
+        DRAFT_NOISE_FAMILY,
+        draft_noise::cubin_spec(DRAFT_NOISE_CUBIN, &[draft_noise_entry()]),
+    ));
     // The MoE sublayers' rounded all-reduce of F32 partials.
     specs.push((
         LL_F32_FAMILY,
@@ -1097,6 +1108,12 @@ pub fn argmax_entries() -> Vec<argmax::Entry> {
         .into_iter()
         .filter(|entry| entry.pattern != argmax::Pattern::PartialBf16)
         .collect()
+}
+
+/// The shared draft noise entry a coupled drafter argmax runs, under its
+/// shared symbol, so each launch claims what the shared entry declares.
+pub fn draft_noise_entry() -> draft_noise::Entry {
+    draft_noise::Entry::new(DRAFT_NOISE_SYMBOL)
 }
 
 #[cfg(test)]
@@ -1482,6 +1499,7 @@ mod tests {
                     "pooled_indexer_merge_radix_glm5next_sm120"
                 ),
                 (ARGMAX_FAMILY, ARGMAX_CUBIN),
+                (DRAFT_NOISE_FAMILY, DRAFT_NOISE_CUBIN),
                 (LL_F32_FAMILY, LL_F32_CUBIN),
                 (PHASED_F32_FAMILY, PHASED_F32_CUBIN),
                 (MOE_SPLIT_FAMILY, "chop_moe_chain_e288l288k8_fp8block_ws"),
@@ -1561,6 +1579,22 @@ mod tests {
                 .collect::<Vec<_>>(),
             [argmax::PARTIAL_F32_SYMBOL, argmax::FINAL_SYMBOL]
         );
+        // The draft noise cubin holds the shared entry, which claims what
+        // the kernel base declares for it.
+        let noise = &specs
+            .iter()
+            .find(|(family, _)| *family == DRAFT_NOISE_FAMILY)
+            .unwrap()
+            .1;
+        assert_eq!(
+            noise
+                .entries
+                .iter()
+                .map(|entry| entry.symbol.as_str())
+                .collect::<Vec<_>>(),
+            [draft_noise::SYMBOL]
+        );
+        assert_eq!(draft_noise_entry().guarantees(), draft_noise::INVARIANCE);
         // The one-split forms of the global and per-rank selections, one
         // row per CTA, each with its selection's capacity.
         let forms = pooled_indexer_rows_entries(shape);

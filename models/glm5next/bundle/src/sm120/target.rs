@@ -15,9 +15,9 @@ use model_glm5next_contract::own_ops::OwnOps;
 use model_glm5next_contract::own_ops::stacked::{StackedPart, StackedProjection};
 use model_glm5next_contract::quantization::Layout;
 use model_glm5next_contract::sm120::engines::{
-    ARGMAX_CUBIN, BF16_LOW_LATENCY_ROWS, COMM_EPILOGUE_CUBIN, LL_ROUND_SYMBOL, LL_SYMBOL,
-    PHASED_CALLS_PER_RUN, PHASED_RESET_RUNS, ROUNDED_LOW_LATENCY_ROWS, bf16_phased_admission_plans,
-    rounded_phased_admission_plans,
+    ARGMAX_CUBIN, BF16_LOW_LATENCY_ROWS, COMM_EPILOGUE_CUBIN, DRAFT_NOISE_CUBIN, LL_ROUND_SYMBOL,
+    LL_SYMBOL, PHASED_CALLS_PER_RUN, PHASED_RESET_RUNS, ROUNDED_LOW_LATENCY_ROWS,
+    bf16_phased_admission_plans, rounded_phased_admission_plans,
 };
 use model_glm5next_contract::sm120::{precision, projection_formats, stacked};
 use runtime_bundle_abi::{
@@ -132,10 +132,11 @@ impl Target for Sm120Own {
     /// The encoder's cubins load with the encoder (`encoders::load`), the
     /// context-parallel ones only above size 1 (the group all-gather's also
     /// with the drafter, whose argmax gathers its pairs through it), the
-    /// shared argmax's only with the drafter, the NVFP4 exports' only for
-    /// their layouts, and the comm epilogue's only with its switch, so an
-    /// instance without it loads, resolves and journals what it did before
-    /// the epilogue existed.
+    /// shared argmax's only with the drafter, the draft noise's only with a
+    /// drafter that couples its drafts, the NVFP4 exports' only for their
+    /// layouts, and the comm epilogue's only with its switch, so an
+    /// instance without a switch loads, resolves and journals what it did
+    /// before the switch existed.
     fn loads(&self, cubin: &str, uses: Uses) -> bool {
         let [_, group_gather, _] = model_glm5next_contract::sm120::context_parallel::cubin_names();
         !model_glm5next_contract::sm120::encoder::is_cubin(cubin)
@@ -144,6 +145,7 @@ impl Target for Sm120Own {
                 || !model_glm5next_contract::sm120::context_parallel::is_cubin(cubin)
                 || (uses.drafter && cubin == group_gather))
             && (uses.drafter || cubin != ARGMAX_CUBIN)
+            && (uses.coupled_drafts || cubin != DRAFT_NOISE_CUBIN)
             && (uses.comm_epilogue || cubin != COMM_EPILOGUE_CUBIN)
             && (uses.prefill_dma || cubin != model_glm5next_contract::sm120::dma::CUBIN)
     }

@@ -39,6 +39,10 @@ pub struct Uses {
     /// context-parallel group all-gather
     /// (`model_glm5next_contract::draft_argmax`).
     pub drafter: bool,
+    /// A drafter that couples its sampled drafts to the target sampler's
+    /// noise (`options::COUPLED_DRAFTS_OPTION`), whose argmax adds the
+    /// draft noise first (`model_glm5next_contract::draft_argmax`).
+    pub coupled_drafts: bool,
     /// Candidate prefill transport, loaded only when explicitly selected.
     pub prefill_dma: bool,
 }

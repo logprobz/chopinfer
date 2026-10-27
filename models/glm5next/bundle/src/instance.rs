@@ -417,6 +417,7 @@ impl Instance {
             context_parallel: cp_size > 1,
             comm_epilogue: self.config.comm_epilogue,
             drafter: self.drafter.is_some(),
+            coupled_drafts: false,
             prefill_dma: self.prefill_dma,
         };
         for &(context, _, _) in &ranks {

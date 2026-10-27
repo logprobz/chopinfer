@@ -2,7 +2,9 @@ use std::fmt::Write;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::KvStats;
+use crate::{KvStats, PrefixAnchorClassV1};
+
+const AGE_BUCKETS: [u64; 8] = [1, 10, 60, 300, 1800, 3600, 7200, 86400];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum KvCachePrecision {
@@ -32,6 +34,13 @@ struct KvMetricsInner {
     prefix_cache_evictions: AtomicU64,
     prefix_cache_anchors: AtomicU64,
     prefix_cache_blocks: AtomicU64,
+    prefix_evictions_by_class: [AtomicU64; 3],
+    prefix_anchors_by_class: [AtomicU64; 3],
+    prefix_snapshot_pages_by_class: [AtomicU64; 3],
+    prefix_pages_freed_by_class: [AtomicU64; 3],
+    prefix_maximal_age_buckets: [AtomicU64; 9],
+    prefix_private_anchors: AtomicU64,
+    prefix_maximal_age_seconds: AtomicU64,
     cow_copies: AtomicU64,
     cow_tokens: AtomicU64,
 }
@@ -80,6 +89,13 @@ pub struct KvMetricsSnapshot {
     pub prefix_cache_evictions: u64,
     pub prefix_cache_anchors: u64,
     pub prefix_cache_blocks: u64,
+    pub prefix_evictions_by_class: [u64; 3],
+    pub prefix_anchors_by_class: [u64; 3],
+    pub prefix_snapshot_pages_by_class: [u64; 3],
+    pub prefix_pages_freed_by_class: [u64; 3],
+    pub prefix_maximal_age_buckets: [u64; 9],
+    pub prefix_private_anchors: u64,
+    pub prefix_maximal_age_seconds: u64,
     pub cow_copies: u64,
     pub cow_tokens: u64,
 }
@@ -109,6 +125,13 @@ impl KvMetrics {
                 prefix_cache_evictions: AtomicU64::new(0),
                 prefix_cache_anchors: AtomicU64::new(0),
                 prefix_cache_blocks: AtomicU64::new(0),
+                prefix_evictions_by_class: std::array::from_fn(|_| AtomicU64::new(0)),
+                prefix_anchors_by_class: std::array::from_fn(|_| AtomicU64::new(0)),
+                prefix_snapshot_pages_by_class: std::array::from_fn(|_| AtomicU64::new(0)),
+                prefix_pages_freed_by_class: std::array::from_fn(|_| AtomicU64::new(0)),
+                prefix_maximal_age_buckets: std::array::from_fn(|_| AtomicU64::new(0)),
+                prefix_private_anchors: AtomicU64::new(0),
+                prefix_maximal_age_seconds: AtomicU64::new(0),
                 cow_copies: AtomicU64::new(0),
                 cow_tokens: AtomicU64::new(0),
             }),
@@ -182,10 +205,54 @@ impl KvMetrics {
             .fetch_add(1, Ordering::Relaxed);
     }
 
-    pub(crate) fn prefix_eviction(&self) {
+    pub(crate) fn anchor_added(&self, class: PrefixAnchorClassV1, pages: usize, private: bool) {
+        if private {
+            self.inner
+                .prefix_private_anchors
+                .fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.inner.prefix_anchors_by_class[class.index()].fetch_add(1, Ordering::Relaxed);
+            self.inner.prefix_snapshot_pages_by_class[class.index()]
+                .fetch_add(pages as u64, Ordering::Relaxed);
+        }
+    }
+
+    pub(crate) fn anchor_removed(&self, class: PrefixAnchorClassV1, pages: usize, private: bool) {
+        if private {
+            self.inner
+                .prefix_private_anchors
+                .fetch_sub(1, Ordering::Relaxed);
+        } else {
+            self.inner.prefix_anchors_by_class[class.index()].fetch_sub(1, Ordering::Relaxed);
+            self.inner.prefix_snapshot_pages_by_class[class.index()]
+                .fetch_sub(pages as u64, Ordering::Relaxed);
+        }
+    }
+
+    pub(crate) fn anchor_reclassified(
+        &self,
+        old: PrefixAnchorClassV1,
+        new: PrefixAnchorClassV1,
+        pages: usize,
+    ) {
+        self.anchor_removed(old, pages, false);
+        self.anchor_added(new, pages, false);
+    }
+
+    pub(crate) fn prefix_eviction(&self, class: PrefixAnchorClassV1, freed: usize, age: u64) {
         self.inner
             .prefix_cache_evictions
             .fetch_add(1, Ordering::Relaxed);
+        self.inner.prefix_evictions_by_class[class.index()].fetch_add(1, Ordering::Relaxed);
+        self.inner.prefix_pages_freed_by_class[class.index()]
+            .fetch_add(freed as u64, Ordering::Relaxed);
+        if class == PrefixAnchorClassV1::Maximal {
+            let bucket = AGE_BUCKETS.partition_point(|limit| *limit < age);
+            self.inner.prefix_maximal_age_buckets[bucket].fetch_add(1, Ordering::Relaxed);
+            self.inner
+                .prefix_maximal_age_seconds
+                .fetch_add(age, Ordering::Relaxed);
+        }
     }
 
     pub(crate) fn configure_capacity(&self, tokens: usize) {
@@ -287,6 +354,26 @@ impl KvMetrics {
                 .inner
                 .prefix_restore_resumed_decoding
                 .load(Ordering::Relaxed),
+            prefix_evictions_by_class: std::array::from_fn(|i| {
+                self.inner.prefix_evictions_by_class[i].load(Ordering::Relaxed)
+            }),
+            prefix_anchors_by_class: std::array::from_fn(|i| {
+                self.inner.prefix_anchors_by_class[i].load(Ordering::Relaxed)
+            }),
+            prefix_snapshot_pages_by_class: std::array::from_fn(|i| {
+                self.inner.prefix_snapshot_pages_by_class[i].load(Ordering::Relaxed)
+            }),
+            prefix_pages_freed_by_class: std::array::from_fn(|i| {
+                self.inner.prefix_pages_freed_by_class[i].load(Ordering::Relaxed)
+            }),
+            prefix_maximal_age_buckets: std::array::from_fn(|i| {
+                self.inner.prefix_maximal_age_buckets[i].load(Ordering::Relaxed)
+            }),
+            prefix_private_anchors: self.inner.prefix_private_anchors.load(Ordering::Relaxed),
+            prefix_maximal_age_seconds: self
+                .inner
+                .prefix_maximal_age_seconds
+                .load(Ordering::Relaxed),
             prefix_cache_evictions: self.inner.prefix_cache_evictions.load(Ordering::Relaxed),
             prefix_cache_anchors: self.inner.prefix_cache_anchors.load(Ordering::Relaxed),
             prefix_cache_blocks: self.inner.prefix_cache_blocks.load(Ordering::Relaxed),
@@ -298,6 +385,29 @@ impl KvMetrics {
     pub(crate) fn detached_clone(&self) -> Self {
         let snapshot = self.snapshot();
         let metrics = Self::new(self.inner.precision);
+        for (i, value) in snapshot.prefix_evictions_by_class.iter().enumerate() {
+            metrics.inner.prefix_evictions_by_class[i].store(*value, Ordering::Relaxed);
+        }
+        for (i, value) in snapshot.prefix_anchors_by_class.iter().enumerate() {
+            metrics.inner.prefix_anchors_by_class[i].store(*value, Ordering::Relaxed);
+        }
+        for (i, value) in snapshot.prefix_snapshot_pages_by_class.iter().enumerate() {
+            metrics.inner.prefix_snapshot_pages_by_class[i].store(*value, Ordering::Relaxed);
+        }
+        for (i, value) in snapshot.prefix_pages_freed_by_class.iter().enumerate() {
+            metrics.inner.prefix_pages_freed_by_class[i].store(*value, Ordering::Relaxed);
+        }
+        for (i, value) in snapshot.prefix_maximal_age_buckets.iter().enumerate() {
+            metrics.inner.prefix_maximal_age_buckets[i].store(*value, Ordering::Relaxed);
+        }
+        metrics
+            .inner
+            .prefix_private_anchors
+            .store(snapshot.prefix_private_anchors, Ordering::Relaxed);
+        metrics
+            .inner
+            .prefix_maximal_age_seconds
+            .store(snapshot.prefix_maximal_age_seconds, Ordering::Relaxed);
         metrics
             .inner
             .tokens
@@ -500,11 +610,6 @@ impl KvMetricsSnapshot {
                 self.prefix_cache_restore_failures,
             ),
             (
-                "chop_prefix_cache_evictions_total",
-                "counter",
-                self.prefix_cache_evictions,
-            ),
-            (
                 "chop_prefix_cache_anchors",
                 "gauge",
                 self.prefix_cache_anchors,
@@ -517,6 +622,58 @@ impl KvMetricsSnapshot {
         ] {
             metric(&mut output, name, kind, value);
         }
+        for (name, kind, values) in [
+            (
+                "chop_prefix_cache_evictions_total",
+                "counter",
+                self.prefix_evictions_by_class,
+            ),
+            (
+                "chop_prefix_cache_public_anchors",
+                "gauge",
+                self.prefix_anchors_by_class,
+            ),
+            (
+                "chop_prefix_cache_snapshot_pages",
+                "gauge",
+                self.prefix_snapshot_pages_by_class,
+            ),
+            (
+                "chop_prefix_cache_pages_freed_total",
+                "counter",
+                self.prefix_pages_freed_by_class,
+            ),
+        ] {
+            writeln!(output, "# TYPE {name} {kind}").unwrap();
+            for (class, value) in ["superseded", "retained", "maximal"]
+                .into_iter()
+                .zip(values)
+            {
+                writeln!(output, "{name}{{class=\"{class}\"}} {value}").unwrap();
+            }
+        }
+        metric(
+            &mut output,
+            "chop_prefix_cache_private_anchors",
+            "gauge",
+            self.prefix_private_anchors,
+        );
+        let name = "chop_prefix_cache_maximal_eviction_age_seconds";
+        writeln!(output, "# TYPE {name} histogram").unwrap();
+        let mut count = 0;
+        for (i, value) in self.prefix_maximal_age_buckets.iter().enumerate() {
+            count += value;
+            let limit = AGE_BUCKETS
+                .get(i)
+                .map_or_else(|| "+Inf".to_owned(), u64::to_string);
+            writeln!(output, "{name}_bucket{{le=\"{limit}\"}} {count}").unwrap();
+        }
+        writeln!(
+            output,
+            "{name}_sum {}\n{name}_count {count}",
+            self.prefix_maximal_age_seconds
+        )
+        .unwrap();
         metric(
             &mut output,
             "chop_cow_copies_total",

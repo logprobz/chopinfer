@@ -90,7 +90,15 @@ fn kv_records_deterministic_prefix_cache_misses_hits_and_evictions() {
         .expect("the anchor is evicted for a live sequence");
     let snapshot = metrics.snapshot();
     assert_eq!(snapshot.prefix_cache_evictions, 1);
+    assert_eq!(snapshot.prefix_evictions_by_class, [0, 0, 1]);
+    assert_eq!(snapshot.prefix_anchors_by_class, [0, 0, 0]);
+    assert_eq!(snapshot.prefix_snapshot_pages_by_class, [0, 0, 0]);
+    assert_eq!(snapshot.prefix_pages_freed_by_class, [0, 0, 2]);
+    assert_eq!(snapshot.prefix_maximal_age_buckets.iter().sum::<u64>(), 1);
     let text = snapshot.prometheus();
+    assert!(text.contains("chop_prefix_cache_evictions_total{class=\"maximal\"} 1"));
+    assert!(!text.contains("\nchop_prefix_cache_evictions_total "));
+    assert!(text.contains("chop_prefix_cache_maximal_eviction_age_seconds_count 1"));
     for name in [
         "chop_prefix_cache_recomputed_seen_tokens_total",
         "chop_prefix_cache_captures_total",

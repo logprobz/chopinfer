@@ -86,7 +86,7 @@ count lookups; the vLLM ones count tokens.
 | `chop_mixed_budget_term_seconds{model_name,engine,term}`, `chop_mixed_budget_samples`, `chop_mixed_budget_trained`, `chop_mixed_budget_decode_estimate_seconds{items_le}` | Tbt mode only: the fitted fixed, mixed, per-token and per-attention-pair terms, prefill steps in the fit window, whether the fit sets budgets, and the decode estimate per power-of-two item bucket ([mixed scheduling](serving-profiles.md#prefill-policy)) |
 | `chop_prefix_cache_{queries,hits}_total`, `chop_prefix_cache_{queried,reused}_tokens_total` | Prefix-cache lookups and restored hits, and their prompt and reused tokens |
 | `chop_prefix_cache_recomputed_seen_tokens_total` | Prompt tokens a committed prefill computed although an earlier request's committed prefill had computed the same leading full pages, short of the last prompt token: repeats and shared prefixes no anchor covered ([where anchors are captured](numerics.md#kv-offload-and-prefix-state)) |
-| `chop_prefix_cache_{captures,capture_failures,restore_failures,evictions}_total`, `chop_prefix_cache_{anchors,blocks}` | Anchor captures, captures and restores the bundle refused, evictions, and the anchors and pages held now |
+| `chop_prefix_cache_{captures,capture_failures,restore_failures}_total`, `chop_prefix_cache_{anchors,blocks}` | Anchor captures, captures and restores the bundle refused, and the anchors and pages held now |
 | `chop_errors_total`, `chop_cancellations_total` | Engine errors and cancelled sequences |
 | `chop_requests_submitted_total` | Engine sequences submitted, counted at admission |
 | `chop_kv_tokens`, `chop_kv_capacity_tokens` | Tokens the KV page pool holds now, and the tokens it can hold: its pages times the tokens of a page, a context-parallel group's stripe. `vllm:kv_cache_usage_perc` is the same pool's used pages over its pages |
@@ -520,3 +520,34 @@ nsys profile --trace=cuda,nvtx --cuda-graph-trace=node \
 
 The server is terminated when the window ends; check that request and kernel
 activity fall inside the window before reading timings.
+
+### Prefix eviction candidate metrics
+
+`CHOPINFER_PREFIX_ANCESTRY=1` enables the default-off ancestry eviction
+candidate in the host. Unset or any other value keeps global LRU. This is a
+candidate switch, pending [stateful replay acceptance](contributing.md#stateful-replay-acceptance),
+not a serving option. Adoption removes the switch and the old LRU path.
+
+`chop_prefix_cache_evictions_total{class="superseded|retained|maximal"}`
+replaces the unlabelled eviction series. Migrate dashboards to
+`sum(chop_prefix_cache_evictions_total)` (or sum by the existing host labels).
+There is no additional unlabelled total to double-count. With the candidate
+off, or for digest-only captures whose ancestry is unknown, public anchors
+are counted as maximal. Private preemption anchors are excluded from these
+public counters and class gauges.
+
+- `chop_prefix_cache_public_anchors{class}` counts public anchors by class.
+- `chop_prefix_cache_snapshot_pages{class}` counts snapshot pages owned by
+  those anchors. A page pinned after anchor removal is no longer in this gauge.
+- `chop_prefix_cache_pages_freed_total{class}` counts pages actually returned
+  to the free list at eviction, including KV pages. Shared or pinned pages
+  are counted only when their final reference disappears during eviction.
+- `chop_prefix_cache_private_anchors` counts owned preemption anchors.
+- `chop_prefix_cache_maximal_eviction_age_seconds` is a histogram of elapsed
+  monotonic seconds since capture, for public maximal victims. Bounds are
+  1, 10, 60, 300, 1800, 3600, 7200 and 86400 seconds, plus infinity.
+
+The existing total anchor gauge includes private anchors. The cached-block
+occupancy gauge counts unique pages held only by anchors; class snapshot
+counts are not a partition of total physical occupancy. Live sequences,
+restore pins and transfer leases can keep pages after an anchor disappears.

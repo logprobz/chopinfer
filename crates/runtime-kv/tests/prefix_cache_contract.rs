@@ -18,13 +18,7 @@ fn capture(
     state_pages: usize,
 ) -> Option<Vec<runtime_kv::BlockId>> {
     let boundary = pool.snapshot(source).unwrap().tokens();
-    let key = tokens
-        .key_at(boundary)
-        .expect("the boundary is inside the prompt");
-    let digest = tokens
-        .chain(boundary / 4)
-        .expect("the full blocks are hashed");
-    pool.insert_anchor(key, digest, source, state_pages)
+    pool.insert_content_anchor(tokens, source, boundary, state_pages)
         .expect("a live source can be anchored")
 }
 
@@ -371,5 +365,310 @@ fn an_own_restore_holds_every_page_from_its_prompt_end_alone() {
         "the anchor's page"
     );
     assert_eq!(pool.block_ref_count(shared[0]).unwrap(), 2);
+    pool.audit().unwrap();
+}
+
+#[test]
+fn idle_frontier_survives_busy_ancestors_under_pressure() {
+    let mut pool = KvPool::new(KvGeometry::new(4, 12).unwrap(), 4)
+        .unwrap()
+        .with_prefix_ancestry(true);
+    let idle = chain(&[900; 4]);
+    let source = pool.create_sequence(4).unwrap();
+    pool.append(source, 4).unwrap();
+    capture(&mut pool, &idle, source, 2).unwrap();
+    pool.release(source).unwrap();
+    let busy = chain(&prompt(12));
+    let source = pool.create_sequence(12).unwrap();
+    for _ in 0..3 {
+        pool.append(source, 4).unwrap();
+        capture(&mut pool, &busy, source, 2).unwrap();
+    }
+    pool.release(source).unwrap();
+    assert_eq!(pool.metrics().snapshot().prefix_cache_evictions, 0);
+    let pressure = pool.create_sequence(4).unwrap();
+    pool.append(pressure, 4).unwrap();
+    assert!(pool.has_anchor(idle.key_at(4).unwrap()));
+    pool.audit().unwrap();
+}
+
+fn content_pool(pages: usize) -> KvPool {
+    KvPool::new(KvGeometry::new(4, pages).unwrap(), 8)
+        .unwrap()
+        .with_prefix_ancestry(true)
+}
+
+fn detached_capture(pool: &mut KvPool, chain: &PrefixChainV1, depth: usize, pages: usize) {
+    let source = pool.create_sequence(depth).unwrap();
+    pool.append(source, depth).unwrap();
+    pool.insert_content_anchor(chain, source, depth, pages)
+        .unwrap();
+    pool.release(source).unwrap();
+    pool.audit().unwrap();
+}
+
+fn assert_classes(pool: &KvPool, entries: &[(PrefixChainV1, usize)]) {
+    use runtime_kv::PrefixAnchorClassV1::{Maximal, Retained, Superseded};
+    let live: Vec<_> = entries
+        .iter()
+        .filter(|(c, n)| pool.has_anchor(c.key_at(*n).unwrap()))
+        .collect();
+    let ancestor = |a: &(PrefixChainV1, usize), b: &(PrefixChainV1, usize)| {
+        a.1 < b.1 && a.0.key_at(a.1) == b.0.key_at(a.1)
+    };
+    let maximal: Vec<_> = live
+        .iter()
+        .copied()
+        .filter(|a| !live.iter().any(|b| ancestor(a, b)))
+        .collect();
+    let mut retained = std::collections::BTreeSet::new();
+    for frontier in &maximal {
+        for divisor in [2, 4, 8] {
+            if let Some(a) = live
+                .iter()
+                .filter(|a| ancestor(a, frontier) && a.1 <= frontier.1 / divisor)
+                .max_by_key(|a| a.1)
+            {
+                retained.insert(a.0.key_at(a.1).unwrap());
+            }
+        }
+    }
+    for (i, a) in maximal.iter().enumerate() {
+        for b in maximal.iter().skip(i + 1) {
+            if let Some(common) = live
+                .iter()
+                .filter(|c| ancestor(c, a) && ancestor(c, b))
+                .max_by_key(|c| c.1)
+            {
+                retained.insert(common.0.key_at(common.1).unwrap());
+            }
+        }
+    }
+    let mut counts = [0; 3];
+    for entry in live {
+        let key = entry.0.key_at(entry.1).unwrap();
+        let expected = if maximal.contains(&entry) {
+            Maximal
+        } else if retained.contains(&key) {
+            Retained
+        } else {
+            Superseded
+        };
+        assert_eq!(pool.anchor_class(key), Some(expected), "depth {}", entry.1);
+        counts[match expected {
+            Superseded => 0,
+            Retained => 1,
+            Maximal => 2,
+        }] += 1;
+    }
+    assert_eq!(pool.metrics().snapshot().prefix_anchors_by_class, counts);
+    pool.audit().unwrap();
+}
+
+#[test]
+fn forks_rewinds_and_failed_descendants_reclassify_without_pressure() {
+    use runtime_kv::PrefixAnchorClassV1::{Maximal, Retained};
+    let mut pool = content_pool(512);
+    let main = chain(&prompt(64));
+    let mut entries = Vec::new();
+    for depth in [4, 8, 16, 24, 32, 48, 64] {
+        detached_capture(&mut pool, &main, depth, 2);
+        entries.push((main.clone(), depth));
+        assert_classes(&pool, &entries);
+    }
+    assert_eq!(pool.metrics().snapshot().prefix_cache_evictions, 0);
+    assert_eq!(pool.anchor_count(), 7, "supersession alone never evicts");
+    let hit = pool.resume_prefix(&main, 33, 64).unwrap().unwrap();
+    assert_eq!(hit.tokens(), 32, "rewind hits a retained ancestor");
+    pool.finish_restore(hit.handle()).unwrap();
+    pool.release(hit.handle()).unwrap();
+    let mut branch = prompt(40);
+    branch[25] += 900;
+    let branch = chain(&branch);
+    detached_capture(&mut pool, &branch, 40, 2);
+    entries.push((branch.clone(), 40));
+    assert_eq!(pool.anchor_class(main.key_at(24).unwrap()), Some(Retained));
+    assert_classes(&pool, &entries);
+    // Abandoning a capture uses the same removal path as explicit deletion.
+    pool.remove_anchor(branch.key_at(40).unwrap()).unwrap();
+    assert_classes(&pool, &entries);
+    for depth in [64, 48, 32, 24, 16, 8] {
+        pool.remove_anchor(main.key_at(depth).unwrap()).unwrap();
+        assert_classes(&pool, &entries);
+    }
+    assert_eq!(pool.anchor_class(main.key_at(4).unwrap()), Some(Maximal));
+    pool.remove_anchor(main.key_at(4).unwrap()).unwrap();
+    assert_eq!(pool.stats().free_blocks(), 512);
+    pool.audit().unwrap();
+}
+
+#[test]
+fn content_ancestry_ignores_cow_ids_and_discriminates_tails_salts_and_media() {
+    use runtime_kv::PrefixAnchorClassV1::{Maximal, Retained};
+    let mut pool = content_pool(128);
+    let base = chain(&prompt(16));
+    let source = pool.create_sequence(16).unwrap();
+    pool.append(source, 5).unwrap();
+    capture(&mut pool, &base, source, 1).unwrap();
+    let before = pool.snapshot(source).unwrap();
+    let append = pool.append(source, 7).unwrap();
+    assert!(append.copy().is_some());
+    assert_ne!(
+        before.blocks()[1],
+        pool.snapshot(source).unwrap().blocks()[1]
+    );
+    capture(&mut pool, &base, source, 1).unwrap();
+    pool.release(source).unwrap();
+    assert_eq!(pool.anchor_class(base.key_at(5).unwrap()), Some(Retained));
+    let mut divergent = prompt(9);
+    divergent[4] += 50;
+    let divergent = chain(&divergent);
+    detached_capture(&mut pool, &divergent, 9, 1);
+    assert_eq!(base.chain(1), divergent.chain(1));
+    assert_eq!(
+        pool.anchor_class(divergent.key_at(9).unwrap()),
+        Some(Maximal)
+    );
+    let salted = PrefixChainV1::salted(4, prompt(16).into(), vec![], Some(b"other")).unwrap();
+    detached_capture(&mut pool, &salted, 16, 1);
+    let media = PrefixChainV1::new(
+        4,
+        prompt(16).into(),
+        vec![PrefixMediaSpanV1 {
+            identity: [7; 32],
+            start: 4,
+            rows: 2,
+            media_row: 0,
+        }],
+    )
+    .unwrap();
+    detached_capture(&mut pool, &media, 16, 1);
+    let entries = [
+        (base.clone(), 5),
+        (base, 12),
+        (divergent, 9),
+        (salted, 16),
+        (media, 16),
+    ];
+    assert_classes(&pool, &entries);
+}
+
+#[test]
+fn incoming_ancestor_tie_break_and_failed_capture_do_not_pin_old_anchors() {
+    for enabled in [false, true] {
+        let mut pool = KvPool::new(KvGeometry::new(4, 6).unwrap(), 4)
+            .unwrap()
+            .with_prefix_ancestry(enabled);
+        let idle = chain(&[900; 4]);
+        detached_capture(&mut pool, &idle, 4, 1);
+        let busy = chain(&prompt(8));
+        let source = pool.create_sequence(8).unwrap();
+        pool.append(source, 4).unwrap();
+        capture(&mut pool, &busy, source, 1).unwrap();
+        pool.append(source, 4).unwrap();
+        capture(&mut pool, &busy, source, 2).unwrap();
+        assert_eq!(pool.has_anchor(idle.key_at(4).unwrap()), enabled);
+        if enabled {
+            assert!(!pool.has_anchor(busy.key_at(4).unwrap()));
+        }
+        pool.remove_anchor(busy.key_at(8).unwrap()).unwrap();
+        pool.metrics().prefix_capture_failed();
+        // A failed replacement does not resurrect its evicted ancestor.
+        if enabled {
+            assert!(!pool.has_anchor(busy.key_at(4).unwrap()));
+        }
+        pool.release(source).unwrap();
+        pool.audit().unwrap();
+    }
+}
+
+#[test]
+fn private_restore_and_transfer_pins_survive_candidate_eviction() {
+    use runtime_kv::{PrefixAnchorClassV1::Maximal, PrefixCacheKeyV1};
+    let mut pool = content_pool(6);
+    let public = chain(&prompt(8));
+    let source = pool.create_sequence(8).unwrap();
+    pool.append(source, 4).unwrap();
+    let state = capture(&mut pool, &public, source, 1).unwrap();
+    let private = PrefixCacheKeyV1::new([91; 32]);
+    pool.insert_private_anchor(private, source, 1)
+        .unwrap()
+        .unwrap();
+    assert_eq!(pool.anchor_class(private), Some(Maximal));
+    assert_eq!(pool.metrics().snapshot().prefix_private_anchors, 1);
+    assert_eq!(pool.metrics().snapshot().prefix_anchors_by_class, [0, 0, 1]);
+    pool.release(source).unwrap();
+    let hit = pool.resume_anchor(public.key_at(4).unwrap(), 8).unwrap();
+    let lease = pool
+        .retain_transfer_pages(&[pool.page_allocation(state[0]).unwrap()])
+        .unwrap();
+    let pressure = pool.create_sequence(20).unwrap();
+    pool.append(pressure, 20)
+        .expect_err("pinned pages prevent reclaiming enough space");
+    assert_eq!(pool.anchor_count(), 0);
+    assert_eq!(pool.block_ref_count(state[0]).unwrap(), 2);
+    pool.audit().unwrap();
+    pool.finish_restore(hit.handle()).unwrap();
+    pool.release(hit.handle()).unwrap();
+    pool.release(pressure).unwrap();
+    assert_eq!(pool.block_ref_count(state[0]).unwrap(), 1);
+    pool.release_transfer_pages(&lease).unwrap();
+    assert_eq!(pool.stats().free_blocks(), 6);
+    let metrics = pool.metrics().snapshot();
+    assert_eq!(
+        metrics.prefix_cache_evictions,
+        metrics.prefix_evictions_by_class.iter().sum()
+    );
+    assert_eq!(metrics.prefix_private_anchors, 0);
+    assert_eq!(metrics.prefix_pages_freed_by_class, [0, 0, 0]);
+    pool.audit().unwrap();
+}
+
+#[test]
+fn random_capture_remove_touch_and_pressure_match_slow_content_oracle() {
+    let mut pool = content_pool(96);
+    let mut entries = Vec::new();
+    let mut random = 0x12345678u64;
+    for iteration in 0..1200 {
+        random ^= random << 13;
+        random ^= random >> 7;
+        random ^= random << 17;
+        let depth = 1 + (random as usize % 48);
+        let branch = (random >> 16) as u32 % 5;
+        let mut tokens = prompt(48);
+        tokens[12] += branch;
+        tokens[27] += (random >> 32) as u32 % 3;
+        let identity =
+            PrefixChainV1::salted(4, tokens.into(), vec![], Some(&[(iteration % 3) as u8]))
+                .unwrap();
+        match random % 5 {
+            0 if !entries.is_empty() => {
+                let (c, n): &(PrefixChainV1, usize) = &entries[random as usize % entries.len()];
+                pool.remove_anchor(c.key_at(*n).unwrap()).unwrap();
+            }
+            1 => {
+                if let Some(hit) = pool.resume_prefix(&identity, depth, 48).unwrap() {
+                    pool.finish_restore(hit.handle()).unwrap();
+                    pool.release(hit.handle()).unwrap();
+                }
+            }
+            _ => {
+                detached_capture(&mut pool, &identity, depth, 2);
+                let key = identity.key_at(depth).unwrap();
+                if !entries.iter().any(|(c, n)| c.key_at(*n) == Some(key)) {
+                    entries.push((identity, depth));
+                }
+            }
+        }
+        assert_classes(&pool, &entries);
+        let clone = pool.clone();
+        assert_eq!(clone, pool);
+        assert_eq!(clone.metrics().snapshot(), pool.metrics().snapshot());
+        clone.audit().unwrap();
+    }
+    for (chain, depth) in entries {
+        pool.remove_anchor(chain.key_at(depth).unwrap()).unwrap();
+    }
+    assert_eq!(pool.stats().free_blocks(), 96);
     pool.audit().unwrap();
 }

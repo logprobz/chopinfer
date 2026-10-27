@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
+mod ancestry;
+use ancestry::PrefixAncestry;
+pub use ancestry::PrefixAnchorClassV1;
 mod context_parallel;
 mod declared_pages;
 mod offload;
@@ -134,6 +137,8 @@ struct PrefixAnchorV1 {
     blocks: Vec<BlockId>,
     state: Vec<BlockId>,
     last_used: u64,
+    created_at: std::time::Instant,
+    class: PrefixAnchorClassV1,
     private: bool,
 }
 
@@ -413,9 +418,10 @@ pub struct KvPool {
     active_sequences: usize,
     anchors: BTreeMap<PrefixCacheKeyV1, PrefixAnchorV1>,
     /// Anchor keys by the digest of their full blocks.
-    anchor_chains: BTreeMap<PrefixCacheKeyV1, Vec<PrefixCacheKeyV1>>,
+    anchor_chains: BTreeMap<PrefixCacheKeyV1, std::collections::BTreeSet<PrefixCacheKeyV1>>,
     /// Anchor keys by last use, oldest first.
-    anchor_order: BTreeMap<u64, PrefixCacheKeyV1>,
+    anchor_order: BTreeMap<(PrefixAnchorClassV1, u64, PrefixCacheKeyV1), PrefixCacheKeyV1>,
+    ancestry: Option<PrefixAncestry>,
     anchor_clock: u64,
     /// References each block holds on behalf of anchors.
     anchor_refs: Vec<u32>,
@@ -450,6 +456,7 @@ impl Clone for KvPool {
             anchors: self.anchors.clone(),
             anchor_chains: self.anchor_chains.clone(),
             anchor_order: self.anchor_order.clone(),
+            ancestry: self.ancestry.clone(),
             anchor_clock: self.anchor_clock,
             anchor_refs: self.anchor_refs.clone(),
             registry: self.registry.clone(),
@@ -478,6 +485,10 @@ impl PartialEq for KvPool {
             && self.active_sequences == other.active_sequences
             && self.anchors == other.anchors
             && self.anchor_refs == other.anchor_refs
+            && self.ancestry == other.ancestry
+            && self.anchor_order == other.anchor_order
+            && self.anchor_clock == other.anchor_clock
+            && self.anchor_chains == other.anchor_chains
             && self.registry == other.registry
             && self.produced == other.produced
             && self.prepared == other.prepared
@@ -560,6 +571,7 @@ impl KvPool {
             anchors: BTreeMap::new(),
             anchor_chains: BTreeMap::new(),
             anchor_order: BTreeMap::new(),
+            ancestry: None,
             anchor_clock: 0,
             anchor_refs,
             registry: PrefixRegistryV1::new(PREFIX_REGISTRY_DIGESTS_V1),
@@ -570,6 +582,27 @@ impl KvPool {
             rewrites_last_page: false,
             metrics,
         })
+    }
+
+    /// Default-off eviction candidate. Configure before creating anchors.
+    #[must_use]
+    pub fn with_prefix_ancestry(mut self, enabled: bool) -> Self {
+        assert!(
+            self.anchors.is_empty(),
+            "configure eviction before captures"
+        );
+        self.ancestry = enabled.then(PrefixAncestry::default);
+        self
+    }
+
+    #[must_use]
+    pub fn prefix_ancestry_enabled(&self) -> bool {
+        self.ancestry.is_some()
+    }
+
+    #[must_use]
+    pub fn anchor_class(&self, key: PrefixCacheKeyV1) -> Option<PrefixAnchorClassV1> {
+        self.anchors.get(&key).map(|anchor| anchor.class)
     }
 
     /// Declares that an append may rewrite committed rows of the sequence's
@@ -913,7 +946,7 @@ impl KvPool {
         source: SequenceHandle,
         state_pages: usize,
     ) -> Result<Option<Vec<BlockId>>, KvError> {
-        self.insert_anchor_inner(key, chain, source, None, state_pages, false)
+        self.insert_anchor_inner(key, chain, source, None, state_pages, false, None)
     }
 
     /// [`Self::insert_anchor`] over the sequence's first `tokens` committed
@@ -928,9 +961,37 @@ impl KvPool {
         tokens: usize,
         state_pages: usize,
     ) -> Result<Option<Vec<BlockId>>, KvError> {
-        self.insert_anchor_inner(key, chain, source, Some(tokens), state_pages, false)
+        self.insert_anchor_inner(key, chain, source, Some(tokens), state_pages, false, None)
     }
 
+    /// Captures a boundary with its complete logical identity. Legacy digest-only
+    /// captures remain maximal because their ancestry cannot be reconstructed.
+    pub fn insert_content_anchor(
+        &mut self,
+        identity: &PrefixChainV1,
+        source: SequenceHandle,
+        tokens: usize,
+        state_pages: usize,
+    ) -> Result<Option<Vec<BlockId>>, KvError> {
+        if identity.block_tokens() != self.geometry.block_tokens || identity.splits_media(tokens) {
+            return Err(KvError::InvalidPrefixMedia);
+        }
+        let key = identity.key_at(tokens).ok_or(KvError::InvariantViolation)?;
+        let chain = identity
+            .chain(tokens / identity.block_tokens())
+            .ok_or(KvError::InvariantViolation)?;
+        self.insert_anchor_inner(
+            key,
+            chain,
+            source,
+            Some(tokens),
+            state_pages,
+            false,
+            Some(identity),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn insert_anchor_inner(
         &mut self,
         key: PrefixCacheKeyV1,
@@ -939,6 +1000,7 @@ impl KvPool {
         prefix: Option<usize>,
         state_pages: usize,
         private: bool,
+        identity: Option<&PrefixChainV1>,
     ) -> Result<Option<Vec<BlockId>>, KvError> {
         self.ensure_no_prepared()?;
         let slot = self.validate(source)?;
@@ -963,7 +1025,15 @@ impl KvPool {
             return Err(KvError::ReferenceCountOverflow { block: *block });
         }
         if self.free_blocks.len() < state_pages {
-            self.evict_anchors_for(state_pages);
+            let ancestors = match (&self.ancestry, identity) {
+                (Some(index), Some(identity)) => index.ancestors(identity, tokens),
+                _ => Vec::new(),
+            };
+            let incoming = ancestors
+                .into_iter()
+                .map(|key| (self.anchors[&key].last_used, key))
+                .collect();
+            self.evict_anchors_for_incoming(state_pages, incoming);
         }
         if self.free_blocks.len() < state_pages {
             return Ok(None);
@@ -977,11 +1047,6 @@ impl KvPool {
         state
             .try_reserve_exact(state_pages)
             .map_err(|_| KvError::MetadataAllocationFailed)?;
-        let mut chain_keys = self.anchor_chains.get(&chain).cloned().unwrap_or_default();
-        chain_keys
-            .try_reserve(1)
-            .map_err(|_| KvError::MetadataAllocationFailed)?;
-        chain_keys.push(key);
         self.check_serials(state_pages)?;
         for _ in 0..state_pages {
             let page = self.free_blocks.pop().expect("free pages were counted");
@@ -992,9 +1057,10 @@ impl KvPool {
             self.retain_block(*block);
             self.anchor_refs[block.index()] += 1;
         }
-        self.anchor_chains.insert(chain, chain_keys);
+        self.anchor_chains.entry(chain).or_default().insert(key);
         self.anchor_clock += 1;
-        self.anchor_order.insert(self.anchor_clock, key);
+        self.anchor_order
+            .insert((PrefixAnchorClassV1::Maximal, self.anchor_clock, key), key);
         self.anchors.insert(
             key,
             PrefixAnchorV1 {
@@ -1003,9 +1069,17 @@ impl KvPool {
                 blocks,
                 state: state.clone(),
                 last_used: self.anchor_clock,
-                private: false,
+                created_at: std::time::Instant::now(),
+                class: PrefixAnchorClassV1::Maximal,
+                private,
             },
         );
+        self.metrics
+            .anchor_added(PrefixAnchorClassV1::Maximal, state_pages, private);
+        if let (Some(index), Some(identity)) = (&mut self.ancestry, identity) {
+            index.insert(identity, tokens, key);
+            self.reclassify_anchors();
+        }
         if !private {
             self.metrics.prefix_capture();
         }
@@ -1018,18 +1092,55 @@ impl KvPool {
         Ok(self.drop_anchor(key))
     }
 
-    /// Evicts least recently used anchors until `needed` pages are free or
-    /// no anchor is left.
+    /// Evicts only under allocation pressure. LRU remains the default.
     fn evict_anchors_for(&mut self, needed: usize) {
+        self.evict_anchors_for_incoming(needed, std::collections::BTreeSet::new());
+    }
+
+    fn evict_anchors_for_incoming(
+        &mut self,
+        needed: usize,
+        mut incoming: std::collections::BTreeSet<(u64, PrefixCacheKeyV1)>,
+    ) {
         while self.free_blocks.len() < needed {
-            let Some((_, key)) = self.anchor_order.first_key_value() else {
+            let Some(((class, _, _), oldest)) = self.anchor_order.first_key_value() else {
                 return;
             };
-            let key = *key;
-            let public = !self.anchors[&key].private;
+            let key = if *class == PrefixAnchorClassV1::Maximal {
+                incoming.first().map_or(*oldest, |(_, key)| *key)
+            } else {
+                *oldest
+            };
+            let anchor = &self.anchors[&key];
+            incoming.remove(&(anchor.last_used, key));
+            let public = !anchor.private;
+            let class = anchor.class;
+            let age = anchor.created_at.elapsed().as_secs();
+            let free = self.free_blocks.len();
             self.drop_anchor(key);
             if public {
-                self.metrics.prefix_eviction();
+                self.metrics
+                    .prefix_eviction(class, self.free_blocks.len() - free, age);
+            }
+        }
+    }
+
+    fn reclassify_anchors(&mut self) {
+        let changes = self
+            .ancestry
+            .as_mut()
+            .map(PrefixAncestry::changes)
+            .unwrap_or_default();
+        for (key, class) in changes {
+            let anchor = self.anchors.get_mut(&key).expect("indexed anchor exists");
+            if anchor.class != class {
+                self.anchor_order
+                    .remove(&(anchor.class, anchor.last_used, key));
+                self.metrics
+                    .anchor_reclassified(anchor.class, class, anchor.state.len());
+                anchor.class = class;
+                self.anchor_order
+                    .insert((class, anchor.last_used, key), key);
             }
         }
     }
@@ -1038,9 +1149,16 @@ impl KvPool {
         let Some(anchor) = self.anchors.remove(&key) else {
             return false;
         };
-        self.anchor_order.remove(&anchor.last_used);
+        self.anchor_order
+            .remove(&(anchor.class, anchor.last_used, key));
+        self.metrics
+            .anchor_removed(anchor.class, anchor.state.len(), anchor.private);
+        if let Some(index) = &mut self.ancestry {
+            index.remove(key);
+            self.reclassify_anchors();
+        }
         if let Some(keys) = self.anchor_chains.get_mut(&anchor.chain) {
-            keys.retain(|candidate| *candidate != key);
+            keys.remove(&key);
             if keys.is_empty() {
                 self.anchor_chains.remove(&anchor.chain);
             }
@@ -1056,10 +1174,12 @@ impl KvPool {
         let Some(anchor) = self.anchors.get_mut(&key) else {
             return;
         };
-        self.anchor_order.remove(&anchor.last_used);
+        self.anchor_order
+            .remove(&(anchor.class, anchor.last_used, key));
         self.anchor_clock += 1;
         anchor.last_used = self.anchor_clock;
-        self.anchor_order.insert(self.anchor_clock, key);
+        self.anchor_order
+            .insert((anchor.class, self.anchor_clock, key), key);
     }
 
     fn set_block_references(&mut self, block: BlockId, refs: u32, transfers: u32) {
@@ -1765,6 +1885,9 @@ impl KvPool {
                 *refs = refs.checked_add(1).ok_or(KvError::InvariantViolation)?;
             }
         }
+        if self.ancestry.as_ref().is_some_and(|index| !index.audit()) {
+            return Err(KvError::InvariantViolation);
+        }
         let mut indexed = 0usize;
         for (chain, keys) in &self.anchor_chains {
             for key in keys {
@@ -1784,7 +1907,16 @@ impl KvPool {
         for (key, anchor) in &self.anchors {
             if anchor.tokens == 0
                 || self.geometry.blocks_for(anchor.tokens)? != anchor.blocks.len()
-                || self.anchor_order.get(&anchor.last_used) != Some(key)
+                || self
+                    .anchor_order
+                    .get(&(anchor.class, anchor.last_used, *key))
+                    != Some(key)
+                || self
+                    .ancestry
+                    .as_ref()
+                    .and_then(|index| index.class(*key))
+                    .unwrap_or_default()
+                    != anchor.class
             {
                 return Err(KvError::InvariantViolation);
             }

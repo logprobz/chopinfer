@@ -4623,6 +4623,9 @@ fn engine_config_v1(
     })
     .map_err(|error| run_error(format!("the served schedule is unusable: {error}")))?
     .with_admission(serving.admission)
+    .with_prefix_ancestry(
+        std::env::var("CHOPINFER_PREFIX_ANCESTRY").is_ok_and(|value| value == "1"),
+    )
     .with_prefill_budget(serving.prefill_budget);
     EngineConfig::new(
         scheduler,

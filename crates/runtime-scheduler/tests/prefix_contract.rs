@@ -1369,3 +1369,39 @@ fn only_a_chunk_that_reaches_its_anchor_takes_an_anchor_item() {
     );
     scheduler.audit().unwrap();
 }
+
+#[test]
+fn ancestry_candidate_reaches_captures_and_abandonment() {
+    for enabled in [false, true] {
+        let mut scheduler = Scheduler::new(
+            SchedulerConfig::new(4, 64, 32, 8, 1)
+                .unwrap()
+                .with_guaranteed_prefill_chunks(8)
+                .unwrap()
+                .with_prefix_cache(STATE_PAGES)
+                .with_prefix_ancestry(enabled),
+            KvGeometry::new(4, 64).unwrap(),
+        )
+        .unwrap();
+        submit(&mut scheduler, 1, &prompt(24, 0), 2);
+        let (_, first) = step(&mut scheduler, |_| false);
+        capture_all(&mut scheduler, &first);
+        let (_, second) = step(&mut scheduler, |_| false);
+        capture_all(&mut scheduler, &second);
+        let metrics = scheduler.kv_metrics().snapshot();
+        assert_eq!(
+            metrics.prefix_anchors_by_class,
+            if enabled { [0, 1, 1] } else { [0, 0, 2] }
+        );
+        let (_, last) = step(&mut scheduler, |_| false);
+        for capture in &last {
+            scheduler.begin_prefix_capture(capture).unwrap().unwrap();
+            scheduler.abandon_prefix_capture(capture).unwrap();
+            scheduler.end_prefix_capture(capture).unwrap();
+        }
+        assert_eq!(
+            scheduler.kv_metrics().snapshot().prefix_anchors_by_class,
+            metrics.prefix_anchors_by_class
+        );
+    }
+}

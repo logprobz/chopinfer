@@ -132,7 +132,7 @@ impl KvPool {
         if self.anchors.contains_key(&key) {
             return Err(KvError::StaleHandle);
         }
-        let pages = self.insert_anchor_inner(key, key, source, None, state_pages, true)?;
+        let pages = self.insert_anchor_inner(key, key, source, None, state_pages, true, None)?;
         if let Some(anchor) = self.anchors.get_mut(&key) {
             anchor.private = true;
         }

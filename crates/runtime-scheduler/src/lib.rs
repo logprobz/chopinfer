@@ -421,6 +421,7 @@ pub struct SchedulerConfig {
     prefill_budget: PrefillBudget,
     prefill_granule: usize,
     rewrites_last_page: bool,
+    prefix_ancestry: bool,
     anchor_items: usize,
 }
 
@@ -474,8 +475,16 @@ impl SchedulerConfig {
             prefill_budget: PrefillBudget::Fixed,
             prefill_granule: 1,
             rewrites_last_page: false,
+            prefix_ancestry: false,
             anchor_items: 0,
         })
+    }
+
+    /// Default-off prefix eviction candidate, pending stateful replay acceptance.
+    #[must_use]
+    pub const fn with_prefix_ancestry(mut self, enabled: bool) -> Self {
+        self.prefix_ancestry = enabled;
+        self
     }
 
     /// Allows a lone unscored prefill to use the step budget instead of the
@@ -1264,6 +1273,7 @@ pub struct PrefixCaptureV1 {
     tokens: usize,
     key: PrefixCacheKeyV1,
     chain: PrefixCacheKeyV1,
+    ancestry: Option<Arc<PrefixChainV1>>,
     handle: SequenceHandle,
     /// The request finished at this commit, and its sequence is released only
     /// once the capture ends.
@@ -1539,7 +1549,8 @@ impl Scheduler {
     ) -> Result<Self, ScheduleError> {
         let kv = KvPool::new_with_metrics(geometry, config.maximum_sequences, kv_metrics)
             .map_err(ScheduleError::Kv)?
-            .with_last_page_rewrites(config.rewrites_last_page);
+            .with_last_page_rewrites(config.rewrites_last_page)
+            .with_prefix_ancestry(config.prefix_ancestry);
         let mut requests = Vec::new();
         requests
             .try_reserve_exact(config.tracking_capacity)
@@ -2863,6 +2874,7 @@ impl Scheduler {
                     tokens,
                     key,
                     chain,
+                    ancestry: self.config.prefix_ancestry.then(|| prefix.chain.clone()),
                     handle,
                     deferred: item.terminal,
                 });
@@ -3341,6 +3353,7 @@ impl Scheduler {
                 tokens,
                 key,
                 chain: key,
+                ancestry: None,
                 handle,
                 deferred: true,
                 swap,
@@ -3431,6 +3444,12 @@ impl Scheduler {
         let Some(state_pages) = self.config.prefix_state_pages else {
             return Ok(None);
         };
+        if let Some(identity) = &capture.ancestry {
+            return self
+                .kv
+                .insert_content_anchor(identity, capture.handle, capture.tokens, state_pages)
+                .map_err(ScheduleError::Kv);
+        }
         if capture.interior {
             return self
                 .kv

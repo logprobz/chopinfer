@@ -23,7 +23,7 @@ const SALT_DOMAIN: &[u8] = b"salt";
 ///
 /// `identity` names the media content and how it is encoded, so the same
 /// placeholder tokens over different media never share a digest.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct PrefixMediaSpanV1 {
     pub identity: [u8; 32],
     pub start: usize,
@@ -163,6 +163,26 @@ impl PrefixChainV1 {
             .any(|span| span.start < boundary && boundary < span.end())
     }
 
+    pub(crate) fn ancestry_atoms(&self, start: usize, end: usize) -> Vec<PrefixAtom> {
+        let mut media = self.media.partition_point(|span| span.start < start);
+        (start..end)
+            .map(|position| {
+                let span = self
+                    .media
+                    .get(media)
+                    .filter(|span| span.start == position)
+                    .copied();
+                if span.is_some() {
+                    media += 1;
+                }
+                PrefixAtom {
+                    token: self.tokens[position],
+                    media: span,
+                }
+            })
+            .collect()
+    }
+
     fn hash_range(&self, sha: &mut Sha256, start: usize, end: usize) {
         for token in &self.tokens[start..end] {
             sha.update(token.to_le_bytes());
@@ -250,4 +270,12 @@ impl PrefixRegistryV1 {
             }
         }
     }
+}
+
+/// Exact material for splitting a radix edge inside a logical block. Media
+/// starts carry the complete span identity; public boundaries never split it.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct PrefixAtom {
+    pub(crate) token: u32,
+    pub(crate) media: Option<PrefixMediaSpanV1>,
 }

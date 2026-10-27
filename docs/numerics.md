@@ -963,7 +963,26 @@ its hit when no anchor exists there. Granules round these positions down.
 A request resumed within its final chunk needs no extra shared-page anchor.
 Prompt-end anchors serve extensions; same-prompt repeats must still prefill
 their last token. Prompt-logprob requests cannot skip rows they must report.
-Unused anchors are evictable under page pressure.
+Unused anchors are evictable under page pressure. The default remains global
+LRU. The default-off `CHOPINFER_PREFIX_ANCESTRY=1` host candidate first evicts
+superseded public ancestors, then retained ancestors, then maximal frontiers,
+using LRU within each class. Each frontier retains the deepest cached
+ancestors at or below half, quarter and eighth of its token depth; forks
+retain their deepest cached ancestor. Retention is a priority, not a pin or
+a TTL. When only maximal anchors remain, an incoming capture replaces its
+own older ancestor before an unrelated frontier. Failed captures remove
+only their new anchor and reclassify surviving ancestors; they cannot
+resurrect a pressure victim.
+
+Ancestry follows salted token and media content through shared full-block
+digest paths and exact partial radix edges, never physical page IDs.
+Copy-on-write, restore pins and transfer leases keep their existing page
+reference ownership. Private preemption anchors remain evictable in the
+maximal tier and cannot supersede public anchors. The candidate changes
+retention, not capture boundaries, snapshot bytes or restore arithmetic.
+It needs stateful replay exactness and acceptance before adoption; adoption
+deletes the candidate switch and old policy. See the
+[prefix eviction metrics](operations-observability.md#prefix-eviction-candidate-metrics).
 
 Offload is disabled by default. Transfers retain page references until all
 ranks complete; swap-in restores newly reserved pages before admission.

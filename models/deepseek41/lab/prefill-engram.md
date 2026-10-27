@@ -77,19 +77,21 @@ The arms differed only in the former gather switch. Matched token IDs and
 logprob words also passed on these original profiles. All 12 timing windows
 executed with zero replay, no prefix hits, preemption or eviction, and zero
 measured table residency after cold advice. KV page counts were equal across
-arms: 329219 for full-prefill and 343946 for short default AR.
+arms: 329219 for full-prefill and 343946 for short default AR. The historical
+full-schedule configuration used `prefill_chunk_tokens=0`,
+`prefill_upper_skip=false` and a 1280 MiB graph memory reserve.
 
 For each metric, d1 = A1/B1 - 1, d2 = A2/B2 - 1, and spread = |d1 - d2|.
 Positive values are inverse-latency gains. Every row passed the new-route
 threshold: both pairs positive, mean above spread, and mean at least 1.5%.
 The 32K prefill value is the median step time of its four 8192-token chunks.
 
-| Profile | Tokens | Metric | d1 | d2 | Mean | Spread |
+| Configuration | Tokens | Metric | d1 | d2 | Mean | Spread |
 |---|---:|---|---:|---:|---:|---:|
-| tp4-ar-full-prefill | 8192 | TTFT | 21.5644% | 23.0753% | 22.3198% | 1.5109% |
-| tp4-ar-full-prefill | 8192 | Prefill step | 22.1022% | 23.2546% | 22.6784% | 1.1524% |
-| tp4-ar-full-prefill | 32768 | TTFT | 20.6364% | 22.2626% | 21.4495% | 1.6262% |
-| tp4-ar-full-prefill | 32768 | Prefill step | 19.6303% | 20.8057% | 20.2180% | 1.1754% |
+| AR, full schedule | 8192 | TTFT | 21.5644% | 23.0753% | 22.3198% | 1.5109% |
+| AR, full schedule | 8192 | Prefill step | 22.1022% | 23.2546% | 22.6784% | 1.1524% |
+| AR, full schedule | 32768 | TTFT | 20.6364% | 22.2626% | 21.4495% | 1.6262% |
+| AR, full schedule | 32768 | Prefill step | 19.6303% | 20.8057% | 20.2180% | 1.1754% |
 | tp4-ar | 511 | TTFT | 9.0102% | 9.1789% | 9.0946% | 0.1687% |
 | tp4-ar | 511 | Prefill step | 9.5489% | 9.5507% | 9.5498% | 0.0017% |
 

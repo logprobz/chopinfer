@@ -67,8 +67,8 @@ DMA serves the negotiated upper-skip executor only (see
 [sparse DMA admission](#sparse-dma-admission)): the create record must
 negotiate upper-skip chunks and prepare the BF16 gather. Package defaults
 use 8192-row chunks with upper-layer skip, including DSpark target chunks.
-Legacy create records without prefill options, full-prefill profiles and
-chunked profiles without skip allocate no DMA inbox, owner stream or events.
+Legacy create records without prefill options and explicit configurations
+without upper skip allocate no DMA inbox, owner stream or events.
 Full-schedule execution keeps SM transport. The DMA and BF16-gather
 experiment switches are removed.
 

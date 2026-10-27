@@ -4,7 +4,8 @@ scheduler's repeat anchors, previously observed shared prefixes and boundaries
 shared by queued requests. These extra cuts align to 64 tokens. It publishes
 complete terminal decode state for multi-turn reuse. The exact dependency cone is implemented
 behind the `prefill_upper_skip` model option, which the default `tp4-ar` and
-`tp4-dspark` profiles set. Their `-full-prefill` profiles keep full execution.
+`tp4-dspark` profiles set. For a full-schedule diagnostic configuration, set
+`prefill_upper_skip=false` and `prefill_chunk_tokens=0` explicitly.
 
 The bundle declares extra cuts through the optional
 `chop_bundle_prefill_cuts_api_v1` export. Its grid declaration, entry table

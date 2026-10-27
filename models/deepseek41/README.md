@@ -391,10 +391,12 @@ qualification evidence. Both run exact upper-layer prefill intervals at
 guaranteed 8192-token chunk ends ([prefill-dependencies.md](prefill-dependencies.md)),
 which on 2026-10-19 matched the full schedule bitwise in served tokens,
 logprobs and captured state at 8K, 32K and 128K prompts at TP4. Prefix
-anchors exist only at chunk, prompt and response ends. `tp4-ar-full-prefill`
-and `tp4-dspark-full-prefill` keep the full schedule and anchor anywhere;
-`tp4-ar-upper-skip-2048` and `tp4-dspark-upper-skip-2048` use 2048-token
-chunk ends.
+anchors also include scheduler-selected shared prefixes aligned to 64 tokens.
+On 2026-10-27, these anchors reached a 66.46% cached-prompt-token rate on
+the shared-document and multi-turn workload, versus 66.35% for the full
+schedule, so the separate full-prefill and 2048-token profiles were removed.
+The `prefill_upper_skip` and `prefill_chunk_tokens` model options remain
+available for explicit diagnostic configurations.
 
 DSpark prefill batches commit projections across prompts and overlaps each
 Engram layer's mapped gather with target compute by default.

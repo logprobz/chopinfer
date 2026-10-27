@@ -76,6 +76,57 @@ libraries marked `lib-tests-in-one-process` one at a time before nextest.
 `RUST_TEST_THREADS` still limits tests within each such library; nextest's
 `--test-threads` limit does not control those separate processes.
 
+### CPU phases and inventories
+
+The CPU gate runs `portable-build`, `portable-lint`, `portable-test`, then
+`high-memory-tests`. The first three call xtask's `check-portable-build`,
+`check-portable-lint` and `check-portable-test` commands. `--only portable`
+selects all four; `--only portable-test --with-producers` includes its
+build/lint prerequisites. The quick gate keeps its own selection policy.
+
+The exact `high-memory-*` nextest overrides declare the exceptional tests
+once. The CPU runner excludes them from ordinary tests, then runs each
+serially in an exclusive gate slot after the ordinary phase. That slot
+does not lift an enclosing supervisor or cgroup cap. The historical
+16 GiB and 30-minute limits came from an outer supervisor, not from the
+heavy wrapper or this phase split.
+
+The 2026-10-25 phased-gate comparison preserved the baseline Rust test,
+doctest and route inventories. Measured wall/CPU seconds and peak RSS were:
+
+| Phase | Wall seconds | CPU seconds | Peak RSS GiB |
+| --- | ---: | ---: | ---: |
+| portable-build | 997.418 | 4594.563 | 2.184 |
+| portable-lint | 167.929 | 716.873 | 1.738 |
+| portable-test | 1414.386 | 10325.714 | 36.635 |
+| high-memory-tests | 146.883 | 147.178 | 32.567 |
+
+RSS is the process/descendant high-water mark from `wait4`, not aggregate
+cgroup memory. Independent steps overlap, so phase times do not sum to gate
+wall time. The ordinary phase also exceeded 16 GiB; separating the two
+exceptional tests does not make the rest fit that cap.
+
+Each gate retains `results.json`, `executed-tests.json`, JUnit reports and
+per-case `high-memory-results.json` under its external work directory.
+To reconstruct or compare inventories:
+
+```sh
+python3 -B ci/test_inventory.py --work "$CI_WORK" --summary "$CI_SUMMARY" \
+  --junit "$CI_JUNIT" --output "$CI_INVENTORY"
+python3 -B ci/test_inventory.py --compare "$CI_BEFORE" "$CI_AFTER" \
+  --output "$CI_COMPARISON"
+```
+
+Repeat `--junit` for historical reports. Only explicitly reviewed added
+Python cases may use `--allow-added-python-step STEP`; removals still fail.
+Older logs without identities compare exact counts, skips and verdicts,
+which the inventory marks separately from identity comparisons.
+
+Route sweeps retain seeded rotation. `CHOPINFER_ROUTE_SEEDS` supplies a
+JSON map of bundle crate names to seeds for a complete gate; each child receives
+its own `CHOPINFER_ROUTE_SEED`. Use the recorded map to reproduce a run
+without advancing the per-model counters. CPU checks are not GPU evidence.
+
 ## Full CPU check prerequisites
 
 `ci/cpu.sh` passes only with all of these in place, even for a change that

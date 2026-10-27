@@ -141,24 +141,16 @@ The GPU test defaults to `synthetic_small` and refuses a binary without its
 pointing to `fixtures/deepseek41/geometries/synthetic-small`. Later checks
 select another compiled geometry with `CHOPINFER_DEEPSEEK41_HEAD_GEOMETRY`.
 
-On 2026-10-17 the SM120 head tests passed on the 12-layer synthetic geometry
-(hidden width 1024, Markov rank 256) at a 250 W power cap. All 24 cases
-passed F64 bounds and exact chain-order checks, including live counts
-0, 1, 3 and 7, in-place logits, stride gaps, graph replay and delayed
-producers. Maximum bound use was 0.06178. A separate memcheck replay passed
-the same 24 cases with zero errors and no Xids. This verifies the two head
-kernels under the original input contract. The confidence hidden input has
-since been corrected to F32; those confidence results are superseded until
-the corrected cubin passes its GPU checks at those shapes.
-
 On 2026-10-18 the corrected F32 head cubin passed 28 normal and 28 memcheck
 cases at a 250 W power cap, with zero memcheck errors and no Xids. These
 cover production-width 5120 confidence, including the unrounded hidden
 counterexample, and the production TP4 Markov matrix. Maximum bound use was
-0.061771. Corrected width-1024 confidence, full-stage parity and
-real-checkpoint execution remain separate integration gates.
+0.061771. This measurement covers those head shapes, not full-stage or model
+qualification.
 
-The [synthetic lowering interface](../lower/dspark/README.md) binds catch-up,
+The [lowering interface](../lower/dspark/README.md) binds catch-up,
 block attention and MoE, and the five-position head chain. `staging` connects
 bounded draft readback to the mapped Engram rows before verification. The
-program still needs to connect these modules to its instance lifecycle.
+instance connects them through create, execute, commit, cancel, restore and
+destruction. AR, prefill and DSpark share the per-layer gather lifecycle;
+target pieces keep their ordered joins.

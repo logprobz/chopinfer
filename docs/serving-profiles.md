@@ -24,6 +24,16 @@ covers, or null for experimental profiles. Startup warns above that count.
 The shared default is 32; MiMo/Qwen TP4 AR and MiMo DFlash have evidence
 through 64. Package capacity alone is not serving qualification.
 
+DeepSeek ships `tp4-ar` and `tp4-dspark`. Both use exact upper-skip prefill
+with 8192-token grid ends and 64-token aligned shared-prefix anchors. An
+unaligned prompt adds a 1-63-token tail step after its aligned anchor;
+measured cold cost is about 30-40 ms. The full-prefill and 2048-token
+profiles were retired after shared-prefix hit-rate qualification. Their
+model options remain available for explicit diagnostic configurations.
+`tp4-dspark` uses the stored floor-one confidence calibration, with 64
+verify rows and widths 6, 8, 16, 32 and 64. See the
+[model documentation](../models/deepseek41/README.md#served-profiles).
+
 ## Speculative token capacity and graph budget
 
 Two serve options size a speculative verify step. Each is also a profile
@@ -34,12 +44,13 @@ overrides it:
   verify rows one step may carry, one row per decoding item plus every
   draft. A package that declares `chop.speculative-requested-rows.v1` serves
   its default rows unless asked for more, up to its manifest maximum, and
-  prepares its buffers for the rows it is asked for. DeepSeek serves 32 by
-  default and up to 192 (32 items at its five-draft block). Startup refuses
+  prepares its buffers for the rows it is asked for. DeepSeek's package
+  fallback is 32, while `tp4-dspark` requests 64; the maximum is 192
+  (32 items at its five-draft block). Startup refuses
   rows at or below `--speculative-tokens` or above the maximum.
 - `--speculation-graph-rows N` (`speculation.graph_rows`), the graph budget:
   the widest verify step captured in a CUDA graph. It reaches a package that
-  declares the `verify_graph_rows` model option (DeepSeek, default 32);
+  declares the `verify_graph_rows` model option (DeepSeek, default 64);
   wider steps run without a graph and pay their launches. Startup warms
   every width up to the package's default rows and, above them, only the
   balanced plan's listed widths (`--speculation-widths`) up to the budget.
@@ -123,9 +134,9 @@ sequences: 30 to 32 MiB per GPU for TP4 AR (18 graphs) and 280 MiB for TP4
 DSpark with verify graphs up to 32 rows (152 graphs), and serving captured
 no further memory. A reserve is the graphs, the 256 MiB warning headroom
 and about 10 % for growth: `tp4-ar` reserves 320 MiB and `tp4-dspark`
-640 MiB, and the rest goes to the KV pool. The other DeepSeek profiles keep
-1280 MiB until their own post-warmup lines measure them, and a profile that
-raises its graph budget measures its reserve again. A capture that finds no
+640 MiB, and the rest goes to the KV pool. These are the two shipped
+DeepSeek profiles. A configuration that raises its graph budget must
+measure its reserve again. A capture that finds no
 memory fails the generation worker, so
 startup logs each rank's free memory after warmup and warns below 256 MiB
 ([observability](operations-observability.md#chopinfer-metrics)); raise the

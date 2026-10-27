@@ -39,183 +39,119 @@ CPU checks that read the checkpoint take it from
 HF corpus `tokenizer_goldens.py corpus` writes, named by
 `$CHOPINFER_DEEPSEEK_TOKENIZER_CORPUS`.
 
-Flash TP4 prefill uses native block-scaled expert tiles. At TP4 the rank
-image stores the backbone's routed gate/up bank in 64-row by 128-K row
-tiles with each 64-byte block of the codes in quad-lane order
-(`row-tiles-64x128-lanes`), which the native tiles read and the exact BF16
-expert path does not. TP1 and TP2 store rows and run the exact path.
-The native tiles use the trained operand grids and change the F32
-accumulation order within each 32-K group. Decode, verify and draft experts
-keep their existing paths; at TP4 the backbone's decode and verify gate/up
-kernels read the quad-lane tiles too, bit for bit as they read rows: each
-lane of a quad loads the code bytes it converts together, so no shuffle
-forms its MMA operands. Native prefill restores the row-tiled order in
-shared memory, which costs it up to 3.3% of its MoE time against row tiles
-(2048 to 8192 live rows, sustained at 300 W, 2026-10-23). See
-[native MoE prefill qualification](lab/native_moe_prefill.md) for the
-numerical contract and fixed gates.
+## Served profiles
 
-The routed expert scale banks of the main layers are stored encoded
-([encoded expert scale banks](../../docs/kernel-library.md#encoded-expert-scale-banks)).
-Flash TP4 uses `scale-row-tiles-offset-v1`; other topologies use
-`scale-row-offset-v1`.
-The bundle exports `chop_bundle_weight_census_v1`, the host measures the
-banks on the CPU before planning, and the census chooses an offset width
-or keeps the bank raw. With the row-offset format, one launch at the end
-of each layer's routes stage expands both banks for the experts with routes into raw banks in scratch
-(106.2 MB at TP4), on the routed branch beside the shared expert. The
-experts read those banks unchanged. DSpark's banks stay raw: the one-row floor kernel loads
-scales before its PDL wait. On the official checkpoint at TP4, each rank's
-routed scale banks shrink from 4,246,732,800 to about 697,200,000 bytes,
-decoding bitwise to the raw banks (2026-10-23, CPU). Encoding is on by
-default; `CHOPINFER_WEIGHT_CENSUS=0` on the host plans every bank raw, which
-is also the A/B control. Served at TP4 AR on 2026-10-23 (test KV mode,
-65,536 pages, a raw/encoded/encoded/raw sequence after a warm-up process),
-every greedy and long-prompt token and logprob bit equaled the raw server's,
-each rank had 3,296 MiB more free memory before its KV pool (60,676 more
-pages at utilization 1.0), the census took 6 to 7 s at startup, and greedy
-decode ran at 0.974, 0.975 and 0.960 of raw tokens per second at 1, 8 and
-32 sequences. Those ratios are with the paired expansion's warp exception
-search; they were 0.973, 0.974 and 0.961 with one-thread searches.
+`profiles.json` ships two experimental profiles, `tp4-ar` and `tp4-dspark`.
+Both use native KV, prefix caching, at most 32 sequences, 8192-token prefill
+chunks and exact upper-layer dependency cones. AR reserves 320 MiB per rank
+for graphs; DSpark reserves 640 MiB. Package capacity and CPU checks do not
+establish release qualification.
 
-The tile-scale format keeps the same census and width-or-raw decisions.
-Its declared decode and verify consumers read encoded scales in place,
-keeping their raw counterpart's arithmetic and launch geometry. A
-projection retains expansion if any of its selected queues lacks an
-encoded variant. This includes wide gate and column queues and native
-prefill. The one-row width-4 gate also retains expansion. The raw scratch
-banks remain allocated for these paths; DSpark's drafter banks remain raw.
-On the official checkpoint, the tile format takes 673.39 to 673.46 MB per
-rank and decodes bitwise to the raw banks (2026-10-24, CPU).
+The scheduler admits 64-token aligned shared-prefix anchors in addition to
+the chunk grid and prompt ends. For an unaligned prompt, it cuts at
+`prompt_tokens / 64 * 64` and executes the remaining 1 to 63 tokens in a
+separate prefill step. Each endpoint produces complete target state and,
+for DSpark, the 134-row raw feature history, including six preserved older
+rows. An anchor costs 53 pages (2.88 MiB) per rank for AR or 125 pages
+(6.79 MiB) for DSpark. See [prefill dependencies](prefill-dependencies.md).
 
-Every MXFP8 dense projection stores its E4M3 codes in
-`mxfp8-fold-packed-8x128-v1` ([packed FP8 fold layout](../../docs/kernel-library.md#packed-fp8-fold-layout)),
-the layout every fold reader takes. Create therefore no longer builds a
-packed copy of them beside row-major codes.
+On 2026-10-27, TP4 shared-document and multi-turn comparisons measured a
+cached-prompt-token rate of 66.46%, against 66.35% for the full schedule and
+35.56% for the previous upper-skip schedule. Matched-hit TTFT fell 72.2% for
+AR and 72.3% for DSpark against that previous schedule. Cold unaligned
+prompts cost an additional 39.8 ms for AR (941 to 981 ms) and 29.3 ms for
+DSpark (966 to 996 ms). The separate full-prefill and 2048-token profiles
+were removed after this comparison. `prefill_upper_skip` and
+`prefill_chunk_tokens` remain declared options for diagnostic configurations.
+TBT-selected cuts are not enabled.
 
-Served at TP4 on 2026-10-23 against the previous layout (test KV mode,
-65,536 pages, a base/head/head/base sequence after a warm-up process):
+AR decode, eligible AR prefill and DSpark target execution use prepared
+per-layer Engram gathers. Their shared layer-gather lifecycle enqueues
+mapped reads before the consuming layer and joins them before its decoder.
+Upper-skip DMA prefill from 512 rows retains the synchronous gather, as do
+media, taps and hosts without the needed service. Every host gather has an
+`engram_gather` route tag; remaining fallbacks are recorded in the bundle's
+route allowlist. See [Engram gathers](lab/prefill-engram.md) and
+[prefill communication](prefill-communication.md).
 
-- AR and DSpark outputs were bitwise equal.
-- Greedy throughput was within the A/A spread or faster: AR 0.9997,
-  1.0028 and 1.0103 at 1, 8 and 32 sequences, DSpark 1.0020, 1.0067 and
-  1.0039.
-- Each rank had 1,922 MiB more free memory at the first graph capture,
-  35,382 more pages at utilization 1.0; with the drafter it was 2,116 MiB.
+## Kernel selection and storage
+
+Flash selection uses nine [schedule tables](contract/tuning/README.md),
+with inclusive row ranges. Other geometries do not inherit Flash tuning.
+Missing rows select the model's baseline; geometry, bank, graph, storage,
+workspace and precedence checks remain code gates. Route declarations use
+the table admissions, and untuned-key tests pin uncovered served ranges.
+
+Dense decode uses one template for split, ticket, prefetched and two-group
+reuse folds. Local rows share the local-wide template; cluster folds share
+the fused cluster body; compact and matrix prefill share a fetch knob.
+Chained MoE floor/bandwidth and absorb/strip schedules share bodies with
+separate scheduling knobs. Latent shared-head modes use a template parameter.
+The fold families share admission, copy, packed-fetch and merge helpers where
+the compiler preserves their bytes. Activation, scale, chain and reduction
+policies remain separate numerical identities, not tuning knobs.
+
+Every MXFP8 dense projection stores E4M3 codes in
+`mxfp8-fold-packed-8x128-v1`. It needs no create-time packed duplicate.
+The 2026-10-23 TP4 comparison with 65,536 KV pages kept AR and DSpark outputs
+bitwise equal, with greedy throughput ratios 0.9997-1.0103 over C1/C8/C32.
+It freed 1922 MiB per rank before graph capture, or 2116 MiB with the drafter.
+Retired builders and row-major controls needed by current qualification live
+in the lab; [packed fold coverage](lab/packed_fold_tests.md) describes them.
+
+Native Flash TP4 prefill uses block-scaled expert tiles over the trained
+operand grids. The backbone gate/up codes use 64-row by 128-K tiles with
+quad-lane ordering. TP1/TP2 and decode, verify and draft arithmetic keep
+their own admitted paths. Native prefill changes the F32 order within a
+32-K group, so its qualification is within-bound, not bitwise to the exact
+BF16 expert path. See [native MoE](lab/native_moe_prefill.md).
+
+Main-layer expert scales use lossless `scale-row-tiles-offset-v1` at TP4
+and `scale-row-offset-v1` at other topologies. The census chooses an encoding
+width or keeps each bank raw. Eligible tile-scale consumers read encoded
+banks directly; other consumers expand them to raw scratch. Drafter banks
+remain raw because their one-row floor reads scales before its PDL wait.
+The TP4 tile format measured 673.39-673.46 MB per rank on 2026-10-24 and
+decoded bitwise to the raw banks. The earlier row-offset served comparison
+on 2026-10-23 freed 3296 MiB per rank and cost 2-4% decode throughput at
+C1/C8/C32, with unchanged output bits. The host's
+`CHOPINFER_WEIGHT_CENSUS=0` selects raw banks.
+
+Native TP4 prefill rounds completed local partials to BF16, sums ranks in
+ascending F32 order and rounds the result once. Decode, target verify and
+draft blocks keep F32 partials. The shared ordered DMA transport preserves
+the selected collective's rounding. See
+[partial arithmetic](communication-partials.md) and
+[attention admission](prefill-attention.md).
 
 ## Checkpoint and geometry
 
-`checkpoint-files.json` pins every file of the official revision, for
-provenance and the qualification binding. Admission reads `config.json`
-alone: aliases, semantic rules, the block-32 FP8 recipe, the CSA2, Engram
-and DSpark relations (`contract/src/structure.rs`), then the closed match
-against `geometries/flash.json`, each refusal naming its field. The
-synthetic geometry (`fixtures/deepseek41/geometries/synthetic-small/`, 12
-layers carrying every CSA2 role, 32 experts, one DSpark stage) admits at
-TP1, TP2 and TP4 when `CHOPINFER_DEEPSEEK41_GEOMETRY_DIRS` names its
-directory.
+`checkpoint-files.json` pins the official revision. Admission reads
+`config.json`, checks the block-32 FP8 recipe and CSA2/Engram/DSpark
+relations, then matches `geometries/flash.json`. `contract/projections.json`
+declares each projection, side tensor and encoder tensor. Checkpoint binding
+claims all 96,085 official tensors once before payload loading.
 
-`contract/projections.json` declares every projection, stem, side tensor
-and encoder tensor once; `checkpoint::bind` binds a checkpoint's
-safetensors headers to it before any payload is read. The official
-revision binds all 96,085 tensors, each claimed once
-(`compiler/tests/checkpoint_binding.rs`).
+The 12-layer synthetic geometry, with every CSA2 role, 32 experts and one
+DSpark stage, admits TP1/TP2/TP4 when `CHOPINFER_DEEPSEEK41_GEOMETRY_DIRS`
+names `fixtures/deepseek41/geometries/synthetic-small`. These are test
+geometries, not additional served profiles.
 
-`text_config.indexer_mma` defaults to `true` for Flash. Native MXFP4 index
-keys use the guarded FP4 tensor-core scorer in prefill and decode; setting
-`--model-option text_config.indexer_mma=false` keeps the SIMT scorer for
-comparison. BF16 key storage retains SIMT. A coarse scale certificate admits
-safe native scores; otherwise each head's four scale sums are checked. The
-fine certificate requires sums in [130, 369], a spread of at most nine, and
-individual scale bytes in [2, 252]. Rejected slots use the original SIMT
-operation order. Queries that cannot be repacked exactly use SIMT for the
-whole row. Ordered selection, candidate provenance and failure publication
-retain their contracts.
+Native FP4 index keys use the guarded tensor-core scorer; BF16 keys use
+SIMT. A scale certificate admits exact native scores, otherwise the original
+SIMT order repairs the slot. Unrepackable queries use SIMT for the whole row.
+The fine certificate requires scale sums in [130, 369], spread at most nine,
+and individual scale bytes in [2, 252]. The
+[guard argument](../../crates/kernels-sm120/cuda/pooled_indexer/position_mma_guard.md)
+states its arithmetic domain.
 
-Native Flash decode buckets 1-32 use the ordered hierarchical merge. Eager
-prefill uses cached local selection only when the rounded context extent is
-128K, the prepared batch has at least 32 rows, and k is 512. That band keeps
-the coarse scorer and original final merge. Other prefill extents retain
-their previous selector; the four-row shared-key scorer remains unselected.
-
-Full C8 and C32 decode batches and verify-32 batches of eight four-row items
-use the 128-position tiled scorer and cached dense local selector from 128K
-through 256K. Verify-32 also uses hierarchical merging from 32K. Contexts
-are the requests' ends rounded to 64-token pages; every request must fit the
-same band. These routes require index top-k 512 and 2048 candidate blocks.
-Partial batches, other verify layouts, shorter contexts and
-contexts above 256K retain the preceding schedule. The 32K decode schedule
-stays unchanged because its measured scorer gain was small and cached
-selection lost time. Prefill retains the separate policy above.
-
-Each schedule has its own graph cache, including both DSpark target pieces.
-Switching contexts retains warm graphs and the original graph-release
-ledger. Source grids, scalar arguments, score strides, candidate publication,
-guard predicates and SIMT repair remain unchanged. At 128K/256K, paired
-eight-source measurements saved 0.225/0.334 ms per C8 step,
-0.299/0.509 ms per C32 step and 0.555/0.804 ms per verify-32 step against
-the preceding schedule. Verify hierarchy alone saved 0.248 ms at 32K.
-These are per-rank indexer times, excluding query projection and attention,
-from seeded independent-request layouts. The qualification also retained
-sealed sampled prefill operands and adversarial repair cases. It establishes
-bitwise indexer output equality; integrated served speed remains a separate
-measurement.
-
-`text_config.indexer_prefill_tile` defaults to true for native Flash eager
-prefill with top-k 512 and 2048 candidate blocks. It selects eight score
-CTAs per row for 4096-row ratio-2 and compact batches, and 512-row
-layer-20 batches, when every position is below 32K. Compact scoring uses
-a 128-position tile.
-Each CTA reuses its packed query across more positions. Compact scoring
-uses all four warps for the same ordered head-FMA sum. Guards, SIMT repair,
-score layouts and selectors are retained. Smaller tails and other contexts
-keep the accepted schedule. Set the option to false for the previous
-schedule; disabling native MMA also disables this route.
-
-On 2026-10-20 at 250 W, 94 paired cases and 23 memcheck cases passed
-bitwise, including ten real captures, poisoned buffers, finite SIMT
-packing fallbacks and chunk partitions. Across 8192-row synthetic chunks
-at offsets 0, 8192, 16384 and 24576, the score-and-selection pipeline
-projected across all eight indexer layers fell from 71.580/109.273/143.251/
-160.122 ms to 37.154/71.434/102.156/116.954 ms per rank. The four-full-chunk
-saving is 156.527 ms; upper-skip reduces the number of rows and the
-available saving. The ten real 32-row cases were slower and retain their
-previous route. Integrated served latency remains a separate measurement.
-
-Under the same admission, layer 20 publishes its candidate blocks with one
-fused launch per batch instead of the block-maxima, local-gather and merge
-launches. It reads the selector's scores directly, keeps block keys in
-registers, resolves ties toward the lower block index and leaves the public
-outputs, tags, visible counts and status on their previous spans. The serving
-cubin is built from the lab recipe and gated by the lab's lock records. On
-2026-10-20 at 250 W, 198 cases (two real layer-20 captures, offsets 0, 8192,
-16384 and 24576, runtime budgets 1, 31 and 2048, ties, holes, bad counts,
-invalid scores and inactive tails) gave 1152 bitwise comparisons and 396
-rejected negative controls, and 36 memcheck cases passed. At budget 2048 the
-complete layer-20 pipeline on its 2496-row upper-skip suffix fell from
-2.518/4.061/7.333/9.148 ms to 1.726/3.235/6.326/8.034 ms at those offsets,
-about 3.7 ms per cold 32K prompt per rank. The reference arm was the
-runtime-count producer; at the compiled count it runs the same gather
-template as the served producer.
-
-On 2026-10-19, captured served operands at 8K, 32K and 128K gave exact f64
-top-k set agreement and recall of 1.0 for SIMT, BF16 MMA and native FP4 MMA:
-475,668 selections across 960 rows. All three had score RMSE 1.4289e-7 and
-maximum error 1.1509e-6. Both MMA paths had zero score-bit differences from
-SIMT across 24,772,608 compared words, including tails. These measurements
-qualified the original unguarded scorer on those captures. The later guard
-repaired the synthetic mismatches; no repair was needed in 17.7 million
-real slots. Unguarded MMA remains a lab control, not the serving default.
-
-The unguarded cancellation witness is consistent with a different full-F32
-addition order: `(2^25 + 1) - 2^25` can lose the unit that SIMT preserves by
-cancelling the large terms first. It is outside the guard's scale domain.
-It does not establish reduced accumulator precision. PTX specifies at least
-single-precision accumulation for this E2M1 instruction, but leaves order,
-rounding and subnormal-input handling unspecified. The guard's integer proof
-requires exact decoded products; domain-edge and individual-code GPU probes
-check this premise on SM120 before a stronger hardware-wide claim. See the
-[guard argument](../../crates/kernels-sm120/cuda/pooled_indexer/position_mma_guard.md).
+Hierarchical merge serves native Flash decode rows 1-32. Eager cached
+prefill selection requires a rounded 128K context extent, at least 32
+prepared rows and top-k 512. Full C8/C32 decode and eight-item verify-32
+use the tiled scorer and cached selector from 128K through 256K;
+verify-32 hierarchy starts at 32K. Other layouts keep their admitted
+fallbacks. Prefill tile scoring has separate low-context and layer-20
+publication gates. The table ranges do not override those code checks.
 
 ## Model options
 
@@ -258,6 +194,49 @@ longer selects the bundle's step or commit records. Existing diagnostic
 capture directories, AR Engram tracing and the shared
 `CHOPINFER_DEVICE_RESULTS` control remain available.
 
+## DSpark execution
+
+`tp4-dspark` uses balanced planning, 64 speculative rows, widths
+`6,8,16,32,64`, graph rows 64 and depths `1:5,8:3,16:3,32:0`. It adopts the
+stored floor-one confidence calibration for both sampled and greedy
+requests. The scheduler still selects the verify width; the device allocator
+assigns draft prefixes within it. Only target-verified tokens are committed.
+See [confidence allocation](dspark-confidence.md) for the measured coding
+and chat tradeoff.
+
+Each drafting item has five backbone rows. Uniform depth-three batches of
+3-8 items compute only the used heads; other batches compute all five.
+Sampled drafts use the target sampler's Philox noise at the draft position's
+generated index. The twelve-item forward limit splits larger batches into
+near-equal chunks, for example 16 as 8+8. Target outputs do not depend on
+this split. Wider admitted verify steps run eagerly above the graph budget.
+
+Prefill commit projections are batched across prompts. Undrafted pure
+decode joins status once and submits private sampling before collecting it
+on the native result path. Verify and undrafted commits with at least eight
+retention copies per rank use the indexed byte-copy kernel; smaller commits,
+prefill and mixed steps keep their ordered copy list. Every gather completes
+before success, and failed device work poisons the instance.
+
+The 2026-10-24 TP4 prefill comparison at 300 W matched full logits, target
+KV, all 134 history rows, drafter state and sampled tokens. At temperature
+1 with 512 outputs, median C8/C16 throughput rose from 465.93/544.39 to
+472.37/553.35 tokens/s. Batched commit costs 121.91 MiB per rank, about
+0.734% of the measured KV pool; gather IDs reserve another 1.5 MiB on rank 0.
+The 64-row default comparison on 2026-10-25, with 1024 sampled output tokens
+and a fixed 32,768-page pool, resolved a 6.357% C16 request-throughput gain
+(0.273-point pair spread) and a 5.237% energy reduction; C8 was within noise.
+These bounded results precede the confidence adoption and are not a final
+refactor-versus-baseline verdict.
+
+The [execution lifecycle](bundle/src/dspark/README.md) and
+[lowering contract](bundle/src/lower/dspark/README.md) describe catch-up,
+raw-history retention, graph reuse, cancellation and prefix restore.
+For untimed transition diagnostics, `state-capture` and
+`CHOPINFER_DSPARK_STATE_DIR` record selected before-draft/after-commit
+boundaries. `diagnostic_step_logs` defaults to false and controls step and
+confidence JSON, without changing confidence computation.
+
 ## Reference
 
 `reference.py` is the refrun adapter (`tools/refrun`). It executes the
@@ -285,338 +264,31 @@ separate skip reasons; missing Python dependencies remain CI failures.
 
 ## Qualification
 
-The model is not qualified yet. Reference-based numerical limits in `qual.json` are
-pinned from the spread of the refrun references of the pinned vendor code
-before the first candidate run, and never moved after a result. The served
-checks pin checkpoint identity 2273a3d9..., tensor parallel size 4 and the
-native KV layout, which `/health` reports as `mixed` (what
-`--kv-cache-dtype auto` resolves to).
+`model.toml` still disables release and both profiles remain experimental.
+The refactor's CPU journals, kernel twins and bounded served comparisons do
+not replace the release preview's full suite at the release revision.
+`qual.json`, `validation.toml` and the pinned reference locks are authoritative
+for the checks and their inputs.
 
-- teacher and chat: gated against the F32 run with BF16-rounded quantizer
-  inputs (F32-TQ), `$CHOPINFER_DATA/refrun/deepseek41/m1/teacher-reference.json`
-  (sha256 fcbd248b..., 35 texts, 3,974 scored positions) and
-  `chat-reference.json` (03c03237..., 17 texts, 5,270 positions), with
-  BF16 and F64-TQ as spread variants. The limits follow spread rule
-  variant-spread.v2 with mean factor 1 (`m1/spread-limits.json`, sha256
-  b275dea1...). teacher: mean |dlogprob| at most 0.15 (the 0.10 floor of a
-  set of at least 1,000 positions, raised to the pooled BF16 spread 0.120
-  and rounded up), top-1 decisive and near-tie at most 8%, disagreement at
-  most 10%, no failed category and at least 3,974 positions scored; the
-  gate computes each category's limits from its own spread (prose-frozen
-  mean 0.20 and total 10.79%, prose mean 0.20, chat mean 0.40, the others
-  at the floors). chat: mean |dlogprob| at most 0.30 (pooled BF16 spread
-  0.292), the same top-1 limits and at least 5,270 positions. The teacher
-  check reads the reference's frozen texts from
-  `$CHOPINFER_DATA/deepseek41/m1/fixtures-text/teacher-texts.json`.
-- paired_teacher: the candidate's teacher receipt against a stored one on
-  the same reference, with the standard reviewed margins
-  (paired-teacher-margins/v1: 0.005-nat pooled and 0.01-nat category mean
-  margins, 1% top-one delta, Holm alpha 0.05, eight clusters, two net tail
-  positions above 0.5 nats), reviewed on 2026-10-18 (its approval line is
-  in `qual.json`). It activates once a stored teacher receipt exists.
-- long_context (131,072 tokens): the teacher rule over the last 1,024
-  positions against the F32-TQ reference alone, under the floor-only policy
-  of `docs/check-kinds.md` (mean |dlogprob| 0.10, decisive and near-tie
-  top-1 0.08, all top-1 flips 0.10).
-- per-layer taps (`taps.json`) within the same spread;
-- evals_gsm8k: the 1,319 GSM8K items with the recipe sampling (temperature
-  1.0, top_p 1.0, max_tokens 262,144), workload sha256
-  bb39334b089e2861ec26b6c700c74951e8293e61268b5acef3b64b93fc73fe76;
-  gsm8k_regression compares it with the stored run, the same sampled
-  bodies, at significance 0.05 and reports no baseline until one exists.
-  evals_gsm8k gates coverage, identity and errors, gsm8k_regression gates
-  against the stored baseline, and the absolute GSM8K floor is
-  spec_verify's.
-- frontend_goldens: the served tokenizer agrees with
-  the 49 rows of `fixtures/deepseek41/frontend/tokenizer-golden.json`.
-  Its live input, `$CHOPINFER_DATA/deepseek41/frontend-agentic/tokenizer-golden.json`,
-  materializes the five checkpoint-file texts after checking their SHA-256
-  and re-encoding them with the pinned tokenizer; every token ID stays the
-  same. The 61 `chat-renders.json` rows use the fixed conversations from
-  `fixtures/mimo26/capture/conversations.py`, with tool arguments serialized
-  as the live capture sends them. `tools.refrun.frontend_corpus.Model`,
-  `template_source` and `model_reference` render and tokenize them on CPU
-  through `frontend_cases.py` and the pinned checkpoint encoder. API reads
-  the same `tools-00` conversation; the frontend gate requires equality
-  for both the tokenizer and chat files, except for the two text digests in
-  the check's `tokenizer_refusals`: FIM and the encoder's action task are
-  outside the served prompt format. Those rows require the specific HTTP
-  400 prompt-special-token refusal. The chat generator uses the same
-  request builder as the check, so disabled thinking reaches the vendor
-  encoder through the frontend's declared thinking object.
-  From the repository root, with the configured checkpoint and reference
-  Python, regenerate and verify the chat fixture on CPU:
+The reference is the checkpoint's pinned vendor code in F32 with
+BF16-rounded trained-quantizer inputs (F32-TQ), with BF16 and F64-TQ spread
+variants. Teacher coverage is at least 3974 positions and chat at least
+5270; pooled mean absolute logprob limits are 0.150 and 0.300 nats.
+Category limits follow the same frozen spread policy. Paired-teacher uses
+the reviewed 0.005-nat pooled and 0.01-nat category mean margins, plus the
+shared top-one and tail gates. Limits and references never move to hide a
+mismatch.
 
-  ```sh
-  CUDA_VISIBLE_DEVICES= "$CHOPINFER_REFRUN_PYTHON" -B fixtures/deepseek41/capture/chat_renders.py --output "$CHOPINFER_DATA/deepseek41/frontend-agentic/chat-renders.json"
-  cmp fixtures/deepseek41/frontend/chat-renders.json "$CHOPINFER_DATA/deepseek41/frontend-agentic/chat-renders.json"
-  ```
+The suite includes tokenizer/frontend goldens, per-layer taps, long context,
+GSM8K, media, prefix equality, determinism, native-KV offload and a BF16-KV
+comparison. DSpark requires AR and speculative arms, exact greedy equality,
+the declared verify bounds and GSM8K at least 193/200 in each arm. Forced
+verify capacities are judged separately against paired AR, without pooling
+away an uncovered capacity. Native and BF16 KV must give the same served
+bits; BF16 KV is a diagnostic comparison and is not qualified for capacity,
+pressure preemption or offload. It explicitly disables speculation.
 
-- prefix_exact: the `deepseek41` policy uses the teacher reference's schema,
-  64-token pages and a 64-token prefill granule from
-  `contract/src/serving.rs`. It checks page and prompt-end anchors, image
-  isolation and continuations after a hit, as the shared prefix check does
-  for GLM, MiMo and Qwen. The `anchor_in_window` and `anchor_past_window`
-  report groups split at Flash's 128-token sliding window
-  (`geometries/flash.json`); `bundle/src/instance/prefix.rs` captures and
-  restores those rings and compressor tails. These settings describe the
-  source contract, not a served result.
-- determinism: the AR and DSpark records of one run are identical.
-- kv_offload_plain and kv_offload_pressure: native-KV offload with a 16 GiB
-  budget, a swap every 16 steps and 32,768 pressure tokens.
-- the `kv-bf16` comparison configuration (`serve --kv-cache-dtype bf16`):
-  the BF16 KV layout holds the same values as the native trained formats,
-  and native (mixed) versus BF16 served bits must be equal. It runs prefix_exact
-  and kv_layout_equality, which records the determinism request set on a
-  native server and on the configuration's BF16 server in one run and
-  requires every request's tokens and logprobs to be bit-identical, naming
-  the first differing position; teacher, teacher_arms and chat join as
-  they land. It is never a served default and not qualified for capacity,
-  preemption under pressure or offload, since its pages are about 3.6
-  times larger (3,200 bytes against 890 per token).
-
-The needle check runs frozen token-ID prompts at total contexts of 8,192,
-131,072, 262,144 and 1,048,576 tokens (7,168, 130,048, 261,120 and
-1,047,552 prompt tokens, each with 1,024 tokens to answer) and requires the
-three needle values in order. `fixtures/deepseek41/capture/needles.py`
-builds them on CPU from MiMo's functional haystack, rendered by the
-checkpoint's `encoding/encoding.py` in chat mode, with the needles near
-10%, 50% and 90% of the haystack, into
-`$CHOPINFER_DATA/deepseek41/needle/prompts.json`; the digests are in
-`fixtures/deepseek41/needles.json` (`--check` rebuilds and compares).
-
-`profiles.json` holds the experimental `tp4-ar` and `tp4-dspark` profiles. The
-release preview's full suite at the release revision is the
-qualification evidence. Both run exact upper-layer prefill intervals at
-guaranteed 8192-token chunk ends ([prefill-dependencies.md](prefill-dependencies.md)),
-which on 2026-10-19 matched the full schedule bitwise in served tokens,
-logprobs and captured state at 8K, 32K and 128K prompts at TP4. Prefix
-anchors also include scheduler-selected shared prefixes aligned to 64 tokens.
-On 2026-10-27, these anchors reached a 66.46% cached-prompt-token rate on
-the shared-document and multi-turn workload, versus 66.35% for the full
-schedule, so the separate full-prefill and 2048-token profiles were removed.
-The `prefill_upper_skip` and `prefill_chunk_tokens` model options remain
-available for explicit diagnostic configurations.
-
-DSpark prefill batches commit projections across prompts and overlaps each
-Engram layer's mapped gather with target compute by default.
-AR also prepares per-layer gathers by default on supported schedules;
-upper-skip DMA prefill from 512 rows keeps synchronous gathers.
-The shared host now reads ahead for both
-synchronous and asynchronous mapped gathers, with independent overrides
-([policy and caller audit](../../docs/mapped-row-read-ahead.md)).
-
-On 2026-10-24, Flash TP4 at a configured 1800 MHz and 300 W passed bitwise
-full-vocabulary logits, target KV, all 134 raw feature-history rows, drafter
-state and sampled-token comparisons against the preceding prefill paths.
-At temperature 1.0 with 512 output tokens, four processes per arm raised
-median C8/C16 request throughput from 465.93/544.39 to 472.37/553.35 tok/s;
-all spreads were below 0.85% with identical step histograms. Energy was
-1.8250/1.5034 versus 1.8252/1.5149 J/token. Batched commit adds 121.91 MiB
-per rank before KV sizing: automatic capacity fell from 320,972 to 318,615
-pages per rank (0.734%). The gather ID buffers also reserve 1.5 MiB on
-rank 0 before KV sizing. These bounded comparisons do not replace release
-qualification.
-
-DSpark uses one joined saved-status readback for pure decode steps where
-no item drafts. On the native device
-result path it submits private sampling before collecting that status and
-completes every Engram gather before returning success. Prefill, mixed and
-drafted steps keep their existing boundaries.
-
-DSpark uses one byte-copy kernel per rank when an undrafted or verify
-commit would otherwise submit at least
-eight retention copies per rank. Prefill, mixed prefill/decode and smaller
-commits retain the original copy list. Metadata reserves 768 bytes per rank
-before KV sizing. All mappings and rank bindings validate before any write;
-every accepted raw row keeps its original physical slot and wrap position.
-Step records expose `undrafted_ready` and `undrafted_status_packets`;
-commit records expose `retention_kernel_launches`, `retention_copy_calls`
-and `retention_metadata_bytes` so gates can assert which path executed.
-
-The `tp4-dspark` profile allocates verify drafts using the stored floor-one
-sampled confidence calibration, with the same five pairs for greedy
-requests. It keeps 64 speculative rows, widths 6, 8, 16, 32 and 64, graph
-rows 64, and depths `1:5,8:3,16:3,32:0`. See
-[DSpark confidence](dspark-confidence.md) for the numerical contract and
-allocation rules and the measured workload tradeoff.
-
-For untimed transition diagnostics, build the bundle with `state-capture`.
-This feature keeps native launches and ready logits enabled. Set
-`CHOPINFER_DSPARK_STATE_DIR` to a private external directory, create its
-`enabled` file, and supply `transitions.json`, for example:
-
-```json
-{"version":1,"before_draft":[4,5],"after_commit":[3,4,5],"requests":[1],"max_bytes":1073741824}
-```
-
-The step numbers count bundle executions, including prefill. Each selected
-boundary captures the full physical state and target KV, plus committed
-Engram lookback, lifecycle bookkeeping and resumed sampling inputs. A
-`before_draft` capture follows ordinary catch-up and precedes provisional
-draft writes; an `after_commit` capture does no catch-up. The plan allows
-at most eight points of each kind and 32 requests, within its byte budget.
-These readbacks synchronize device work. Run separate uncaptured native
-exactness and timing windows to check execution ordering and performance.
-
-### DSpark qualification
-
-The preview selects `tp4-dspark`, with both AR and speculative quick arms
-and exact greedy equality. DSpark keeps five backbone rows per block.
-Uniform depth-three batches of 3-8 items compute only their used heads;
-other batches compute all five proposals. Scheduler budgets select the
-emitted prefix. For a sampled request the
-drafter proposes from the target sampler's own noise at each draft
-position's generated index (model option `dspark_coupled_drafts`, default
-true; `false` drafts every request greedily); emitted tokens do not depend
-on it. Its profiles plan balanced
-drafts at native KV and TP4: every stream drafts the deepest common depth
-that fits the 64 verify rows, at most five from C1, three from C8 through
-C16 and none from C32 (`depths` `1:5,8:3,16:3,32:0`), and no plan reads a step time, so
-identical processes run identical step shapes. On 2026-10-23 at 300 W, four
-fresh processes per arm on one install served balanced within a 2.2%
-throughput spread at C8 and C16 with identical step shapes, while the
-adaptive policy differed by up to 57% in C8 full-concurrency throughput.
-Against no drafting, three drafts per stream at C8 raised full-concurrency
-throughput by 44% greedy and 26% sampled; one draft at C16 lowered request
-throughput to 0.92 greedy and 0.82 sampled, so C16 and C32 served without
-drafts at that time. Each plan now lands on the widest verify width of
-6, 8, 16, 32 and 64 rows that its depth caps reach
-(`widths` `6,8,16,32,64`), filled by
-acceptance: the target verify's MoE has its prepared plans at those widths
-and runs a generic path between them, so a C8 step of 24 rows took 43.8 ms
-against 37.5 ms for 32 rows. On 2026-10-23 at 300 W, against the same
-profile without widths with three or four fresh processes per arm, this
-raised C8 request throughput by 10.1% greedy and 9.1% sampled and lowered
-energy per token by 6.4% and 5.8%, with C8 full-concurrency throughput and
-C1, C16 and C32 unchanged. `--speculation adaptive` with the shared
-`per-block` draft-cost model remains available. The model option
-`dspark_draft_chunk_items` (default 12, at most 32) caps the drafting items
-one drafter forward runs. A step splits into the fewest near-equal chunks
-within that limit, with larger chunks first: 16 items use 8 + 8, 24 use
-12 + 12, and 32 use 11 + 11 + 10. Target outputs do not depend on chunking.
-The Flash TP4 DSpark profiles select this twelve-item limit on the bounded
-head/router, HC and quantizer paths. An override above twelve items can
-select the larger-row paths.
-Diagnostic builds can set `CHOPINFER_DSPARK_HEAD_CAPTURE` to a private
-external directory and create its `enabled` marker after startup. The
-drafter then captures normalized F32 head inputs, BF16 head weights and
-reference F32 outputs once at each of 40, 60, 80 and 160 rows. Readbacks
-run after drafter dispatch, outside graph capture. Files are private and
-never replaced; these untimed captures are for lab comparisons only.
-The package declares up to 192 verify rows a step, every item at its
-deepest block. The host serves 32 unless `--speculative-rows` (profile
-`speculation.rows`) asks for more, and the instance prepares every op for
-the rows it is asked for. The model option `verify_graph_rows`
-(`--speculation-graph-rows`, profile `speculation.graph_rows`, default 64)
-is the widest verify step captured in a graph; wider steps run without one.
-The three TP4 DSpark profiles request 64 verify rows and graph rows.
-Before the specialized 64-row routes, on 2026-10-24 (TP4,
-300 W, sampled at temperature 1.0, 128 rows, graphs up to 64 rows) the
-median step took 16.4 ms at 8 rows, 29.4 ms at 16, 47.1 ms at 24,
-37.8 ms at 32, 88.2 ms at 40 and 93.0 ms at 48 rows with 8 items, and
-24.0 ms at 16 rows, 43.9 ms at 32, 99.6 ms at 48, 103.8 ms at 64 and
-268.2 ms at 96 rows (no graph) with 16 items.
-Widths without specialized kernels then (24, 40, 48 and 64 rows) cost more than
-32 rows or several AR steps, so full-concurrency C8 ran fastest at depth 3
-(32 rows, 596 tokens/s against 488 for AR) and C16 at depth 0 (668
-tokens/s; depth 1 at 32 rows 663, depths 2 and 3 at 48 and 64 rows 395 and
-451). These measurements preceded the specialized 64-row routes and the
-C16 default qualified below.
-On 2026-10-25, the 64-row default passed fixed-seed sampled (temperature
-1.0) and greedy equality against the preceding landed implementation at
-TP4 on four RTX PRO 6000 GPUs. Matched wide-policy schedules exercised
-C8, C16 depth 3 with an actual 64-row target, and C32 depth 0, with 256
-output tokens per request. AR and DSpark covered 224 batch requests per
-revision and 24 cold-repeat, prefix-hit and multi-turn controls. Tokens,
-selected and top-logprob bits matched. The 114 DSpark state comparisons
-also matched full-vocabulary logits, all 134 raw feature-history rows,
-committed KV, cursors and prompt boundaries, including an 8192-token chunk
-boundary. Identical C32 conditioning cohorts overwrote reusable compressor
-tail history before capture; their outputs also matched bit for bit. No
-captured bytes were masked. Canonical initialization of dead tail-history
-cells remains a post-release state-hygiene follow-up.
-
-The closed-loop comparison used four fresh keeper-borrowed processes in
-A1/B1/B2/A2 order, one seed schedule, distinct cache salts and zero cached
-prompt tokens. Requests sampled at temperature 1.0 with both minimum and
-maximum output set to 1024 tokens. Each concurrency ran for 15 seconds;
-unfinished requests were cancelled at the window boundary. Both arms used
-a 32768-page KV cap per rank for this comparison, with no evictions or
-preemptions. The 300 W cap remained in force and the SM clock lock was
-removed. Per-window mean clocks ranged from 1942 to 2167 MHz on rank 0,
-2097 to 2221 on rank 1, 2134 to 2236 on rank 2 and 2082 to 2223 on rank 3.
-All comparisons below are within that job.
-
-| Concurrency | Base A1 / A2 tokens/s | Head B1 / B2 tokens/s | Mean paired gain | Pair spread | Mean paired J/token change |
-|---|---:|---:|---:|---:|---:|
-| C8 | 678.543 / 664.756 | 675.463 / 670.417 | +0.199% | 1.306 points | +0.718% |
-| C16 | 722.647 / 722.326 | 769.570 / 767.258 | +6.357% | 0.273 points | -5.237% |
-
-The paired changes are B1/A1 - 1 and B2/A2 - 1; their mean is the verdict
-and their absolute difference is the spread. C8 stayed within spread.
-Both C16 throughput pairs gained, by 6.493% and 6.220%, resolving the gain.
-C16 energy improved in both pairs. The small C8 energy change is
-informational under the 3% energy rule.
-
-| Configuration | KV MiB per rank | Graph MiB by rank | Free MiB by rank |
-|---|---:|---|---|
-| Base default, capped pool | 1780 | 270 / 270 / 270 / 270 | 15883 / 15885 / 15885 / 15885 |
-| 64-row default, capped pool | 1780 | 276 / 274 / 274 / 274 | 15845 / 15849 / 15849 / 15849 |
-| 64-row policy, full pool | 17275 | 276 / 274 / 274 / 274 | 357 / 361 / 361 / 361 |
-
-The full-pool exactness start, with device-result transport disabled for
-state capture, allocated 318026 pages per rank, or 20353664 tokens of
-capacity. The timing cap is not a profile default. Wider
-preparation uses 32 MiB more workspace per rank and graph allocation grows
-by 4 to 6 MiB, so automatic KV sizing can decrease. The `tp4-dspark` graph
-reserve stays at 640 MiB; context, per-request and maximum-sequence limits
-are unchanged. Default-regression pins now require the 64-row capacity,
-graph budget and width list. Kernel locks and existing journal pins were
-not regenerated.
-
-The DSpark paired-teacher policy
-is keyed by `tp4-dspark` and uses the same approved margins as `tp4-ar`.
-
-The speculative-verification copy set must have mean absolute logprob
-difference at most 0.15 and top-1 disagreement at most 0.08 against AR,
-as specified in [the serving qualification gates](../../docs/numerics.md#serving-qualification-gates).
-Each arm records at least 16 copy requests and 16 natural requests, each
-with at least one scored position, from the shared frozen teacher texts
-and GSM8K questions. Both arms must bind to the official checkpoint and
-the same package at TP4 with native KV.
-
-The approved DSpark qualification plan sets the GSM8K floor at 193/200 for
-both arms. This matches MiMo's floor and is one item looser than Qwen's
-model-specific 194/200. These limits are declared before candidate results.
-
-Recipe sampling (temperature 1.0, top_p 1.0) applies to serving and every
-sampled check, while spec_verify, spec_greedy, greedy equality to AR and
-determinism compare greedy paths by definition. Spec_verify inputs record
-`{temperature: 0, top_p: 1, logprobs: 5}` as the shared tool emits them.
-
-`verify_exact` compares target verification rows with paired AR rows against
-the pinned F32-TQ teacher reference. It requires complete observed row
-shapes, the same checkpoint, bound package identities and coverage of every
-forced position. The relative mean margin is 0.005 and the excess top-one
-bound is two standard deviations, from the serving qualification gates.
-The full preview runs a separate `verify-bN` configuration for every prepared
-capacity. Each records AR and speculative arms at the same concurrency,
-requires the listed executed capacities in both capture and report, and
-judges its own pair without pooling numerical errors across configurations:
-
-| Configuration | Draft budget | Concurrency | Verify capacity | AR capacity |
-| --- | ---: | ---: | ---: | ---: |
-| `verify-b2` | 1 | 1 | 2 | 1 |
-| `verify-b4` | 3 | 1 | 4 | 1 |
-| `verify-b8` | 5 | 1 | 8 | 1 |
-| `verify-b16` | 5 | 2 | 16 | 2 |
-| `verify-b32` | 5 | 4 | 32 | 4 |
-
-These configurations fix the draft budget so adaptive scheduling cannot
-avoid a required capacity. The default full cohort also runs the C1 pair.
-A missing capacity or dropped trace observation fails the check. No
-speculative GPU evidence is claimed by this declaration.
-
-The `kv-bf16` comparison explicitly disables speculation. DSpark runs on
-native KV; both arms of the BF16 versus native comparison use K=0.
+The [numerical gates](../../docs/numerics.md#serving-qualification-gates)
+and [serving profiles](../../docs/serving-profiles.md) describe the shared
+acceptance rules. Store captures, qualification receipts and timings outside
+the repository under `CHOPINFER_DATA`.

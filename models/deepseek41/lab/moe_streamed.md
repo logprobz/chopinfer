@@ -51,31 +51,6 @@ baseline. Later direct MoE admissions supersede that baseline at their
 qualified buckets. The retained lab job still compares all six historical
 arms bitwise, with dropped-join controls and fixed timing gates.
 
-## CPU audit, 2026-10-19
-
-CUDA 13.2.86, sm_120f, Flash TP4, E384/top-6:
-
-| Kernel | Registers/thread | Static shared bytes | Local/stack bytes |
-| --- | ---: | ---: | ---: |
-| Old gate/up, r16 | 80 | 21,828 | 0/0 |
-| Active gate/up, r16 | 84 | 28,740 | 0/0 |
-| Streamed gate/up, small | 80 | 3,232 | 0/0 |
-| Streamed gate/up, wide | 164 | 18,688 | 0/0 |
-| Old down, r16 | 63 | 12,612 | 0/0 |
-| Active down, r16 | 67 | 19,524 | 0/0 |
-| Streamed down, small | 64 | 3,232 | 0/0 |
-| Streamed down, wide | 96 | 18,688 | 0/0 |
-
-SASS contains 128-bit global loads in the streamed compute entries. The
-old entries use scalar global loads. Active entries also contain vector
-loads, but retain shared staging and four-warp chain handovers. At C1,
-old gate/up has only 54 useful CTAs and down has 480. The active grid caps
-at 376 CTAs; gate/up uses 216. Streamed gate/up has 2,160 independent chain
-items and down has 2,400, with a small-queue grid capped at 1,504 CTAs.
-These counts and compiler resources suggest more load concurrency; they
-do not measure achieved occupancy or bandwidth. The paired device
-measurements above carry the timing evidence.
-
 ## Qualification and profiling
 
 `moe_job.py` runs 50 complete serial-versus-overlapped graph comparisons

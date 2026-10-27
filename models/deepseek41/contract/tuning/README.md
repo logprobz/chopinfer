@@ -56,6 +56,31 @@ with no row. Missing keys select the existing baseline. The pins enumerate
 the operation, shape, capacity and uncovered launch ranges, so a newly
 untuned bucket produces a test diff.
 
+## Dense decode knobs
+
+`dense_decode` rows in `dense_fold.json` and `reuse.json` encode the
+schedule through five required knobs:
+
+| Knob | Encoding |
+| --- | --- |
+| `tile_n` | Output-column tile, an integer count. |
+| `row_groups` | One group or two groups of sixteen rows. |
+| `stages` | Ring depth, a count fixed by the supported finish. |
+| `weight_prefetch` | Boolean; requires persistent weights/scales ready before the PDL predecessor. |
+| `finish` | Count `0` for ticket finish, `1` for a separate merge launch. |
+
+Ticket finish admits `tile_n` 32 or 64, `row_groups` 1 or 2 and `stages` 3;
+weight prefetch requires one row group. Merge finish admits exactly
+`tile_n=16`, `row_groups=1`, `stages=2`, `weight_prefetch=false`.
+Two-group reuse rows additionally require `folds` 2, 4 or 8. This is the
+runtime partition, not a template knob; other rows must omit it and choose
+their partition at launch. `Knobs::from_row` refuses missing, mistyped,
+unknown or unsupported values.
+
+Every schedule retains E4M3 ceil-UE8M0 activations, UE8M0 scales per K32,
+four K32 MMAs per K128 chain and ascending F32 reduction. Those policies
+are numerical identity. They cannot be changed by a tuning row.
+
 ## Whole-bucket evaluation
 
 Decode graph buckets are 1, 2, 4, 8, 16 and 32. The weighted verify widths
@@ -136,12 +161,11 @@ checked independently of schedule selection.
 
 The certified router retains weight-domain, workspace, aliasing and
 verification-overlap checks. Router-in-norm retains its producer and
-certificate ABI checks. Its route metadata and the zero router's historical
-measurement domain remain unchanged pending the separate route-tag refactor.
+certificate ABI checks. Its route metadata is derived from the corresponding table admissions.
 
 Dense-prefill registration keeps compact's `ROWS` domain, which is also
-consumed by dense-fold registration. Kernel catalogs retain every qualified
-control and unused variant. `mxfp8_fold::prefill_tail_policy` remains a code
+consumed by dense-fold registration. The lab retains qualified controls; the package loads served entries and
+required dependencies. `mxfp8_fold::prefill_tail_policy` remains a code
 gate: its shape thresholds and row-remainder evaluator decide the split
 tail. `lower/dense.rs` retains fused/local precedence, layer and bank gates.
 `ops/dense.rs` retains prefill, short-prefill, wide Engram, stream and workspace

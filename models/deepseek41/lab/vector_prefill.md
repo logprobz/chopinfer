@@ -1,4 +1,4 @@
-# Vector staging experiment
+# Qualified vector MoE staging
 
 The separate vector family preserves the scalar family's row and column
 tiles, conversion instructions, barriers and eight k16 MMAs per chain.
@@ -28,7 +28,7 @@ inventory. Future comparisons follow the bundle's current serving selector.
 The 2026-10-19 pair at 250 W passed all 96 normal, scalar-control and
 stamped comparisons, all 384 boundary replays per comparison arm, and 32
 omitted-chain controls. All outputs are bitwise. Vector decoded128 gate/up
-qualifies at these exact Flash TP4 prefill buckets:
+qualified at these exact Flash TP4 prefill buckets:
 
 | Expert bank | Rows | Worst gate/up speedup across both devices and routings |
 | --- | ---: | ---: |
@@ -41,7 +41,9 @@ E384 down wins on balanced routing, but only 1.007-1.012x on skewed routing.
 E128 down loses about 3% on balanced routing. Down retains its existing
 entry in every bucket. Other buckets and geometries retain their entries.
 
-The bundle uses the same frozen vector declaration and cubin as the lab.
+The E384 backbone now selects native prefill instead. The E128 prepared
+buckets retain vector gate/up, using the same frozen declaration and cubin
+as the lab.
 Its wrapper replaces only gate/up calls, retains the current output
 quantizer, and owns disjoint conversion and queue regions. E128 at 4096
 replaces four grouped gate launches; both 8192 buckets replace the column

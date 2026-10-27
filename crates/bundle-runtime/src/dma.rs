@@ -481,6 +481,11 @@ impl Call {
     /// source's stream or lane instead of its destination's, in the same
     /// permutation order, and each destination waits for its source's copy
     /// in that phase.
+    ///
+    /// Use the result of `pushes` for this rank set and host as `push`.
+    /// Reuse the same main streams in rank order on every call: reusable
+    /// events rely on those stream histories. Do not overlap calls sharing
+    /// this state. The caller owns poisoned-state refusal and error poisoning.
     pub fn execute_ordered(
         &self,
         services: &HostServicesV1,

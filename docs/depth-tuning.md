@@ -257,9 +257,10 @@ AR dry runs require a frozen install and parse every launch with its native
 draft flags in AR mode. Speculative jobs retain their existing arguments.
 
 Arms can declare model environment controls as `env`, with strings to set
-values and `null` to unset them. For example an AR A/B can compare
-`{"label": "a", "env": {"CHOPINFER_DEEPSEEK41_PREFILL_ENGRAM": null}}`
-against `{"label": "b", "env": {"CHOPINFER_DEEPSEEK41_PREFILL_ENGRAM": "1"}}`.
+values and `null` to unset them. Use only controls the compared build still
+reads. For an AR comparison of two served revisions, use the named-install
+form instead: `{"label": "a", "install": "base"}` against
+`{"label": "b", "install": "head"}`, with both installs sealed as above.
 The controls apply to parser checks, CPU identity probes, warmup, timed
 visits and reference replay, and are recorded in launch receipts. Only
 `CHOPINFER_*` model controls are accepted; checkpoint, tracing, cold-control

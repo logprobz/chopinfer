@@ -1,11 +1,10 @@
-# DSpark synthetic lowering
+# DSpark lowering
 
 `Prepared` binds the target-feature mean, feature packing, main projection,
 F32 normalization, trained quantizers and native KV operations. `block`
-reuses the backbone's ratio-zero attention and MoE lowering with each MTP
-stage's checkpoint views. The synthetic geometry has the same 32 experts
-and top-k for backbone and drafter. A different drafter expert set refuses
-until it has its own prepared MoE operations.
+reuses ratio-zero attention and MoE lowering with each MTP stage's
+checkpoint views and prepared drafter expert set. The prepared expert count
+and top-k must match the drafter geometry; mismatches refuse lowering.
 
 `metadata` always describes five rows per drafting item, regardless of K.
 Every query sees its committed 128-cell window and all five provisional

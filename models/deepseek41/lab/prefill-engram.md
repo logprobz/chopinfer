@@ -10,7 +10,8 @@ their existing history rules.
 The route uses the existing asynchronous mapped-gather host service and
 supports ordinary eager and upper-skip prefill without DMA communication. The default TP4 upper-skip profiles use phased DMA
 from 512 rows and keep synchronous gathers there, including at 8K and 32K.
-Full-prefill profiles and short upper-skip chunks can use prepared gathers.
+Explicit full-schedule configurations and short upper-skip chunks can use
+prepared gathers.
 Media, diagnostic text taps, missing host services and unsupported schedules
 retain their existing fallback reasons. DSpark joins each layer after submitting its target producer work and
 finishes the gathers after consolidated status reads. No runtime ABI, kernel,
@@ -77,7 +78,7 @@ The arms differed only in the former gather switch. Matched token IDs and
 logprob words also passed on these original profiles. All 12 timing windows
 executed with zero replay, no prefix hits, preemption or eviction, and zero
 measured table residency after cold advice. KV page counts were equal across
-arms: 329219 for full-prefill and 343946 for short default AR. The historical
+arms: 329219 for full-prefill and 343946 for short default AR. The measured
 full-schedule configuration used `prefill_chunk_tokens=0`,
 `prefill_upper_skip=false` and a 1280 MiB graph memory reserve.
 
@@ -95,28 +96,9 @@ The 32K prefill value is the median step time of its four 8192-token chunks.
 | tp4-ar | 511 | TTFT | 9.0102% | 9.1789% | 9.0946% | 0.1687% |
 | tp4-ar | 511 | Prefill step | 9.5489% | 9.5507% | 9.5498% | 0.0017% |
 
-Energy is provisional. J/token values in visit order and relative changes
-are below; a positive change means more energy. The full-prefill mean was
-+0.7919%, and the short mean was -0.7525%. Neither reached the 3% veto.
-
-| Tokens | A1 | B1 | B2 | A2 | d1 | d2 | Mean | Spread |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 8192 | 250.7428 | 254.9324 | 258.5471 | 258.8253 | 1.6709% | -0.1075% | 0.7817% | 1.7783% |
-| 32768 | 394.3390 | 404.6377 | 411.2416 | 415.4260 | 2.6116% | -1.0073% | 0.8022% | 3.6189% |
-| 511 | 224.6464 | 223.8887 | 219.0953 | 221.6837 | -0.3373% | -1.1676% | -0.7525% | 0.8304% |
-
-Enforced GPU limits stayed at 275/250/250/250 W throughout both jobs.
-No limit or clock was set, and no Xid appeared. Recorded SM clocks in MHz,
-in rank order, include the start, end and each visit boundary:
-
-| Boundary | Full-prefill | Short default AR |
-|---|---|---|
-| Start | 1890/1890/1890/1852 | 1890/1890/1890/742 |
-| A1 | 1890/1882/1890/1882 | 180/180/1890/1882 |
-| B1 | 1890/1882/1890/1882 | 180/742/1650/1882 |
-| B2 | 1890/1890/1890/1882 | 180/180/1815/1882 |
-| A2 | 1890/1890/1890/1890 | 180/1882/1890/1597 |
-| End | 1890/1890/1890/1890 | 180/1882/1890/1597 |
+The full-schedule mean energy change was +0.7919%; the short-prompt
+change was -0.7525%. Neither reached the 3% veto. Per-device power limits
+remained 275/250/250/250 W; clocks were observed, not set. No Xid appeared.
 
 The timing guard admitted four existing full-prefill fallback entries and
 40 short-profile entries, bound to exact symbols, row counts and phases,
@@ -144,19 +126,12 @@ one page fault at a time. Measured on
 CPU on 2026-10-23 on the serving host's drive, one 8,192-token chunk of one
 layer for four ranks (196,608 rows per plane, codes and scales cold, quiet
 drive) took 18 to 22 s that way, about 10 s of it the codes plane; the
-synchronous gather this candidate replaces took 1.9 to 2.6 s. A chunk
+synchronous gather control took 1.9 to 2.6 s. A chunk
 gathers two layers. With the reader threads, the default since then, the
 same prepared chunk took 0.30 to 0.36 s per layer, in the same bytes.
 
-The old copy returns with `CHOPINFER_MAPPED_LARGE_GATHER_FETCH=0`,
-`CHOPINFER_MAPPED_MISS_START=0` or `CHOPINFER_MAPPED_MISS_FETCH=0`. Do not
-time or select this candidate under any of them without
-`CHOPINFER_MAPPED_ASYNC_READ_AHEAD=1`. The served comparison must drop the
-Engram tables' pages before each timed run: repeated prompts find the rows
-in the page cache, and the cold cost then does not show.
-
-Both synchronous and asynchronous read-ahead now default on. The shared
-`CHOPINFER_MAPPED_READ_AHEAD=0` switch disables both unless the async-specific
-`CHOPINFER_MAPPED_ASYNC_READ_AHEAD` override selects otherwise; its `=0`
-value disables async advice alone. The [caller audit](../../../docs/mapped-row-read-ahead.md)
-confirms that no in-tree production consumer depends on advice being off.
+Both synchronous and asynchronous read-ahead default on. The shared
+host's [mapped-row policy](../../../docs/mapped-row-read-ahead.md) documents
+its controls. Cold comparisons must evict the Engram table pages before
+each timed run and record residency; repeated prompts otherwise hide the
+cold-read cost.

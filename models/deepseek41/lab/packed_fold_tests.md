@@ -34,9 +34,9 @@ Shared-expert MoE comparisons pack all three dense fold banks.
 ## Production-shape parity
 
 `packed_serving` owns one cubin with row-major and packed twins from the
-bundle catalogs and the retained decode reference catalogs. It covers 367 distinct packed compute symbols in 506
-comparisons across Flash TP1/TP2/TP4, deduplicating symbols shared by
-multiple topologies. Decode entries exercise one row, a partial tile and
+bundle catalogs and the retained decode reference catalogs. The 2026-10-23 parity run covered 367 distinct packed compute symbols in
+506 comparisons across Flash TP1/TP2/TP4, deduplicating shared symbols.
+Current coverage follows the served catalogs and template rows. Decode entries exercise one row, a partial tile and
 capacity. Large v2/prefill entries use 129 rows, which exercises full and
 tail paths in split prefill. Exact-row entries use their smallest registered
 bucket; retained unused tile/stage variants use a valid smallest bucket

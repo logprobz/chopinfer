@@ -74,7 +74,7 @@ class TraceTests(unittest.TestCase):
             def chunks(self, path, body, deadline, cap):
                 if body and 'messages' in body:
                     if not any(m['role'] == 'user' for m in body['messages']):
-                        raise ValueError('DeepSeek chat has no turn to answer')
+                        raise ValueError('chat has no turn to answer')
                     if body.get('chat_template_kwargs', {}).get('preserve_thinking'):
                         preserved.append(body)
                     if 'preserve_thinking' in body:

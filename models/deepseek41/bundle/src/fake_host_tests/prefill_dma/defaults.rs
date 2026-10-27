@@ -172,8 +172,16 @@ fn package_defaults_select_dma_for_upper_skip_only() {
 }
 
 #[test]
-fn full_prefill_profile_keeps_the_sm_transport() {
-    let full = resolved(Some("tp4-ar-full-prefill"));
+fn full_prefill_options_keep_the_sm_transport() {
+    let full = ModelOptionsV1 {
+        schema: CAPABILITY.into(),
+        options: prefill_profile::declarations().into(),
+    }
+    .resolve(&BTreeMap::from([
+        (CHUNK.into(), "0".into()),
+        (SKIP.into(), "false".into()),
+    ]))
+    .unwrap();
     assert_eq!(Profile::read(&full).unwrap(), Profile::default());
     let disabled = capture(&full, 8192);
     assert_disabled_journal(&capture(&full, 8192), &disabled);

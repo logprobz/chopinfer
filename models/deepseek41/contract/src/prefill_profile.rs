@@ -35,7 +35,7 @@ pub fn declarations() -> [ModelOptionV1; 2] {
 impl Profile {
     /// Every actual chunk of a guaranteed profile retains complete state,
     /// including a scheduler-selected shared-prefix cut inside its grid.
-    /// Legacy and full-prefill profiles do not negotiate this capability.
+    /// Configurations without a guaranteed grid do not negotiate this capability.
     pub const fn scheduler_cuts(self) -> bool {
         self.chunk != 0
     }
@@ -110,24 +110,16 @@ mod tests {
     }
 
     #[test]
-    fn diagnostic_profiles_keep_explicit_unqualified_overrides() {
+    fn diagnostic_options_keep_explicit_unqualified_overrides() {
         let declaration = declared_options();
-        for mode in ["ar", "dspark"] {
-            for (suffix, chunk, skip) in
-                [("full-prefill", 0, false), ("upper-skip-2048", 2048, true)]
-            {
-                let name = format!("tp4-{mode}-{suffix}");
-                let overrides = profile_overrides(&name);
-                assert_eq!(overrides.get(CHUNK), Some(&chunk.to_string()), "{name}");
-                assert_eq!(overrides.get(SKIP), Some(&skip.to_string()), "{name}");
-                let resolved = declaration.resolve(&overrides).unwrap();
-                assert_eq!(
-                    Profile::read(&resolved).unwrap(),
-                    Profile { chunk, skip },
-                    "{name}"
-                );
-                assert!(!declaration.is_qualified(&resolved), "{name}");
-            }
+        for (chunk, skip) in [(0, false), (2048, true)] {
+            let overrides = BTreeMap::from([
+                (CHUNK.into(), chunk.to_string()),
+                (SKIP.into(), skip.to_string()),
+            ]);
+            let resolved = declaration.resolve(&overrides).unwrap();
+            assert_eq!(Profile::read(&resolved).unwrap(), Profile { chunk, skip });
+            assert!(!declaration.is_qualified(&resolved));
         }
     }
 

@@ -84,18 +84,13 @@ mod tests {
             schema: CAPABILITY.into(),
             options: declarations().into(),
         };
-        for name in [
-            "tp4-dspark",
-            "tp4-dspark-full-prefill",
-            "tp4-dspark-upper-skip-2048",
-        ] {
-            let rows = profiles["profiles"][name]["speculation"]["graph_rows"]
-                .as_u64()
-                .unwrap();
-            let resolved = declaration
-                .resolve(&BTreeMap::from([(GRAPH_ROWS.into(), rows.to_string())]))
-                .unwrap();
-            assert!(declaration.is_qualified(&resolved), "{name}");
-        }
+        let name = "tp4-dspark";
+        let rows = profiles["profiles"][name]["speculation"]["graph_rows"]
+            .as_u64()
+            .unwrap();
+        let resolved = declaration
+            .resolve(&BTreeMap::from([(GRAPH_ROWS.into(), rows.to_string())]))
+            .unwrap();
+        assert!(declaration.is_qualified(&resolved), "{name}");
     }
 }

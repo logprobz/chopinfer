@@ -254,10 +254,6 @@ conformance::suite! {
     startup: Served {
         tp4_ar: "tp4-ar",
         tp4_dspark: "tp4-dspark",
-        tp4_ar_full_prefill: "tp4-ar-full-prefill",
-        tp4_dspark_full_prefill: "tp4-dspark-full-prefill",
-        tp4_ar_upper_skip_2048: "tp4-ar-upper-skip-2048",
-        tp4_dspark_upper_skip_2048: "tp4-dspark-upper-skip-2048",
     }
     mod ar_tp1 {
         allocation_release: Model<AR_TP1> => AllocationReleaseShards;
@@ -504,23 +500,12 @@ impl conformance::Startup for Served {
         let mut configurations = Vec::new();
         for (mode, drafts) in [("ar", 0), ("dspark", 5)] {
             // The default profiles skip at guaranteed 8192-token chunk ends.
-            for (profile, chunk) in [
-                (format!("tp4-{mode}"), 8192),
-                (format!("tp4-{mode}-upper-skip-2048"), 2048),
-            ] {
-                let mut entry = serving(&profile, drafts);
-                entry.model_options = BTreeMap::from([
-                    ("prefill_chunk_tokens".into(), chunk.to_string()),
-                    ("prefill_upper_skip".into(), "true".into()),
-                ]);
-                configurations.push(entry);
-            }
-            let mut full = serving(&format!("tp4-{mode}-full-prefill"), drafts);
-            full.model_options = BTreeMap::from([
-                ("prefill_chunk_tokens".into(), "0".into()),
-                ("prefill_upper_skip".into(), "false".into()),
+            let mut entry = serving(&format!("tp4-{mode}"), drafts);
+            entry.model_options = BTreeMap::from([
+                ("prefill_chunk_tokens".into(), "8192".into()),
+                ("prefill_upper_skip".into(), "true".into()),
             ]);
-            configurations.push(full);
+            configurations.push(entry);
         }
         // The DSpark profiles cap balanced chunks at twelve drafting items.
         for entry in &mut configurations {
@@ -699,7 +684,7 @@ fn route_envelopes_cover_balanced_drafter_partitions() {
             );
         }
     }
-    assert_eq!(profiles, 3);
+    assert_eq!(profiles, 1);
 }
 
 #[test]

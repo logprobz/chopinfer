@@ -120,26 +120,21 @@ fn host_admits(document: &str, name: &str) -> Result<(), String> {
 fn dspark_profiles_keep_balanced_full_block_drafting() {
     let document = profiles(&FLASH, &[4]).unwrap();
     let file: serde_json::Value = serde_json::from_str(&document).unwrap();
-    for name in [
-        "tp4-dspark",
-        "tp4-dspark-full-prefill",
-        "tp4-dspark-upper-skip-2048",
-    ] {
-        let speculation = &file["profiles"][name]["speculation"];
-        assert_eq!(speculation["mode"], "balanced");
-        assert_eq!(speculation["depths"], "1:5,8:3,16:3,32:0");
-        assert_eq!(speculation["widths"], "6,8,16,32,64");
-        assert_eq!(speculation["rows"], 64);
-        assert_eq!(speculation["graph_rows"], 64);
-        assert_eq!(speculation["tokens"], 5);
-        assert_eq!(speculation["draft_cost"], "per-block");
-        assert_eq!(speculation["drafter"], "dspark");
-        assert_eq!(
-            file["profiles"][name]["model_options"]["dspark_draft_chunk_items"],
-            "12"
-        );
-        host_admits(&document, name).unwrap();
-    }
+    let name = "tp4-dspark";
+    let speculation = &file["profiles"][name]["speculation"];
+    assert_eq!(speculation["mode"], "balanced");
+    assert_eq!(speculation["depths"], "1:5,8:3,16:3,32:0");
+    assert_eq!(speculation["widths"], "6,8,16,32,64");
+    assert_eq!(speculation["rows"], 64);
+    assert_eq!(speculation["graph_rows"], 64);
+    assert_eq!(speculation["tokens"], 5);
+    assert_eq!(speculation["draft_cost"], "per-block");
+    assert_eq!(speculation["drafter"], "dspark");
+    assert_eq!(
+        file["profiles"][name]["model_options"]["dspark_draft_chunk_items"],
+        "12"
+    );
+    host_admits(&document, name).unwrap();
 }
 
 /// Every geometry's package profiles pass the host's admission, and the

@@ -189,7 +189,8 @@ device correctness. Select only idle GPUs with `CHOPINFER_KERNEL_GPU` or
 `CHOPINFER_KERNEL_GPUS` and set `CHOPINFER_KERNEL_REQUIRE=1` for required
 kernel checks. Choose the affected tests from [kernel-lab](../crates/kernel-lab/README.md).
 Changes that alter bits follow the [numerical evidence rules](numerics.md#a-speedup-that-changes-bits)
-before measuring speed. Timings require an idle host as well as idle GPUs.
+before measuring speed. Served timings require an idle host as well as idle
+GPUs; [pair-lab kernel timing](#pair-lab-kernel-timing) needs only idle GPUs.
 
 Maintainers produce pinned-toolchain locks, sealed [journal proofs](../tools/journal_proof/README.md),
 [serving smokes](../tools/smoke/README.md), [serving A/Bs](../tools/ab/serving/README.md)
@@ -298,7 +299,8 @@ run alone does not establish that the snapshot allocation fits.
 
 First establish [accuracy](numerics.md#a-speedup-that-changes-bits). Use the
 affected kernel-lab benchmark and serving A/B with identical checkpoints,
-profiles, workloads and output lengths on an idle host and GPUs. Report
+profiles, workloads and output lengths on idle GPUs and, except for
+[pair-lab kernel timing](#pair-lab-kernel-timing), an idle host. Report
 paired timings and variability, not a best run. Shared-device results are
 diagnostic only. [Tracing and profiling](operations-observability.md#trace-a-slow-request)
 helps locate the cost; profiling bypasses do not qualify release artifacts.
@@ -307,7 +309,7 @@ helps locate the cost; profiling bypasses do not qualify release artifacts.
 
 Use the in-tree `tools/tune` `mode: ab` for the following paired method.
 Arm A is the baseline and arm B is the candidate. Only served full-graph
-timing of the affected bucket decides adoption. Pair-lab kernel timings
+timing of the affected bucket decides adoption. [Pair-lab kernel timings](#pair-lab-kernel-timing)
 with an in-job A/A help locate work to improve.
 
 - Use sampled coding and chat prompts at temperature 1.0.
@@ -341,6 +343,17 @@ variant or deleted path) if any weighted cell has both d1 and d2 negative
 and a mean below `-max(spread, 0.5%)`. Keep cell verdicts separate so a gain
 elsewhere cannot hide that regression. An A1/A2 or B1/B2 comparison counts
 as A/A only when both visits used identical seeds and prompts.
+
+### Pair-lab kernel timing
+
+Kernel-lab timing measured with CUDA events on the job's own two idle GPUs
+does not need an idle host. The job runs for at most five minutes and
+interleaves an in-job A/A control with identical operands in both arms,
+and reports the A/A spread beside the result. A lab gain counts only when
+it exceeds that spread. Report an unusually wide A/A spread and rerun the
+job on an idle host. Pair-lab timings locate and rank work; they never
+decide adoption. Served timing, host overhead included, still requires an
+idle host and idle GPUs.
 
 ### Power and energy
 

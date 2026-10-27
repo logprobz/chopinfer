@@ -12,7 +12,9 @@ Read [BUNDLE_ARCHITECTURE.md](BUNDLE_ARCHITECTURE.md),
   iterating.
 - GPU tests run only when `CHOPINFER_KERNEL_GPU` or `CHOPINFER_KERNEL_GPUS`
   names idle GPUs. CPU results and shared-device measurements are not GPU
-  correctness or performance evidence.
+  correctness or performance evidence. Served timing also needs an idle
+  host; [pair-lab kernel timing](docs/contributing.md#pair-lab-kernel-timing)
+  may run on a busy host with an in-job A/A control.
 
 ## Keep data and personal information out of the repository
 

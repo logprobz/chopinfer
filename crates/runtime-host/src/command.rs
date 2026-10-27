@@ -2363,6 +2363,42 @@ fn default_verify_rows_v1(manifest: &BundleManifestV1, sequences: usize) -> usiz
     )
 }
 
+/// `config` with the verify allocation `--speculation-confidence` resolves
+/// to, announcing whether serving allocates and why not. `forced` is
+/// `--debug-reference-tokens`: its sampler scores forced rows on the host and
+/// takes no device results, so a forced run never allocates, and neither its
+/// engine nor its verify warmup plans an allocated step.
+fn with_verify_confidence_v1(
+    config: SpeculationConfig,
+    confidence: Option<&crate::confidence::VerifyConfidence>,
+    manifest: &BundleManifestV1,
+    device_results: bool,
+    forced: bool,
+) -> SpeculationConfig {
+    let resolved = confidence.map(|confidence| {
+        if forced {
+            Err("--debug-reference-tokens needs host results".to_owned())
+        } else {
+            confidence.resolve(manifest, device_results)
+        }
+    });
+    match resolved {
+        Some(Ok(allocation)) => {
+            eprintln!(
+                "startup speculation_confidence: on, floor {}, {} positions",
+                allocation.floor(),
+                allocation.positions()
+            );
+            config.with_verify_allocation(Some(allocation))
+        }
+        Some(Err(reason)) => {
+            eprintln!("startup speculation_confidence: off, {reason}");
+            config
+        }
+        None => config,
+    }
+}
+
 /// `model_options` with the package's `verify_allocation` option set when
 /// serving allocates verify drafts and the package declares the option. The
 /// host owns the option, so an explicit one is refused.
@@ -2812,23 +2848,13 @@ fn serve_v1(
     )?
     .map(|config| config.with_verify_widths(verify_widths))
     .map(|config| {
-        match verify_confidence
-            .map(|confidence| confidence.resolve(package.manifest(), device_results))
-        {
-            Some(Ok(allocation)) => {
-                eprintln!(
-                    "startup speculation_confidence: on, floor {}, {} positions",
-                    allocation.floor(),
-                    allocation.positions()
-                );
-                config.with_verify_allocation(Some(allocation))
-            }
-            Some(Err(reason)) => {
-                eprintln!("startup speculation_confidence: off, {reason}");
-                config
-            }
-            None => config,
-        }
+        with_verify_confidence_v1(
+            config,
+            verify_confidence,
+            package.manifest(),
+            device_results,
+            debug_reference_tokens.is_some(),
+        )
     });
     let model_options = &verify_allocation_options_v1(
         package.manifest(),
@@ -8560,54 +8586,52 @@ mod tests {
         assert!(super::validate_profile_drafter_v1(&plain, Some("first"), 3).is_err());
     }
 
+    /// A bundle-drafting package with `capabilities`, whose drafter follows
+    /// `contract` and which declares the verify allocation model option.
+    fn confidence_package(capabilities: &[&str], contract: Option<&str>) -> BundleManifestV1 {
+        use runtime_bundle::model_options::{ModelOptionV1, ModelOptionsV1, OptionDefinitionV1};
+        manifest_requiring(
+            vec![topology("tp1", 1)],
+            8,
+            DECLARED_ROWS_V1,
+            &"0".repeat(64),
+            capabilities
+                .iter()
+                .copied()
+                .chain([runtime_bundle::model_options::CAPABILITY])
+                .map(id)
+                .collect(),
+        )
+        .with_speculation(
+            runtime_bundle::BundleSpeculationV1::new(1, true, 8, vec![4, 8], Some(id("weights")))
+                .unwrap()
+                .with_confidence_contract(contract.map(id))
+                .unwrap(),
+        )
+        .unwrap()
+        .with_model_options(ModelOptionsV1 {
+            schema: runtime_bundle::model_options::CAPABILITY.into(),
+            options: vec![ModelOptionV1 {
+                name: runtime_bundle_abi::VERIFY_ALLOCATION_OPTION_V1.into(),
+                definition: OptionDefinitionV1::Boolean { default: false },
+                default_is_qualified: true,
+            }],
+        })
+        .unwrap()
+    }
+
     /// A calibration reaches balanced plans only when the package allocates
     /// verify drafts and its drafter follows the calibration's contract;
     /// otherwise serving says why it runs without one.
     #[test]
     fn confidence_needs_the_allocation_capability_and_its_contract() {
-        use runtime_bundle::model_options::{ModelOptionV1, ModelOptionsV1, OptionDefinitionV1};
         let calibration = crate::confidence::parse(concat!(
             r#"{"contract":"fixture.drafter-confidence.v1","floor":1,"#,
             r#""greedy":[[1,0]],"sampled":[[1,0]]}"#
         ))
         .unwrap()
         .unwrap();
-        let package = |capabilities: &[&str], contract: Option<&str>| {
-            manifest_requiring(
-                vec![topology("tp1", 1)],
-                8,
-                DECLARED_ROWS_V1,
-                &"0".repeat(64),
-                capabilities
-                    .iter()
-                    .copied()
-                    .chain([runtime_bundle::model_options::CAPABILITY])
-                    .map(id)
-                    .collect(),
-            )
-            .with_speculation(
-                runtime_bundle::BundleSpeculationV1::new(
-                    1,
-                    true,
-                    8,
-                    vec![4, 8],
-                    Some(id("weights")),
-                )
-                .unwrap()
-                .with_confidence_contract(contract.map(id))
-                .unwrap(),
-            )
-            .unwrap()
-            .with_model_options(ModelOptionsV1 {
-                schema: runtime_bundle::model_options::CAPABILITY.into(),
-                options: vec![ModelOptionV1 {
-                    name: runtime_bundle_abi::VERIFY_ALLOCATION_OPTION_V1.into(),
-                    definition: OptionDefinitionV1::Boolean { default: false },
-                    default_is_qualified: true,
-                }],
-            })
-            .unwrap()
-        };
+        let package = confidence_package;
         let allocating = [
             crate::executor::SPECULATIVE_CAPABILITY_V1,
             runtime_bundle_abi::VERIFY_ALLOCATION_CAPABILITY_V1,
@@ -8670,6 +8694,62 @@ mod tests {
                 .resolve(&package(capabilities, contract), true)
                 .unwrap_err();
             assert_eq!(refusal, reason);
+        }
+    }
+
+    /// `--debug-reference-tokens` scores forced rows in a sampler that takes
+    /// no device results, so a forced run with a confidence profile serves
+    /// unallocated verify steps: neither its engine nor its verify warmup
+    /// plans an allocated step, which a package such as DSpark refuses
+    /// without device results.
+    #[test]
+    fn forced_reference_tokens_keep_verify_steps_unallocated() {
+        let calibration = crate::confidence::parse(concat!(
+            r#"{"contract":"fixture.drafter-confidence.v1","floor":1,"#,
+            r#""greedy":[[1,0],[1,0],[1,0],[1,0],[1,0]],"#,
+            r#""sampled":[[1,0],[1,0],[1,0],[1,0],[1,0]]}"#
+        ))
+        .unwrap()
+        .unwrap();
+        let manifest = confidence_package(
+            &[
+                crate::executor::SPECULATIVE_CAPABILITY_V1,
+                runtime_bundle_abi::VERIFY_ALLOCATION_CAPABILITY_V1,
+            ],
+            Some("fixture.drafter-confidence.v1"),
+        );
+        let config = runtime_engine::SpeculationConfig::new(
+            5,
+            48,
+            SpeculationMode::Balanced(runtime_engine::DraftDepths::parse("1:3").unwrap()),
+            runtime_engine::DraftSource::Bundle,
+        )
+        .unwrap()
+        .with_verify_widths(runtime_engine::VerifyWidths::parse("6,8,16,32").unwrap());
+        let item_rows: Vec<usize> = (1..=6).collect();
+        for forced in [false, true] {
+            let served = super::with_verify_confidence_v1(
+                config,
+                Some(&calibration),
+                &manifest,
+                true,
+                forced,
+            );
+            assert_eq!(served.verify_allocation().is_some(), !forced);
+            assert_eq!(
+                runtime_engine::warmup::allocated_shapes(served, 32, &item_rows).is_empty(),
+                forced
+            );
+            let options = super::verify_allocation_options_v1(
+                &manifest,
+                &Default::default(),
+                served.verify_allocation().is_some(),
+            )
+            .unwrap();
+            assert_eq!(
+                options.contains_key(runtime_bundle_abi::VERIFY_ALLOCATION_OPTION_V1),
+                !forced
+            );
         }
     }
 

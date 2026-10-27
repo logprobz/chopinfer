@@ -681,9 +681,5 @@ fn grid_anchor_items_bound_the_anchored_items_of_a_step() {
         anchored_step(&mut s),
         [(1, 0, 789, Some(768)), (2, 0, 768, None)]
     );
-    assert!(
-        anchored_step(&mut s)
-            .iter()
-            .any(|&item| item == (2, 768, 21, None))
-    );
+    assert!(anchored_step(&mut s).contains(&(2, 768, 21, None)));
 }

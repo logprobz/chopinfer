@@ -8,7 +8,7 @@
 use kernel_build::CubinSpec;
 use kernels_sm120::gemm::{mxfp8_fold, mxfp8_fold_cluster::Entry};
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
-pub const FAMILY: &str = "mxfp8_fold_cluster";
+pub const FAMILY: &str = "mxfp8_fold_cluster_reference";
 pub const CUBIN: &str = "mxfp8_fold_cluster_deepseek41_sm120";
 
 pub(super) fn distributed(row: &kernel_build::tuning::Row) -> bool {
@@ -92,9 +92,6 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
         kernels_sm120::gemm::mxfp8_fold_cluster::cubin_spec(CUBIN, &entries(), false)
             .map_err(|e| e.to_string())?,
     )])
-}
-pub fn enabled(g: &Geometry, ranks: u32) -> bool {
-    g.id == FLASH.id && ranks == 4
 }
 
 fn query(id: &str) -> Option<kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery> {

@@ -106,14 +106,6 @@ impl Conversions {
             };
             map.insert(tail, conversion);
         }
-        for (e, _) in &b.mxfp8_prefill_tma_matrices {
-            if symbols.contains(e.symbol().as_str()) {
-                map.insert(
-                    e.symbol(),
-                    Conversion::Refused("the TMA matrix prefill has no packed entry"),
-                );
-            }
-        }
         Self(Arc::new(map))
     }
 

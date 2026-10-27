@@ -6,7 +6,7 @@
 use kernel_build::CubinSpec;
 use kernels_sm120::gemm::{mxfp8_fold, mxfp8_fold_local_rows::Entry};
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
-pub const FAMILY: &str = "fold_local_rows";
+pub const FAMILY: &str = "fold_local_rows_reference";
 pub const CUBIN: &str = "fold_local_rows_deepseek41_sm120";
 
 // SM120, 250 W, 2026-10-22: graph replay against the swizzled served fold
@@ -76,7 +76,4 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
         kernels_sm120::gemm::mxfp8_fold_local_rows::cubin_spec(CUBIN, &entries())
             .map_err(|e| e.to_string())?,
     )])
-}
-pub fn enabled(g: &Geometry, ranks: u32) -> bool {
-    g.id == FLASH.id && ranks == 4
 }

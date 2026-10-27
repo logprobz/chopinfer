@@ -99,17 +99,6 @@ impl Sm120 {
                 );
             }
             for (e, r) in self
-                .mxfp8_prefill_tma_matrices
-                .iter()
-                .filter(|(e, _)| e.base.query == *q)
-            {
-                fast(
-                    *r,
-                    "TMA-matrix",
-                    e.prepare(*r).expect("registered TMA matrix route"),
-                );
-            }
-            for (e, r) in self
                 .mxfp8_prefill_tma_scales
                 .iter()
                 .filter(|(e, _)| e.base.query == *q)

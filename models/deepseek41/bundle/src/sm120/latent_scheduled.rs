@@ -26,18 +26,34 @@ pub fn qualified(g: &Geometry, ranks: u32) -> bool {
         && g.shape.indexer.top_k == 512
 }
 
-pub fn paired_prefill_enabled(g: &Geometry, ranks: u32, capacity: u32) -> bool {
-    use model_deepseek41_contract::tuning::{Family, select};
-    select(
-        g,
-        Family::Latent,
-        "latent.paired.prefill",
-        "fp8",
-        &[("ranks", ranks)],
-        capacity,
-        1,
-    )
-    .is_some()
+pub fn paired_prefill_rows(
+    g: &Geometry,
+    ranks: u32,
+    capacity: u32,
+) -> Vec<std::ops::RangeInclusive<u32>> {
+    use model_deepseek41_contract::tuning::{Family, table};
+    paired_prefill_rows_from(table(g, Family::Latent), ranks, capacity)
+}
+
+pub(super) fn paired_prefill_rows_from(
+    table: Option<&kernel_build::tuning::Table>,
+    ranks: u32,
+    capacity: u32,
+) -> Vec<std::ops::RangeInclusive<u32>> {
+    table
+        .into_iter()
+        .flat_map(|t| t.rows())
+        .filter(|row| {
+            row.key.op == "latent.paired.prefill"
+                && row.key.weights == "fp8"
+                && row.key.shape == [("ranks".into(), ranks)].into()
+                && row.key.bucket == capacity
+        })
+        .map(|row| {
+            let [first, last] = row.key.rows.unwrap_or([1, row.key.bucket]);
+            first..=last
+        })
+        .collect()
 }
 
 pub fn wide_query(capacity: u32, rows: u32) -> bool {

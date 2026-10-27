@@ -61,7 +61,8 @@ pub fn prepare(
             [1..=need.capacity],
         )],
     );
-    if !super::latent_scheduled::paired_prefill_enabled(geometry, ranks, need.capacity) {
+    let rows = super::latent_scheduled::paired_prefill_rows(geometry, ranks, need.capacity);
+    if rows.is_empty() {
         return Ok(reference);
     }
     let Some(entry) = entries()
@@ -86,6 +87,7 @@ pub fn prepare(
         reference,
         info,
         entry,
+        rows,
     }))
 }
 
@@ -93,24 +95,7 @@ struct PairedPrefill {
     reference: Prepared<LatentSourcesBuffers<View>>,
     info: OpInfo,
     entry: sources::Entry,
-}
-
-fn paired_route_rows() -> Vec<std::ops::RangeInclusive<u32>> {
-    use model_deepseek41_contract::tuning::{Family, table};
-    table(&FLASH, Family::Latent)
-        .into_iter()
-        .flat_map(|table| table.rows())
-        .filter(|row| {
-            row.key.op == "latent.paired.prefill"
-                && row.key.weights == "fp8"
-                && row.key.shape == [("ranks".into(), 4)].into()
-                && row.key.bucket == ROWS
-        })
-        .map(|row| {
-            let [first, last] = row.key.rows.unwrap_or([1, row.key.bucket]);
-            first..=last
-        })
-        .collect()
+    rows: Vec<std::ops::RangeInclusive<u32>>,
 }
 
 impl PreparedOp<LatentSourcesBuffers<View>> for PairedPrefill {
@@ -121,7 +106,7 @@ impl PreparedOp<LatentSourcesBuffers<View>> for PairedPrefill {
                 kernel_core::route::RouteClass::Fast,
                 "latent_prefill",
                 "paired",
-                paired_route_rows(),
+                self.rows.clone(),
             ))
         } else {
             self.reference.route(counts, launch)
@@ -144,20 +129,92 @@ impl PreparedOp<LatentSourcesBuffers<View>> for PairedPrefill {
         // stages one key tile for both rows only when their keys are the
         // same or shifted by one, otherwise one tile per row.
         let mut launches = self.reference.launches(buffers, workspace, counts)?;
-        for launch in &mut launches {
+        self.substitute(&mut launches, counts)?;
+        Ok(launches)
+    }
+}
+
+impl PairedPrefill {
+    fn substitute(&self, launches: &mut [Launch], counts: Counts) -> Result<(), Refusal> {
+        if !self.rows.iter().any(|range| range.contains(&counts.rows)) {
+            return Ok(());
+        }
+        for launch in launches {
             if launch.symbol == self.entry.symbol() {
                 launch.symbol = sources_prefill::reuse_symbol(&self.entry, 2);
                 launch.plan = sources_prefill::reuse_plan(&self.entry, counts.rows, 2)?;
             }
         }
-        Ok(launches)
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use model_deepseek41_contract::tuning::{Family, table};
+
     #[test]
     fn paired_route_rows_keep_the_full_interval() {
-        assert_eq!(super::paired_route_rows(), [1..=8192]);
+        assert_eq!(
+            super::super::latent_scheduled::paired_prefill_rows(&FLASH, 4, ROWS),
+            [1..=8192]
+        );
+    }
+
+    #[test]
+    fn narrowed_paired_range_controls_substitution() {
+        let mut table =
+            kernel_build::tuning::Table::new(table(&FLASH, Family::Latent).unwrap().target);
+        let mut row = model_deepseek41_contract::tuning::table(&FLASH, Family::Latent)
+            .unwrap()
+            .rows()
+            .iter()
+            .find(|r| r.key.op == "latent.paired.prefill")
+            .unwrap()
+            .clone();
+        row.key.rows = Some([8, 16]);
+        table.upsert(row).unwrap();
+        let ranges =
+            super::super::latent_scheduled::paired_prefill_rows_from(Some(&table), 4, ROWS);
+        assert_eq!(ranges, [8..=16]);
+        let entry = entries().unwrap().remove(0);
+        let backend = kernels_sm120::backend::Sm120::new().with_latent_sources(entry.clone());
+        let reference = backend
+            .latent_attention_sources(&entry.query, Need::rows(ROWS))
+            .unwrap();
+        let paired = PairedPrefill {
+            info: reference.info().clone(),
+            reference,
+            entry,
+            rows: ranges,
+        };
+        for rows in [1, 7, 8, 12, 16, 17, ROWS] {
+            let original = Launch {
+                symbol: paired.entry.symbol(),
+                plan: paired.entry.plan(rows).unwrap(),
+                arguments: kernel_core::contract::ArgumentList(vec![]),
+                rows,
+                collective: false,
+                persistent: false,
+            };
+            let mut launches = vec![original.clone()];
+            paired
+                .substitute(&mut launches, Counts::rows(rows))
+                .unwrap();
+            if (8..=16).contains(&rows) {
+                assert_eq!(
+                    launches[0].symbol,
+                    sources_prefill::reuse_symbol(&paired.entry, 2)
+                );
+                assert_eq!(
+                    launches[0].plan,
+                    sources_prefill::reuse_plan(&paired.entry, rows, 2).unwrap()
+                );
+            } else {
+                assert_eq!(launches[0].symbol, original.symbol);
+                assert_eq!(launches[0].plan, original.plan);
+            }
+        }
     }
 }

@@ -33,16 +33,25 @@ prompts, as well as any cost of shared-prefix cuts.
 
 The `prefill_anchor_items` model option (default 0, at most 8) is a
 prototype that keeps such a rounded end inside one upper-skip step
-instead. Only AR upper-skip instances accept it; DSpark and full-schedule
+instead. AR and DSpark upper-skip instances accept it; full-schedule
 profiles refuse it at create. Each allowed anchor item gets one spare entry
-of every captured state buffer (window rings and compressor tails), in
-separate buffers per rank. Before any write of the step reaches the slot,
+of every captured state buffer (window rings, compressor tails and, with
+DSpark, the raw feature history), in separate buffers per rank. Before any write of the step reaches the slot,
 the spare is seeded from the slot's tails, and from its rings when the item
 starts less than 136 rows before the anchor. Every layer's window write is
 then repeated into the spare ring for the rows within a ring of the anchor,
 and the cone also roots those rows. The spare then holds the bytes a chunk
 ending at the anchor leaves in its slot, and a capture at the anchor copies
-it. The instance reports its allowance through the optional
+it. With DSpark the step also packs the raw feature rows a chunk ending at
+the anchor retains: all of them while they fit the drafter's 134-row
+history, else its last 128. The drafter's commit, before its own retention,
+copies the slot's history entry into the spare and then those rows. It also
+retains in the slot the up to six rows such a chunk leaves there that the
+item's own last window does not, so the slot's history matches the item cut
+at the anchor too. Snapshots hold no drafter rings; a restore rebuilds them
+from the raw window, so a capture at the anchor needs no drafter state at
+the anchor. The drafter rings after the step are those of the uncut step.
+The instance reports its allowance through the optional
 `chop_bundle_prefill_anchors_api_v1` export: its spare count when cuts are
 enabled, otherwise 0. The host applies it to the guaranteed grid in place
 of the manifest's anchor items and keeps the manifest value for bundles

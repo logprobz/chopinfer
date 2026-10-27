@@ -89,6 +89,15 @@ every rank, then call `restore_after_copy`. The stage cursors restart at the
 window's first position. No derived ring or cursor from a prior slot owner
 survives restore. A failed copy must poison the runtime.
 
+A prefill item that keeps its rounded prompt end as an anchor inside it
+(`prefill_anchor_items`, `instance::execute::anchors`) captures that anchor
+from a spare raw history. Before its own retention the commit copies the
+slot's history entry into the spare, then the rows a chunk ending at the
+anchor retains, and retains in the slot the rows such a chunk leaves there
+that the item's last window does not (`transfers::anchor_copies`). Both
+histories then match the item cut at the anchor. The capture still catches
+up the slot, which holds the prompt end; the spare needs no stage cursor.
+
 The configured position capacity must hold the full five-position block
 even when K is smaller. If it cannot, admission refuses that draft step; the
 caller can schedule K=0. With the adopted confidence calibration, batch

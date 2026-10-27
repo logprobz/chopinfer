@@ -30,10 +30,17 @@ impl Entry {
     }
     pub fn validate(&self) -> Result<(), Refusal> {
         self.ticket.validate()?;
-        if self.ticket.query.n % 8 != 0
-            || self.ticket.query.k % 64 != 0
-            || self.ticket.knobs.weight_prefetch
+        let knobs = self.ticket.knobs;
+        if knobs.row_groups != 1
+            || knobs.stages != 3
+            || knobs.weight_prefetch
+            || knobs.finish != dense_decode::Finish::Ticket
         {
+            return Err(Refusal(
+                "stream folds require one row group, three stages, no weight prefetch and ticket finish",
+            ));
+        }
+        if self.ticket.query.n % 8 != 0 || self.ticket.query.k % 64 != 0 {
             return Err(Refusal(
                 "packed folds require eight-column tiles and complete 64-K groups",
             ));

@@ -96,6 +96,27 @@ mod tests {
     use kernel_core::backend::{Backend, Need};
     use model_deepseek41_contract::{admission::SUPPORTED_RANKS, geometry::FLASH};
     #[test]
+    fn stream_defaults_match_the_cuda_knobs() {
+        use kernels_sm120::gemm::dense_decode::{Finish, Knobs};
+        let entries = catalog(&FLASH).unwrap();
+        assert!(!entries.is_empty());
+        for entry in entries {
+            let knobs = entry.ticket.knobs;
+            assert_eq!(
+                knobs,
+                Knobs {
+                    tile_n: knobs.tile_n,
+                    row_groups: 1,
+                    stages: 3,
+                    weight_prefetch: false,
+                    finish: Finish::Ticket,
+                }
+            );
+            entry.validate().unwrap();
+        }
+    }
+
+    #[test]
     fn serving_stream_buckets_are_exact_and_geometry_scoped() {
         let mut covered = std::collections::BTreeSet::new();
         let mut other = FLASH;

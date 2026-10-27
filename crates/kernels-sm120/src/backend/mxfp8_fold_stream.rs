@@ -223,6 +223,46 @@ mod tests {
     use super::*;
     use kernel_core::backend::Backend;
     #[test]
+    fn stream_refuses_knobs_not_implemented_by_cuda() {
+        use crate::gemm::dense_decode::{Finish, Knobs};
+        let query = Mxfp8FoldGemmQuery {
+            m_capacity: 64,
+            n: 576,
+            k: 576,
+            groups: 2,
+            activation_row_stride: 1152,
+            activation_group_stride: 576,
+            output: kernel_core::contract::DType::F32,
+            execution:
+                kernel_core::precision::execution::BlockScaledExecution::NativeBlockScaledMma,
+        };
+        let mut entry = Entry::new(query, "packed_fold", false).unwrap();
+        let defaults = entry.ticket.knobs;
+        for knobs in [
+            Knobs {
+                row_groups: 2,
+                ..defaults
+            },
+            Knobs {
+                stages: 2,
+                ..defaults
+            },
+            Knobs {
+                weight_prefetch: true,
+                ..defaults
+            },
+            Knobs {
+                finish: Finish::Merge,
+                ..defaults
+            },
+            Knobs::SPLIT,
+        ] {
+            entry.ticket.knobs = knobs;
+            assert!(entry.validate().is_err(), "accepted {knobs:?}");
+        }
+    }
+
+    #[test]
     fn packed_fold_initializes_once_and_keeps_state_out_of_disposable_workspace() {
         let query = Mxfp8FoldGemmQuery {
             m_capacity: 64,

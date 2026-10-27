@@ -211,25 +211,34 @@ impl Sim {
         memory[span.offset as usize..end].copy_from_slice(bytes);
     }
 
-    pub fn read(&self, span: DeviceBufferSpanV1, extents: &BTreeMap<u32, u64>) -> Vec<u8> {
-        let tracked = Self::tracked(span, extents);
-        let mut bytes = vec![0; span.length as usize];
-        if tracked && let Some(memory) = self.memory.get(&span.buffer.slot()) {
+    fn written(&self, span: DeviceBufferSpanV1, extents: &BTreeMap<u32, u64>) -> &[u8] {
+        if Self::tracked(span, extents)
+            && let Some(memory) = self.memory.get(&span.buffer.slot())
+        {
             let start = span.offset as usize;
             let end = ((span.offset + span.length) as usize).min(memory.len());
             if start < end {
-                bytes[..end - start].copy_from_slice(&memory[start..end]);
+                return &memory[start..end];
             }
         }
+        &[]
+    }
+
+    pub fn read(&self, span: DeviceBufferSpanV1, extents: &BTreeMap<u32, u64>) -> Vec<u8> {
+        let written = self.written(span, extents);
+        let mut bytes = vec![0; span.length as usize];
+        bytes[..written.len()].copy_from_slice(written);
         bytes
     }
 
     fn word(&mut self, span: DeviceBufferSpanV1, index: u64, extents: &BTreeMap<u32, u64>) -> i32 {
-        let bytes = self.read(
+        let written = self.written(
             DeviceBufferSpanV1::new(span.buffer, span.offset + 4 * index, 4),
             extents,
         );
-        i32::from_le_bytes(bytes.try_into().unwrap())
+        let mut bytes = [0; 4];
+        bytes[..written.len()].copy_from_slice(written);
+        i32::from_le_bytes(bytes)
     }
 
     fn words(
@@ -360,17 +369,18 @@ impl Sim {
         };
         let shape = self.topology.unwrap_or(Shape::TP4);
         // A topology's per-rank entries behave as TP4's of the same name.
-        let name = name.replacen(
-            shape.tag(),
-            model_qwen38_contract::geometry::FLASH.kernel_tag,
-            1,
-        );
-        let name = name.replacen(
-            shape.geometry.kernel_tag,
-            model_qwen38_contract::geometry::FLASH.kernel_tag,
-            1,
-        );
-        let name = name.as_str();
+        let canonical = model_qwen38_contract::geometry::FLASH.kernel_tag;
+        let name = if shape.tag() == canonical {
+            std::borrow::Cow::Borrowed(name)
+        } else {
+            std::borrow::Cow::Owned(name.replacen(shape.tag(), canonical, 1))
+        };
+        let name = if shape.geometry.kernel_tag == canonical {
+            name
+        } else {
+            std::borrow::Cow::Owned(name.replacen(shape.geometry.kernel_tag, canonical, 1))
+        };
+        let name = name.as_ref();
         let part = spans.parts.and_then(|parts| {
             arguments
                 .iter()

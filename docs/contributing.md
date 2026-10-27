@@ -122,10 +122,12 @@ Python cases may use `--allow-added-python-step STEP`; removals still fail.
 Older logs without identities compare exact counts, skips and verdicts,
 which the inventory marks separately from identity comparisons.
 
-Route sweeps retain seeded rotation. `CHOPINFER_ROUTE_SEEDS` supplies a
-JSON map of bundle crate names to seeds for a complete gate; each child receives
-its own `CHOPINFER_ROUTE_SEED`. Use the recorded map to reproduce a run
-without advancing the per-model counters. CPU checks are not GPU evidence.
+Every CPU route sweep covers every boundary, packed and chunk case; dense
+single-prompt probes rotate by seed. `CHOPINFER_ROUTE_SEED` selects an explicit
+seed for the gate, which otherwise uses the UTC day. The CI runner prints
+each model's seed and reproduction command. There are no per-model counters
+or seed maps. See [route classes and served envelopes](kernel-library.md#route-classes-and-served-envelopes)
+for the rotation periods and full-tier coverage. CPU checks are not GPU evidence.
 
 ## Full CPU check prerequisites
 

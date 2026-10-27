@@ -519,12 +519,14 @@ nondefault serving overrides and their ranges are a separate envelope
 extension; explicit override route tests do not establish full-profile coverage.
 
 The CPU plan reports fixed `boundary_rows`, seeded `dense_rows` and the
-`dense_rotation_period`. The period preserves the previous dense assignment:
-12 seeds for DeepSeek, 36 for Qwen, 30 for GLM and 24 for MiMo. Boundary and
-packed coverage no longer requires executing every CPU seed per integration
-wave. CI and direct Cargo runs default to the UTC day and print a reproduction
-command; `CHOPINFER_ROUTE_SEED` selects an explicit dense-probe seed. There
-are no persistent per-model counters or per-model seed maps.
+`dense_rotation_period`. Any single CPU run covers every
+boundary, packed and chunk case. Dense single-prompt probes complete their
+rotation after `dense_rotation_period` consecutive seeds: 12 for DeepSeek,
+36 for Qwen, 30 for GLM and 24 for MiMo. CI and direct Cargo runs default to
+the UTC day, so consecutive days complete that rotation. Both print the seed;
+only the CI runner prints a reproduction command. `CHOPINFER_ROUTE_SEED`
+selects an explicit dense-probe seed. There are no persistent per-model
+counters or per-model seed maps.
 
 `CHOPINFER_ROUTE_SWEEP=full` checks every single-prompt prefill row count and
 adds the untagged-symbol island backstop. Its secondary modes retain every
@@ -543,9 +545,7 @@ up to four models in parallel. The runner warns loudly when a model exceeds
 added wall time. The CPU stage runs models serially. On a shared host with
 eight admitted CPUs, the CPU stage took 244 seconds at seed 7: DeepSeek 99,
 GLM 46, MiMo 44 and Qwen 55 seconds (2026-10-27).
-Route workers reuse upload backing, omit unused upload digests and suspend
-unused launch-plan diagnostics; simulator table reads retain their values
-without allocating each scalar. The model warnings remain active.
+The model warnings remain active.
 `ci/quick.sh` always selects quick; `ci/cpu.sh` selects CPU.
 Missing executed cases or peak RSS reports fail the stage.
 

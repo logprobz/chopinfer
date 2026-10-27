@@ -1475,6 +1475,7 @@ fn draft_argmax_case<'a>(
             )),
             verify_tokens: Some(Slot::Own(scattered_tokens("verify_rows", VERIFY_TOKENS))),
             live_drafts: Slot::Own(Spec::live()),
+            noise: None,
         })
         .collect();
     let oracle = move |images: &[Images], live: u32| -> LabResult<Vec<Vec<(String, Expected)>>> {

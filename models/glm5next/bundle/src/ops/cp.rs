@@ -260,6 +260,7 @@ mod tests {
                 layout: &FP8_BLOCK128,
                 index_topk: shape.profile.index_topk_max,
                 context_parallel: size,
+                proposals: Default::default(),
             };
             if size < 2 {
                 continue;

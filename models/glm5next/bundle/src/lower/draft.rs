@@ -53,9 +53,10 @@ impl Lowering<'_> {
     /// (`model_glm5next_contract::draft_argmax`): every rank's pair over
     /// its F32 logits shard, the gathers of every rank's scores and ids onto
     /// every rank, then the best of them written to the drafting item's
-    /// latest draft and its verify row's input token. The run's draft rows
-    /// (`draft_rows`) bound the grids; the draft rows table holds their run
-    /// rows, then their drafting items, then their verify rows.
+    /// latest draft and its verify row's input token. A coupled drafter
+    /// first adds its run's noise records to the logits shard. The run's
+    /// draft rows (`draft_rows`) bound the grids; the draft rows table holds
+    /// their run rows, then their drafting items, then their verify rows.
     pub(super) fn draft_argmax(&self, phase: Phase) -> Result<Vec<Lowered>, String> {
         let drafter = self
             .buffers
@@ -92,6 +93,8 @@ impl Lowering<'_> {
             verify_rows: part(Buffer::DraftRows, 2),
             verify_tokens: self.verify_tokens,
             live_drafts: self.scratch(Buffer::DraftCount),
+            // Allocated only with coupled drafts, whose argmax reads them.
+            noise: self.buffers.scratch.get(&Buffer::DraftNoise).copied(),
         };
         self.ops
             .draft

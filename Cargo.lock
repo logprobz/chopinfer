@@ -161,6 +161,7 @@ dependencies = [
  "runtime-bundle-sdk",
  "runtime-host",
  "runtime-kv",
+ "runtime-sampling",
  "serde_json",
 ]
 

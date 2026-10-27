@@ -111,7 +111,7 @@ fn fused_boundaries(lines: &[String]) -> Vec<String> {
 /// first appearance: two sequences that are equal under one consistent
 /// renaming become equal. The switched instance's extra module load shifts
 /// the handles create allocates after it.
-fn relabel(lines: &[String]) -> Vec<String> {
+pub(super) fn relabel(lines: &[String]) -> Vec<String> {
     let mut names = BTreeMap::<String, usize>::new();
     lines
         .iter()

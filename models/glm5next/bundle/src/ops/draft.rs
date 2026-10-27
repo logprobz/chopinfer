@@ -1,13 +1,14 @@
 //! The MTP drafter's argmax over the head's vocabulary shards
-//! (`model_glm5next_contract::draft_argmax`): each rank's shared F32
-//! partial, the all-gathers of the pairs' scores and ids, and the shared
-//! final scattered into the drafts and the verify input tokens.
+//! (`model_glm5next_contract::draft_argmax`): with coupled drafts each
+//! rank's shared draft noise first, then each rank's shared F32 partial,
+//! the all-gathers of the pairs' scores and ids, and the shared final
+//! scattered into the drafts and the verify input tokens.
 
 use kernel_core::backend::{Backend, Counts, Need, Prepared, Refused, View};
 use kernel_core::collective::{GatherBuffers, RankViews};
 use kernel_core::contract::Refusal;
 use model_glm5next_contract::contract::Shape;
-use model_glm5next_contract::draft_argmax::{self, DraftArgmax, DraftArgmaxBuffers};
+use model_glm5next_contract::draft_argmax::{self, DraftArgmax, DraftArgmaxBuffers, Proposals};
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
 use super::{Asks, Bind, Lowered};
@@ -31,8 +32,8 @@ pub(crate) struct GatherPeer {
 /// A step's spans of the draft argmax on one rank: its logits shard rows
 /// and their live width, its pairs' scores and ids, every rank's views of
 /// the scores' and the ids' gathers in rank order, the drafting items and
-/// drafts, the verify rows and the optional verify tokens, and the live
-/// draft count.
+/// drafts, the verify rows and the optional verify tokens, the live draft
+/// count, and a coupled argmax's noise records.
 pub(crate) struct DraftViews {
     pub logits: DeviceBufferSpanV1,
     pub live_width: DeviceBufferSpanV1,
@@ -44,17 +45,19 @@ pub(crate) struct DraftViews {
     pub verify_rows: DeviceBufferSpanV1,
     pub verify_tokens: Option<DeviceBufferSpanV1>,
     pub live_drafts: DeviceBufferSpanV1,
+    pub noise: Option<DeviceBufferSpanV1>,
 }
 
 impl DraftOps {
-    /// Every rank's draft argmax of `shape` on `backend`, each asked
-    /// through `asks`, refused unless every rank's two pair gathers keep
-    /// the same flag and epoch regions. The drafts only choose what the
-    /// target's verify accepts or rejects, so the argmax asks for its rows
-    /// alone.
+    /// Every rank's draft argmax of `shape` on `backend`, proposing as
+    /// `proposals` says, each asked through `asks`, refused unless every
+    /// rank's two pair gathers keep the same flag and epoch regions. The
+    /// drafts only choose what the target's verify accepts or rejects, so
+    /// the argmax asks for its rows alone.
     pub(crate) fn prepare(
         backend: &dyn Backend,
         shape: Shape,
+        proposals: Proposals,
         asks: &Asks,
     ) -> Result<Self, Refused> {
         let ranks = (0..shape.ranks())
@@ -63,7 +66,7 @@ impl DraftOps {
                     format!("draft.argmax rank {rank}"),
                     Need::rows(draft_argmax::CAPACITY),
                     |need| {
-                        DraftArgmax::prepare_for(backend, shape, rank, need)
+                        DraftArgmax::prepare_proposing(backend, shape, rank, need, proposals)
                             .map(|op| Box::new(op) as Prepared<DraftArgmaxBuffers<View>>)
                     },
                 )
@@ -127,6 +130,7 @@ impl DraftOps {
             verify_rows: bind.view(views.verify_rows),
             verify_tokens: views.verify_tokens.map(|span| bind.view(span)),
             live_drafts: bind.view(views.live_drafts),
+            noise: views.noise.map(|span| bind.view(span)),
         };
         bind.launch(op, &buffers, Counts::rows(rows))
     }

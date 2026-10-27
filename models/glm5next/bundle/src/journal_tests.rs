@@ -18,6 +18,7 @@ use bundle_runtime::upload::{BlockTableMirror, DeviceInputs, InputLayout, PhaseA
 use kernel_core::latent_attention::{LatentAttentionQuery, LatentKvFormat};
 use model_glm5next_contract::contract::{DECODE_BATCH, Glm, Shape, has_mtp_layer, latent_format};
 use model_glm5next_contract::direct::layout;
+use model_glm5next_contract::draft_argmax::Proposals;
 use model_glm5next_contract::sm120::engines as selected;
 use runtime_bundle_abi::{
     BundleDeviceBufferHandleV1, BundleStreamHandleV1, DeviceBufferSpanV1, KernelArgumentV1,
@@ -72,9 +73,15 @@ pub(crate) fn draft_regions() -> [u64; 2] {
         &model_glm5next_contract::quantization::FP8_BLOCK128,
     )
     .unwrap();
-    crate::ops::draft::DraftOps::prepare(backend.as_ref(), Shape::TP4, &Default::default())
-        .unwrap()
-        .regions()
+    let proposals = Proposals::Greedy;
+    crate::ops::draft::DraftOps::prepare(
+        backend.as_ref(),
+        Shape::TP4,
+        proposals,
+        &Default::default(),
+    )
+    .unwrap()
+    .regions()
 }
 
 /// The fake device's buffers of one rank in create's order: the scratch,
@@ -132,7 +139,8 @@ pub(crate) fn rank_buffers_within(
         ))
     };
     // The drafter's buffers with the KV formats that hold its layer.
-    let scratch = allocate_scratch(shape, has_mtp_layer(format), &mut allocate)
+    let drafter = has_mtp_layer(format).then_some(Proposals::Greedy);
+    let scratch = allocate_scratch(shape, drafter, &mut allocate)
         .unwrap()
         .unwrap();
     let reduced = scratch[&crate::buffers::Buffer::Reduced];

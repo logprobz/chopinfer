@@ -105,6 +105,7 @@ fn plans() -> Vec<Plan> {
                 layout,
                 index_topk: shape.profile.index_topk_max,
                 context_parallel: size,
+                proposals: Default::default(),
             })
         })
         .collect()

@@ -12,6 +12,8 @@
 //! first unlowered stage. The fake-host tests run the lowered stages alone
 //! (`Instance::partial`) to drive the step through the ledger.
 
+use std::collections::BTreeMap;
+
 use bundle_runtime::dispatch::DispatchError;
 use bundle_runtime::drafter::{DraftError, Pending};
 use bundle_runtime::graphs::{GraphCache, GraphKey};
@@ -24,9 +26,11 @@ use bundle_runtime::pipeline::{
 use bundle_runtime::resources::{status, upload_bytes};
 use bundle_runtime::upload::{DeviceInputs, InputLayout, PhaseArena};
 use kernel_core::backend::{Counts, Need, Refused};
+use kernel_core::draft_noise::NoiseRecord;
 use model_glm5next_contract::contract::{
     ANCHOR_ITEMS, Glm, MAX_VERIFY_ROWS, PREFILL_GRANULE, latent_format,
 };
+use model_glm5next_contract::draft_argmax::Proposals;
 use model_glm5next_contract::own_ops::OwnOps;
 use model_glm5next_contract::own_ops::state::{StateCopy, StateCopyBuffers};
 use runtime_bundle_abi::{
@@ -108,11 +112,13 @@ struct Run {
 
 /// A drafter run's own inputs (`Run::draft_side`): each row's (hidden,
 /// token) source codes; the draft rows' run rows, drafting items and
-/// verify rows, `DRAFT_ITEMS` each; their count; and in a draft step, each
-/// item's row of the extend pass (`first`), whose selection it reuses.
+/// verify rows, `DRAFT_ITEMS` each; their count; in a draft step, each
+/// item's row of the extend pass (`first`), whose selection it reuses; and
+/// with coupled drafts, the draft rows' `noise` records.
 fn draft_side(
     run: &crate::drafter::Run,
     first: Option<&crate::drafter::Run>,
+    noise: Option<&[NoiseRecord]>,
 ) -> Result<Vec<(Buffer, Vec<i32>)>, &'static str> {
     let capacity = model_glm5next_contract::contract::DRAFT_ITEMS as usize;
     if run.drafts.len() > capacity {
@@ -150,11 +156,18 @@ fn draft_side(
             .collect::<Result<_, _>>()?;
         side.push((Buffer::DraftShareRows, shared));
     }
+    if let Some(noise) = noise {
+        side.push((Buffer::DraftNoise, crate::drafter::noise::words(noise)));
+    }
     Ok(side)
 }
 
 /// A phase, its arena index, its input layout and its graph key.
 type PhasePlan = (Phase, usize, InputLayout, Option<(u32, u32)>);
+
+/// A packed step, the drafts each decode-phase item asks for, and each
+/// sampled drafting request's noise (`crate::drafter::noise::requests`).
+type Packed = (PackedStep, Vec<u32>, BTreeMap<u64, NoiseRecord>);
 
 /// Each rank's launches, each launch's stage and whether it waits for its
 /// peers.
@@ -176,9 +189,10 @@ impl Instance {
 
     /// Packs a step's prefill and decode or verify items on the host's
     /// state slots.
-    /// The step, and per decode-phase item the drafts it asks the bundle
-    /// for (zero unless the MTP drafter drafts it).
-    fn pack(&self, request: &[u8]) -> Result<(PackedStep, Vec<u32>), BundleStatusV1> {
+    /// The step, per decode-phase item the drafts it asks the bundle for
+    /// (zero unless the MTP drafter drafts it), and with coupled drafts
+    /// each sampled drafting request's noise.
+    fn pack(&self, request: &[u8]) -> Result<Packed, BundleStatusV1> {
         let batch = BatchCodecV1::decode(request).map_err(|_| BundleStatusV1::InvalidArgument)?;
         if !batch.media().is_empty() && self.encoder.is_none() {
             return Err(BundleStatusV1::Unsupported);
@@ -193,7 +207,11 @@ impl Instance {
             u64::from(self.config.context_parallel.size()),
         )?;
         let drafts = step.bundle_drafts(&batch);
-        Ok((step, drafts))
+        let noise = match self.ops.plan.proposals {
+            Proposals::Coupled => crate::drafter::noise::requests(&batch),
+            Proposals::Greedy => BTreeMap::new(),
+        };
+        Ok((step, drafts, noise))
     }
 
     /// The phase of `inputs`, its arena index, its input layout and its
@@ -634,6 +652,7 @@ impl Instance {
         run: &crate::drafter::Run,
         pass: DraftPass,
         first: Option<&crate::drafter::Run>,
+        noise: Option<&[NoiseRecord]>,
     ) -> Result<Run, BundleStatusV1> {
         let mut inputs = run.inputs();
         if pass == DraftPass::Extend {
@@ -696,15 +715,26 @@ impl Instance {
             lowered,
             draft: Some(pass),
             inject: false,
-            draft_side: draft_side(run, first).map_err(|error| {
+            draft_side: draft_side(run, first, noise).map_err(|error| {
                 self.log(error);
                 BundleStatusV1::InternalError
             })?,
         })
     }
 
-    /// Every drafter run of `plan`.
-    fn plan_draft_runs(&self, plan: &DraftPlan) -> Result<DraftRuns, BundleStatusV1> {
+    /// Every drafter run of `plan`. With coupled drafts each run takes its
+    /// draft rows' records of `noise`: the runs before the target draft
+    /// position `index` (`bundle_runtime::drafter::Plan::before`), and the
+    /// run after a prefill drafts nothing.
+    fn plan_draft_runs(
+        &self,
+        plan: &DraftPlan,
+        noise: &BTreeMap<u64, NoiseRecord>,
+    ) -> Result<DraftRuns, BundleStatusV1> {
+        let coupled = self.ops.plan.proposals == Proposals::Coupled;
+        let records = |run, position| {
+            coupled.then(|| crate::drafter::noise::records(plan, run, position, noise))
+        };
         let mut runs = DraftRuns::default();
         for (index, run) in plan.before.iter().enumerate() {
             let pass = if index == 0 {
@@ -712,11 +742,18 @@ impl Instance {
             } else {
                 DraftPass::Step
             };
-            runs.before
-                .push(self.plan_draft_run(run, pass, plan.before.first())?);
+            let noise = records(run, index as u32);
+            runs.before.push(self.plan_draft_run(
+                run,
+                pass,
+                plan.before.first(),
+                noise.as_deref(),
+            )?);
         }
         if let Some(run) = &plan.prefill {
-            runs.prefill = Some(self.plan_draft_run(run, DraftPass::Extend, None)?);
+            let noise = records(run, 0);
+            runs.prefill =
+                Some(self.plan_draft_run(run, DraftPass::Extend, None, noise.as_deref())?);
         }
         Ok(runs)
     }
@@ -1329,7 +1366,7 @@ impl Instance {
                 .with_state_slots(vec![0])
                 .encode()
                 .map_err(|error| format!("{rows} rows: {error:?}"))?;
-            let (step, _) = self
+            let (step, _, _) = self
                 .pack(&request)
                 .map_err(|error| format!("{rows} rows: {error:?}"))?;
             let run = self
@@ -1687,7 +1724,7 @@ impl Instance {
         if self.ledger.step().is_some() {
             return BundleStatusV1::InvalidState;
         }
-        let (step, drafts) = match self.pack(request) {
+        let (step, drafts, noise) = match self.pack(request) {
             Ok(packed) => packed,
             Err(error) => return error,
         };
@@ -1706,7 +1743,7 @@ impl Instance {
             None => None,
         };
         let mut draft_runs = match &draft_plan {
-            Some(plan) => match self.plan_draft_runs(plan) {
+            Some(plan) => match self.plan_draft_runs(plan, &noise) {
                 Ok(runs) => runs,
                 Err(error) => return error,
             },

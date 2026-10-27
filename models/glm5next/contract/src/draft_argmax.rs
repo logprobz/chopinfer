@@ -10,12 +10,21 @@
 //! of any sign or payload below every other value (-inf included), equal
 //! logits to the lower global id; so a row of only NaN drafts global id 0,
 //! always in the vocabulary. Every rank computes the same tokens.
+//!
+//! A coupled argmax ([`Proposals::Coupled`]) first adds the target
+//! sampler's noise to each rank's shard in place
+//! (`kernel_core::draft_noise`): each draft's record holds its request's
+//! seed and temperature and the generated index the target samples the
+//! draft's position at, so every launch draws at position zero and one
+//! captured draft step serves every position. A greedy record leaves its
+//! row's bits, so a greedy item drafts what the greedy argmax drafts.
 
 use kernel_core::backend::{
     Backend, Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View,
 };
 use kernel_core::collective::GatherBuffers;
 use kernel_core::contract::{ArgmaxLayout, CommQuery, DType, Refusal, RowQuery};
+use kernel_core::draft_noise::{self, DraftNoise, DraftNoiseBuffers, NoiseRecord};
 use kernel_core::oracle;
 use kernel_core::properties::Invariance;
 use kernel_core::rows::{ArgmaxFinalBuffers, ArgmaxPairs, ArgmaxPartialBuffers, ArgmaxScatter};
@@ -54,6 +63,25 @@ pub fn final_query(shape: Shape) -> RowQuery {
     }
 }
 
+/// A coupled argmax's noise over rank `rank`'s shard of `shape`'s head:
+/// the noise of each global id of the vocabulary split over the ranks.
+pub fn noise_query(shape: Shape) -> DraftNoise {
+    DraftNoise {
+        vocab_per_rank: shape.profile.vocab_rows,
+        ranks: shape.ranks(),
+    }
+}
+
+/// How a draft argmax proposes: the argmax of the drafter's logits, or of
+/// its logits coupled to the target sampler's noise
+/// (`crate::options::COUPLED_DRAFTS_OPTION`).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Proposals {
+    #[default]
+    Greedy,
+    Coupled,
+}
+
 kernel_core::scratch_record! {
     /// One rank's buffers of the draft argmax: its F32 `logits` shard rows
     /// `[drafts, vocab_rows]` and the device `u32` count of their live
@@ -65,7 +93,9 @@ kernel_core::scratch_record! {
     /// `verify_rows` and the `u32` verify input tokens they index when
     /// present, and the device `u32` count of live drafts. The live drafts'
     /// items are distinct, as are their verify rows; an index outside its
-    /// buffer writes nothing.
+    /// buffer writes nothing. A coupled argmax also reads one
+    /// `kernel_core::draft_noise::NoiseRecord` per draft in `noise`, and
+    /// perturbs `logits` in place; a greedy one binds none.
     #[derive(Clone, Debug)]
     pub struct DraftArgmaxBuffers {
         pub logits: value,
@@ -77,15 +107,17 @@ kernel_core::scratch_record! {
         pub verify_rows: value,
         pub verify_tokens: option,
         pub live_drafts: value,
+        pub noise: option,
     }
 }
 
-/// One rank's draft argmax, prepared once: its partial, the two gathers
-/// and its final, launched in that order. Launches read `Counts::rows`
-/// (the drafts the launch grids, at most [`CAPACITY`]); the gathers move
-/// their whole blocks at any count.
+/// One rank's draft argmax, prepared once: a coupled argmax's noise, then
+/// its partial, the two gathers and its final, launched in that order.
+/// Launches read `Counts::rows` (the drafts the launch grids, at most
+/// [`CAPACITY`]); the gathers move their whole blocks at any count.
 pub struct DraftArgmax {
     rank: u32,
+    noise: Option<Prepared<DraftNoiseBuffers<View>>>,
     partial: Prepared<ArgmaxPartialBuffers<View>>,
     scores: Prepared<GatherBuffers<View>>,
     ids: Prepared<GatherBuffers<View>>,
@@ -107,18 +139,38 @@ impl DraftArgmax {
         rank: u32,
         need: Need,
     ) -> Result<Self, Refused> {
+        Self::prepare_proposing(backend, shape, rank, need, Proposals::Greedy)
+    }
+
+    /// [`Self::prepare_for`] of an argmax that proposes as `proposals`
+    /// says: a coupled one prepares the rank's noise too.
+    pub fn prepare_proposing(
+        backend: &dyn Backend,
+        shape: Shape,
+        rank: u32,
+        need: Need,
+        proposals: Proposals,
+    ) -> Result<Self, Refused> {
         if need.capacity == 0 || need.capacity > CAPACITY {
             return Err(Refused::Rule(format!(
                 "a draft argmax serves 1 to {CAPACITY} drafts"
             )));
         }
         let rows = Need::rows(need.capacity);
+        let noise = match proposals {
+            Proposals::Greedy => None,
+            Proposals::Coupled => Some(backend.draft_noise(&noise_query(shape), rank, rows)?),
+        };
         let partial = backend.sharded_argmax_partial(&partial_query(shape), rank, rows)?;
         let gather = gather_query(shape);
         let scores = backend.all_gather(&gather, rank, None, Need::rows(1))?;
         let ids = backend.all_gather(&gather, rank, None, Need::rows(1))?;
         let last = backend.sharded_argmax_final(&final_query(shape), rows)?;
-        let parts = [partial.info(), scores.info(), ids.info(), last.info()];
+        let parts = noise
+            .iter()
+            .map(|noise| noise.info())
+            .chain([partial.info(), scores.info(), ids.info(), last.info()])
+            .collect::<Vec<_>>();
         let guarantees = parts
             .iter()
             .map(|info| info.guarantees)
@@ -136,6 +188,7 @@ impl DraftArgmax {
         need.check(&info)?;
         Ok(Self {
             rank,
+            noise,
             partial,
             scores,
             ids,
@@ -194,7 +247,22 @@ impl PreparedOp<DraftArgmaxBuffers<View>> for DraftArgmax {
             live_rows: buffers.live_drafts,
         };
         let block = Counts::rows(1);
-        let mut launches = self.partial.launches(&partial, View::EMPTY, counts)?;
+        let mut launches = match (&self.noise, buffers.noise) {
+            (Some(noise), Some(records)) => {
+                let perturbed = DraftNoiseBuffers {
+                    logits: buffers.logits,
+                    live_width: buffers.live_width,
+                    noise: records,
+                    live_rows: buffers.live_drafts,
+                    position: 0,
+                };
+                noise.launches(&perturbed, View::EMPTY, counts)?
+            }
+            (None, None) => Vec::new(),
+            (Some(_), None) => return Err(Refusal("a coupled draft argmax lacks its noise")),
+            (None, Some(_)) => return Err(Refusal("a greedy draft argmax binds noise")),
+        };
+        launches.extend(self.partial.launches(&partial, View::EMPTY, counts)?);
         launches.extend(self.scores.launches(&buffers.scores, View::EMPTY, block)?);
         launches.extend(self.ids.launches(&buffers.ids, View::EMPTY, block)?);
         launches.extend(self.last.launches(&last, View::EMPTY, counts)?);
@@ -207,6 +275,20 @@ impl PreparedOp<DraftArgmaxBuffers<View>> for DraftArgmax {
 pub fn token(shards: &[&[f32]]) -> Result<u32, Refusal> {
     let id = oracle::sharded_argmax(shards)?;
     u32::try_from(id).map_err(|_| Refusal("a draft id exceeds u32"))
+}
+
+/// The coupled token of one draft from every rank's shard of its logits,
+/// in rank order, under its noise record: a sampled record's largest
+/// `x / T + g` in f64 over the whole vocabulary, ties to the lower global
+/// id (`kernel_core::draft_noise::proposal` at position zero), a greedy
+/// record's [`token`]. The device's F32 noise lies within
+/// `draft_noise::bound` of these values, so a near tie may propose
+/// another token.
+pub fn coupled_token(shards: &[&[f32]], noise: &NoiseRecord) -> Result<u32, Refusal> {
+    if !noise.sampled() {
+        return token(shards);
+    }
+    draft_noise::proposal(&shards.concat(), noise, 0)
 }
 
 /// What every rank's launch of `rows` rows writes, from each rank's
@@ -279,6 +361,7 @@ mod tests {
         partial_query(shape).validate().unwrap();
         gather_query(shape).validate().unwrap();
         final_query(shape).validate().unwrap();
+        noise_query(shape).validate().unwrap();
         let RowQuery::ShardedArgmaxPartial {
             vocab_per_rank,
             ranks,
@@ -288,6 +371,36 @@ mod tests {
             unreachable!("a partial query");
         };
         assert_eq!(vocab_per_rank * ranks, shape.geometry.vocab());
+        assert_eq!(
+            (noise_query(shape).vocab_per_rank, noise_query(shape).ranks),
+            (vocab_per_rank, ranks)
+        );
+    }
+
+    /// A coupled draft is the noise's proposal over the whole vocabulary,
+    /// whichever rank holds it; a greedy record drafts the argmax.
+    #[test]
+    fn the_coupled_oracle_drafts_the_noise_proposal_over_the_shards() {
+        let ranks: [&[f32]; 2] = [&[0.0; 32], &[0.0; 32]];
+        let flat = [0.0_f32; 64];
+        let picks = (0..16)
+            .map(|generated| {
+                let noise = NoiseRecord {
+                    seed: 7,
+                    generated,
+                    temperature: 1.0,
+                };
+                let pick = coupled_token(&ranks, &noise).unwrap();
+                assert_eq!(pick, draft_noise::proposal(&flat, &noise, 0).unwrap());
+                pick
+            })
+            .collect::<Vec<_>>();
+        // Flat logits leave the draft to the noise, which reaches both
+        // shards over the generated indexes.
+        assert!(picks.iter().any(|&pick| pick < 32) && picks.iter().any(|&pick| pick >= 32));
+        let peaked: [&[f32]; 2] = [&[0.0; 4], &[0.0, 3.0, 3.0, 0.0]];
+        assert_eq!(coupled_token(&peaked, &NoiseRecord::GREEDY).unwrap(), 5);
+        assert_eq!(coupled_token(&peaked, &NoiseRecord::GREEDY), token(&peaked));
     }
 
     /// The oracle drafts NaN lowest and ties to the lower global id across

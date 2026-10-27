@@ -713,6 +713,7 @@ impl Instance {
                 layout: engines.layout,
                 index_topk: SHAPE.profile.index_topk_max,
                 context_parallel: 1,
+                proposals: Default::default(),
             };
             let ops = Ops::prepare(backend.as_ref(), &served, plan)
                 .map_err(|refused| refused.to_string())?;
@@ -722,7 +723,7 @@ impl Instance {
         let mut peers = Vec::new();
         for rank in 0..RANKS {
             let mut allocate = |bytes| Ok::<_, ()>(handles.allocate(rank, bytes));
-            let scratch = allocate_scratch(SHAPE, drafter, &mut allocate)
+            let scratch = allocate_scratch(SHAPE, drafter.then(Default::default), &mut allocate)
                 .map_err(err)?
                 .map_err(err)?;
             let reduced = scratch[&Buffer::Reduced];
@@ -957,6 +958,7 @@ impl Instance {
             layout: engines.layout,
             index_topk: SHAPE.profile.index_topk_max,
             context_parallel: self.cp.as_ref().map_or(1, |cp| cp.size),
+            proposals: Default::default(),
         };
         let ops =
             Ops::prepare(backend.as_ref(), &served, plan).map_err(|refused| refused.to_string())?;

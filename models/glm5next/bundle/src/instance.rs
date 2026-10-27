@@ -40,6 +40,7 @@ use bundle_runtime::transaction::{self, End, Failure, Retire, Stage, Steps};
 use bundle_runtime::upload::{BlockTableMirror, InputLayout, PhaseArena};
 use model_glm5next_contract::contract::{Glm, INDEXER_TAIL_STATE_ID, MAX_VERIFY_ROWS, Shape};
 use model_glm5next_contract::direct::{INDEX_SCHEMA, RANK_IMAGE_ROLE, index_role};
+use model_glm5next_contract::draft_argmax::Proposals;
 use runtime_bundle_abi::{
     BundleAbiError, BundleCudaSymbolHandleV1, BundleKeptRowsV1, BundleStatusV1,
     ExecuteResultSinkV1, HostServicesV1,
@@ -312,22 +313,22 @@ impl Instance {
             let pieces = u64::from(execute::MAX_PIECES) * execute::piece_stride(items);
             self.piece_arenas
                 .push(allocate_span(services, pool, stream, pieces, held)?);
-            let buffers =
-                allocate_scratch_named(shape, self.drafter.is_some(), |buffer, bytes| {
-                    let owner = if matches!(
-                        buffer,
-                        crate::buffers::Buffer::Partial | crate::buffers::Buffer::Reduced
-                    ) {
-                        self.dma.get(rank).map_or(stream, |dma| dma.owner)
-                    } else {
-                        stream
-                    };
-                    allocate_span(services, pool, owner, bytes, held)
-                })?
-                .map_err(|error| {
-                    let _ = services.log(error.as_bytes());
-                    BundleAbiError::InvalidRange("glm5next scratch")
-                })?;
+            let drafter = self.drafter.is_some().then_some(self.ops.plan.proposals);
+            let buffers = allocate_scratch_named(shape, drafter, |buffer, bytes| {
+                let owner = if matches!(
+                    buffer,
+                    crate::buffers::Buffer::Partial | crate::buffers::Buffer::Reduced
+                ) {
+                    self.dma.get(rank).map_or(stream, |dma| dma.owner)
+                } else {
+                    stream
+                };
+                allocate_span(services, pool, owner, bytes, held)
+            })?
+            .map_err(|error| {
+                let _ = services.log(error.as_bytes());
+                BundleAbiError::InvalidRange("glm5next scratch")
+            })?;
             // The split mixer's tickets start at zero; each launch leaves
             // them zero.
             services.zero_device_buffer(stream, buffers[&crate::buffers::Buffer::MixTickets])?;
@@ -417,7 +418,7 @@ impl Instance {
             context_parallel: cp_size > 1,
             comm_epilogue: self.config.comm_epilogue,
             drafter: self.drafter.is_some(),
-            coupled_drafts: false,
+            coupled_drafts: self.ops.plan.proposals == Proposals::Coupled,
             prefill_dma: self.prefill_dma,
         };
         for &(context, _, _) in &ranks {
@@ -796,12 +797,18 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         log(&error);
         BundleStatusV1::InternalError
     })?;
-    // The ops, prepared once per process on the target's backend.
+    // The ops, prepared once per process on the target's backend. Only a
+    // drafter couples its drafts.
+    let proposals = match verify.bundle_drafter && config.coupled_drafts {
+        true => Proposals::Coupled,
+        false => Proposals::Greedy,
+    };
     let plan = crate::ops::Plan {
         shape,
         layout: config.layout,
         index_topk: config.runtime.index_topk,
         context_parallel: config.context_parallel.size(),
+        proposals,
     };
     let ops = crate::ops::Ops::shared(target.as_ref(), plan).map_err(|refused| {
         log(&refused.to_string());
@@ -885,6 +892,16 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         instance.log(&format!(
             "{}=true: the sublayer all-reduces run the Sinkhorn mHC comm epilogue",
             model_glm5next_contract::options::COMM_EPILOGUE_OPTION
+        ));
+    }
+    if instance.config.coupled_drafts {
+        let effect = match proposals {
+            Proposals::Coupled => "the MTP drafter proposes sampled drafts from the target noise",
+            Proposals::Greedy => "no MTP drafter runs, so nothing is coupled",
+        };
+        instance.log(&format!(
+            "{}=true: {effect}",
+            model_glm5next_contract::options::COUPLED_DRAFTS_OPTION
         ));
     }
     if instance.shared_overlap.on() {

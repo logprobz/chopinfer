@@ -13,6 +13,7 @@
 //! (`index_share_for_mtp_iteration`).
 
 pub mod copies;
+pub mod noise;
 
 use model_glm5next_contract::contract::{
     DRAFT_ITEMS, MAX_VERIFY_ROWS, PAGE_TOKENS, PREFILL_GRANULE, PREFILL_TOKENS, Shape,

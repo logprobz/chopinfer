@@ -570,6 +570,7 @@ mod tests {
     use kernel_core::contract::ArgumentList;
     use kernel_core::row_copy::GatherByIndexBuffers;
     use model_glm5next_contract::copies;
+    use model_glm5next_contract::draft_argmax::Proposals;
     use model_glm5next_contract::sm120::engines::ROW_GATHER_SYMBOL;
 
     const SHAPE: Shape = Shape::TP4;
@@ -897,7 +898,7 @@ mod tests {
             ))
         };
         let mtp = has_mtp_layer(format);
-        let scratch = allocate_scratch(SHAPE, mtp, &mut allocate)
+        let scratch = allocate_scratch(SHAPE, mtp.then_some(Proposals::Greedy), &mut allocate)
             .unwrap()
             .unwrap();
         let reduced = scratch[&Buffer::Reduced];

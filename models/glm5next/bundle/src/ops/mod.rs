@@ -36,6 +36,7 @@ use kernel_core::contract::{Refusal, StaticQuery};
 use kernel_core::moe_experts::{GatedMlpBuffers, PreparedExperts};
 use kernel_core::properties::Invariance;
 use model_glm5next_contract::contract::Shape;
+use model_glm5next_contract::draft_argmax::Proposals;
 use model_glm5next_contract::own_ops::OwnOps;
 use model_glm5next_contract::quantization::Layout;
 use runtime_bundle_abi::DeviceBufferSpanV1;
@@ -45,7 +46,8 @@ use crate::target::Target;
 pub use reduce::StateRegions;
 
 /// What an instance prepares its ops for: its shape, the indexer's runtime
-/// top-k and its context-parallel group size (1 without groups).
+/// top-k, its context-parallel group size (1 without groups) and how its
+/// MTP drafter proposes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Plan {
     pub shape: Shape,
@@ -54,6 +56,10 @@ pub struct Plan {
     pub layout: &'static Layout,
     pub index_topk: u32,
     pub context_parallel: u32,
+    /// Greedy, unless the instance runs the drafter and couples its drafts
+    /// (`options::COUPLED_DRAFTS_OPTION`): its argmax then prepares the
+    /// draft noise too.
+    pub proposals: Proposals,
 }
 
 /// The queries the backend's registered entries serve
@@ -119,7 +125,7 @@ impl Ops {
             reduce: reduce::ReduceOps::prepare(&served.1, plan.shape, &asks)?,
             rows: rows::RowOps::prepare(backend, plan.shape, &asks)?,
             logits: logits::LogitsOps::prepare(backend, plan.shape, &asks)?,
-            draft: draft::DraftOps::prepare(backend, plan.shape, &asks)?,
+            draft: draft::DraftOps::prepare(backend, plan.shape, plan.proposals, &asks)?,
             own: own::OwnRowOps::prepare(
                 &served.2,
                 plan.shape,
@@ -175,6 +181,7 @@ impl Ops {
             layout: &model_glm5next_contract::quantization::FP8_BLOCK128,
             index_topk: shape.profile.index_topk_max,
             context_parallel,
+            proposals: Proposals::Greedy,
         };
         Ops::for_plan(plan)
     }

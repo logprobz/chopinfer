@@ -27,7 +27,7 @@ use model_glm5next_contract::backend::{Kernels, Selected};
 use model_glm5next_contract::contract::{
     DECODE_BATCH, Glm, MAX_VERIFY_ROWS, PREFILL_TOKENS, Shape, has_mtp_layer, latent_format,
 };
-use model_glm5next_contract::draft_argmax;
+use model_glm5next_contract::draft_argmax::{self, Proposals};
 use model_glm5next_contract::state::request_state;
 use runtime_bundle_abi::DeviceBufferSpanV1;
 
@@ -180,10 +180,17 @@ pub enum Buffer {
     /// experts, so its output is its sum (`x + 0` is `x` but for `x = -0`,
     /// and the routed sum it then meets, from `+0`, is never `-0`).
     ZeroRows,
+    /// A coupled drafter run's noise records `[DRAFT_ITEMS]`
+    /// (`kernel_core::draft_noise::NoiseRecord`), one per draft row: the
+    /// noise its argmax adds to the logits first
+    /// (`model_glm5next_contract::draft_argmax::Proposals::Coupled`).
+    /// Last, and only with coupled drafts, so an instance without them
+    /// allocates what it did before.
+    DraftNoise,
 }
 
 impl Buffer {
-    pub const ALL: [Self; 65] = [
+    pub const ALL: [Self; 66] = [
         Self::KdaQkv,
         Self::KdaConv,
         Self::KdaGate,
@@ -249,6 +256,7 @@ impl Buffer {
         Self::MixPartials,
         Self::MixTickets,
         Self::ZeroRows,
+        Self::DraftNoise,
     ];
 
     /// Whether only the MTP drafter's runs use the buffer.
@@ -265,7 +273,13 @@ impl Buffer {
                 | Self::DraftPairs
                 | Self::SharedKeyLists
                 | Self::DraftShareRows
+                | Self::DraftNoise
         )
+    }
+
+    /// Whether only a drafter that couples its drafts uses the buffer.
+    pub const fn coupled(self) -> bool {
+        matches!(self, Self::DraftNoise)
     }
 
     /// Bytes of the buffer on one rank.
@@ -303,6 +317,7 @@ impl Buffer {
             Self::DraftCount => I32,
             Self::Drafts | Self::DraftShareRows => drafts * I32,
             Self::DraftPairs => 2 * drafts * F32,
+            Self::DraftNoise => drafts * kernel_core::draft_noise::NOISE_BYTES as u64,
             Self::SharedKeyLists => drafts * u64::from(shape.latent_keys()) * I32,
             Self::Workspace => Selected::workspace_bytes(shape, widest_step_rows(), SCRATCH_ROWS),
             Self::MixPartials => Selected::mix_scratch_bytes(shape, SCRATCH_ROWS)[0],
@@ -763,11 +778,12 @@ pub struct RankBuffers {
 /// Allocates one rank's scratch through `allocate`, in [`Buffer::ALL`]
 /// order: the error of `allocate`, or a sizing refusal. The drafter's
 /// buffers (256 MiB per rank at the prefill capacity) only when the
-/// instance runs the MTP drafter: the host sizes the KV pool from the
-/// memory left after create's allocations.
+/// instance runs the MTP drafter, whose `drafter` proposals say whether it
+/// couples its drafts too: the host sizes the KV pool from the memory left
+/// after create's allocations.
 pub fn allocate_scratch<E>(
     shape: Shape,
-    drafter: bool,
+    drafter: Option<Proposals>,
     mut allocate: impl FnMut(u64) -> Result<DeviceBufferSpanV1, E>,
 ) -> Result<Result<BTreeMap<Buffer, DeviceBufferSpanV1>, String>, E> {
     allocate_scratch_named(shape, drafter, |_, bytes| allocate(bytes))
@@ -776,12 +792,14 @@ pub fn allocate_scratch<E>(
 /// Named traversal lets a transport give peer-visible planes private owners.
 pub(crate) fn allocate_scratch_named<E>(
     shape: Shape,
-    drafter: bool,
+    drafter: Option<Proposals>,
     mut allocate: impl FnMut(Buffer, u64) -> Result<DeviceBufferSpanV1, E>,
 ) -> Result<Result<BTreeMap<Buffer, DeviceBufferSpanV1>, String>, E> {
     let mut scratch = BTreeMap::new();
     for buffer in Buffer::ALL {
-        if buffer.drafter() && !drafter {
+        if (buffer.drafter() && drafter.is_none())
+            || (buffer.coupled() && drafter != Some(Proposals::Coupled))
+        {
             continue;
         }
         let bytes = match buffer.bytes(shape) {
@@ -980,6 +998,34 @@ mod tests {
         // of 64 splits, fit the workspace.
         assert_eq!(widest_step_rows(), 32);
         assert!(bytes(Buffer::Workspace) >= 32 * 64 * 16 * 514 * 4);
+    }
+
+    /// Only a coupled drafter allocates its noise records, one 32-byte
+    /// record per draft row, after every other buffer: the others keep
+    /// their order and sizes.
+    #[test]
+    fn only_a_coupled_drafter_allocates_its_noise_records_last() {
+        let order = |drafter| {
+            let mut order = Vec::new();
+            allocate_scratch_named(Shape::TP4, drafter, |buffer, bytes| {
+                let slot = order.len() as u32;
+                order.push((buffer, bytes));
+                Ok::<_, ()>(DeviceBufferSpanV1::new(runtime_abi_handle(slot), 0, bytes))
+            })
+            .unwrap()
+            .unwrap();
+            order
+        };
+        let (none, greedy, coupled) = (
+            order(None),
+            order(Some(Proposals::Greedy)),
+            order(Some(Proposals::Coupled)),
+        );
+        assert!(none.iter().all(|(buffer, _)| !buffer.drafter()));
+        assert!(greedy.iter().all(|(buffer, _)| !buffer.coupled()));
+        assert_eq!(greedy.len(), none.len() + 10);
+        assert_eq!(coupled[..greedy.len()], greedy[..]);
+        assert_eq!(coupled[greedy.len()..], [(Buffer::DraftNoise, 32 * 32)]);
     }
 
     /// The tail's declared slot pieces, the span its commit copies

@@ -414,3 +414,58 @@ row and readable receipt. Baselines advance only after a full passing run of
 all required configurations; reseeding requires a recorded reason. External
 variants never advance in-tree baselines. Missing captures are not passes.
 No rule or baseline may be changed to hide a mismatch.
+## Declarative agentic traces
+
+`agentic_mixed.py --workload trace --trace FILE` reuses the streaming client,
+metrics, qualification receipts and `agentic_compare.py` for finite synthetic
+session traces. Generate a content-free declaration outside the repository:
+
+```sh
+python3 -B tools/qual/agentic_trace.py --out "$CHOPINFER_DATA/trace.json" \
+  --sessions 8 --turns 100 --contexts 100000,250000 --idle-pages 4096
+python3 -B tools/qual/agentic_mixed.py --workload trace \
+  --trace "$CHOPINFER_DATA/trace.json" --levels 8 --replicas 1 \
+  --temperature 1 --seconds 600 --session-timeout-seconds 600 \
+  --min-samples 8 --cache-salt group --arm fixed --label baseline
+```
+
+The generator uses append shares 31/40/12/7/10 percent for 1-63,
+64-511, 512-2047, 2048-8191 and 8192+ tokens over each 100 requests.
+Balanced output budgets 128/256/550/1266 average 550 tokens. Think times
+0/2/10/60 seconds are declared assumptions. Source files, patches and test
+results are synthesized from seeds, then fitted with the served `/tokenize`.
+No trace field accepts prompt text. The page size is explicit in the trace
+and must match the served model's logical KV page size.
+
+Each turn depends on the prior turn's completion. Thinking and parked
+sessions release their HTTP slots. A finite trace must finish within
+`--seconds`; incomplete, errored or timed-out traces fail. This is a maximum
+elapsed window, so throughput uses actual elapsed time. The sample floor
+still labels unsupported tails; eight sessions do not establish session p95.
+Long contexts are primed before timing. `group` salts share each group's
+prime; `session` salts isolate each session and require separate primes.
+Use per-session salts for acceptance and report shared groups separately.
+
+Every SSE event has a monotonic timestamp and token multiplicity, including
+usage and completion events. Every served prompt must equal `/tokenize`
+token for token, and usage/output-ID counts must agree. `canonical` history
+keeps later requests matched when outputs diverge. `--trace-history generated`
+instead appends the actual answer and measures LCP against the previous
+prompt plus emitted IDs. A preserve-thinking render provides the diagnostic
+counterfactual, including loss before the previous answer. Canonical history
+replacement can also lose LCP, so do not attribute its whole loss to thinking.
+
+Idle page demand is `ceil((prompt_tokens - cached_tokens + output_tokens) /
+page_tokens)` summed over other completed requests. It excludes snapshot,
+copy-on-write and speculative allocations. Cache behavior can change this
+clock across arms; retain actual return schedules and the existing eviction
+and cached-token metrics. It is not a measurement of physical allocation.
+
+`agentic_trace_analysis.py RECEIPT --steps LOG --power SAMPLES` reports
+50/100/250/1000 ms event-gap counts, total and excess durations, and unioned
+prefill overlap, plus TTFT by append class, throughput, draft acceptance,
+computed/reused prefill and anchor survival. Power samples must bracket the
+window and retain each rank's limits and SM clocks; missing samples yield
+unavailable energy. SSE gaps include transport and parser effects. Profiled
+or busy-host results remain diagnostic. Run fresh-process warmup and ABBA
+visits as described in [stateful replay acceptance](../../docs/contributing.md#stateful-replay-acceptance).

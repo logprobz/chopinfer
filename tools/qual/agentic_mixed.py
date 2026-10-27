@@ -656,13 +656,15 @@ def stream_request(client, body, deadline, stall_threshold_ms=100, burst_window_
                decode_seconds=None, decode_tokens_per_second=None, prompt_tokens=None,
                cached_tokens=None, output_tokens=None, accepted_draft_tokens=None, draft_tokens=None,
                finish_reason=None, failure=None, timed_out=False, status=None, tool_names=[],
-               token_ids=None, parsed_calls=None)
+               token_ids=None, parsed_calls=None, sse_events=[])
     message = dict(role='assistant', content='')
     calls, times, output_events = {}, [], []
     done = False
     try:
         events = sse_events(client.chunks('/v1/chat/completions', body, min(deadline, started + client.timeout), MAX_RESPONSE))
         for at, data in events:
+            event_row = dict(at=at, done=data == '[DONE]', tokens=0)
+            row['sse_events'].append(event_row)
             if data == '[DONE]':
                 done = True
                 break
@@ -692,6 +694,7 @@ def stream_request(client, body, deadline, stall_threshold_ms=100, burst_window_
                 if delta.get('refusal') or choice.get('finish_reason') == 'content_filter':
                     raise ValueError('request refused')
                 evidence.chunk(choice)
+                event_row['tokens'] += len(choice.get('token_ids') or [])
                 for field in ('content', 'reasoning_content', 'reasoning'):
                     if delta.get(field):
                         if not isinstance(delta[field], str):
@@ -1154,6 +1157,10 @@ def run_decode(client, model, profile, groups, context_window):
 
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--workload', choices=('coding', 'trace'), default='coding')
+    p.add_argument('--trace', type=Path, help='content-free agentic-trace JSON declaration')
+    p.add_argument('--trace-history', choices=('canonical', 'generated'), default='canonical',
+                   help='canonical synthetic history for matched inputs; generated for rendered response LCP diagnostics')
     p.add_argument('--url', default='http://127.0.0.1:8101')
     p.add_argument('--model')
     p.add_argument('--frontend', help="the served model's frontend declaration (frontend.json), whose markup and tool "
@@ -1165,7 +1172,7 @@ def parser():
     p.add_argument('--corpus', type=Path, default=CORPUS,
                    help='a corpus directory with a verified manifest: the pinned Chopinfer corpus (default), or a larger '
                         'one staged under $CHOPINFER_DATA by `agentic_workload.py stage`')
-    p.add_argument('--cache-salt', choices=('session', 'none'), default='session',
+    p.add_argument('--cache-salt', choices=('session', 'group', 'none'), default='session',
                    help='session (default): send each session its own cache_salt, so no other session or run absorbs '
                         'its prefill and the prefill budgets see real pressure; none: share prefixes across sessions')
     p.add_argument('--seed', default='chopinfer-coding-v1')
@@ -1203,6 +1210,12 @@ def parser():
 
 
 def validate(p, args):
+    if (args.workload == 'trace') != (args.trace is not None):
+        p.error('--workload trace requires --trace; coding does not accept it')
+    if args.cache_salt == 'group' and args.workload != 'trace':
+        p.error('--cache-salt group requires trace mode')
+    if args.workload == 'trace' and (args.no_token_evidence or args.no_stream_usage):
+        p.error('trace mode requires token IDs and stream usage')
     try:
         levels = [int(c) for c in args.levels.split(',')]
     except ValueError:
@@ -1413,6 +1426,9 @@ def main(argv=None):
     p = parser()
     args = p.parse_args(argv)
     levels = validate(p, args)
+    if args.workload == 'trace':
+        from agentic_trace import main as trace_main
+        return trace_main(args, levels)
     common.startup()
     try:
         manifest, groups = load_corpus(args.corpus)

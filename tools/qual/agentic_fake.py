@@ -95,6 +95,23 @@ class PrefixCache:
         return tokens, cached
 
 
+def trace_tokens(request):
+    """Byte tokens for trace mechanics, including earlier reasoning removal."""
+    if 'prompt' in request:
+        return list(request['prompt'].encode())
+    messages = request['messages']
+    last_user = max((i for i, m in enumerate(messages) if m['role'] == 'user'), default=-1)
+    rendered = ''
+    for i, message in enumerate(messages):
+        rendered += '<' + message['role'] + '>'
+        if request.get('preserve_thinking') or i > last_user:
+            rendered += message.get('reasoning_content', '')
+        rendered += message.get('content', '') + '</turn>'
+    if request.get('add_generation_prompt', True):
+        rendered += '<assistant>'
+    return list(rendered.encode())
+
+
 @contextmanager
 def fake_server(files, mode='fixed', clock=None, reads=None):
     """`clock` (a FakeClock) advances by the pacing interval per event. With
@@ -151,6 +168,15 @@ def fake_server(files, mode='fixed', clock=None, reads=None):
                 pass  # Expected when an interrupted benchmark cancels a stream.
 
         def chat(self):
+            if self.path == '/tokenize':
+                request = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                raw = json.dumps({'tokens': trace_tokens(request)}).encode()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+                return
             if self.path != '/v1/chat/completions':
                 self.send_error(404)
                 return
@@ -181,7 +207,18 @@ def fake_server(files, mode='fixed', clock=None, reads=None):
                 emit({'choices': [{'index': 0, 'delta': value}]})
 
             messages = request['messages']
-            if request.get('tools'):
+            trace = request.get('return_token_ids') and request.get('ignore_eos')
+            if trace:
+                prompt = trace_tokens(request)
+                prompt_tokens = len(prompt)
+                cached_tokens = min(cached_tokens, prompt_tokens - 1)
+                emit({'prompt_token_ids': prompt, 'choices': []})
+                output = request['max_tokens']
+                for part in (output // 2, output - output // 2):
+                    if part:
+                        emit({'choices': [{'index': 0, 'delta': {'content': 'x' * part}, 'token_ids': [120] * part}]})
+                finish = 'length'
+            elif request.get('tools'):
                 tool_count = sum(m['role'] == 'tool' for m in messages)
                 path = messages[1]['content'].split(':', 1)[0][3:]
                 if tool_count < 3:

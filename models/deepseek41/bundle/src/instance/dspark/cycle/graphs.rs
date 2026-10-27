@@ -12,6 +12,32 @@ use runtime_bundle_abi::{
 };
 
 impl Instance {
+    /// Issue validated eager pieces, joining each layer before its consumer.
+    /// The caller retains its lifecycle checks and unwind scope.
+    pub(in crate::instance) fn launch_layered_pieces(
+        &self,
+        streams: &[BundleStreamHandleV1],
+        ranges: &[Vec<std::ops::Range<usize>>],
+        programs: &[Vec<PreparedLaunch>],
+        collectives: &[Vec<bool>],
+        mut join: impl FnMut(usize) -> Result<(), BundleAbiError>,
+    ) -> Result<(), DispatchError> {
+        let pieces = ranges.first().ok_or(DispatchError::InvalidPlan)?.len();
+        for piece in 0..pieces {
+            if piece > 0 {
+                join(piece - 1)?;
+            }
+            let ops = (0..streams.len())
+                .map(|rank| &programs[rank][ranges[rank][piece].clone()])
+                .collect::<Vec<_>>();
+            let waits = (0..streams.len())
+                .map(|rank| &collectives[rank][ranges[rank][piece].clone()])
+                .collect::<Vec<_>>();
+            self.launch_eager(streams, &ops, &waits)?;
+        }
+        Ok(())
+    }
+
     /// The prepared layer gathers of a layered target launch: DSpark's, or
     /// AR's.
     fn target_layers(&self) -> Result<&[crate::dspark::cycle::LayerGather], DispatchError> {
@@ -97,19 +123,13 @@ impl Instance {
                 }
             }
             let Some((bucket, items)) = graph else {
-                for piece in 0..pieces {
-                    if piece > 0 {
-                        self.wait_target_rows(piece - 1)?;
-                    }
-                    let ops = (0..streams.len())
-                        .map(|rank| &programs[rank][ranges[rank][piece].clone()])
-                        .collect::<Vec<_>>();
-                    let waits = (0..streams.len())
-                        .map(|rank| &collectives[rank][ranges[rank][piece].clone()])
-                        .collect::<Vec<_>>();
-                    self.launch_eager(streams, &ops, &waits)?;
-                }
-                return Ok(());
+                return self.launch_layered_pieces(
+                    streams,
+                    &ranges,
+                    &programs,
+                    &collectives,
+                    |layer| self.wait_target_rows(layer),
+                );
             };
             for (rank, &stream) in streams.iter().enumerate() {
                 let key = GraphKey {

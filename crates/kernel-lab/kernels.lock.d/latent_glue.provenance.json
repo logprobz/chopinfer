@@ -1,7 +1,7 @@
 [
   {
     "name": "chop_latent_glue_lab",
-    "source_closure_sha256": "eef58807fbcbd75ba46375de2b009924dd699410cc16f31bcb213be47bfc1e67"
+    "source_closure_sha256": "1d5f7ba7e90f77dad45396327558c4755d035dba12667bf4c6058ebec1fca030"
   },
   {
     "name": "chop_latent_glue_quantize_lab",

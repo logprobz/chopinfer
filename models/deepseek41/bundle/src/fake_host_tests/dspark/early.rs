@@ -53,7 +53,7 @@ struct Run {
 /// keeping its bonus row.
 fn schedule(ranks: Ranks, steps: usize) -> Run {
     let shape = Shape::new(&FLASH, ranks).unwrap();
-    let (host, mut instance) = create(shape);
+    let (host, mut instance) = create_with_logs(shape, 4, 32, true);
     let (span, stride) = crate::instance::dspark_early_ids(instance.handle()).expect("early IDs");
     let mut histories = Vec::new();
     for slot in 0..4 {

@@ -1,6 +1,21 @@
 //! Kept upper-skip plans issue exactly what a fresh lowering issues.
 use super::*;
 use crate::instance::execute::plan_cache::{self, MAX_ROWS, Mode};
+
+fn create_cached(host: &Rc<Host>, mode: Mode, plans: usize) -> BundleInstanceV1 {
+    use model_deepseek41_contract::execution_options::{
+        PREFILL_PLAN_CACHE_PLANS, PREFILL_PLAN_CACHE_VERIFY,
+    };
+    super::prefill_skip::create_profile_with_options(
+        host,
+        8192,
+        true,
+        &[
+            (PREFILL_PLAN_CACHE_VERIFY, (mode == Mode::Verify).into()),
+            (PREFILL_PLAN_CACHE_PLANS, plans.into()),
+        ],
+    )
+}
 use bundle_runtime::fake_host::RecordingSink;
 use runtime_bundle_sdk::prefill::{Boundary, encode};
 use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
@@ -136,9 +151,11 @@ fn lifecycle_on(mode: Mode, dspark: bool) -> (Vec<String>, (u64, u64)) {
     if dspark {
         host.speculation.set(Some((5, 32)));
     }
-    let mut instance = plan_cache::with_mode(mode, || {
-        super::prefill_skip::create_profile(&host, 8192, true)
-    });
+    let mut instance = create_cached(
+        &host,
+        mode,
+        model_deepseek41_contract::execution_options::DEFAULT_PLANS,
+    );
     let mut steps: Vec<(Vec<u8>, Then, &[u64])> = vec![
         (batch(&[prompt(1, 0, 22, 100, 0)], &[]), Then::Commit, &[]),
         (batch(&[prompt(2, 1, 22, 300, 9)], &[]), Then::Commit, &[]),
@@ -321,9 +338,7 @@ type Outcome = (Vec<String>, (u64, u64), (Vec<u32>, u64));
 /// commit, on an instance keeping at most `plans` plans.
 fn one_at_a_time(mode: Mode, plans: usize, lengths: &[u32]) -> Outcome {
     let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-    let mut instance = plan_cache::with_limit(mode, plans, || {
-        super::prefill_skip::create_profile(&host, 8192, true)
-    });
+    let mut instance = create_cached(&host, mode, plans);
     for (index, &rows) in lengths.iter().enumerate() {
         let request = index as u64 + 1;
         let first = 100 + 70 * index as u32;

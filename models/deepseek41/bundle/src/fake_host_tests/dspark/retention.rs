@@ -18,9 +18,7 @@ fn batch(items: &[(u64, u64, u64)], depth: u32) -> Vec<u8> {
 }
 
 fn create_indexed() -> (Rc<Host>, BundleInstanceV1) {
-    let result = create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 16, 32);
-    crate::instance::dspark_step_trace_for_test(result.1.handle(), true);
-    result
+    create_with_logs(Shape::new(&FLASH, Ranks::TP4).unwrap(), 16, 32, true)
 }
 
 fn prepare_prompts(host: &Host, instance: &mut BundleInstanceV1, positions: &[u64]) {

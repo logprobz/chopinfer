@@ -468,6 +468,8 @@ pub struct Adapter<'a, P> {
     /// Supplied target-token masks only; emitted drafts are always text.
     pub text: &'a BTreeMap<u64, Vec<bool>>,
     pub diagnostic: Context,
+    /// Whether the instance opted into per-step JSON diagnostics.
+    pub diagnostic_logs: bool,
     /// Phase times of this callback, when step tracing is enabled.
     pub times: Option<PhaseTimes>,
 }
@@ -722,9 +724,12 @@ impl<P: Program> Host for Adapter<'_, P> {
         self.staging.commit(plan)
     }
     fn record_diagnostics(&mut self, diagnostics: &[Diagnostic]) {
-        calibration::record(self.diagnostic, diagnostics, |message| {
-            self.services.log(message)
-        });
+        calibration::record(
+            self.diagnostic_logs,
+            self.diagnostic,
+            diagnostics,
+            |message| self.services.log(message),
+        );
         self.staging.cancel();
     }
 }

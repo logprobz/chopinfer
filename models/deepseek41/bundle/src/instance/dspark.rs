@@ -349,6 +349,7 @@ impl Instance {
         let services = std::rc::Rc::clone(&self.services);
         let device = self.dspark.as_mut().ok_or("DSpark is absent")?;
         let diagnostic = device.diagnostic;
+        let diagnostic_logs = self.config.execution.diagnostic_step_logs;
         if device.runtime.is_none() || device.staging.is_none() {
             return Err("DSpark lifecycle or staging is borrowed".into());
         }
@@ -372,6 +373,7 @@ impl Instance {
             readback: &readback,
             text: &text,
             diagnostic,
+            diagnostic_logs,
             times: times.take(),
         };
         let result = work(&mut runtime, &mut host);
@@ -475,7 +477,11 @@ impl Instance {
             .filter(|input| input.rows.kind.is_verify())
             .map(|input| input.rows.request)
             .collect();
-        let mut times = device.step_trace.then(PhaseTimes::default);
+        let mut times = self
+            .config
+            .execution
+            .diagnostic_step_logs
+            .then(PhaseTimes::default);
         let items = inputs.len();
         let drafting = inputs
             .iter()

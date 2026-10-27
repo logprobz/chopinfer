@@ -269,6 +269,7 @@ fn run(shape: Shape, budget: u32, kept: Option<u32>) -> ResultCase {
         ranks: &ranks,
         readback: &readback,
         text: &text,
+        diagnostic_logs: true,
         diagnostic: Context {
             instance_id: 1,
             step_id: 1,
@@ -553,6 +554,7 @@ fn deferred_adapter_keeps_confidence_bits_and_commits_only_retained_text_history
         readback: &readback,
         text: &text,
         times: Some(PhaseTimes::default()),
+        diagnostic_logs: true,
         diagnostic: Context {
             instance_id: 1,
             step_id: 1,

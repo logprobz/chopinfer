@@ -463,10 +463,39 @@ fn create_with_limits(
     items: u32,
     verify_tokens: u32,
 ) -> (Rc<Host>, BundleInstanceV1) {
+    create_with_options(shape, items, verify_tokens, &[])
+}
+
+fn create_with_logs(
+    shape: Shape,
+    items: u32,
+    verify_tokens: u32,
+    enabled: bool,
+) -> (Rc<Host>, BundleInstanceV1) {
+    create_with_options(
+        shape,
+        items,
+        verify_tokens,
+        &[(
+            model_deepseek41_contract::execution_options::DIAGNOSTIC_STEP_LOGS,
+            enabled.into(),
+        )],
+    )
+}
+
+fn create_with_options(
+    shape: Shape,
+    items: u32,
+    verify_tokens: u32,
+    options: &[(&str, serde_json::Value)],
+) -> (Rc<Host>, BundleInstanceV1) {
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
     host.drafter.set(true);
     host.speculation.set(Some((5, verify_tokens)));
-    let record = crate::config::tests::record(&shape, host.kv, items, false);
+    let mut record = crate::config::tests::record(&shape, host.kv, items, false);
+    for (name, value) in options {
+        record = crate::config::tests::with_option(record, name, value.clone());
+    }
     let instance = api()
         .create(
             HostServicesTableV1::new(Rc::new(MappedHost::new(Rc::clone(&host)))),
@@ -746,7 +775,7 @@ fn instance_configures_draft_attention_before_execution() {
 #[test]
 fn full_instance_drafts_and_retains_all_topologies() {
     for shape in crate::shape::topologies() {
-        let (host, mut instance) = create(shape);
+        let (host, mut instance) = create_with_logs(shape, 4, 32, true);
         execute(&mut instance, &host, &super::prompt(7, 0, 0, 3, true));
         instance.commit().unwrap();
         let before = host.journal.borrow().len();
@@ -799,6 +828,82 @@ fn records(host: &Host) -> Vec<serde_json::Value> {
 }
 
 #[test]
+fn step_diagnostics_are_opt_in_and_preserve_the_full_journal() {
+    use model_deepseek41_contract::execution_options::DIAGNOSTIC_STEP_LOGS;
+    let mut journals = Vec::new();
+    for enabled in [None, Some(false), Some(true)] {
+        let options = enabled
+            .map(|value| (DIAGNOSTIC_STEP_LOGS, value.into()))
+            .into_iter()
+            .collect::<Vec<_>>();
+        let (host, mut instance) =
+            create_with_options(Shape::new(&FLASH, Ranks::TP4).unwrap(), 1, 32, &options);
+        execute(&mut instance, &host, &super::prompt(1, 0, 0, 3, true));
+        instance.commit().unwrap();
+        execute(&mut instance, &host, &verify(1, 0, 3, 5));
+        instance.commit_accepted(&[kept(1, 6)]).unwrap();
+        execute(&mut instance, &host, &verify(1, 0, 9, 5));
+        assert_eq!(state(&instance, 1).end, 9);
+        instance.cancel().unwrap();
+        assert!(crate::instance::dspark_context(instance.handle(), 1).is_none());
+        assert_eq!(
+            crate::instance::ledger_state(instance.handle(), 0),
+            (None, false)
+        );
+        instance.retire_request(1).unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+        let logs = host
+            .logs
+            .borrow()
+            .iter()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .collect::<Vec<_>>();
+        let shape = logs
+            .iter()
+            .filter(|record| record["schema"] == "chopinfer.deepseek41.step-shape.v1")
+            .collect::<Vec<_>>();
+        let confidence = records(&host);
+        if enabled == Some(true) {
+            assert_eq!(
+                shape
+                    .iter()
+                    .filter(|record| record["phase"] == "dspark-engram")
+                    .count(),
+                2
+            );
+            assert_eq!(
+                shape
+                    .iter()
+                    .filter(|record| record["micros"].is_object())
+                    .count(),
+                3
+            );
+            assert_eq!(confidence.len(), 2);
+            assert_eq!(confidence[0]["completion"], "committed");
+            assert_eq!(confidence[1]["completion"], "cancelled");
+        } else {
+            assert!(
+                shape.is_empty(),
+                "default serving emitted step JSON: {shape:?}"
+            );
+            assert!(
+                confidence.is_empty(),
+                "default serving emitted confidence JSON"
+            );
+            assert!(
+                !logs
+                    .iter()
+                    .any(|record| record["schema"] == "chopinfer.deepseek41.commit-shape.v1")
+            );
+        }
+        journals.push(host.journal.borrow().clone());
+    }
+    assert_eq!(journals[0], journals[1]);
+    assert_eq!(journals[0], journals[2]);
+}
+
+#[test]
 fn instance_partial_acceptance_ar_wrap_cancel_restore_and_slot_reuse() {
     graph_lifecycle(None);
 }
@@ -810,8 +915,18 @@ fn graph_pressure_preserves_partial_acceptance_cancel_restore_and_slot_reuse() {
 
 fn graph_lifecycle(capacity: Option<usize>) {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-    let (host, mut instance) = create(shape);
-    crate::instance::dspark_graphs_for_test(instance.handle(), capacity);
+    use model_deepseek41_contract::execution_options::{
+        DIAGNOSTIC_STEP_LOGS, DSPARK_GRAPH_HANDLES_PER_RANK,
+    };
+    let mut options = vec![(DIAGNOSTIC_STEP_LOGS, true.into())];
+    if let Some(capacity) = capacity {
+        assert_eq!(capacity % shape.ranks() as usize, 0);
+        options.push((
+            DSPARK_GRAPH_HANDLES_PER_RANK,
+            (capacity / shape.ranks() as usize).into(),
+        ));
+    }
+    let (host, mut instance) = create_with_options(shape, 4, 32, &options);
     let prompt_rows = 141;
     let ids = (0..prompt_rows as u32).collect::<Vec<_>>();
     execute(
@@ -891,7 +1006,7 @@ fn graph_lifecycle(capacity: Option<usize>) {
 #[test]
 fn instance_budget_prefixes_compute_the_same_full_drafter_program() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-    let (host, mut instance) = create(shape);
+    let (host, mut instance) = create_with_logs(shape, 4, 32, true);
     execute(&mut instance, &host, &super::prompt(1, 0, 0, 3, true));
     instance.commit().unwrap();
     let pages = (0..instance.describe_prefix_state().unwrap())

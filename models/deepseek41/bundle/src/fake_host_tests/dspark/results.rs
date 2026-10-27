@@ -314,7 +314,7 @@ fn default_device_results_activate_and_zero_restores_legacy_dspark_journals() {
 fn device_results_preserve_draft_order_wait_for_sampling_and_collect_once() {
     for shape in crate::shape::topologies() {
         for (items, k) in [(1_u32, 5_u32), (8, 3)] {
-            let (host, mut instance) = create_with_limits(shape, 8, 32);
+            let (host, mut instance) = create_with_logs(shape, 8, 32, true);
             for slot in 0..items {
                 execute(
                     &mut instance,

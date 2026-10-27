@@ -549,6 +549,7 @@ impl Instance {
         let Some(pending) = &device.cycle.pending else {
             return self.finish_deferred_engram();
         };
+        let diagnostic_logs = self.config.execution.diagnostic_step_logs;
         // Add the host callback scopes and each consumer's exposed wait.
         // Per-layer values retain attribution when the callbacks overlap.
         let mut host_ns = 0_u64;
@@ -561,10 +562,12 @@ impl Instance {
                 .ok_or("DSpark mapped layer upload is incomplete at target boundary")?;
             host_ns += stats.host_nanoseconds;
             exposed_ns += stats.exposed_nanoseconds;
-            layers.push(format!(
-                "{{\"layer\":{},\"host_ns\":{},\"exposed_ns\":{}}}",
-                layer.layer, stats.host_nanoseconds, stats.exposed_nanoseconds,
-            ));
+            if diagnostic_logs {
+                layers.push(format!(
+                    "{{\"layer\":{},\"host_ns\":{},\"exposed_ns\":{}}}",
+                    layer.layer, stats.host_nanoseconds, stats.exposed_nanoseconds,
+                ));
+            }
         }
         let mut early_layers = Vec::new();
         if let Some(early) = &device.cycle.early
@@ -576,10 +579,12 @@ impl Instance {
                     .complete_mapped_gather(gather)
                     .map_err(|e| e.to_string())?
                     .ok_or("DSpark early Engram upload is incomplete at target boundary")?;
-                early_layers.push(format!(
-                    "{{\"layer\":{},\"rows\":{rows},\"host_ns\":{},\"exposed_ns\":{}}}",
-                    layer.layer, stats.host_nanoseconds, stats.exposed_nanoseconds,
-                ));
+                if diagnostic_logs {
+                    early_layers.push(format!(
+                        "{{\"layer\":{},\"rows\":{rows},\"host_ns\":{},\"exposed_ns\":{}}}",
+                        layer.layer, stats.host_nanoseconds, stats.exposed_nanoseconds,
+                    ));
+                }
             }
         }
         let packet = device
@@ -645,28 +650,30 @@ impl Instance {
             )
             .map_err(|e| e.to_string())?;
         }
-        // The existing routine schema uses bounded best-effort logging. It
-        // reports exposed time without making logging a coordinator wait.
-        let message = format!(
-            concat!(
-                "{{\"schema\":\"chopinfer.deepseek41.step-shape.v1\",",
-                "\"phase\":\"dspark-engram\",\"items\":{},\"rows\":{},",
-                "\"host_ns\":{},\"exposed_ns\":{},\"device_results\":{},\"bundle_readbacks\":{},\"layers\":[{}],{}\"explicit_bundle_syncs\":0}}"
-            ),
-            pending.inputs.len(),
-            pending.text.len(),
-            host_ns,
-            exposed_ns,
-            device.results.metadata.is_some(),
-            boundary_reads + device.cycle.layers.len(),
-            layers.join(","),
-            if early_layers.is_empty() {
-                String::new()
-            } else {
-                format!("\"early\":[{}],", early_layers.join(","))
-            },
-        );
-        let _ = self.services.log(message.as_bytes());
+        if diagnostic_logs {
+            // The existing routine schema uses bounded best-effort logging. It
+            // reports exposed time without making logging a coordinator wait.
+            let message = format!(
+                concat!(
+                    "{{\"schema\":\"chopinfer.deepseek41.step-shape.v1\",",
+                    "\"phase\":\"dspark-engram\",\"items\":{},\"rows\":{},",
+                    "\"host_ns\":{},\"exposed_ns\":{},\"device_results\":{},\"bundle_readbacks\":{},\"layers\":[{}],{}\"explicit_bundle_syncs\":0}}"
+                ),
+                pending.inputs.len(),
+                pending.text.len(),
+                host_ns,
+                exposed_ns,
+                device.results.metadata.is_some(),
+                boundary_reads + device.cycle.layers.len(),
+                layers.join(","),
+                if early_layers.is_empty() {
+                    String::new()
+                } else {
+                    format!("\"early\":[{}],", early_layers.join(","))
+                },
+            );
+            let _ = self.services.log(message.as_bytes());
+        }
         let device = self.dspark.as_mut().expect("drafter retained");
         device.prefetch.feedback = feedback;
         let cycle = &mut device.cycle;

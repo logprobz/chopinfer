@@ -176,7 +176,7 @@ impl Instance {
     }
 
     fn prefetch_trace(&self, event: &str, items: usize, nanos: u128) {
-        if self.dspark.as_ref().is_some_and(|device| device.step_trace) {
+        if self.config.execution.diagnostic_step_logs {
             let _ = self.services.log(
                 format!(
                     "{{\"schema\":\"chopinfer.deepseek41.step-shape.v1\",\"phase\":\"dspark-prefetch\",\"event\":\"{event}\",\"items\":{items},\"host_ns\":{nanos}}}"

@@ -5,31 +5,15 @@ use crate::instance::indexer_graphs::Bank;
 use bundle_runtime::graphs::{GraphKey, GraphReservation};
 use runtime_bundle_abi::{BundleAbiError, BundleStatusV1};
 
-/// Graph handles per rank. A TP4 startup warms 131 target keys of three
-/// pieces per rank, 24 catch-up and 6 draft widths: 423 handles per rank,
-/// which 384 could not hold, so the widest 16-item verify keys ran eagerly.
-/// The rest leaves room for completion tails that serving adds lazily.
-/// Workloads at 546 handles per rank held about 1.19 GiB of capture
-/// allocations with at least 3.10 GiB free on each GPU.
-const HANDLES_PER_RANK: usize = 512;
-const ENV: &str = "CHOPINFER_DSPARK_GRAPH_HANDLES_PER_RANK";
-
 impl Instance {
     pub(crate) fn configure_dspark_graphs(&self) -> Result<(), BundleAbiError> {
         if self.dspark.is_none() {
             return Ok(());
         }
-        let per_rank = match std::env::var_os(ENV) {
-            None => HANDLES_PER_RANK,
-            Some(value) => value
-                .to_str()
-                .and_then(|v| v.parse::<usize>().ok())
-                .ok_or_else(|| {
-                    self.log("CHOPINFER_DSPARK_GRAPH_HANDLES_PER_RANK requires an integer");
-                    BundleAbiError::Status(BundleStatusV1::InvalidArgument)
-                })?,
-        };
-        let capacity = per_rank
+        let capacity = self
+            .config
+            .execution
+            .dspark_graph_handles_per_rank
             .checked_mul(self.ranks.len())
             .ok_or(BundleAbiError::InvalidRange("DSpark graph capacity"))?;
         self.graphs.set_capacity(capacity)?;

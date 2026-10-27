@@ -24,6 +24,11 @@ fn create_with_mapping(count: u32, sampled: bool) -> (Rc<Host>, BundleInstanceV1
         crate::config::tests::record(&shape, host.kv, count, false),
         sampled,
     );
+    let record = crate::config::tests::with_option(
+        record,
+        model_deepseek41_contract::execution_options::DIAGNOSTIC_STEP_LOGS,
+        true.into(),
+    );
     let instance = crate::device_results::with_override(None, || {
         api()
             .with_device_results_api(crate::api::BUNDLE_DEEPSEEK41_DEVICE_RESULTS_API_V1)
@@ -31,7 +36,6 @@ fn create_with_mapping(count: u32, sampled: bool) -> (Rc<Host>, BundleInstanceV1
             .create(HostServicesTableV1::new(Rc::clone(&mapped)), &record)
             .unwrap()
     });
-    crate::instance::dspark_step_trace_for_test(instance.handle(), true);
     (host, instance, mapped)
 }
 

@@ -68,8 +68,6 @@ pub(crate) struct Device {
     pub catch_up_graphs: BTreeMap<u32, GraphCache<DeepSeek>>,
     pub diagnostic: Context,
     pub verified: Vec<u64>,
-    /// `CHOPINFER_STEP_TRACE=1` at create: each execute logs its phase times.
-    pub step_trace: bool,
     /// Most drafting items per drafter forward, from the create record's
     /// `dspark_draft_chunk_items` model option.
     pub draft_chunk_items: usize,
@@ -258,7 +256,6 @@ impl Device {
                 step_id: 0,
             },
             verified: Vec::new(),
-            step_trace: std::env::var("CHOPINFER_STEP_TRACE").as_deref() == Ok("1"),
             draft_chunk_items,
             computed_positions: BLOCK_ROWS,
             #[cfg(feature = "diagnostic-taps")]

@@ -1,14 +1,13 @@
 //! Fold scratch aliases ordered layers, while weights and lanes stay disjoint.
 use super::shared_overlap::journal_spans;
 use super::*;
-use crate::shared_overlap::{Settings, with_settings_in_tests};
 
 #[test]
 fn packed_folds_share_scratch_across_layers_and_keep_lanes_disjoint() {
     for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
         let shape = Shape::new(&FLASH, ranks).unwrap();
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);
-        let mut instance = with_settings_in_tests(Settings::ALL, || create(&host, 4));
+        let mut instance = create(&host, 4);
         audit_allocations(&host, &instance, false);
         let initial = host.device.journal.borrow().clone();
         // The folds read the planned packed codes: create packs nothing.

@@ -374,9 +374,9 @@ impl Instance {
 
     pub(super) fn dspark_commit_features(&self, plan: &CommitPlan) -> Result<(), String> {
         let mut times = self
-            .dspark
-            .as_ref()
-            .is_some_and(|d| d.step_trace)
+            .config
+            .execution
+            .diagnostic_step_logs
             .then(CommitTimes::default);
         let started = times.as_ref().map(|_| std::time::Instant::now());
         let result = self.dspark_commit_features_timed(plan, times.as_mut());

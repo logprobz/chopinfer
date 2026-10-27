@@ -13,15 +13,13 @@
 //! tags and Engram rows reach the kernels through the per-step uploads and
 //! are never part of a plan.
 //!
-//! `CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE`: unset or `1` keeps plans,
-//! `verify` keeps plans and lowers every hit again,
-//! refusing the step if the fresh plan differs from the kept one.
+//! `prefill_plan_cache_verify` lowers every hit again and refuses the step
+//! if the fresh plan differs from the kept one. It defaults to false.
 //!
-//! At most `CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE_PLANS` plans are kept
-//! (1 to 64, default [`DEFAULT_PLANS`]); keeping one more drops the least
-//! recently used. A dropped plan is lowered again on its next use, and a
-//! fresh lowering issues what a kept plan does, so the limit moves only host
-//! time and memory.
+//! At most `prefill_plan_cache_plans` plans are kept (1 to 64, default 16).
+//! Keeping one more drops the least recently used. A dropped plan is
+//! lowered again on its next use, with the same launches, so the limit
+//! moves only host time and memory.
 
 use super::{PREFILL, Run, skip};
 use crate::instance::Instance;
@@ -32,69 +30,15 @@ use bundle_runtime::upload::InputLayout;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-const SWITCH: &str = "CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE";
-const PLANS_SWITCH: &str = "CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE_PLANS";
 /// The longest prompt a plan is kept for. At most one plan of each length
 /// is kept; one TP4 Flash plan holds about ten thousand launches in about
 /// 20 MiB of host memory.
-pub(crate) const MAX_ROWS: u32 = 64;
-/// Plans kept at once unless `CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE_PLANS`
-/// says otherwise: about 320 MiB of host memory on TP4 Flash, where every
-/// length kept would be about 1.3 GiB.
-pub(crate) const DEFAULT_PLANS: usize = 16;
+pub(crate) const MAX_ROWS: u32 = model_deepseek41_contract::execution_options::MAX_PLANS as u32;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Mode {
     On,
     Verify,
-}
-
-impl Mode {
-    fn read(setting: Option<&str>) -> Result<Self, String> {
-        match setting {
-            None | Some("1") => Ok(Self::On),
-            Some("verify") => Ok(Self::Verify),
-            Some(other) => Err(format!("{SWITCH}={other:?} is not 1 or verify")),
-        }
-    }
-}
-
-/// The most plans kept at once, from `setting`.
-fn read_limit(setting: Option<&str>) -> Result<usize, String> {
-    let Some(setting) = setting else {
-        return Ok(DEFAULT_PLANS);
-    };
-    match setting.parse::<usize>() {
-        Ok(plans) if (1..=MAX_ROWS as usize).contains(&plans) => Ok(plans),
-        _ => Err(format!(
-            "{PLANS_SWITCH}={setting:?} is not a plan count from 1 to {MAX_ROWS}"
-        )),
-    }
-}
-
-#[cfg(test)]
-thread_local! {
-    static IN_TESTS: Cell<Option<(Mode, usize)>> = const { Cell::new(None) };
-}
-
-/// Runs `run` with instances created inside it in `mode`.
-#[cfg(test)]
-pub(crate) fn with_mode<T>(mode: Mode, run: impl FnOnce() -> T) -> T {
-    with_limit(mode, DEFAULT_PLANS, run)
-}
-
-/// Runs `run` with instances created inside it in `mode`, keeping at most
-/// `plans` plans.
-#[cfg(test)]
-pub(crate) fn with_limit<T>(mode: Mode, plans: usize, run: impl FnOnce() -> T) -> T {
-    struct Restore(Option<(Mode, usize)>);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            IN_TESTS.set(self.0);
-        }
-    }
-    let _restore = Restore(IN_TESTS.replace(Some((mode, plans))));
-    run()
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -123,22 +67,13 @@ pub(crate) struct Cache {
 }
 
 impl Cache {
-    pub(crate) fn from_env() -> Result<Self, String> {
-        #[cfg(test)]
-        if let Some((mode, plans)) = IN_TESTS.get() {
-            return Ok(Self::new(mode, plans));
-        }
-        let read = |name: &str| match std::env::var(name) {
-            Ok(value) => Ok(Some(value)),
-            Err(std::env::VarError::NotPresent) => Ok(None),
-            Err(std::env::VarError::NotUnicode(_)) => Err(format!("{name} is not unicode")),
+    pub(crate) fn new(options: &model_deepseek41_contract::execution_options::Options) -> Self {
+        let mode = if options.prefill_plan_cache_verify {
+            Mode::Verify
+        } else {
+            Mode::On
         };
-        let mode = Mode::read(read(SWITCH)?.as_deref())?;
-        let limit = read_limit(read(PLANS_SWITCH)?.as_deref())?;
-        Ok(Self::new(mode, limit))
-    }
-
-    fn new(mode: Mode, limit: usize) -> Self {
+        let limit = options.prefill_plan_cache_plans;
         Self {
             mode,
             plans: RefCell::new((0..MAX_ROWS).map(|_| None).collect()),
@@ -322,7 +257,7 @@ pub(crate) fn kept(handle: runtime_bundle_abi::BundleHandleV1) -> (Vec<u32>, u64
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_PLANS, MAX_ROWS, Mode, read_limit, same_programs};
+    use super::same_programs;
     use crate::program::Stage;
     use bundle_runtime::dispatch::BufferBindings;
     use bundle_runtime::pipeline::PreparedLaunch;
@@ -373,25 +308,5 @@ mod tests {
         assert!(!same(base(), program(launch("k", 768, 7, 0), false)));
         assert!(!same(base(), program(launch("k", 256, 8, 0), false)));
         assert!(!same(base(), program(launch("k", 256, 7, 0), true)));
-    }
-
-    #[test]
-    fn the_switch_defaults_on_and_refuses_other_values() {
-        assert_eq!(Mode::read(None), Ok(Mode::On));
-        assert_eq!(Mode::read(Some("1")), Ok(Mode::On));
-        assert!(Mode::read(Some("0")).is_err());
-        assert_eq!(Mode::read(Some("verify")), Ok(Mode::Verify));
-        assert!(Mode::read(Some("on")).is_err());
-        assert!(Mode::read(Some("")).is_err());
-    }
-
-    #[test]
-    fn the_plan_limit_defaults_and_refuses_counts_outside_one_to_max_rows() {
-        assert_eq!(read_limit(None), Ok(DEFAULT_PLANS));
-        assert_eq!(read_limit(Some("1")), Ok(1));
-        assert_eq!(read_limit(Some("64")), Ok(MAX_ROWS as usize));
-        for refused in ["0", "65", "-1", "", "all"] {
-            assert!(read_limit(Some(refused)).is_err(), "{refused}");
-        }
     }
 }

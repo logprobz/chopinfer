@@ -40,6 +40,7 @@ pub const KV_LAYOUTS: [KvLayout; 2] = [
 /// One instance's checked configuration.
 #[derive(Clone, Debug)]
 pub struct Configuration {
+    pub execution: model_deepseek41_contract::execution_options::Options,
     pub prefill: model_deepseek41_contract::prefill_profile::Profile,
     /// Drafting items per drafter forward
     /// (`model_deepseek41_contract::dspark_options`).
@@ -166,6 +167,11 @@ pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleS
             log(&e);
             BundleStatusV1::InvalidArgument
         })?;
+    let execution =
+        model_deepseek41_contract::execution_options::Options::read(&options).map_err(|e| {
+            log(&e);
+            BundleStatusV1::InvalidArgument
+        })?;
     shape.runtime = shape
         .geometry
         .resolve_model_options(shape.geometry.runtime_defaults(), &options)
@@ -238,6 +244,7 @@ pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleS
         return Err(BundleStatusV1::Unsupported);
     }
     Ok(Configuration {
+        execution,
         prefill,
         dspark_draft_chunk_items,
         dspark_coupled_drafts,
@@ -389,6 +396,50 @@ pub(crate) mod tests {
         bytes.extend_from_slice(MODEL_OPTIONS_TAG_V1);
         bytes.extend_from_slice(&(options.len() as u32).to_le_bytes());
         bytes.extend_from_slice(&options);
+    }
+
+    #[test]
+    fn execution_options_are_checked_before_instance_allocation() {
+        use model_deepseek41_contract::execution_options::*;
+        let shape = crate::shape::topologies()[0];
+        let base = record(&shape, KV_LAYOUTS[0], 1, false);
+        let defaults = decode(&base, |_| {}).unwrap().execution;
+        assert_eq!(
+            defaults,
+            Options::read(&std::collections::BTreeMap::new()).unwrap()
+        );
+        let mut changed = base.clone();
+        for (name, value) in [
+            (SHARED_OVERLAP_MAX_ROWS, 8.into()),
+            (PREFILL_PLAN_CACHE_PLANS, 2.into()),
+            (PREFILL_PLAN_CACHE_VERIFY, true.into()),
+            (DSPARK_GRAPH_HANDLES_PER_RANK, 32.into()),
+            (DIAGNOSTIC_STEP_LOGS, true.into()),
+        ] {
+            changed = with_option(changed, name, value);
+        }
+        assert_eq!(
+            decode(&changed, |_| {}).unwrap().execution,
+            Options {
+                shared_overlap_max_rows: 8,
+                prefill_plan_cache_plans: 2,
+                prefill_plan_cache_verify: true,
+                dspark_graph_handles_per_rank: 32,
+                diagnostic_step_logs: true,
+            }
+        );
+        for (name, value) in [
+            (SHARED_OVERLAP_MAX_ROWS, 0.into()),
+            (PREFILL_PLAN_CACHE_PLANS, 65.into()),
+            (PREFILL_PLAN_CACHE_VERIFY, "verify".into()),
+            (DSPARK_GRAPH_HANDLES_PER_RANK, (-1).into()),
+            (DIAGNOSTIC_STEP_LOGS, 1.into()),
+        ] {
+            assert_eq!(
+                decode(&with_option(base.clone(), name, value), |_| {}).unwrap_err(),
+                BundleStatusV1::InvalidArgument
+            );
+        }
     }
 
     #[test]

@@ -1,10 +1,15 @@
 //! Export the target schedule at exact verify widths, including mixed depths.
 use super::*;
+use model_deepseek41_contract::execution_options::DSPARK_GRAPH_HANDLES_PER_RANK;
 
 #[test]
 fn wide_query_keeps_short_prefill_on_its_original_entry() {
-    let (host, mut instance) = create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 16, 128);
-    crate::instance::dspark_graphs_for_test(instance.handle(), Some(0));
+    let (host, mut instance) = create_with_options(
+        Shape::new(&FLASH, Ranks::TP4).unwrap(),
+        16,
+        128,
+        &[(DSPARK_GRAPH_HANDLES_PER_RANK, 0.into())],
+    );
     let from = host.journal.borrow().len();
     execute(
         &mut instance,
@@ -28,9 +33,13 @@ fn wide_query_keeps_short_prefill_on_its_original_entry() {
 
 #[test]
 fn target_programs_lower_at_wide_verify_rows() {
-    let (host, mut instance) = create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 16, 128);
+    let (host, mut instance) = create_with_options(
+        Shape::new(&FLASH, Ranks::TP4).unwrap(),
+        16,
+        128,
+        &[(DSPARK_GRAPH_HANDLES_PER_RANK, 0.into())],
+    );
     // Eager execution exposes every launch, independent of the graph budget.
-    crate::instance::dspark_graphs_for_test(instance.handle(), Some(0));
     for slot in 0..16 {
         execute(
             &mut instance,

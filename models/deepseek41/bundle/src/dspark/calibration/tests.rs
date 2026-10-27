@@ -142,12 +142,12 @@ fn rejection_has_a_named_refusal() {
 fn log_failure_does_not_stop_later_records_and_empty_steps_log_nothing() {
     let input = diagnostic();
     let mut seen = Vec::new();
-    record(CONTEXT, &[input.clone(), input], |message| {
+    record(true, CONTEXT, &[input.clone(), input], |message| {
         seen.push(serde_json::from_slice::<Value>(message).unwrap());
         Err("injected logging failure")
     });
     assert_eq!(seen.len(), 2);
-    record(CONTEXT, &[], |_| -> Result<(), ()> {
+    record(true, CONTEXT, &[], |_| -> Result<(), ()> {
         panic!("K=0 has no block to log")
     });
 }
@@ -168,4 +168,11 @@ fn used_depth_diagnostics_never_report_uncomputed_tails() {
     assert!(encode(CONTEXT, &input).is_err());
     input.computed_positions = 6;
     assert!(encode(CONTEXT, &input).is_err());
+}
+
+#[test]
+fn disabled_diagnostics_do_not_call_the_sink() {
+    record(false, CONTEXT, &[diagnostic()], |_| -> Result<(), ()> {
+        panic!("disabled diagnostics must not log");
+    });
 }

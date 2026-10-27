@@ -921,6 +921,9 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         let _ = services.log(format!("{NAME} create failed: {reason}").as_bytes());
     };
     let mut config = decode(bytes, log)?;
+    crate::removed_environment::warn(|message| {
+        let _ = services.log(message.as_bytes());
+    });
     let taps = crate::taps::StepTaps::from_env(&config).map_err(|error| {
         log(&error);
         BundleStatusV1::InvalidArgument
@@ -998,10 +1001,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         log(&error);
         BundleStatusV1::InternalError
     })?;
-    let plans = execute::plan_cache::Cache::from_env().map_err(|error| {
-        log(&error);
-        BundleStatusV1::InvalidArgument
-    })?;
+    let plans = execute::plan_cache::Cache::new(&config.execution);
     let partial = partial();
     if !partial && let Some(missing) = ops.missing.first() {
         log(missing);
@@ -1024,7 +1024,9 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         graphs: GraphCache::with_items(config.create.ranks, items),
         graph_bank: indexer_graphs::Bank::default(),
         indexer_banks: BTreeMap::new(),
-        shared_overlap: crate::shared_overlap::Settings::from_env(),
+        shared_overlap: crate::shared_overlap::Settings::new(
+            config.execution.shared_overlap_max_rows,
+        ),
         side_lanes: Vec::new(),
         draft_graphs: BTreeMap::new(),
         #[cfg(any(feature = "diagnostic-taps", feature = "state-capture"))]
@@ -1578,23 +1580,6 @@ pub(crate) fn prefill_cache_for_test(
 }
 
 #[cfg(test)]
-pub(crate) fn dspark_step_trace_for_test(
-    handle: runtime_bundle_abi::BundleHandleV1,
-    enabled: bool,
-) {
-    INSTANCES.with(|table| {
-        table
-            .borrow_mut()
-            .get_mut(handle)
-            .expect("a live instance")
-            .dspark
-            .as_mut()
-            .expect("enabled drafter")
-            .step_trace = enabled;
-    });
-}
-
-#[cfg(test)]
 pub(crate) fn retention_metadata_for_test(
     handle: runtime_bundle_abi::BundleHandleV1,
 ) -> Vec<runtime_bundle_abi::DeviceBufferSpanV1> {
@@ -1639,5 +1624,19 @@ pub(crate) fn release_graphs_for_test(handle: runtime_bundle_abi::BundleHandleV1
         let mut table = table.borrow_mut();
         let instance = table.get_mut(handle).expect("a live instance");
         instance.graphs.release_all(&instance.services).unwrap();
+    })
+}
+
+/// Keep the removed KV-off scratch audit local to its own test instance.
+#[cfg(test)]
+pub(crate) fn kv_overlap_for_test(
+    handle: runtime_bundle_abi::BundleHandleV1,
+    enabled: bool,
+) -> crate::shared_overlap::Settings {
+    INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let instance = table.get_mut(handle).expect("a live instance");
+        instance.shared_overlap.kv = enabled;
+        instance.shared_overlap
     })
 }

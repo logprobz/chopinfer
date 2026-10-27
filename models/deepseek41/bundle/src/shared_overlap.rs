@@ -31,10 +31,6 @@ use runtime_bundle_abi::{
 use crate::program::Stage;
 use bundle_runtime::pipeline::launch_all;
 
-/// Positive values limit the number of rows in overlapped graph captures.
-#[cfg_attr(test, allow(dead_code))]
-pub const SWITCH: &str = "CHOPINFER_DEEPSEEK41_SHARED_OVERLAP";
-
 /// The largest decode or verify phase whose window KV projection binds the
 /// shared expert's workspace and row status: the dense decode buckets.
 pub fn kv_rows() -> u32 {
@@ -65,25 +61,12 @@ impl Settings {
         kv: true,
     };
 
-    /// The positive row limit selected by [`SWITCH`].
-    pub fn read(value: Option<&str>) -> Self {
-        match value.map(str::parse::<u32>) {
-            Some(Ok(max_rows)) if max_rows > 0 => Self {
-                max_rows,
-                ..Self::ALL
-            },
-            _ => Self::ALL,
+    /// The positive row limit checked from the instance's model options.
+    pub fn new(max_rows: u32) -> Self {
+        Self {
+            max_rows,
+            ..Self::ALL
         }
-    }
-
-    /// The process environment's settings; a test's instances take the
-    /// default (not the process environment) unless it sets theirs within
-    /// [`with_settings_in_tests`].
-    pub fn from_env() -> Self {
-        #[cfg(test)]
-        return IN_TESTS.get().unwrap_or_else(|| Self::read(None));
-        #[cfg(not(test))]
-        Self::read(std::env::var(SWITCH).ok().as_deref())
     }
 
     /// Whether any bucket overlaps.
@@ -101,20 +84,6 @@ impl Settings {
     pub fn serves_kv(self, rows: u32) -> bool {
         self.kv && self.serves(rows) && rows <= kv_rows()
     }
-}
-
-#[cfg(test)]
-thread_local! {
-    static IN_TESTS: std::cell::Cell<Option<Settings>> = const { std::cell::Cell::new(None) };
-}
-
-/// Runs `create` with `settings`, as [`SWITCH`] would set them.
-#[cfg(test)]
-pub(crate) fn with_settings_in_tests<T>(settings: Settings, create: impl FnOnce() -> T) -> T {
-    IN_TESTS.set(Some(settings));
-    let created = create();
-    IN_TESTS.set(None);
-    created
 }
 
 /// Events each rank creates beside its side stream: the fork and the join.
@@ -963,13 +932,12 @@ mod tests {
                 stages[omitted]
             );
         }
-        assert!(Settings::read(None).serves(192));
-        assert!(!Settings::read(Some("8")).serves(32));
-        assert!(Settings::read(None).serves_kv(64));
-        assert!(!Settings::read(None).serves_kv(65));
-        assert!(Settings::read(Some("16")).serves_kv(16));
-        assert!(!Settings::read(Some("16")).serves_kv(32));
-        assert_eq!(Settings::read(None), Settings::ALL);
-        assert_eq!(Settings::read(Some("0")), Settings::ALL);
+        assert!(Settings::ALL.serves(192));
+        assert!(!Settings::new(8).serves(32));
+        assert!(Settings::ALL.serves_kv(64));
+        assert!(!Settings::ALL.serves_kv(65));
+        assert!(Settings::new(16).serves_kv(16));
+        assert!(!Settings::new(16).serves_kv(32));
+        assert_eq!(Settings::new(u32::MAX), Settings::ALL);
     }
 }

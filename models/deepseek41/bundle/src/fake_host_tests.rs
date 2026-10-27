@@ -919,10 +919,21 @@ pub(crate) fn api() -> BundleApiV1 {
 /// Creates an instance serving `items` with only its lowered stages
 /// (`crate::instance::PARTIAL`).
 pub(crate) fn create(host: &Rc<Host>, items: u32) -> BundleInstanceV1 {
+    create_with_options(host, items, &[])
+}
+
+pub(crate) fn create_with_options(
+    host: &Rc<Host>,
+    items: u32,
+    options: &[(&str, serde_json::Value)],
+) -> BundleInstanceV1 {
     if host.speculation.get().is_some_and(|(drafts, _)| drafts > 0) {
         host.drafter.set(true);
     }
-    let record = crate::config::tests::record(&host.shape, host.kv, items, false);
+    let mut record = crate::config::tests::record(&host.shape, host.kv, items, false);
+    for (name, value) in options {
+        record = crate::config::tests::with_option(record, name, value.clone());
+    }
     crate::instance::PARTIAL.with(|partial| partial.set(true));
     let services = if host.drafter.get() {
         HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(host))))

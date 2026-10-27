@@ -1,5 +1,4 @@
 use super::*;
-use crate::shared_overlap::{Settings, with_settings_in_tests};
 
 /// The launch index of the next `launch` line after `at`.
 fn next_launch(lines: &[String], at: usize) -> Option<usize> {
@@ -102,7 +101,7 @@ fn ar_decode_joins_the_shared_expert_before_the_gate_after_the_r2_finish() {
     for items in [8u32, 32] {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let host = FakeHost::new(shape, KV_LAYOUTS[0]);
-        let mut instance = with_settings_in_tests(Settings::ALL, || create(&host, items));
+        let mut instance = create(&host, items);
         for slot in 0..u64::from(items) {
             step(
                 &mut instance,

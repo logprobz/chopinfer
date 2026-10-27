@@ -14,7 +14,8 @@ fn status_bytes(rank: usize) -> u64 {
 #[test]
 fn c1_boundary_preserves_all_status_sources_and_confidence_words() {
     for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
-        let (host, mut instance) = create(Shape::new(&FLASH, ranks).unwrap());
+        let (host, mut instance) =
+            create_with_logs(Shape::new(&FLASH, ranks).unwrap(), 4, 32, true);
         execute(
             &mut instance,
             &host,

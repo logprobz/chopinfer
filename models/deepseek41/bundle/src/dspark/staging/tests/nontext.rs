@@ -128,6 +128,7 @@ impl Fixture {
             readback: &readback,
             text: &mask,
             times: None,
+            diagnostic_logs: true,
             diagnostic: Context {
                 instance_id: 1,
                 step_id: start,
@@ -192,6 +193,7 @@ impl Fixture {
             readback: &readback,
             text: &text,
             times: None,
+            diagnostic_logs: true,
             diagnostic: Context {
                 instance_id: 1,
                 step_id: 999,

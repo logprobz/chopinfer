@@ -249,9 +249,16 @@ struct Run {
 }
 
 fn run(graphs: Graphs) -> Run {
-    let (host, mut instance) = create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 32, 32);
     let capacity = if graphs == Graphs::Eager { 0 } else { 1 << 20 };
-    crate::instance::dspark_graphs_for_test(instance.handle(), Some(capacity));
+    let (host, mut instance) = create_with_options(
+        Shape::new(&FLASH, Ranks::TP4).unwrap(),
+        32,
+        32,
+        &[(
+            model_deepseek41_contract::execution_options::DSPARK_GRAPH_HANDLES_PER_RANK,
+            (capacity / Ranks::TP4.count()).into(),
+        )],
+    );
     for request in 1..=32 {
         admit(&mut instance, &host, request, request - 1);
     }

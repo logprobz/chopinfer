@@ -5,7 +5,7 @@ use super::*;
 fn layer_gathers_join_only_at_their_own_consumers() {
     for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
         let shape = Shape::new(&FLASH, ranks).unwrap();
-        let (host, mut instance) = create(shape);
+        let (host, mut instance) = create_with_logs(shape, 4, 32, true);
         execute(
             &mut instance,
             &host,

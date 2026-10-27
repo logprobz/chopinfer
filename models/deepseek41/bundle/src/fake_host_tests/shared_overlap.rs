@@ -1,10 +1,26 @@
 use super::*;
-use crate::shared_overlap::{Settings, with_settings_in_tests};
+use crate::shared_overlap::Settings;
+
+fn create_settings(host: &Rc<Host>, settings: Settings) -> BundleInstanceV1 {
+    let instance = create_with_options(
+        host,
+        4,
+        &[(
+            model_deepseek41_contract::execution_options::SHARED_OVERLAP_MAX_ROWS,
+            settings.max_rows.into(),
+        )],
+    );
+    assert_eq!(
+        crate::instance::kv_overlap_for_test(instance.handle(), settings.kv),
+        settings
+    );
+    instance
+}
 
 fn captured(settings: Settings, ranks: Ranks) -> Vec<String> {
     let shape = Shape::new(&FLASH, ranks).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
-    let mut instance = with_settings_in_tests(settings, || create(&host, 4));
+    let mut instance = create_settings(&host, settings);
     step(
         &mut instance,
         &prompt(7, 0, 0, 3, true),
@@ -36,6 +52,40 @@ fn captured(settings: Settings, ranks: Ranks) -> Vec<String> {
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
     lines
+}
+
+#[test]
+fn overlap_row_limit_gates_the_next_graph_bucket() {
+    for max_rows in [1, 2] {
+        let shape = Shape::new(&FLASH, Ranks::TP2).unwrap();
+        let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+        let mut instance = create_settings(&host, Settings::new(max_rows));
+        for slot in 0..2 {
+            step(
+                &mut instance,
+                &prompt(slot + 1, slot, 0, 3, true),
+                &mut Views::default(),
+            );
+        }
+        let from = host.journal.borrow().len();
+        step(
+            &mut instance,
+            &decode(&[(1, 0, 3, 7), (2, 1, 3, 9)]),
+            &mut Views::default(),
+        );
+        let regions = audit_regions(&host.journal.borrow()[from..]);
+        assert_eq!(
+            regions.moe,
+            if max_rows == 2 {
+                FLASH.layers() as usize * 2
+            } else {
+                0
+            }
+        );
+        assert_eq!(regions.collisions, 0);
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
 }
 
 #[test]
@@ -340,7 +390,7 @@ fn shared_overlap_journal_has_no_unordered_scratch_bindings() {
                 kv,
                 ..Settings::ALL
             };
-            let mut instance = with_settings_in_tests(settings, || create(&host, 4));
+            let mut instance = create_settings(&host, settings);
             step(
                 &mut instance,
                 &prompt(7, 0, 0, 3, true),

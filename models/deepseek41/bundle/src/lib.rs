@@ -20,6 +20,7 @@ mod instance;
 pub mod lower;
 pub mod ops;
 pub mod program;
+mod removed_environment;
 pub mod shape;
 mod shared_overlap;
 pub mod sm120;

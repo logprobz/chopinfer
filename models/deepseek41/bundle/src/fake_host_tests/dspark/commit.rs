@@ -46,8 +46,8 @@ fn commits(host: &Host) -> Vec<serde_json::Value> {
 
 #[test]
 fn batched_commit_preserves_continued_and_mixed_prompt_cursors() {
-    let (host, mut instance) = create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 16, 32);
-    crate::instance::dspark_step_trace_for_test(instance.handle(), true);
+    let (host, mut instance) =
+        create_with_logs(Shape::new(&FLASH, Ranks::TP4).unwrap(), 16, 32, true);
     let mut starts = [0; 6];
     for (lengths, projected, retained) in [
         (

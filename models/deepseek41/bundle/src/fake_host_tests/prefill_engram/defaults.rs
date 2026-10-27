@@ -4,10 +4,14 @@ use super::*;
 fn dspark_prefill_defaults_to_batched_commit_and_prepared_gathers() {
     let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
     host.speculation.set(Some((5, 32)));
-    let mut instance = create_backend(
+    let mut instance = create_backend_with_options(
         &host,
         true,
         dspark::host::MappedHost::with_delayed_completion(Rc::clone(&host)),
+        &[(
+            model_deepseek41_contract::execution_options::DIAGNOSTIC_STEP_LOGS,
+            true.into(),
+        )],
     )
     .unwrap();
     assert_eq!(indices(instance.handle()).len(), 2);
@@ -20,7 +24,6 @@ fn dspark_prefill_defaults_to_batched_commit_and_prepared_gathers() {
             assert_eq!(record["after_kv"], 0, "gather IDs must precede KV sizing");
         }
     }
-    crate::instance::dspark_step_trace_for_test(instance.handle(), true);
     let request = encode(
         &prompt(7, 0, 0, 193, true),
         &[Boundary {

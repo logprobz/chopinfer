@@ -100,10 +100,14 @@ pub fn encode(context: Context, diagnostic: &Diagnostic) -> Result<String, &'sta
 /// Custom sinks must also avoid waiting for output progress. Encoding or
 /// logging failure must not change serving; calibration checks coverage.
 pub fn record<E>(
+    enabled: bool,
     context: Context,
     diagnostics: &[Diagnostic],
     mut log: impl FnMut(&[u8]) -> Result<(), E>,
 ) {
+    if !enabled {
+        return;
+    }
     for diagnostic in diagnostics {
         if let Ok(message) = encode(context, diagnostic) {
             let _ = log(message.as_bytes());

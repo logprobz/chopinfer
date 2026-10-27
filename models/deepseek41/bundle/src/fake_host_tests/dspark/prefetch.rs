@@ -57,6 +57,48 @@ fn feedback(request: u64, start: u64, accepted: u32) -> Feedback {
 }
 
 #[test]
+fn prefetch_diagnostics_follow_the_option_without_changing_the_journal() {
+    let mut journals = Vec::new();
+    for enabled in [false, true] {
+        let (host, mut instance) =
+            create_with_logs(Shape::new(&FLASH, Ranks::TP4).unwrap(), 1, 32, enabled);
+        execute(
+            &mut instance,
+            &host,
+            &super::super::prompt(1, 0, 0, 3, true),
+        );
+        instance.commit().unwrap();
+        execute(&mut instance, &host, &verify(1, 0, 3, 5));
+        dspark_prefetch_for_test(instance.handle(), feedback(1, 3, 2), true);
+        instance.commit_accepted(&[kept(1, 3)]).unwrap();
+        execute(&mut instance, &host, &verify(1, 0, 6, 2));
+        instance.commit_accepted(&[kept(1, 1)]).unwrap();
+        instance.retire_request(1).unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+        let records = host
+            .logs
+            .borrow()
+            .iter()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|record| {
+                record["schema"] == "chopinfer.deepseek41.step-shape.v1"
+                    && record["phase"] == "dspark-prefetch"
+            })
+            .collect::<Vec<_>>();
+        if enabled {
+            assert_eq!(records.len(), 2);
+            assert_eq!(records[0]["event"], "queued");
+            assert_eq!(records[1]["event"], "reused");
+        } else {
+            assert!(records.is_empty());
+        }
+        journals.push(host.journal.borrow().clone());
+    }
+    assert_eq!(journals[0], journals[1]);
+}
+
+#[test]
 fn private_successor_restores_current_state_and_skips_the_next_draft() {
     for ranks in [Ranks::TP1, Ranks::TP4] {
         for accepted in 0..=5 {

@@ -28,6 +28,15 @@ fn create_backend(
     skip: bool,
     backend: dspark::host::MappedHost,
 ) -> Result<BundleInstanceV1, BundleAbiError> {
+    create_backend_with_options(host, skip, backend, &[])
+}
+
+fn create_backend_with_options(
+    host: &Rc<Host>,
+    skip: bool,
+    backend: dspark::host::MappedHost,
+    overrides: &[(&str, serde_json::Value)],
+) -> Result<BundleInstanceV1, BundleAbiError> {
     host.drafter.set(true);
     let mut record = crate::config::tests::record(
         &host.shape,
@@ -47,6 +56,9 @@ fn create_backend(
     let mut options: serde_json::Value = serde_json::from_slice(&record[start + 4..]).unwrap();
     options["prefill_chunk_tokens"] = serde_json::json!(8192);
     options["prefill_upper_skip"] = serde_json::json!(skip);
+    for (name, value) in overrides {
+        options[*name] = value.clone();
+    }
     record.truncate(start);
     let options = serde_json::to_vec(&options).unwrap();
     record.extend_from_slice(&(options.len() as u32).to_le_bytes());

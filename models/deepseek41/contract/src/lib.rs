@@ -8,6 +8,7 @@ pub mod dspark_coupling;
 pub mod dspark_options;
 pub mod encoder;
 pub mod encoder_plan;
+pub mod execution_options;
 pub mod frontend;
 pub mod geometry;
 pub mod hc;

@@ -1,5 +1,39 @@
 //! Graph pressure preserves the same lifecycle and mapped gather handles.
 use super::*;
+use model_deepseek41_contract::execution_options::DSPARK_GRAPH_HANDLES_PER_RANK;
+
+#[test]
+fn declared_graph_budget_sets_each_ranks_capacity_at_create() {
+    for ranks in [Ranks::TP1, Ranks::TP4] {
+        for per_rank in [0_usize, 8, 512] {
+            let (host, mut instance) = create_with_options(
+                Shape::new(&FLASH, ranks).unwrap(),
+                1,
+                32,
+                &[(DSPARK_GRAPH_HANDLES_PER_RANK, per_rank.into())],
+            );
+            assert_eq!(
+                crate::instance::dspark_graphs_for_test(instance.handle(), None).capacity,
+                Some(per_rank * ranks.count()),
+            );
+            execute(
+                &mut instance,
+                &host,
+                &super::super::prompt(1, 0, 0, 3, true),
+            );
+            instance.commit().unwrap();
+            execute(&mut instance, &host, &verify(1, 0, 3, 5));
+            instance.commit_accepted(&[kept(1, 6)]).unwrap();
+            assert!(
+                crate::instance::dspark_graphs_for_test(instance.handle(), None).peak
+                    <= per_rank * ranks.count()
+            );
+            instance.retire_request(1).unwrap();
+            instance.destroy().unwrap();
+            assert_eq!(host.acquired.get(), host.released.get());
+        }
+    }
+}
 
 #[test]
 fn selected_adaptive_warmup_geometries_fit_the_graph_budget_and_replay() {
@@ -304,7 +338,8 @@ fn recorded_startup_warmup_keys_fit_the_graph_budget() {
 
 #[test]
 fn bounded_draft_chunks_preserve_full_proposals_and_replay_small_graphs() {
-    let (host, mut instance) = create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 32, 192);
+    let (host, mut instance) =
+        create_with_logs(Shape::new(&FLASH, Ranks::TP4).unwrap(), 32, 192, true);
     let mut captured = false;
     for slot in 0..32 {
         execute(
@@ -452,9 +487,13 @@ fn warmed_full_batch_survives_mixed_tail_admission_and_matches_replay() {
 #[test]
 fn exact_width_graph_pressure_retains_warm_keys_on_every_topology() {
     for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
-        let (host, mut instance) = create(Shape::new(&FLASH, ranks).unwrap());
+        let (host, mut instance) = create_with_options(
+            Shape::new(&FLASH, ranks).unwrap(),
+            4,
+            32,
+            &[(DSPARK_GRAPH_HANDLES_PER_RANK, 8.into())],
+        );
         let capacity = 8 * ranks.count();
-        crate::instance::dspark_graphs_for_test(instance.handle(), Some(capacity));
         execute(
             &mut instance,
             &host,
@@ -504,8 +543,12 @@ fn exact_width_graph_pressure_retains_warm_keys_on_every_topology() {
 
 #[test]
 fn zero_graph_capacity_keeps_the_full_draft_and_target_eager() {
-    let (host, mut instance) = create(Shape::new(&FLASH, Ranks::TP4).unwrap());
-    crate::instance::dspark_graphs_for_test(instance.handle(), Some(0));
+    let (host, mut instance) = create_with_options(
+        Shape::new(&FLASH, Ranks::TP4).unwrap(),
+        4,
+        32,
+        &[(DSPARK_GRAPH_HANDLES_PER_RANK, 0.into())],
+    );
     execute(
         &mut instance,
         &host,

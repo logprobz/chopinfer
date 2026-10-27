@@ -39,17 +39,29 @@ fn bounded_indexer_keeps_upper_skip_query_and_candidate_origins() {
 }
 
 pub(super) fn create_profile(host: &Rc<Host>, chunk: u32, skip: bool) -> BundleInstanceV1 {
+    create_profile_with_options(host, chunk, skip, &[])
+}
+
+pub(super) fn create_profile_with_options(
+    host: &Rc<Host>,
+    chunk: u32,
+    skip: bool,
+    options: &[(&str, serde_json::Value)],
+) -> BundleInstanceV1 {
     let mut record = crate::config::tests::record(&host.shape, host.kv, 4, false);
     let at = record
         .windows(MODEL_OPTIONS_TAG_V1.len())
         .position(|w| w == MODEL_OPTIONS_TAG_V1)
         .unwrap();
-    let options = serde_json::to_vec(&serde_json::json!({
+    let mut values = serde_json::json!({
         "text_config.index_topk": host.shape.runtime.index_topk,
         "text_config.candidate_topk_blocks": host.shape.runtime.candidate_topk_blocks,
         "prefill_chunk_tokens": chunk, "prefill_upper_skip": skip,
-    }))
-    .unwrap();
+    });
+    for (name, value) in options {
+        values[*name] = value.clone();
+    }
+    let options = serde_json::to_vec(&values).unwrap();
     record.truncate(at + MODEL_OPTIONS_TAG_V1.len());
     record.extend_from_slice(&(options.len() as u32).to_le_bytes());
     record.extend_from_slice(&options);

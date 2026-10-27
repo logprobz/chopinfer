@@ -27,7 +27,7 @@ fn warm_cycle_host_boundary_inventory() {
     // The successor joins status into one packet at every width.
     for (items, verify_rows) in [(1_u32, 6_u32), (8, 4)] {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-        let (host, mut instance) = create_with_limits(shape, 8, 32);
+        let (host, mut instance) = create_with_logs(shape, 8, 32, true);
         let batch = |start: u64, rows: u32, draft: bool| {
             BatchRequestV1::new(
                 BatchWireVersionV1::V3,
@@ -301,8 +301,7 @@ fn prefill_phase_records_preserve_device_boundaries() {
     let mut boundaries = Vec::new();
     for enabled in [false, true] {
         let (host, mut instance) =
-            create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 2, 32);
-        crate::instance::dspark_step_trace_for_test(instance.handle(), enabled);
+            create_with_logs(Shape::new(&FLASH, Ranks::TP4).unwrap(), 2, 32, enabled);
         let lengths = [2048_u32, 1024];
         let request = BatchRequestV1::new(
             BatchWireVersionV1::V3,

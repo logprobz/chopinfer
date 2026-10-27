@@ -431,6 +431,35 @@ impl conformance::Startup for Served {
         tags.extend(crate::engram_rows::route_tags());
         tags
     }
+    fn check_allocated_route_shapes(
+        serving: &conformance::Serving,
+        shapes: &[runtime_bundle_sdk::warmup::AllocatedShape],
+    ) {
+        if serving.profile == "tp4-dspark" {
+            let identities: Vec<_> = shapes
+                .iter()
+                .map(|shape| (shape.items, shape.width, shape.reserved_rows))
+                .collect();
+            assert_eq!(
+                identities,
+                [
+                    (2, 8, 12),
+                    (3, 16, 18),
+                    (4, 16, 24),
+                    (5, 16, 30),
+                    (6, 32, 36),
+                    (7, 32, 42),
+                    (8, 32, 48),
+                    (9, 32, 54),
+                    (10, 32, 60),
+                    (11, 32, 55),
+                    (13, 32, 52),
+                    (14, 32, 56),
+                ],
+                "tp4-dspark allocated route identities"
+            );
+        }
+    }
     fn route_threads(tier: conformance::route_guard::Tier) -> usize {
         if tier == conformance::route_guard::Tier::Quick {
             4

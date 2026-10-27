@@ -6,6 +6,7 @@ use super::{
 use crate::fake_host::RecordingSink;
 use kernel_core::route::{RouteTag, merge};
 use runtime_bundle_abi::BundleInstanceV1;
+use runtime_bundle_sdk::warmup::AllocatedShape;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -504,6 +505,10 @@ pub fn sweep<S: Startup>(profile: &str, allowlist: &str, bundle: &str) {
             samples
         })
     };
+    // Derive expectations from the serving profile, independently of the
+    // model envelope and the case iterator that produced these samples.
+    check_allocated_coverage(&host.allocated, &samples);
+    S::check_allocated_route_shapes(serving, &host.allocated);
     samples.sort_by(|a, b| (&a.mode, &a.phase, a.rows).cmp(&(&b.mode, &b.phase, b.rows)));
     let tags: Vec<_> = catalogue.into_values().collect();
     budget.check();
@@ -529,11 +534,8 @@ pub fn sweep<S: Startup>(profile: &str, allowlist: &str, bundle: &str) {
         "{profile}: route sweep {tier:?}, seed={seed}, {count} cases, {:.3}s, workers={shards}, max_setup={setup:.3}s",
         started.elapsed().as_secs_f64()
     );
-    if !envelope.allocated.is_empty() {
-        println!(
-            "{profile}: allocated verify shapes {:?}",
-            envelope.allocated
-        );
+    if !host.allocated.is_empty() {
+        println!("{profile}: allocated verify shapes {:?}", host.allocated);
     }
     if let Err(error) = audit::check(profile, &failures, &allow, tier, &tags) {
         panic!("{error}");
@@ -552,6 +554,33 @@ fn case_key(case: &Case) -> (String, String, u32) {
 }
 fn sample_key(sample: &audit::Sample) -> (String, String, u32) {
     (sample.mode.clone(), sample.phase.clone(), sample.rows)
+}
+
+fn check_allocated_coverage(expected: &[AllocatedShape], samples: &[audit::Sample]) {
+    let mut expected: Vec<_> = expected
+        .iter()
+        .map(|shape| {
+            (
+                format!(
+                    "allocated-verify-items-{}-reserved-{}",
+                    shape.items, shape.reserved_rows
+                ),
+                "verify".into(),
+                shape.width as u32,
+            )
+        })
+        .collect();
+    let mut actual: Vec<_> = samples
+        .iter()
+        .filter(|sample| sample.mode.starts_with("allocated-"))
+        .map(sample_key)
+        .collect();
+    expected.sort();
+    actual.sort();
+    assert_eq!(
+        actual, expected,
+        "allocated route coverage differs from the served allocation shapes"
+    );
 }
 
 /// Exercise repeated varying shapes with the same fake instance. Model hooks
@@ -582,6 +611,77 @@ pub fn memory_regression<S: Startup>() {
 mod tests {
     use super::*;
     use kernel_core::route::RouteClass;
+
+    fn allocation_samples() -> (Vec<AllocatedShape>, Vec<audit::Sample>) {
+        let shapes: Vec<_> = [(2, 8, 12), (3, 16, 18), (4, 16, 24)]
+            .into_iter()
+            .map(|(items, width, reserved_rows)| AllocatedShape {
+                items,
+                width,
+                reserved_rows,
+            })
+            .collect();
+        let samples = shapes
+            .iter()
+            .map(|shape| audit::Sample {
+                mode: format!(
+                    "allocated-verify-items-{}-reserved-{}",
+                    shape.items, shape.reserved_rows
+                ),
+                phase: "verify".into(),
+                rows: shape.width as u32,
+                symbols: BTreeMap::new(),
+            })
+            .collect();
+        (shapes, samples)
+    }
+
+    #[test]
+    fn allocated_coverage_rejects_each_omitted_case() {
+        let (shapes, samples) = allocation_samples();
+        check_allocated_coverage(&shapes, &samples);
+        for omitted in 0..shapes.len() {
+            let (_, mut samples) = allocation_samples();
+            samples.remove(omitted);
+            assert!(
+                std::panic::catch_unwind(|| check_allocated_coverage(&shapes, &samples)).is_err(),
+                "omitted allocated case {omitted} passed coverage"
+            );
+        }
+        assert!(
+            std::panic::catch_unwind(|| check_allocated_coverage(&shapes, &[])).is_err(),
+            "an empty allocated sweep passed coverage"
+        );
+    }
+
+    #[test]
+    fn allocated_coverage_rejects_duplicates_and_wrong_identities() {
+        let (shapes, mut samples) = allocation_samples();
+        samples.extend(allocation_samples().1.into_iter().take(1));
+        assert!(std::panic::catch_unwind(|| check_allocated_coverage(&shapes, &samples)).is_err());
+        for field in 0..3 {
+            let (_, mut samples) = allocation_samples();
+            match field {
+                0 => samples[0].mode = "allocated-verify-items-2-reserved-13".into(),
+                1 => samples[0].phase = "decode".into(),
+                _ => samples[0].rows += 1,
+            }
+            assert!(
+                std::panic::catch_unwind(|| check_allocated_coverage(&shapes, &samples)).is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn allocated_coverage_preserves_unallocated_profiles() {
+        let samples = [audit::Sample {
+            mode: "verify-items-2".into(),
+            phase: "verify".into(),
+            rows: 8,
+            symbols: BTreeMap::new(),
+        }];
+        check_allocated_coverage(&[], &samples);
+    }
 
     #[test]
     fn full_keeps_boundaries_in_every_mode_and_every_single_row() {

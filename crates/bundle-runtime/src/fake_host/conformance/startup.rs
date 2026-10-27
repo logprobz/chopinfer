@@ -322,6 +322,9 @@ pub trait Startup: Sized + 'static {
     fn servings() -> Vec<Serving>;
     /// Every shape the profile may serve, derived from its serving constants.
     fn envelope(serving: &Serving) -> super::route_guard::Envelope;
+    /// Assert model-specific allocation identities after complete route
+    /// coverage has matched the shapes derived from the profile.
+    fn check_allocated_route_shapes(_serving: &Serving, _shapes: &[AllocatedShape]) {}
     /// The same registration metadata used by the bundle's route counters.
     fn route_tags(&self) -> Vec<kernel_core::route::RouteTag>;
     /// Bound independent fake instances; expensive creation may favor fewer.

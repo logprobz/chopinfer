@@ -49,11 +49,13 @@ rows, not a stop reason or an independent acceptance count. The leading
 proposals remain distinct. Unknown outcomes must be excluded from confidence
 calibration until independent verifier evidence resolves them.
 
-`calibration::record` encodes these diagnostics for the coordinator's host
-log callback. It preserves raw score bits and records the numerical contract
+With `--model-option diagnostic_step_logs=true`, `calibration::record`
+encodes these diagnostics for the coordinator's host log callback. This
+option defaults to false and also controls the step and commit JSON logs.
+The records preserve raw score bits and record the numerical contract
 and acceptance evidence. The [confidence record format](../../../dspark-confidence.md)
-defines the JSON fields and external calibration artifacts. The full program
-must connect this callback when its execution adapter is available.
+defines the JSON fields and external calibration artifacts. Disabling
+records leaves confidence computation and lifecycle validation unchanged.
 
 Each slot's raw history has `window + 6` rows, indexed by absolute position
 modulo that capacity. Short commits retain every accepted row. A prefill

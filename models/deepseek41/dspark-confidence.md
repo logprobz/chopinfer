@@ -6,6 +6,11 @@ outside the scheduler's emitted prefix. `computed_positions` is three for
 uniform depth-three Flash TP4 batches of 3-8 items and five otherwise.
 Uncomputed tails are omitted from the record.
 
+Records are off by default. Set `--model-option diagnostic_step_logs=true`
+to enable them together with the DSpark phase, Engram, prefetch and commit
+JSON records. The resolved diagnostic option is part of serving identity.
+Logging does not change confidence computation, acceptance or device IO.
+
 The record carries opaque instance, execute-step and request IDs, the number
 of committed main rows, the emitted budget K, K+1 verify rows, proposal
 token IDs, raw F32 confidence bit patterns and outcome labels. Each array

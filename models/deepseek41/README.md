@@ -217,6 +217,47 @@ requires exact decoded products; domain-edge and individual-code GPU probes
 check this premise on SM120 before a stronger hardware-wide claim. See the
 [guard argument](../../crates/kernels-sm120/cuda/pooled_indexer/position_mma_guard.md).
 
+## Model options
+
+Set these package-declared options with `--model-option NAME=VALUE`. The
+host records every resolved value in serving identity, metadata and
+metrics. The table shows the Flash package defaults; profiles can override
+them. A non-default value is unqualified.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `diagnostic_step_logs` | `false` | Emit DSpark phase, prefetch, Engram, commit and drafter-confidence JSON records. |
+| `dspark_coupled_drafts` | `true` | Couple sampled drafts to the target sampler's noise. |
+| `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |
+| `dspark_graph_handles_per_rank` | `512` | Graph handles per rank, from 0 to 9223372036854775807; 0 keeps DSpark eager. The total across ranks must fit the platform's count range. |
+| `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
+| `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
+| `prefill_plan_cache_verify` | `false` | Lower each cache hit again and refuse a differing plan. |
+| `prefill_upper_skip` | `true` | Use upper-skip prefill; requires nonzero guaranteed chunk ends. |
+| `shared_overlap_max_rows` | `4294967295` | Largest graph bucket that overlaps shared-expert and eligible window-KV work. Positive values only; the default covers every admitted bucket. |
+| `text_config.candidate_topk_blocks` | `2048` | Candidate block pool, checked with index top-k and the partial newest block. |
+| `text_config.index_topk` | `512` | Index selection top-k, from 1 to 512. |
+| `text_config.indexer_mma` | `true` | Use the guarded native Flash index scorer where eligible. |
+| `text_config.indexer_prefill_tile` | `true` | Enable the qualified Flash tiled indexer routes. |
+| `verify_graph_rows` | `64` | Widest graphed verify step; wider admitted steps run eagerly. |
+
+The bundle no longer reads execution settings from
+`CHOPINFER_DEEPSEEK41_SHARED_OVERLAP`,
+`CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE_PLANS`,
+`CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE` or
+`CHOPINFER_DSPARK_GRAPH_HANDLES_PER_RANK`. Use the corresponding row-limit,
+plan-count, plan-verification and graph-budget options above. Startup emits
+one warning naming each set retired DeepSeek or DSpark switch as ignored,
+including opt-outs removed during adoption. An old value such as
+`CHOPINFER_DEEPSEEK41_SHARED_OVERLAP=0` cannot select serial execution.
+
+Per-step JSON is off by default. Enable `diagnostic_step_logs=true` for
+timing and confidence captures; this changes diagnostic output only.
+`CHOPINFER_STEP_TRACE` still controls the shared host's tracing, but no
+longer selects the bundle's step or commit records. Existing diagnostic
+capture directories, AR Engram tracing and the shared
+`CHOPINFER_DEVICE_RESULTS` control remain available.
+
 ## Reference
 
 `reference.py` is the refrun adapter (`tools/refrun`). It executes the

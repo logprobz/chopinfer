@@ -14,9 +14,9 @@ retained feature rows included. Token IDs, pages, slots, window and tail
 inputs, index tags and Engram rows are uploaded every step and are never
 part of a plan. At most one plan is kept per length, about 20 MiB of host
 memory each, and at most 16 plans at once (about 320 MiB per instance;
-`CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE_PLANS` sets 1 to 64). Keeping one
+`--model-option prefill_plan_cache_plans=N` sets 1 to 64). Keeping one
 more drops the least recently used plan, which is lowered again on its next
-use. `CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE=verify` lowers every reuse
+use. `--model-option prefill_plan_cache_verify=true` lowers every reuse
 again and refuses the step if the fresh plan differs. The fake-host tests
 compare ordinary reuse with this verified fresh lowering over alternating prompts, slots and pages, mixed decode steps, a
 cancelled prefill and ineligible prefills, on a DSpark target also beside a

@@ -187,6 +187,29 @@ fn copies(lines: &[String]) -> Vec<(Span, Span)> {
         .collect()
 }
 
+/// The instance declares its spares as its grid's anchor items: none by
+/// default or without a grid, one each with the option.
+#[test]
+fn instances_declare_their_spares_as_grid_anchor_items() {
+    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP1).unwrap(), KV_LAYOUTS[0]);
+    for (chunk, skip, anchors, declared) in [
+        (8192, true, 0, 0),
+        (8192, true, 1, 1),
+        (8192, true, 8, 8),
+        (0, false, 0, 0),
+    ] {
+        let mut instance = create_profile_with_options(
+            &host,
+            chunk,
+            skip,
+            &[("prefill_anchor_items", anchors.into())],
+        );
+        assert_eq!(instance.prefill_anchor_items(), Ok(Some(declared)));
+        instance.destroy().unwrap();
+    }
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
 /// An unaligned prompt's single anchored step writes every layer's ring of
 /// its rounded end into the spare, from the rows a cut there would end
 /// with, and seeds only the tails: its ring is inside the item. A capture

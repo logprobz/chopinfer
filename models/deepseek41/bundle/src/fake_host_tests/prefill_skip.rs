@@ -81,6 +81,8 @@ pub(super) fn try_create_profile_with_options(
         .unwrap()
         .with_prefill_cuts_api(crate::instance::prefill::PREFILL_CUTS_API)
         .unwrap()
+        .with_prefill_anchors_api(crate::instance::prefill::PREFILL_ANCHORS_API)
+        .unwrap()
         .with_device_results_api(crate::api::BUNDLE_DEEPSEEK41_DEVICE_RESULTS_API_V1)
         .unwrap()
         .create(services, &record)

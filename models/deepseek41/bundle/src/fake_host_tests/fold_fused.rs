@@ -994,14 +994,6 @@ const ENGINES: &[(&str, &[&str])] = &[
         ],
     ),
     (
-        "chop::sinkhorn_hc::completion",
-        &[
-            "sinkhorn_hc/completion.cuh",
-            "sinkhorn_hc/finish_norm.cuh",
-            "row/rmsnorm_quantize_cached.cuh",
-        ],
-    ),
-    (
         "chop::sinkhorn_hc::finish_split",
         &[
             "sinkhorn_hc/finish_split.cuh",
@@ -1034,7 +1026,6 @@ fn bodies() -> BTreeMap<String, String> {
     ] {
         specs.extend(family.unwrap().into_iter().map(|(_, spec)| spec));
     }
-    specs.push(s::hc_completion::cubin().unwrap());
     specs.push(s::hc_finish_twin::cubin().unwrap());
     specs.extend(s::hc_cols::cubins().unwrap());
     specs

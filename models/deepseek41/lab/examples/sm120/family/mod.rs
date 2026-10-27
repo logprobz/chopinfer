@@ -187,9 +187,9 @@ fn simple() -> Vec<Recipe> {
             bundle::hc_cols::cubins()?.into_iter().collect()
         ),
         one!(
-            Bundle,
-            bundle::hc_completion::FAMILY,
-            vec![bundle::hc_completion::cubin()?]
+            Lab,
+            lab::hc_completion::FAMILY,
+            vec![lab::hc_completion::cubin()?]
         ),
         one!(
             Bundle,

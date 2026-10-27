@@ -31,7 +31,6 @@ pub(crate) mod fold_tails;
 pub mod fold_verify;
 pub mod fold_verify_local;
 pub mod hc_cols;
-pub mod hc_completion;
 pub mod hc_expand_mix;
 pub mod hc_finish_norm;
 pub mod hc_finish_twin;
@@ -1015,8 +1014,7 @@ impl crate::Kernels {
     /// Whether an instance loads `cubin` with the program's cubins: every
     /// cubin but the dependency probes, which only the kernel lab launches,
     /// the unwired acceptance reducer, the allocated verify steps' (loaded
-    /// apart, `allocation_cubin`), the one-launch HC boundary, which the
-    /// column-block pair replaced (packaged and locked for the labs), and the
+    /// apart, `allocation_cubin`), and the
     /// vision encoder's, which only an encoder instance loads.
     /// Streamed MoE modules load only for the qualified topology.
     pub fn loads(cubin: &str, shape: &crate::shape::Shape) -> bool {
@@ -1049,7 +1047,6 @@ impl crate::Kernels {
             && (cubin != fold_verify_local::CUBIN
                 || fold_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows)
                 || fold_tails::enabled(shape.geometry, shape.ranks()))
-            && cubin != hc_completion::CUBIN
             && (!latent_scheduled::candidate_cubin(cubin)
                 || latent_scheduled::qualified(shape.geometry, shape.ranks()))
             && !encoder::is_cubin(cubin)

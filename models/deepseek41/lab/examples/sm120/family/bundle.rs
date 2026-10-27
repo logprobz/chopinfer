@@ -48,8 +48,6 @@ pub mod fold_verify_local;
 pub mod hc;
 #[path = "../../../../bundle/src/sm120/hc_cols.rs"]
 pub mod hc_cols;
-#[path = "../../../../bundle/src/sm120/hc_completion.rs"]
-pub mod hc_completion;
 #[path = "../../../../bundle/src/sm120/hc_expand_mix.rs"]
 pub mod hc_expand_mix;
 #[path = "../../../../bundle/src/sm120/hc_finish_norm.rs"]

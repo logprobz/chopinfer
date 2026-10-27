@@ -1,16 +1,17 @@
 //! One-launch decode HC boundaries replacing the served chain producer and
 //! fused finish/norm tail: the tail layout and the split norm layout. The
 //! column-block pair (`hc_cols`) replaced them at C1 and C8; the cubin is
-//! still built, locked and packaged for the labs, and no instance loads it.
+//! retained only in the model lab with its original locked cubin bytes.
+use bundle_deepseek41::sm120::{hc_finish_norm, hc_round_chain};
 use kernel_build::CubinSpec;
 use kernels_sm120::sinkhorn_hc::completion::{self, Entry, Layout, Mutation};
 use model_deepseek41_contract::geometry::FLASH;
-pub const FAMILY: &str = "sinkhorn_hc_completion";
+pub const FAMILY: &str = "sinkhorn_hc_completion_reference";
 pub const CUBIN: &str = "sinkhorn_hc_deepseek41_completion_sm120";
 pub fn entry(layout: Layout) -> Entry {
     Entry {
-        reference: super::hc_finish_norm::entry(&FLASH),
-        producer_prefix: super::hc_round_chain::entry(&FLASH).prefix,
+        reference: hc_finish_norm::entry(&FLASH),
+        producer_prefix: hc_round_chain::entry(&FLASH).prefix,
         prefix: format!("chop_{}_hc_completion", FLASH.kernel_tag),
         layout,
         mutation: Mutation::None,

@@ -27,6 +27,8 @@ pub mod fold_local_rows;
 pub mod fold_plain;
 #[path = "../../../tests/sm120/attention_pair/grouped_cache.rs"]
 pub mod grouped_cache;
+#[path = "../../../sm120/hc_completion.rs"]
+pub mod hc_completion;
 #[path = "../../../tests/sm120/hc_prefill_fused/catalog.rs"]
 pub mod hc_prefill_fused;
 #[path = "../../../tests/sm120/hc_prefill_warp/catalog.rs"]

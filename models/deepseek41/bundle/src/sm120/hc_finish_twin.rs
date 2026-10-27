@@ -107,7 +107,7 @@ mod tests {
     #[test]
     fn backend_replaces_only_the_tail_at_twin_buckets() {
         use super::super::{
-            hc_completion, hc_finish_norm, hc_round_chain, hc_round_expand_mix, norm_quantize,
+            hc_finish_norm, hc_round_chain, hc_round_expand_mix, norm_quantize,
             norm_quantize_cached,
         };
         use kernel_core::{
@@ -128,7 +128,13 @@ mod tests {
             let backend = hc_round_expand_mix::register(backend, &FLASH);
             let backend = hc_round_chain::register(backend, &FLASH, 4);
             hc_finish_norm::register_pair(backend, &FLASH).with_sinkhorn_finish_norm_completion(
-                hc_completion::served(),
+                kernels_sm120::sinkhorn_hc::completion::Entry {
+                    reference: hc_finish_norm::entry(&FLASH),
+                    producer_prefix: hc_round_chain::entry(&FLASH).prefix,
+                    prefix: format!("chop_{}_hc_completion", FLASH.kernel_tag),
+                    layout: kernels_sm120::sinkhorn_hc::completion::Layout::Split,
+                    mutation: kernels_sm120::sinkhorn_hc::completion::Mutation::None,
+                },
                 vec![(1, 16), (8, 8)],
             )
         };

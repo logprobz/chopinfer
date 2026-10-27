@@ -53,8 +53,6 @@ mod engram_hash_rows;
 mod hc;
 #[allow(dead_code, reason = "the bundle selects the measured column pairs")]
 mod hc_cols;
-#[allow(dead_code, reason = "packaged for the labs; no instance loads it")]
-mod hc_completion;
 #[allow(dead_code)]
 mod hc_expand_mix;
 #[allow(dead_code, reason = "the bundle selects measured fused tails")]
@@ -442,7 +440,6 @@ pub fn selection(
             owners.push((norm_query_cached::cubin_name(geometry), geometry.id));
             owners.push((hc_round_chain::cubin_name(geometry), geometry.id));
             owners.push((hc_finish_norm::cubin_name(geometry), geometry.id));
-            owners.push((hc_completion::CUBIN.into(), geometry.id));
             owners.push((hc_finish_twin::CUBIN.into(), geometry.id));
             owners.push((hc_cols::PRODUCER_CUBIN.into(), geometry.id));
             owners.push((hc_cols::FINISH_CUBIN.into(), geometry.id));
@@ -610,10 +607,6 @@ pub fn selection(
             hc_finish_norm::cubins(std::slice::from_ref(geometry))
                 .expect("qualified HC finish norm cubin"),
         );
-        specs.push((
-            hc_completion::FAMILY,
-            hc_completion::cubin().expect("one-launch HC boundary cubin"),
-        ));
         specs.push((
             hc_finish_twin::FAMILY,
             hc_finish_twin::cubin().expect("two-CTA HC finish cubin"),

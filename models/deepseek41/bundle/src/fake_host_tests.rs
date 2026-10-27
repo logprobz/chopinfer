@@ -1356,7 +1356,10 @@ fn every_geometry_topology_runs_the_fake_host_journal_and_lifecycle() {
                     "default loaded {cubin}"
                 );
                 // The column-block pair retired the one-launch HC boundary.
-                assert_ne!(*cubin, crate::sm120::hc_completion::CUBIN, "{topology}");
+                assert_ne!(
+                    *cubin, "sinkhorn_hc_deepseek41_completion_sm120",
+                    "{topology}"
+                );
                 assert!(crate::serves(cubin, &shape), "{topology}: {cubin}");
             }
             let lines = host.device.journal.borrow().clone();

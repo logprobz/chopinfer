@@ -214,3 +214,67 @@ async fn health_prefill_options_match_the_applied_terminal_dispatch() {
         );
     }
 }
+
+/// Timing cuts beside a decode reach the bundle as cut envelopes that end
+/// on granule multiples before the prompt end.
+#[test]
+fn timing_cuts_reach_the_bundle_as_cut_envelopes() {
+    use runtime_scheduler::{MixedPolicy, PrefillBudget};
+    let mut instance = FakeExecutionV1::emitting(Vec::new());
+    instance.prefill_chunk = 8192;
+    instance.prefill_cuts = true;
+    instance.dynamic_rows = true;
+    let vocabulary = ModelVocabulary::new(VOCABULARY).unwrap();
+    let geometry = KvGeometry::new(64, 1024).unwrap();
+    let config = EngineConfig::new(
+        SchedulerConfig::new(2, 2, 8192, 8192, 1)
+            .unwrap()
+            .with_prefill_granule(64)
+            .unwrap()
+            .with_prefill_budget(PrefillBudget::Tbt(MixedPolicy::new(150, 512, 0).unwrap())),
+        geometry,
+        vocabulary,
+        geometry.token_capacity(),
+        2,
+    )
+    .unwrap()
+    .with_guaranteed_prefill_chunks(8192)
+    .unwrap()
+    .with_prefill_cuts(true)
+    .with_prefill_timing_cuts(true);
+    let executor = BundleModelExecutorV1::new(instance, VOCABULARY, 8)
+        .with_view_sampler(Rc::new(CollectedSampler));
+    let mut engine = Engine::new(config, executor).unwrap();
+    let request = |id: u64, prompt: usize, output| {
+        EngineRequest::new(
+            RequestId::new(id),
+            vec![0; prompt],
+            output,
+            SamplingParameters::new(0.0).unwrap(),
+            id,
+            Vec::new(),
+            vocabulary,
+        )
+        .unwrap()
+    };
+    engine.submit(request(1, 1, 64)).unwrap();
+    engine.step().unwrap();
+    engine.submit(request(2, 1100, 2)).unwrap();
+    for _ in 0..4 {
+        engine.step().unwrap();
+    }
+    let ends = engine
+        .executor()
+        .instance
+        .envelopes
+        .iter()
+        .flat_map(|encoded| {
+            runtime_bundle_sdk::prefill::decode_with_cuts(encoded)
+                .unwrap()
+                .boundaries
+        })
+        .filter(|boundary| boundary.request_id == 2)
+        .map(|boundary| (boundary.chunk_end, boundary.prompt_tokens))
+        .collect::<Vec<_>>();
+    assert_eq!(ends, [(512, 1100), (1024, 1100), (1100, 1100)]);
+}

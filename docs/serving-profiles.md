@@ -303,3 +303,14 @@ options override them. Mixed prefill/decode scheduling is opt-in and requires
 the package's declared support. Compare it with the same model, workload,
 concurrency and precision. Neither a scheduling flag nor spare capacity
 establishes accuracy or performance qualification.
+
+A declared prefill grid keeps whole chunks under every budget. The
+candidate switch `CHOPINFER_PREFILL_TIMING_CUTS=1`, with
+`--prefill-budget tbt` and a bundle that declares prefill cuts, instead
+ends a grid chunk that runs while requests decode at the last prefill
+granule multiple the tbt cap reaches (at least the
+`--mixed-min-prefill-tokens` floor), so the decoders share the step. The
+server refuses to start with the switch otherwise. Timing cuts capture no
+prefix anchor, and scored and media requests keep their chunks. The switch
+is a candidate under qualification: it is removed when the behavior is
+adopted or dropped.

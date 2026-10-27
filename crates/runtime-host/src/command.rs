@@ -3547,6 +3547,23 @@ impl ServedEngineV1 {
                 .map_err(|error| format!("unusable bundle prefill chunk size: {error:?}"))?
                 .with_prefill_cuts(prefill_cuts.chunk_tokens != 0)
         };
+        // The serving configuration validated the switch's value.
+        let config = if std::env::var_os(PREFILL_TIMING_CUTS).is_some_and(|value| value == "1") {
+            let config = config.with_prefill_timing_cuts(true);
+            if !config.prefill_timing_cuts() {
+                return Err(format!(
+                    "{PREFILL_TIMING_CUTS}=1 needs --prefill-budget tbt and a bundle that \
+                     declares prefill cuts"
+                ));
+            }
+            println!(
+                "prefill timing cuts on ({PREFILL_TIMING_CUTS}=1): grid chunks beside decoding \
+                 requests end at the TBT cap"
+            );
+            config
+        } else {
+            config
+        };
         let snapshot_pages = if prefix_capability
             && (self.prefix_cache || (offload_capability && self.kv_offload.budget_bytes != 0))
         {
@@ -4616,6 +4633,15 @@ fn engine_config_v1(
     )
     .map_err(|error| run_error(format!("the serving engine is unusable: {error:?}")))
     .and_then(|config| {
+        // Refused here too, before the bundle loads.
+        prefill_timing_cuts_v1(
+            std::env::var_os(PREFILL_TIMING_CUTS).as_deref(),
+            serving.prefill_budget,
+        )
+        .map_err(usage_error)?;
+        Ok(config)
+    })
+    .and_then(|config| {
         batch_refusal_limits_v1(|name| {
             std::env::var_os(name).map(|value| value.to_string_lossy().into_owned())
         })
@@ -4654,6 +4680,26 @@ fn serving_backend_config_v1(
         // A worker stuck in a step fails readiness and exits the process for
         // its supervisor rather than staying ready.
         .with_watchdog(Some(crate::WorkerWatchdogV1::serving())))
+}
+
+/// Candidate switch for timing-cut prefill chunks
+/// ([`runtime_engine::EngineConfig::with_prefill_timing_cuts`]): `1` turns
+/// them on, `0` or unset leaves them off.
+pub const PREFILL_TIMING_CUTS: &str = "CHOPINFER_PREFILL_TIMING_CUTS";
+
+/// Whether the switch is on; it needs the tbt budget.
+fn prefill_timing_cuts_v1(
+    value: Option<&std::ffi::OsStr>,
+    budget: runtime_scheduler::PrefillBudget,
+) -> Result<bool, String> {
+    match value.map(|value| value.to_str()) {
+        None | Some(Some("0")) => Ok(false),
+        Some(Some("1")) if matches!(budget, runtime_scheduler::PrefillBudget::Tbt(_)) => Ok(true),
+        Some(Some("1")) => Err(format!(
+            "{PREFILL_TIMING_CUTS}=1 needs --prefill-budget tbt"
+        )),
+        Some(_) => Err(format!("{PREFILL_TIMING_CUTS} must be 0 or 1")),
+    }
 }
 
 fn batch_refusal_limits_v1(
@@ -11233,6 +11279,29 @@ mod tests {
 #[cfg(test)]
 mod refusal_config_tests {
     use super::batch_refusal_limits_v1;
+
+    #[test]
+    fn the_prefill_timing_cut_switch_needs_tbt_and_a_known_value() {
+        use runtime_scheduler::{MixedPolicy, PrefillBudget};
+        let tbt = PrefillBudget::Tbt(MixedPolicy::default());
+        let value = |text: &str| Some(std::ffi::OsString::from(text));
+        for budget in [PrefillBudget::Fixed, tbt] {
+            assert_eq!(super::prefill_timing_cuts_v1(None, budget), Ok(false));
+            assert_eq!(
+                super::prefill_timing_cuts_v1(value("0").as_deref(), budget),
+                Ok(false)
+            );
+            for invalid in ["", "true", "2"] {
+                assert!(super::prefill_timing_cuts_v1(value(invalid).as_deref(), budget).is_err());
+            }
+        }
+        assert_eq!(
+            super::prefill_timing_cuts_v1(value("1").as_deref(), tbt),
+            Ok(true)
+        );
+        let refused = super::prefill_timing_cuts_v1(value("1").as_deref(), PrefillBudget::Fixed);
+        assert!(refused.unwrap_err().contains("--prefill-budget tbt"));
+    }
 
     #[test]
     fn refusal_limits_default_override_and_reject_invalid_configuration() {

@@ -1041,6 +1041,22 @@
    "error": "qualification.prefix.prefill_granule"
   },
   {
+   "name": "exact prompt-end anchors",
+   "set": {
+    "/qualification/prefix/exact_prompt_ends": true
+   },
+   "remove": [],
+   "error": null
+  },
+  {
+   "name": "a string exact prompt-ends flag",
+   "set": {
+    "/qualification/prefix/exact_prompt_ends": "true"
+   },
+   "remove": [],
+   "error": "qualification.prefix.exact_prompt_ends"
+  },
+  {
    "name": "a short checkpoint identity",
    "set": {
     "/qualification/checkpoint/checkpoint_identity": "74a79e"

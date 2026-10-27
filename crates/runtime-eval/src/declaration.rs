@@ -918,10 +918,13 @@ fn qualification(value: &Value) -> Checked<CheckpointPin> {
             "anchor_labels",
             "reference_schema",
         ]);
-        let prefix = fields(prefix, where_, &required, &[])?;
+        let prefix = fields(prefix, where_, &required, &["exact_prompt_ends"])?;
         text(&prefix["family"], &format!("{where_}.family"))?;
         for key in flags {
             boolean(&prefix[key], &format!("{where_}.{key}"))?;
+        }
+        if let Some(exact) = prefix.get("exact_prompt_ends") {
+            boolean(exact, &format!("{where_}.exact_prompt_ends"))?;
         }
         positive_integer(&prefix["block_tokens"], &format!("{where_}.block_tokens"))?;
         positive_integer(

@@ -773,3 +773,85 @@ fn grid_anchor_items_span_from_a_restored_odd_start() {
     s.complete_prefix_restore(RequestId::new(2)).unwrap();
     assert_eq!(anchored_step(&mut s), [(2, 789, 300, Some(1088))]);
 }
+
+/// Serves a prompt of `document` to its end as the engine does: its prefill,
+/// then decodes, which publish no anchor (decode-written state is private to
+/// the request). Returns the cached tokens and the prefill items as (start,
+/// tokens).
+fn serve(
+    s: &mut Scheduler,
+    id: u64,
+    document: &[u32],
+    prompt: usize,
+    outputs: usize,
+) -> (usize, Vec<(usize, usize)>) {
+    let request = RequestId::new(id);
+    submit_outputs(s, id, &document[..prompt], outputs);
+    s.admit().unwrap();
+    let cached = s.cached_tokens(request).unwrap();
+    if cached > 0 {
+        s.complete_prefix_restore(request).unwrap();
+    }
+    let (mut emitted, mut rows) = (0, Vec::new());
+    while s.request_state(request).unwrap() != RequestState::Finished {
+        let batch = s.next_batch().unwrap().unwrap();
+        let [item] = batch.items() else {
+            panic!("one request")
+        };
+        let emits = usize::from(item.expects_output());
+        if let BatchPhase::Prefill { tokens } = item.phase() {
+            rows.push((batch.kv_plan().appends()[0].previous_tokens(), tokens));
+        }
+        let outcome =
+            BatchOutcome::success(request, item.phase(), emits, emitted + emits == outputs);
+        s.commit_batch(batch.id(), &[outcome]).unwrap();
+        emitted += emits;
+        for capture in s.take_prefix_captures() {
+            let exists = s.has_capture_anchor(&capture);
+            assert!(s.begin_prefix_capture(&capture).unwrap().is_some() || exists);
+            s.end_prefix_capture(&capture).unwrap();
+        }
+        s.audit().unwrap();
+    }
+    (cached, rows)
+}
+
+/// Every cache hit of the served exactness plan is the split grid's. Only
+/// prefill-written anchors are public: a 16-token probe at 769 leaves its
+/// prompt end, the longest hit of a later repeat of 789. Repeats before
+/// probes and single-token seeds keep the rounded ends and the seeds' odd
+/// ends the longest hits.
+#[test]
+fn grid_anchor_items_keep_every_cache_hit_of_the_split_grid() {
+    for grid in [0, 1] {
+        let split = |cached: usize, end: usize| {
+            let anchor = end / 64 * 64;
+            if grid == 0 && anchor > cached {
+                vec![(cached, anchor - cached), (anchor, end - anchor)]
+            } else {
+                vec![(cached, end - cached)]
+            }
+        };
+        let mut s = scheduler_with_grid_anchors(8192, true, grid, 0);
+        let first: Vec<u32> = (0..1000).collect();
+        assert_eq!(serve(&mut s, 1, &first, 789, 16), (0, split(0, 789)));
+        assert_eq!(serve(&mut s, 2, &first, 769, 16), (768, split(768, 769)));
+        assert_eq!(serve(&mut s, 3, &first, 789, 16), (769, split(769, 789)));
+        let second: Vec<u32> = (1000..2000).collect();
+        assert_eq!(serve(&mut s, 4, &second, 789, 16), (0, split(0, 789)));
+        assert_eq!(serve(&mut s, 5, &second, 789, 16), (768, split(768, 789)));
+        assert_eq!(serve(&mut s, 6, &second, 769, 16), (768, split(768, 769)));
+        for (id, seed) in [(7, 760), (10, 761), (13, 762)] {
+            let document: Vec<u32> = (id as u32 * 1000..id as u32 * 1000 + 1000).collect();
+            assert_eq!(serve(&mut s, id, &document, seed, 1), (0, split(0, seed)));
+            assert_eq!(
+                serve(&mut s, id + 1, &document, 900, 16),
+                (seed, split(seed, 900))
+            );
+            assert_eq!(
+                serve(&mut s, id + 2, &document, 900, 16),
+                (896, split(896, 900))
+            );
+        }
+    }
+}

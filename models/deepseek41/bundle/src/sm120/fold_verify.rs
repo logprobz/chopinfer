@@ -38,9 +38,9 @@ pub fn entry(id: &str) -> Option<Entry> {
         "attention.o-b" => (5120, 2048, 1, 64, false),
         _ => return None,
     };
-    let (tile_n, splits, stages) = if id == "attention.kv" {
+    let (tile_n, splits, stages, distributed) = if id == "attention.kv" {
         // This lab descriptor is not a served wide status route.
-        (16, 8, 5)
+        (16, 8, 5, false)
     } else {
         let op = format!("dense_fold.{}_status.verify", id.replace(['.', '-'], "_"));
         let tuning = super::mxfp8_fold::status_tuning(&op, 64, 64)?;
@@ -48,6 +48,7 @@ pub fn entry(id: &str) -> Option<Entry> {
             super::mxfp8_fold::tuning_count(tuning, "tile_n"),
             super::mxfp8_fold::tuning_count(tuning, "splits"),
             super::mxfp8_fold::tuning_count(tuning, "stages"),
+            super::fold_cluster::distributed(tuning),
         )
     };
     let q = Mxfp8FoldGemmQuery {
@@ -74,7 +75,7 @@ pub fn entry(id: &str) -> Option<Entry> {
             tile_rows: 64,
             splits,
             stages,
-            distributed: false,
+            distributed,
         },
         pending,
         quantize,

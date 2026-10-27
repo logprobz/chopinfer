@@ -10,6 +10,13 @@ use kernels_sm120::gemm::{mxfp8_fold, mxfp8_fold_cluster::Entry};
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
 pub const FAMILY: &str = "mxfp8_fold_cluster";
 pub const CUBIN: &str = "mxfp8_fold_cluster_deepseek41_sm120";
+
+pub(super) fn distributed(row: &kernel_build::tuning::Row) -> bool {
+    assert_eq!(row.schedule, "cluster_fused");
+    row.knobs["distributed"]
+        .flag()
+        .expect("cluster storage flag")
+}
 // SM120, 300 W, 2026-10-22: graph replay against the served fold of each
 // bucket, warm medians in us on two devices. q-a 16: 12.0/12.9 -> 9.6/8.9.
 // q-a 32: 16.0/16.0 -> 11.8/11.7. kv 16: 9.9/10.0 -> 7.7/7.6. kv 32:
@@ -63,7 +70,7 @@ pub fn served(id: &str, rows: u32) -> Option<Entry> {
     let q = query(id)?;
     let op = format!("dense_fold.{}_cluster.decode", id.replace(['.', '-'], "_"));
     let tuning = super::mxfp8_fold::status_tuning(&op, 32, rows)?;
-    Some(entry(
+    let mut entry = entry(
         rows,
         q.n,
         q.k,
@@ -71,7 +78,9 @@ pub fn served(id: &str, rows: u32) -> Option<Entry> {
         super::mxfp8_fold::tuning_count(tuning, "tile_n"),
         super::mxfp8_fold::tuning_count(tuning, "splits"),
         super::mxfp8_fold::tuning_count(tuning, "stages"),
-    ))
+    );
+    entry.distributed = distributed(tuning);
+    Some(entry)
 }
 
 pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {

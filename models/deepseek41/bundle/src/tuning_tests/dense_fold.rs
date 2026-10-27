@@ -288,3 +288,48 @@ fn local_wide_rows_keep_the_qualified_launches() {
     }
     assert_eq!(checked, 7);
 }
+
+#[test]
+fn cluster_rows_keep_cta_local_storage() {
+    let table = tuning::table(&FLASH, Family::DenseFold).unwrap();
+    let mut checked = 0;
+    for row in table
+        .rows()
+        .iter()
+        .filter(|row| row.schedule == "cluster_fused")
+    {
+        assert_eq!(
+            row.knobs.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["distributed", "splits", "stages", "tile_n"]
+        );
+        assert_eq!(row.knobs["distributed"].flag(), Some(false));
+        let (site, phase) = row
+            .key
+            .op
+            .strip_prefix("dense_fold.")
+            .unwrap()
+            .rsplit_once('.')
+            .unwrap();
+        let id = site
+            .trim_end_matches("_cluster")
+            .trim_end_matches("_status")
+            .replace("attention_", "attention.")
+            .replace('_', "-");
+        let [lo, hi] = row.key.rows.unwrap_or([1, row.key.bucket]);
+        for rows in lo..=hi {
+            let entry = if phase == "decode" {
+                crate::sm120::fold_cluster::served(&id, rows).unwrap()
+            } else {
+                crate::sm120::fold_verify::served(&id, rows)
+                    .unwrap()
+                    .cluster
+            };
+            assert!(!entry.distributed);
+            assert_eq!(entry.tile_n, row.knobs["tile_n"].count().unwrap());
+            assert_eq!(entry.splits, row.knobs["splits"].count().unwrap());
+            assert_eq!(entry.stages, row.knobs["stages"].count().unwrap());
+        }
+        checked += 1;
+    }
+    assert_eq!(checked, 11);
+}

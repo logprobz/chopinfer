@@ -96,7 +96,7 @@ fn pdl(
             ),
         ],
     )?;
-    let module = s.load_cubin(bundle_deepseek41::sm120::dependency_probes().0)?;
+    let module = s.load_cubin(crate::dependency_probes::get().0)?;
     let producer = LiveProducer::with_function(
         s,
         module

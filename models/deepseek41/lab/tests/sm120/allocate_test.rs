@@ -76,7 +76,7 @@ fn gpu_functions() -> [(&'static str, &'static [u8], &'static str); 2] {
         (name, bytes, symbol),
         (
             kernels_sm120::probes::CUBIN,
-            bundle_deepseek41::sm120::dependency_probes().0,
+            crate::dependency_probes::get().0,
             kernels_sm120::probes::LIVE,
         ),
     ]

@@ -1,4 +1,6 @@
 //! Unselected exact native FP8 staging matrix against the serving route.
+#[path = "../dependency_probes.rs"]
+mod dependency_probes;
 use bundle_deepseek41::sm120::{fold_cubin_for_symbol, mxfp8_fold as registration};
 use kernel_core::backend::{Backend, Counts, Launch, Need, View};
 use kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers as Buffers;
@@ -328,7 +330,7 @@ fn cpu_matrix() {
             cases.push(json!({"n":e.base.query.n,"k":e.base.query.k,"groups":e.base.query.groups,"stages":e.stages,"rows":rows,"topologies":topology(&e),"baseline_symbols":old.iter().map(|o|&o.symbol).collect::<Vec<_>>(),"candidate_symbols":new.iter().map(|o|&o.symbol).collect::<Vec<_>>()}));
         }
     }
-    let (bytes, exports) = bundle_deepseek41::sm120::dependency_probes();
+    let (bytes, exports) = crate::dependency_probes::get();
     assert!(exports.contains(&kernels_sm120::probes::LIVE));
     embedded.insert(
         kernels_sm120::probes::CUBIN.into(),

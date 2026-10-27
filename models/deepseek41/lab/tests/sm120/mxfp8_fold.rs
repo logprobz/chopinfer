@@ -25,9 +25,9 @@ impl Modules for ModelModules {
             modules[name].function(symbol).map_err(|e| e.to_string())
         }))
     }
-    /// The bundle's locked dependency probes.
+    /// The shared lab's locked dependency probes.
     fn probes(&self, session: &Session) -> LabResult<Option<Probes>> {
-        let (bytes, _) = bundle_deepseek41::sm120::dependency_probes();
+        let (bytes, _) = crate::dependency_probes::get();
         let module = session.load_cubin(bytes)?;
         let function = |name| module.function(name).map_err(|e| e.to_string());
         Ok(Some(Probes {

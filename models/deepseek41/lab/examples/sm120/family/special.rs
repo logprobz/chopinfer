@@ -146,6 +146,12 @@ pub fn recipes() -> Vec<Recipe> {
         };
     }
     vec![
+        recipe(
+            Root::Shared,
+            "dependency_probes",
+            || Ok(vec![probes()]),
+            Export::None,
+        ),
         own!(acceptance_entries, acceptance_cubin),
         own!(host_acceptance_entries, host_acceptance_cubin),
         own!(ring_gather_entries, ring_gather_cubin),

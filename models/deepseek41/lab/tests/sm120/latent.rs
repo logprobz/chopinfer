@@ -71,7 +71,7 @@ impl kernel_harness::kit::Modules for Modules {
         session: &kernel_harness::Session,
     ) -> kernel_harness::LabResult<Option<kernel_harness::conformance::Probes>> {
         use kernel_harness::poison::{CopyProducer, LiveProducer};
-        let (bytes, _) = bundle_deepseek41::sm120::dependency_probes();
+        let (bytes, _) = crate::dependency_probes::get();
         let module = session.load_cubin(bytes)?;
         let live = module
             .function(kernels_sm120::probes::LIVE)
@@ -187,7 +187,7 @@ fn conform(
 
 #[test]
 fn latent_required_cases_prepare_and_symbols_are_embedded() {
-    let (bytes, symbols) = bundle_deepseek41::sm120::dependency_probes();
+    let (bytes, symbols) = crate::dependency_probes::get();
     assert!(!bytes.is_empty());
     assert_eq!(
         symbols,

@@ -503,7 +503,7 @@ fn compare(
             );
         }
     }
-    let (bytes, _) = bundle_deepseek41::sm120::dependency_probes();
+    let (bytes, _) = crate::dependency_probes::get();
     let delay = session
         .load_cubin(bytes)?
         .function(kernels_sm120::probes::COPY)

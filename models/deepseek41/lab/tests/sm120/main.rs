@@ -6,6 +6,7 @@ mod dense_decode_reference;
 
 mod ceil_parallel;
 mod dense_decode;
+mod dependency_probes;
 mod embedding_replicated;
 mod f32_blocked;
 mod f32_decode;

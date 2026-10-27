@@ -1,4 +1,6 @@
 //! Indexed raw retention versus the previous ordered device-copy list.
+#[path = "dependency_probes.rs"]
+mod dependency_probes;
 use bundle_deepseek41::{
     dspark::{
         state::{CommitItem, Config, Kind, Rows},
@@ -176,7 +178,7 @@ fn retention_bytes_match_scalar_copies_with_poison_and_consumers() {
         assert_eq!(name,retain_rows_entries::CUBIN);
         let module = session.load_cubin(cubin)?;
         let function = module.function(retain_rows_entries::SYMBOL).map_err(|e| e.to_string())?;
-        let probes = session.load_cubin(bundle_deepseek41::sm120::dependency_probes().0)?;
+        let probes = session.load_cubin(crate::dependency_probes::get().0)?;
         let producer = LiveProducer::with_function(session,
             probes.function(kernels_sm120::probes::LIVE).map_err(|e| e.to_string())?)?;
         let initial_free = session.context.memory_info().map_err(|e| e.to_string())?.0;

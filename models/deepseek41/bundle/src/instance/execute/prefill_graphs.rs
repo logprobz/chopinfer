@@ -16,11 +16,17 @@
 //! The head, after the logits compaction copies, is one more program with
 //! one segment.
 
+use std::cell::RefCell;
 use std::ops::Range;
 
-use bundle_runtime::graphs::programs::{Fingerprint, fingerprint};
-use bundle_runtime::pipeline::PreparedLaunch;
+use bundle_runtime::dispatch::DispatchError;
+use bundle_runtime::graphs::programs::{
+    Admission, Eager, Fingerprint, Limits, Programs as Store, fingerprint,
+};
+use bundle_runtime::pipeline::{PoisonOnUnwind, PreparedLaunch};
 use model_deepseek41_contract::indexer;
+use model_deepseek41_contract::serving::DeepSeek;
+use runtime_bundle_abi::{BundleAbiError, BundleStreamHandleV1};
 
 use super::{PREFILL, Programs, Run, skip};
 use crate::instance::Instance;
@@ -29,6 +35,42 @@ use crate::program::Stage;
 
 /// The most rows of an eligible prefill.
 pub(super) const MAX_ROWS: u32 = 511;
+
+/// Free graph handles per rank a bounded ledger keeps after a prefill
+/// capture, for the decode, verify and drafter graphs serving captures
+/// lazily. The served DSpark profile's warmup captured 158 handles per rank
+/// of its 512, and 12 hours of agent traffic raised that to 173.
+pub(super) const HEADROOM: usize = 128;
+
+/// Prefill keys that ran once remembered at once.
+const SEEN: usize = 64;
+
+/// Head programs captured at once: one per head input layout.
+const HEADS: usize = 4;
+
+/// The captured body and head programs.
+pub(in crate::instance) struct Stores {
+    body: Store<Key, DeepSeek>,
+    head: Store<Key, DeepSeek>,
+}
+
+impl Stores {
+    /// Stores holding at most `programs` body programs, or none at zero,
+    /// which keeps every prefill eager.
+    pub(in crate::instance) fn new(programs: usize) -> Option<RefCell<Self>> {
+        let limits = |programs| Limits {
+            programs,
+            seen: SEEN,
+            headroom: HEADROOM,
+        };
+        (programs > 0).then(|| {
+            RefCell::new(Self {
+                body: Store::new(limits(programs)),
+                head: Store::new(limits(HEADS)),
+            })
+        })
+    }
+}
 
 /// The host work between two graph segments.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -116,6 +158,22 @@ pub(super) fn eligible(run: &Run, plan: &skip::Plan) -> bool {
         && inputs.request_ids.len() == 1
         && inputs.position_axes.is_empty()
         && (1..=MAX_ROWS).contains(&inputs.live_tokens())
+}
+
+/// Whether an eligible prefill may replay as graphs: it continues a prefix.
+/// Startup warmup runs about a hundred prefix-zero prompts of 1 to 32 rows,
+/// repeating each length; captured, they would fill the store under the
+/// decode and verify graphs warmup captures after them, which pins them
+/// for good, and served traffic rarely repeats them (29 of 5,017 logged
+/// steps under 512 rows started at position zero). Continuations are what
+/// agent turns and prompt tails run.
+pub(super) fn admits(run: &Run, plan: &skip::Plan) -> bool {
+    eligible(run, plan)
+        && run
+            .inputs
+            .prefix_len
+            .first()
+            .is_some_and(|&start| start > 0)
 }
 
 /// Whether `stage` runs eagerly between graph segments: an index selection
@@ -310,5 +368,184 @@ impl Instance {
         }
         record.push('}');
         let _ = self.services.log(record.as_bytes());
+    }
+}
+
+impl Instance {
+    /// Runs an eligible prefill's upper-skip plan (`eligible`) with its body
+    /// and head as graphs: each replays when its key is captured, captures
+    /// first when admitted, and otherwise runs as the eager plan does. The
+    /// gaps between body segments join the prepared gathers and launch the
+    /// eager selections in program order; the logits compaction copies run
+    /// between the body and the head. A program that does not split runs
+    /// eagerly.
+    pub(super) fn launch_prefill_graphs(
+        &self,
+        run: &Run,
+        plan: &skip::Plan,
+        gathers: Option<&crate::instance::prefill_engram::Plan>,
+    ) -> Result<(), BundleAbiError> {
+        let Some(stores) = &self.prefill_graphs else {
+            return plan.execute(self, gathers);
+        };
+        let streams: Vec<_> = self.ranks.iter().map(|rank| rank.2).collect();
+        let rows = run.inputs.live_tokens();
+        let joins = gathers.map(|gathers| gathers.joins());
+        let (programs, collectives, _) = plan.body();
+        let keyed = split(self, plan.body(), joins.as_deref()).and_then(|split| {
+            let body = Key::of(rows, programs, &split)?;
+            let head = Key::of(run.head_rows, &plan.head().0, &whole(&plan.head().0))?;
+            Ok((split, body, head))
+        });
+        let (split, body, head) = match keyed {
+            Ok(keyed) => keyed,
+            Err(error) => {
+                self.log(&format!(
+                    "prefill graphs: {error}; the prefill runs eagerly"
+                ));
+                return plan.execute(self, gathers);
+            }
+        };
+        let mut stores = stores.borrow_mut();
+        let gap = |at: usize| match &split.gaps[at] {
+            Gap::Join(layer) => self
+                .prefill_engram
+                .as_ref()
+                .ok_or(DispatchError::InvalidPlan)?
+                .join(&self.services, &streams, *layer)
+                .map_err(DispatchError::from),
+            Gap::Eager(ranges) => {
+                let ops: Vec<_> = ranges
+                    .iter()
+                    .zip(programs)
+                    .map(|(range, program)| &program[range.clone()])
+                    .collect();
+                let waits: Vec<_> = ranges
+                    .iter()
+                    .zip(collectives)
+                    .map(|(range, waits)| &waits[range.clone()])
+                    .collect();
+                self.launch_eager(&streams, &ops, &waits)
+            }
+        };
+        let segments = split.segments(programs);
+        if !self.run_program(&mut stores.body, &streams, body, &segments, "prefill", gap)? {
+            plan.execute_body(self, gathers)?;
+        }
+        plan.compact_rows(self)?;
+        let head_split = whole(&plan.head().0);
+        let segments = head_split.segments(&plan.head().0);
+        let no_gap = |_| Err(DispatchError::InvalidPlan);
+        if !self.run_program(
+            &mut stores.head,
+            &streams,
+            head,
+            &segments,
+            "prefill-head",
+            no_gap,
+        )? {
+            plan.execute_head(self)?;
+        }
+        Ok(())
+    }
+
+    /// Replays `key`'s program, capturing its `segments` first when the
+    /// store admits it, with `gap` between segments. Returns false,
+    /// launching nothing, when it must run eagerly instead.
+    fn run_program(
+        &self,
+        store: &mut Store<Key, DeepSeek>,
+        streams: &[BundleStreamHandleV1],
+        key: Key,
+        segments: &[Vec<&[PreparedLaunch]>],
+        label: &'static str,
+        gap: impl FnMut(usize) -> Result<(), DispatchError>,
+    ) -> Result<bool, BundleAbiError> {
+        let handles = segments
+            .iter()
+            .filter(|ranks| ranks.iter().any(|launches| !launches.is_empty()))
+            .count();
+        // A chunk that scores no row has no head to capture.
+        if handles == 0 {
+            return Ok(false);
+        }
+        let drain = || super::dma::drain_streams(self).map_err(DispatchError::from);
+        let admitted = store
+            .admit(&self.services, &self.graphs, &key, handles, drain)
+            .map_err(|error| self.dispatch_failed(error))?;
+        if self.config.execution.diagnostic_step_logs {
+            let decision = match &admitted {
+                Admission::Replay => "replay".to_owned(),
+                Admission::Capture(_) => "capture".to_owned(),
+                Admission::Eager(why) => format!("eager-{why:?}").to_lowercase(),
+            };
+            let record = format!(
+                "{{\"schema\":\"chopinfer.deepseek41.prefill-graph.v1\",\"program\":\"{label}\",\
+                 \"rows\":{},\"key\":\"{}\",\"decision\":\"{decision}\"}}",
+                key.rows,
+                key.digest()
+            );
+            let _ = self.services.log(record.as_bytes());
+        }
+        match admitted {
+            Admission::Replay => {
+                let stats = store.stats();
+                if stats.replays.is_power_of_two() {
+                    self.log(&format!(
+                        "{label} graph replays: {}; {stats:?}",
+                        stats.replays
+                    ));
+                }
+            }
+            Admission::Eager(why) => {
+                let stats = store.stats();
+                let denied = stats.full + stats.ledger;
+                if matches!(why, Eager::Full | Eager::Ledger) && denied.is_power_of_two() {
+                    self.log(&format!(
+                        "{label} graphs: {} rows run eagerly ({why:?}); {stats:?}",
+                        key.rows
+                    ));
+                }
+                return Ok(false);
+            }
+            Admission::Capture(mut reservation) => {
+                let started = std::time::Instant::now();
+                let launches: usize = segments.iter().map(|ranks| ranks[0].len()).sum();
+                let rows = key.rows;
+                store
+                    .capture(
+                        &self.services,
+                        &self.graphs,
+                        key.clone(),
+                        &mut reservation,
+                        streams,
+                        segments,
+                        (label, Some(rows)),
+                        |rank, launches| {
+                            super::super::prefill_cache::launch(
+                                &self.services,
+                                streams[rank],
+                                &self.symbols[rank],
+                                launches,
+                            )
+                        },
+                    )
+                    .map_err(|error| self.dispatch_failed(error))?;
+                self.log(&format!(
+                    "{label} graph capture: {rows} rows, {handles} graphs and {launches} \
+                     launches on rank 0, {:.3}s; {:?}",
+                    started.elapsed().as_secs_f64(),
+                    store.stats()
+                ));
+            }
+        }
+        let _unwinding = PoisonOnUnwind(&self.collectives);
+        let replayed = store
+            .replay(&self.services, &key, streams, &self.collectives, gap)
+            .map_err(|error| self.dispatch_failed(error))?;
+        if !replayed {
+            return Err(self.dispatch_failed(DispatchError::InvalidPlan));
+        }
+        Ok(true)
     }
 }

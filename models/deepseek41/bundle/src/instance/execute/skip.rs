@@ -399,6 +399,18 @@ impl Plan {
         instance: &Instance,
         gathers: Option<&crate::instance::prefill_engram::Plan>,
     ) -> Result<(), BundleAbiError> {
+        self.execute_body(instance, gathers)?;
+        self.compact_rows(instance)?;
+        self.execute_head(instance)
+    }
+
+    /// The body: through upper-skip DMA, between prepared gather joins, or
+    /// in one eager unit.
+    pub(super) fn execute_body(
+        &self,
+        instance: &Instance,
+        gathers: Option<&crate::instance::prefill_engram::Plan>,
+    ) -> Result<(), BundleAbiError> {
         let streams: Vec<_> = instance.ranks.iter().map(|r| r.2).collect();
         if let Some(dma) = &self.dma {
             if gathers.is_some() && !instance.config.execution.prefill_dma_engram {
@@ -406,22 +418,33 @@ impl Plan {
                     runtime_bundle_abi::BundleStatusV1::InvalidState,
                 ));
             }
-            dma.execute(instance, &self.body, gathers)?;
+            dma.execute(instance, &self.body, gathers)
         } else {
             if let Some(gathers) = gathers {
                 gathers.execute(instance, &self.body.0, &self.body.1)
             } else {
                 instance.launch_eager(&streams, &self.body.0, &self.body.1)
             }
-            .map_err(|e| instance.dispatch_failed(e))?;
+            .map_err(|e| instance.dispatch_failed(e))
         }
+    }
+
+    /// Moves each scored row to its logits position for the head.
+    pub(super) fn compact_rows(&self, instance: &Instance) -> Result<(), BundleAbiError> {
         for (rank, copies) in self.copies.iter().enumerate() {
             for &(destination, source) in copies {
-                instance
-                    .services
-                    .copy_device_to_device(streams[rank], destination, source)?;
+                instance.services.copy_device_to_device(
+                    instance.ranks[rank].2,
+                    destination,
+                    source,
+                )?;
             }
         }
+        Ok(())
+    }
+
+    pub(super) fn execute_head(&self, instance: &Instance) -> Result<(), BundleAbiError> {
+        let streams: Vec<_> = instance.ranks.iter().map(|r| r.2).collect();
         instance
             .launch_eager(&streams, &self.head.0, &self.head.1)
             .map_err(|e| instance.dispatch_failed(e))

@@ -137,6 +137,9 @@ pub struct Instance {
     ar_status: Option<execute::ar_status::Packet>,
     /// Kept upper-skip plans of short prompts.
     plans: execute::plan_cache::Cache,
+    /// Short prefills' graph segments, with `prefill_graph_programs` above
+    /// zero (`execute::prefill_graphs`).
+    prefill_graphs: Option<std::cell::RefCell<execute::prefill_graphs::Stores>>,
     /// Run the lowered stages alone (`PARTIAL`).
     partial: bool,
     /// Each rank's decode and verify graphs by bucket.
@@ -1003,6 +1006,8 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         BundleStatusV1::InternalError
     })?;
     let plans = execute::plan_cache::Cache::new(&config.execution);
+    let prefill_graphs =
+        execute::prefill_graphs::Stores::new(config.execution.prefill_graph_programs);
     let partial = partial();
     if !partial && let Some(missing) = ops.missing.first() {
         log(missing);
@@ -1074,6 +1079,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         prefill_engram_fallback: crate::engram_rows::SyncReason::NoPreparedGather,
         ar_status: None,
         plans,
+        prefill_graphs,
         partial,
         taps,
         engram,

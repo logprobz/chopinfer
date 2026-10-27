@@ -171,13 +171,14 @@ them. A non-default value is unqualified.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `diagnostic_step_logs` | `false` | Emit DSpark phase, prefetch, Engram, commit and drafter-confidence JSON records, and each upper-skip prefill's program record (`chopinfer.deepseek41.prefill-program.v1`: rows, start, graph segments and program digests). |
+| `diagnostic_step_logs` | `false` | Emit DSpark phase, prefetch, Engram, commit and drafter-confidence JSON records, each upper-skip prefill's program record (`chopinfer.deepseek41.prefill-program.v1`: rows, start, graph segments and program digests) and, with `prefill_graph_programs`, each graph decision (`chopinfer.deepseek41.prefill-graph.v1`). |
 | `dspark_coupled_drafts` | `true` | Couple sampled drafts to the target sampler's noise. |
 | `dspark_compact_allocation` | `false` | Candidate: score and exchange only computed rows for allocated steps up to 64 rows; sample the reserved rows through an index map and reuse allocation metadata staging. |
 | `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |
 | `dspark_graph_handles_per_rank` | `512` | Graph handles per rank, from 0 to 9223372036854775807; 0 keeps DSpark eager. The total across ranks must fit the platform's count range. |
 | `prefill_dma_engram` | `false` | Candidate: enqueue both prepared Engram reads before DMA prefill compute and join at their decoders. |
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
+| `prefill_graph_programs` | `0` | Candidate switch: short text continuations (one item after a prefix, under 512 rows, no upper-skip DMA) captured as graph segments at their second run, at most this many body programs at once, from 0 to 64; 0 keeps every prefill eager. Unqualified. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit again and refuse a differing plan. |
 | `prefill_upper_skip` | `true` | Use upper-skip prefill; requires nonzero guaranteed chunk ends. |

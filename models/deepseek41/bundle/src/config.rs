@@ -421,6 +421,7 @@ pub(crate) mod tests {
             (SHARED_OVERLAP_MAX_ROWS, 8.into()),
             (PREFILL_PLAN_CACHE_PLANS, 2.into()),
             (PREFILL_PLAN_CACHE_VERIFY, true.into()),
+            (PREFILL_GRAPH_PROGRAMS, 8.into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK, 32.into()),
             (DIAGNOSTIC_STEP_LOGS, true.into()),
         ] {
@@ -433,6 +434,7 @@ pub(crate) mod tests {
                 shared_overlap_max_rows: 8,
                 prefill_plan_cache_plans: 2,
                 prefill_plan_cache_verify: true,
+                prefill_graph_programs: 8,
                 dspark_graph_handles_per_rank: 32,
                 diagnostic_step_logs: true,
             }
@@ -442,6 +444,7 @@ pub(crate) mod tests {
             (SHARED_OVERLAP_MAX_ROWS, 0.into()),
             (PREFILL_PLAN_CACHE_PLANS, 65.into()),
             (PREFILL_PLAN_CACHE_VERIFY, "verify".into()),
+            (PREFILL_GRAPH_PROGRAMS, 65.into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK, (-1).into()),
             (DIAGNOSTIC_STEP_LOGS, 1.into()),
         ] {

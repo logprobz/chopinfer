@@ -10,10 +10,14 @@ pub const PREFILL_PLAN_CACHE_PLANS: &str = "prefill_plan_cache_plans";
 pub const PREFILL_PLAN_CACHE_VERIFY: &str = "prefill_plan_cache_verify";
 /// Candidate: overlap prepared Engram reads with phased DMA prefill.
 pub const PREFILL_DMA_ENGRAM: &str = "prefill_dma_engram";
+/// The candidate switch of short-prefill graphs: the most body programs
+/// captured at once, 0 (the default) keeping every prefill eager.
+pub const PREFILL_GRAPH_PROGRAMS: &str = "prefill_graph_programs";
 pub const DSPARK_GRAPH_HANDLES_PER_RANK: &str = "dspark_graph_handles_per_rank";
 pub const DIAGNOSTIC_STEP_LOGS: &str = "diagnostic_step_logs";
 pub const DEFAULT_PLANS: usize = 16;
 pub const MAX_PLANS: usize = 64;
+pub const MAX_PREFILL_GRAPH_PROGRAMS: usize = 64;
 /// The served warmup fits within 512 graph handles per rank, leaving room
 /// for completion tails that serving captures lazily.
 pub const DEFAULT_GRAPH_HANDLES_PER_RANK: usize = 512;
@@ -24,11 +28,12 @@ pub struct Options {
     pub shared_overlap_max_rows: u32,
     pub prefill_plan_cache_plans: usize,
     pub prefill_plan_cache_verify: bool,
+    pub prefill_graph_programs: usize,
     pub dspark_graph_handles_per_rank: usize,
     pub diagnostic_step_logs: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 6] {
+pub fn declarations() -> [ModelOptionV1; 7] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -45,6 +50,14 @@ pub fn declarations() -> [ModelOptionV1; 6] {
         (
             PREFILL_DMA_ENGRAM,
             OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            PREFILL_GRAPH_PROGRAMS,
+            OptionDefinitionV1::Integer {
+                default: 0,
+                minimum: 0,
+                maximum: MAX_PREFILL_GRAPH_PROGRAMS as i64,
+            },
         ),
         (
             PREFILL_PLAN_CACHE_PLANS,
@@ -104,6 +117,7 @@ impl Options {
                 .as_u64()
                 .expect("checked u32") as u32,
             prefill_plan_cache_plans: count(PREFILL_PLAN_CACHE_PLANS)?,
+            prefill_graph_programs: count(PREFILL_GRAPH_PROGRAMS)?,
             prefill_plan_cache_verify: values[PREFILL_PLAN_CACHE_VERIFY]
                 .as_bool()
                 .expect("checked boolean"),
@@ -136,6 +150,7 @@ mod tests {
             shared_overlap_max_rows: u32::MAX,
             prefill_plan_cache_plans: 16,
             prefill_plan_cache_verify: false,
+            prefill_graph_programs: 0,
             dspark_graph_handles_per_rank: 512,
             diagnostic_step_logs: false,
         };
@@ -152,6 +167,7 @@ mod tests {
             (SHARED_OVERLAP_MAX_ROWS.into(), "8".into()),
             (PREFILL_PLAN_CACHE_PLANS.into(), "2".into()),
             (PREFILL_PLAN_CACHE_VERIFY.into(), "true".into()),
+            (PREFILL_GRAPH_PROGRAMS.into(), "8".into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK.into(), "0".into()),
             (DIAGNOSTIC_STEP_LOGS.into(), "true".into()),
         ]);
@@ -163,6 +179,7 @@ mod tests {
                 shared_overlap_max_rows: 8,
                 prefill_plan_cache_plans: 2,
                 prefill_plan_cache_verify: true,
+                prefill_graph_programs: 8,
                 dspark_graph_handles_per_rank: 0,
                 diagnostic_step_logs: true,
             }
@@ -181,6 +198,8 @@ mod tests {
             (PREFILL_PLAN_CACHE_PLANS, "65"),
             (PREFILL_PLAN_CACHE_PLANS, "1.5"),
             (PREFILL_PLAN_CACHE_VERIFY, "1"),
+            (PREFILL_GRAPH_PROGRAMS, "-1"),
+            (PREFILL_GRAPH_PROGRAMS, "65"),
             (DIAGNOSTIC_STEP_LOGS, "\"true\""),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),
@@ -198,6 +217,8 @@ mod tests {
             (SHARED_OVERLAP_MAX_ROWS, i64::from(u32::MAX)),
             (PREFILL_PLAN_CACHE_PLANS, 1),
             (PREFILL_PLAN_CACHE_PLANS, 64),
+            (PREFILL_GRAPH_PROGRAMS, 0),
+            (PREFILL_GRAPH_PROGRAMS, 64),
             (DSPARK_GRAPH_HANDLES_PER_RANK, 0),
             (DSPARK_GRAPH_HANDLES_PER_RANK, i64::MAX),
         ] {

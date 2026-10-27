@@ -79,6 +79,26 @@ const IDENTITY_COMPONENT: u32 = 200;
 const VIEW_ALIGNMENT: u64 = 4096;
 
 #[test]
+fn uploads_reuse_capacity_and_replace_visible_bytes() {
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+    let stream = BundleStreamHandleV1::from_parts(1, 1);
+    let buffer = BundleDeviceBufferHandleV1::from_parts(1, 7);
+    let span = |length| DeviceBufferSpanV1::new(buffer, 0, length);
+    host.on_upload(stream, span(64), &[1; 64]).unwrap();
+    let pointer = host.uploads.borrow()[&(buffer.raw, 0)].as_ptr();
+    for bytes in [vec![2; 32], vec![3; 64], Vec::new()] {
+        host.on_upload(stream, span(bytes.len() as u64), &bytes)
+            .unwrap();
+        let mut actual = vec![0; bytes.len()];
+        host.read_back(&mut actual, span(bytes.len() as u64))
+            .unwrap();
+        assert_eq!(actual, bytes);
+        assert_eq!(host.uploads.borrow()[&(buffer.raw, 0)].as_ptr(), pointer);
+    }
+}
+
+#[test]
 fn latent_sources_configure_shared_memory_before_serving_launches() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
@@ -738,10 +758,12 @@ impl FakePackage for FakeHost {
         destination: DeviceBufferSpanV1,
         source: &[u8],
     ) -> HostServiceResultV1<()> {
-        self.uploads.borrow_mut().insert(
-            (destination.buffer.raw, destination.offset),
-            source.to_vec(),
-        );
+        let mut uploads = self.uploads.borrow_mut();
+        let bytes = uploads
+            .entry((destination.buffer.raw, destination.offset))
+            .or_default();
+        bytes.clear();
+        bytes.extend_from_slice(source);
         Ok(())
     }
     fn on_copy(

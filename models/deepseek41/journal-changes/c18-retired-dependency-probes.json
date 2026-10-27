@@ -1,0 +1,13 @@
+{
+  "schema": "chopinfer.journal-proof.layout.v1",
+  "description": "Remove the unloaded dependency_probes_sm120 package module. Model-lab fixtures authenticate the identical existing shared dependency_probes family; serving operations and loaded modules are unchanged.",
+  "modules": {
+    "removed": [
+      "dependency_probes_sm120"
+    ]
+  },
+  "resources": {},
+  "collectives": [],
+  "kernels": [],
+  "operations": {}
+}

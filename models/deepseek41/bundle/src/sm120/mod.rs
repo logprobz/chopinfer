@@ -246,15 +246,6 @@ pub fn fold_cubin_for_symbol(symbol: &str) -> Option<(&'static str, &'static [u8
         .map(|c| (c.name, c.bytes))
 }
 
-/// Locked PDL producers for the model's kernel lab.
-pub fn dependency_probes() -> (&'static [u8], &'static [&'static str]) {
-    let cubin = crate::CUBINS
-        .iter()
-        .find(|cubin| cubin.name == kernels_sm120::probes::CUBIN)
-        .expect("embedded dependency probes");
-    (cubin.bytes, cubin.symbols)
-}
-
 /// Register the exact F32 projections of `geometry` at `ranks`, the head's
 /// and the dense ones, as one offer over the symbols their loaded cubins
 /// hold, authenticated by their build dependency. The model lab exercises
@@ -1012,8 +1003,7 @@ impl crate::Kernels {
     }
 
     /// Whether an instance loads `cubin` with the program's cubins: every
-    /// cubin but the dependency probes, which only the kernel lab launches,
-    /// the unwired acceptance reducer, the allocated verify steps' (loaded
+    /// cubin but the unwired acceptance reducer, the allocated verify steps' (loaded
     /// apart, `allocation_cubin`), and the
     /// vision encoder's, which only an encoder instance loads.
     /// Streamed MoE modules load only for the qualified topology.
@@ -1035,7 +1025,6 @@ impl crate::Kernels {
                 || moe_router64::enabled(shape.geometry, shape.ranks(), shape.verify_rows))
             && (cubin != f32_verify::CUBIN
                 || f32_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows))
-            && cubin != kernels_sm120::probes::CUBIN
             && (!ceil_split::is_cubin(cubin) || ceil_split::serves(shape.geometry, shape.ranks()))
             && (cubin != query_window::CUBIN || query_window::serves(shape.geometry, shape.ranks()))
             && cubin != acceptance_entries::CUBIN

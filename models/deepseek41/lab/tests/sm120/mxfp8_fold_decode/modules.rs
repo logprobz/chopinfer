@@ -1,6 +1,6 @@
 //! CPU validation of every module used by the fold comparison job.
 use crate::dense_decode_reference as mxfp8_fold;
-use bundle_deepseek41::sm120::{dependency_probes, fold_cubin_for_symbol};
+use bundle_deepseek41::sm120::fold_cubin_for_symbol;
 use kernel_harness::{Cubins, LabResult};
 use model_deepseek41_contract::{geometry::FLASH, serving::PREFILL_TOKENS};
 use serde_json::{Value, json};
@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 
 const TIMING: &str = "probe_sm120";
 // time_named uses the gate and both cache-eviction modes. The conformance
-// kit uses the bundle's dependency probes through ModelModules.
+// kit uses authenticated shared dependency probes through ModelModules.
 const TIMING_ENTRIES: &[&str] = &[
     "chop_probe_gate_v1",
     "chop_probe_flush_v1",
@@ -79,7 +79,7 @@ fn expected() -> LabResult<BTreeMap<String, Expected>> {
     {
         add(entry.packed_spec().map_err(|e| e.to_string())?.symbol)?;
     }
-    let (bytes, symbols) = dependency_probes();
+    let (bytes, symbols) = crate::dependency_probes::get();
     for required in [kernels_sm120::probes::LIVE, kernels_sm120::probes::COPY] {
         if !symbols.contains(&required) {
             return Err(format!("missing dependency probe {required}"));
@@ -162,8 +162,8 @@ pub(crate) fn check() -> LabResult<Value> {
     validate(&directory()?, &expected()?)
 }
 
-/// The session must register the timing module by name even though model
-/// functions and PDL probes are loaded from the bundle's embedded bytes.
+/// Register the timing module by name; model functions and authenticated
+/// dependency probes are loaded separately.
 pub(crate) fn timing_cubins() -> LabResult<Cubins> {
     static BYTES: OnceLock<LabResult<Vec<u8>>> = OnceLock::new();
     static TABLE: OnceLock<[(&str, &[u8]); 1]> = OnceLock::new();

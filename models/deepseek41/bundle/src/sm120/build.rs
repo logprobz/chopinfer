@@ -727,7 +727,6 @@ pub fn selection(
             .into_iter()
             .map(|s| (router_norm_entries::FAMILY, s)),
     );
-    specs.push(("dependencies", kernels_sm120::probes::cubin_spec()));
     specs.extend(indexer_query::cubins(geometries).expect("deepseek41 query preparation cubins"));
     specs.extend(
         indexer_query_parallel::parallel_cubins(geometries).expect("parallel query cubins"),

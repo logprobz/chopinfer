@@ -281,14 +281,18 @@ mismatch.
 
 The suite includes tokenizer/frontend goldens, per-layer taps, long context,
 GSM8K, media, prefix equality, determinism, native-KV offload and a BF16-KV
-comparison. DSpark requires AR and speculative arms, exact greedy equality,
-the declared verify bounds and GSM8K at least 193/200 in each arm. Forced
-verify capacities are judged separately against paired AR, without pooling
-away an uncovered capacity. Native and BF16 KV must give the same served
-bits; BF16 KV is a diagnostic comparison and is not qualified for capacity,
-pressure preemption or offload. It explicitly disables speculation.
+comparison. Native and BF16 KV must give the same served bits; BF16 KV is a
+diagnostic comparison and is not qualified for capacity, pressure
+preemption or offload. It explicitly disables speculation.
 
 The [numerical gates](../../docs/numerics.md#serving-qualification-gates)
 and [serving profiles](../../docs/serving-profiles.md) describe the shared
 acceptance rules. Store captures, qualification receipts and timings outside
 the repository under `CHOPINFER_DATA`.
+
+### DSpark qualification
+
+`tp4-dspark` requires AR and speculative arms, exact greedy equality, the
+declared verify bounds and GSM8K at least 193/200 in each arm. Forced verify
+capacities are judged separately against paired AR, without pooling away an
+uncovered capacity.

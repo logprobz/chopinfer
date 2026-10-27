@@ -25,6 +25,10 @@ FORMS = [
     # The model host's spelling records source and destination contexts
     # before the spans; both contexts remain literal rank slots.
     ('copy', re.compile(rf'peer-copy (\d+) \d+ \d+ {_SPAN} {_SPAN}'), ('stream',)),
+    # DeepSeek's DSpark host notes a cross-rank results copy before issuing
+    # it: source and destination contexts, literal rank slots. The copy
+    # records its own line.
+    ('peer-results', re.compile(r'peer results \d+ \d+'), ()),
     ('download', re.compile(rf'download (\d+) {_SPAN}'), ('stream',)),
     # A model's readback line (its download_line): the stream, the source and
     # the byte count read.

@@ -762,6 +762,15 @@ class MapperTests(unittest.TestCase):
             self.assertEqual(m(f'peer copy 2 1 {span} 2 {span}'),f'peer copy 3 1 {mapped} 2 {mapped}')
             self.assertEqual(m(f'peer-copy 2 2 1 {span} {span}'),f'peer-copy 3 2 1 {mapped} {mapped}')
 
+    def test_peer_result_notes_keep_their_rank_slots(self):
+        from engine import Unproven
+        for closed in (True,False):
+            m=self.mapper(closed)
+            self.assertEqual(m('peer results 4 1'),'peer results 4 1')
+            for line in ('peer results 4','peer results 4 1 2','peer results x 1','peer results 4 1 raw: 4294967300'):
+                with self.assertRaises(Unproven):
+                    m(line)
+
     def test_removed_buffer_checks_every_raw_in_operation_forms(self):
         import history
         mapper = history.Mapper({}, {}, {}, {}, closed=False, removed_buffers={4294967300})

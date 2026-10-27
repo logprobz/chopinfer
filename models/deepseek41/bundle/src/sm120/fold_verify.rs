@@ -44,11 +44,14 @@ pub fn entry(id: &str) -> Option<Entry> {
     } else {
         let op = format!("dense_fold.{}_status.verify", id.replace(['.', '-'], "_"));
         let tuning = super::mxfp8_fold::status_tuning(&op, 64, 64)?;
+        assert_eq!(tuning.schedule, "cluster_fused");
         (
             super::mxfp8_fold::tuning_count(tuning, "tile_n"),
             super::mxfp8_fold::tuning_count(tuning, "splits"),
             super::mxfp8_fold::tuning_count(tuning, "stages"),
-            super::fold_cluster::distributed(tuning),
+            tuning.knobs["distributed"]
+                .flag()
+                .expect("cluster storage flag"),
         )
     };
     let q = Mxfp8FoldGemmQuery {

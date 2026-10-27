@@ -98,7 +98,9 @@ serving data, which is the serving workload. The option needs
 zero tokens drop a profile's calibration, and `off` replaces it. Startup logs
 `startup speculation_confidence:` with the result, and serves without
 confidence when the package does not declare the capability or names
-another contract.
+another contract. A run with `--debug-reference-tokens` also serves without
+it, because forced rows are scored on the host and allocated verify steps
+need device results.
 
 ## GPU memory
 

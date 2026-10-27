@@ -3,23 +3,17 @@
 //! either code order, a gate/up op launches each entry's build for that
 //! layout under its symbol and refuses any other launch that reads the
 //! bank, so no step can read tiles as rows or one code order as the other.
-//! Native-off prefill refuses at prepare: its exact kernels read the bank
-//! as rows.
 use super::moe_row_tiles;
 use kernel_core::backend::{Counts, DeferredBf16Round, Launch, OpInfo, PreparedOp, Refused, View};
 use kernel_core::contract::{Argument, Refusal};
 use kernel_core::gated_mlp::GatedMlpProjection;
 use kernel_core::moe_experts::{GatedMlpBuffers, PreparedExperts};
 use kernel_core::precision::layout::{ROW_TILES_64X128, ROW_TILES_64X128_LANES};
-use kernel_core::precision::{ExecutionPhase, OperationUse, WeightLayout};
+use kernel_core::precision::{OperationUse, WeightLayout};
 use model_deepseek41_contract::geometry::Geometry;
 use model_deepseek41_contract::moe::Experts;
 use model_deepseek41_contract::weight_plan::RoutedLayout;
 use std::collections::BTreeMap;
-
-/// Why a tiled install refuses native-off prefill.
-pub const NATIVE_OFF: &str = "DeepSeek's TP4 backbone gate/up bank is stored in row tiles, \
-which requires native MoE prefill kernels that read its tile layout";
 
 /// The layout the gate/up consumers of `set` read at `ranks`: the served
 /// plan's for the TP4 backbone bank, rows for every other bank and rank
@@ -42,32 +36,20 @@ pub fn prepare(
     ranks: u32,
     set: Experts,
     kind: GatedMlpProjection,
-    usage: OperationUse,
+    _usage: OperationUse,
     op: Box<dyn PreparedExperts>,
 ) -> Result<Box<dyn PreparedExperts>, Refused> {
-    prepare_for(
-        g,
-        layout(g, ranks, set),
-        kind,
-        usage,
-        super::moe_native::requested(),
-        op,
-    )
+    prepare_for(g, layout(g, ranks, set), kind, op)
 }
 
 fn prepare_for(
     g: &Geometry,
     layout: RoutedLayout,
     kind: GatedMlpProjection,
-    usage: OperationUse,
-    native: bool,
     op: Box<dyn PreparedExperts>,
 ) -> Result<Box<dyn PreparedExperts>, Refused> {
     if !layout.tiled() || kind != GatedMlpProjection::GateUp {
         return Ok(op);
-    }
-    if usage.phase == ExecutionPhase::Prefill && !native {
-        return Err(Refused::Rule(NATIVE_OFF.into()));
     }
     let symbols: BTreeMap<String, String> = moe_row_tiles::builds_for(g, layout)
         .map_err(Refused::Rule)?
@@ -329,11 +311,6 @@ mod tests {
                 Ok(Vec::new())
             }
         }
-        let usage = OperationUse {
-            phase: ExecutionPhase::Decode,
-            capacity: 8,
-            graph: false,
-        };
         for (layout, id) in [
             (RoutedLayout::Tiles, ROW_TILES_64X128),
             (RoutedLayout::Lanes, ROW_TILES_64X128_LANES),
@@ -347,15 +324,7 @@ mod tests {
                     vec![(row.clone(), 0), ("pack_v1".into(), 0)],
                 )))
             };
-            let op = prepare_for(
-                &FLASH,
-                layout,
-                GatedMlpProjection::GateUp,
-                usage,
-                true,
-                declared(),
-            )
-            .unwrap();
+            let op = prepare_for(&FLASH, layout, GatedMlpProjection::GateUp, declared()).unwrap();
             assert_eq!(op.info().layout_of("weights").unwrap().id, id);
             assert_eq!(
                 op.info()
@@ -365,23 +334,14 @@ mod tests {
                     .collect::<Vec<_>>(),
                 [build.symbol.as_str(), "pack_v1"]
             );
-            let down = prepare_for(
-                &FLASH,
-                layout,
-                GatedMlpProjection::Down,
-                usage,
-                true,
-                declared(),
-            )
-            .unwrap();
+            let down = prepare_for(&FLASH, layout, GatedMlpProjection::Down, declared()).unwrap();
             assert!(down.info().layout_of("weights").is_none());
             assert_eq!(down.info().symbols[0].0, *row);
         }
     }
 
-    /// Only the TP4 backbone gate/up bank takes the served layout; native-off
-    /// prefill refuses a tiled bank with its reason, and rows leave every op
-    /// as it is.
+    /// Only the TP4 backbone gate/up bank takes the served layout; rows and
+    /// down projections leave every op as it is.
     #[test]
     fn only_the_tp4_backbone_bank_reads_the_served_layout() {
         let [target, drafter] = [(384, 6), (128, 3)].map(|(count, top_k)| Experts { count, top_k });
@@ -391,36 +351,12 @@ mod tests {
         for (ranks, set) in [(4, drafter), (2, target), (1, target)] {
             assert_eq!(layout(&FLASH, ranks, set), RoutedLayout::Rows);
         }
-        let usage = |phase| OperationUse {
-            phase,
-            capacity: 8192,
-            graph: false,
-        };
         let fake = || -> Box<dyn PreparedExperts> { Box::new(Fake(Vec::new())) };
-        let refused = prepare_for(
-            &FLASH,
-            RoutedLayout::Tiles,
-            GatedMlpProjection::GateUp,
-            usage(ExecutionPhase::Prefill),
-            false,
-            fake(),
-        );
-        assert_eq!(refused.err(), Some(Refused::Rule(NATIVE_OFF.into())));
-        for (layout, kind, native) in [
-            (RoutedLayout::Rows, GatedMlpProjection::GateUp, false),
-            (RoutedLayout::Tiles, GatedMlpProjection::Down, false),
+        for (layout, kind) in [
+            (RoutedLayout::Rows, GatedMlpProjection::GateUp),
+            (RoutedLayout::Tiles, GatedMlpProjection::Down),
         ] {
-            assert!(
-                prepare_for(
-                    &FLASH,
-                    layout,
-                    kind,
-                    usage(ExecutionPhase::Prefill),
-                    native,
-                    fake()
-                )
-                .is_ok()
-            );
+            assert!(prepare_for(&FLASH, layout, kind, fake()).is_ok());
         }
     }
 }

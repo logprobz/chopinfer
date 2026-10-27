@@ -39,11 +39,6 @@ const QUANTIZER: &str = "_moe_ceil_";
 /// same either way.
 pub const FUSED_CEIL_ROWS: u32 = 2048;
 
-/// Native prefill is selected wherever its topology and phase gates apply.
-pub fn requested() -> bool {
-    true
-}
-
 /// The topology and bank the entries compile for.
 pub fn eligible(g: &Geometry, ranks: u32) -> bool {
     g.id == FLASH.id && ranks == 4
@@ -57,8 +52,8 @@ pub fn applies(g: &Geometry, ranks: u32, set: Experts, usage: OperationUse) -> b
         && usage.capacity <= entries::CAPACITY
 }
 
-/// Replace `base`'s expert tiles with the native ones when requested and
-/// `usage` is a prefill of the target bank; otherwise return `base`.
+/// Replace `base`'s expert tiles with the native ones when `usage` is an
+/// eligible prefill of the target bank; otherwise return `base`.
 pub fn prepare(
     g: &Geometry,
     ranks: u32,
@@ -67,13 +62,13 @@ pub fn prepare(
     usage: OperationUse,
     base: Box<dyn PreparedExperts>,
 ) -> Result<Box<dyn PreparedExperts>, Refused> {
-    if !requested() || !applies(g, ranks, set, usage) {
+    if !applies(g, ranks, set, usage) {
         return Ok(base);
     }
     wrap(kind, usage, base).map_err(Refused::from)
 }
 
-/// The wrapper itself, for the lab; it does not read the switch.
+/// The wrapper itself, also used by the lab.
 pub fn wrap(
     kind: GatedMlpProjection,
     usage: OperationUse,

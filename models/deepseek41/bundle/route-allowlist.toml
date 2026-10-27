@@ -1038,8 +1038,8 @@ phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1"
 symbol = "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1"
-rows = [[129, 129], [191, 191], [255, 255]]
-reason = "Packed prompt logits align in global 64-row coordinates. Adjacent aligned intervals merge into 65 or 127 rows at these enclosing widths; dense::project_with uses the general fold between its short-prefill limit of 64 and staged-prefill threshold of 128. Qualify this inner-row range and remove this exact packed-cone exception"
+rows = [[65, 127], [129, 191], [251, 255], [2115, 2116], [2181, 2184], [2247, 2252], [2313, 2320], [2379, 2388], [2445, 2456], [2511, 2524], [2577, 2594], [2643, 2662], [2709, 2730], [2775, 2798], [2841, 2866], [2907, 2934], [2973, 3002], [3039, 3071], [3106, 3135], [3172, 3199], [3238, 3263], [3304, 3327], [3370, 3391], [3436, 3455], [3502, 3519], [3568, 3583], [3634, 3647], [3700, 3711], [3766, 3775], [3832, 3839], [3898, 3903], [3964, 3967], [4030, 4031], [4161, 4223], [4233, 4287], [6502, 6503]]
+reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends align in global 64-row coordinates. Adjacent output cones merge, then execute::skip partitions them at 4096 rows. These exact outer widths reach a 65 through 127 row part, between the short-prefill limit of 64 and staged-prefill threshold of 128. DSpark feature roots are included. Qualify this inner-row range and remove this exception"
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
@@ -1048,8 +1048,8 @@ phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1"
 symbol = "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1"
-rows = [[129, 129], [191, 191], [255, 255]]
-reason = "Packed prompt logits align in global 64-row coordinates. Adjacent aligned intervals merge into 65 or 127 rows at these enclosing widths; dense::project_with uses the general fold between its short-prefill limit of 64 and staged-prefill threshold of 128. Qualify this inner-row range and remove this exact packed-cone exception"
+rows = [[65, 127], [129, 191], [251, 255], [2115, 2116], [2181, 2184], [2247, 2252], [2313, 2320], [2379, 2388], [2445, 2456], [2511, 2524], [2577, 2594], [2643, 2662], [2709, 2730], [2775, 2798], [2841, 2866], [2907, 2934], [2973, 3002], [3039, 3071], [3106, 3135], [3172, 3199], [3238, 3263], [3304, 3327], [3370, 3391], [3436, 3455], [3502, 3519], [3568, 3583], [3634, 3647], [3700, 3711], [3766, 3775], [3832, 3839], [3898, 3903], [3964, 3967], [4030, 4031], [4161, 4223], [4233, 4287], [6502, 6503]]
+reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends align in global 64-row coordinates. Adjacent output cones merge, then execute::skip partitions them at 4096 rows. These exact outer widths reach a 65 through 127 row part, between the short-prefill limit of 64 and staged-prefill threshold of 128. DSpark feature roots are included. Qualify this inner-row range and remove this exception"
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
@@ -1058,8 +1058,8 @@ phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1"
 symbol = "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1"
-rows = [[129, 129], [191, 191], [255, 255]]
-reason = "Packed prompt logits align in global 64-row coordinates. Adjacent aligned intervals merge into 65 or 127 rows at these enclosing widths; dense::project_with uses the general fold between its short-prefill limit of 64 and staged-prefill threshold of 128. Qualify this inner-row range and remove this exact packed-cone exception"
+rows = [[65, 127], [129, 191], [251, 255], [2115, 2116], [2181, 2184], [2247, 2252], [2313, 2320], [2379, 2388], [2445, 2456], [2511, 2524], [2577, 2594], [2643, 2662], [2709, 2730], [2775, 2798], [2841, 2866], [2907, 2934], [2973, 3002], [3039, 3071], [3106, 3135], [3172, 3199], [3238, 3263], [3304, 3327], [3370, 3391], [3436, 3455], [3502, 3519], [3568, 3583], [3634, 3647], [3700, 3711], [3766, 3775], [3832, 3839], [3898, 3903], [3964, 3967], [4030, 4031], [4161, 4223], [4233, 4287], [6502, 6503]]
+reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends align in global 64-row coordinates. Adjacent output cones merge, then execute::skip partitions them at 4096 rows. These exact outer widths reach a 65 through 127 row part, between the short-prefill limit of 64 and staged-prefill threshold of 128. DSpark feature roots are included. Qualify this inner-row range and remove this exception"
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
@@ -1068,8 +1068,8 @@ phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1"
 symbol = "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1"
-rows = [[129, 129], [191, 191], [255, 255]]
-reason = "Packed prompt logits align in global 64-row coordinates. Adjacent aligned intervals merge into 65 or 127 rows at these enclosing widths; dense::project_with uses the general fold between its short-prefill limit of 64 and staged-prefill threshold of 128. Qualify this inner-row range and remove this exact packed-cone exception"
+rows = [[65, 127], [129, 191], [251, 255], [2115, 2116], [2181, 2184], [2247, 2252], [2313, 2320], [2379, 2388], [2445, 2456], [2511, 2524], [2577, 2594], [2643, 2662], [2709, 2730], [2775, 2798], [2841, 2866], [2907, 2934], [2973, 3002], [3039, 3071], [3106, 3135], [3172, 3199], [3238, 3263], [3304, 3327], [3370, 3391], [3436, 3455], [3502, 3519], [3568, 3583], [3634, 3647], [3700, 3711], [3766, 3775], [3832, 3839], [3898, 3903], [3964, 3967], [4030, 4031], [4161, 4223], [4233, 4287], [6502, 6503]]
+reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends align in global 64-row coordinates. Adjacent output cones merge, then execute::skip partitions them at 4096 rows. These exact outer widths reach a 65 through 127 row part, between the short-prefill limit of 64 and staged-prefill threshold of 128. DSpark feature roots are included. Qualify this inner-row range and remove this exception"
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
@@ -1078,8 +1078,8 @@ phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n5120_k2048_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1"
 symbol = "chop_deepseek41_dense_decode_n5120_k2048_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1"
-rows = [[193, 193], [257, 258]]
-reason = "Disjoint packed-prompt logit intervals retain a separate 64-row cone at these enclosing widths. Its original ticket initialize and packed stages remain outside the qualified reuse and prefetch choices. Qualify the packed-cone inner rows and remove this exact exception"
+rows = [[64, 64], [128, 128], [193, 250], [257, 8192]]
+reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends retain a separate aligned 64-row output cone at these exact outer widths. This shape has no prefetch or reuse choice at inner width 64, so dense::project_with retains the ticket admit and packed stages. Qualify the packed-cone inner rows and remove this exception"
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
@@ -1088,8 +1088,8 @@ phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n5120_k2048_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1"
 symbol = "chop_deepseek41_dense_decode_n5120_k2048_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1"
-rows = [[193, 193], [257, 258]]
-reason = "Disjoint packed-prompt logit intervals retain a separate 64-row cone at these enclosing widths. Its original ticket initialize and packed stages remain outside the qualified reuse and prefetch choices. Qualify the packed-cone inner rows and remove this exact exception"
+rows = [[64, 64], [128, 128], [193, 250], [257, 8192]]
+reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends retain a separate aligned 64-row output cone at these exact outer widths. This shape has no prefetch or reuse choice at inner width 64, so dense::project_with retains the ticket admit and packed stages. Qualify the packed-cone inner rows and remove this exception"
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
@@ -1098,8 +1098,8 @@ phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1"
 symbol = "chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1"
-rows = [[193, 193], [257, 258]]
-reason = "Disjoint packed-prompt logit intervals retain a separate 64-row cone at these enclosing widths. Its original ticket initialize and packed stages remain outside the qualified reuse and prefetch choices. Qualify the packed-cone inner rows and remove this exact exception"
+rows = [[64, 64], [128, 128], [193, 250], [257, 8192]]
+reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends retain a separate aligned 64-row output cone at these exact outer widths. This shape has no prefetch or reuse choice at inner width 64, so dense::project_with retains the ticket admit and packed stages. Qualify the packed-cone inner rows and remove this exception"
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
@@ -1108,8 +1108,8 @@ phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1"
 symbol = "chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1"
-rows = [[193, 193], [257, 258]]
-reason = "Disjoint packed-prompt logit intervals retain a separate 64-row cone at these enclosing widths. Its original ticket initialize and packed stages remain outside the qualified reuse and prefetch choices. Qualify the packed-cone inner rows and remove this exact exception"
+rows = [[64, 64], [128, 128], [193, 250], [257, 8192]]
+reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends retain a separate aligned 64-row output cone at these exact outer widths. This shape has no prefetch or reuse choice at inner width 64, so dense::project_with retains the ticket admit and packed stages. Qualify the packed-cone inner rows and remove this exception"
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
@@ -1118,8 +1118,8 @@ phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1"
 symbol = "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1"
-rows = [[129, 129], [191, 191], [255, 255], [4192, 4192]]
-reason = "Packed prompt logits align in global 64-row coordinates. Adjacent aligned intervals merge into 65 or 127 rows at these enclosing widths; dense::project_with uses the general fold between its short-prefill limit of 64 and staged-prefill threshold of 128. Qualify this inner-row range and remove this exact packed-cone exception; the completed DSpark capture also selects this general fold at enclosing packed width 4192"
+rows = [[65, 127], [129, 191], [251, 255], [2115, 2116], [2181, 2184], [2247, 2252], [2313, 2320], [2379, 2388], [2445, 2456], [2511, 2524], [2577, 2594], [2643, 2662], [2709, 2730], [2775, 2798], [2841, 2866], [2907, 2934], [2973, 3002], [3039, 3071], [3106, 3135], [3172, 3199], [3238, 3263], [3304, 3327], [3370, 3391], [3436, 3455], [3502, 3519], [3568, 3583], [3634, 3647], [3700, 3711], [3766, 3775], [3832, 3839], [3898, 3903], [3964, 3967], [4030, 4031], [4161, 4223]]
+reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends align in global 64-row coordinates. Adjacent output cones merge, then execute::skip partitions them at 4096 rows. These exact outer widths reach a 65 through 127 row part, between the short-prefill limit of 64 and staged-prefill threshold of 128. DSpark feature roots are included. Qualify this inner-row range and remove this exception"
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
@@ -1128,8 +1128,8 @@ phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1"
 symbol = "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1"
-rows = [[129, 129], [191, 191], [255, 255], [4192, 4192]]
-reason = "Packed prompt logits align in global 64-row coordinates. Adjacent aligned intervals merge into 65 or 127 rows at these enclosing widths; dense::project_with uses the general fold between its short-prefill limit of 64 and staged-prefill threshold of 128. Qualify this inner-row range and remove this exact packed-cone exception; the completed DSpark capture also selects this general fold at enclosing packed width 4192"
+rows = [[65, 127], [129, 191], [251, 255], [2115, 2116], [2181, 2184], [2247, 2252], [2313, 2320], [2379, 2388], [2445, 2456], [2511, 2524], [2577, 2594], [2643, 2662], [2709, 2730], [2775, 2798], [2841, 2866], [2907, 2934], [2973, 3002], [3039, 3071], [3106, 3135], [3172, 3199], [3238, 3263], [3304, 3327], [3370, 3391], [3436, 3455], [3502, 3519], [3568, 3583], [3634, 3647], [3700, 3711], [3766, 3775], [3832, 3839], [3898, 3903], [3964, 3967], [4030, 4031], [4161, 4223]]
+reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends align in global 64-row coordinates. Adjacent output cones merge, then execute::skip partitions them at 4096 rows. These exact outer widths reach a 65 through 127 row part, between the short-prefill limit of 64 and staged-prefill threshold of 128. DSpark feature roots are included. Qualify this inner-row range and remove this exception"
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
@@ -1138,8 +1138,8 @@ phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1"
 symbol = "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1"
-rows = [[129, 129], [191, 191], [255, 255], [4192, 4192]]
-reason = "Packed prompt logits align in global 64-row coordinates. Adjacent aligned intervals merge into 65 or 127 rows at these enclosing widths; dense::project_with uses the general fold between its short-prefill limit of 64 and staged-prefill threshold of 128. Qualify this inner-row range and remove this exact packed-cone exception; the completed DSpark capture also selects this general fold at enclosing packed width 4192"
+rows = [[65, 127], [129, 191], [251, 255], [2115, 2116], [2181, 2184], [2247, 2252], [2313, 2320], [2379, 2388], [2445, 2456], [2511, 2524], [2577, 2594], [2643, 2662], [2709, 2730], [2775, 2798], [2841, 2866], [2907, 2934], [2973, 3002], [3039, 3071], [3106, 3135], [3172, 3199], [3238, 3263], [3304, 3327], [3370, 3391], [3436, 3455], [3502, 3519], [3568, 3583], [3634, 3647], [3700, 3711], [3766, 3775], [3832, 3839], [3898, 3903], [3964, 3967], [4030, 4031], [4161, 4223]]
+reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends align in global 64-row coordinates. Adjacent output cones merge, then execute::skip partitions them at 4096 rows. These exact outer widths reach a 65 through 127 row part, between the short-prefill limit of 64 and staged-prefill threshold of 128. DSpark feature roots are included. Qualify this inner-row range and remove this exception"
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
@@ -1148,8 +1148,8 @@ phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1"
 symbol = "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1"
-rows = [[129, 129], [191, 191], [255, 255], [4192, 4192]]
-reason = "Packed prompt logits align in global 64-row coordinates. Adjacent aligned intervals merge into 65 or 127 rows at these enclosing widths; dense::project_with uses the general fold between its short-prefill limit of 64 and staged-prefill threshold of 128. Qualify this inner-row range and remove this exact packed-cone exception; the completed DSpark capture also selects this general fold at enclosing packed width 4192"
+rows = [[65, 127], [129, 191], [251, 255], [2115, 2116], [2181, 2184], [2247, 2252], [2313, 2320], [2379, 2388], [2445, 2456], [2511, 2524], [2577, 2594], [2643, 2662], [2709, 2730], [2775, 2798], [2841, 2866], [2907, 2934], [2973, 3002], [3039, 3071], [3106, 3135], [3172, 3199], [3238, 3263], [3304, 3327], [3370, 3391], [3436, 3455], [3502, 3519], [3568, 3583], [3634, 3647], [3700, 3711], [3766, 3775], [3832, 3839], [3898, 3903], [3964, 3967], [4030, 4031], [4161, 4223]]
+reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends align in global 64-row coordinates. Adjacent output cones merge, then execute::skip partitions them at 4096 rows. These exact outer widths reach a 65 through 127 row part, between the short-prefill limit of 64 and staged-prefill threshold of 128. DSpark feature roots are included. Qualify this inner-row range and remove this exception"
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
@@ -1158,8 +1158,8 @@ phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n5120_k2048_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1"
 symbol = "chop_deepseek41_dense_decode_n5120_k2048_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1"
-rows = [[193, 193], [257, 258]]
-reason = "Disjoint packed-prompt logit intervals retain a separate 64-row cone at these enclosing widths. Its original ticket initialize and packed stages remain outside the qualified reuse and prefetch choices. Qualify the packed-cone inner rows and remove this exact exception"
+rows = [[64, 64], [128, 128], [193, 250], [257, 8192]]
+reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends retain a separate aligned 64-row output cone at these exact outer widths. This shape has no prefetch or reuse choice at inner width 64, so dense::project_with retains the ticket admit and packed stages. Qualify the packed-cone inner rows and remove this exception"
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
@@ -1168,8 +1168,8 @@ phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n5120_k2048_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1"
 symbol = "chop_deepseek41_dense_decode_n5120_k2048_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1"
-rows = [[193, 193], [257, 258]]
-reason = "Disjoint packed-prompt logit intervals retain a separate 64-row cone at these enclosing widths. Its original ticket initialize and packed stages remain outside the qualified reuse and prefetch choices. Qualify the packed-cone inner rows and remove this exact exception"
+rows = [[64, 64], [128, 128], [193, 250], [257, 8192]]
+reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends retain a separate aligned 64-row output cone at these exact outer widths. This shape has no prefetch or reuse choice at inner width 64, so dense::project_with retains the ticket admit and packed stages. Qualify the packed-cone inner rows and remove this exception"
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
@@ -1178,8 +1178,8 @@ phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1"
 symbol = "chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1"
-rows = [[193, 193], [257, 258]]
-reason = "Disjoint packed-prompt logit intervals retain a separate 64-row cone at these enclosing widths. Its original ticket initialize and packed stages remain outside the qualified reuse and prefetch choices. Qualify the packed-cone inner rows and remove this exact exception"
+rows = [[64, 64], [128, 128], [193, 250], [257, 8192]]
+reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends retain a separate aligned 64-row output cone at these exact outer widths. This shape has no prefetch or reuse choice at inner width 64, so dense::project_with retains the ticket admit and packed stages. Qualify the packed-cone inner rows and remove this exception"
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
@@ -1188,8 +1188,8 @@ phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1"
 symbol = "chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1"
-rows = [[193, 193], [257, 258]]
-reason = "Disjoint packed-prompt logit intervals retain a separate 64-row cone at these enclosing widths. Its original ticket initialize and packed stages remain outside the qualified reuse and prefetch choices. Qualify the packed-cone inner rows and remove this exact exception"
+rows = [[64, 64], [128, 128], [193, 250], [257, 8192]]
+reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends retain a separate aligned 64-row output cone at these exact outer widths. This shape has no prefetch or reuse choice at inner width 64, so dense::project_with retains the ticket admit and packed stages. Qualify the packed-cone inner rows and remove this exception"
 task = "MXFP8-fold-packed-cones"
 
 # Both upper-skip profiles reach these packed two-prompt prefill gaps.
@@ -1244,3 +1244,23 @@ symbol = "chop_deepseek41_dspark_router_f32_v1_cached_rows_v1"
 rows = [[8, 8], [16, 16]]
 reason = "Pre-existing at the refactor freeze in allocated verify: 2 items reserve 12 rows at width 8, and 3, 4 or 5 items reserve 18, 24 or 30 rows at width 16. The same-shape CPU sweep observes this cached drafter router stage at the freeze. The C6b GPU bitwise A/B on 2026-10-26 covers the adopted allocation at 64-row capacity and floor 1, with matched token IDs and selected-logprob bits equal. Retain this exact gap until router reuse covers these drafting counts"
 task = "C6b-allocated-router-reuse"
+
+[[allow]]
+profiles = ["tp4-ar", "tp4-dspark"]
+phase = "prefill"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n1024_k4096_g2_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_admit_v1"
+symbol = "chop_deepseek41_dense_decode_n1024_k4096_g2_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_admit_v1"
+rows = [[64, 64], [128, 128], [193, 250], [257, 8192]]
+reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends retain a separate aligned 64-row output cone at these exact outer widths. The N1024/K4096/G2 prefetch admit and packed stages serve inner width 64 outside the reuse range of 17 through 32, retaining reuse-fallback metadata. Qualify this packed-cone reuse range and remove this exception"
+task = "MXFP8-fold-packed-cones"
+
+[[allow]]
+profiles = ["tp4-ar", "tp4-dspark"]
+phase = "prefill"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n1024_k4096_g2_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_packed_v1"
+symbol = "chop_deepseek41_dense_decode_n1024_k4096_g2_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_packed_v1"
+rows = [[64, 64], [128, 128], [193, 250], [257, 8192]]
+reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends retain a separate aligned 64-row output cone at these exact outer widths. The N1024/K4096/G2 prefetch admit and packed stages serve inner width 64 outside the reuse range of 17 through 32, retaining reuse-fallback metadata. Qualify this packed-cone reuse range and remove this exception"
+task = "MXFP8-fold-packed-cones"

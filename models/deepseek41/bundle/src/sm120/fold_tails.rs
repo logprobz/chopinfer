@@ -21,7 +21,7 @@ pub(crate) fn tile(rows: u32) -> Option<u32> {
 }
 
 pub(crate) fn wide_rows(rows: u32) -> bool {
-    super::mxfp8_fold::status_tuning("dense_fold.status_wide_tails.decode", 64, rows).is_some()
+    super::fold_verify_local::selected("dense_fold.status_wide_tails.decode", rows)
 }
 
 pub(crate) fn cluster(id: &str, rows: u32) -> Option<Entry> {

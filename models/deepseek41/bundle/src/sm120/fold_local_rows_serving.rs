@@ -187,12 +187,10 @@ impl crate::Kernels {
                         shape.ranks(),
                         shape.verify_rows,
                     ) && need.capacity <= shape.verify_decode_rows()
-                        && super::mxfp8_fold::status_tuning(
+                        && super::fold_verify_local::selected(
                             "dense_fold.status_wide.verify",
-                            64,
                             need.capacity,
-                        )
-                        .is_some()))
+                        )))
             {
                 let entry = super::fold_verify_local::entry()?;
                 if !matches(entry.query(), query, need) {

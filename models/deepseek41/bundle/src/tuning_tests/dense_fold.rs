@@ -253,3 +253,38 @@ dense_fold.stream.decode mxfp8 groups=2,k=4096,n=1024,paired=0 t64: 2..=64
 dense_fold.stream.decode mxfp8 groups=4,k=4096,n=1024,paired=0 t64: 2..=64
 dense_fold.stream.decode mxfp8 groups=8,k=4096,n=1024,paired=0 t64: 1..=64
 "#;
+
+#[test]
+fn local_wide_rows_keep_the_qualified_launches() {
+    let table = tuning::table(&FLASH, Family::DenseFold).unwrap();
+    let candidate = crate::sm120::fold_verify_local::entry().unwrap();
+    let mut checked = 0;
+    for row in table
+        .rows()
+        .iter()
+        .filter(|row| row.schedule == "local_wide")
+    {
+        assert_eq!(
+            row.knobs.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["stages", "tile_n", "tile_rows"]
+        );
+        assert_eq!(
+            (
+                candidate.entry().stages,
+                candidate.entry().tile_n,
+                candidate.entry().base.query.m_capacity
+            ),
+            (4, 48, 32)
+        );
+        let [lo, hi] = row.key.rows.unwrap_or([1, row.key.bucket]);
+        for rows in lo..=hi {
+            assert!(crate::sm120::fold_verify_local::selected(&row.key.op, rows));
+            let plan = candidate.plan(rows).unwrap();
+            let mut original = candidate.entry().plan(32).unwrap();
+            original.grid[1] = rows.div_ceil(32);
+            assert_eq!(plan, original);
+        }
+        checked += 1;
+    }
+    assert_eq!(checked, 7);
+}

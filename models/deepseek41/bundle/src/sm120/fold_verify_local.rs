@@ -13,12 +13,29 @@ use kernels_sm120::gemm::{
 use model_deepseek41_contract::geometry::{FLASH, Geometry};
 pub const FAMILY: &str = "mxfp8_fold_verify_local64";
 pub const CUBIN: &str = "mxfp8_fold_verify_local64_deepseek41_sm120";
+fn tuning() -> &'static kernel_build::tuning::Row {
+    let row = super::mxfp8_fold::status_tuning("dense_fold.status_wide.verify", 64, 64)
+        .expect("qualified wide local fold");
+    assert_eq!(row.schedule, "local_wide");
+    row
+}
+
+pub(crate) fn selected(op: &str, rows: u32) -> bool {
+    super::mxfp8_fold::status_tuning(op, 64, rows).is_some_and(|row| {
+        let qualified = tuning();
+        assert_eq!(row.schedule, qualified.schedule);
+        assert_eq!(row.knobs, qualified.knobs);
+        true
+    })
+}
+
 pub fn entry() -> Result<Candidate, Refusal> {
+    let tuning = tuning();
     let a = &FLASH.shape.attention;
     let n = a.heads / 4 * a.head_dim;
     let k = a.q_rank;
     let q = Mxfp8FoldGemmQuery {
-        m_capacity: 32,
+        m_capacity: super::mxfp8_fold::tuning_count(tuning, "tile_rows"),
         n,
         k,
         groups: 1,
@@ -32,8 +49,8 @@ pub fn entry() -> Result<Candidate, Refusal> {
             q,
             format!("chop_{}_verify_mxfp8_n{n}_k{k}_g1_f32", FLASH.kernel_tag),
         )?,
-        tile_n: 48,
-        stages: 4,
+        tile_n: super::mxfp8_fold::tuning_count(tuning, "tile_n"),
+        stages: super::mxfp8_fold::tuning_count(tuning, "stages"),
     })
 }
 pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>, String> {

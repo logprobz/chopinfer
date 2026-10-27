@@ -28,43 +28,9 @@ __device__ void admit(const uint8_t* codes, const uint8_t* scales, uint32_t* fai
   }
 }
 
-__device__ __forceinline__ void copy16(uint8_t* dst, const uint8_t* src, bool valid) {
-  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;"
-               :: "r"(uint32_t(__cvta_generic_to_shared(dst))), "l"(src),
-                  "r"(valid ? 16 : 0) : "memory");
-}
-
-// A packed strip keeps its contiguous fold in one 1024-byte shared slot.
-// A final half fold occupies its first 512 bytes; the rest is zero-filled.
-template<int N, int K>
-__device__ __forceinline__ void copy_packed_chunk(uint8_t* dst, const uint8_t* weights,
-    uint32_t group, uint32_t column_base, uint32_t chunk, uint32_t fold, uint32_t end) {
-  const uint32_t strip = chunk / 64;
-  const uint32_t byte = (chunk % 64) * 16;
-  const bool valid = fold < end && column_base + strip * 8 < N &&
-      byte < mxfp8_fold_packed::fold_bytes(fold, K);
-  const uint64_t at = mxfp8_fold_packed::fold_offset(
-      (group * N + column_base) / 8 + strip, fold, K) + byte;
-  copy16(dst + fold_row_chunk(chunk / 8, chunk % 8), weights + (valid ? at : 0), valid);
-}
-
-// One aligned vector supplies two unchanged MMA steps. Keep the vector
-// shared load explicit so the packed lane runs use the swizzle together.
-// Half-fold steps 2 and 3 read the zero-filled second half of the strip slot.
-template<int K>
-__device__ __forceinline__ uint4 packed_fragment(const uint8_t* codes,
-    uint32_t warp, uint32_t quad, uint32_t lane, uint32_t step, uint32_t fold) {
-  const bool half = K % 128 != 0 && fold == K / 128;
-  const uint32_t at = warp * 1024 +
-      mxfp8_fold_packed::segment_word(quad, (half ? step % 2 : step) * 32 + lane * 4, half)
-      + (half ? step / 2 * 512 : 0);
-  const uint8_t* address = codes + fold_row_chunk(at / 128, (at % 128) / 16);
-  uint4 value;
-  asm volatile("ld.shared.v4.u32 {%0,%1,%2,%3}, [%4];"
-      : "=r"(value.x), "=r"(value.y), "=r"(value.z), "=r"(value.w)
-      : "r"(uint32_t(__cvta_generic_to_shared(address))));
-  return value;
-}
+using mxfp8_fold_common::copy16;
+using mxfp8_fold_common::copy_packed_chunk;
+using mxfp8_fold_common::split_fragment;
 
 template<int N, int K, int Groups, int RowStride, int GroupStride, bool Paired, bool PackedWeights = false>
 __device__ void partials(const uint8_t* activations, const uint8_t* activation_scales,
@@ -163,7 +129,7 @@ __device__ void partials(const uint8_t* activations, const uint8_t* activation_s
             fold_row_chunk(quad + (i % 2) * 8, step * 2 + i / 2) + lane4 * 4);
       if constexpr (PackedWeights) {
         if ((step & 1) == 0)
-          packed_b = packed_fragment<K>(codes[stage] + 16 * 128,
+          packed_b = split_fragment<K>(codes[stage] + 16 * 128,
               warp, quad, lane4, step, first_fold + stage);
         bf.v[0] = (step & 1) ? packed_b.z : packed_b.x;
         bf.v[1] = (step & 1) ? packed_b.w : packed_b.y;

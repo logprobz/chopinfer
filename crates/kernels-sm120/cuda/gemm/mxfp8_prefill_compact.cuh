@@ -47,11 +47,7 @@ __device__ __forceinline__ uint32_t packed_at(bool half, int row, uint32_t local
       : mxfp8_fold_packed::segment_word(0, local, false);
   return at ^ half_flip(half, row);
 }
-__device__ __forceinline__ void copy16(void* dst, const void* src, bool valid) {
-  const uint32_t at=ptx::shared_address(dst);
-  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;" ::
-      "r"(at),"l"(src),"r"(valid ? 16 : 0):"memory");
-}
+using mxfp8_fold_common::copy16;
 __device__ __forceinline__ void copy4(void* dst, const void* src, bool valid) {
   const uint32_t at=ptx::shared_address(dst);
   asm volatile("cp.async.ca.shared.global [%0], [%1], 4, %2;" ::

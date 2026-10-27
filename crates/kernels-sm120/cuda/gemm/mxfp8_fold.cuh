@@ -7,19 +7,7 @@
 
 namespace chop::gemm::mxfp8_fold {
 
-// The native instruction sees the original E4M3 and UE8M0 bytes. Admission
-// agrees with the exact BF16 operand contract, without decoding or rounding.
-__device__ __forceinline__ bool admitted(uint8_t code, uint8_t scale) {
-  const unsigned mag = code & 127;
-  if (mag == 127 || scale == 255) return false;
-  if (!mag) return true;
-  const unsigned exponent = mag >> 3;
-  const unsigned significand = exponent ? 8 + (mag & 7) : mag & 7;
-  if (exponent && unsigned(scale) + exponent > 261) return false;
-  const int power = int(scale) + (exponent ? int(exponent) - 137 : -136);
-  const int shift = -133 - power;
-  return shift <= 0 || (shift <= 3 && !(significand & ((1u << shift) - 1)));
-}
+using mxfp8_fold_common::admitted;
 
 struct Operand {
   const uint8_t* codes;

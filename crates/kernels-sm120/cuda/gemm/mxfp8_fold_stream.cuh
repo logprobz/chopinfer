@@ -111,15 +111,7 @@ __device__ void merge_task(Task task, uint32_t bank, uint32_t g,
     float total = 0.0f;
     if (!failed[row]) {
       const uint64_t at = (uint64_t(row) * Groups + g) * N + col;
-      for (uint32_t base = 0; base < Folds; base += 16) {
-        float chain[16];
-#pragma unroll
-        for (int j = 0; j < 16; ++j)
-          if (base + j < Folds) chain[j] = __ldcg(partials + uint64_t(base + j) * rows * Groups * N + at);
-#pragma unroll
-        for (int j = 0; j < 16; ++j)
-          if (base + j < Folds) total = __fadd_rn(total, chain[j]);
-      }
+      total = mxfp8_fold_common::ordered_merge<N, Groups, Folds, mxfp8_fold_common::AscendingF32>(partials, rows, at);
     }
     const uint64_t at = (uint64_t(row) * Groups + g) * N + col;
     if constexpr (F32Output) reinterpret_cast<float*>(output)[at] = total;

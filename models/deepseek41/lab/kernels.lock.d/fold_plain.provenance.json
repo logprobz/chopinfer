@@ -1,22 +1,22 @@
 [
   {
     "name": "plain_fold_local_rows_deepseek41_sm120",
-    "source_closure_sha256": "ea3542fa7f52b3ffa42e13534a9e51e26c3f542a09d97e39d7112fe7a783cf0c"
+    "source_closure_sha256": "bac98ba910760ff217dd2b5324e941e9c4991bb1a666d5703e362f87b88734d5"
   },
   {
     "name": "plain_mxfp8_fold_decode_deepseek41_sm120_v1",
-    "source_closure_sha256": "5c163cf1be32a5441305a2e9b1de40525ddbce810b4c1dd3afd8c4d741220b18"
+    "source_closure_sha256": "b218b6febdf3805645f8b9c5fa82a49d59ae1d046126e91a00ae2b070d626bec"
   },
   {
     "name": "plain_mxfp8_fold_prefetch_deepseek41_sm120_v3",
-    "source_closure_sha256": "106198edebbeb05c52592b347bbc28a09e847ffbb345aa2bdca0e2c1ab4e7c71"
+    "source_closure_sha256": "a20564489cca131d9c1bcb3be7ce5f8559741e3f74723b3fb081a82f6690644a"
   },
   {
     "name": "plain_mxfp8_fold_reuse_deepseek41_sm120",
-    "source_closure_sha256": "7668afa16fd00a1532c6a131d402278527d133f2b679051113ab464556c55895"
+    "source_closure_sha256": "cc2af253d2ffafe5ca73c50e6cb65bc0409055a0bef8e14c4252ff44b6bd01f1"
   },
   {
     "name": "plain_mxfp8_fold_ticket_deepseek41_sm120_v2",
-    "source_closure_sha256": "8ab2ab362fa084aaec046defe56988770bf8a37aca701b71682d40454ced9c62"
+    "source_closure_sha256": "59ad586af28b04b28d709a68805f1dd670ec59068e031695ef6d5546bfe352dc"
   }
 ]

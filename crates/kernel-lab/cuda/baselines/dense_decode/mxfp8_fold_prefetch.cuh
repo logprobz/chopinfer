@@ -19,23 +19,9 @@ __device__ void initialize(const uint8_t* codes, const uint8_t* scales, uint8_t*
   for (uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
        i < tiles<N, Groups, TileN, Paired>(rows); i += gridDim.x * blockDim.x)
     tickets[i] = 0;
-  const uint32_t row = blockIdx.x;
-  if (row >= min(rows, *live_rows)) return;
-  bool invalid = false;
-  for (int g = 0; g < Groups; ++g) {
-    for (int k = threadIdx.x * 16; k < K; k += blockDim.x * 16) {
-      const uint64_t at = uint64_t(row) * RowStride + uint64_t(g) * GroupStride + k;
-      const uint4 packed = *reinterpret_cast<const uint4*>(codes + at);
-      const uint8_t scale = scales[at / 32];
-      invalid |= !(admitted4(packed.x, scale) && admitted4(packed.y, scale) &&
-                   admitted4(packed.z, scale) && admitted4(packed.w, scale));
-    }
-  }
-  const bool bad = __syncthreads_or(invalid);
-  if (threadIdx.x == 0) {
-    const uint32_t previous = atomicOr(status + status_row_offset + row, bad ? 1u : 0u);
-    reinterpret_cast<uint32_t*>(workspace)[row] = bad || previous != 0;
-  }
+  mxfp8_fold_common::admit_task<K,Groups,RowStride,GroupStride>(
+      blockIdx.x,codes,scales,reinterpret_cast<uint32_t*>(workspace),
+      live_rows,status,status_row_offset,rows);
 }
 
 template<int N, int K, int Groups, int RowStride, int GroupStride,
@@ -244,15 +230,7 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
     float total = 0.0f;
     if (!row_failed[i / TileN]) {
       const uint64_t at = (uint64_t(row) * Groups + g) * N + col;
-      for (uint32_t base = 0; base < Folds; base += 16) {
-        float chain[16];
-#pragma unroll
-        for (int j = 0; j < 16; ++j)
-          if (base + j < Folds) chain[j] = __ldcg(partials + uint64_t(base + j) * rows * Groups * N + at);
-#pragma unroll
-        for (int j = 0; j < 16; ++j)
-          if (base + j < Folds) total = __fadd_rn(total, chain[j]);
-      }
+      total = mxfp8_fold_common::ordered_merge<N, Groups, Folds, mxfp8_fold_common::AscendingF32>(partials, rows, at);
     }
     const uint64_t at = (uint64_t(row) * Groups + g) * N + col;
     if constexpr (F32Output) reinterpret_cast<float*>(output)[at] = total;

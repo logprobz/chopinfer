@@ -5,16 +5,7 @@
 
 namespace chop::gemm::mxfp8_fold_ticket {
 
-__device__ __forceinline__ bool admitted4(uint32_t codes, uint8_t scale) {
-  // Every finite E4M3 code is BF16-exact in this UE8M0 interval. Detect
-  // magnitude 127 in four bytes without decoding or cross-byte carries.
-  if (scale >= 3 && scale <= 246)
-    return (((codes & 0x7f7f7f7fu) + 0x01010101u) & 0x80808080u) == 0;
-  bool valid = true;
-#pragma unroll
-  for (int i = 0; i < 4; ++i) valid &= mxfp8_fold::admitted(uint8_t(codes >> (i * 8)), scale);
-  return valid;
-}
+using mxfp8_fold_common::admitted4;
 
 template<int N, int Groups, int TileN, bool Paired>
 __device__ __forceinline__ uint32_t tiles(uint32_t rows) {
@@ -52,41 +43,9 @@ __device__ void initialize(const uint8_t* codes, const uint8_t* scales, uint8_t*
   }
 }
 
-__device__ __forceinline__ void copy16(uint8_t* dst, const uint8_t* src, bool valid) {
-  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;"
-      :: "r"(uint32_t(__cvta_generic_to_shared(dst))), "l"(src), "r"(valid ? 16 : 0) : "memory");
-}
-
-// A packed strip keeps its contiguous fold in one 1024-byte shared slot.
-// A final half fold occupies its first 512 bytes; the rest is zero-filled.
-template<int N, int K>
-__device__ __forceinline__ void copy_packed_chunk(uint8_t* dst, const uint8_t* weights,
-    uint32_t group, uint32_t column_base, uint32_t chunk, uint32_t fold, uint32_t end) {
-  const uint32_t strip = chunk / 64;
-  const uint32_t byte = (chunk % 64) * 16;
-  const bool valid = fold < end && column_base + strip * 8 < N &&
-      byte < mxfp8_fold_packed::fold_bytes(fold, K);
-  const uint64_t at = mxfp8_fold_packed::fold_offset(
-      (group * N + column_base) / 8 + strip, fold, K) + byte;
-  copy16(dst + fold_row_chunk(chunk / 8, chunk % 8), weights + (valid ? at : 0), valid);
-}
-
-// One aligned vector supplies two unchanged MMA steps. Keep the vector
-// shared load explicit so the packed lane runs use the swizzle together.
-template<int K>
-__device__ __forceinline__ uint4 packed_fragment(const uint8_t* codes,
-    uint32_t warp, uint32_t quad, uint32_t lane, uint32_t step, uint32_t fold) {
-  const bool half = K % 128 != 0 && fold == K / 128;
-  if (half && step >= 2) return uint4{};
-  const uint32_t at = warp * 1024 +
-      mxfp8_fold_packed::segment_word(quad, step * 32 + lane * 4, half);
-  const uint8_t* address = codes + fold_row_chunk(at / 128, (at % 128) / 16);
-  uint4 value;
-  asm volatile("ld.shared.v4.u32 {%0,%1,%2,%3}, [%4];"
-      : "=r"(value.x), "=r"(value.y), "=r"(value.z), "=r"(value.w)
-      : "r"(uint32_t(__cvta_generic_to_shared(address))));
-  return value;
-}
+using mxfp8_fold_common::copy16;
+using mxfp8_fold_common::copy_packed_chunk;
+using mxfp8_fold_common::packed_fragment;
 
 template<int N, int K, int Groups, int RowStride, int GroupStride,
          int TileN, bool F32Output, bool Paired, bool PackedWeights = false>
@@ -240,15 +199,7 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
     float total = 0.0f;
     if (!row_failed[i / TileN]) {
       const uint64_t at = (uint64_t(row) * Groups + g) * N + col;
-      for (uint32_t base = 0; base < Folds; base += 16) {
-        float chain[16];
-#pragma unroll
-        for (int j = 0; j < 16; ++j)
-          if (base + j < Folds) chain[j] = __ldcg(partials + uint64_t(base + j) * rows * Groups * N + at);
-#pragma unroll
-        for (int j = 0; j < 16; ++j)
-          if (base + j < Folds) total = __fadd_rn(total, chain[j]);
-      }
+      total = mxfp8_fold_common::ordered_merge<N, Groups, Folds, mxfp8_fold_common::AscendingF32>(partials, rows, at);
     }
     const uint64_t at = (uint64_t(row) * Groups + g) * N + col;
     if constexpr (F32Output) reinterpret_cast<float*>(output)[at] = total;

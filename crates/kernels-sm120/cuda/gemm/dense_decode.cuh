@@ -29,11 +29,8 @@ struct FourK32 {
     ptx::mma_mxf8f6f4<ptx::Element::e4m3, ptx::Element::e4m3>(d, a, b, sa, sb);
   }
 };
-struct AscendingF32 {
-  static __device__ __forceinline__ float add(float sum, float partial) {
-    return __fadd_rn(sum, partial);
-  }
-};
+
+using mxfp8_fold_common::AscendingF32;
 
 template<Knobs S, class Activation, class Scale, class Chain, class Reduction>
 struct Policies {
@@ -51,52 +48,11 @@ struct Policies {
   static constexpr bool valid = true;
 };
 
-__device__ __forceinline__ bool admitted4(uint32_t codes, uint8_t scale) {
-  // Every finite E4M3 code is BF16-exact in this UE8M0 interval. Detect
-  // magnitude 127 in four bytes without decoding or cross-byte carries.
-  if (scale >= 3 && scale <= 246)
-    return (((codes & 0x7f7f7f7fu) + 0x01010101u) & 0x80808080u) == 0;
-  bool valid = true;
-#pragma unroll
-  for (int i = 0; i < 4; ++i) valid &= mxfp8_fold::admitted(uint8_t(codes >> (i * 8)), scale);
-  return valid;
-}
-
-__device__ __forceinline__ void copy16(uint8_t* dst, const uint8_t* src, bool valid) {
-  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;"
-      :: "r"(uint32_t(__cvta_generic_to_shared(dst))), "l"(src), "r"(valid ? 16 : 0) : "memory");
-}
-
-// A packed strip keeps its contiguous fold in one 1024-byte shared slot.
-// A final half fold occupies its first 512 bytes; the rest is zero-filled.
-template<int N, int K>
-__device__ __forceinline__ void copy_packed_chunk(uint8_t* dst, const uint8_t* weights,
-    uint32_t group, uint32_t column_base, uint32_t chunk, uint32_t fold, uint32_t end) {
-  const uint32_t strip = chunk / 64;
-  const uint32_t byte = (chunk % 64) * 16;
-  const bool valid = fold < end && column_base + strip * 8 < N &&
-      byte < mxfp8_fold_packed::fold_bytes(fold, K);
-  const uint64_t at = mxfp8_fold_packed::fold_offset(
-      (group * N + column_base) / 8 + strip, fold, K) + byte;
-  copy16(dst + fold_row_chunk(chunk / 8, chunk % 8), weights + (valid ? at : 0), valid);
-}
-
-// One aligned vector supplies two unchanged MMA steps. Keep the vector
-// shared load explicit so the packed lane runs use the swizzle together.
-template<int K>
-__device__ __forceinline__ uint4 packed_fragment(const uint8_t* codes,
-    uint32_t warp, uint32_t quad, uint32_t lane, uint32_t step, uint32_t fold) {
-  const bool half = K % 128 != 0 && fold == K / 128;
-  if (half && step >= 2) return uint4{};
-  const uint32_t at = warp * 1024 +
-      mxfp8_fold_packed::segment_word(quad, step * 32 + lane * 4, half);
-  const uint8_t* address = codes + fold_row_chunk(at / 128, (at % 128) / 16);
-  uint4 value;
-  asm volatile("ld.shared.v4.u32 {%0,%1,%2,%3}, [%4];"
-      : "=r"(value.x), "=r"(value.y), "=r"(value.z), "=r"(value.w)
-      : "r"(uint32_t(__cvta_generic_to_shared(address))));
-  return value;
-}
+using mxfp8_fold_common::admitted4;
+using mxfp8_fold_common::copy16;
+using mxfp8_fold_common::copy_packed_chunk;
+using mxfp8_fold_common::packed_fragment;
+using mxfp8_fold_common::split_fragment;
 
 // Task and packed helpers are shared with the other fold schedules.
 struct Task { uint32_t x, y, z, nx, ny; };
@@ -131,29 +87,25 @@ __device__ void initialize(const uint8_t* codes, const uint8_t* scales, uint8_t*
   for (uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
        i < tiles<N, Groups, S, Paired>(rows); i += gridDim.x * blockDim.x)
     tickets[i] = 0;
-  const uint32_t row = blockIdx.x;
-  if (row >= min(rows, *live_rows)) return;
-  bool invalid = false;
-  for (int g = 0; g < Groups; ++g) {
-    if constexpr (S.weight_prefetch || S.row_groups == 2) {
-      for (int k = threadIdx.x * 16; k < K; k += blockDim.x * 16) {
-        const uint64_t at = uint64_t(row) * RowStride + uint64_t(g) * GroupStride + k;
-        const uint4 packed = *reinterpret_cast<const uint4*>(codes + at);
-        const uint8_t scale = scales[at / 32];
-        invalid |= !(admitted4(packed.x, scale) && admitted4(packed.y, scale) &&
-                     admitted4(packed.z, scale) && admitted4(packed.w, scale));
-      }
-    } else {
+  if constexpr (S.weight_prefetch || S.row_groups == 2) {
+    mxfp8_fold_common::admit_task<K,Groups,RowStride,GroupStride>(
+        blockIdx.x,codes,scales,reinterpret_cast<uint32_t*>(workspace),
+        live_rows,status,status_row_offset,rows);
+  } else {
+    const uint32_t row = blockIdx.x;
+    if (row >= min(rows, *live_rows)) return;
+    bool invalid = false;
+    for (int g = 0; g < Groups; ++g) {
       for (int k = threadIdx.x * 4; k < K; k += blockDim.x * 4) {
         const uint64_t at = uint64_t(row) * RowStride + uint64_t(g) * GroupStride + k;
         invalid |= !admitted4(*reinterpret_cast<const uint32_t*>(codes + at), scales[at / 32]);
       }
     }
-  }
-  const bool bad = __syncthreads_or(invalid);
-  if (threadIdx.x == 0) {
-    const uint32_t previous = atomicOr(status + status_row_offset + row, bad ? 1u : 0u);
-    reinterpret_cast<uint32_t*>(workspace)[row] = bad || previous != 0;
+    const bool bad = __syncthreads_or(invalid);
+    if (threadIdx.x == 0) {
+      const uint32_t previous = atomicOr(status + status_row_offset + row, bad ? 1u : 0u);
+      reinterpret_cast<uint32_t*>(workspace)[row] = bad || previous != 0;
+    }
   }
 }
 
@@ -494,21 +446,6 @@ __device__ void admit(const uint8_t* codes, const uint8_t* scales, uint32_t* fai
     const uint32_t previous = atomicOr(status + status_row_offset + row, bad ? 1u : 0u);
     failed[row] = bad || previous != 0;
   }
-}
-
-template<int K>
-__device__ __forceinline__ uint4 split_fragment(const uint8_t* codes,
-    uint32_t warp, uint32_t quad, uint32_t lane, uint32_t step, uint32_t fold) {
-  const bool half = K % 128 != 0 && fold == K / 128;
-  const uint32_t at = warp * 1024 +
-      mxfp8_fold_packed::segment_word(quad, (half ? step % 2 : step) * 32 + lane * 4, half)
-      + (half ? step / 2 * 512 : 0);
-  const uint8_t* address = codes + fold_row_chunk(at / 128, (at % 128) / 16);
-  uint4 value;
-  asm volatile("ld.shared.v4.u32 {%0,%1,%2,%3}, [%4];"
-      : "=r"(value.x), "=r"(value.y), "=r"(value.z), "=r"(value.w)
-      : "r"(uint32_t(__cvta_generic_to_shared(address))));
-  return value;
 }
 
 template<int N, int K, int Groups, int RowStride, int GroupStride,

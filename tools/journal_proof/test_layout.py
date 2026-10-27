@@ -22,7 +22,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'specs'))
 import layout_spec  # noqa: E402
-from common import Invalid, fnv  # noqa: E402
+from common import Invalid, fnv, git  # noqa: E402
 import layout  # noqa: E402
 from engine import Unproven  # noqa: E402
 import proof  # noqa: E402
@@ -637,13 +637,25 @@ class LayoutTests(unittest.TestCase):
 
     def test_committed_declarations_parse(self):
         # Each model's declarations (README, Layout declarations).
-        for path in sorted(Path(__file__).resolve().parents[2].glob('models/*/journal-changes/*.json')):
+        repo = Path(__file__).resolve().parents[2]
+        committed = set(git(repo, 'ls-tree', '-r', '--name-only', 'HEAD', 'models').decode().splitlines())
+        declarations = {p.relative_to(repo).as_posix(): p
+                        for p in repo.glob('models/*/journal-changes/*.json')}
+        for path in sorted(declarations.values()):
             with self.subTest(path.name):
                 data = path.read_bytes()
                 if json.loads(data).get('schema') == proof.SCHEMA:
                     # A committed proof spec, for example one that declares
                     # added journals, must read as a spec.
-                    proof.read_spec(path)
+                    spec = proof.read_spec(path)
+                    self.assertEqual(set(spec['auxiliary_rules']), {f['name'] for f in spec['fixtures']})
+                    if 'layout' in spec:
+                        reference = spec['layout']
+                        self.assertTrue(reference['path'] in committed, 'layout must name a committed file')
+                        self.assertTrue(reference['path'] in declarations, 'layout must name a journal declaration')
+                        raw = declarations[reference['path']].read_bytes()
+                        self.assertEqual(hashlib.sha256(raw).hexdigest(), reference['sha256'])
+                        layout.parse(raw)
                     continue
                 decl = layout.parse(data)
                 # A description-only identity declaration authorizes no edits.

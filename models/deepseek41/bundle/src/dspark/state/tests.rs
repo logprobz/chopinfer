@@ -1,4 +1,5 @@
 use super::*;
+use crate::dspark::transfers;
 
 #[test]
 fn declared_drafter_state_matches_the_committed_row_layout() {
@@ -152,17 +153,36 @@ impl Memory {
         });
     }
 
+    /// Reads `position` of `request` from raw-history `cell`, which must
+    /// lie in the request's slot, at or above its `retained_start`, and
+    /// hold that position. Records the read.
+    fn read(&mut self, request: u64, slot: u32, position: u64, cell: u64) -> Feature {
+        let context = self.state.context(request).unwrap();
+        let retained = context.retained_start;
+        assert_eq!(context.slot, slot);
+        self.reads.push((position, retained));
+        assert!(position >= retained, "read {position} below {retained}");
+        let capacity = self.state.config().history_capacity();
+        assert_eq!(
+            cell / capacity,
+            u64::from(slot),
+            "cell {cell} outside slot {slot}"
+        );
+        let feature = self.raw.get(&cell).copied();
+        assert_eq!(
+            feature.map(|feature| feature.position),
+            Some(position),
+            "raw feature was overwritten too early"
+        );
+        feature.unwrap()
+    }
+
     fn catch_up(&mut self, request: u64) {
         for stage in 0..self.state.config().stages {
             while let Some(pass) = self.state.projection(request, stage, 3).unwrap() {
-                let retained = self.state.context(request).unwrap().retained_start;
                 for position in pass.start..pass.start + u64::from(pass.count) {
-                    self.reads.push((position, retained));
-                    let feature = self.raw[&self.state.config().history_cell(pass.slot, position)];
-                    assert_eq!(
-                        feature.position, position,
-                        "raw feature was overwritten too early"
-                    );
+                    let cell = self.state.config().history_cell(pass.slot, position);
+                    let feature = self.read(request, pass.slot, position, cell);
                     self.project(pass.slot, stage, feature, false);
                 }
                 self.state.projected(pass).unwrap();
@@ -789,63 +809,118 @@ fn device_failure_poisons_all_lifecycle_mutations() {
 type Pass = (u64, u32, u64, u32);
 
 /// The serving runtime's order: drafting items and bulk commits catch up,
-/// other items defer.
+/// other items defer. Every raw-history read and write goes through the
+/// transfers the device runs.
 struct Deferred {
     memory: Memory,
     passes: Vec<Pass>,
     batched: Vec<(u64, u64, u32)>,
+    /// Rows per per-stage pass of a bulk commit.
+    projection_rows: u32,
 }
 
 impl Deferred {
     fn new() -> Self {
-        let mut memory = Memory::new();
-        memory.state = State::new(config()).unwrap().with_batch_rows(2).unwrap();
+        Self::with(config(), 2, 3)
+    }
+
+    fn with(config: Config, batch_rows: u32, projection_rows: u32) -> Self {
+        let mut memory = Memory::with_config(config);
+        memory.state = State::new(config)
+            .unwrap()
+            .with_batch_rows(batch_rows)
+            .unwrap();
         Self {
             memory,
             passes: Vec::new(),
             batched: Vec::new(),
+            projection_rows,
         }
     }
 
-    fn catch_up(&mut self, request: u64) {
-        let m = &mut self.memory;
-        m.state.skip_unread(request).unwrap();
-        if let Some(pass) = m.state.row_projection(request).unwrap() {
-            assert!(pass.count <= m.state.config().window);
-            self.batched.push((request, pass.start, pass.count));
-            for stage in 0..m.state.config().stages {
-                for position in pass.start..pass.start + u64::from(pass.count) {
-                    let feature = m.raw[&m.state.config().history_cell(pass.slot, position)];
-                    assert_eq!(feature.position, position);
-                    m.project(pass.slot, stage, feature, false);
-                }
+    /// `Runtime::catch_up_all`: batched launches project every request's
+    /// readable deferred rows through every stage, then each bulk commit
+    /// runs per-stage passes, lowered as `dspark_project_rows` and
+    /// `dspark_project` lower them.
+    fn catch_up(&mut self, requests: &[u64]) {
+        let config = self.memory.state.config();
+        let mut passes = Vec::new();
+        for &request in requests {
+            self.memory.state.skip_unread(request).unwrap();
+            if let Some(pass) = self.memory.state.row_projection(request).unwrap() {
+                assert!(pass.count <= config.window);
+                self.batched.push((request, pass.start, pass.count));
+                passes.push(pass);
             }
-            m.state.projected_rows(pass).unwrap();
         }
-        if m.state.has_bulk(request) {
-            for stage in 0..m.state.config().stages {
-                while let Some(pass) = m.state.projection(request, stage, 3).unwrap() {
-                    self.passes.push((request, stage, pass.start, pass.count));
-                    for position in pass.start..pass.start + u64::from(pass.count) {
-                        let feature = m.raw[&m.state.config().history_cell(pass.slot, position)];
-                        m.project(pass.slot, stage, feature, false);
+        let batch_rows = self.memory.state.batch_rows();
+        for launch in transfers::batched_projection(config, &passes, batch_rows).unwrap() {
+            assert!(launch.rows <= batch_rows);
+            for segment in launch.segments {
+                for row in 0..u64::from(segment.rows) {
+                    let feature = self.memory.read(
+                        segment.request,
+                        segment.slot,
+                        segment.position + row,
+                        segment.history_row + row,
+                    );
+                    for stage in 0..config.stages {
+                        self.memory.project(segment.slot, stage, feature, false);
                     }
-                    m.state.projected(pass).unwrap();
                 }
             }
         }
-        assert!(!m.state.has_bulk(request));
+        for pass in passes {
+            self.memory.state.projected_rows(pass).unwrap();
+        }
+        for &request in requests {
+            if !self.memory.state.has_bulk(request) {
+                continue;
+            }
+            for stage in 0..config.stages {
+                while let Some(pass) = self
+                    .memory
+                    .state
+                    .projection(request, stage, self.projection_rows)
+                    .unwrap()
+                {
+                    self.passes.push((request, stage, pass.start, pass.count));
+                    for chunk in
+                        transfers::retained_projection(config, pass, config.window).unwrap()
+                    {
+                        let transfers::Source::Retained { row: cell } = chunk.source else {
+                            panic!("a retained pass read staging rows");
+                        };
+                        for row in 0..u64::from(chunk.rows) {
+                            let feature = self.memory.read(
+                                request,
+                                chunk.slot,
+                                chunk.position + row,
+                                cell + row,
+                            );
+                            self.memory.project(chunk.slot, chunk.stage, feature, false);
+                        }
+                    }
+                    self.memory.state.projected(pass).unwrap();
+                }
+            }
+            assert!(!self.memory.state.has_bulk(request));
+        }
     }
 
     fn run(&mut self, rows: Vec<Rows>, kept: &[(u64, u32)], salt: u64) -> Vec<DraftBlock> {
         self.memory.state.prepare(rows.clone()).unwrap();
-        for row in &rows {
-            if self.memory.state.needs_catch_up(row.request)
-                && (row.kind.drafts() > 0 || self.memory.state.has_bulk(row.request))
-            {
-                self.catch_up(row.request);
-            }
-        }
+        let catching_up = rows
+            .iter()
+            .map(|row| row.request)
+            .zip(rows.iter().map(|row| row.kind.drafts() > 0))
+            .filter(|&(request, drafting)| {
+                self.memory.state.needs_catch_up(request)
+                    && (drafting || self.memory.state.has_bulk(request))
+            })
+            .map(|(request, _)| request)
+            .collect::<Vec<_>>();
+        self.catch_up(&catching_up);
         let blocks = self.memory.state.begin_execution().unwrap();
         let staged = rows
             .iter()
@@ -862,10 +937,75 @@ impl Deferred {
             .collect::<BTreeMap<_, _>>();
         self.memory.state.executed().unwrap();
         let plan = self.memory.state.begin_commit(kept).unwrap();
-        self.memory.apply(&plan, &staged);
+        self.apply(&plan, &staged);
         self.memory.state.complete_commit(plan).unwrap();
         blocks
     }
+
+    /// A direct commit projects every kept row from staging; `retain_copies`
+    /// then write the retained rows into the slot's history.
+    fn apply(&mut self, plan: &CommitPlan, staged: &BTreeMap<u64, Vec<Feature>>) {
+        let config = self.memory.state.config();
+        for item in plan.items() {
+            let features = &staged[&item.rows.request][..item.kept as usize];
+            if item.project_from_staging {
+                for stage in 0..config.stages {
+                    for &feature in features {
+                        self.memory.project(item.rows.slot, stage, feature, true);
+                    }
+                }
+            }
+            for copy in transfers::retain_copies(config, *item, 0).unwrap() {
+                for row in 0..u64::from(copy.rows) {
+                    let feature = features[(copy.staged_row + row) as usize];
+                    let cell = copy.history_row + row;
+                    assert_eq!(cell, config.history_cell(item.rows.slot, feature.position));
+                    self.memory.raw.insert(cell, feature);
+                    self.memory.journal.push(Event::Retain {
+                        slot: item.rows.slot,
+                        feature,
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// Preempts a caught-up `request` and restores it into `slot`, as prefix
+/// capture and restore do. The physical snapshot copies the slot's whole
+/// raw history, stale cells included; the window `snapshot_copies` map is
+/// read at capture and again after the restore.
+fn move_slot(memory: &mut Memory, request: u64, slot: u32) {
+    let config = memory.state.config();
+    let capacity = config.history_capacity();
+    let snapshot = memory.state.snapshot(request).unwrap();
+    let from = memory.state.context(request).unwrap().slot;
+    let window = |memory: &mut Memory, slot| {
+        for copy in transfers::snapshot_copies(config, slot, snapshot).unwrap() {
+            for row in 0..u64::from(copy.rows) {
+                let position = snapshot.start + copy.snapshot_row + row;
+                memory.read(request, slot, position, copy.history_row + row);
+            }
+        }
+    };
+    window(memory, from);
+    let saved = (0..capacity)
+        .map(|cell| {
+            memory
+                .raw
+                .get(&(u64::from(from) * capacity + cell))
+                .copied()
+        })
+        .collect::<Vec<_>>();
+    memory.state.retire(request).unwrap();
+    for (cell, feature) in (u64::from(slot) * capacity..).zip(saved) {
+        match feature {
+            Some(feature) => memory.raw.insert(cell, feature),
+            None => memory.raw.remove(&cell),
+        };
+    }
+    memory.state.restore(request, slot, snapshot).unwrap();
+    window(memory, slot);
 }
 
 /// Eager passes, recorded by wrapping `Memory::catch_up`.
@@ -996,10 +1136,14 @@ fn batched_catch_up_stays_within_the_one_row_exact_bounds() {
 
 /// A timing-cut history of sixteen 512-row commits leaves positions
 /// 7656-7661 in raw-history cells 18-23, which one 8192-row commit leaves
-/// unwritten. No read reaches them: every catch-up projection and the
-/// snapshot read at or above `retained_start`, the last window, and each
-/// cell read holds its own position, through AR steps, drafting steps and
-/// a restore in another slot (`prefill-dependencies.md`).
+/// unwritten. No read reaches them in the serving order: a restore into
+/// the other slot, which copies the stale cells along, then AR steps that
+/// defer projection and drafting steps that catch up in batched launches.
+/// Production's 32-row batch bound projects the restored window in bulk
+/// per-stage passes; a 128-row bound projects it in one batched launch.
+/// Every row each transfer reads is at or above `retained_start` and its
+/// cell, in the request's slot, holds it. The eager replay drafts
+/// identically (`prefill-dependencies.md`).
 #[test]
 fn raw_history_cells_older_than_the_window_are_never_read() {
     use model_deepseek41_contract::geometry::FLASH;
@@ -1012,69 +1156,87 @@ fn raw_history_cells_older_than_the_window_are_never_read() {
         position_capacity: 16384,
     };
     assert_eq!((config.window, config.history_capacity()), (128, 134));
-    let stale = 18..24;
-    for history in [vec![512_u32; 16], vec![8192]] {
-        let mut memory = Memory::with_config(config);
-        let mut end = 0;
-        for &rows in &history {
-            memory.run(vec![prefill(41, 0, end, rows)], &[], 7);
-            end += u64::from(rows);
-        }
-        assert_eq!(end, 8192);
-        let cells: Vec<_> = stale
-            .clone()
-            .map(|cell| memory.raw.get(&cell).map(|feature| feature.position))
-            .collect();
-        if history.len() == 16 {
-            assert_eq!(cells, (7656..7662).map(Some).collect::<Vec<_>>());
-        } else {
-            assert_eq!(cells, [None; 6]);
-        }
-        let context = memory.state.context(41).unwrap();
-        assert_eq!((context.retained_start, context.end), (8064, 8192));
-        // Preempt right after the history, while the stale cells remain,
-        // restore in the other slot, decode, and do it again.
-        let mut slot = 0;
-        for round in 0..2 {
-            memory.catch_up(41);
-            let snapshot = memory.state.snapshot(41).unwrap();
-            let retained = memory.state.context(41).unwrap().retained_start;
-            assert!(snapshot.start >= retained);
-            let saved = (snapshot.start..snapshot.end)
-                .map(|position| {
-                    memory.reads.push((position, retained));
-                    let feature = memory.raw[&config.history_cell(slot, position)];
-                    assert_eq!(feature.position, position, "snapshot read a stale cell");
-                    feature
-                })
-                .collect::<Vec<_>>();
-            memory.state.retire(41).unwrap();
-            slot = 1 - slot;
-            for feature in saved {
-                memory
-                    .raw
-                    .insert(config.history_cell(slot, feature.position), feature);
+    assert_eq!(BATCH_PROJECTION_ROWS, 32);
+    for batch_rows in [BATCH_PROJECTION_ROWS, config.window] {
+        for history in [vec![512_u32; 16], vec![8192]] {
+            let mut eager = Memory::with_config(config);
+            let mut deferred = Deferred::with(config, batch_rows, config.window);
+            let mut end = 0;
+            for &rows in &history {
+                let step = vec![prefill(41, 0, end, rows)];
+                eager.run(step.clone(), &[], 7);
+                deferred.run(step, &[], 7);
+                end += u64::from(rows);
             }
-            memory.state.restore(41, slot, snapshot).unwrap();
-            // AR steps defer projection; drafting steps catch up and verify.
-            for step in 0..20_u64 {
-                let drafts = if step % 4 == 3 { 5 } else { 0 };
-                let kept = if drafts > 0 {
-                    vec![(41, 3)]
+            assert_eq!(end, 8192);
+            for memory in [&eager, &deferred.memory] {
+                let cells: Vec<_> = (18..24)
+                    .map(|cell| memory.raw.get(&cell).map(|feature| feature.position))
+                    .collect();
+                if history.len() == 16 {
+                    assert_eq!(cells, (7656..7662).map(Some).collect::<Vec<_>>());
                 } else {
-                    Vec::new()
-                };
-                memory.run(vec![decode(41, slot, end, drafts)], &kept, 7);
-                end = memory.state.context(41).unwrap().end;
+                    assert_eq!(cells, [None; 6]);
+                }
+                let context = memory.state.context(41).unwrap();
+                assert_eq!((context.retained_start, context.end), (8064, 8192));
             }
-            memory.catch_up(41);
-            memory.assert_ring(41, 7);
-            assert!(end > 8192 + 20 * (round + 1));
-        }
-        assert!(!memory.reads.is_empty());
-        for &(position, retained) in &memory.reads {
-            assert!(position >= retained, "read {position} below {retained}");
-            assert!(!(7656..7662).contains(&position), "read stale {position}");
+            // Preempt right after the history, while the stale cells
+            // remain, restore in the other slot, decode, and do it again.
+            let mut slot = 0;
+            for round in 0..2 {
+                slot = 1 - slot;
+                eager.catch_up(41);
+                move_slot(&mut eager, 41, slot);
+                deferred.catch_up(&[41]);
+                move_slot(&mut deferred.memory, 41, slot);
+                assert_eq!(
+                    deferred.memory.state.has_bulk(41),
+                    batch_rows < config.window
+                );
+                for step in 0..20_u64 {
+                    let drafts = if step % 4 == 3 { 5 } else { 0 };
+                    let kept = if drafts > 0 {
+                        vec![(41, 3)]
+                    } else {
+                        Vec::new()
+                    };
+                    let rows = vec![decode(41, slot, end, drafts)];
+                    let eager_blocks = eager.run(rows.clone(), &kept, 7);
+                    let blocks = deferred.run(rows, &kept, 7);
+                    assert_eq!(blocks, eager_blocks);
+                    assert_eq!(blocks.len(), usize::from(drafts > 0));
+                    // Every drafting item reads the eager ring contents.
+                    for block in &blocks {
+                        let window = u64::from(config.window);
+                        for stage in 0..config.stages {
+                            for position in block.main_rows - window..block.main_rows {
+                                let cell = (block.slot, stage, position % window);
+                                assert_eq!(deferred.memory.rings[&cell], eager.rings[&cell]);
+                                assert_eq!(eager.rings[&cell].position, position);
+                            }
+                        }
+                    }
+                    end = deferred.memory.state.context(41).unwrap().end;
+                    assert_eq!(end, eager.state.context(41).unwrap().end);
+                }
+                deferred.catch_up(&[41]);
+                eager.catch_up(41);
+                deferred.memory.assert_ring(41, 7);
+                eager.assert_ring(41, 7);
+                assert!(end > 8192 + 20 * (round + 1));
+            }
+            // The restored window went through bulk passes or a batched
+            // launch, and deferred rows through batched launches.
+            assert_eq!(deferred.passes.is_empty(), batch_rows == config.window);
+            assert!(!deferred.batched.is_empty());
+            for memory in [&eager, &deferred.memory] {
+                assert!(memory.reads.iter().any(|&(position, _)| position < 8192));
+                for &(position, retained) in &memory.reads {
+                    assert!(position >= retained, "read {position} below {retained}");
+                    assert!(!(7656..7662).contains(&position), "read stale {position}");
+                }
+            }
         }
     }
 }

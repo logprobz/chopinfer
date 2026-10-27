@@ -766,7 +766,10 @@ class MapperTests(unittest.TestCase):
         from engine import Unproven
         for closed in (True,False):
             m=self.mapper(closed)
-            self.assertEqual(m('peer results 4 1'),'peer results 4 1')
+            # 2 is a created stream and an issued ID and 5 a function and an
+            # issued ID in this mapper, so a typed slot would change.
+            for line in ('peer results 4 1','peer results 2 5'):
+                self.assertEqual(m(line),line)
             for line in ('peer results 4','peer results 4 1 2','peer results x 1','peer results 4 1 raw: 4294967300'):
                 with self.assertRaises(Unproven):
                     m(line)

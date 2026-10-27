@@ -25,9 +25,8 @@ FORMS = [
     # The model host's spelling records source and destination contexts
     # before the spans; both contexts remain literal rank slots.
     ('copy', re.compile(rf'peer-copy (\d+) \d+ \d+ {_SPAN} {_SPAN}'), ('stream',)),
-    # DeepSeek's DSpark host notes a cross-rank results copy before issuing
-    # it: source and destination contexts, literal rank slots. The copy
-    # records its own line.
+    # A model host's note before a cross-rank results copy: source and
+    # destination contexts, literal rank slots. The copy records its own line.
     ('peer-results', re.compile(r'peer results \d+ \d+'), ()),
     ('download', re.compile(rf'download (\d+) {_SPAN}'), ('stream',)),
     # A model's readback line (its download_line): the stream, the source and
@@ -67,7 +66,8 @@ CLAIM = dict(
     auxiliary_history=('Every other operation the fixture device recorded from the start of its lifetime through its last '
                        'pinned checkpoint (setup and the history between pinned captures): launches, copies, uploads with '
                        'their payload FNV, downloads, zeros, allocations, releases, stream and event creation, event '
-                       'record/wait, graph capture begin/end, replay and release, mapped-gather records and serving kv state. '
+                       'record/wait, graph capture begin/end, replay and release, mapped-gather records, serving kv state and '
+                       'peer result notes with their literal rank slots. '
                        'Compared line for line under '
                        'history_policy and the same mapping; unknown operation forms fail closed.'),
     ordering=('The relative order of every retained operation across owners (create, each pinned journal, history) '

@@ -56,8 +56,10 @@ The operation grammar includes optional prefixes before `chop_` kernel
 symbols and mapped-gather records. Gather create/release handles use the
 issued-ID mapping, waits use the stream mapping, and index byte lengths,
 row counts, ranks and view IDs compare literally. A bare `serving kv`
-record compares literally too. These forms remain subject to the same
-resource and operation-order checks as other device records.
+record compares literally too, and so does a model host's
+`peer results SRC DST` note, whose two contexts are rank slots. These forms
+remain subject to the same resource and operation-order checks as other
+device records.
 
 The revision's sources must hold exactly those pins: the literal
 `(lines, 0x<fnv>)` tuples of the Rust files under the bundle directory that
@@ -620,7 +622,8 @@ A declaration is model-specific, so it lives with its model:
 `models/<model>/journal-changes/<change>.json`, committed with the change.
 A declaration written after its change landed names the revision that holds
 it with `--declaration-revision`. Every committed declaration must parse
-(`test_layout.py`).
+(`test_layout.py`); a committed spec, such as one that declares added
+journals, must read as a spec.
 
 ### Mutation harness
 

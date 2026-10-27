@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from agentic_metrics import burst_intervals, distribution
+from agentic_metrics import burst_intervals, distribution, stall_stats
 
 
 def union(intervals):
@@ -54,7 +54,7 @@ def interval_gaps(intervals, prefills):
     result = {}
     for threshold in (50, 100, 250, 1000):
         selected = [(a, b) for a, b in intervals if (b - a) * 1000 > threshold]
-        result[str(threshold)] = dict(count=len(selected), eligible_gaps=len(intervals),
+        result[str(threshold)] = dict(**stall_stats([(b - a) * 1000 for a, b in intervals], threshold),
             total_gap_ms=sum((b - a) * 1000 for a, b in selected),
             excess_ms=sum((b - a) * 1000 - threshold for a, b in selected),
             prefill_overlap_ms=sum(max(0, min(b, y) - max(a, x)) * 1000 for a, b in selected for x, y in prefills))

@@ -108,8 +108,14 @@ class TraceReviewTests(unittest.TestCase):
         current = receipts['fixed-new']
         self.assertEqual(encoded, json.dumps(current['profile'], sort_keys=True, separators=(',', ':')))
         self.assertEqual(legacy['profile_digest'], current['profile_digest'])
-        self.assertEqual(compare(legacy, current)['arms'],
-                         {'baseline': 'fixed-old', 'candidate': 'fixed-new'})
+        report = compare(legacy, current)
+        self.assertEqual(report['arms'], {'baseline': 'fixed-old', 'candidate': 'fixed-new'})
+        for level in legacy['levels']:
+            level['client_stalls'].pop('stall_ms_per_1000_gaps', None)
+        old_report = compare(legacy, current)
+        key = 'client_stall_ms_per_1000_gaps'
+        self.assertEqual(report['levels'][0]['spread'][key], old_report['levels'][0]['spread'][key])
+        self.assertIn(key, old_report['levels'][0]['replicas'][0]['figures']['baseline'])
 
     def test_readme_trace_has_feasible_pacing(self):
         text = Path(__file__).with_name('README.md').read_text()
@@ -130,6 +136,19 @@ class TraceReviewTests(unittest.TestCase):
         for session in trace.generate(8, 4)['sessions']:
             self.assertEqual({t['think_seconds'] for t in session['turns']}, {0, 2, 10, 60})
             self.assertEqual({t['output_tokens'] for t in session['turns']}, {128, 256, 550, 1266})
+
+    def test_stall_time_normalizes_by_eligible_gaps(self):
+        short = metrics.stall_stats([200, 1], 100)
+        long = metrics.stall_stats([200] + [1] * 9, 100)
+        self.assertEqual(short['total_stall_ms'], long['total_stall_ms'])
+        self.assertEqual(short['stall_ms_per_1000_gaps'], 100000)
+        self.assertEqual(long['stall_ms_per_1000_gaps'], 20000)
+        self.assertIsNone(metrics.stall_stats([], 100)['stall_ms_per_1000_gaps'])
+        from agentic_trace_analysis import gaps
+        row = dict(output_events=[dict(at=t, kinds=['content']) for t in (0, .2, .21)])
+        value = gaps(row, [])['100']
+        self.assertAlmostEqual(value['stall_ms_per_1000_gaps'], 100000)
+        self.assertEqual(value['per_1000_gaps'], 500)
 
 
 

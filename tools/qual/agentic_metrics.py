@@ -311,11 +311,18 @@ def failure_reason(session):
     return 'request or response error'
 
 
+def stall_time_per_1000(stats):
+    """Normalize raw stall duration, also for receipts predating this field."""
+    count = stats['eligible_gaps']
+    return 1000 * stats['total_stall_ms'] / count if count else None
+
+
 def stall_stats(gaps, threshold_ms):
     stalls = [gap for gap in gaps if gap > threshold_ms]
     return dict(count=len(stalls), eligible_gaps=len(gaps),
                 per_1000_gaps=1000 * len(stalls) / len(gaps) if gaps else None,
-                total_stall_ms=sum(stalls), threshold_ms=threshold_ms)
+                total_stall_ms=sum(stalls), threshold_ms=threshold_ms,
+                stall_ms_per_1000_gaps=1000 * sum(stalls) / len(gaps) if gaps else None)
 
 
 def output_bursts(events, window_ms):
@@ -399,6 +406,8 @@ def replica_figures(level):
         'client_step_gap_p95_ms': tail(level['step_gap_ms'], 'p95'),
         'client_stalls_per_1000_gaps': dict(value=level['client_stalls']['per_1000_gaps'],
                                             samples=level['client_stalls']['eligible_gaps']),
+        'client_stall_ms_per_1000_gaps': dict(value=stall_time_per_1000(level['client_stalls']),
+                                                samples=level['client_stalls']['eligible_gaps']),
         'prompt_tokens_per_turn_p50': tail(prefill['prompt_tokens_per_turn'], 'p50'),
         'uncached_prompt_tokens_p50': tail(prefill['uncached_prompt_tokens'], 'p50'),
         'server_prefill_tokens_per_step': {k: prefill['server_prefill_tokens_per_step'][k] for k in ('value', 'samples')},

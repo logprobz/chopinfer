@@ -174,21 +174,23 @@ fn anchored_instances_keep_eight_anchor_items() {
 mod anchor_route_sweep {
     use super::*;
 
-    fn sweep(profile: &str) {
-        route_guard::sweep::<Anchored>(
-            profile,
-            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
-            env!("CARGO_PKG_NAME"),
-        );
-    }
-
+    /// Both profiles in turn, beside the served sweeps that run in the same
+    /// process: in parallel the four quick sweeps double the library's peak
+    /// RSS. The CPU and later tiers run the library's sweeps one after
+    /// another, and its peak RSS grows with each, so two more would pass
+    /// the route budget: the quick tier covers the anchored routes.
     #[test]
-    fn tp4_ar() {
-        sweep("tp4-ar");
-    }
-
-    #[test]
-    fn tp4_dspark() {
-        sweep("tp4-dspark");
+    fn tp4_profiles() {
+        if std::env::var("CHOPINFER_ROUTE_SWEEP").is_ok_and(|tier| tier != "quick") {
+            println!("anchored routes run in the quick tier only");
+            return;
+        }
+        for profile in ["tp4-ar", "tp4-dspark"] {
+            route_guard::sweep::<Anchored>(
+                profile,
+                include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
+                env!("CARGO_PKG_NAME"),
+            );
+        }
     }
 }

@@ -541,3 +541,63 @@ fn anchor_seeds_precede_the_tails_own_seed_copies() {
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
 }
+
+/// The diagnostic state dump of a capture at an anchor reads the anchor's
+/// spares: the snapshot payload at the anchor and the pages up to it.
+#[cfg(feature = "diagnostic-taps")]
+#[test]
+fn anchor_state_dumps_read_their_spares() {
+    let root = std::path::PathBuf::from(std::env::var_os("CHOPINFER_DATA").unwrap())
+        .join("deepseek41-tests")
+        .join(format!("anchor-state-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("enabled"), []).unwrap();
+    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP1).unwrap(), KV_LAYOUTS[0]);
+    let mut instance = create(&host, 1);
+    crate::instance::set_dspark_state_capture_root_for_test(instance.handle(), Some(root.clone()));
+    instance
+        .execute_prefill_cuts(
+            &cuts(&anchored(1, 0, 0, 789, true), 1, 789, 789),
+            &mut Sink::default(),
+        )
+        .unwrap();
+    instance.commit().unwrap();
+    let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
+    for tokens in [768, 789] {
+        instance
+            .capture_prefix_state(1, tokens, &pages)
+            .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+    }
+    let read = |name: &str| {
+        let directory = root.join(name).join("request-1");
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(directory.join("state.json")).unwrap()).unwrap();
+        let pieces = metadata["pieces"].as_array().unwrap();
+        let bytes: u64 = pieces
+            .iter()
+            .map(|piece| piece["bytes"].as_u64().unwrap())
+            .sum();
+        assert_eq!(
+            std::fs::metadata(directory.join("rank-0.bin"))
+                .unwrap()
+                .len(),
+            bytes
+        );
+        let rings = pieces
+            .iter()
+            .filter(|piece| piece["buffer"] == "window.ring")
+            .count();
+        assert_eq!(rings, 80);
+        metadata
+    };
+    let anchor = read("snapshot-768");
+    assert_eq!(anchor["end"], 768);
+    assert_eq!(anchor["retained_start"], 640);
+    assert_eq!(read("snapshot-789")["end"], 789);
+    assert!(root.join("chunk-789/request-1/state.json").is_file());
+    assert!(!root.join("chunk-768").exists());
+    instance.retire_request(1).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+    std::fs::remove_dir_all(root).unwrap();
+}

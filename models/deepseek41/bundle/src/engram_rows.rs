@@ -16,6 +16,8 @@
 //! into the bundle's staging buffers on one stream, in row order then
 //! column order, so the work after it on that stream reads them.
 
+mod exposure;
+
 use std::collections::BTreeMap;
 use std::ops::Range;
 
@@ -346,22 +348,52 @@ impl EngramRows {
                     .chunks(layers * columns)
                     .flat_map(|row| &row[layer * columns..(layer + 1) * columns]),
             );
-            for (plane, span) in [
+            for (plane_index, (plane, span)) in [
                 (&table.codes, destination.codes),
                 (&table.scales, destination.scales),
-            ] {
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 if bundle_runtime::routes::active() {
-                    bundle_runtime::routes::submitted(Some(&reason.tag()));
+                    bundle_runtime::routes::submitted_on_rank(mapped.rank, &reason.tag());
                 }
-                services.gather_mapped_rows(
-                    stream,
-                    span,
-                    MappedRowGatherV1 {
-                        image: mapped.image,
-                        rank: mapped.rank,
-                        view_id: &plane.view,
-                        row_bytes: plane.row_bytes,
-                        rows: &rows,
+                exposure::measure(
+                    exposure::enabled(),
+                    || {
+                        services.gather_mapped_rows(
+                            stream,
+                            span,
+                            MappedRowGatherV1 {
+                                image: mapped.image,
+                                rank: mapped.rank,
+                                view_id: &plane.view,
+                                row_bytes: plane.row_bytes,
+                                rows: &rows,
+                            },
+                        )
+                    },
+                    |started_unix_ns, elapsed_ns, succeeded| {
+                        let record = format!(
+                            concat!(
+                                "{{\"schema\":\"chopinfer.sync-engram-gather.v1\",",
+                                "\"rank\":{},\"layer_index\":{},\"plane_index\":{},",
+                                "\"token_rows\":{},\"gather_rows\":{},\"row_bytes\":{},",
+                                "\"reason\":\"{}\",\"started_unix_ns\":{},",
+                                "\"elapsed_ns\":{},\"succeeded\":{}}}"
+                            ),
+                            mapped.rank,
+                            layer,
+                            plane_index,
+                            hashed.rows,
+                            rows.len(),
+                            plane.row_bytes,
+                            reason.entry(),
+                            started_unix_ns,
+                            elapsed_ns,
+                            succeeded,
+                        );
+                        let _ = services.log(record.as_bytes());
                     },
                 )?;
             }

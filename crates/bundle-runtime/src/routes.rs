@@ -178,6 +178,12 @@ pub fn submitted(tag: Option<&RouteTag>) {
     record_launch(None, "unknown", tag);
 }
 
+/// Attribute a non-kernel route, such as a mapped-row gather, to its owner.
+/// Kernel dispatches infer their rank from the acquired symbol instead.
+pub fn submitted_on_rank(rank: u32, tag: &RouteTag) {
+    record_launch(Some(rank), &tag.symbol, Some(tag));
+}
+
 pub fn replay(counts: &RouteCounts) {
     ACTIVE.with(|a| {
         if let Some(active) = a.borrow_mut().as_mut() {
@@ -222,6 +228,23 @@ mod tests {
         let disabled = RouteCounter::begin(false);
         record_launch(Some(2), "ignored", None);
         assert!(disabled.finish().is_none());
+    }
+
+    #[test]
+    fn explicit_host_route_rank_preserves_aggregate_fallback_counts() {
+        let counter = RouteCounter::begin(true);
+        let tag = branch(
+            MAPPED_GATHER_SYMBOL,
+            RouteClass::Baseline,
+            "gather",
+            "sync",
+            [1..=8192],
+        );
+        submitted_on_rank(2, &tag);
+        let counts = counter.finish().unwrap();
+        assert_eq!(counts.fallback_launches, 1);
+        assert_eq!(counts.ranks["2"].tagged[&tag.entry], 1);
+        assert!(!counts.ranks.contains_key("unknown"));
     }
 
     #[test]

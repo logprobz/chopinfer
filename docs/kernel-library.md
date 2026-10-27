@@ -749,3 +749,12 @@ needs `--profile`, `--phase` and `--rows` where those constraints apply;
 a job's family list instead supplies explicit reasons for that workload.
 The serving-step profile report accepts `--route-classes` and `--route-allow`
 to run this check after reading the export.
+
+DeepSeek's `CHOPINFER_SYNC_GATHER_TRACE=1` diagnostic logs each synchronous
+Engram gather's rank, layer index, plane index (codes then scales), token rows, gathered rows, row bytes,
+reason, wall-clock start and monotonic elapsed host time. It defaults off;
+the disabled path reads no clocks. The interval includes the host service
+call and excludes logging. It adds no device synchronization and does not
+claim GPU completion time or achieved bandwidth. Use the timestamps to
+associate exposure with step traces and keep these diagnostic timings
+separate from acceptance timing.

@@ -683,3 +683,93 @@ fn grid_anchor_items_bound_the_anchored_items_of_a_step() {
     );
     assert!(anchored_step(&mut s).contains(&(2, 768, 21, None)));
 }
+
+fn submit_outputs(s: &mut Scheduler, id: u64, tokens: &[u32], outputs: usize) {
+    let spec = RequestSpec::new(RequestId::new(id), tokens.len(), outputs).unwrap();
+    let chain = PrefixChainV1::new(64, Arc::from(tokens), Vec::new()).unwrap();
+    s.submit_with_prefix(spec, Some(PrefixRequestV1::new(Arc::new(chain), true)))
+        .unwrap();
+}
+
+/// Commits the next batch and returns its queued captures, not yet run.
+fn commit_next(s: &mut Scheduler) -> Vec<runtime_scheduler::PrefixCaptureV1> {
+    let batch = s.next_batch().unwrap().unwrap();
+    let outcomes = batch
+        .items()
+        .iter()
+        .map(|item| {
+            BatchOutcome::success(
+                item.request_id(),
+                item.phase(),
+                usize::from(item.expects_output()),
+                item.expects_output(),
+            )
+        })
+        .collect::<Vec<_>>();
+    s.commit_batch(batch.id(), &outcomes).unwrap();
+    s.take_prefix_captures()
+}
+
+/// A request that finishes in its anchored chunk captures the anchor, then
+/// its prompt end, and keeps its sequence until the last capture ends.
+#[test]
+fn grid_anchor_items_release_a_finished_sequence_after_its_last_capture() {
+    let mut s = scheduler_with_grid_anchors(8192, true, 1, 0);
+    submit(&mut s, 1, &(0..789).collect::<Vec<_>>(), false);
+    let captures = commit_next(&mut s);
+    assert_eq!(
+        captures.iter().map(|c| c.tokens()).collect::<Vec<_>>(),
+        [768, 789]
+    );
+    assert_eq!(
+        s.request_state(RequestId::new(1)).unwrap(),
+        RequestState::Finished
+    );
+    for capture in &captures {
+        assert_eq!(s.kv_stats().active_sequences(), 1);
+        assert!(s.begin_prefix_capture(capture).unwrap().is_some());
+        s.end_prefix_capture(capture).unwrap();
+    }
+    assert_eq!(s.kv_stats().active_sequences(), 0);
+    s.audit().unwrap();
+}
+
+/// Cancelling a request after its anchored chunk commits, before its
+/// captures run, drops both with its sequence: the same prompt then finds
+/// no anchor and keeps its rounded end inside one chunk again.
+#[test]
+fn grid_anchor_items_drop_both_captures_of_a_request_cancelled_before_them() {
+    let mut s = scheduler_with_grid_anchors(8192, true, 1, 0);
+    let tokens: Vec<u32> = (0..789).collect();
+    submit_outputs(&mut s, 1, &tokens, 4);
+    let batch = s.next_batch().unwrap().unwrap();
+    let outcomes = batch
+        .items()
+        .iter()
+        .map(|item| BatchOutcome::success(item.request_id(), item.phase(), 1, false))
+        .collect::<Vec<_>>();
+    s.commit_batch(batch.id(), &outcomes).unwrap();
+    s.cancel(RequestId::new(1)).unwrap();
+    assert!(s.take_prefix_captures().is_empty());
+    assert_eq!(s.kv_stats().active_sequences(), 0);
+    submit(&mut s, 2, &tokens, false);
+    assert_eq!(anchored_step(&mut s), [(2, 0, 789, Some(768))]);
+    s.audit().unwrap();
+}
+
+/// A request restored at an odd prompt end keeps its own longer prompt's
+/// rounded end inside its one remaining chunk.
+#[test]
+fn grid_anchor_items_span_from_a_restored_odd_start() {
+    let mut s = scheduler_with_grid_anchors(8192, true, 1, 0);
+    let first: Vec<u32> = (0..789).collect();
+    submit(&mut s, 1, &first, false);
+    assert_eq!(finish(&mut s, 1), (vec![(0, 789)], vec![768, 789]));
+    let mut second = first.clone();
+    second.extend(2000..2300);
+    submit(&mut s, 2, &second, false);
+    s.admit().unwrap();
+    assert_eq!(s.cached_tokens(RequestId::new(2)).unwrap(), 789);
+    s.complete_prefix_restore(RequestId::new(2)).unwrap();
+    assert_eq!(anchored_step(&mut s), [(2, 789, 300, Some(1088))]);
+}

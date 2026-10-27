@@ -342,3 +342,59 @@ fn declared_cuts_refresh_shared_prefixes_after_a_shorter_grid_hit() {
         s.audit().unwrap();
     }
 }
+
+#[test]
+fn declared_repeat_cuts_must_improve_on_the_last_grid_anchor() {
+    for prompt in [1088, 1024] {
+        for (guaranteed, cuts) in [(true, false), (false, false), (false, true), (true, true)] {
+            let mut s = scheduler_with_cuts(256, guaranteed, cuts);
+            let first = (0..prompt).collect::<Vec<u32>>();
+            submit(&mut s, 1, &first, false);
+            finish(&mut s, 1);
+            let mut second = first[..192].to_vec();
+            second.extend(2000..2000 + prompt - 192);
+            submit(&mut s, 2, &second, false);
+            let (rows, captures) = finish(&mut s, 2);
+            let repeat_hit = if guaranteed {
+                let mut expected = (256..prompt as usize).step_by(256).collect::<Vec<_>>();
+                expected.push(prompt as usize);
+                if cuts {
+                    expected.push(192);
+                    if prompt == 1024 {
+                        expected.push(960);
+                    }
+                }
+                expected.sort_unstable();
+                assert_eq!(captures, expected, "prompt={prompt}, cuts={cuts}");
+                if prompt == 1088 && cuts {
+                    assert_eq!(
+                        rows,
+                        [
+                            (0, 192),
+                            (192, 64),
+                            (256, 256),
+                            (512, 256),
+                            (768, 256),
+                            (1024, 64)
+                        ]
+                    );
+                }
+                if cuts && prompt == 1024 {
+                    960
+                } else {
+                    (prompt as usize - 1) / 256 * 256
+                }
+            } else {
+                // Ordinary full-prefill profiles keep their shifted repeat cut.
+                assert_eq!(captures, [192, 960, prompt as usize]);
+                960
+            };
+            submit(&mut s, 3, &second, false);
+            s.admit().unwrap();
+            assert_eq!(s.cached_tokens(RequestId::new(3)).unwrap(), repeat_hit);
+            s.complete_prefix_restore(RequestId::new(3)).unwrap();
+            finish(&mut s, 3);
+            s.audit().unwrap();
+        }
+    }
+}

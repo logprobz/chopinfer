@@ -3692,7 +3692,12 @@ impl Scheduler {
             .filter(|tokens| *tokens < prompt)
             .fold(hit, usize::max);
         let repeat = (start + prompt.saturating_sub(start + 1) / chunk * chunk) / granule * granule;
-        if repeat > start && absent(repeat) {
+        // A guaranteed grid already gives repeats its last boundary. A
+        // shifted repeat cut is useful only when it shortens that replay.
+        let improves_grid = self.requests[index]
+            .guaranteed_prefill_chunks
+            .is_none_or(|grid| repeat > (prompt - 1) / grid * grid);
+        if repeat > start && improves_grid && absent(repeat) {
             points.push(repeat);
         }
         if let Some(chunk) = self.requests[index].guaranteed_prefill_chunks {

@@ -99,9 +99,9 @@ def generate(sessions=8, turns=100, seed='agentic-trace-v1', contexts=(100000, 2
             ordinal = turn * sessions + session
             low, high = RANGES[classes[ordinal % 100]]
             planned.append(dict(after=turn - 1 if turn else None, append_tokens=rng.randint(low, high),
-                                output_tokens=(128, 256, 550, 1266)[ordinal % 4],
+                                output_tokens=(128, 256, 550, 1266)[(turn + session) % 4],
                                 seed=mixed.request_seed(seed, sessions, session, turn),
-                                think_seconds=(0, 2, 10, 60)[ordinal % 4],
+                                think_seconds=(0, 2, 10, 60)[(turn + session) % 4],
                                 idle_pages=idle_pages if session == 0 and turn and turn % 4 == 0 else 0))
         rows.append(dict(id=session, group=session % len(contexts), turns=planned))
     return validate(dict(schema=SCHEMA, seed=seed, page_tokens=64,

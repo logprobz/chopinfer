@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import shlex
 from pathlib import Path
 import time
 import unittest
@@ -109,6 +110,26 @@ class TraceReviewTests(unittest.TestCase):
         self.assertEqual(legacy['profile_digest'], current['profile_digest'])
         self.assertEqual(compare(legacy, current)['arms'],
                          {'baseline': 'fixed-old', 'candidate': 'fixed-new'})
+
+    def test_readme_trace_has_feasible_pacing(self):
+        text = Path(__file__).with_name('README.md').read_text()
+        snippet = text.split('python3 -B tools/qual/agentic_trace.py', 1)[1].split('```', 1)[0]
+        commands = snippet.replace('\\' + '\n', '').strip().splitlines()
+        generator, replay = shlex.split(commands[0]), shlex.split(commands[1])
+        def value(words, flag):
+            return words[words.index(flag) + 1]
+        workload = trace.generate(int(value(generator, '--sessions')), int(value(generator, '--turns')),
+                                  contexts=[int(n) for n in value(generator, '--contexts').split(',')],
+                                  idle_pages=int(value(generator, '--idle-pages')))
+        think_bound = max(sum(turn['think_seconds'] for turn in session['turns'])
+                          for session in workload['sessions'])
+        self.assertLess(think_bound, float(value(replay, '--seconds')))
+        self.assertTrue(all(turn['idle_pages'] == 0 for session in workload['sessions'] for turn in session['turns']))
+
+    def test_generator_rotates_mix_within_each_session(self):
+        for session in trace.generate(8, 4)['sessions']:
+            self.assertEqual({t['think_seconds'] for t in session['turns']}, {0, 2, 10, 60})
+            self.assertEqual({t['output_tokens'] for t in session['turns']}, {128, 256, 550, 1266})
 
 
 

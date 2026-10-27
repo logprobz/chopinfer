@@ -422,12 +422,18 @@ session traces. Generate a content-free declaration outside the repository:
 
 ```sh
 python3 -B tools/qual/agentic_trace.py --out "$CHOPINFER_DATA/trace.json" \
-  --sessions 8 --turns 100 --contexts 100000,250000 --idle-pages 4096
+  --sessions 8 --turns 4 --contexts 100000,250000 --idle-pages 0
 python3 -B tools/qual/agentic_mixed.py --workload trace \
   --trace "$CHOPINFER_DATA/trace.json" --levels 8 --replicas 1 \
   --temperature 1 --seconds 600 --session-timeout-seconds 600 \
   --min-samples 8 --cache-salt group --arm fixed --label baseline
 ```
+
+This four-turn example declares 72 seconds of think time per session,
+leaving the rest of the 600-second measured window for requests. It disables
+page-pressure parking; longer traces can enable it when sufficient other
+traffic is planned. Think times and output budgets rotate within each
+session, including when the session count is divisible by four.
 
 The generator uses append shares 31/40/12/7/10 percent for 1-63,
 64-511, 512-2047, 2048-8191 and 8192+ tokens over each 100 requests.

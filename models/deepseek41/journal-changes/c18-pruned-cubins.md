@@ -12,8 +12,10 @@ entries from five mixed cubins:
 | latent_decode_cache | 18 | 6 |
 | latent_cache_groups | 12 | 12 |
 
-The exact module names, before and after lock digests, and removed symbols
-are in `c18-pruned-cubin-symbols.json`. The matrix catalog retains the wide
+The committed proof spec `c18-pruned-cubin-symbols.json` binds the fixture
+histories, exact module replacements and the SHA-256 of the layout declaration.
+It is the byte-for-byte spec used to prove this pruning, including every
+before and after lock digest and removed symbol. The matrix catalog retains the wide
 Engram projection registered directly by verification. The original full
 ceil and matrix cubins remain authenticated model-lab references; their
 lock and provenance pairs are unchanged.

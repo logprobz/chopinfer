@@ -76,6 +76,34 @@ class PositionTests(unittest.TestCase):
                              {"primer": 0, "hit": 128, "cold": 0})
             self.assertEqual(prefix_exact.expected_cached(main, 64)["hit"], 128)
 
+    def test_guaranteed_grid_profiles_resume_exact_prompt_ends(self):
+        # Profiles on a guaranteed prefill grid capture every prompt end
+        # exactly (runtime-scheduler capture_points): with
+        # `exact_prompt_ends`, a hit after the primer ids[:69] resumes 69.
+        main = {"text": "a", "position": 70, "anchor": 64,
+                "cached": {"primer": 0, "chunked": 0, "hit": 64, "cold": 0}}
+        prompt_end = {"text": "a", "position": 70, "anchor": 69,
+                      "cached": {"primer": 0, "hit": 69, "cold": 0}}
+        policy = {**prefix_exact.prefix_policy(), "block_tokens": 64, "prefill_granule": 64}
+        with mock.patch.object(prefix_exact, "prefix_policy", return_value={**policy, "exact_prompt_ends": True}):
+            self.assertEqual(cache_errors([prompt_end], 64, PROMPT_END_ARMS), [])
+            # The chunked arm's exact end at 70 serves longer prompts only.
+            self.assertEqual(cache_errors([main], 64), [])
+            # A miss, the granule below the end, or a longer hit is an error.
+            for hit in (0, 64, 68, 70):
+                wrong = {**prompt_end, "cached": {**prompt_end["cached"], "hit": hit}}
+                self.assertEqual(len(cache_errors([wrong], 64, PROMPT_END_ARMS)), 1, hit)
+            for hit in (0, 63, 69, 70):
+                wrong = {**main, "cached": {**main["cached"], "hit": hit}}
+                self.assertEqual(len(cache_errors([wrong], 64)), 1, hit)
+            # Split anchors lie on the grid, where both rules agree.
+            self.assertEqual(prefix_exact.prompt_end_resumed(8192, 64), 8192)
+        # Without the declaration, or with it false, the hit keeps the granule.
+        for selected in (policy, {**policy, "exact_prompt_ends": False}):
+            with mock.patch.object(prefix_exact, "prefix_policy", return_value=selected):
+                self.assertEqual(prefix_exact.expected_cached(prompt_end, 64, PROMPT_END_ARMS)["hit"], 64)
+                self.assertEqual(len(cache_errors([prompt_end], 64, PROMPT_END_ARMS)), 1)
+
     def test_cache_errors_name_every_unexpected_hit_or_miss(self):
         good = {"text": "a", "position": 5, "anchor": 4,
                 "cached": {"primer": 0, "chunked": 0, "hit": 4, "cold": 0}}

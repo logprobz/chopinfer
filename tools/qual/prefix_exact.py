@@ -51,7 +51,9 @@ resumes prompt-end anchors: for each position p it picks a primer end B one
 to five tokens before p that is not a page boundary, sends ids[:B], then
 ids[:p] (the hit) and ids[:p] under a fresh salt (cold). The hit resumes B
 rounded down to the granule once that spans a reuse unit, and nothing
-otherwise (`prompt_end_resumed`). Its hit rows must equal
+otherwise (`prompt_end_resumed`). Where `qualification.prefix.exact_prompt_ends`
+declares that the served profiles capture every prompt end exactly (a
+guaranteed prefill grid), the hit resumes B itself. Its hit rows must equal
 its cold rows and pass the same accuracy rule.
 
 `record` also runs two checks that need no reference, when the policy enables
@@ -263,7 +265,9 @@ def resumed(position, anchor, reuse):
     it spans a unit of `reuse` tokens: the prefix it shares with the primer,
     which sent ids[:anchor], in whole units; its prompt end on the granule;
     and where its final chunk of the profile's prefill chunk starts, a whole
-    number of chunks after the last capture before the prompt end."""
+    number of chunks after the last capture before the prompt end. With
+    `exact_prompt_ends` it also captures its exact prompt end, which a hit
+    on the same prompt cannot resume, since it prefills its last token."""
     granule = prefix_policy()["prefill_granule"]
     points = []
     shared = min(anchor // reuse * reuse, (position - 1) // reuse * reuse) // granule * granule
@@ -282,7 +286,14 @@ def resumed(position, anchor, reuse):
 def prompt_end_resumed(anchor, reuse):
     """The cached tokens of a hit after a primer that ended at `anchor`: its
     prompt end on the granule, once that spans a unit of `reuse` tokens. The
-    primer's final-chunk point lies at or before that end, so it adds none."""
+    primer's final-chunk point lies at or before that end, so it adds none.
+
+    A profile on a guaranteed prefill grid also captures every prompt end
+    exactly, whatever its length (runtime-scheduler `capture_points`); the
+    policy declares this as `exact_prompt_ends`. The hit then resumes
+    `anchor` itself, which lies before its last token."""
+    if prefix_policy().get("exact_prompt_ends", False):
+        return anchor
     tokens = granule_floor(anchor)
     return tokens if tokens >= reuse else 0
 

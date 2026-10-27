@@ -3567,6 +3567,7 @@
       "acceptance": true,
       "block_tokens": 64,
       "prefill_granule": 64,
+      "exact_prompt_ends": true,
       "anchor_boundary": 128,
       "anchor_labels": [
         "anchor_in_window",

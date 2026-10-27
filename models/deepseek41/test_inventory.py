@@ -47,6 +47,17 @@ class DeepseekInventory(ModelRequirements):
             self.assertEqual(prefix_exact.prefix_policy()['prefill_granule'], 64)
             for check in ('prompt_end', 'media', 'acceptance'):
                 self.assertIs(prefix_exact.prefix_policy()[check], True)
+            # Every served profile and qualification configuration keeps the
+            # 8192-token guaranteed prefill grid, whose scheduler captures
+            # each prompt end exactly, so a hit after the primer ids[:69]
+            # resumes 69, not the granule below it.
+            self.assertIs(prefix_exact.prefix_policy()['exact_prompt_ends'], True)
+            self.assertEqual(prefix_exact.prompt_end_resumed(69, 64), 69)
+        profiles = json.loads((ROOT / self.model.directory / 'profiles.json').read_text())['profiles']
+        for name, profile in profiles.items():
+            self.assertEqual(profile['model_options']['prefill_chunk_tokens'], '8192', name)
+        for name, config in facts['configurations'].items():
+            self.assertNotIn('prefill_chunk_tokens', ' '.join(config['serve']), name)
 
     def test_agentic_api_has_a_locked_tool_conversation(self):
         facts = self.qual()

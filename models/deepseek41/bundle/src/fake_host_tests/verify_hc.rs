@@ -174,12 +174,12 @@ use super::*;
 // fixtures keep scalar prefill commits and stop before a verify commit;
 // every retained operation is identical under the ordered resource map.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0xa2c089d7881becca)),
-    (6, (8040, 0xbbeaee3cd7dbde94)),
-    (8, (7720, 0x6e359a9d044b1a3c)),
-    (12, (8216, 0x2c6573d036c91b07)),
-    (16, (8052, 0x321ddacaa7c92700)),
-    (32, (7744, 0xa65b4937a6e34129)),
+    (4, (7880, 0xbab92867b78c23da)),
+    (6, (8040, 0x82515ff172fbfe82)),
+    (8, (7720, 0xa87ad19a0b142ce0)),
+    (12, (8216, 0xa86f262ff6e3e891)),
+    (16, (8052, 0xaf08e2bcee51b588)),
+    (32, (7744, 0x654b2d0b14a7b44b)),
 ];
 
 #[test]

@@ -70,11 +70,27 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
     if !geometries.iter().any(|g| g.id == FLASH.id) {
         return Ok(Vec::new());
     }
+    let rows = rows();
+    let entries: Vec<_> = catalog()?
+        .into_iter()
+        .filter(|entry| {
+            // Engram verification also registers the wide projection directly.
+            rows.iter().any(|&rows| {
+                choice(entry.base.query, rows) == Some((entry.tile_rows, entry.stages))
+            }) || (
+                entry.base.query.n,
+                entry.base.query.k,
+                entry.base.query.groups,
+                entry.tile_rows,
+                entry.stages,
+            ) == (25600, 6144, 1, 64, 2)
+        })
+        .collect();
     Ok(vec![(
         FAMILY,
         super::mxfp8_fold::packed(
-            mxfp8_prefill_matrix::cubin_spec(CUBIN, &catalog()?),
-            catalog()?.iter().map(|e| e.packed_spec()),
+            mxfp8_prefill_matrix::cubin_spec(CUBIN, &entries),
+            entries.iter().map(|e| e.packed_spec()),
         )?,
     )])
 }

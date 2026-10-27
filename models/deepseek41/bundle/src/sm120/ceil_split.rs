@@ -6,7 +6,7 @@
 //! one SM; split over a cluster of 2, 4 or 8 CTAs, each warp runs one or
 //! two. Codes, scales and the row status are the served entry's, and each
 //! twin keeps its served entry's early dependent release. Every candidate
-//! part count is compiled; [`SERVED`] names the ones registered.
+//! part count remains available to the lab; only [`SERVED`] is packaged.
 use kernel_build::CubinSpec;
 use kernel_core::contract::DType;
 use kernels_sm120::{backend::Sm120, row::block_quantize};
@@ -23,7 +23,7 @@ pub const ROWS: u32 = 1;
 /// The widths and input types the twins quantize.
 pub const WIDTHS: [(u32, DType); 2] = [(8192, DType::Bf16), (2048, DType::F32)];
 
-/// The part counts compiled for every width.
+/// The part counts compared by the lab for every width.
 pub const PARTS: [u32; 3] = [2, 4, 8];
 
 /// The part count registered for each width: the lab pair's fastest
@@ -117,6 +117,9 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
         let mut entries = Vec::<block_quantize::Entry>::new();
         for &ranks in SUPPORTED_RANKS {
             for entry in candidates(g, ranks)? {
+                if !SERVED.contains(&(entry.query.width, entry.query.input, entry.split_parts)) {
+                    continue;
+                }
                 if !entries.iter().any(|e| e.symbol == entry.symbol) {
                     entries.push(entry);
                 }
@@ -181,6 +184,6 @@ mod tests {
         assert!(served.contains(&"chop_deepseek41_dense_ceil_f32_w2048_parallel_v1"));
         let specs = cubins(model_deepseek41_contract::geometry::GEOMETRIES).unwrap();
         assert_eq!(specs.len(), 1);
-        assert_eq!(specs[0].1.entries.len(), WIDTHS.len() * PARTS.len());
+        assert_eq!(specs[0].1.entries.len(), SERVED.len());
     }
 }

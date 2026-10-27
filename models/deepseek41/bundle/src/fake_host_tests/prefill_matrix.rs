@@ -177,7 +177,7 @@ fn retain_the_qualified_cubin_and_load_only_flash_tp4() {
         kernel_build::digest(cubin.bytes),
         // The qualified tiles' packed twins (kernel-lab
         // mxfp8_prefill_matrix_packed: bitwise equal to the row-major tiles).
-        "e7801ea5d377b926ec8e1deade0c1c392855045eff7f69153888de66ac1c4934"
+        "7d4fb44917e658735acb5e8bc302c3f7243c45cdd2bad52421049b53083cc46a"
     );
     for shape in crate::shape::topologies() {
         assert_eq!(

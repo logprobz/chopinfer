@@ -76,16 +76,14 @@ pub fn head_group(phase: AttentionPhase, rows: u32) -> u32 {
         .unwrap_or(0)
 }
 
-/// Keep the qualified lab module byte-for-byte, including its unused controls.
+/// Serving cache descriptors; profiling controls stay in the model lab.
 pub fn entries(g: &Geometry) -> Result<Vec<Entry>, String> {
     Ok(super::latent_scheduled::entries(g, 4)?
         .into_iter()
         .filter(|s| !s.name.ends_with("_draft_block"))
-        .flat_map(|source| {
-            [false, true].map(move |profile| Entry {
-                source: source.clone(),
-                profile,
-            })
+        .map(|source| Entry {
+            source,
+            profile: false,
         })
         .collect())
 }

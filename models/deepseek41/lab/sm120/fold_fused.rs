@@ -108,9 +108,10 @@ pub fn cubins() -> Vec<CubinSpec> {
     vec![spec]
 }
 
-/// Locked row-major references retained after their package retirement.
+/// Locked reference catalogs retained after package retirement or pruning.
 pub fn reference_modules() -> Vec<(String, String, Vec<String>)> {
     [
+        include_str!("../kernels.lock.d/mxfp8_prefill_matrix_reference.lock"),
         include_str!("../kernels.lock.d/fold_local_rows_reference.lock"),
         include_str!("../kernels.lock.d/mxfp8_fold_cluster_reference.lock"),
         include_str!("../kernels.lock.d/mxfp8_prefill_tma_matrix_reference.lock"),

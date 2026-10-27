@@ -141,6 +141,16 @@ fn simple() -> Vec<Recipe> {
     }
     vec![
         one!(
+            Lab,
+            "ceil_split_reference",
+            lab::pruned_references::ceil_split()?
+        ),
+        one!(
+            Lab,
+            "mxfp8_prefill_matrix_reference",
+            lab::pruned_references::prefill_matrix()?
+        ),
+        one!(
             Bundle,
             bundle::ceil_prefill::FAMILY,
             cubins(bundle::ceil_prefill::cubins(GEOMETRIES)?)

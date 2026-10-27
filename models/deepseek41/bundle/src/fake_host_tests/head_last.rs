@@ -10,7 +10,7 @@ fn qualified_module_and_row_policy_are_explicit() {
         .unwrap();
     assert_eq!(
         kernel_build::digest(module.bytes),
-        "0e37e17f5aaffaa527f04b6fe94c6fe3e6f58c7339930d6d7482a2059e557b00"
+        "5d641744eda4253538b0bb7ca23f723d0a28ca3171744c745baeee6c4a950014"
     );
     for shape in crate::shape::topologies() {
         let enabled = head_last::enabled(shape.geometry, shape.ranks());

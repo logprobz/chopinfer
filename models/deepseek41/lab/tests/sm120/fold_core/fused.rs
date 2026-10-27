@@ -187,7 +187,7 @@ pub(super) fn load(s: &Session, calls: &[Launch]) -> LabResult<Functions> {
             None => {
                 let (name, hash) = reference_module(&call.symbol)
                     .ok_or_else(|| format!("no cubin holds {}", call.symbol))?;
-                (name.to_owned(), reference_bytes(name, hash)?)
+                (format!("reference/{name}"), reference_bytes(name, hash)?)
             }
         };
         if !loaded.contains_key(&name) {
@@ -218,7 +218,7 @@ pub(super) fn served_modules(calls: &[Launch]) -> Value {
         if let Some((name, bytes)) = fold_cubin_for_symbol(&c.symbol) {
             map.insert(name.into(), json!(kernel_build::digest(bytes)));
         } else if let Some((name, hash)) = reference_module(&c.symbol) {
-            map.insert(name.to_owned(), json!(hash));
+            map.insert(format!("reference/{name}"), json!(hash));
         }
     }
     Value::Object(map)

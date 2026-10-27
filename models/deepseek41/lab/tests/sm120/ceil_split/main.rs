@@ -3,7 +3,8 @@
 //! bitwise codes, scales and status over special patterns (non-finite
 //! values in every part of the row), live counts, graph replays and
 //! output-flip negatives, then paired timing of one launch and of a PDL
-//! chain. Both modules are the bundle's embedded, locked cubins.
+//! chain. The full split catalog is a locked model-lab reference; the
+//! baseline quantizers remain embedded in the bundle.
 use bundle_deepseek41::sm120::{ceil_split as registration, fold_cubin_for_symbol};
 use kernel_core::contract::DType;
 use kernel_harness::{Cubins, LabResult, Session, eviction::EvictionMode, launch};
@@ -50,18 +51,53 @@ fn pairs() -> Vec<[Entry; 2]> {
 fn artifacts() -> PathBuf {
     PathBuf::from(std::env::var_os("CHOPINFER_CEIL_SPLIT").expect("frozen ceil artifacts required"))
 }
+fn reference_lock() -> serde_json::Value {
+    let records: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../kernels.lock.d/ceil_split_reference.lock"
+    ))
+    .unwrap();
+    assert_eq!(records.len(), 1);
+    records.into_iter().next().unwrap()
+}
+
+fn reference_bytes(record: &serde_json::Value) -> LabResult<Vec<u8>> {
+    let name = record["name"]
+        .as_str()
+        .ok_or("missing split reference name")?;
+    let path = artifacts().join(format!("{name}.cubin"));
+    if !std::fs::symlink_metadata(&path)
+        .map_err(|e| e.to_string())?
+        .file_type()
+        .is_file()
+    {
+        return Err("split reference must be a regular file".into());
+    }
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    if record["cubin_sha256"] != kernel_build::digest(&bytes) {
+        return Err("split reference differs from the model-lab lock".into());
+    }
+    Ok(bytes)
+}
+
 /// Module name to its bytes and the symbols the matrix uses.
 type Modules = BTreeMap<String, (Vec<u8>, Vec<String>)>;
-/// The embedded served and split modules, and the timing probe.
+/// Embedded served modules, the locked split reference and the timing probe.
 fn modules() -> LabResult<Modules> {
     let mut modules = Modules::new();
     for pair in pairs() {
         for entry in pair {
-            let (name, bytes) =
-                fold_cubin_for_symbol(&entry.symbol).ok_or("entry must be embedded")?;
-            let module = modules
-                .entry(name.into())
-                .or_insert_with(|| (bytes.to_vec(), Vec::new()));
+            let (name, bytes) = if entry.split_parts == 0 {
+                let (name, bytes) = fold_cubin_for_symbol(&entry.symbol)
+                    .ok_or("baseline entry must be embedded")?;
+                (name.to_owned(), bytes.to_vec())
+            } else {
+                let record = reference_lock();
+                (
+                    record["name"].as_str().unwrap().to_owned(),
+                    reference_bytes(&record)?,
+                )
+            };
+            let module = modules.entry(name).or_insert_with(|| (bytes, Vec::new()));
             if !module.1.contains(&entry.symbol) {
                 module.1.push(entry.symbol.clone());
             }
@@ -112,7 +148,15 @@ fn split_pairs_cover_the_c1_widths_and_keep_the_served_abi() {
         assert!(old.pdl && new.pdl);
         for entry in [served, split] {
             assert!(
-                fold_cubin_for_symbol(&entry.symbol).is_some(),
+                if entry.split_parts == 0 {
+                    fold_cubin_for_symbol(&entry.symbol).is_some()
+                } else {
+                    reference_lock()["entries"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|locked| locked["symbol"] == entry.symbol)
+                },
                 "{}",
                 entry.symbol
             );

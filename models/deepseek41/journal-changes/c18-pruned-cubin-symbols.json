@@ -1,0 +1,198 @@
+{
+  "description": "Exact locked module replacements for C18 entry pruning; each retained entry and resource record is unchanged.",
+  "module_replacements": [
+    {
+      "module": "ceil_split_deepseek41_sm120",
+      "base": {
+        "lock": "models/deepseek41/bundle/kernels.lock.d/ceil_split.lock",
+        "sha256": "6c323f7623cbf3989e7dcd624d31465ec71c9158c6071589f39ae5989bfafe69"
+      },
+      "head": {
+        "lock": "models/deepseek41/bundle/kernels.lock.d/ceil_split.lock",
+        "sha256": "cf48fff41cc619112be34bbd6b6cc13d422418701c084b9adc6ee15f284296ed"
+      },
+      "renames": {},
+      "removed_symbols": [
+        "chop_deepseek41_dense_ceil_w8192_split2_v1",
+        "chop_deepseek41_dense_ceil_w8192_split4_v1",
+        "chop_deepseek41_dense_ceil_f32_w2048_split2_v1",
+        "chop_deepseek41_dense_ceil_f32_w2048_split4_v1"
+      ],
+      "resolve_order": "locked"
+    },
+    {
+      "module": "f32_decode_last_deepseek41_sm120",
+      "base": {
+        "lock": "models/deepseek41/bundle/kernels.lock.d/f32_decode_last.lock",
+        "sha256": "0e37e17f5aaffaa527f04b6fe94c6fe3e6f58c7339930d6d7482a2059e557b00"
+      },
+      "head": {
+        "lock": "models/deepseek41/bundle/kernels.lock.d/f32_decode_last.lock",
+        "sha256": "5d641744eda4253538b0bb7ca23f723d0a28ca3171744c745baeee6c4a950014"
+      },
+      "renames": {},
+      "removed_symbols": [
+        "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1_last_m8_s0_p1_r0_v1_prepare_v1",
+        "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1_last_m8_s0_p1_r0_v1",
+        "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1_last_m8_s0_p1_r1_v1",
+        "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1_last_m8_s0_p16_r0_v1_prepare_v1",
+        "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1_last_m8_s0_p16_r0_v1",
+        "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1_last_m8_s0_p16_r1_v1",
+        "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1_last_m8_s1_p16_r0_v1_prepare_v1",
+        "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1_last_m8_s1_p16_r0_v1",
+        "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1_last_m8_s1_p16_r1_v1",
+        "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1_last_m32_s0_p1_r0_v1_prepare_v1",
+        "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1_last_m32_s0_p1_r0_v1",
+        "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1_last_m32_s0_p1_r1_v1",
+        "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1_last_m32_s0_p16_r0_v1_prepare_v1",
+        "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1_last_m32_s0_p16_r0_v1",
+        "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1_last_m32_s0_p16_r1_v1",
+        "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1_last_m32_s1_p16_r0_v1_prepare_v1",
+        "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1_last_m32_s1_p16_r0_v1",
+        "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1_last_m32_s1_p16_r1_v1"
+      ],
+      "resolve_order": "locked"
+    },
+    {
+      "module": "fold_core_prefill_deepseek41_sm120",
+      "base": {
+        "lock": "models/deepseek41/bundle/kernels.lock.d/mxfp8_prefill_matrix.lock",
+        "sha256": "e7801ea5d377b926ec8e1deade0c1c392855045eff7f69153888de66ac1c4934"
+      },
+      "head": {
+        "lock": "models/deepseek41/bundle/kernels.lock.d/mxfp8_prefill_matrix.lock",
+        "sha256": "7d4fb44917e658735acb5e8bc302c3f7243c45cdd2bad52421049b53083cc46a"
+      },
+      "renames": {},
+      "removed_symbols": [
+        "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_matrix_m64_n128_s3_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_matrix_m64_n128_s3_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_matrix_m64_n128_s3_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_matrix_m64_n128_s3_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_matrix_m64_n128_s3_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_matrix_m64_n128_s3_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m32_n128_s3_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m32_n128_s3_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m32_n128_s3_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s3_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s3_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s3_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m128_n128_s2_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m128_n128_s2_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m128_n128_s2_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_matrix_m32_n128_s3_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_matrix_m32_n128_s3_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_matrix_m32_n128_s3_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_matrix_m64_n128_s2_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_matrix_m64_n128_s2_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_matrix_m64_n128_s2_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_matrix_m64_n128_s3_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_matrix_m64_n128_s3_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_matrix_m64_n128_s3_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_matrix_m128_n128_s2_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_matrix_m128_n128_s2_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_matrix_m128_n128_s2_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_matrix_m32_n128_s3_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_matrix_m32_n128_s3_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_matrix_m32_n128_s3_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_matrix_m64_n128_s2_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_matrix_m64_n128_s2_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_matrix_m64_n128_s2_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_matrix_m32_n128_s3_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_matrix_m32_n128_s3_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_matrix_m32_n128_s3_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_matrix_m64_n128_s2_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_matrix_m64_n128_s2_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_matrix_m64_n128_s2_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_matrix_m64_n128_s3_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_matrix_m64_n128_s3_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_matrix_m64_n128_s3_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_matrix_m128_n128_s2_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_matrix_m128_n128_s2_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_matrix_m128_n128_s2_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_matrix_m32_n128_s3_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_matrix_m32_n128_s3_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_matrix_m32_n128_s3_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_matrix_m64_n128_s2_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_matrix_m64_n128_s2_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_matrix_m64_n128_s2_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_matrix_m64_n128_s3_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_matrix_m64_n128_s3_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_matrix_m64_n128_s3_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_matrix_m128_n128_s2_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_matrix_m128_n128_s2_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_matrix_m128_n128_s2_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_matrix_m32_n128_s3_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_matrix_m32_n128_s3_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_matrix_m32_n128_s3_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_matrix_m64_n128_s2_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_matrix_m64_n128_s2_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_matrix_m64_n128_s2_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_matrix_m64_n128_s3_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_matrix_m64_n128_s3_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_matrix_m64_n128_s3_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_matrix_m128_n128_s2_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_matrix_m128_n128_s2_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_matrix_m128_n128_s2_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_matrix_m32_n128_s3_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_matrix_m32_n128_s3_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_matrix_m32_n128_s3_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_matrix_m64_n128_s2_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_matrix_m64_n128_s2_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_matrix_m64_n128_s2_v1_omit_first_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_matrix_m64_n128_s3_v1_admit_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_matrix_m64_n128_s3_v1_packed_v1",
+        "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_matrix_m64_n128_s3_v1_omit_first_v1"
+      ],
+      "resolve_order": "locked"
+    },
+    {
+      "module": "latent_decode_cache_deepseek41_sm120",
+      "base": {
+        "lock": "models/deepseek41/bundle/kernels.lock.d/latent_decode_cache.lock",
+        "sha256": "e5034fe26e057e558c7f73fba83d56311cebd2f206318ae404951fff806918a7"
+      },
+      "head": {
+        "lock": "models/deepseek41/bundle/kernels.lock.d/latent_decode_cache.lock",
+        "sha256": "0b82e45cf26f5e232806c843d0adb9c5c3ecb600dcecee7ae05160b9fbac47a0"
+      },
+      "renames": {},
+      "removed_symbols": [
+        "chop_latent_sources_deepseek41_h16_d512_window_normalized_s1_r64_decode_cached_profile1_v1",
+        "chop_latent_sources_deepseek41_h16_d512_window_normalized_s1_r64_verify_cached_profile1_v1",
+        "chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_decode_cached_profile1_v1",
+        "chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_verify_cached_profile1_v1",
+        "chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_decode_p32_cached_profile1_v1",
+        "chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_verify_p32_cached_profile1_v1"
+      ],
+      "resolve_order": "locked"
+    },
+    {
+      "module": "latent_cache_groups_deepseek41_sm120",
+      "base": {
+        "lock": "models/deepseek41/bundle/kernels.lock.d/latent_cache_groups.lock",
+        "sha256": "35134bb00aeb20d84c087a8c5418c2b0aa5cb13712fca2a98bc07648a06db7d7"
+      },
+      "head": {
+        "lock": "models/deepseek41/bundle/kernels.lock.d/latent_cache_groups.lock",
+        "sha256": "19320484ae12560f44c01369ced2b436e3f62984e7c3102e0b8e15a65cd7477c"
+      },
+      "renames": {},
+      "removed_symbols": [
+        "chop_latent_sources_deepseek41_h16_d512_window_normalized_s1_r64_verify_cached_h1_profile1_v1",
+        "chop_latent_sources_deepseek41_h16_d512_window_normalized_s1_r64_verify_cached_h2_profile1_v1",
+        "chop_latent_sources_deepseek41_h16_d512_window_normalized_s1_r64_verify_cached_h4_profile1_v1",
+        "chop_latent_sources_deepseek41_h16_d512_window_normalized_s1_r64_verify_cached_h8_profile1_v1",
+        "chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_verify_cached_h1_profile1_v1",
+        "chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_verify_cached_h2_profile1_v1",
+        "chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_verify_cached_h4_profile1_v1",
+        "chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_verify_cached_h8_profile1_v1",
+        "chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_verify_p32_cached_h1_profile1_v1",
+        "chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_verify_p32_cached_h2_profile1_v1",
+        "chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_verify_p32_cached_h4_profile1_v1",
+        "chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_verify_p32_cached_h8_profile1_v1"
+      ],
+      "resolve_order": "locked"
+    }
+  ]
+}

@@ -12,22 +12,17 @@ pub fn enabled(g: &Geometry, ranks: u32) -> bool {
     g.id == FLASH.id && ranks == 4
 }
 
-// Preserve the complete GPU-qualified module, including unused controls.
-// Only the split-fast scalar-load entries are advertised by the serving op.
+// The serving op advertises only the split-fast scalar-load entries.
 pub fn entries() -> Result<Vec<Candidate>, String> {
     let entry = super::f32_head::decode_entry(&FLASH, 4)?;
     let mut entries = Vec::new();
     for tile_rows in [8, 32] {
-        for split_fast in [false, true] {
-            for prefetch in [1, 16] {
-                entries.push(Candidate {
-                    entry: entry.clone(),
-                    tile_rows,
-                    split_fast,
-                    prefetch,
-                });
-            }
-        }
+        entries.push(Candidate {
+            entry: entry.clone(),
+            tile_rows,
+            split_fast: true,
+            prefetch: 1,
+        });
     }
     Ok(entries)
 }

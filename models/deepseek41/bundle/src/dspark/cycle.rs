@@ -63,14 +63,8 @@ pub(crate) struct Early {
     pub rows: Option<u32>,
 }
 
-/// A layer owns its pinned gather slot and the target piece consuming it.
-pub(crate) struct LayerGather {
-    pub layer: u32,
-    pub gather: BundleMappedGatherHandleV1,
-    pub indices: DeviceBufferSpanV1,
-    pub destinations: Vec<DeviceBufferSpanV1>,
-    pub graphs: GraphCache<DeepSeek>,
-}
+/// A target layer attaches its graph cache to the common gather slot.
+pub(crate) type LayerGather = crate::instance::layer_gather::LayerGather<GraphCache<DeepSeek>>;
 impl Cycle {
     pub fn new(hash: HashDevice) -> Self {
         Self {

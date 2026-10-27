@@ -22,6 +22,7 @@ mod engram;
 pub(crate) mod execute;
 mod fold_stream;
 mod indexer_graphs;
+pub(crate) mod layer_gather;
 mod media;
 mod memory;
 pub(crate) mod prefill;
@@ -1170,7 +1171,7 @@ impl Bundle for Instance {
                 }
             }
             while let Some(layer) = device.cycle.layers.last() {
-                self.services.release_mapped_gather(layer.gather)?;
+                layer.release(&self.services)?;
                 device.cycle.layers.pop();
             }
         }

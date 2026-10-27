@@ -14,15 +14,14 @@
 //! their host-hashed ids go through the gathers DSpark's drafted steps use
 //! (`instance::dspark::cycle`).
 
-use super::Instance;
+use super::{Instance, layer_gather};
 use crate::dspark::cycle::LayerGather;
 use crate::engram_rows::Hashed;
 use crate::indexer_workloads::Route as IndexerRoute;
 use bundle_runtime::graphs::{GraphCache, GraphKey, GraphReservation};
 use bundle_runtime::resources::upload_bytes;
 use runtime_bundle_abi::{
-    BundleAbiError, BundleStatusV1, DeviceBufferSpanV1 as Span, MappedGatherPlaneV1,
-    MappedGatherStatsV1,
+    BundleAbiError, BundleStatusV1, DeviceBufferSpanV1 as Span, MappedGatherStatsV1,
 };
 
 /// Logs each step's per-layer host and exposed wait times when set to 1.
@@ -179,36 +178,37 @@ impl Instance {
                     {
                         return Err(BundleAbiError::InvalidRange("AR Engram destination extent"));
                     }
-                    planes.push(MappedGatherPlaneV1 {
+                    planes.push(layer_gather::plane(
                         image,
-                        rank: rank as u32,
-                        view_id: plane.view.clone(),
-                        row_bytes: plane.row_bytes,
-                        index_offset: 0,
-                        stream: self.ranks[rank].2,
+                        rank as u32,
+                        self.ranks[rank].2,
+                        plane,
                         destination,
-                    });
+                    ));
                 }
             }
             let ids = Span::new(indices.buffer, indices.offset + layer as u64 * bytes, bytes);
             // A failed creation leaves the earlier gathers in the state, so
             // release still drains them before their allocations.
-            let gather = match self.services.create_mapped_gather(stream, ids, &planes) {
+            let gather = match LayerGather::create(
+                &self.services,
+                stream,
+                e.layers[layer],
+                ids,
+                &planes,
+                || {
+                    let mut graphs = GraphCache::sharing(&self.graphs);
+                    graphs.label("ar-engram", None, layer as u32 + 1);
+                    graphs
+                },
+            ) {
                 Ok(gather) => gather,
                 Err(error) => {
                     self.ar_engram = Some(state);
                     return Err(error);
                 }
             };
-            let mut graphs = GraphCache::sharing(&self.graphs);
-            graphs.label("ar-engram", None, layer as u32 + 1);
-            state.layers.push(LayerGather {
-                layer: e.layers[layer],
-                gather,
-                indices: ids,
-                destinations: planes.iter().map(|plane| plane.destination).collect(),
-                graphs,
-            });
+            state.layers.push(gather);
         }
         self.ar_engram = Some(state);
         self.log(&format!(
@@ -223,7 +223,7 @@ impl Instance {
     pub(super) fn release_ar_engram(&mut self) -> Result<(), BundleAbiError> {
         if let Some(state) = &mut self.ar_engram {
             while let Some(layer) = state.layers.last() {
-                self.services.release_mapped_gather(layer.gather)?;
+                layer.release(&self.services)?;
                 state.layers.pop();
             }
         }
@@ -286,8 +286,7 @@ impl Instance {
             // Count before enqueueing: a refused enqueue may still hold
             // transfers, which release fences.
             state.enqueued += 1;
-            crate::engram_rows::PreparedGather::ArDecode.submitted();
-            services.enqueue_mapped_gather(layer.gather, rows)?;
+            layer.begin(services, rows, crate::engram_rows::PreparedGather::ArDecode)?;
         }
         Ok(())
     }
@@ -303,10 +302,9 @@ impl Instance {
         let gather = state
             .layers
             .get(layer)
-            .ok_or(BundleAbiError::InvalidRange("AR Engram layer"))?
-            .gather;
+            .ok_or(BundleAbiError::InvalidRange("AR Engram layer"))?;
         for &(_, _, stream) in &self.ranks {
-            self.services.wait_mapped_gather(gather, stream)?;
+            gather.join(&self.services, stream)?;
         }
         state.joined.set(layer + 1);
         Ok(())
@@ -321,9 +319,11 @@ impl Instance {
         };
         let mut layers = Vec::new();
         for layer in &state.layers[..state.enqueued] {
-            let stats = self.services.complete_mapped_gather(layer.gather)?.ok_or(
-                BundleAbiError::InvalidRange("AR Engram upload incomplete at the result boundary"),
-            )?;
+            let stats = layer
+                .finish(&self.services)?
+                .ok_or(BundleAbiError::InvalidRange(
+                    "AR Engram upload incomplete at the result boundary",
+                ))?;
             layers.push(layer_trace(layer.layer, &stats));
         }
         state.enqueued = 0;
@@ -345,15 +345,15 @@ impl Instance {
         };
         for layer in &state.layers[state.joined.get().min(state.enqueued)..state.enqueued] {
             for &(_, _, stream) in &self.ranks {
-                self.services.wait_mapped_gather(layer.gather, stream)?;
+                layer.join(&self.services, stream)?;
             }
         }
         for &(_, _, stream) in &self.ranks {
             self.services.synchronize_stream(stream)?;
         }
         for layer in &state.layers[..state.enqueued] {
-            self.services
-                .complete_mapped_gather(layer.gather)?
+            layer
+                .finish(&self.services)?
                 .ok_or(BundleAbiError::Status(BundleStatusV1::InvalidState))?;
         }
         state.enqueued = 0;

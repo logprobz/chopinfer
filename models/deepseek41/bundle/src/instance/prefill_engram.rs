@@ -3,27 +3,23 @@
 mod plan;
 pub(super) use plan::Plan;
 
-use super::Instance;
+use super::{
+    Instance,
+    layer_gather::{self, LayerGather},
+};
 use crate::engram_rows::{Destination, Hashed};
 use bundle_runtime::resources::upload_bytes;
 use model_deepseek41_contract::serving::PREFILL_TOKENS;
 use runtime_bundle_abi::{
-    BundleAbiError, BundleMappedGatherHandleV1, BundleStatusV1, BundleStreamHandleV1,
-    DeviceBufferSpanV1 as Span, HostServicesV1, MappedGatherPlaneV1,
+    BundleAbiError, BundleStatusV1, BundleStreamHandleV1, DeviceBufferSpanV1 as Span,
+    HostServicesV1,
 };
 use std::cell::Cell;
 
 const PINNED_LIMIT: u64 = 256 * 1024 * 1024;
 
-struct Layer {
-    id: u32,
-    gather: BundleMappedGatherHandleV1,
-    indices: Span,
-    destinations: Vec<Span>,
-}
-
 pub(super) struct Gathers {
-    layers: Vec<Layer>,
+    layers: Vec<LayerGather>,
     columns: usize,
     pending: Cell<bool>,
     failed: Cell<bool>,
@@ -75,8 +71,11 @@ impl Gathers {
                 upload_bytes(services, producer, layer.indices, bytes)?;
             }
             for layer in &self.layers {
-                crate::engram_rows::PreparedGather::Prefill.submitted();
-                services.enqueue_mapped_gather(layer.gather, (rows * self.columns) as u64)?;
+                layer.begin(
+                    services,
+                    (rows * self.columns) as u64,
+                    crate::engram_rows::PreparedGather::Prefill,
+                )?;
             }
             Ok(())
         })();
@@ -101,7 +100,7 @@ impl Gathers {
             .ok_or(BundleAbiError::InvalidRange("prefill Engram join"))?;
         let result = streams
             .iter()
-            .try_for_each(|&stream| services.wait_mapped_gather(layer.gather, stream));
+            .try_for_each(|&stream| layer.join(services, stream));
         if result.is_err() {
             self.failed.set(true);
         }
@@ -123,14 +122,12 @@ impl Gathers {
         let result: Result<(), BundleAbiError> = (|| {
             let mut layers = Vec::new();
             for layer in &self.layers {
-                let stats = services.complete_mapped_gather(layer.gather)?.ok_or(
-                    BundleAbiError::InvalidRange(
-                        "prefill Engram upload incomplete at result boundary",
-                    ),
-                )?;
+                let stats = layer.finish(services)?.ok_or(BundleAbiError::InvalidRange(
+                    "prefill Engram upload incomplete at result boundary",
+                ))?;
                 layers.push(format!(
                     "{{\"layer\":{},\"host_ns\":{},\"exposed_ns\":{}}}",
-                    layer.id, stats.host_nanoseconds, stats.exposed_nanoseconds
+                    layer.layer, stats.host_nanoseconds, stats.exposed_nanoseconds
                 ));
             }
             let _ = services.log(
@@ -164,7 +161,7 @@ impl Gathers {
         // The host fences unfinished callbacks and DMA before releasing their
         // pinned buffers. This precedes release of every referenced allocation.
         while let Some(layer) = self.layers.last() {
-            services.release_mapped_gather(layer.gather)?;
+            layer.release(services)?;
             self.layers.pop();
         }
         Ok(())
@@ -252,15 +249,13 @@ impl Instance {
                             "prefill Engram destination extent",
                         ));
                     }
-                    planes[layer].push(MappedGatherPlaneV1 {
+                    planes[layer].push(layer_gather::plane(
                         image,
-                        rank: rank as u32,
-                        view_id: plane.view.clone(),
-                        row_bytes: plane.row_bytes,
-                        index_offset: 0,
-                        stream: self.ranks[rank].2,
+                        rank as u32,
+                        self.ranks[rank].2,
+                        plane,
                         destination,
-                    });
+                    ));
                 }
             }
         }
@@ -291,19 +286,19 @@ impl Instance {
             start: Cell::new(0),
         });
         for (index, planes) in planes.into_iter().enumerate() {
-            let gather = self
-                .services
-                .create_mapped_gather(stream, indices[index], &planes)?;
+            let gather = LayerGather::create(
+                &self.services,
+                stream,
+                e.layers[index],
+                indices[index],
+                &planes,
+                || (),
+            )?;
             self.prefill_engram
                 .as_mut()
                 .expect("gather cleanup retained")
                 .layers
-                .push(Layer {
-                    id: e.layers[index],
-                    gather,
-                    indices: indices[index],
-                    destinations: planes.iter().map(|p| p.destination).collect(),
-                });
+                .push(gather);
         }
         Ok(())
     }
@@ -316,7 +311,11 @@ pub(crate) fn indices(handle: runtime_bundle_abi::BundleHandleV1) -> Vec<(u32, S
     Instance::instances().with(|table| {
         let status = bundle_runtime::table::with_instance(table, handle, |instance| {
             if let Some(gathers) = &instance.prefill_engram {
-                result = gathers.layers.iter().map(|l| (l.id, l.indices)).collect();
+                result = gathers
+                    .layers
+                    .iter()
+                    .map(|l| (l.layer, l.indices))
+                    .collect();
             }
             BundleStatusV1::Success
         });

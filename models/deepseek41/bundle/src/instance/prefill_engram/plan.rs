@@ -35,7 +35,7 @@ impl Plan {
             let mut sections = Vec::new();
             for (index, layer) in gathers.layers.iter().enumerate() {
                 let mut matches = stages[rank].iter().enumerate().filter_map(|(at, stage)| {
-                    (*stage == Stage::EngramRows(layer.id)).then_some(at)
+                    (*stage == Stage::EngramRows(layer.layer)).then_some(at)
                 });
                 let end = matches.next().ok_or("prefill Engram consumer absent")?;
                 if end < start || matches.next().is_some() {
@@ -108,8 +108,8 @@ impl Plan {
 
 #[cfg(test)]
 mod tests {
-    use super::super::Layer;
     use super::*;
+    use crate::instance::layer_gather::LayerGather;
     use bundle_runtime::dispatch::BufferBindings;
     use kernel_core::contract::{Argument, ArgumentList, LaunchPlan};
     use runtime_bundle_abi::{
@@ -141,11 +141,12 @@ mod tests {
     fn gathers() -> Gathers {
         Gathers {
             layers: [(1, 1, 3), (14, 2, 4)]
-                .map(|(id, index, output)| Layer {
-                    id,
+                .map(|(id, index, output)| LayerGather {
+                    layer: id,
                     gather: BundleMappedGatherHandleV1::from_parts(1, index),
                     indices: span(index),
                     destinations: vec![span(output)],
+                    graphs: (),
                 })
                 .into(),
             columns: 24,

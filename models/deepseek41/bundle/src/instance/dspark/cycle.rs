@@ -7,7 +7,7 @@ use crate::dspark::execution::{DraftInput, Input};
 use crate::dspark::staging::DeviceTarget;
 use crate::dspark::state::BLOCK_ROWS;
 use crate::engram_rows::Hashed;
-use crate::instance::ar_engram;
+use crate::instance::{ar_engram, layer_gather};
 use bundle_runtime::graphs::GraphCache;
 use bundle_runtime::inputs::{PackedStep, PhaseInputs};
 use bundle_runtime::resources::{Held, upload_bytes};
@@ -85,15 +85,13 @@ impl Instance {
                     .map_err(|_| {
                         BundleAbiError::InvalidRange("DSpark mapped destination extent")
                     })?;
-                    layer_planes[layer].push(MappedGatherPlaneV1 {
+                    layer_planes[layer].push(layer_gather::plane(
                         image,
-                        rank: rank as u32,
-                        view_id: plane.view.clone(),
-                        row_bytes: plane.row_bytes,
-                        index_offset: 0,
-                        stream: self.ranks[rank].2,
+                        rank as u32,
+                        self.ranks[rank].2,
+                        plane,
                         destination,
-                    });
+                    ));
                 }
             }
         }
@@ -135,18 +133,19 @@ impl Instance {
         for (index, planes) in layer_planes.into_iter().enumerate() {
             let indices = slice(memory.ids, index as u64 * bytes, bytes)
                 .map_err(|_| BundleAbiError::InvalidRange("DSpark layer hash extent"))?;
-            let gather = self
-                .services
-                .create_mapped_gather(self.ranks[0].2, indices, &planes)?;
-            let mut graphs = GraphCache::sharing(&self.graphs);
-            graphs.label("target", None, index as u32 + 1);
-            device.cycle.layers.push(LayerGather {
-                layer: device.shape.geometry.shape.engram.layers[index],
-                gather,
+            let gather = LayerGather::create(
+                &self.services,
+                self.ranks[0].2,
+                device.shape.geometry.shape.engram.layers[index],
                 indices,
-                destinations: planes.iter().map(|plane| plane.destination).collect(),
-                graphs,
-            });
+                &planes,
+                || {
+                    let mut graphs = GraphCache::sharing(&self.graphs);
+                    graphs.label("target", None, index as u32 + 1);
+                    graphs
+                },
+            )?;
+            device.cycle.layers.push(gather);
         }
         if let (Some(stream), Some(ids)) = (device.cycle.early_stream, device.cycle.early_ids) {
             if early_planes
@@ -364,11 +363,11 @@ impl Instance {
             .map_err(|e| format!("Engram device hash launch: {e:?}"))?;
         }
         for layer in &device.cycle.layers {
-            crate::engram_rows::PreparedGather::DsparkTarget.submitted();
-            self.services
-                .enqueue_mapped_gather(
-                    layer.gather,
+            layer
+                .begin(
+                    &self.services,
                     u64::from(rows) * device.cycle.hash.shape.columns(),
+                    crate::engram_rows::PreparedGather::DsparkTarget,
                 )
                 .map_err(|e| e.to_string())?;
         }
@@ -467,9 +466,12 @@ impl Instance {
         upload_bytes(services, stream, memory.ids, &deferred.ids).map_err(|e| e.to_string())?;
         let rows = u64::from(deferred.rows) * cycle.hash.shape.columns();
         for layer in &cycle.layers {
-            crate::engram_rows::PreparedGather::DsparkUndrafted.submitted();
-            services
-                .enqueue_mapped_gather(layer.gather, rows)
+            layer
+                .begin(
+                    services,
+                    rows,
+                    crate::engram_rows::PreparedGather::DsparkUndrafted,
+                )
                 .map_err(|e| e.to_string())?;
         }
         cycle.gathering = true;
@@ -493,9 +495,8 @@ impl Instance {
         }
         let mut layers = Vec::new();
         for layer in &cycle.layers {
-            let stats = self
-                .services
-                .complete_mapped_gather(layer.gather)
+            let stats = layer
+                .finish(&self.services)
                 .map_err(|e| e.to_string())?
                 .ok_or("DSpark mapped layer upload is incomplete at target boundary")?;
             layers.push(ar_engram::layer_trace(layer.layer, &stats));
@@ -517,8 +518,7 @@ impl Instance {
                 .cycle
                 .layers
                 .get(layer)
-                .ok_or(BundleAbiError::InvalidRange("DSpark mapped layer"))?
-                .gather;
+                .ok_or(BundleAbiError::InvalidRange("DSpark mapped layer"))?;
             // The early copy finished while the drafter ran; joining it
             // here keeps the boundary's completion check for both.
             let early = device
@@ -533,7 +533,7 @@ impl Instance {
                 if let Some(early) = early {
                     self.services.wait_mapped_gather(early, stream)?;
                 }
-                self.services.wait_mapped_gather(gather, stream)?;
+                gather.join(&self.services, stream)?;
             }
         }
         Ok(())
@@ -555,9 +555,8 @@ impl Instance {
         let mut exposed_ns = 0_u64;
         let mut layers = Vec::new();
         for layer in &device.cycle.layers {
-            let stats = self
-                .services
-                .complete_mapped_gather(layer.gather)
+            let stats = layer
+                .finish(&self.services)
                 .map_err(|e| e.to_string())?
                 .ok_or("DSpark mapped layer upload is incomplete at target boundary")?;
             host_ns += stats.host_nanoseconds;

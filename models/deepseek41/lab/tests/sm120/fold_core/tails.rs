@@ -260,7 +260,7 @@ fn tail_catalog_uses_current_packed_modules() {
                     assert!(
                         case.served
                             .iter()
-                            .any(|call| call.symbol.contains("ticket_n1280"))
+                            .any(|call| call.symbol.contains("prefetch_n1280"))
                     );
                 }
             }

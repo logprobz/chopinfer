@@ -25,6 +25,7 @@ import layout_spec  # noqa: E402
 from common import Invalid, fnv  # noqa: E402
 import layout  # noqa: E402
 from engine import Unproven  # noqa: E402
+import proof  # noqa: E402
 from proof import main  # noqa: E402
 from provenance import init  # noqa: E402
 from testkit import CONFIG, CREATE, GEN, MODEL, ROOT, STEP, GitFixture, checkpoint, seal_capture, span, write_device  # noqa: E402
@@ -639,6 +640,11 @@ class LayoutTests(unittest.TestCase):
         for path in sorted(Path(__file__).resolve().parents[2].glob('models/*/journal-changes/*.json')):
             with self.subTest(path.name):
                 data = path.read_bytes()
+                if json.loads(data).get('schema') == proof.SCHEMA:
+                    # A committed proof spec, for example one that declares
+                    # added journals, must read as a spec.
+                    proof.read_spec(path)
+                    continue
                 decl = layout.parse(data)
                 # A description-only identity declaration authorizes no edits.
                 if set(json.loads(data)) - {'schema', 'description'}:

@@ -240,7 +240,7 @@ impl Resolved {
         stream: BundleStreamHandleV1,
     ) -> Result<(), DispatchError> {
         services.launch_cuda_symbol(stream, self.function, self.config, &self.arguments)?;
-        crate::routes::submitted(self.route.as_ref());
+        crate::routes::submitted_symbol(services, self.function, self.route.as_ref());
         Ok(())
     }
 }

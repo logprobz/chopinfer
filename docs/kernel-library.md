@@ -722,6 +722,13 @@ Adding a model:
    graph replays and add no device synchronization or readback. The tune runner
    enables these counters and rejects missing evidence or a nonzero family
    without a reason in the job's `allow_fallbacks` object.
+   The optional `ranks` census retains tagged entry counts and untagged symbol
+   counts for each logical rank, through capture and replay. Symbols acquired
+   outside the shared acquisition helpers are reported under `unknown`; a
+   complete per-rank census must reject unknown attribution. The census covers
+   successful bundle-runtime dispatches, not host-owned sampling kernels or
+   raw CUDA calls outside that dispatch path. Use profiler activity for the
+   full device census. It is diagnostic and remains off by default.
 
 For profile review, set `CHOPINFER_ROUTE_TAGS_OUT` to a fresh existing directory
 outside the repository when running a sweep. It writes one tag JSON per

@@ -106,6 +106,7 @@ pub fn open_ranks(
             services.select_context(rank, *ordinal),
         )?;
         held.push(Held::Context(context));
+        crate::routes::register_context(services, context, rank);
         let pool = services.select_memory_pool(context)?;
         held.push(Held::Pool(pool));
         let stream = services.create_stream(context, 0)?;
@@ -544,6 +545,7 @@ pub fn load_module<'a>(
             services.resolve_cuda_symbol(module, symbol.as_bytes()),
         )?;
         held.push(Held::Symbol(function));
+        crate::routes::register_symbol(services, context, function, symbol);
         if resolved.insert(symbol.to_owned(), function).is_some() {
             return Err(BundleAbiError::InvalidRange("duplicate CUDA symbol"));
         }

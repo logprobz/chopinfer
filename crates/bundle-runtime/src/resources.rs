@@ -30,7 +30,9 @@ pub fn release(services: &HostServicesV1, held: Held) -> Result<(), BundleAbiErr
     match held {
         Held::Image(value) => services.release_compiled_image(value),
         Held::Component(value) => services.release_authenticated_component(value),
-        Held::Context(value) => services.release_context(value),
+        Held::Context(value) => services
+            .release_context(value)
+            .inspect(|()| crate::routes::forget_context(services, value)),
         Held::Pool(value) => services.release_memory_pool(value),
         Held::Stream(value) => services.release_stream(value),
         Held::Event(value) => services.release_event(value),
@@ -39,7 +41,9 @@ pub fn release(services: &HostServicesV1, held: Held) -> Result<(), BundleAbiErr
         Held::Peer(value) => services.release_peer_access(value),
         Held::PoolPeer(pool, peer) => services.set_memory_pool_peer_access(pool, peer, false),
         Held::Module(value) => services.release_cuda_module(value),
-        Held::Symbol(value) => services.release_cuda_symbol(value),
+        Held::Symbol(value) => services
+            .release_cuda_symbol(value)
+            .inspect(|()| crate::routes::forget_symbol(services, value)),
         Held::State(value) => services.release_state(value),
     }
 }

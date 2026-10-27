@@ -528,6 +528,30 @@ fn accumulate_route(total: &mut serde_json::Value, next: &serde_json::Value) -> 
             entries.insert(entry.clone(), count.clone());
         }
     }
+    if let Some(ranks) = next.get("ranks") {
+        let target = total
+            .as_object_mut()?
+            .entry("ranks")
+            .or_insert_with(|| serde_json::json!({}));
+        for (rank, counts) in ranks.as_object()? {
+            if rank != "unknown" && rank.parse::<u32>().is_err() {
+                return None;
+            }
+            let target = target
+                .as_object_mut()?
+                .entry(rank.clone())
+                .or_insert_with(|| serde_json::json!({"tagged": {}, "untagged": {}}));
+            for kind in ["tagged", "untagged"] {
+                for (symbol, launches) in counts[kind].as_object()? {
+                    let previous = target[kind]
+                        .as_object_mut()?
+                        .entry(symbol.clone())
+                        .or_insert(0.into());
+                    *previous = previous.as_u64()?.checked_add(launches.as_u64()?)?.into();
+                }
+            }
+        }
+    }
     Some(())
 }
 
@@ -538,6 +562,19 @@ pub(crate) fn take_route() -> Option<serde_json::Value> {
 #[cfg(test)]
 mod route_tests {
     use super::*;
+
+    #[test]
+    fn rank_census_accumulates_callbacks_and_refuses_overflow() {
+        let mut total = serde_json::json!({"fallback_launches": 0, "families": {}, "entries": {}});
+        let next = serde_json::json!({"fallback_launches": 0, "families": {}, "entries": {},
+            "ranks": {"1": {"tagged": {"norm/fast": 2}, "untagged": {"plain": 3}}}});
+        assert_eq!(accumulate_route(&mut total, &next), Some(()));
+        assert_eq!(accumulate_route(&mut total, &next), Some(()));
+        assert_eq!(total["ranks"]["1"]["tagged"]["norm/fast"], 4);
+        assert_eq!(total["ranks"]["1"]["untagged"]["plain"], 6);
+        total["ranks"]["1"]["untagged"]["plain"] = u64::MAX.into();
+        assert_eq!(accumulate_route(&mut total, &next), None);
+    }
 
     #[test]
     fn unrelated_route_messages_never_reach_the_json_parser() {

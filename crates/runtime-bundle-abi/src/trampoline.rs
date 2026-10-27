@@ -1792,6 +1792,12 @@ pub struct HostServicesV1 {
 }
 
 impl HostServicesV1 {
+    /// Process-local identity for optional host-side diagnostic metadata.
+    /// Never serialize it or use it as a device/rank identity.
+    pub fn diagnostic_identity(&self) -> usize {
+        self.raw.user_data as usize
+    }
+
     /// Uploads all rank arenas together when supported by the host.
     pub fn upload_rank_arenas(
         &self,

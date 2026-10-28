@@ -62,15 +62,16 @@ unchanged. Served evidence (2026-10-28, TP4, eight anchor items against
 none on one install): cold, repeated, probed and restored unaligned AR
 prompts gave identical tokens, logprobs, full-vocabulary logits, cache hits
 and captured state, and DSpark the same outputs, logits of every prefill and
-verify step, cache hits, draft and acceptance counts and published snapshot
-payloads, with drafter rings and cursors equal at every caught-up snapshot.
-A sampled ABBA on 32 cold coding and chat prompts with 64 output tokens
-measured AR request throughput 12.6% higher at C4 and 13.1% higher at C8,
-neutral at C2. A DSpark ABBA on the same prompts, both arms on the anchor
-arm's 316,922 KV pages per rank, measured 5.6% higher request throughput at
-C4 (2.9% and 8.4% in its two pairs), neutral at C1 and C2. With DSpark the eight spares
-cost 1,178 KV pages per rank (0.37%). Adoption and stateful replay
-acceptance remain pending.
+verify step, cache hits, proposed token IDs, draft lengths and kept rows of
+every drafting cycle, and published snapshot payloads, with drafter rings
+and cursors equal at every caught-up snapshot. A sampled ABBA on 32 cold
+coding and chat prompts with 64 output tokens measured AR request throughput
+12.6% higher at C4 and 13.1% higher at C8, neutral at C2. A DSpark ABBA on
+the same prompts, both arms on the anchor arm's 316,922 KV pages per rank,
+measured 5.6% higher request throughput at C4 (2.9% and 8.4% in its two
+pairs), neutral at C1 and C2. With DSpark the eight spares cost 1,178 KV
+pages per rank (0.37%). Adoption and stateful replay acceptance remain
+pending.
 
 A shorter grid hit does not suppress a longer observed shared-prefix cut,
 even when the request resumes within its final chunk. The next request can

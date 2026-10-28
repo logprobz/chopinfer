@@ -58,8 +58,15 @@ of the manifest's anchor items and keeps the manifest value for bundles
 without the export. With a nonzero allowance an off-grid rounded end runs
 in the same step as the prompt end, and the scheduler captures both after
 that step. Grid ends, shared-prefix cuts and the default schedule are
-unchanged. Only CPU fake-host, scheduler and engine tests cover the
-prototype; served bitwise equality and throughput are not yet measured.
+unchanged. Served evidence (2026-10-28, TP4, eight anchor items against
+none on one install): cold, repeated, probed and restored unaligned AR
+prompts gave identical tokens, logprobs, full-vocabulary logits, cache hits
+and captured state, and DSpark the same outputs, prefill logits, cache hits
+and published snapshot payloads, with drafter rings and cursors equal at
+every caught-up snapshot. A sampled ABBA on 32 cold coding and chat prompts
+with 64 output tokens measured AR request throughput 12.6% higher at C4 and
+13.1% higher at C8, neutral at C2. With DSpark the eight spares cost 1,178
+KV pages per rank (0.37%). DSpark timing is not yet measured.
 
 A shorter grid hit does not suppress a longer observed shared-prefix cut,
 even when the request resumes within its final chunk. The next request can

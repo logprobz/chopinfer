@@ -173,13 +173,17 @@ use super::*;
 // Indexed retention adds a 768-byte metadata buffer per rank. These
 // fixtures keep scalar prefill commits and stop before a verify commit;
 // every retained operation is identical under the ordered resource map.
+// Compact allocation merges metadata storage and removes the unused
+// reserved-head buffer from DSpark create. These unallocated verify bodies
+// retain their launches, operands, grids and ordering under the typed handle
+// map; the journal declaration covers the create-time resource changes.
 const JOURNALS: [(u32, (usize, u64)); 6] = [
-    (4, (7880, 0xbab92867b78c23da)),
-    (6, (8040, 0x82515ff172fbfe82)),
-    (8, (7720, 0xa87ad19a0b142ce0)),
-    (12, (8216, 0xa86f262ff6e3e891)),
-    (16, (8052, 0xaf08e2bcee51b588)),
-    (32, (7744, 0x654b2d0b14a7b44b)),
+    (4, (7880, 0x790492fb319c0e52)),
+    (6, (8040, 0x3185f0f2834b3de2)),
+    (8, (7720, 0x19bda5468a9871c1)),
+    (12, (8216, 0xf938777c820e1a25)),
+    (16, (8052, 0x82a85847466cc04a)),
+    (32, (7744, 0xabf9ab2b237f17fc)),
 ];
 
 #[test]

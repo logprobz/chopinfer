@@ -752,14 +752,12 @@ fn resolved_segments(
 
 /// Steps the scheduler's timing cuts end early (non-final chunks ending on
 /// the granule, without logits) and final chunks of the same rows and
-/// starts, in AR, DSpark and DSpark with compact allocation instances: two
-/// steps share a body or head key exactly when their graph segments issue
-/// the same launches as the host resolves them, so neither a timing-cut
-/// step nor a compact-allocation DSpark step can replay another program's
-/// graph.
+/// starts, in AR and DSpark instances: two steps share a body or head key
+/// exactly when their graph segments issue the same resolved launches, so
+/// neither a timing-cut step nor a DSpark step can replay another program's
+/// graph. DSpark always uses compact confidence allocation.
 #[test]
 fn prefill_graph_keys_follow_timing_cuts_and_compact_allocation() {
-    use model_deepseek41_contract::dspark_options::COMPACT_ALLOCATION;
     use runtime_bundle_sdk::prefill::Boundary;
     // (rows, start, prompt tokens): a cut ends on the granule before its
     // prompt ends; a final chunk ends its prompt.
@@ -776,14 +774,13 @@ fn prefill_graph_keys_follow_timing_cuts_and_compact_allocation() {
         (64, 40_000, 40_064),
     ];
     let mut planned = Vec::new();
-    for (dspark, compact) in [(false, false), (true, false), (true, true)] {
-        let options = [(COMPACT_ALLOCATION, compact.into())];
+    for dspark in [false, true] {
         let (host, mut instance) = crate::fake_host_tests::indexer_workloads::skip_host(
             Ranks::TP4,
             dspark,
             true,
             8,
-            if compact { &options[..] } else { &[] },
+            &[],
         );
         super::super::INSTANCES.with(|table| {
             let mut table = table.borrow_mut();
@@ -810,7 +807,7 @@ fn prefill_graph_keys_follow_timing_cuts_and_compact_allocation() {
                 let split = prefill_graphs::split(live, skip.body(), joins.as_deref()).unwrap();
                 let head = prefill_graphs::whole(&skip.head().0);
                 planned.push((
-                    (dspark, compact, index),
+                    (dspark, index),
                     prefill_graphs::Key::of(rows, &skip.body().0, &split).unwrap(),
                     resolved_segments(&skip.body().0, &split.graphs),
                     prefill_graphs::Key::of(run.head_rows, &skip.head().0, &head).unwrap(),

@@ -356,8 +356,8 @@ impl Instance {
         }
         let mut runtime = device.runtime.take().expect("checked lifecycle");
         let mut staging = device.staging.take().expect("checked staging");
-        let allocated = self.config.dspark_compact_allocation
-            && BatchCodecV1::decode(request).is_ok_and(|batch| batch.verify_allocation().is_some());
+        let allocated =
+            BatchCodecV1::decode(request).is_ok_and(|batch| batch.verify_allocation().is_some());
         let mut program = Work {
             allocated,
             instance: self,
@@ -433,7 +433,7 @@ impl Instance {
         // the device results path takes it.
         let allocated =
             BatchCodecV1::decode(request).is_ok_and(|batch| batch.verify_allocation().is_some());
-        if allocated && self.config.dspark_compact_allocation && !sink.mapped_sampling_enabled() {
+        if allocated && !sink.mapped_sampling_enabled() {
             self.log("compact allocation requires mapped sampling");
             return BundleStatusV1::Unsupported;
         }
@@ -441,9 +441,7 @@ impl Instance {
             self.log("DSpark allocated verify steps need device results");
             return BundleStatusV1::Unsupported;
         }
-        if let Err(error) = self
-            .consume_dspark_prefetch(&inputs, allocated && self.config.dspark_compact_allocation)
-        {
+        if let Err(error) = self.consume_dspark_prefetch(&inputs, allocated) {
             if let Some(runtime) = self
                 .dspark
                 .as_mut()

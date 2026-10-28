@@ -151,7 +151,7 @@ impl Instance {
             .as_ref()
             .ok_or("DSpark result metadata absent")?;
         let memory = result.memory.ok_or("DSpark result storage absent")?;
-        if let Some(step) = self.compact_allocated_step() {
+        if let Some(step) = self.allocated_step() {
             if !sink.mapped_sampling_enabled() {
                 return Err("compact allocation requires mapped sampling".into());
             }

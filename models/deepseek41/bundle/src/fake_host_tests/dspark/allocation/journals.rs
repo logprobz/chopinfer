@@ -70,11 +70,11 @@ fn allocated_lifetimes_journal() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let mut mismatches = Vec::new();
     for (items, width, depth, suffix, expected) in [
-        (4, 16, 5, "", (69410, 0xdc83175a4a5e2ac3)),
-        (8, 32, 5, "", (107020, 0x606f5030f37582c5)),
-        (4, 12, 3, "-d3", (69544, 0x3af119b2de9d2e87)),
-        (16, 65, 5, "-odd", (190528, 0x0cfc348ffc83132f)),
-        (32, 192, 5, "-maximum", (343266, 0xfaa48307251114a3)),
+        (4, 16, 5, "", (69330, 0x185fae6559e6719a)),
+        (8, 32, 5, "", (106922, 0x322dc6e49e1050f2)),
+        (4, 12, 3, "-d3", (69498, 0x6be615ffa3c974c4)),
+        (16, 65, 5, "-odd", (190430, 0xbc3be4efd4d537f0)),
+        (32, 192, 5, "-maximum", (343168, 0xa34eacdd446a8626)),
     ] {
         let (host, mut instance) = create_with_limits(shape, 32, 192);
         for slot in 0..items {

@@ -207,22 +207,18 @@ impl Instance {
         }
         let batch = runtime_bundle_sdk::BatchCodecV1::decode(request)
             .map_err(|e| format!("DSpark batch: {e:?}"))?;
-        let allocation = if self.config.dspark_compact_allocation {
-            crate::dspark::allocation::Step::with_rule_cache(
-                &batch,
-                &step.decode,
-                Some(
-                    &self
-                        .dspark
-                        .as_ref()
-                        .ok_or("DSpark is absent")?
-                        .allocation
-                        .rule_cache,
-                ),
-            )?
-        } else {
-            crate::dspark::allocation::Step::of(&batch, &step.decode)?
-        };
+        let allocation = crate::dspark::allocation::Step::with_rule_cache(
+            &batch,
+            &step.decode,
+            Some(
+                &self
+                    .dspark
+                    .as_ref()
+                    .ok_or("DSpark is absent")?
+                    .allocation
+                    .rule_cache,
+            ),
+        )?;
         let device = self.dspark.as_mut().ok_or("DSpark is absent")?;
         if device.cycle.pending.is_some() || device.cycle.gathering {
             return Err("DSpark device cycle is already pending".into());

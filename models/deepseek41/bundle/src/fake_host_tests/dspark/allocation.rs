@@ -1,8 +1,8 @@
 //! Allocated verify steps (`chopbatch-v7`): each DSpark instance prepares
 //! their ops and storage. It runs them on the device results path, allocating on
 //! every rank after the draft copies and before the hash, computing the
-//! width eagerly, gathering the head and feature rows back into the
-//! reserved layout and walking the verified drafts.
+//! width, sampling its computed logits through the reserved-row map,
+//! gathering feature rows into the reserved layout and walking verified drafts.
 use super::results::{DeviceSink, metadata};
 use super::*;
 use runtime_bundle_sdk::{SamplingKindV1, VerifyAllocationV1, VerifyCalibrationV1};
@@ -65,27 +65,32 @@ fn device_step(
     (items, k, epoch): (u32, u32, u64),
     acceptance: &str,
 ) -> (Vec<String>, usize, usize) {
-    let mut sink = DeviceSink {
-        host: Rc::clone(host),
-        metadata: Some(metadata(items, k, epoch)),
-        legacy: Sink::default(),
-        drafts: Vec::new(),
-        samples: Vec::new(),
-        completion: None,
+    let mut sink = MappedSink {
+        inner: DeviceSink {
+            host: Rc::clone(host),
+            metadata: Some(metadata(items, k, epoch)),
+            legacy: Sink::default(),
+            drafts: Vec::new(),
+            samples: Vec::new(),
+            completion: None,
+        },
+        mapped: Vec::new(),
     };
     let start = host.journal.borrow().len();
     instance
         .execute(request, &mut sink)
         .unwrap_or_else(|e| panic!("cycle {epoch}: {e:?} {:?}", host.logs.borrow()));
-    assert_eq!(sink.drafts.len(), items as usize);
+    assert_eq!(sink.inner.drafts.len(), items as usize);
     assert_eq!(
-        sink.samples
+        sink.inner
+            .samples
             .iter()
             .map(|s| s.logits.logits.row_count)
-            .sum::<u32>(),
+            .sum::<u32>()
+            + sink.mapped.iter().map(|s| s.sample_rows).sum::<u32>(),
         items * (k + 1)
     );
-    assert_eq!(sink.completion.unwrap().sample_rows, items * (k + 1));
+    assert_eq!(sink.inner.completion.unwrap().sample_rows, items * (k + 1));
     instance
         .commit_accepted(
             &(1..=items)
@@ -104,9 +109,8 @@ fn device_step(
 
 /// An allocated step runs on every topology: each rank allocates after its
 /// draft copies and before rank 0 hashes the computed rows, the target
-/// computes the width, every rank gathers its head and packed feature rows
-/// back into the reserved rows by index, the sampler reads the reserved
-/// rows, and the allocated acceptance walks the verified drafts. A host
+/// computes the width, every rank gathers packed feature rows into the
+/// reserved layout by index, the sampler maps reserved rows to computed logits, and the allocated acceptance walks the verified drafts. A host
 /// without device results is refused before any work. The target's graph
 /// is keyed by the width in the allocated bank: the first step of a width
 /// captures it, a step of the same width that reserves other rows replays
@@ -160,8 +164,7 @@ fn allocated_steps_compute_the_width_and_keep_the_reserved_layout() {
 
         // The first step of the width captures each rank's target graph:
         // the feature packing's gather and the packed rows' gather into the
-        // reserved rows, then the reserved head rows' gather before the
-        // head, then replays it.
+        // reserved rows, then the computed-row head, then replays it.
         let (step, hash, accepted) = device_step(
             &host,
             &mut instance,
@@ -209,7 +212,7 @@ fn allocated_steps_compute_the_width_and_keep_the_reserved_layout() {
                     line.starts_with(&prefix) && line.contains("chop_row_gather_by_index")
                 })
                 .count();
-            assert_eq!(gathers, 3, "rank {rank}");
+            assert_eq!(gathers, 2, "rank {rank}");
         }
 
         // The same width over 24 reserved rows, whose tail is still 32
@@ -288,7 +291,7 @@ fn allocated_steps_compute_the_width_and_keep_the_reserved_layout() {
 }
 
 #[test]
-fn allocated_heads_route_by_reserved_rows_at_narrow_target_widths() {
+fn allocated_heads_route_by_computed_rows_at_narrow_target_widths() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let wide = crate::sm120::f32_verify::entries()
         .unwrap()
@@ -319,18 +322,14 @@ fn allocated_heads_route_by_reserved_rows_at_narrow_target_widths() {
             for symbol in &wide {
                 assert_eq!(
                     launch_of(target, *stream, symbol).is_some(),
-                    reserved > 32,
+                    width > 32,
                     "width {width}, reserved {reserved}, stream {stream}, symbol {symbol}"
                 );
             }
             let old_head = target
                 .iter()
                 .any(|line| line.starts_with(&format!("launch {stream} chop_deepseek41_head_f32")));
-            assert_eq!(
-                old_head,
-                reserved <= 32,
-                "width {width}, reserved {reserved}"
-            );
+            assert_eq!(old_head, width <= 32, "width {width}, reserved {reserved}");
         }
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
@@ -506,11 +505,9 @@ impl LogitsRowSinkV1 for MappedSink {
 
 #[test]
 fn compact_allocation_scores_only_computed_rows_and_keeps_reserved_samples() {
-    use model_deepseek41_contract::dspark_options::COMPACT_ALLOCATION;
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-    for (items, width) in [(4, 16), (8, 32)] {
-        let (host, mut instance) =
-            create_with_options(shape, 32, 64, &[(COMPACT_ALLOCATION, true.into())]);
+    for (items, width) in [(4, 16), (8, 32), (16, 65), (32, 192)] {
+        let (host, mut instance) = create_with_limits(shape, 32, 192);
         for slot in 0..items {
             execute(
                 &mut instance,
@@ -564,7 +561,7 @@ fn compact_allocation_scores_only_computed_rows_and_keeps_reserved_samples() {
             assert_eq!(sink.inner.completion.unwrap().sample_rows, items * 6);
             assert!(sink.inner.drafts.iter().all(|d| d.computed_tokens == 5));
             let journal = host.journal.borrow();
-            if cycle == 1 {
+            if cycle == 1 && width <= 32 {
                 let hash = launch_of(
                     &journal[start..],
                     host.rank_streams.borrow()[&0],

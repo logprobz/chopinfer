@@ -1,11 +1,10 @@
 //! Allocated verify steps on the instance (`crate::dspark::allocation`):
-//! the allocation after the draft copies on every rank, the reserved head
-//! rows and feature rows gathered back by `expand`, and the allocated
+//! the allocation after the draft copies on every rank, computed logits
+//! sampled through `expand`, reserved feature rows, and the allocated
 //! acceptance.
 use super::Instance;
 use crate::dspark::allocation::{Memory, Step};
 use crate::dspark::device::{DECODE_BASE, slice};
-use crate::lower::Lowering;
 use crate::ops::{Bind, Lowered};
 use crate::program::Phase;
 use bundle_runtime::resources::upload_bytes;
@@ -18,9 +17,9 @@ use model_deepseek41_contract::own_ops::allocation::{BLOCK, Item, RULE_WORDS};
 use runtime_bundle_abi::DeviceBufferSpanV1 as Span;
 use runtime_bundle_sdk::SamplingKindV1;
 
-/// The bucket of an allocated step's tail rows: each bucket is a graph
-/// bank of its own, so a step reserving fewer rows than the prepared ones
-/// scores and exchanges fewer.
+/// The bucket of an allocated step's feature tail: each bucket is a graph
+/// bank of its own, so feature gathers cover only the reservation bucket.
+/// Vocabulary heads and logits gathers use the computed width.
 const TAIL_ROWS: u32 = 16;
 
 impl Instance {
@@ -35,7 +34,7 @@ impl Instance {
             .as_ref()
     }
 
-    /// The rows the pending allocated step's tail gathers into and scores:
+    /// The rows the pending allocated step's feature tail gathers into:
     /// its reserved rows rounded up to a multiple of `TAIL_ROWS`, at most
     /// the prepared reserved rows, so its programs depend only on its width
     /// and that bucket. Rows past the step's reserved rows are never
@@ -44,13 +43,6 @@ impl Instance {
         let step = self.allocated_step()?;
         let prepared = self.dspark.as_ref()?.allocation.op.reserved_rows;
         Some(step.reserved_rows.next_multiple_of(TAIL_ROWS).min(prepared))
-    }
-
-    pub(crate) fn compact_allocated_step(&self) -> Option<&Step> {
-        self.allocated_step().filter(|step| {
-            self.config.dspark_compact_allocation
-                && step.width <= model_deepseek41_contract::serving::SCORED_ROWS
-        })
     }
 
     /// Rank `rank`'s allocation storage.
@@ -80,67 +72,43 @@ impl Instance {
                 .flat_map(|value| value.to_le_bytes())
                 .collect::<Vec<_>>()
         };
-        let items = if allocation.compact {
-            Vec::new()
-        } else {
-            words(&step.item_words())
-        };
         let mut staging = allocation.staging.borrow_mut();
-        if allocation.compact {
-            let bytes = &mut staging.bytes;
-            bytes.fill(0);
-            for (word, value) in step.items.iter().flat_map(|item| item.encode()).enumerate() {
-                bytes[word * 4..word * 4 + 4].copy_from_slice(&value.to_le_bytes());
-            }
-            let count = allocation.op.items as usize
-                * model_deepseek41_contract::own_ops::allocation::ITEM_WORDS
-                * 4;
-            for (at, value) in [
-                step.items.len() as u32,
-                step.reserved_rows,
-                step.width,
-                step.rule[1],
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                bytes[count + at * 4..count + (at + 1) * 4].copy_from_slice(&value.to_le_bytes());
-            }
+        let bytes = &mut staging.bytes;
+        bytes.fill(0);
+        for (word, value) in step.items.iter().flat_map(|item| item.encode()).enumerate() {
+            bytes[word * 4..word * 4 + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        let count = allocation.op.items as usize
+            * model_deepseek41_contract::own_ops::allocation::ITEM_WORDS
+            * 4;
+        for (at, value) in [
+            step.items.len() as u32,
+            step.reserved_rows,
+            step.width,
+            step.rule[1],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            bytes[count + at * 4..count + (at + 1) * 4].copy_from_slice(&value.to_le_bytes());
         }
         let live = step.items.len() as u32;
         for (rank, (target, stored)) in targets.iter().zip(&device.ranks).enumerate() {
             let memory = self.allocation_memory(rank)?;
             let stream = self.ranks[rank].2;
-            if let Some(metadata) = memory.metadata {
-                upload_bytes(&self.services, stream, metadata, &staging.bytes)
-                    .map_err(|e| e.to_string())?;
-                let calibration: [u32; RULE_WORDS - 2] = step.rule[2..].try_into().unwrap();
-                if staging.calibration[rank] != Some(calibration) {
-                    let bytes = words(&calibration);
-                    upload_bytes(
-                        &self.services,
-                        stream,
-                        slice(memory.rule, 8, bytes.len() as u64)?,
-                        &bytes,
-                    )
-                    .map_err(|e| e.to_string())?;
-                    staging.calibration[rank] = Some(calibration);
-                }
-            } else {
-                for (span, bytes) in [
-                    (memory.items, items.clone()),
-                    (memory.rule, words(&step.rule)),
-                    (memory.live_items, live.to_le_bytes().to_vec()),
-                    (memory.reserved, step.reserved_rows.to_le_bytes().to_vec()),
-                ] {
-                    upload_bytes(
-                        &self.services,
-                        stream,
-                        slice(span, 0, bytes.len() as u64)?,
-                        &bytes,
-                    )
-                    .map_err(|e| e.to_string())?;
-                }
+            upload_bytes(&self.services, stream, memory.metadata, &staging.bytes)
+                .map_err(|e| e.to_string())?;
+            let calibration: [u32; RULE_WORDS - 2] = step.rule[2..].try_into().unwrap();
+            if staging.calibration[rank] != Some(calibration) {
+                let bytes = words(&calibration);
+                upload_bytes(
+                    &self.services,
+                    stream,
+                    slice(memory.rule, 8, bytes.len() as u64)?,
+                    &bytes,
+                )
+                .map_err(|e| e.to_string())?;
+                staging.calibration[rank] = Some(calibration);
             }
             let scratch = &self.buffers[rank].scratch;
             let mut bind = Bind::default();
@@ -185,19 +153,9 @@ impl Instance {
                 )
                 .map_err(|e| format!("DSpark verify allocation launch: {e:?}"))?;
             }
-            if memory.metadata.is_some() {
-                self.services
-                    .copy_device_to_device(stream, target.live_tokens, slice(memory.rule, 0, 4)?)
-                    .map_err(|e| e.to_string())?;
-            } else {
-                upload_bytes(
-                    &self.services,
-                    stream,
-                    target.live_tokens,
-                    &step.width.to_le_bytes(),
-                )
+            self.services
+                .copy_device_to_device(stream, target.live_tokens, slice(memory.rule, 0, 4)?)
                 .map_err(|e| e.to_string())?;
-            }
         }
         Ok(())
     }
@@ -241,36 +199,6 @@ impl Instance {
                 .map_err(|e| format!("DSpark verify allocation check: {e}"))?;
         }
         Ok(())
-    }
-
-    /// An allocated step's head on rank `rank`: its computed final-norm
-    /// rows gathered by `expand` into the reserved rows, then the head over
-    /// the prepared reserved rows (`base.head_rows`), the step's live.
-    pub(crate) fn dspark_allocated_head(
-        &self,
-        base: &Lowering<'_>,
-        phase: Phase,
-    ) -> Result<Option<Vec<Lowered>>, String> {
-        if self.compact_allocated_step().is_some() {
-            return base.lm_head_over(
-                phase,
-                crate::buffers::rows(base.buffers.scratch.normed_wide, phase.rows()),
-                phase.rows(),
-                base.inputs.live_tokens,
-            );
-        }
-        let memory = self.allocation_memory(base.rank as usize)?;
-        let Some(mut launches) =
-            base.reserved_head_rows(phase, memory.expand, memory.reserved, memory.head)?
-        else {
-            return Ok(None);
-        };
-        let Some(head) = base.lm_head_over(phase, memory.head, base.head_rows, memory.reserved)?
-        else {
-            return Ok(None);
-        };
-        launches.extend(head);
-        Ok(Some(launches))
     }
 
     /// An allocated step's packed features on rank `rank`: its computed

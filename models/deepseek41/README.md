@@ -173,7 +173,6 @@ them. A non-default value is unqualified.
 |---|---|---|
 | `diagnostic_step_logs` | `false` | Emit DSpark phase, prefetch, Engram, commit and drafter-confidence JSON records, each upper-skip prefill's program record (`chopinfer.deepseek41.prefill-program.v1`: rows, start, graph segments and program digests) and, with `prefill_graph_programs`, each graph decision (`chopinfer.deepseek41.prefill-graph.v1`). |
 | `dspark_coupled_drafts` | `true` | Couple sampled drafts to the target sampler's noise. |
-| `dspark_compact_allocation` | `false` | Candidate: score and exchange only computed rows for allocated steps up to 64 rows; sample the reserved rows through an index map and reuse allocation metadata staging. |
 | `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |
 | `dspark_graph_handles_per_rank` | `512` | Graph handles per rank, from 0 to 9223372036854775807; 0 keeps DSpark eager. The total across ranks must fit the platform's count range. |
 | `prefill_dma_engram` | `false` | Candidate: enqueue both prepared Engram reads before DMA prefill compute and join at their decoders. |
@@ -213,11 +212,33 @@ capture directories, AR Engram tracing and the shared
 stored floor-one confidence calibration for both sampled and greedy
 requests. The scheduler still selects the verify width; the device allocator
 assigns draft prefixes within it. Only target-verified tokens are committed.
+
+Confidence allocation scores and gathers only computed vocabulary rows.
+Sampling uses the computed-to-reserved index map, preserving each item's
+seed, generated index, Gumbel ordinal, stop rules and bonus row. Commit
+retains the reserved feature layout. Allocation metadata uses persistent
+staging and cached calibration bytes.
+
+On 2026-10-28, TP4 native-KV ABBA comparisons at temperature 1.0, with
+confidence enabled and power limits of 275/250/250/250 W, covered coding
+and chat at 256 output tokens with four and eight streams, and at 1024
+output tokens with four streams. Compact allocation improved coding
+four-stream 256-token request throughput by a resolved 1.91% (1.57
+percentage-point paired spread). The other five throughput cells were
+within noise, and no cell had a resolved step-time, acceptance or
+throughput regression. All 311 matched request keys and seven unmatched
+replays agreed bitwise on emitted tokens and selected logprobs; the fixed
+batch comparison also checked logits, proposals, acceptance and state.
+Compact allocation is the default implementation. Widths above 64 rows
+are admitted through the same computed-row path but are unqualified for
+timing; the measured cells do not establish their performance.
+
 See [confidence allocation](dspark-confidence.md) for the measured coding
 and chat tradeoff.
 
-Each drafting item has five backbone rows. Uniform depth-three batches of
-3-8 items compute only the used heads; other batches compute all five.
+Each drafting item has five backbone rows. Allocated batches compute all
+five heads. Unallocated uniform depth-three batches of 3-8 items compute
+only the used heads; other batches compute all five.
 Sampled drafts use the target sampler's Philox noise at the draft position's
 generated index. The twelve-item forward limit splits larger batches into
 near-equal chunks, for example 16 as 8+8. Target outputs do not depend on

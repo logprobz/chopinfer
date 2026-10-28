@@ -854,7 +854,7 @@ mod tests {
 
     #[test]
     fn mapped_sampling_preserves_reserved_rng_and_rejects_duplicate_rows() {
-        for concurrency in [1, 4, 8, 32] {
+        for concurrency in [1, 4, 8, 16, 32] {
             let items = (1..=concurrency).map(|id| item(id, 5)).collect::<Vec<_>>();
             let sampler = Rc::new(Sampler::default());
             let mut sink = sink(&items, sampler.clone());
@@ -866,7 +866,14 @@ mod tests {
             let request = BundleMappedDeviceSamplingRequestV1 {
                 struct_size: size_of::<BundleMappedDeviceSamplingRequestV1>() as u32,
                 reserved: 0,
-                source: logits(0, (concurrency as u32 * 3).min(64)),
+                source: logits(
+                    0,
+                    match concurrency {
+                        16 => 65,
+                        32 => 192,
+                        _ => concurrency as u32 * 3,
+                    },
+                ),
                 first_sample_row: 0,
                 sample_rows: total,
                 row_indices: buffer(10, u64::from(total) * 4),

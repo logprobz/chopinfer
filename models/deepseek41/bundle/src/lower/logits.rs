@@ -34,30 +34,6 @@ impl Lowering<'_> {
             .map_err(|refusal| format!("rank {}'s head rows: {refusal}", self.rank))
     }
 
-    /// An allocated verify step's computed final-norm rows gathered by
-    /// `expand` into its `head_rows` reserved rows at `destination`, with
-    /// the device count `count` of them.
-    pub(crate) fn reserved_head_rows(
-        &self,
-        phase: Phase,
-        expand: Span,
-        count: Span,
-        destination: Span,
-    ) -> Result<Option<Vec<Lowered>>, String> {
-        let Some(ops) = &self.ops.logits else {
-            return Ok(None);
-        };
-        let spans = GatherByIndexBuffers {
-            source: rows(self.buffers.scratch.normed_wide, phase.rows()),
-            row_indices: expand,
-            count,
-            destination,
-        };
-        ops.head_rows(self.head_rows, self.head_rows, spans)
-            .map(Some)
-            .map_err(|refusal| format!("rank {}'s reserved head rows: {refusal}", self.rank))
-    }
-
     /// The head over the rank's vocabulary shard: a decode or verify
     /// phase's final-norm rows, or a prefill's gathered head rows (none
     /// without logits rows).

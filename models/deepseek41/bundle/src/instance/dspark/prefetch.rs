@@ -66,7 +66,7 @@ impl Instance {
         let Some(feedback) = device.prefetch.feedback.take() else {
             return Ok(());
         };
-        let allocated = self.config.dspark_compact_allocation && feedback.allocated;
+        let allocated = feedback.allocated;
         let state = device
             .runtime
             .as_ref()

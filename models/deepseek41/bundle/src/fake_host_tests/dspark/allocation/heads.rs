@@ -95,18 +95,13 @@ fn assert_heads(host: &Host, lines: &[String], positions: usize) {
 
 #[test]
 fn allocated_depth_three_executes_five_heads_and_checks_successor_depth() {
-    use model_deepseek41_contract::{
-        dspark_options::COMPACT_ALLOCATION, execution_options::DIAGNOSTIC_STEP_LOGS,
-    };
+    use model_deepseek41_contract::execution_options::DIAGNOSTIC_STEP_LOGS;
     for (first_allocated, next_allocated) in [(false, false), (true, true), (false, true)] {
         let (host, mut instance) = create_with_options(
             Shape::new(&FLASH, Ranks::TP4).unwrap(),
             32,
             64,
-            &[
-                (COMPACT_ALLOCATION, true.into()),
-                (DIAGNOSTIC_STEP_LOGS, true.into()),
-            ],
+            &[(DIAGNOSTIC_STEP_LOGS, true.into())],
         );
         for slot in 0..4 {
             execute(

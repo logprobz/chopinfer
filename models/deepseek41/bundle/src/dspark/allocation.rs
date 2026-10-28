@@ -3,14 +3,9 @@
 //! rows into the reserved layout and the allocated acceptance at create,
 //! and allocates their storage on every rank before the KV pool.
 //!
-//! An allocated step keeps the reserved layout everywhere but the target
-//! body: the host uploads its reserved rows, the allocation compacts the
-//! target's per-row inputs to the computed rows on every rank, the target
-//! computes the width, and its final-norm rows and packed features are
-//! gathered back into the reserved rows by `expand` before the head and
-//! the commit read them.
-//! The compact-allocation candidate instead scores computed rows and gives
-//! the sampler `expand`; feature rows and commit retain the reserved layout.
+//! The target and vocabulary head compute only allocated rows. The sampler
+//! reads those logits through the computed-to-reserved map; packed feature
+//! rows are gathered into the reserved layout that commit consumes.
 use super::results::{ITEMS, ROWS, STOP_CAPACITY};
 use bundle_runtime::inputs::PhaseInputs;
 use bundle_runtime::resources::{Held, allocate_span};
@@ -58,17 +53,14 @@ pub(crate) struct Allocation {
     /// Packed BF16 feature rows gathered by index.
     pub features: Prepared<GatherByIndexBuffers<View>>,
     pub acceptance: Prepared<AllocatedAcceptanceBuffers<View>>,
-    /// The bytes of one F32 final-norm row.
-    head_row_bytes: u64,
     pub ranks: Vec<Memory>,
-    pub compact: bool,
     pub rule_cache: std::cell::RefCell<RuleCache>,
     pub staging: std::cell::RefCell<MetadataStaging>,
 }
 
 /// One rank's allocation inputs and outputs (`VerifyAllocateBuffers`), the
-/// device count of the step's reserved rows and the head's reserved input
-/// rows; the confidence scores and the compacted rows are the drafter's
+/// device count of the step's reserved rows; the confidence scores and
+/// the compacted rows are the drafter's
 /// and the target's own storage.
 #[derive(Clone, Copy)]
 pub(crate) struct Memory {
@@ -81,22 +73,20 @@ pub(crate) struct Memory {
     pub rows: Span,
     pub expand: Span,
     pub reserved: Span,
-    pub head: Span,
-    pub metadata: Option<Span>,
+    pub metadata: Span,
 }
 
 impl Allocation {
     /// The ops for steps of up to `items` items (the instance's input
     /// capacity) and `verify_rows` reserved rows (its verify rows, at most
     /// a full block each), and as wide, over `features` bytes of packed
-    /// features and `hidden` F32 final-norm values a row.
+    /// features a row.
     pub fn new(
         backend: &dyn kernel_core::backend::Backend,
         own: &dyn OwnOps,
         vocab: u32,
         (items, verify_rows): (u32, u32),
         features: u64,
-        hidden: u32,
     ) -> Result<Self, String> {
         let verify_rows = verify_rows.min(items * (1 + BLOCK as u32));
         let op = VerifyAllocate {
@@ -134,9 +124,7 @@ impl Allocation {
             allocate,
             features,
             acceptance,
-            head_row_bytes: u64::from(hidden) * 4,
             ranks: Vec::new(),
-            compact: false,
             rule_cache: Default::default(),
             staging: Default::default(),
         })
@@ -152,50 +140,24 @@ impl Allocation {
     ) -> Result<(), BundleAbiError> {
         let mut alloc = |bytes| allocate_span(services, pool, stream, bytes, held);
         let items = u64::from(self.op.items);
-        let metadata = if self.compact {
-            Some(alloc(
-                items * ITEM_WORDS as u64 * 4 + 8 + RULE_WORDS as u64 * 4,
-            )?)
-        } else {
-            None
-        };
-        let (item_data, rule, live_items, reserved) = if let Some(span) = metadata {
-            let item_bytes = items * ITEM_WORDS as u64 * 4;
-            let sub = |offset, length| Span::new(span.buffer, span.offset + offset, length);
-            self.staging
-                .borrow_mut()
-                .bytes
-                .resize(item_bytes as usize + 16, 0);
-            self.staging.borrow_mut().calibration.push(None);
-            (
-                sub(0, item_bytes),
-                sub(item_bytes + 8, RULE_WORDS as u64 * 4),
-                sub(item_bytes, 4),
-                Some(sub(item_bytes + 4, 4)),
-            )
-        } else {
-            // Preserve the original allocation order for the disabled candidate.
-            (
-                alloc(items * ITEM_WORDS as u64 * 4)?,
-                alloc(RULE_WORDS as u64 * 4)?,
-                alloc(4)?,
-                None,
-            )
-        };
+        let item_bytes = items * ITEM_WORDS as u64 * 4;
+        let metadata = alloc(item_bytes + 8 + RULE_WORDS as u64 * 4)?;
+        let sub = |offset, length| Span::new(metadata.buffer, metadata.offset + offset, length);
+        self.staging
+            .borrow_mut()
+            .bytes
+            .resize(item_bytes as usize + 16, 0);
+        self.staging.borrow_mut().calibration.push(None);
         self.ranks.push(Memory {
-            items: item_data,
-            rule,
-            live_items,
+            items: sub(0, item_bytes),
+            rule: sub(item_bytes + 8, RULE_WORDS as u64 * 4),
+            live_items: sub(item_bytes, 4),
             status: alloc(4)?,
             verified: alloc(items * 4)?,
             starts: alloc(items * 4)?,
             rows: alloc(u64::from(self.op.width) * 4)?,
             expand: alloc(u64::from(self.op.reserved_rows) * 4)?,
-            reserved: match reserved {
-                Some(span) => span,
-                None => alloc(4)?,
-            },
-            head: alloc(u64::from(self.op.reserved_rows) * self.head_row_bytes)?,
+            reserved: sub(item_bytes + 4, 4),
             metadata,
         });
         Ok(())
@@ -218,6 +180,7 @@ impl Step {
     /// reserved layout: every item's rows are its one row and its reserved
     /// drafts, and the items with drafts take the drafter's confidence rows
     /// in order. A step with no allocation is `None`.
+    #[cfg(test)]
     pub fn of(batch: &BatchRequestV1, decode: &PhaseInputs) -> Result<Option<Self>, String> {
         Self::with_rule_cache(batch, decode, None)
     }
@@ -275,6 +238,7 @@ impl Step {
     }
 
     /// The items as the allocation's U32 item rows.
+    #[cfg(test)]
     pub fn item_words(&self) -> Vec<u32> {
         self.items.iter().flat_map(|item| item.encode()).collect()
     }

@@ -9,6 +9,8 @@ struct Sink<'a> {
     metadata: DeviceCycleMetadataV1,
     drafts: Vec<u64>,
     rows: u32,
+    computed_rows: u32,
+    mapped: usize,
     completion: Option<BundleDeviceCompletionV1>,
 }
 
@@ -40,15 +42,32 @@ impl LogitsRowSinkV1 for Sink<'_> {
         Ok(())
     }
 
-    fn sample_device_logits(
+    fn mapped_sampling_enabled(&self) -> bool {
+        true
+    }
+
+    fn sample_mapped_device_logits(
         &mut self,
-        sample: BundleDeviceSamplingRequestV1,
+        sample: BundleMappedDeviceSamplingRequestV1,
     ) -> HostServiceResultV1<()> {
         sample.validate().unwrap();
-        self.rows += sample.logits.logits.row_count;
+        assert_eq!(sample.source.logits.row_count, self.computed_rows);
+        for view in [
+            sample.source.logits.buffer,
+            sample.row_indices,
+            sample.output,
+        ] {
+            self.host.check_span(DeviceBufferSpanV1::new(
+                view.buffer,
+                view.offset,
+                view.length,
+            ));
+        }
+        self.rows += sample.sample_rows;
+        self.mapped += 1;
         let stream = BundleStreamHandleV1::from_parts(
             1,
-            self.host.rank_streams.borrow()[&sample.logits.logits.rank],
+            self.host.rank_streams.borrow()[&sample.source.logits.rank],
         );
         self.host.record_event(sample.done, stream)
     }
@@ -116,6 +135,8 @@ pub(super) fn execute(
         metadata,
         drafts: Vec::new(),
         rows: 0,
+        computed_rows: width,
+        mapped: 0,
         completion: None,
     };
     let from = adapter.host.journal.borrow().len();
@@ -132,6 +153,7 @@ pub(super) fn execute(
         sink.rows as usize, reserved,
         "sampling uses the reserved row layout"
     );
+    assert_eq!(sink.mapped, 1);
     assert_eq!(sink.completion.unwrap().sample_rows as usize, reserved);
     let journal = adapter.host.journal.borrow();
     let step = &journal[from..];
@@ -195,20 +217,20 @@ pub(super) fn execute(
                 .iter()
                 .filter(|symbol| symbol.starts_with("chop_row_gather_by_index"))
                 .count()
-                >= 3,
-            "width {width}, reserved {reserved}, stream {stream}: packed feature and reserved head gathers"
+                >= 2,
+            "width {width}, reserved {reserved}, stream {stream}: packed and reserved feature gathers"
         );
         assert_eq!(
             symbols
                 .iter()
                 .any(|symbol| symbol.starts_with("chop_deepseek41_head_f32")),
-            reserved <= 32,
-            "width {width}, reserved {reserved}, stream {stream}: target head route follows reserved rows"
+            width <= 32,
+            "width {width}, reserved {reserved}, stream {stream}: target head route follows computed rows"
         );
         for symbol in &wide_head {
             assert_eq!(
                 symbols.contains(&symbol.as_str()),
-                reserved > 32,
+                width > 32,
                 "width {width}, reserved {reserved}, stream {stream}: wide target head {symbol}"
             );
         }

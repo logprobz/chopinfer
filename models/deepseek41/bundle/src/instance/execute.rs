@@ -522,13 +522,8 @@ impl Instance {
                     (true, _, Stage::DsparkFeature(layer)) => {
                         self.dspark_feature(&lowering, phase, layer).map(Some)
                     }
-                    (true, _, Stage::GatherLogits)
-                        if allocated.is_some() && self.compact_allocated_step().is_some() =>
-                    {
+                    (true, _, Stage::GatherLogits) if allocated.is_some() => {
                         lowering.gather_compact_logits()
-                    }
-                    (true, _, Stage::LmHead) if allocated.is_some() => {
-                        self.dspark_allocated_head(&lowering, phase)
                     }
                     (true, _, Stage::EngramRows(layer)) => {
                         self.dspark_engram(&lowering, phase, layer)
@@ -643,15 +638,8 @@ impl Instance {
         let (head_rows, capacity) = if arena == PREFILL {
             (inputs.logit_rows().len() as u32, SCORED_ROWS)
         } else {
-            // An allocated step's head scores its tail rows.
-            (
-                if self.compact_allocated_step().is_some() {
-                    phase.rows()
-                } else {
-                    allocated.unwrap_or(phase.rows())
-                },
-                crate::buffers::head_rows(&self.config.shape),
-            )
+            // Every decode or verify head scores only computed rows.
+            (phase.rows(), crate::buffers::head_rows(&self.config.shape))
         };
         if head_rows > capacity {
             self.log(&format!(
@@ -1715,7 +1703,7 @@ impl Instance {
             .as_ref()
             .is_some_and(|device| device.results.metadata.is_some());
         if device_results {
-            let views = if self.compact_allocated_step().is_some() {
+            let views = if self.allocated_step().is_some() {
                 Vec::new()
             } else {
                 self.logits_views(runs)?

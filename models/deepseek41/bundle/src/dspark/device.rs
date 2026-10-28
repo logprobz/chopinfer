@@ -238,7 +238,6 @@ impl Device {
                 g.shape.vocab,
                 (config.slots, shape.verify_rows),
                 features.row_bytes(),
-                g.shape.hidden,
             )?,
             features,
             ops,

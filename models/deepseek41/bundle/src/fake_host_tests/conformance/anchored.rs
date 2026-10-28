@@ -23,8 +23,27 @@ impl Startup for Anchored {
     fn servings() -> Vec<conformance::Serving> {
         Served::servings()
     }
+    /// The served envelope and a mandatory set of anchored steps, swept in
+    /// every tier: packed prompts each keeping an anchor, a ring that
+    /// crosses the 4096-row key part, restored odd starts, one whose anchor
+    /// lies 135 rows in (seeded rings, the last seeded distance) beside a
+    /// second anchored item, and a 67-row spare write.
     fn envelope(serving: &conformance::Serving) -> conformance::Envelope {
-        Served::envelope(serving)
+        let mut envelope = Served::envelope(serving);
+        let anchored = |mode: &str, offset, lengths: &[u32]| conformance::CutCase {
+            mode: mode.into(),
+            offset,
+            lengths: lengths.to_vec(),
+            remaining: vec![0; lengths.len()],
+        };
+        envelope.cuts.extend([
+            anchored("anchor-packed", 0, &[789, 300, 100]),
+            anchored("anchor-part", 0, &[4171]),
+            anchored("anchor-restored", 789, &[300]),
+            anchored("anchor-restored-packed", 761, &[139, 300]),
+            anchored("anchor-short", 829, &[71]),
+        ]);
+        envelope
     }
     fn check_allocated_route_shapes(
         serving: &conformance::Serving,
@@ -70,8 +89,14 @@ impl Startup for Anchored {
         for (item, &prompt_tokens) in items.iter().zip(prompt_ends) {
             let rows = item.tokens.len() as u32;
             let end = item.start + u64::from(rows);
+            // A setup chunk ending off the granule stands for the earlier
+            // request whose prompt ended there, as a restore resumes its
+            // snapshot: it ends that prompt, without an anchor.
+            let setup = end != prompt_tokens && !end.is_multiple_of(64);
+            let prompt_tokens = if setup { end } else { prompt_tokens };
             let rounded = end / 64 * 64;
-            let anchor = end == prompt_tokens
+            let anchor = !setup
+                && end == prompt_tokens
                 && item.start < rounded
                 && rounded < end
                 && anchors < ANCHOR_ITEMS;

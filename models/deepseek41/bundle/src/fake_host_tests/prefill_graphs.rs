@@ -347,78 +347,256 @@ fn diagnostic_logs_record_each_graph_decision() {
     assert_eq!(host.acquired.get(), host.released.get());
 }
 
-/// Three turns of an instance with graphs: each request's 64-row prompt,
-/// a decoded token, then a 31-row continuation. Returns each step's
-/// journal lines, in order, and the prefills poisoned, after poisoning its
-/// stage scratch first when `poison`.
+/// Three turns of an instance with graphs, `dspark` or not, each
+/// request's 64-row prompt, a decoded token, then a 31-row continuation,
+/// poisoning its scratch first when `poison`.
 #[cfg(feature = "diagnostic-taps")]
-fn poisoned_turns(poison: bool) -> (Vec<Vec<String>>, u64) {
+struct PoisonedTurns {
+    /// Each step's journal lines, in order.
+    steps: Vec<Vec<String>>,
+    /// Each step's recorded copies, uploads and reads.
+    ops: Vec<Vec<bundle_runtime::fake_host::SnapshotOp>>,
+    /// What arming recorded: the poison sources' uploads.
+    armed: Vec<bundle_runtime::fake_host::SnapshotOp>,
+    /// Prefills poisoned and DSpark steps left alone.
+    counts: (u64, u64),
+    /// Each rank's poison source and scratch fields.
+    targets: crate::instance::PoisonTargets,
+}
+
+#[cfg(feature = "diagnostic-taps")]
+fn poisoned_turns(dspark: bool, poison: bool) -> PoisonedTurns {
     let (host, mut instance) = skip_host(
         Ranks::TP4,
-        false,
+        dspark,
         true,
         4,
         &[(PREFILL_GRAPH_PROGRAMS, 4.into())],
     );
-    if poison {
+    let record = || *host.device.snapshot_ops.borrow_mut() = Some(Vec::new());
+    let take = || host.device.snapshot_ops.borrow_mut().take().unwrap();
+    record();
+    let (armed, targets) = if poison {
         crate::instance::poison_prefill_scratch_for_test(instance.handle());
-    }
-    let mut steps = Vec::new();
+        (
+            take(),
+            crate::instance::poison_targets_for_test(instance.handle()),
+        )
+    } else {
+        take();
+        (Vec::new(), Vec::new())
+    };
+    let (mut steps, mut ops) = (Vec::new(), Vec::new());
     for request in 1..=3 {
+        record();
         steps.push(step(&host, &mut instance, request, 0, 64));
+        ops.push(take());
         decode_one(&host, &mut instance, request, 64);
+        record();
         steps.push(step(&host, &mut instance, request, 65, 31));
+        ops.push(take());
     }
-    let poisoned = if poison {
+    let counts = if poison {
         crate::instance::poison_prefill_scratch_for_test(instance.handle())
     } else {
-        0
+        (0, 0)
     };
     for request in 1..=3 {
         instance.retire_request(request).unwrap();
     }
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
-    (steps, poisoned)
+    PoisonedTurns {
+        steps,
+        ops,
+        armed,
+        counts,
+        targets,
+    }
 }
 
-/// A diagnostic build's scratch poison runs before each admitted short
-/// prefill uploads or launches anything, and only adds uploads: each
-/// continuation's journal is the unpoisoned one with poison uploads before
-/// its first upload, and prompts at position zero are left alone.
+/// A journal line without the graph ID of a capture, replay or release.
+#[cfg(feature = "diagnostic-taps")]
+fn without_graph_id(line: &str) -> String {
+    let words: Vec<&str> = line.split(' ').collect();
+    match words.as_slice() {
+        ["captured", stream, _, nodes] => format!("captured {stream} {nodes}"),
+        ["replay", stream, _] => format!("replay {stream}"),
+        ["release", "graph", _] => "release graph".into(),
+        _ => line.to_owned(),
+    }
+}
+
+/// `spans` merged into disjoint byte ranges by buffer.
+#[cfg(feature = "diagnostic-taps")]
+fn merged(
+    spans: impl IntoIterator<Item = runtime_bundle_abi::DeviceBufferSpanV1>,
+) -> Vec<(u64, u64, u64)> {
+    let mut ranges: Vec<_> = spans
+        .into_iter()
+        .map(|span| (span.buffer.raw, span.offset, span.offset + span.length))
+        .collect();
+    ranges.sort();
+    let mut out: Vec<(u64, u64, u64)> = Vec::new();
+    for (buffer, start, end) in ranges {
+        match out.last_mut() {
+            Some(last) if last.0 == buffer && start <= last.2 => last.2 = last.2.max(end),
+            _ => out.push((buffer, start, end)),
+        }
+    }
+    out
+}
+
+/// A diagnostic build's scratch poison fills, before each admitted short
+/// prefill uploads, clears or gathers anything, every scratch field but
+/// the text constants and immutable count table (including the head's
+/// operands in the poisoned spans), from sources
+/// of 0xff bytes, on every rank of an AR and of a DSpark instance; the
+/// rest of each step's journal is unchanged, and prompts at position zero
+/// are left alone.
 #[cfg(feature = "diagnostic-taps")]
 #[test]
-fn scratch_poison_uploads_precede_each_admitted_prefill_and_change_nothing_else() {
-    let (clean, _) = poisoned_turns(false);
-    let (poisoned, count) = poisoned_turns(true);
-    assert_eq!(count, 3);
-    for (index, (clean, poisoned)) in clean.iter().zip(&poisoned).enumerate() {
-        if index % 2 == 0 {
-            assert_eq!(clean, poisoned, "prompt step {index}");
-            continue;
-        }
-        let at = clean
-            .iter()
-            .zip(poisoned)
-            .position(|(a, b)| a != b)
-            .expect("poison uploads");
-        let added = poisoned.len() - clean.len();
-        assert!(added >= 4, "step {index}: {added} poison uploads");
-        assert!(
-            poisoned[at..at + added]
+fn scratch_poison_fills_every_per_step_scratch_field_before_each_admitted_prefill() {
+    use bundle_runtime::fake_host::SnapshotOp;
+    for dspark in [false, true] {
+        let clean = poisoned_turns(dspark, false);
+        let poisoned = poisoned_turns(dspark, true);
+        assert_eq!(poisoned.counts, (3, 0), "dspark {dspark}");
+        // Each source holds 0xff bytes.
+        assert_eq!(poisoned.targets.len(), 4);
+        for (source, _) in &poisoned.targets {
+            let uploads: Vec<_> = poisoned
+                .armed
                 .iter()
-                .all(|line| line.starts_with("upload "))
-        );
-        assert_eq!(poisoned[at + added..], clean[at..], "step {index}");
-        let first = |prefix: &str| clean.iter().position(|line| line.starts_with(prefix));
-        assert!(
-            first("upload ").is_none_or(|upload| at <= upload),
-            "step {index}"
-        );
-        assert!(
-            first("launch ").is_none_or(|launch| at < launch),
-            "step {index}"
-        );
+                .filter_map(|op| match op {
+                    SnapshotOp::Upload(_, span, bytes) if span == source => Some(bytes),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(uploads.len(), 1);
+            assert_eq!(uploads[0].len() as u64, source.length);
+            assert!(uploads[0].iter().all(|&byte| byte == 0xff));
+        }
+        for (_, fields) in &poisoned.targets {
+            let filled = |name: &str| fields.iter().any(|f| f.0 == name && f.2);
+            for name in [
+                "normed_wide",
+                "head_input",
+                "head",
+                "streams",
+                "engram_codes",
+                "row_status",
+                "block_live",
+                "sorted_rows",
+                "workspace",
+                "shared_workspace",
+            ] {
+                assert!(filled(name), "{name}");
+            }
+            for name in ["first_pre", "bias_select", "prefill_counts"] {
+                assert!(fields.iter().any(|f| f.0 == name && !f.2), "{name}");
+            }
+            if dspark {
+                for name in ["dspark.taps", "dspark.prefill_packed"] {
+                    assert!(filled(name), "{name}");
+                }
+                for name in ["dspark.decode_packed", "dspark.feature_indices"] {
+                    assert!(fields.iter().any(|f| f.0 == name && !f.2), "{name}");
+                }
+            }
+        }
+        for (index, (clean_lines, lines)) in clean.steps.iter().zip(&poisoned.steps).enumerate() {
+            let copies = |source: runtime_bundle_abi::DeviceBufferSpanV1| -> Vec<_> {
+                let owner = poisoned
+                    .armed
+                    .iter()
+                    .find_map(|op| match op {
+                        SnapshotOp::Upload(stream, span, _) if *span == source => Some(*stream),
+                        _ => None,
+                    })
+                    .expect("source uploaded on its owning stream");
+                poisoned.ops[index]
+                    .iter()
+                    .filter_map(|op| match op {
+                        SnapshotOp::Copy(stream, from, to) if from.buffer == source.buffer => {
+                            assert_eq!(*stream, owner);
+                            assert_eq!(from.offset, source.offset);
+                            assert_eq!(from.length, to.length);
+                            assert!(from.length <= source.length);
+                            Some(*to)
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            };
+            if index % 2 == 0 {
+                assert_eq!(clean_lines, lines, "dspark {dspark} prompt step {index}");
+                assert!(
+                    poisoned
+                        .targets
+                        .iter()
+                        .all(|(source, _)| copies(*source).is_empty())
+                );
+                continue;
+            }
+            for (source, fields) in &poisoned.targets {
+                let targets = copies(*source);
+                let expected = fields.iter().filter(|f| f.2).map(|f| f.1);
+                assert_eq!(
+                    merged(targets.clone()),
+                    merged(expected),
+                    "dspark {dspark} step {index}"
+                );
+                let kept = merged(fields.iter().filter(|f| !f.2).map(|f| f.1));
+                for (buffer, start, end) in merged(targets) {
+                    assert!(
+                        kept.iter()
+                            .all(|k| k.0 != buffer || k.2 <= start || end <= k.1),
+                        "a poison copy reaches a kept field"
+                    );
+                }
+            }
+            let at = clean_lines
+                .iter()
+                .zip(lines)
+                .position(|(a, b)| a != b)
+                .expect("poison copies");
+            let added = lines.len() - clean_lines.len();
+            assert!(
+                lines[at..at + added]
+                    .iter()
+                    .all(|line| line.starts_with("copy "))
+            );
+            // The poison sources take four more handles, so graph IDs
+            // shift; every other field is compared.
+            let rest: Vec<_> = lines[at + added..]
+                .iter()
+                .map(|l| without_graph_id(l))
+                .collect();
+            let clean_rest: Vec<_> = clean_lines[at..]
+                .iter()
+                .map(|l| without_graph_id(l))
+                .collect();
+            let differs = rest.iter().zip(&clean_rest).position(|(a, b)| a != b);
+            assert_eq!(
+                rest.len(),
+                clean_lines.len() - at,
+                "dspark {dspark} step {index}"
+            );
+            assert!(
+                differs.is_none(),
+                "dspark {dspark} step {index}: {:?} instead of {:?}",
+                differs.map(|d| &rest[d]),
+                differs.map(|d| &clean_rest[d])
+            );
+            let first = |prefix: &str| clean_lines.iter().position(|line| line.starts_with(prefix));
+            for prefix in ["upload ", "zero ", "gather ", "launch "] {
+                assert!(
+                    first(prefix).is_none_or(|line| at <= line),
+                    "{prefix} step {index}"
+                );
+            }
+        }
     }
 }
 

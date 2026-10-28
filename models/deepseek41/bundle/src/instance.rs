@@ -156,11 +156,10 @@ pub struct Instance {
     state_capture_root: Option<std::path::PathBuf>,
     #[cfg(feature = "state-capture")]
     transition_capture_bytes: std::cell::Cell<u64>,
-    /// Admitted short prefills whose stage scratch was poisoned, when the
-    /// create environment set `CHOPINFER_PREFILL_SCRATCH_POISON`
-    /// (`Instance::poison_prefill_scratch`).
+    /// The poison sources and counts, when the create environment set
+    /// `CHOPINFER_PREFILL_SCRATCH_POISON` (`Instance::poison_prefill_scratch`).
     #[cfg(feature = "diagnostic-taps")]
-    scratch_poison: Option<std::cell::Cell<u64>>,
+    scratch_poison: Option<execute::prefill_graphs::ScratchPoison>,
     /// Per-layer taps of prefills (`crate::taps`), when the environment
     /// asks for them.
     taps: crate::taps::StepTaps,
@@ -1047,8 +1046,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         #[cfg(feature = "state-capture")]
         transition_capture_bytes: std::cell::Cell::new(0),
         #[cfg(feature = "diagnostic-taps")]
-        scratch_poison: std::env::var_os("CHOPINFER_PREFILL_SCRATCH_POISON")
-            .map(|_| std::cell::Cell::new(0)),
+        scratch_poison: None,
         config,
         prefill_counts: Vec::new(),
         prefill_boundaries: Vec::new(),
@@ -1137,6 +1135,13 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         return Err(Failed::releasing(instance, status(error)));
     }
     instance.memory.take("dspark_graphs");
+    #[cfg(feature = "diagnostic-taps")]
+    if std::env::var_os("CHOPINFER_PREFILL_SCRATCH_POISON").is_some()
+        && let Err(error) = instance.arm_scratch_poison()
+    {
+        instance.log(&format!("create failed arming scratch poison: {error}"));
+        return Err(Failed::releasing(instance, status(error)));
+    }
     if let Err(error) = instance.check_dspark_allocation() {
         instance.log(&format!(
             "create failed checking the verify allocation: {error}"
@@ -1656,17 +1661,109 @@ pub(crate) fn kv_overlap_for_test(
     })
 }
 
-/// Poisons `handle`'s stage scratch before each admitted short prefill, as
-/// `CHOPINFER_PREFILL_SCRATCH_POISON` at create does, and returns how many
-/// prefills were poisoned so far.
+/// Poisons `handle`'s per-step scratch before each admitted short prefill,
+/// as `CHOPINFER_PREFILL_SCRATCH_POISON` at create does, arming it first;
+/// returns the prefills poisoned and DSpark steps left alone so far.
 #[cfg(all(test, feature = "diagnostic-taps"))]
-pub(crate) fn poison_prefill_scratch_for_test(handle: runtime_bundle_abi::BundleHandleV1) -> u64 {
+pub(crate) fn poison_prefill_scratch_for_test(
+    handle: runtime_bundle_abi::BundleHandleV1,
+) -> (u64, u64) {
     INSTANCES.with(|table| {
         let mut table = table.borrow_mut();
-        let poison = &mut table
-            .get_mut(handle)
-            .expect("a live instance")
-            .scratch_poison;
-        poison.get_or_insert_with(|| std::cell::Cell::new(0)).get()
+        let instance = table.get_mut(handle).expect("a live instance");
+        if instance.scratch_poison.is_none() {
+            instance.arm_scratch_poison().expect("poison sources");
+        }
+        let poison = instance.scratch_poison.as_ref().expect("armed");
+        (poison.poisoned.get(), poison.skipped.get())
+    })
+}
+
+/// Each rank's poison source and every scratch field of the armed
+/// instance `handle`: its name, span and whether a poisoned prefill fills
+/// it.
+#[cfg(all(test, feature = "diagnostic-taps"))]
+pub(crate) type PoisonTargets = Vec<(
+    runtime_bundle_abi::DeviceBufferSpanV1,
+    Vec<(String, runtime_bundle_abi::DeviceBufferSpanV1, bool)>,
+)>;
+
+#[cfg(all(test, feature = "diagnostic-taps"))]
+pub(crate) fn poison_targets_for_test(handle: runtime_bundle_abi::BundleHandleV1) -> PoisonTargets {
+    use kernel_core::allocation::Traversal;
+    INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let instance = table.get_mut(handle).expect("a live instance");
+        let poison = instance.scratch_poison.as_ref().expect("armed");
+        poison
+            .sources
+            .iter()
+            .zip(&instance.buffers)
+            .enumerate()
+            .map(|(rank, (&source, buffers))| {
+                let mut fields = Vec::new();
+                buffers.scratch.visit_named(&mut |name, span| {
+                    if name == "block_live" {
+                        let counts = crate::buffers::index_prefill_counts(*span).unwrap();
+                        fields.push((
+                            name.to_owned(),
+                            runtime_bundle_abi::DeviceBufferSpanV1::new(
+                                span.buffer,
+                                span.offset,
+                                counts.offset - span.offset,
+                            ),
+                            true,
+                        ));
+                        fields.push(("prefill_counts".to_owned(), counts, false));
+                    } else {
+                        let kept = execute::prefill_graphs::POISON_KEEPS.contains(&name);
+                        fields.push((name.to_owned(), *span, !kept));
+                    }
+                });
+                for (name, span) in [
+                    ("sorted_rows", buffers.sorted_rows),
+                    ("workspace", buffers.workspace),
+                    ("shared_workspace", buffers.shared_workspace),
+                ] {
+                    fields.push((name.to_owned(), span, true));
+                }
+                if let Some(span) = buffers.mix_partials {
+                    fields.push(("mix_partials".to_owned(), span, true));
+                }
+                if let Some(span) = buffers.mix_tickets {
+                    fields.push(("mix_tickets".to_owned(), span, false));
+                }
+                for &span in &buffers.comm {
+                    fields.push(("comm".to_owned(), span, false));
+                }
+                if let Some(device) = &instance.dspark {
+                    let stored = &device.ranks[rank];
+                    fields.push(("dspark.taps".to_owned(), stored.taps, true));
+                    let bytes =
+                        u64::from(crate::dspark::device::DECODE_BASE) * device.features.row_bytes();
+                    fields.push((
+                        "dspark.prefill_packed".to_owned(),
+                        crate::dspark::device::slice(stored.packed, 0, bytes).unwrap(),
+                        true,
+                    ));
+                    fields.push((
+                        "dspark.decode_packed".to_owned(),
+                        crate::dspark::device::slice(
+                            stored.packed,
+                            bytes,
+                            stored.packed.length - bytes,
+                        )
+                        .unwrap(),
+                        false,
+                    ));
+                    fields.push((
+                        "dspark.feature_indices".to_owned(),
+                        stored.feature_indices,
+                        false,
+                    ));
+                }
+                (source, fields)
+            })
+            .collect()
     })
 }

@@ -250,9 +250,14 @@ boundaries. `diagnostic_step_logs` defaults to false and controls step and
 confidence JSON, without changing confidence computation. A
 `diagnostic-taps` build also places each short-prefill program record (its
 slot and page table), and with `CHOPINFER_PREFILL_SCRATCH_POISON` set at
-create fills the transient stage scratch with NaN bytes before each
-admitted short prefill of an instance without a drafter, for graph
-exactness jobs.
+create fills per-step scratch, sorted routes, workspaces and mixer partials
+with NaN bytes before each admitted short prefill uploads anything, for
+graph exactness jobs. Text constants, the immutable count table, mixer
+tickets, request state and communication state are preserved. A DSpark step
+is poisoned only when it prefills alone with prepared gathers, as its
+Engram rows may be staged earlier otherwise. Its raw feature taps and
+prefill packed-feature prefix are poisoned too; the decode suffix stays
+intact.
 
 ## Reference
 

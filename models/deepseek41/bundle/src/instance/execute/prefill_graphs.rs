@@ -378,64 +378,168 @@ impl Instance {
     }
 
     /// A diagnostic build created with `CHOPINFER_PREFILL_SCRATCH_POISON`
-    /// set fills every rank's transient stage scratch (the members of
-    /// `buffers::REGIONS`, which each stage writes before the next reads)
-    /// with 0xff bytes, NaN in every float format, before an admitted short
-    /// prefill of an instance without a drafter uploads anything: graphs
-    /// and eager runs alike must not read what an earlier step left there.
+    /// set fills every rank's per-step scratch with 0xff bytes, NaN in every
+    /// float format, by copies from its poison source, before an admitted
+    /// short prefill uploads, clears or gathers anything: graphs and eager
+    /// runs alike must not read what an earlier step left there. Every
+    /// scratch field is per-step except the text constants
+    /// (`POISON_KEEPS`) and the appended immutable count table. Separate
+    /// route, workspace and mixer partial buffers are poisoned too, along
+    /// with DSpark raw taps and the prefill packed-feature prefix. Request
+    /// state, KV, mixer tickets and communication state are preserved. A
+    /// drafter's Engram rows may be staged or prefetched
+    /// into scratch before this point, so a DSpark step is poisoned only
+    /// when it prefills alone with prepared gathers, which begin after it.
     #[cfg(feature = "diagnostic-taps")]
-    pub(super) fn poison_prefill_scratch(&self, run: &Run) -> Result<(), BundleAbiError> {
-        use kernel_core::allocation::Traversal;
-        const CHUNK: u64 = 16 << 20;
-        let Some(poisoned) = &self.scratch_poison else {
+    pub(super) fn poison_prefill_scratch(
+        &self,
+        run: &Run,
+        alone: bool,
+    ) -> Result<(), BundleAbiError> {
+        let Some(poison) = &self.scratch_poison else {
             return Ok(());
         };
         let super::Execution::Skip { plan, .. } = &run.execution else {
             return Ok(());
         };
-        if self.prefill_graphs.is_none() || self.dspark.is_some() || !admits(run, plan) {
+        if self.prefill_graphs.is_none() || !admits(run, plan) {
             return Ok(());
         }
-        let members = crate::buffers::REGIONS
+        if self.dspark.is_some() && !(alone && run.execution.prefill_engram().is_some()) {
+            poison.skipped.set(poison.skipped.get() + 1);
+            return Ok(());
+        }
+        for (rank, ((buffers, &(_, _, stream)), &source)) in self
+            .buffers
             .iter()
-            .flat_map(|region| region.members.iter().copied())
-            .collect::<Vec<_>>();
-        let pattern = vec![0xff_u8; CHUNK as usize];
-        for (buffers, &(_, _, stream)) in self.buffers.iter().zip(&self.ranks) {
-            let mut spans = Vec::new();
-            buffers.scratch.visit_named(&mut |name, span| {
-                if members.contains(&name) {
-                    spans.push(*span);
-                }
-            });
+            .zip(&self.ranks)
+            .zip(&poison.sources)
+            .enumerate()
+        {
+            let mut spans = poison_spans(buffers)?;
+            if let Some(device) = &self.dspark {
+                let stored = &device.ranks[rank];
+                spans.push(stored.taps);
+                // Prefill produces this prefix; the decode suffix can hold
+                // staged rows for another phase and is not scratch here.
+                spans.push(
+                    crate::dspark::device::slice(
+                        stored.packed,
+                        0,
+                        u64::from(crate::dspark::device::DECODE_BASE) * device.features.row_bytes(),
+                    )
+                    .map_err(|_| BundleAbiError::InvalidRange("poison prefill features"))?,
+                );
+            }
             for span in spans {
                 let mut at = 0;
                 while at < span.length {
-                    let bytes = (span.length - at).min(CHUNK);
-                    let part = runtime_bundle_abi::DeviceBufferSpanV1::new(
-                        span.buffer,
-                        span.offset + at,
-                        bytes,
-                    );
-                    bundle_runtime::resources::upload_bytes(
-                        &self.services,
+                    let bytes = (span.length - at).min(source.length);
+                    self.services.copy_device_to_device(
                         stream,
-                        part,
-                        &pattern[..bytes as usize],
+                        runtime_bundle_abi::DeviceBufferSpanV1::new(
+                            span.buffer,
+                            span.offset + at,
+                            bytes,
+                        ),
+                        runtime_bundle_abi::DeviceBufferSpanV1::new(
+                            source.buffer,
+                            source.offset,
+                            bytes,
+                        ),
                     )?;
                     at += bytes;
                 }
             }
         }
-        poisoned.set(poisoned.get() + 1);
-        if poisoned.get().is_power_of_two() {
-            self.log(&format!(
-                "prefill scratch poisoned before {} admitted prefills",
-                poisoned.get()
-            ));
-        }
+        poison.poisoned.set(poison.poisoned.get() + 1);
+        self.log(&format!(
+            "prefill scratch poisoned before {} admitted prefills ({} DSpark steps left alone)",
+            poison.poisoned.get(),
+            poison.skipped.get()
+        ));
         Ok(())
     }
+}
+
+/// A diagnostic build's scratch poison: each rank's 0xff source, the
+/// admitted prefills it poisoned and the DSpark steps it left alone.
+#[cfg(feature = "diagnostic-taps")]
+pub(crate) struct ScratchPoison {
+    pub sources: Vec<runtime_bundle_abi::DeviceBufferSpanV1>,
+    pub poisoned: std::cell::Cell<u64>,
+    pub skipped: std::cell::Cell<u64>,
+}
+
+/// Bytes of each rank's poison source; fills copy it in parts.
+#[cfg(feature = "diagnostic-taps")]
+const POISON_SOURCE_BYTES: u64 = 16 << 20;
+
+#[cfg(feature = "diagnostic-taps")]
+impl Instance {
+    /// Allocates and fills each rank's poison source, held with the
+    /// instance's other buffers.
+    pub(in crate::instance) fn arm_scratch_poison(&mut self) -> Result<(), BundleAbiError> {
+        let bytes = vec![0xff_u8; POISON_SOURCE_BYTES as usize];
+        let mut sources = Vec::with_capacity(self.ranks.len());
+        for &(_, pool, stream) in &self.ranks {
+            let span = bundle_runtime::resources::allocate_span(
+                &self.services,
+                pool,
+                stream,
+                POISON_SOURCE_BYTES,
+                &mut self.held,
+            )?;
+            self.services.copy_host_to_device(stream, span, &bytes)?;
+            sources.push(span);
+        }
+        self.scratch_poison = Some(ScratchPoison {
+            sources,
+            poisoned: std::cell::Cell::new(0),
+            skipped: std::cell::Cell::new(0),
+        });
+        Ok(())
+    }
+}
+
+/// The scratch fields a text prefill reads as create-initialized constants:
+/// the one-hot first `pre` and the text bias choice. Drafting may reset the
+/// bias choice; an admitted text prefill does not rewrite it.
+#[cfg(feature = "diagnostic-taps")]
+pub(crate) const POISON_KEEPS: [&str; 2] = ["first_pre", "bias_select"];
+
+/// The scratch spans a poisoned prefill fills: every field but
+/// `POISON_KEEPS` and the immutable count table after `block_live`'s mutable
+/// prefix, which each step uploads, plus separately allocated transient
+/// route, workspace and mixer partial buffers.
+#[cfg(feature = "diagnostic-taps")]
+pub(crate) fn poison_spans(
+    buffers: &crate::buffers::RankBuffers,
+) -> Result<Vec<runtime_bundle_abi::DeviceBufferSpanV1>, BundleAbiError> {
+    use kernel_core::allocation::Traversal;
+    let scratch = &buffers.scratch;
+    let counts = crate::buffers::index_prefill_counts(scratch.block_live)?;
+    let mut spans = Vec::new();
+    scratch.visit_named(&mut |name, span| {
+        if name == "block_live" {
+            spans.push(runtime_bundle_abi::DeviceBufferSpanV1::new(
+                span.buffer,
+                span.offset,
+                counts.offset - span.offset,
+            ));
+        } else if !POISON_KEEPS.contains(&name) {
+            spans.push(*span);
+        }
+    });
+    spans.extend([
+        buffers.sorted_rows,
+        buffers.workspace,
+        buffers.shared_workspace,
+    ]);
+    spans.extend(buffers.mix_partials);
+    // mix_tickets are initialized synchronization state, unlike the
+    // disposable tickets each workspace kernel sequence initializes.
+    Ok(spans)
 }
 
 impl Instance {

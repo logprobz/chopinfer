@@ -1145,7 +1145,7 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
                     .map(|d| (d.request_id, d.tokens.clone()))
                     .collect()
             };
-            let frame = Frame::from_rows(
+            let mut frame = Frame::from_rows(
                 request,
                 kept,
                 if step.items.iter().all(|item| item.prefill) {
@@ -1156,6 +1156,9 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
                 drafts,
                 &rows,
             );
+            if allocated.is_some() {
+                frame.acceptance = Some(emitted.accepted_prefixes.iter().map(Into::into).collect());
+            }
             if let Err(error) = golden.step(&frame, &rows) {
                 if config.diagnostic.is_some() {
                     return Err(error);

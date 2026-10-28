@@ -99,6 +99,32 @@ pub struct RowEvidence {
     pub sample: SampleBits,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AcceptanceEvidence {
+    pub request: u64,
+    pub cycle_epoch: u64,
+    pub verified_drafts: usize,
+    pub accepted_drafts: usize,
+    pub emitted_rows: usize,
+    pub terminal: bool,
+    pub rejected: bool,
+    pub empty_row: Option<usize>,
+}
+impl From<&runtime_engine::AcceptedPrefix> for AcceptanceEvidence {
+    fn from(value: &runtime_engine::AcceptedPrefix) -> Self {
+        Self {
+            request: value.request_id.get(),
+            cycle_epoch: value.cycle_epoch,
+            verified_drafts: value.drafted,
+            accepted_drafts: value.accepted,
+            emitted_rows: value.emitted,
+            terminal: value.terminal,
+            rejected: value.rejected,
+            empty_row: value.empty_row,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Frame {
     pub request: Vec<u8>,
     pub kept: Vec<(u64, usize)>,
@@ -106,6 +132,8 @@ pub struct Frame {
     pub bucket: usize,
     pub drafts: Vec<(u64, Vec<u32>)>,
     pub rows: Vec<RowEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acceptance: Option<Vec<AcceptanceEvidence>>,
 }
 impl Frame {
     pub fn from_rows(
@@ -117,6 +145,7 @@ impl Frame {
     ) -> Self {
         Self {
             request,
+            acceptance: None,
             kept,
             bucket,
             drafts,
@@ -322,6 +351,7 @@ impl Golden {
                 || expected.kept != frame.kept
                 || expected.bucket != frame.bucket
                 || expected.drafts != frame.drafts
+                || expected.acceptance != frame.acceptance
             {
                 self.first = Some(schedule_difference(&expected, frame, self.steps));
                 return Err(
@@ -454,8 +484,12 @@ fn scalar(bytes: &[u8]) -> Value {
 }
 
 fn schedule(frame: &Frame) -> Value {
-    json!({"request_sha256":runtime_weights::sha256_bytes(&frame.request),
-        "kept":frame.kept,"drafts":frame.drafts,"calculated_bucket":frame.bucket})
+    let mut value = json!({"request_sha256":runtime_weights::sha256_bytes(&frame.request),
+        "kept":frame.kept,"drafts":frame.drafts,"calculated_bucket":frame.bucket});
+    if let Some(acceptance) = &frame.acceptance {
+        value["acceptance"] = json!(acceptance);
+    }
+    value
 }
 
 fn schedule_difference(expected: &Frame, observed: &Frame, step: usize) -> Value {

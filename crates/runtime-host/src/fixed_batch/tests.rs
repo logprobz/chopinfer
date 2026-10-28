@@ -970,3 +970,80 @@ fn prefill_only_traces_preserve_anchors_and_bound_work() {
         assert!(invalid.validate().is_err());
     }
 }
+
+#[test]
+fn allocated_evidence_compares_each_request_even_when_totals_and_kept_match() {
+    use super::record::AcceptanceEvidence;
+    let scratch = Scratch::new();
+    let baseline = scratch.0.join("baseline");
+    let identity = json!({"trace":1});
+    let data = rows();
+    let legacy = frame(&data);
+    let encoded = serde_json::to_value(&legacy).unwrap();
+    assert!(encoded.get("acceptance").is_none());
+    assert_eq!(serde_json::from_value::<Frame>(encoded).unwrap(), legacy);
+    let mut original = legacy;
+    original.kept = vec![(1, 1), (2, 1)];
+    original.acceptance = Some(
+        [1, 3]
+            .into_iter()
+            .enumerate()
+            .map(|(i, drafted)| {
+                AcceptanceEvidence::from(&runtime_engine::AcceptedPrefix {
+                    request_id: RequestId::new(i as u64 + 1),
+                    cycle_epoch: 2,
+                    drafted,
+                    accepted: 0,
+                    emitted: 1,
+                    terminal: false,
+                    rejected: true,
+                    empty_row: None,
+                })
+            })
+            .collect(),
+    );
+    let mut golden = Golden::open(&baseline, None, &identity).unwrap();
+    golden.step(&original, &data).unwrap();
+    golden.finish(1).unwrap();
+    std::fs::write(baseline.join("receipt.json"), r#"{"passed":true}"#).unwrap();
+    for case in 0..8 {
+        let mut actual = original.clone();
+        let evidence = actual.acceptance.as_mut().unwrap();
+        match case {
+            0 => {
+                evidence[0].verified_drafts = 2;
+                evidence[1].verified_drafts = 2;
+            }
+            1 => evidence[0].accepted_drafts = 1,
+            2 => evidence[0].emitted_rows = 2,
+            3 => evidence[0].terminal = true,
+            4 => evidence[0].rejected = false,
+            5 => evidence[0].empty_row = Some(0),
+            6 => evidence[0].request = 3,
+            _ => actual.acceptance = None,
+        }
+        assert_eq!(actual.kept, original.kept);
+        if case == 0 {
+            assert_eq!(
+                actual
+                    .acceptance
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .map(|a| a.verified_drafts)
+                    .sum::<usize>(),
+                4
+            );
+        }
+        let mut compare = Golden::open(
+            &scratch.0.join(format!("arm{case}")),
+            Some(&baseline),
+            &identity,
+        )
+        .unwrap();
+        assert!(
+            compare.step(&actual, &data).is_err(),
+            "acceptance drift {case} escaped comparison"
+        );
+    }
+}

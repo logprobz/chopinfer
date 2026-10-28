@@ -1,10 +1,13 @@
 //! `retained_bytes` is an upper bound on what grammars really keep, checked
-//! against the allocator. One test, since the live-byte count is global.
+//! against the allocator. Only the measuring thread's allocations count: the
+//! test harness's main thread keeps allocating after it spawns the test
+//! thread, and a loaded host can delay that into a measured window.
 // SAFETY-REVIEWED: the only unsafe code is the counting allocator below,
 // which forwards to the system allocator.
 #![allow(unsafe_code)]
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 
@@ -16,6 +19,15 @@ use runtime_grammar::{
 struct Counting;
 
 static LIVE: AtomicIsize = AtomicIsize::new(0);
+
+thread_local! {
+    // Const-initialized with no destructor, so reading it never allocates.
+    static MEASURED: Cell<bool> = const { Cell::new(false) };
+}
+
+fn measured() -> bool {
+    MEASURED.try_with(Cell::get).unwrap_or(false)
+}
 
 // SAFETY-REVIEWED: every method forwards to the system allocator with the
 // caller's pointer and layout unchanged and only updates a counter.
@@ -36,7 +48,9 @@ unsafe impl GlobalAlloc for Counting {
 
     // SAFETY-REVIEWED: forwards a pointer this allocator returned.
     unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-        LIVE.fetch_sub(layout.size() as isize, Ordering::SeqCst);
+        if measured() {
+            LIVE.fetch_sub(layout.size() as isize, Ordering::SeqCst);
+        }
         // SAFETY-REVIEWED: the pointer came from System with this layout.
         unsafe { System.dealloc(pointer, layout) }
     }
@@ -50,7 +64,7 @@ unsafe impl GlobalAlloc for Counting {
 }
 
 fn count(pointer: *mut u8, bytes: isize) -> *mut u8 {
-    if !pointer.is_null() {
+    if !pointer.is_null() && measured() {
         LIVE.fetch_add(bytes, Ordering::SeqCst);
     }
     pointer
@@ -65,6 +79,7 @@ fn live() -> isize {
 
 #[test]
 fn retained_bytes_bound_what_the_allocator_keeps() {
+    MEASURED.with(|measured| measured.set(true));
     let tokens = (0..256_u16)
         .map(|byte| VocabularyToken {
             bytes: vec![byte as u8],

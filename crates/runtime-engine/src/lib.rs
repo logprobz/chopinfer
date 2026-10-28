@@ -182,6 +182,27 @@ impl EngineConfig {
         self
     }
 
+    /// Candidate demand-adaptive TBT cap
+    /// ([`runtime_scheduler::SchedulerConfig::with_adaptive_prefill_budget`]).
+    #[must_use]
+    pub const fn with_adaptive_prefill_budget(mut self, enabled: bool) -> Self {
+        self.scheduler = self.scheduler.with_adaptive_prefill_budget(enabled);
+        self
+    }
+
+    /// Whether the TBT cap is sized from demand: the candidate and the TBT
+    /// budget together.
+    #[must_use]
+    pub const fn adaptive_prefill_budget(self) -> bool {
+        self.scheduler.adaptive_prefill_budget()
+    }
+
+    /// The bundle's guaranteed prefill grid, when it declares one.
+    #[must_use]
+    pub const fn guaranteed_prefill_chunks(self) -> Option<usize> {
+        self.scheduler.guaranteed_prefill_chunks()
+    }
+
     /// Enables the default-off aligned short-prompt capture candidate.
     #[must_use]
     pub const fn with_aligned_prompt_capture(mut self, enabled: bool) -> Self {

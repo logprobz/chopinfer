@@ -25,19 +25,51 @@ fn sweep(profile: &str) {
     }
     ENABLED.set(true);
     let _reset = Reset;
-    conformance::route_guard::sweep::<Served>(
-        profile,
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
-        env!("CARGO_PKG_NAME"),
+    conformance::route_guard::sweep::<Served>(profile, &allowlist(), env!("CARGO_PKG_NAME"));
+}
+
+// Keep the default-off allowances in the package's production allowlist.
+// Candidate sweeps remove exactly the two fallbacks the option eliminates.
+fn allowlist() -> String {
+    let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml"));
+    let mut removed = 0;
+    let result = source
+        .split("[[allow]]")
+        .filter(|section| {
+            let remove = section
+                .lines()
+                .any(|line| line.trim() == "entry = \"engram/sync/prefill_schedule\"");
+            removed += usize::from(remove);
+            !remove
+        })
+        .collect::<Vec<_>>()
+        .join("[[allow]]");
+    assert_eq!(
+        removed, 2,
+        "candidate must remove only both DMA fallback allowances"
+    );
+    result
+}
+
+#[test]
+fn candidate_allowlist_keeps_other_entries() {
+    let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml"));
+    let candidate = allowlist();
+    assert!(!candidate.contains("engram/sync/prefill_schedule"));
+    assert_eq!(
+        candidate.matches("[[allow]]").count() + 2,
+        source.matches("[[allow]]").count()
     );
 }
 
-#[test]
-fn route_sweep_dma_engram_ar() {
-    sweep("tp4-ar");
-}
+mod route_sweep {
+    #[test]
+    fn dma_engram_ar() {
+        super::sweep("tp4-ar");
+    }
 
-#[test]
-fn route_sweep_dma_engram_dspark() {
-    sweep("tp4-dspark");
+    #[test]
+    fn dma_engram_dspark() {
+        super::sweep("tp4-dspark");
+    }
 }

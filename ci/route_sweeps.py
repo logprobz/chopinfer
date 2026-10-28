@@ -29,7 +29,13 @@ def check(name, output, code, elapsed, tier):
     if code:
         raise RuntimeError(f"{name}: route sweep exited {code}")
     count = re.search(r"test result: ok\. ([1-9][0-9]*) passed; 0 failed; 0 ignored;", output)
-    if count is None or "cases," not in output or "peak_rss_bytes=" not in output:
+    if count is None:
+        raise RuntimeError(f"{name}: missing executed route tests")
+    if tier == "quick" and re.search(r"^\S+: quick tier represented by \S+$", output, re.MULTILINE):
+        # The shared envelope explicitly delegates equivalent quick profiles.
+        # run() still requires real case/RSS evidence from this model.
+        return int(count[1])
+    if "cases," not in output or "peak_rss_bytes=" not in output:
         raise RuntimeError(f"{name}: missing executed route cases or peak RSS evidence")
     if tier == "cpu" and any(field not in output for field in (
             '"dense_rotation_period":', '"boundary_rows":', '"dense_rows":')):
@@ -52,34 +58,60 @@ def run(binaries, tier, threads=8):
     def model(item):
         name, (binary, cwd, env) = item
         seed = dense_seed(env)
-        reproduce = ["env", f"CHOPINFER_ROUTE_SWEEP={tier}", f"CHOPINFER_ROUTE_SEED={seed}",
-                     "bash", "tools/dev/heavy.sh", "cargo", "test", "--locked", "--offline",
-                     "-p", name, "--lib", "route_sweep::", "--", "--nocapture"]
-        print(f"route seed: model={name} tier={tier} seed={seed} reproduce={shlex.join(reproduce)}", flush=True)
-        before = time.monotonic()
+        child_env = {**env, "CHOPINFER_ROUTE_SWEEP": tier, "CHOPINFER_ROUTE_SEED": str(seed)}
         try:
-            done = subprocess.run([binary, "route_sweep::", "--nocapture", "--test-threads", str(threads)],
-                                  cwd=cwd, env={**env, "CHOPINFER_ROUTE_SWEEP": tier, "CHOPINFER_ROUTE_SEED": str(seed)},
-                                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                  text=True, timeout=600, check=False)
-            elapsed = time.monotonic() - before
-            return name, elapsed, done.stdout, done.returncode
-        except subprocess.TimeoutExpired as error:
-            output = error.stdout or b""
-            if isinstance(output, bytes):
-                output = output.decode(errors="replace")
-            return name, time.monotonic() - before, output, 124
+            listing = subprocess.check_output([binary, "route_sweep::", "--list"],
+                                              cwd=cwd, env=child_env, text=True, timeout=60)
+            profiles = [line.removesuffix(": test") for line in listing.splitlines()
+                        if line.endswith(": test") and "route_sweep::" in line]
+            if not profiles or len(set(profiles)) != len(profiles):
+                raise ValueError("missing or duplicate route profile tests")
+        except (subprocess.SubprocessError, ValueError) as error:
+            return [(name, 0, str(error), 1)]
+        results = []
+        # VmHWM is a process lifetime high-water mark. Isolate each profile so
+        # one completed sweep cannot consume another profile's memory budget.
+        for profile in profiles:
+            reproduce = ["env", f"CHOPINFER_ROUTE_SWEEP={tier}", f"CHOPINFER_ROUTE_SEED={seed}",
+                         "bash", "tools/dev/heavy.sh", "cargo", "test", "--locked", "--offline",
+                         "-p", name, "--lib", profile, "--", "--exact", "--nocapture"]
+            print(f"route seed: model={name} tier={tier} seed={seed} reproduce={shlex.join(reproduce)}", flush=True)
+            before = time.monotonic()
+            try:
+                done = subprocess.run([binary, profile, "--exact", "--nocapture", "--test-threads", str(threads)],
+                                      cwd=cwd, env=child_env, stdin=subprocess.DEVNULL,
+                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                      text=True, timeout=600, check=False)
+                results.append((f"{name}/{profile}", time.monotonic() - before, done.stdout, done.returncode))
+            except subprocess.TimeoutExpired as error:
+                output = error.stdout or b""
+                if isinstance(output, bytes):
+                    output = output.decode(errors="replace")
+                results.append((f"{name}/{profile}", time.monotonic() - before, output, 124))
+        if not any(code == 0 and "cases," in output and "peak_rss_bytes=" in output
+                   for _, _, output, code in results):
+            results.append((name, 0, "model has no executed route cases or peak RSS evidence", 1))
+        return results
 
     failed = False
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        for name, elapsed, output, code in pool.map(model, sorted(binaries.items())):
-            print(f"==> {name} {tier} route envelope ({elapsed:.3f}s)\n{output}", flush=True)
-            try:
-                count = check(name, output, code, elapsed, tier)
-                print(f"route budget: model={name} tier={tier} tests={count} elapsed_seconds={elapsed:.3f}", flush=True)
-            except RuntimeError as error:
-                print(error, file=sys.stderr, flush=True)
-                failed = True
+        for results in pool.map(model, sorted(binaries.items())):
+            package = results[0][0].partition("/")[0]
+            model_failed, tests, total = False, 0, 0
+            for name, elapsed, output, code in results:
+                profile = name.partition("/")[2]
+                print(f"==> {package} {tier} route envelope ({elapsed:.3f}s) profile={profile}\n{output}", flush=True)
+                total += elapsed
+                try:
+                    count = check(name, output, code, elapsed, tier)
+                    tests += count
+                    print(f"route profile budget: model={package} profile={profile} tier={tier} tests={count} elapsed_seconds={elapsed:.3f}", flush=True)
+                except RuntimeError as error:
+                    print(error, file=sys.stderr, flush=True)
+                    model_failed = failed = True
+            # The inventory's package verdict covers every profile together.
+            if not model_failed:
+                print(f"route budget: model={package} tier={tier} tests={tests} elapsed_seconds={total:.3f}", flush=True)
     print(f"route envelopes: tier={tier} models={len(binaries)} parallel_models={workers} "
           f"added_wall_seconds={time.monotonic() - started:.3f}", flush=True)
     return int(failed)

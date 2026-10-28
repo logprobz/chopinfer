@@ -806,17 +806,64 @@ class Qualification(unittest.TestCase):
 
 
 class RouteSweeps(unittest.TestCase):
+    def test_each_profile_has_a_separate_process_and_budget_check(self):
+        output = "12 cases, 0.1s\npeak_rss_bytes=1024\ntest result: ok. 1 passed; 0 failed; 0 ignored;"
+        names = ["model::route_sweep::default", "candidate::route_sweep::enabled"]
+        listing = "\n".join(name + ": test" for name in names)
+        binaries = {"bundle": ("fixture", ".", {"CHOPINFER_ROUTE_SEED": "41"})}
+        with patch.object(route_sweeps.subprocess, "check_output", return_value=listing), \
+                patch.object(route_sweeps.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, output)) as run, \
+                patch.object(route_sweeps, "check", wraps=route_sweeps.check) as check, \
+                patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(route_sweeps.run(binaries, "quick"), 0)
+        self.assertEqual([call.args[0][1] for call in run.call_args_list], names)
+        self.assertTrue(all("--exact" in call.args[0] for call in run.call_args_list))
+        self.assertEqual(check.call_count, len(names))
+
     def test_explicit_dense_seed_reaches_every_child(self):
         output = ('12 cases, 0.1s\npeak_rss_bytes=1024\n'
                   '{"dense_rotation_period": 2, "boundary_rows": [1, 2], "dense_rows": [6]}\n'
                   'test result: ok. 1 passed; 0 failed; 0 ignored;')
         env = {"CHOPINFER_ROUTE_SEED": "41"}
         binaries = {name: ("fixture", ".", env) for name in ("first", "second")}
-        with patch.object(route_sweeps.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, output)) as run, \
+        with patch.object(route_sweeps.subprocess, "check_output", return_value="route_sweep::profile: test"), \
+                patch.object(route_sweeps.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, output)) as run, \
                 patch("sys.stdout", new_callable=io.StringIO):
             self.assertEqual(route_sweeps.run(binaries, "cpu"), 0)
         self.assertEqual([call.kwargs["env"]["CHOPINFER_ROUTE_SEED"] for call in run.call_args_list], ["41", "41"])
         self.assertEqual(env, {"CHOPINFER_ROUTE_SEED": "41"})
+
+    def test_profile_isolation_keeps_inventory_package_verdict(self):
+        names = ["route_sweep::default", "candidate::route_sweep::enabled"]
+        listing = "\n".join(name + ": test" for name in names)
+        binaries = {"bundle-sample": ("fixture", ".", {"CHOPINFER_ROUTE_SEED": "41"})}
+        for failed in [False, True]:
+            outputs = [subprocess.CompletedProcess([], 101 if failed and i == 1 else 0,
+                f"sample-{i}: route sweep Quick, seed=41, 12 cases, 0.1s\npeak_rss_bytes=1024\n"
+                f"test {name} ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored;")
+                for i, name in enumerate(names)]
+            with patch.object(route_sweeps.subprocess, "check_output", return_value=listing), \
+                    patch.object(route_sweeps.subprocess, "run", side_effect=outputs), \
+                    patch("sys.stdout", new_callable=io.StringIO) as output, patch("sys.stderr", new_callable=io.StringIO):
+                self.assertEqual(route_sweeps.run(binaries, "quick"), int(failed))
+            cases, routes, _ = test_inventory.log_records("portable-test", output.getvalue())
+            self.assertEqual(len(cases), 2)
+            self.assertEqual(len(routes), 2)
+            self.assertTrue(all(row["model"] == "bundle-sample" for row in routes))
+            self.assertEqual("route budget: model=bundle-sample " in output.getvalue(), not failed)
+            if not failed:
+                self.assertTrue(all(row["outcome"] == "passed" for row in routes))
+
+    def test_quick_alias_needs_an_executed_representative(self):
+        alias = "alias: quick tier represented by default\ntest result: ok. 1 passed; 0 failed; 0 ignored;"
+        cases = "12 cases, 0.1s\npeak_rss_bytes=1024\ntest result: ok. 1 passed; 0 failed; 0 ignored;"
+        listing = "route_sweep::default: test\nroute_sweep::alias: test"
+        binaries = {"bundle": ("fixture", ".", {})}
+        for outputs, expected in [([cases, alias], 0), ([alias, alias], 1)]:
+            with patch.object(route_sweeps.subprocess, "check_output", return_value=listing), \
+                    patch.object(route_sweeps.subprocess, "run", side_effect=[subprocess.CompletedProcess([], 0, s) for s in outputs]), \
+                    patch("sys.stdout", new_callable=io.StringIO), patch("sys.stderr", new_callable=io.StringIO):
+                self.assertEqual(route_sweeps.run(binaries, "quick"), expected)
 
     def test_new_model_is_discovered_from_its_required_allowlist(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -845,7 +892,10 @@ class RouteSweeps(unittest.TestCase):
             for name in ("first", "second"):
                 binary = root / name
                 binary.write_text(f"#!{sys.executable}\n" + textwrap.dedent('''\
-                    import pathlib, time
+                    import pathlib, sys, time
+                    if "--list" in sys.argv:
+                        print("route_sweep::profile: test")
+                        raise SystemExit(0)
                     root = pathlib.Path(__file__).parent
                     pathlib.Path(__file__ + ".ready").touch()
                     end = time.monotonic() + 5

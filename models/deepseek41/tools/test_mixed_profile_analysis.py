@@ -5,10 +5,22 @@ import struct
 import sqlite3
 import tempfile
 
-from mixed_profile_analysis import analyze, clock_epoch, exclusive, expert_census, family, moe_payload, phase_widths
+from mixed_profile_analysis import analyze, clock_epoch, cohort_readiness, exclusive, expert_census, family, moe_payload, phase_widths
 
 
 class MixedProfileTest(unittest.TestCase):
+    def test_short_cohorts_cannot_pass_readiness_after_one_decoder_drains(self):
+        progress = [{"emitted": 1, "finished": False} for _ in range(8)]
+        progress[0] = {"emitted": 32, "finished": True}
+        with self.assertRaisesRegex(ValueError, "drained"):
+            cohort_readiness(progress, 8, 32)
+        progress[0] = {"emitted": 31, "finished": False}
+        with self.assertRaisesRegex(ValueError, "admission margin"):
+            cohort_readiness(progress, 8, 32)
+        self.assertEqual(cohort_readiness(progress, 8, 256)["minimum_remaining_tokens"], 225)
+        with self.assertRaisesRegex(ValueError, "every decoder"):
+            cohort_readiness(progress[:-1], 8, 256)
+
     def test_overlapping_kernels_do_not_charge_gaps_or_count_overlap_twice(self):
         rows = [{"start": 10, "end": 60, "name": "chop_moe_native_gateup_x"},
                 {"start": 20, "end": 40, "name": "chop_comm_x"},

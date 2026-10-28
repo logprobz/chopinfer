@@ -114,6 +114,26 @@ def phase_widths(step):
     return {key: step.get(key, 0) for key in ("prefill_tokens", "decode_rows", "verify_rows")}
 
 
+def cohort_readiness(progress, count, outputs, minimum_remaining=64):
+    """Require every decoder to have emitted, with room for request admission.
+
+    This client observation is a precondition. The engine trace must still
+    prove that the requested concurrency survived into the mixed step.
+    """
+    if len(progress) != count or count < 1:
+        raise ValueError("not every decoder emitted a token")
+    remaining = []
+    for row in progress:
+        emitted = row["emitted"]
+        if not 1 <= emitted <= outputs or row.get("finished", False):
+            raise ValueError("decoder drained before cohort readiness")
+        remaining.append(outputs - emitted)
+    if min(remaining) < minimum_remaining:
+        raise ValueError("decoder output budget leaves too little admission margin")
+    return {"minimum_remaining_tokens": min(remaining),
+            "required_remaining_tokens": minimum_remaining, "decoders": count}
+
+
 def moe_payload(rows, distinct_experts=None):
     """TP4 Flash's logical selected weight footprint and arithmetic, per layer.
 

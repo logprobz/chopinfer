@@ -70,8 +70,18 @@ coding and chat prompts with 64 output tokens measured AR request throughput
 the same prompts, both arms on the anchor arm's 316,922 KV pages per rank,
 measured 5.6% higher request throughput at C4 (2.9% and 8.4% in its two
 pairs), neutral at C1 and C2. With DSpark the eight spares cost 1,178 KV
-pages per rank (0.37%). Adoption and stateful replay acceptance remain
-pending.
+pages per rank (0.37%).
+
+A stateful replay on the same date found a different C1 tradeoff: four
+canonical sessions of five turns, 64 output tokens at temperature 1, and
+32,768 KV pages per rank in both arms. Each profile's 40 matched turn pairs
+had identical output token IDs, streamed logprobs and cache hits. Cache
+reuse stayed at about 74%. Under the paired ABBA rule, output throughput
+regressed by 2.9% in AR and 5.7% in DSpark. AR TTFT p50 rose from 197-200 ms
+to 231 ms; DSpark rose from 202 ms to 241-242 ms. Both profiles also had
+resolved TTFT p95 regressions. These short-turn C1 results reject default
+adoption despite the earlier cold-prompt gains. The candidate stays off;
+concurrent and generated-history stateful acceptance remain unproven.
 
 A shorter grid hit does not suppress a longer observed shared-prefix cut,
 even when the request resumes within its final chunk. The next request can

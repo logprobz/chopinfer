@@ -1736,6 +1736,14 @@ impl Instance {
             } else {
                 self.logits_views(runs)?
             };
+            // Device results publish the verify logits without a host view:
+            // the diagnostic capture reads them here. A compact allocated
+            // step has no full-row view to read.
+            #[cfg(feature = "diagnostic-taps")]
+            self.capture_profile_logits(&views).map_err(|error| {
+                self.log(&error);
+                BundleAbiError::Status(BundleStatusV1::HostError)
+            })?;
             self.submit_dspark_results(sink, &views).map_err(|error| {
                 self.log(&error);
                 BundleAbiError::Status(BundleStatusV1::BundleError)

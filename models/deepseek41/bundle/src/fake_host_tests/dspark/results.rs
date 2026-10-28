@@ -444,3 +444,66 @@ fn unsupported_metadata_keeps_legacy_draft_results() {
     instance.cancel().unwrap();
     instance.destroy().unwrap();
 }
+
+/// Diagnostic taps read the logits of a device-results verify step, which
+/// reach the host as no view, as they read host-view logits: the capture
+/// holds a dump of the verify step.
+#[cfg(feature = "diagnostic-taps")]
+#[test]
+fn device_result_logits_reach_the_diagnostic_capture() {
+    let root = std::path::PathBuf::from(std::env::var_os("CHOPINFER_DATA").unwrap())
+        .join("deepseek41-tests")
+        .join(format!("dspark-device-logits-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let (host, mut instance) = create_with_options(
+        shape,
+        1,
+        32,
+        &[(
+            model_deepseek41_contract::prefill_profile::CHUNK,
+            8192.into(),
+        )],
+    );
+    crate::instance::set_dspark_state_capture_root_for_test(instance.handle(), Some(root.clone()));
+    std::fs::write(root.join("enabled"), []).unwrap();
+    execute(
+        &mut instance,
+        &host,
+        &super::super::prompt(1, 0, 0, 3, true),
+    );
+    instance.commit().unwrap();
+    let dumps = || {
+        std::fs::read_dir(root.join("logits"))
+            .map(|entries| {
+                entries
+                    .map(|entry| entry.unwrap().path())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+    let before = dumps();
+    let mut sink = DeviceSink {
+        host: Rc::clone(&host),
+        metadata: Some(metadata(1, 5, 1)),
+        legacy: Sink::default(),
+        drafts: Vec::new(),
+        samples: Vec::new(),
+        completion: None,
+    };
+    instance.execute(&batch(1, 3, 5), &mut sink).unwrap();
+    assert!(sink.completion.is_some());
+    let fresh: Vec<_> = dumps()
+        .into_iter()
+        .filter(|path| !before.contains(path))
+        .collect();
+    assert!(!fresh.is_empty(), "no verify logits dump");
+    for path in fresh {
+        let bytes = std::fs::metadata(&path).unwrap().len();
+        assert!(bytes > 0 && bytes % 4 == 0, "{path:?}: {bytes} bytes");
+    }
+    instance.commit_accepted(&[kept(1, 1)]).unwrap();
+    instance.retire_request(1).unwrap();
+    instance.destroy().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}

@@ -1218,7 +1218,7 @@ fn a_failed_restore_with_a_granule_captures_on_its_multiples() {
 }
 
 #[test]
-fn continuation_chunks_keep_their_anchor_cut_with_spares_available() {
+fn prompt_ending_chunks_run_past_their_anchor_within_the_anchor_budget() {
     let mut scheduler = Scheduler::new(
         SchedulerConfig::new(4, 64, 64, 16, 1)
             .unwrap()
@@ -1280,11 +1280,12 @@ fn continuation_chunks_keep_their_anchor_cut_with_spares_available() {
             })
             .collect::<Vec<_>>()
     };
-    // Both requests already ran earlier chunks, so available anchor spares
-    // cannot fuse either continuation across the anchor at 40.
+    // The first request's last chunk runs past its anchor at 40 to the
+    // prompt end and keeps its state there; with one anchor item a step,
+    // the second, in the same steps, ends a chunk at 40 instead.
     assert_eq!(
         prefill(1),
-        [(16, 0, None), (16, 16, None), (8, 32, None), (5, 40, None)]
+        [(16, 0, None), (16, 16, None), (13, 32, Some(40))]
     );
     assert_eq!(
         prefill(2),
@@ -1305,8 +1306,8 @@ fn continuation_chunks_keep_their_anchor_cut_with_spares_available() {
 /// An anchor item goes only to a chunk that reaches its prompt-end anchor
 /// in this step: two prompts that stop first at the end of the blocks an
 /// earlier prompt shared (32) keep none, and the third, which only has its
-/// anchor (40), runs past it with one of the two. The continuations keep
-/// their ordinary anchor cuts even though an anchor spare is available.
+/// anchor (40), runs past it with one of the two. Their next chunks then run
+/// past their own anchors.
 #[test]
 fn only_a_chunk_that_reaches_its_anchor_takes_an_anchor_item() {
     let mut scheduler = Scheduler::new(
@@ -1336,7 +1337,7 @@ fn only_a_chunk_that_reaches_its_anchor_takes_an_anchor_item() {
     shared(4, 500);
     submit(&mut scheduler, 5, &prompt(45, 2000), 1);
     let mut chunks = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..2 {
         let batch = scheduler.next_batch().unwrap().unwrap();
         let outcomes = batch
             .items()
@@ -1360,11 +1361,9 @@ fn only_a_chunk_that_reaches_its_anchor_takes_an_anchor_item() {
         chunks,
         [
             (3, BatchPhase::Prefill { tokens: 32 }, None),
-            (3, BatchPhase::Prefill { tokens: 8 }, None),
-            (3, BatchPhase::Prefill { tokens: 5 }, None),
+            (3, BatchPhase::Prefill { tokens: 13 }, Some(40)),
             (4, BatchPhase::Prefill { tokens: 32 }, None),
-            (4, BatchPhase::Prefill { tokens: 8 }, None),
-            (4, BatchPhase::Prefill { tokens: 5 }, None),
+            (4, BatchPhase::Prefill { tokens: 13 }, Some(40)),
             (5, BatchPhase::Prefill { tokens: 45 }, Some(40)),
         ]
     );
@@ -1404,5 +1403,55 @@ fn ancestry_candidate_reaches_captures_and_abandonment() {
             scheduler.kv_metrics().snapshot().prefix_anchors_by_class,
             metrics.prefix_anchors_by_class
         );
+    }
+}
+
+#[test]
+fn manifest_anchor_allowances_keep_restored_warm_turns_fused() {
+    for anchors in [2, 16] {
+        let config = SchedulerConfig::new(16, 64, 64, 64, 1)
+            .unwrap()
+            .with_prefill_granule(8)
+            .unwrap()
+            .with_anchor_items(anchors)
+            .with_prefix_cache(STATE_PAGES);
+        let mut scheduler = Scheduler::new(config, KvGeometry::new(4, 128).unwrap()).unwrap();
+        submit(&mut scheduler, 1, &prompt(16, 0), 1);
+        let (_, captures) = step(&mut scheduler, |_| true);
+        capture_all(&mut scheduler, &captures);
+        submit(&mut scheduler, 2, &prompt(31, 0), 1);
+        scheduler.admit().unwrap();
+        assert_eq!(scheduler.cached_tokens(RequestId::new(2)).unwrap(), 16);
+        scheduler
+            .complete_prefix_restore(RequestId::new(2))
+            .unwrap();
+        let batch = scheduler.next_batch().unwrap().unwrap();
+        let [item] = batch.items() else {
+            panic!("one warm request")
+        };
+        assert_eq!(batch.kv_plan().appends()[0].previous_tokens(), 16);
+        assert_eq!(item.phase(), BatchPhase::Prefill { tokens: 15 });
+        assert_eq!(item.anchor_tokens(), Some(24));
+        scheduler
+            .commit_batch(
+                batch.id(),
+                &[BatchOutcome::success(
+                    item.request_id(),
+                    item.phase(),
+                    1,
+                    true,
+                )],
+            )
+            .unwrap();
+        let captures = scheduler.take_prefix_captures();
+        assert_eq!(
+            captures
+                .iter()
+                .map(PrefixCaptureV1::tokens)
+                .collect::<Vec<_>>(),
+            [24]
+        );
+        capture_all(&mut scheduler, &captures);
+        scheduler.audit().unwrap();
     }
 }

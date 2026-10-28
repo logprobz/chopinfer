@@ -286,6 +286,32 @@ fn a_failed_capture_end_leaves_the_stream_in_the_state_the_device_reports() {
     }
 }
 
+/// A refused capture start leaves the stream free: it synchronizes,
+/// captures again and is released.
+#[test]
+fn a_refused_capture_start_leaves_the_stream_free() {
+    let (table, backend) = table();
+    let host = table.caller();
+    let context = host.select_context(0, 0).unwrap();
+    let stream = host.create_stream(context, 0).unwrap();
+    backend.with_device_mut(|device| device.refuse_after(FakeRefusalV1::BeginGraphCapture, 0));
+    assert_eq!(
+        status(host.begin_graph_capture(stream).unwrap_err()),
+        BundleStatusV1::HostError
+    );
+    assert_eq!(
+        status(host.end_graph_capture(stream).unwrap_err()),
+        BundleStatusV1::InvalidState
+    );
+    host.synchronize_stream(stream).unwrap();
+    host.begin_graph_capture(stream).unwrap();
+    let graph = host.end_graph_capture(stream).unwrap();
+    host.release_graph(graph).unwrap();
+    host.release_stream(stream).unwrap();
+    host.release_context(context).unwrap();
+    assert_eq!(backend.live_resource_count(), 0);
+}
+
 #[test]
 fn a_bundle_round_trips_bytes_through_its_own_handles() {
     let (table, backend) = table();

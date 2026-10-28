@@ -62,6 +62,8 @@ pub enum FakeRefusalV1 {
     ReleaseDeviceBuffer,
     ReleasePeerAccess,
     ReleaseStream,
+    /// The start of a capture, refused before the stream captures.
+    BeginGraphCapture,
     /// The end of a capture, refused before the capture ends.
     EndGraphCapture,
     /// The instantiation of a graph whose capture already ended.
@@ -1419,7 +1421,8 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
     }
 
     fn begin_graph_capture(&mut self, stream: DeviceObjectV1) -> HostDeviceResultV1<()> {
-        self.require(stream, FakeObjectKindV1::Stream).map(|_| ())
+        self.require(stream, FakeObjectKindV1::Stream)?;
+        self.check(FakeRefusalV1::BeginGraphCapture)
     }
 
     fn end_graph_capture(

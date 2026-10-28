@@ -35,10 +35,11 @@ use std::collections::VecDeque;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::ops::Range;
 
-use runtime_bundle_abi::{BundleAbiError, BundleStreamHandleV1, HostServicesV1, KernelArgumentV1};
+use kernel_core::contract::{Argument, Validate};
+use runtime_bundle_abi::{BundleAbiError, BundleStreamHandleV1, HostServicesV1};
 
 use super::{GraphCache, GraphKey, GraphReservation};
-use crate::dispatch::{self, DispatchError};
+use crate::dispatch::{self, BufferBindings, DispatchError};
 use crate::geometry::BundleGeometry;
 use crate::pipeline::{Collectives, PreparedLaunch, Unit};
 
@@ -51,73 +52,124 @@ pub struct Fingerprint {
     pub digest: [u64; 2],
 }
 
-/// The fingerprint of `launches`; a launch the host would refuse to
-/// resolve has none.
-pub fn fingerprint(launches: &[PreparedLaunch]) -> Result<Fingerprint, DispatchError> {
-    // Two digests of the same words with distinct leading tags: a key holds
-    // 128 bits, so distinct programs do not collide in practice.
-    let mut digests = [DefaultHasher::new(), DefaultHasher::new()];
-    for (tag, digest) in digests.iter_mut().enumerate() {
-        tag.hash(digest);
+/// Two digests of the same words: SipHash and a multiply-rotate word mix,
+/// so a key holds 128 bits and distinct programs do not collide in
+/// practice, at about the cost of one SipHash pass.
+struct Digests {
+    sip: DefaultHasher,
+    mix: u64,
+}
+
+impl Digests {
+    fn mix(&mut self, word: u64) {
+        self.mix = (self.mix ^ word)
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+            .rotate_left(29);
     }
+}
+
+impl Hasher for Digests {
+    fn write(&mut self, bytes: &[u8]) {
+        self.sip.write(bytes);
+        let mut chunks = bytes.chunks_exact(8);
+        for chunk in &mut chunks {
+            self.mix(u64::from_le_bytes(chunk.try_into().expect("eight bytes")));
+        }
+        let mut last = [0; 8];
+        let rest = chunks.remainder();
+        last[..rest.len()].copy_from_slice(rest);
+        self.mix(u64::from_le_bytes(last) ^ ((rest.len() as u64) << 59));
+    }
+
+    fn finish(&self) -> u64 {
+        self.sip.finish()
+    }
+}
+
+/// The fingerprint of `launches`; a launch the host would refuse to
+/// resolve has none. Arguments hash as the host resolves them, each buffer
+/// as its view, without building the resolved argument lists.
+pub fn fingerprint(launches: &[PreparedLaunch]) -> Result<Fingerprint, DispatchError> {
+    let mut digests = Digests {
+        sip: DefaultHasher::new(),
+        mix: 0x243f_6a88_85a3_08d3,
+    };
     for launch in launches {
         let config = dispatch::launch_config(launch.plan)?;
-        let arguments = dispatch::arguments(&launch.arguments, &launch.bindings)?;
-        for digest in &mut digests {
-            launch.symbol.hash(digest);
-            launch.rows.hash(digest);
-            launch.plan.workspace_bytes.hash(digest);
-            (
-                config.flags,
-                [config.grid_x, config.grid_y, config.grid_z],
-                [config.block_x, config.block_y, config.block_z],
-                config.shared_memory_bytes,
-                [config.cluster.x, config.cluster.y, config.cluster.z],
-            )
-                .hash(digest);
-            arguments.len().hash(digest);
-            for argument in &arguments {
-                hash_argument(argument, digest);
-            }
+        launch
+            .arguments
+            .validate()
+            .map_err(|_| DispatchError::InvalidPlan)?;
+        launch.symbol.hash(&mut digests);
+        launch.rows.hash(&mut digests);
+        launch.plan.workspace_bytes.hash(&mut digests);
+        (
+            config.flags,
+            [config.grid_x, config.grid_y, config.grid_z],
+            [config.block_x, config.block_y, config.block_z],
+            config.shared_memory_bytes,
+            [config.cluster.x, config.cluster.y, config.cluster.z],
+        )
+            .hash(&mut digests);
+        launch.arguments.0.len().hash(&mut digests);
+        for argument in &launch.arguments.0 {
+            hash_argument(argument, &launch.bindings, &mut digests)?;
         }
     }
     Ok(Fingerprint {
         launches: u32::try_from(launches.len()).map_err(|_| DispatchError::InvalidPlan)?,
-        digest: digests.map(|digest| digest.finish()),
+        digest: [digests.sip.finish(), digests.mix],
     })
 }
 
-fn hash_span(span: &runtime_bundle_abi::DeviceBufferSpanV1, digest: &mut DefaultHasher) {
+fn hash_view(
+    id: u64,
+    bindings: &BufferBindings,
+    digest: &mut Digests,
+) -> Result<(), DispatchError> {
+    let span = bindings.get(id)?;
     (span.buffer.raw, span.offset, span.length).hash(digest);
+    Ok(())
 }
 
-fn hash_argument(argument: &KernelArgumentV1, digest: &mut DefaultHasher) {
+fn hash_argument(
+    argument: &Argument,
+    bindings: &BufferBindings,
+    digest: &mut Digests,
+) -> Result<(), DispatchError> {
     match argument {
-        KernelArgumentV1::DeviceBuffer(span) => {
+        Argument::DeviceBuffer(id) => {
             0_u8.hash(digest);
-            hash_span(span, digest);
+            hash_view(*id, bindings, digest)?;
         }
-        KernelArgumentV1::NullDevicePointer => 1_u8.hash(digest),
-        KernelArgumentV1::ScalarU32(value) => (2_u8, value).hash(digest),
-        KernelArgumentV1::ScalarI32(value) => (3_u8, value).hash(digest),
-        KernelArgumentV1::ScalarU64(value) => (4_u8, value).hash(digest),
-        KernelArgumentV1::OpaqueBytes(bytes) => (5_u8, bytes).hash(digest),
-        // A tensor map's fields are plain values; its debug form names
-        // every one of them.
-        KernelArgumentV1::TensorMap(map) => (6_u8, format!("{map:?}")).hash(digest),
-        KernelArgumentV1::DevicePointerArray(spans) => {
-            (7_u8, spans.len()).hash(digest);
-            for span in spans {
-                match span {
-                    Some(span) => {
-                        1_u8.hash(digest);
-                        hash_span(span, digest);
-                    }
-                    None => 0_u8.hash(digest),
-                }
+        Argument::NullDevicePointer => 1_u8.hash(digest),
+        Argument::U32(value) => (2_u8, value).hash(digest),
+        Argument::I32(value) => (3_u8, value).hash(digest),
+        Argument::U64(value) => (4_u8, value).hash(digest),
+        Argument::TensorMap(map) => {
+            6_u8.hash(digest);
+            hash_view(map.base_buffer, bindings, digest)?;
+            (
+                &map.dims,
+                &map.strides_bytes,
+                &map.box_dims,
+                &map.element_strides,
+                map.swizzle,
+                map.interleave,
+                map.l2_promotion,
+                map.oob_fill,
+                map.element,
+            )
+                .hash(digest);
+        }
+        Argument::DevicePointerArray(ids) => {
+            (7_u8, ids.len()).hash(digest);
+            for &id in ids {
+                hash_view(id, bindings, digest)?;
             }
         }
     }
+    Ok(())
 }
 
 /// The store's bounds.

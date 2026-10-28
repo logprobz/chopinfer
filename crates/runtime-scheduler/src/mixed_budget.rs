@@ -523,9 +523,11 @@ impl StepModel {
     /// Within the span of caps that cross the same lines this falls as `P`
     /// grows, because the fixed cost is shared by more tokens, so the
     /// minimum is one of the largest caps under each line (never below the
-    /// progress floor) or no cap. Without a cap the step takes `whole`:
-    /// a chunk that leaves no room for decoding runs alone, and the
-    /// decoders wait for it and their own step.
+    /// progress floor) or no cap. Caps are priced at no more than
+    /// `maximum`, what the waiting requests' next chunks can take beside
+    /// the decoders. Without a cap the step takes `whole`: a chunk that
+    /// leaves no room for decoding runs alone, and the decoders wait for it
+    /// and their own step.
     pub(super) fn adaptive_budget(
         &self,
         demand: Demand,

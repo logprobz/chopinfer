@@ -2226,18 +2226,29 @@ impl Scheduler {
                 // bound, not a latency guarantee.
                 let floor = policy.min_prefill_tokens().min(decode_room);
                 if self.config.adaptive_prefill_budget && !prefill.is_empty() {
-                    // Sized from demand; a grid chunk too long to share
-                    // the step runs alone when uncapped.
-                    let whole = self.config.guaranteed_prefill_chunks.map_or(
-                        mixed_budget::Uncapped::Mixed(decode_room),
-                        |chunk| {
-                            if chunk > decode_room {
-                                mixed_budget::Uncapped::Alone(chunk)
-                            } else {
-                                mixed_budget::Uncapped::Mixed(chunk)
-                            }
-                        },
-                    );
+                    // Sized from demand: what the waiting requests' next
+                    // uncapped chunks could take together. A grid chunk too
+                    // long to share the step runs alone when uncapped.
+                    let (mut tokens, mut longest) = (0usize, 0usize);
+                    for &index in &prefill {
+                        let chunk = Self::chunk_tokens(
+                            &self.requests[index],
+                            self.config.prefill_chunk_limit,
+                            None,
+                            self.config.maximum_scored_rows,
+                            self.config.prefill_granule,
+                            false,
+                        );
+                        tokens = tokens.saturating_add(chunk);
+                        longest = longest.max(chunk);
+                    }
+                    let whole = if self.config.guaranteed_prefill_chunks.is_some()
+                        && longest > decode_room
+                    {
+                        mixed_budget::Uncapped::Alone(longest)
+                    } else {
+                        mixed_budget::Uncapped::Mixed(tokens.min(decode_room))
+                    };
                     self.step_model
                         .adaptive_budget(
                             mixed_budget::Demand {
@@ -2245,7 +2256,7 @@ impl Scheduler {
                                 waiting: prefill.len(),
                                 context,
                             },
-                            decode_room,
+                            tokens.min(decode_room),
                             whole,
                             policy,
                         )

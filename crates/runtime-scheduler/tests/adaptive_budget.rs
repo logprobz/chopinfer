@@ -264,22 +264,37 @@ fn prefill_demand_keeps_chunks_under_the_one_second_line() {
         submit(&mut s, id, 2 * GRID, 4);
     }
     let mut steps = Vec::new();
+    // Steps formed while all three prompts waited beside the one decoder.
+    let mut dominated = 0;
     while (1..=3).any(|id| prefilling(&s, id)) {
         assert!(steps.len() < 40, "{steps:#?}");
+        if (1..=3).all(|id| prefilling(&s, id)) {
+            dominated += 1;
+        }
         steps.push(step(&mut s).unwrap());
     }
     for id in 1..=3 {
         assert_legal(&chunks(&steps, id), 2 * GRID);
     }
-    // Wide cuts, close to whole chunks, each beside the decoder and under
-    // 1 s; the decoder progresses every step.
-    let wide: Vec<_> = steps.iter().filter(|step| step.cap.is_some()).collect();
+    // While prefill demand dominates: wide cuts, close to whole chunks,
+    // each beside the decoder and under 1 s; the decoder progresses every
+    // step.
+    let wide: Vec<_> = steps[..dominated]
+        .iter()
+        .filter(|step| step.cap.is_some())
+        .collect();
     assert!(!wide.is_empty());
-    for step in &steps {
+    for step in &steps[..dominated] {
         assert!(step.decodes.contains(&100), "{step:?}");
         assert!(step.micros <= 1_000_000, "{step:?}");
+        // A cap is wide, or no smaller than what the prompts could take,
+        // so it cut nothing.
         if let Some(cap) = step.cap {
-            assert!((7000..GRID).contains(&cap), "{step:?}");
+            let cut = step
+                .ends
+                .iter()
+                .any(|&(_, end)| matches!(end, PrefillEnd::Timing | PrefillEnd::Floor));
+            assert!((7000..GRID).contains(&cap) || !cut, "{step:?}");
         }
     }
     assert!(
@@ -288,6 +303,12 @@ fn prefill_demand_keeps_chunks_under_the_one_second_line() {
             .flat_map(|step| &step.prefills)
             .any(|&(_, _, tokens)| tokens >= 7000)
     );
+    // Afterwards the cap may shrink, but every step still serves the
+    // decoder and stays under 1 s.
+    for step in &steps {
+        assert!(step.decodes.contains(&100), "{step:?}");
+        assert!(step.micros <= 1_000_000, "{step:?}");
+    }
 }
 
 #[test]
@@ -380,8 +401,10 @@ fn plain_requests_take_the_adaptive_cap_as_their_step_budget() {
     let steps = prefill(&mut s, 1, 100);
     for step in &steps {
         assert_eq!(step.decodes.len(), 6, "{step:?}");
+        // The cap is never above what the prompt can take: its tail.
         let cap = step.cap.expect("capped beside decoders");
-        assert!((FLOOR..=640).contains(&cap), "{step:?}");
+        let tokens: usize = step.prefills.iter().map(|item| item.2).sum();
+        assert!(cap <= 640 && (cap >= FLOOR || tokens == cap), "{step:?}");
         assert!(step.micros < 250_000, "{step:?}");
     }
     // Prompts outnumber the decoder: the step budget grows past one

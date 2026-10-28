@@ -23,8 +23,9 @@ impl Startup for Anchored {
     fn servings() -> Vec<conformance::Serving> {
         Served::servings()
     }
-    /// The served envelope and a mandatory set of anchored steps, swept in
-    /// every tier: packed prompts each keeping an anchor, a ring that
+    /// The served envelope and a mandatory set of anchored steps, which
+    /// every anchored sweep runs (the quick tier only, below): packed
+    /// prompts each keeping an anchor, a ring that
     /// crosses the 4096-row key part, restored odd starts, one whose anchor
     /// lies 135 rows in (seeded rings, the last seeded distance) beside a
     /// second anchored item, and a 67-row spare write.

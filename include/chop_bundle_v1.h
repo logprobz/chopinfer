@@ -2004,7 +2004,9 @@ const chop_bundle_prefill_table_v1 *chop_bundle_prefill_cuts_api_v1(void);
  * inside each (the V3 batch item anchor flag), so that anchor needs no
  * chunk end; such items arrive in the cuts envelope. When the export is
  * present its allowance applies only to grid requests; manifest anchors stay
- * unchanged. Grid items start at zero and have at least minimum_fused_rows
+ * unchanged. The two per-step allowances add up; a bundle enabling both
+ * must retain state for their sum in one step. Grid items start at zero
+ * and have at least minimum_fused_rows
  * rows (zero adds no width bound). An anchor_items value of zero keeps
  * every such anchor at a chunk end. A nonzero allowance needs an
  * enabled cuts policy. Old hosts ignore this export; hosts use the manifest

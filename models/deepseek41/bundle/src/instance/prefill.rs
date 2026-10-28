@@ -10,12 +10,13 @@ runtime_bundle_abi::export_prefill_cuts_api_v1!(PREFILL_CUTS_API, describe_cuts,
 runtime_bundle_abi::export_prefill_anchors_api_v1!(PREFILL_ANCHORS_API, describe_anchors);
 
 /// The prompt-end anchors an upper-skip instance keeps inside items on its
-/// grid (`execution_options::PREFILL_ANCHOR_ITEMS`); zero without spares.
+/// grid (`execution_options::PREFILL_ANCHOR_ITEMS`); the measured width
+/// policy is TP4 only. Other rank counts advertise no grid allowance.
 fn describe_anchors(handle: BundleHandleV1) -> BundlePrefillAnchorsV1 {
     let mut items = 0;
     let status = Instance::instances().with(|table| {
         with_instance(table, handle, |instance| {
-            if instance.config.prefill.scheduler_cuts() {
+            if instance.config.prefill.scheduler_cuts() && instance.config.shape.ranks() == 4 {
                 items = instance.anchor_spare_count();
             }
             BundleStatusV1::Success

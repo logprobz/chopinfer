@@ -187,27 +187,38 @@ fn copies(lines: &[String]) -> Vec<(Span, Span)> {
         .collect()
 }
 
-/// The instance declares its spares as its grid's anchor items: none by
-/// default or without a grid, one each with the option.
+/// Only TP4 advertises the measured grid policy. Other rank counts retain
+/// direct anchor execution for state probes but declare no grid allowance.
 #[test]
 fn instances_declare_their_spares_as_grid_anchor_items() {
-    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP1).unwrap(), KV_LAYOUTS[0]);
-    for (chunk, skip, anchors, declared) in [
-        (8192, true, 0, 0),
-        (8192, true, 1, 1),
-        (8192, true, 8, 8),
-        (0, false, 0, 0),
-    ] {
-        let mut instance = create_profile_with_options(
-            &host,
-            chunk,
-            skip,
-            &[("prefill_anchor_items", anchors.into())],
-        );
-        assert_eq!(instance.prefill_anchor_items(), Ok(Some(declared)));
-        instance.destroy().unwrap();
+    for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
+        let host = FakeHost::new(Shape::new(&FLASH, ranks).unwrap(), KV_LAYOUTS[0]);
+        for (chunk, skip, anchors, declared) in [
+            (8192, true, 0, 0),
+            (8192, true, 1, 1),
+            (8192, true, 8, 8),
+            (0, false, 0, 0),
+        ] {
+            let mut instance = create_profile_with_options(
+                &host,
+                chunk,
+                skip,
+                &[("prefill_anchor_items", anchors.into())],
+            );
+            let expected = if ranks == Ranks::TP4 { declared } else { 0 };
+            assert_eq!(instance.prefill_anchor_items(), Ok(Some(expected)));
+            assert_eq!(
+                instance
+                    .prefill_anchor_policy()
+                    .unwrap()
+                    .unwrap()
+                    .minimum_fused_rows,
+                if expected > 0 { 357 } else { 0 }
+            );
+            instance.destroy().unwrap();
+        }
+        assert_eq!(host.acquired.get(), host.released.get());
     }
-    assert_eq!(host.acquired.get(), host.released.get());
 }
 
 /// An unaligned prompt's single anchored step writes every layer's ring of

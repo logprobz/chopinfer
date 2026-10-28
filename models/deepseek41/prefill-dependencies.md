@@ -33,10 +33,13 @@ prompts, as well as any cost of shared-prefix cuts.
 
 The `prefill_anchor_items` model option (default 0, at most 8) is a
 prototype that keeps such a rounded end inside one upper-skip step
-instead. AR and DSpark upper-skip instances accept it; full-schedule
+instead. AR and DSpark upper-skip instances accept it; only TP4 advertises
+the measured grid admission policy. TP1 and TP2 retain direct anchor
+execution for state probes but advertise no grid allowance. Full-schedule
 profiles refuse it at create. Each allowed anchor item gets one spare entry
 of every captured state buffer (window rings, compressor tails and, with
-DSpark, the raw feature history), in separate buffers per rank. Before any write of the step reaches the slot,
+DSpark, the raw feature history), in separate buffers per rank. Before any
+write of the step reaches the slot,
 the spare is seeded from the slot's tails, and from its rings when the item
 starts less than 136 rows before the anchor. Every layer's window write is
 then repeated into the spare ring for the rows within a ring of the anchor,
@@ -88,9 +91,8 @@ resolved TTFT p95 regressions. These short-turn C1 results reject default
 adoption despite the earlier cold-prompt gains. The measurements above
 precede the restriction to items starting at token zero with at least
 357 rows. That restriction keeps the earlier cold batch shapes eligible
-and excludes the measured
-short continuations; its served effect remains unproven. The candidate
-stays off; concurrent and generated-history stateful acceptance remain
+and excludes the measured short continuations; its served effect remains
+unproven. The candidate stays off; concurrent and generated-history stateful acceptance remain
 unproven.
 
 A shorter grid hit does not suppress a longer observed shared-prefix cut,

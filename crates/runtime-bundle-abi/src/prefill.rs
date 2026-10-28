@@ -92,7 +92,9 @@ impl BundlePrefillApiV1 {
 /// prefill items per step at the last prefill-granule multiple strictly
 /// inside each (`BATCH_ITEM_FLAG_ANCHOR_V3`), so that anchor needs no chunk
 /// end. This allowance applies only to guaranteed-grid requests and leaves
-/// manifest anchors unchanged. Grid items must start at token zero and
+/// manifest anchors unchanged. The two per-step allowances add up; a bundle
+/// enabling both must retain state for their sum in one step.
+/// Grid items must start at token zero and
 /// contain at least `minimum_fused_rows` rows; zero adds no width bound.
 /// Zero items keeps every such anchor at a chunk end. A nonzero
 /// allowance requires an enabled cuts policy. Old hosts ignore the export,

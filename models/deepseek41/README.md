@@ -175,7 +175,7 @@ them. A non-default value is unqualified.
 | `dspark_coupled_drafts` | `true` | Couple sampled drafts to the target sampler's noise. |
 | `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |
 | `dspark_graph_handles_per_rank` | `512` | Graph handles per rank, from 0 to 9223372036854775807; 0 keeps DSpark eager. The total across ranks must fit the platform's count range. |
-| `prefill_anchor_items` | `0` | Cold whole-prompt upper-skip items of at least 357 rows per step that keep their rounded prompt end in anchor spares instead of ending a chunk there, from 0 to 8; upper-skip AR and DSpark only. The instance offers them on its guaranteed grid through the optional prefill anchors export. Measurement prototype. |
+| `prefill_anchor_items` | `0` | Cold whole-prompt upper-skip items of at least 357 rows per step that keep their rounded prompt end in anchor spares instead of ending a chunk there, from 0 to 8; TP4 upper-skip AR and DSpark only. Other rank counts advertise no grid allowance. The instance offers them on its guaranteed grid through the optional prefill anchors export. Measurement prototype. |
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
 | `prefill_graph_programs` | `0` | Candidate switch: short text continuations (one item after a prefix, under 512 rows, no upper-skip DMA) captured as graph segments at their second run, at most this many body programs at once, from 0 to 64; 0 keeps every prefill eager. Unqualified. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |

@@ -1,0 +1,1021 @@
+{
+  "schema": "chopinfer.journal-proof.layout.v1",
+  "description": "Adopt prepared Engram reads in TP4 native-KV single-item DMA prefill. The DSpark shared-anchor fixture changes its 4032- and 4160-row DMA steps: two private-ID uploads and two prepared gathers, each joined on four target streams and completed after status. Existing allocations, handles, modules, per-stream launch arguments/order, transport, status operations and every other fixture remain identical. Exact positional edits account for moved gather uploads and independent cross-rank decoder launch interleaving.",
+  "operations": {
+    "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-2.jsonl": [
+      {
+        "remove": {
+          "text": "mapped gather 0 layers.1.engram.embed.weight",
+          "lines": [
+            11020,
+            33032
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967465 }, offset: 0, length: 24772608 } e86af6ea18aa2325",
+          "lines": [
+            11021
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "mapped gather 0 layers.1.engram.embed.scale",
+          "lines": [
+            11022,
+            33034
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967466 }, offset: 0, length: 774144 } 260fb60a18c66325",
+          "lines": [
+            11023
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "mapped gather 0 layers.14.engram.embed.weight",
+          "lines": [
+            11024,
+            33036
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967465 }, offset: 51511296, length: 24772608 } e86af6ea18aa2325",
+          "lines": [
+            11025
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "mapped gather 0 layers.14.engram.embed.scale",
+          "lines": [
+            11026,
+            33038
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967466 }, offset: 1609728, length: 774144 } 260fb60a18c66325",
+          "lines": [
+            11027
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "mapped gather 1 layers.1.engram.embed.weight",
+          "lines": [
+            11043,
+            33055
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967641 }, offset: 0, length: 24772608 } e86af6ea18aa2325",
+          "lines": [
+            11044
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "mapped gather 1 layers.1.engram.embed.scale",
+          "lines": [
+            11045,
+            33057
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967642 }, offset: 0, length: 774144 } 260fb60a18c66325",
+          "lines": [
+            11046
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "mapped gather 1 layers.14.engram.embed.weight",
+          "lines": [
+            11047,
+            33059
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967641 }, offset: 51511296, length: 24772608 } e86af6ea18aa2325",
+          "lines": [
+            11048
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "mapped gather 1 layers.14.engram.embed.scale",
+          "lines": [
+            11049,
+            33061
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967642 }, offset: 1609728, length: 774144 } 260fb60a18c66325",
+          "lines": [
+            11050
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "mapped gather 2 layers.1.engram.embed.weight",
+          "lines": [
+            11066,
+            33078
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967807 }, offset: 0, length: 24772608 } e86af6ea18aa2325",
+          "lines": [
+            11067
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "mapped gather 2 layers.1.engram.embed.scale",
+          "lines": [
+            11068,
+            33080
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967808 }, offset: 0, length: 774144 } 260fb60a18c66325",
+          "lines": [
+            11069
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "mapped gather 2 layers.14.engram.embed.weight",
+          "lines": [
+            11070,
+            33082
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967807 }, offset: 51511296, length: 24772608 } e86af6ea18aa2325",
+          "lines": [
+            11071
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "mapped gather 2 layers.14.engram.embed.scale",
+          "lines": [
+            11072,
+            33084
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967808 }, offset: 1609728, length: 774144 } 260fb60a18c66325",
+          "lines": [
+            11073
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "mapped gather 3 layers.1.engram.embed.weight",
+          "lines": [
+            11089,
+            33101
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967973 }, offset: 0, length: 24772608 } e86af6ea18aa2325",
+          "lines": [
+            11090
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "mapped gather 3 layers.1.engram.embed.scale",
+          "lines": [
+            11091,
+            33103
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967974 }, offset: 0, length: 774144 } 260fb60a18c66325",
+          "lines": [
+            11092
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "mapped gather 3 layers.14.engram.embed.weight",
+          "lines": [
+            11093,
+            33105
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967973 }, offset: 51511296, length: 24772608 } e86af6ea18aa2325",
+          "lines": [
+            11094
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "mapped gather 3 layers.14.engram.embed.scale",
+          "lines": [
+            11095,
+            33107
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967974 }, offset: 1609728, length: 774144 } 260fb60a18c66325",
+          "lines": [
+            11096
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294978041 }, offset: 0, length: 387072 } 02e3295302cca0ac",
+          "lines": [
+            11066
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294978042 }, offset: 0, length: 387072 } 027dc7a70fc4eac4",
+          "lines": [
+            11067
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "async mapped ids 786432 96768",
+          "lines": [
+            11068,
+            11069
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "launch 3 chop_sinkhorn_hc_deepseek41_expand_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 10, grid_y: 4032, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967566 }, offset: 0, length: 165150720 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967564 }, offset: 0, length: 41287680 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967570 }, offset: 0, length: 64512 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967571 }, offset: 0, length: 258048 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967565 }, offset: 0, length: 165150720 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967554 }, offset: 128, length: 4 })]",
+          "lines": [
+            11689,
+            18109
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "launch 4 chop_sinkhorn_hc_deepseek41_expand_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 10, grid_y: 4032, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967732 }, offset: 0, length: 165150720 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967730 }, offset: 0, length: 41287680 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967736 }, offset: 0, length: 64512 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967737 }, offset: 0, length: 258048 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967731 }, offset: 0, length: 165150720 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967720 }, offset: 128, length: 4 })]",
+          "lines": [
+            11690,
+            18110
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "launch 5 chop_sinkhorn_hc_deepseek41_expand_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 10, grid_y: 4032, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967898 }, offset: 0, length: 165150720 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967896 }, offset: 0, length: 41287680 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967902 }, offset: 0, length: 64512 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967903 }, offset: 0, length: 258048 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967897 }, offset: 0, length: 165150720 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967886 }, offset: 128, length: 4 })]",
+          "lines": [
+            11691,
+            18111
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "async mapped wait 2",
+          "lines": [
+            11692,
+            18112,
+            33718,
+            40170
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "mapped gather 0 layers.1.engram.embed.weight",
+          "lines": [
+            11693,
+            33719
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967465 }, offset: 0, length: 24772608 } e86af6ea18aa2325",
+          "lines": [
+            11694
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "mapped gather 0 layers.1.engram.embed.scale",
+          "lines": [
+            11695,
+            33721
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967466 }, offset: 0, length: 774144 } 260fb60a18c66325",
+          "lines": [
+            11696
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "async mapped wait 3",
+          "lines": [
+            11697,
+            18117,
+            33723,
+            40175
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "mapped gather 1 layers.1.engram.embed.weight",
+          "lines": [
+            11698,
+            33724
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967641 }, offset: 0, length: 24772608 } e86af6ea18aa2325",
+          "lines": [
+            11699
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "mapped gather 1 layers.1.engram.embed.scale",
+          "lines": [
+            11700,
+            33726
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967642 }, offset: 0, length: 774144 } 260fb60a18c66325",
+          "lines": [
+            11701
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "async mapped wait 4",
+          "lines": [
+            11702,
+            18122,
+            33728,
+            40180
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "mapped gather 2 layers.1.engram.embed.weight",
+          "lines": [
+            11703,
+            33729
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967807 }, offset: 0, length: 24772608 } e86af6ea18aa2325",
+          "lines": [
+            11704
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "mapped gather 2 layers.1.engram.embed.scale",
+          "lines": [
+            11705,
+            33731
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967808 }, offset: 0, length: 774144 } 260fb60a18c66325",
+          "lines": [
+            11706
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "async mapped wait 5",
+          "lines": [
+            11707,
+            18127,
+            33733,
+            40185
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "mapped gather 3 layers.1.engram.embed.weight",
+          "lines": [
+            11708,
+            33734
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967973 }, offset: 0, length: 24772608 } e86af6ea18aa2325",
+          "lines": [
+            11709
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "mapped gather 3 layers.1.engram.embed.scale",
+          "lines": [
+            11710,
+            33736
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967974 }, offset: 0, length: 774144 } 260fb60a18c66325",
+          "lines": [
+            11711
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "launch 3 chop_sinkhorn_hc_deepseek41_expand_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 10, grid_y: 4032, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967566 }, offset: 0, length: 165150720 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967564 }, offset: 0, length: 41287680 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967570 }, offset: 0, length: 64512 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967571 }, offset: 0, length: 258048 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967565 }, offset: 0, length: 165150720 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967554 }, offset: 128, length: 4 })]",
+          "lines": [
+            11755,
+            18177
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "launch 4 chop_sinkhorn_hc_deepseek41_expand_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 10, grid_y: 4032, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967732 }, offset: 0, length: 165150720 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967730 }, offset: 0, length: 41287680 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967736 }, offset: 0, length: 64512 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967737 }, offset: 0, length: 258048 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967731 }, offset: 0, length: 165150720 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967720 }, offset: 128, length: 4 })]",
+          "lines": [
+            11794,
+            18238
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "launch 5 chop_sinkhorn_hc_deepseek41_expand_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 10, grid_y: 4032, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967898 }, offset: 0, length: 165150720 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967896 }, offset: 0, length: 41287680 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967902 }, offset: 0, length: 64512 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967903 }, offset: 0, length: 258048 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967897 }, offset: 0, length: 165150720 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967886 }, offset: 128, length: 4 })]",
+          "lines": [
+            11833,
+            18299
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "mapped gather 0 layers.14.engram.embed.weight",
+          "lines": [
+            18113,
+            40171
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967465 }, offset: 51511296, length: 24772608 } e86af6ea18aa2325",
+          "lines": [
+            18114
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "mapped gather 0 layers.14.engram.embed.scale",
+          "lines": [
+            18115,
+            40173
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967466 }, offset: 1609728, length: 774144 } 260fb60a18c66325",
+          "lines": [
+            18116
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "mapped gather 1 layers.14.engram.embed.weight",
+          "lines": [
+            18118,
+            40176
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967641 }, offset: 51511296, length: 24772608 } e86af6ea18aa2325",
+          "lines": [
+            18119
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "mapped gather 1 layers.14.engram.embed.scale",
+          "lines": [
+            18120,
+            40178
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967642 }, offset: 1609728, length: 774144 } 260fb60a18c66325",
+          "lines": [
+            18121
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "mapped gather 2 layers.14.engram.embed.weight",
+          "lines": [
+            18123,
+            40181
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967807 }, offset: 51511296, length: 24772608 } e86af6ea18aa2325",
+          "lines": [
+            18124
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "mapped gather 2 layers.14.engram.embed.scale",
+          "lines": [
+            18125,
+            40183
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967808 }, offset: 1609728, length: 774144 } 260fb60a18c66325",
+          "lines": [
+            18126
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "mapped gather 3 layers.14.engram.embed.weight",
+          "lines": [
+            18128,
+            40186
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967973 }, offset: 51511296, length: 24772608 } e86af6ea18aa2325",
+          "lines": [
+            18129
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "mapped gather 3 layers.14.engram.embed.scale",
+          "lines": [
+            18130,
+            40188
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967974 }, offset: 1609728, length: 774144 } 260fb60a18c66325",
+          "lines": [
+            18131
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "async mapped complete",
+          "lines": [
+            30368,
+            30369,
+            52442,
+            52443
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967465 }, offset: 0, length: 25559040 } 126a5c83ab9a2325",
+          "lines": [
+            33033
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967466 }, offset: 0, length: 798720 } 92566e9ee55de325",
+          "lines": [
+            33035
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967465 }, offset: 51511296, length: 25559040 } 126a5c83ab9a2325",
+          "lines": [
+            33037
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967466 }, offset: 1609728, length: 798720 } 92566e9ee55de325",
+          "lines": [
+            33039
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967641 }, offset: 0, length: 25559040 } 126a5c83ab9a2325",
+          "lines": [
+            33056
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967642 }, offset: 0, length: 798720 } 92566e9ee55de325",
+          "lines": [
+            33058
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967641 }, offset: 51511296, length: 25559040 } 126a5c83ab9a2325",
+          "lines": [
+            33060
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967642 }, offset: 1609728, length: 798720 } 92566e9ee55de325",
+          "lines": [
+            33062
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967807 }, offset: 0, length: 25559040 } 126a5c83ab9a2325",
+          "lines": [
+            33079
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967808 }, offset: 0, length: 798720 } 92566e9ee55de325",
+          "lines": [
+            33081
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967807 }, offset: 51511296, length: 25559040 } 126a5c83ab9a2325",
+          "lines": [
+            33083
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967808 }, offset: 1609728, length: 798720 } 92566e9ee55de325",
+          "lines": [
+            33085
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967973 }, offset: 0, length: 25559040 } 126a5c83ab9a2325",
+          "lines": [
+            33102
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967974 }, offset: 0, length: 798720 } 92566e9ee55de325",
+          "lines": [
+            33104
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967973 }, offset: 51511296, length: 25559040 } 126a5c83ab9a2325",
+          "lines": [
+            33106
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967974 }, offset: 1609728, length: 798720 } 92566e9ee55de325",
+          "lines": [
+            33108
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294978041 }, offset: 0, length: 399360 } 4836b8ae7b087199",
+          "lines": [
+            33092
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294978042 }, offset: 0, length: 399360 } 3132a3b42fdcd44b",
+          "lines": [
+            33093
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "async mapped ids 786432 99840",
+          "lines": [
+            33094,
+            33095
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "launch 3 chop_sinkhorn_hc_deepseek41_expand_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 10, grid_y: 4160, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967566 }, offset: 0, length: 170393600 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967564 }, offset: 0, length: 42598400 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967570 }, offset: 0, length: 66560 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967571 }, offset: 0, length: 266240 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967565 }, offset: 0, length: 170393600 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967554 }, offset: 128, length: 4 })]",
+          "lines": [
+            33715,
+            40167
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "launch 4 chop_sinkhorn_hc_deepseek41_expand_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 10, grid_y: 4160, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967732 }, offset: 0, length: 170393600 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967730 }, offset: 0, length: 42598400 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967736 }, offset: 0, length: 66560 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967737 }, offset: 0, length: 266240 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967731 }, offset: 0, length: 170393600 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967720 }, offset: 128, length: 4 })]",
+          "lines": [
+            33716,
+            40168
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "launch 5 chop_sinkhorn_hc_deepseek41_expand_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 10, grid_y: 4160, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967898 }, offset: 0, length: 170393600 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967896 }, offset: 0, length: 42598400 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967902 }, offset: 0, length: 66560 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967903 }, offset: 0, length: 266240 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967897 }, offset: 0, length: 170393600 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967886 }, offset: 128, length: 4 })]",
+          "lines": [
+            33717,
+            40169
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967465 }, offset: 0, length: 25559040 } 126a5c83ab9a2325",
+          "lines": [
+            33720
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967466 }, offset: 0, length: 798720 } 92566e9ee55de325",
+          "lines": [
+            33722
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967641 }, offset: 0, length: 25559040 } 126a5c83ab9a2325",
+          "lines": [
+            33725
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967642 }, offset: 0, length: 798720 } 92566e9ee55de325",
+          "lines": [
+            33727
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967807 }, offset: 0, length: 25559040 } 126a5c83ab9a2325",
+          "lines": [
+            33730
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967808 }, offset: 0, length: 798720 } 92566e9ee55de325",
+          "lines": [
+            33732
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967973 }, offset: 0, length: 25559040 } 126a5c83ab9a2325",
+          "lines": [
+            33735
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967974 }, offset: 0, length: 798720 } 92566e9ee55de325",
+          "lines": [
+            33737
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "launch 3 chop_sinkhorn_hc_deepseek41_expand_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 10, grid_y: 4160, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967566 }, offset: 0, length: 170393600 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967564 }, offset: 0, length: 42598400 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967570 }, offset: 0, length: 66560 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967571 }, offset: 0, length: 266240 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967565 }, offset: 0, length: 170393600 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967554 }, offset: 128, length: 4 })]",
+          "lines": [
+            33767,
+            40225
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "launch 4 chop_sinkhorn_hc_deepseek41_expand_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 10, grid_y: 4160, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967732 }, offset: 0, length: 170393600 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967730 }, offset: 0, length: 42598400 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967736 }, offset: 0, length: 66560 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967737 }, offset: 0, length: 266240 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967731 }, offset: 0, length: 170393600 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967720 }, offset: 128, length: 4 })]",
+          "lines": [
+            33806,
+            40290
+          ]
+        }
+      },
+      {
+        "remove": {
+          "text": "launch 5 chop_sinkhorn_hc_deepseek41_expand_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 10, grid_y: 4160, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967898 }, offset: 0, length: 170393600 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967896 }, offset: 0, length: 42598400 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967902 }, offset: 0, length: 66560 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967903 }, offset: 0, length: 266240 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967897 }, offset: 0, length: 170393600 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967886 }, offset: 128, length: 4 })]",
+          "lines": [
+            33845,
+            40355
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967465 }, offset: 51511296, length: 25559040 } 126a5c83ab9a2325",
+          "lines": [
+            40172
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967466 }, offset: 1609728, length: 798720 } 92566e9ee55de325",
+          "lines": [
+            40174
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967641 }, offset: 51511296, length: 25559040 } 126a5c83ab9a2325",
+          "lines": [
+            40177
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967642 }, offset: 1609728, length: 798720 } 92566e9ee55de325",
+          "lines": [
+            40179
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967807 }, offset: 51511296, length: 25559040 } 126a5c83ab9a2325",
+          "lines": [
+            40182
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967808 }, offset: 1609728, length: 798720 } 92566e9ee55de325",
+          "lines": [
+            40184
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967973 }, offset: 51511296, length: 25559040 } 126a5c83ab9a2325",
+          "lines": [
+            40187
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967974 }, offset: 1609728, length: 798720 } 92566e9ee55de325",
+          "lines": [
+            40189
+          ]
+        }
+      }
+    ]
+  }
+}

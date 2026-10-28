@@ -16,7 +16,6 @@ use model_deepseek41_contract::serving::DECODE_BATCH;
 use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
 
 mod allocated;
-mod dma_engram;
 
 /// A served configuration: its rank count and the host's (drafts, verify
 /// tokens), none without speculation.
@@ -489,7 +488,7 @@ impl conformance::Startup for Served {
     type Limits = Limits;
 
     fn profiles() -> &'static str {
-        dma_engram::profiles(include_str!("../../../profiles.json"))
+        include_str!("../../../profiles.json")
     }
     fn servings() -> Vec<conformance::Serving> {
         let serving = |profile: &str, draft_tokens: u32| {
@@ -529,11 +528,6 @@ impl conformance::Startup for Served {
         }
         // The DSpark profiles cap balanced chunks at twelve drafting items.
         for entry in &mut configurations {
-            if dma_engram::ENABLED.get() {
-                entry
-                    .model_options
-                    .insert("prefill_dma_engram".into(), "true".into());
-            }
             if entry.draft_tokens > 0 {
                 entry.model_options.insert(
                     model_deepseek41_contract::dspark_options::DRAFT_CHUNK_ITEMS.into(),

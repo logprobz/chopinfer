@@ -413,11 +413,6 @@ impl Plan {
     ) -> Result<(), BundleAbiError> {
         let streams: Vec<_> = instance.ranks.iter().map(|r| r.2).collect();
         if let Some(dma) = &self.dma {
-            if gathers.is_some() && !instance.config.execution.prefill_dma_engram {
-                return Err(BundleAbiError::Status(
-                    runtime_bundle_abi::BundleStatusV1::InvalidState,
-                ));
-            }
             dma.execute(instance, &self.body, gathers)
         } else {
             if let Some(gathers) = gathers {

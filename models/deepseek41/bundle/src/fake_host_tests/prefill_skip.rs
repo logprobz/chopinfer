@@ -310,7 +310,7 @@ fn shared_prefix_endpoint_captures_restores_and_returns_to_the_grid() {
         let (name, expected) = if dspark {
             (
                 "flash-tp4-dspark-shared-anchor.journal",
-                (71670, 0x6419520edc320231),
+                (71698, 0x1fd8bd0d42749e1c),
             )
         } else {
             (

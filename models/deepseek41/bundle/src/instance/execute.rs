@@ -791,10 +791,6 @@ impl Instance {
             Some(SyncReason::Media)
         } else if self.taps.text() {
             Some(SyncReason::Taps)
-        } else if run.execution.skip().is_some_and(|skip| skip.uses_dma())
-            && !self.config.execution.prefill_dma_engram
-        {
-            Some(SyncReason::PrefillSchedule)
         } else if self.prefill_engram.is_none() {
             Some(self.prefill_engram_fallback)
         } else if run.engram.is_none() {

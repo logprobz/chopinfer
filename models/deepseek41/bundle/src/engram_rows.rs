@@ -32,7 +32,6 @@ use runtime_bundle_abi::{
 pub enum SyncReason {
     Media,
     Taps,
-    PrefillSchedule,
     NoAsyncService,
     MixedTarget,
     HostTarget,
@@ -42,10 +41,9 @@ pub enum SyncReason {
 
 impl SyncReason {
     #[cfg(test)]
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 7] = [
         Self::Media,
         Self::Taps,
-        Self::PrefillSchedule,
         Self::NoAsyncService,
         Self::MixedTarget,
         Self::HostTarget,
@@ -57,7 +55,6 @@ impl SyncReason {
         match self {
             Self::Media => "engram/sync/media",
             Self::Taps => "engram/sync/taps",
-            Self::PrefillSchedule => "engram/sync/prefill_schedule",
             Self::NoAsyncService => "engram/sync/no_async_service",
             Self::MixedTarget => "engram/sync/mixed_target",
             Self::HostTarget => "engram/sync/host_target",

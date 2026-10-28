@@ -26,7 +26,7 @@ reads the policy setting or relies on advice being off.
 | DeepSeek DSpark first-target-row prefetch | Separate early gathers in the same target-cycle module. |
 | DeepSeek DSpark decode without drafts | Reuses the target layer gathers with deferred host-hashed IDs. |
 | DeepSeek eager text prefill | [Prepared per-layer gathers](../models/deepseek41/bundle/src/instance/prefill_engram.rs), including DSpark prefill. |
-| DeepSeek DMA text prefill | Prepared per-layer gathers when the default-off candidate `prefill_dma_engram=true` is selected, on the TP4 native-KV single-item upper-skip path. |
+| DeepSeek DMA text prefill | Prepared per-layer gathers by default on the TP4 native-KV single-item upper-skip path at 512-8192 rows. |
 | GLM | No mapped-gather caller; text and encoder plans have no special mapped views. |
 | MiMo | No mapped-gather caller; acquisition places its views in the device arena. |
 | Qwen | No mapped-gather caller. Its optional n-gram table uses pinned host placement read by kernels, a separate route. |
@@ -63,15 +63,14 @@ symbol `host.gather_mapped_rows` and entry `engram/sync/<reason>`:
 | --- | --- |
 | `media` | Media flags and token hashing retain the synchronous staging boundary. |
 | `taps` | Text taps retain their diagnostic stage and readback order. |
-| `prefill_schedule` | Upper-skip DMA prefill with `prefill_dma_engram=false` (the default). |
 | `no_async_service` | The host lacks the optional prepared mapped-gather services. |
 | `mixed_target` | A host target combines input kinds without a prepared layer plan. |
 | `host_target` | Supplied target/verify rows retain their host hashing boundary. |
 | `no_prepared_gather` | The phase has no prepared gather state or hashes. |
 | `gather_capacity` | Undrafted hashes exceed the prepared gather capacity. |
 
-Prefill reasons take precedence in this order: media, taps, default DMA
-schedule, missing async service, then unavailable preparation.
+Prefill reasons take precedence in this order: media, taps, missing async
+service, then unavailable preparation.
 Reasons are carried from preparation state or the selected phase, never
 inferred from journal text. A graph reservation failure keeps the prepared
 gather and executes eagerly, so it is not a synchronous fallback.
@@ -92,10 +91,10 @@ kernels in a mixed capture. The raw synchronous count is a fake-host sweep
 check, not an independent counter in serving step records. No synthetic CUDA
 launch or new journal line is introduced by this guard.
 
-## DMA prefill candidate
+## DMA prefill
 
-`--model-option prefill_dma_engram=true` enables the candidate for reductions
-of 512 through 8192 rows on the existing DMA path. Both layers' IDs are
+Prepared Engram gathers are the default for reductions of 512 through 8192
+rows on the existing TP4 native-KV single-item DMA path. Both layers' IDs are
 uploaded into dedicated buffers and their gathers enqueue before compute.
 Each layer joins every target stream immediately before its Engram decoder.
 Collective order, row intervals and arithmetic stay the same. Completion is
@@ -105,11 +104,10 @@ With `CHOPINFER_ROUTE_COUNTERS=1`, submitted DMA owner sums appear in the
 entries with family `prefill_dma` and their `chop_comm_owned_sum_` symbols.
 Fast entries do not increment the fallback-only family totals. Require this
 execution witness in every measured prefill step, plus two prepared gathers
-and a completion record per candidate chunk. Its `waits` field is the configured
+and a completion record per prepared chunk. Its `waits` field is the configured
 rank count times layer count, not an independent event counter. The completion
-record establishes that both joins reached the result boundary. The synchronous
-`prefill_schedule` reason identifies a selected DMA plan with the candidate
-off; it alone does not witness submitted arithmetic.
+record establishes that both joins reached the result boundary. A selected route without submitted owner sums does not witness executed DMA
+arithmetic.
 
 Preparation audits pending IDs and destinations against the original launches
 (including tensor maps and pointer arrays), DMA transfer spans, generated
@@ -128,17 +126,47 @@ terminal. An unmatched
 collective keeps resources retained and must not be synchronized.
 
 Plan-time overlap or collective-balance audit failures refuse the request before
-enqueue. The candidate fails closed instead of silently selecting synchronous
-gathers. Its owner-sum tags change route metadata when counters are enabled;
+enqueue. Preparation fails closed instead of silently selecting synchronous gathers. Its owner-sum tags change route metadata when counters are enabled;
 journal identity does not claim route-tag identity.
 
 Cold-row experiments must keep async read-ahead enabled. The shared defaults
 already enable it; `CHOPINFER_MAPPED_ASYNC_READ_AHEAD=1` makes the setting
-explicit even when another read-ahead control was inherited. The candidate
+explicit even when another read-ahead control was inherited. The bundle
 does not override host policy. Reset the mapped-row cache and advise only the
 sealed Engram file ranges before each cold visit, never host-wide caches.
-CPU ordering tests do not establish cold-row latency or GPU equality. Keep
-the candidate off until full-logits/state exactness and cold/warm TTFT ABBA
-support adoption. Media is the next possible caller to investigate if operator
-traffic uses it often; its hashing and destination lifetimes need a separate
-audit.
+CPU ordering tests do not establish cold-row latency or GPU equality. Media
+is the next possible caller to investigate if operator traffic uses it often;
+its hashing and destination lifetimes need a separate audit.
+
+## Adoption evidence
+
+On 2026-10-28, TP4 native-KV AR and DSpark matched full-vocabulary logits,
+complete chunk state and sampled output bits with prepared DMA gathers on
+and off, including a 25345-token prompt with a 769-row final DMA chunk.
+The odd-width exactness runs disabled prefix caching to avoid the rounded-end
+cut. Timing kept prefix caching enabled and compared 32 output tokens per
+request at temperature 1 with matched seeds and fresh cache salts.
+
+Warm TTFT ABBA reduced latency in every measured cell. For d1=B1/A1-1 and
+d2=B2/A2-1, both deltas favored prepared gathers, and each mean reduction
+exceeded its pair spread and the 1.5% new-route threshold:
+
+| Prompt tokens | AR reduction / spread | DSpark reduction / spread |
+| --- | --- | --- |
+| 512 | 6.797% / 3.387 percentage points | 1.839% / 0.452 percentage points |
+| 8192 | 12.840% / 1.015 percentage points | 11.769% / 0.685 percentage points |
+| 25345 | 11.123% / 1.384 percentage points | 10.728% / 0.002 percentage points |
+
+All matched output IDs and logprob bits agreed. Every warm measurement and
+its cache check had zero major faults. GPU power limits remained unchanged
+through each job; sampled clocks were recorded per visit. The incomplete
+DSpark long-prompt visit that failed its quiet-host check was excluded in
+full. Deliberately cold TTFT was diagnostic only.
+
+The synchronous host-call timer fell to zero on prepared DMA chunks, while
+layer-1 join time remained exposed. This does not imply that all gather work
+was hidden. Media, taps, host-target rows, missing async service and the other
+listed preparation fallbacks still use their synchronous path. The candidate
+option and DMA-only synchronous fallback are removed. Default tests exercise
+the adopted path; short-prefill graphs remain a separate candidate below 512
+rows.

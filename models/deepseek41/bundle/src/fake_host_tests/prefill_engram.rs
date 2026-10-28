@@ -149,7 +149,6 @@ fn eager_and_upper_skip_join_each_layer_without_changing_launches() {
             assert_eq!(spans.len(), 2);
             let begin = host.journal.borrow().len();
             let mapped = host.mapped_gather_calls.get();
-            let dma = ranks == Ranks::TP4 && kv.storage == KvStorage::Native && skip;
             let request = encode(
                 &prompt(7, 0, 0, rows, true),
                 &[Boundary {
@@ -163,20 +162,9 @@ fn eager_and_upper_skip_join_each_layer_without_changing_launches() {
             instance
                 .execute_prefill(&request, &mut Views::default())
                 .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
-            if dma {
-                // DMA owns this schedule, so even prepared Engram gathers
-                // use synchronous staging before its first launch.
-                assert_eq!(
-                    host.mapped_gather_calls.get() - mapped,
-                    2 * 2 * ranks.get() as u64
-                );
-                assert!(
-                    host.journal.borrow()[begin..]
-                        .iter()
-                        .all(|line| !line.starts_with("async mapped "))
-                );
-            }
-            if !dma {
+
+            {
+                assert_eq!(host.mapped_gather_calls.get(), mapped);
                 let logs = host.logs.borrow();
                 let metric: serde_json::Value = serde_json::from_str(
                     logs.iter()
@@ -311,7 +299,7 @@ fn layer_handles_reuse_after_partial_prefill_and_cancel() {
                 .iter()
                 .filter(|line| line.contains("\"phase\":\"prefill-engram\""))
                 .count(),
-            usize::from(start != 0),
+            1 + usize::from(start != 0),
         );
         if start == 0 {
             instance.commit().unwrap();
@@ -339,7 +327,7 @@ fn layer_handles_reuse_after_partial_prefill_and_cancel() {
             .iter()
             .filter(|s| s.contains("\"phase\":\"prefill-engram\""))
             .count(),
-        2
+        3
     );
     instance.retire_request(8).unwrap();
     instance.destroy().unwrap();

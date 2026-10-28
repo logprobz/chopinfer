@@ -175,7 +175,6 @@ them. A non-default value is unqualified.
 | `dspark_coupled_drafts` | `true` | Couple sampled drafts to the target sampler's noise. |
 | `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |
 | `dspark_graph_handles_per_rank` | `512` | Graph handles per rank, from 0 to 9223372036854775807; 0 keeps DSpark eager. The total across ranks must fit the platform's count range. |
-| `prefill_dma_engram` | `false` | Candidate: enqueue both prepared Engram reads before DMA prefill compute and join at their decoders. |
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
 | `prefill_graph_programs` | `0` | Candidate switch: short text continuations (one item after a prefix, under 512 rows, no upper-skip DMA) captured as graph segments at their second run, at most this many body programs at once, from 0 to 64; 0 keeps every prefill eager. Unqualified. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
@@ -187,6 +186,12 @@ them. A non-default value is unqualified.
 | `text_config.indexer_mma` | `true` | Use the guarded native Flash index scorer where eligible. |
 | `text_config.indexer_prefill_tile` | `true` | Enable the qualified Flash tiled indexer routes. |
 | `verify_graph_rows` | `64` | Widest graphed verify step; wider admitted steps run eagerly. |
+
+TP4 native-KV single-item DMA prefill overlaps both prepared Engram gathers
+by default at 512-8192 rows. The model joins each layer before its decoder;
+media, taps and unavailable prepared row services retain their existing
+fallbacks. See [mapped-row read-ahead](../../docs/mapped-row-read-ahead.md)
+for the adoption evidence and remaining synchronous callers.
 
 The bundle no longer reads execution settings from
 `CHOPINFER_DEEPSEEK41_SHARED_OVERLAP`,

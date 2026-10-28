@@ -8,13 +8,8 @@ fn dma_prefill_enqueues_both_layers_and_joins_before_decoders() {
             if speculative {
                 host.speculation.set(Some((5, 32)));
             }
-            let mut instance = create_backend_with_options(
-                &host,
-                true,
-                completion_backend(&host, delayed),
-                &[("prefill_dma_engram", true.into())],
-            )
-            .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+            let mut instance = create_backend(&host, true, completion_backend(&host, delayed))
+                .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
             let begin = host.journal.borrow().len();
             let mapped = host.mapped_gather_calls.get();
             let request = encode(
@@ -84,13 +79,7 @@ fn dma_prefill_failure_between_enqueue_and_join_retains_destinations() {
             }
             let backend =
                 dspark::host::MappedHost::with_gather_failure(Rc::clone(&host), failure, after);
-            let mut instance = create_backend_with_options(
-                &host,
-                true,
-                backend,
-                &[("prefill_dma_engram", true.into())],
-            )
-            .unwrap();
+            let mut instance = create_backend(&host, true, backend).unwrap();
             let request = encode(
                 &prompt(7, 0, 0, 512, true),
                 &[Boundary {
@@ -138,21 +127,16 @@ fn dma_prefill_failure_between_enqueue_and_join_retains_destinations() {
 }
 
 #[test]
-fn dma_prefill_option_preserves_launches_through_cancel_and_reuse() {
+fn dma_prefill_completion_timing_preserves_launches_through_cancel_and_reuse() {
     for speculative in [false, true] {
         let mut reference = None;
-        for enabled in [false, true] {
+        for delayed in [false, true] {
             let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
             if speculative {
                 host.speculation.set(Some((5, 32)));
             }
-            let mut instance = create_backend_with_options(
-                &host,
-                true,
-                completion_backend(&host, true),
-                &[("prefill_dma_engram", enabled.into())],
-            )
-            .unwrap();
+            let mut instance =
+                create_backend(&host, true, completion_backend(&host, delayed)).unwrap();
             let initial = indices(instance.handle());
             for (request_id, start, rows, end, cancel) in [
                 (7, 0, 8192, 8704, false),
@@ -195,65 +179,56 @@ fn dma_prefill_option_preserves_launches_through_cancel_and_reuse() {
 #[test]
 fn dma_owner_route_counts_match_submitted_kernels() {
     for speculative in [false, true] {
-        for enabled in [false, true] {
-            bundle_runtime::routes::with_logging(|| {
-                let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-                if speculative {
-                    host.speculation.set(Some((5, 32)));
-                }
-                let mut instance = create_backend_with_options(
-                    &host,
-                    true,
-                    completion_backend(&host, true),
-                    &[("prefill_dma_engram", enabled.into())],
-                )
+        bundle_runtime::routes::with_logging(|| {
+            let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+            if speculative {
+                host.speculation.set(Some((5, 32)));
+            }
+            let mut instance =
+                create_backend(&host, true, completion_backend(&host, true)).unwrap();
+            let request = encode(
+                &prompt(7, 0, 0, 512, true),
+                &[Boundary {
+                    request_id: 7,
+                    prompt_tokens: 512,
+                    chunk_end: 512,
+                    chunk_tokens: 8192,
+                }],
+            )
+            .unwrap();
+            let begin = host.journal.borrow().len();
+            let log_begin = host.logs.borrow().len();
+            instance
+                .execute_prefill(&request, &mut Views::default())
                 .unwrap();
-                let request = encode(
-                    &prompt(7, 0, 0, 512, true),
-                    &[Boundary {
-                        request_id: 7,
-                        prompt_tokens: 512,
-                        chunk_end: 512,
-                        chunk_tokens: 8192,
-                    }],
-                )
-                .unwrap();
-                let begin = host.journal.borrow().len();
-                let log_begin = host.logs.borrow().len();
-                instance
-                    .execute_prefill(&request, &mut Views::default())
-                    .unwrap();
-                let issued = host.journal.borrow()[begin..]
-                    .iter()
-                    .filter(|line| {
-                        line.starts_with("launch ") && line.contains("chop_comm_owned_sum_")
-                    })
-                    .count() as u64;
-                assert!(issued > 0);
-                let counted: u64 = host.logs.borrow()[log_begin..]
-                    .iter()
-                    .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-                    .filter(|value| value["schema"] == "chopinfer.route.v1")
-                    .flat_map(|value| {
-                        value["entries"]
-                            .as_object()
-                            .unwrap()
-                            .values()
-                            .cloned()
-                            .collect::<Vec<_>>()
-                    })
-                    .filter(|entry| entry["family"] == "prefill_dma")
-                    .map(|entry| entry["launches"].as_u64().unwrap())
-                    .sum();
-                assert_eq!(
-                    counted, issued,
-                    "every submitted DMA owner sum must be witnessed"
-                );
-                instance.commit().unwrap();
-                instance.retire_request(7).unwrap();
-                instance.destroy().unwrap();
-            });
-        }
+            let issued = host.journal.borrow()[begin..]
+                .iter()
+                .filter(|line| line.starts_with("launch ") && line.contains("chop_comm_owned_sum_"))
+                .count() as u64;
+            assert!(issued > 0);
+            let counted: u64 = host.logs.borrow()[log_begin..]
+                .iter()
+                .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                .filter(|value| value["schema"] == "chopinfer.route.v1")
+                .flat_map(|value| {
+                    value["entries"]
+                        .as_object()
+                        .unwrap()
+                        .values()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
+                .filter(|entry| entry["family"] == "prefill_dma")
+                .map(|entry| entry["launches"].as_u64().unwrap())
+                .sum();
+            assert_eq!(
+                counted, issued,
+                "every submitted DMA owner sum must be witnessed"
+            );
+            instance.commit().unwrap();
+            instance.retire_request(7).unwrap();
+            instance.destroy().unwrap();
+        });
     }
 }
 
@@ -283,13 +258,8 @@ fn dma_join_precedes_first_destination_read_on_every_stream() {
             if speculative {
                 host.speculation.set(Some((5, 32)));
             }
-            let mut instance = create_backend_with_options(
-                &host,
-                true,
-                completion_backend(&host, true),
-                &[("prefill_dma_engram", true.into())],
-            )
-            .unwrap();
+            let mut instance =
+                create_backend(&host, true, completion_backend(&host, true)).unwrap();
             let begin = host.journal.borrow().len();
             let request = encode(
                 &prompt(7, 0, 0, rows, true),
@@ -439,13 +409,7 @@ fn assert_gathers_settled(refused: &[String]) {
 fn prefill_status_refusal_settles_gathers_and_serves_next_step() {
     for rows in [193, 512, 769] {
         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-        let mut instance = create_backend_with_options(
-            &host,
-            true,
-            completion_backend(&host, true),
-            &[("prefill_dma_engram", true.into())],
-        )
-        .unwrap();
+        let mut instance = create_backend(&host, true, completion_backend(&host, true)).unwrap();
         let refused = refused_prefill(&host, &mut instance, false, rows);
         assert!(instance.commit().is_err());
         instance.retire_request(7).unwrap();
@@ -463,41 +427,31 @@ fn prefill_status_refusal_settles_gathers_and_serves_next_step() {
 #[test]
 fn dspark_status_refusal_settles_gathers_before_terminal_poison() {
     for rows in [193, 512, 769] {
-        for enabled in [false, true] {
-            let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-            host.speculation.set(Some((5, 32)));
-            let mut instance = create_backend_with_options(
-                &host,
-                true,
-                completion_backend(&host, true),
-                &[("prefill_dma_engram", enabled.into())],
-            )
-            .unwrap();
-            let refused = refused_prefill(&host, &mut instance, true, rows);
-            if enabled || rows < 512 {
-                assert_gathers_settled(&refused);
-            }
-            // execute_packed settles the target before returning the error to
-            // Runtime::host_result, which retains DSpark's terminal policy.
-            assert_eq!(
-                crate::instance::prefill_engram::refusal_state(instance.handle()),
-                (true, true)
-            );
-            assert_eq!(
-                instance.retire_request(7).unwrap_err(),
-                BundleAbiError::Status(BundleStatusV1::InvalidState)
-            );
-            assert!(
-                instance
-                    .execute_prefill(&status_request(9, rows), &mut Views::default())
-                    .is_err()
-            );
-            match instance.destroy() {
-                Ok(()) => assert_eq!(host.acquired.get(), host.released.get()),
-                Err(error) => {
-                    assert_eq!(error, BundleAbiError::Poisoned);
-                    assert!(instance.is_poisoned());
-                }
+        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+        host.speculation.set(Some((5, 32)));
+        let mut instance = create_backend(&host, true, completion_backend(&host, true)).unwrap();
+        let refused = refused_prefill(&host, &mut instance, true, rows);
+        assert_gathers_settled(&refused);
+        // execute_packed settles the target before returning the error to
+        // Runtime::host_result, which retains DSpark's terminal policy.
+        assert_eq!(
+            crate::instance::prefill_engram::refusal_state(instance.handle()),
+            (true, true)
+        );
+        assert_eq!(
+            instance.retire_request(7).unwrap_err(),
+            BundleAbiError::Status(BundleStatusV1::InvalidState)
+        );
+        assert!(
+            instance
+                .execute_prefill(&status_request(9, rows), &mut Views::default())
+                .is_err()
+        );
+        match instance.destroy() {
+            Ok(()) => assert_eq!(host.acquired.get(), host.released.get()),
+            Err(error) => {
+                assert_eq!(error, BundleAbiError::Poisoned);
+                assert!(instance.is_poisoned());
             }
         }
     }
@@ -510,15 +464,9 @@ fn ready_prefill_refusal_settles_after_publication_and_serves_next_cycle() {
     // negotiated prefill envelope. Use ordinary AR execute for this order;
     // the negotiated-prefill tests above cover DMA separately.
     use super::super::device_results::ReadySink;
-    for (rows, enabled) in [(193, false), (512, true)] {
+    for rows in [193, 512] {
         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-        let mut instance = create_backend_with_options(
-            &host,
-            true,
-            completion_backend(&host, true),
-            &[("prefill_dma_engram", enabled.into())],
-        )
-        .unwrap();
+        let mut instance = create_backend(&host, true, completion_backend(&host, true)).unwrap();
         let sources = FLASH.shape.csa.index_sources.len();
         let mut status = vec![0; rows as usize * 4];
         status[0] = 1;
@@ -582,13 +530,7 @@ fn ready_prefill_refusal_settles_after_publication_and_serves_next_cycle() {
 fn poisoned_dma_prefill_never_waits_on_healthy_pending_gathers() {
     let create = || {
         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-        let instance = create_backend_with_options(
-            &host,
-            true,
-            completion_backend(&host, true),
-            &[("prefill_dma_engram", true.into())],
-        )
-        .unwrap();
+        let instance = create_backend(&host, true, completion_backend(&host, true)).unwrap();
         (host, instance)
     };
     let (reference, mut instance) = create();

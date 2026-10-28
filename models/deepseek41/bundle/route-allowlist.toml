@@ -1196,26 +1196,6 @@ task = "MXFP8-fold-packed-cones"
 # The complete 36-phase CPU rotation observes every listed profile/entry/row pair.
 
 [[allow]]
-profiles = ["tp4-ar"]
-phase = "prefill"
-family = "engram_gather"
-entry = "engram/sync/prefill_schedule"
-symbol = "host.gather_mapped_rows"
-rows = [[512, 8192]]
-reason = "The default-off prefill_dma_engram candidate keeps upper-skip DMA prefills at 512-8192 rows on synchronous Engram gathers. Instance::prefill_gather_reason selects this fallback only when skip.uses_dma() and the candidate is off. Candidate sweeps omit this allowance"
-task = "W7-qualify-and-adopt-prepared-DMA-gathers"
-
-[[allow]]
-profiles = ["tp4-dspark"]
-phase = "prefill"
-family = "engram_gather"
-entry = "engram/sync/prefill_schedule"
-symbol = "host.gather_mapped_rows"
-rows = [[512, 8192]]
-reason = "The default-off prefill_dma_engram candidate keeps upper-skip DMA prefills at 512-8192 rows on synchronous Engram gathers. Instance::prefill_gather_reason selects this fallback only when skip.uses_dma() and the candidate is off. Candidate sweeps omit this allowance"
-task = "W7-qualify-and-adopt-prepared-DMA-gathers"
-
-[[allow]]
 profiles = ["tp4-dspark"]
 phase = "verify"
 family = "f32_reuse"

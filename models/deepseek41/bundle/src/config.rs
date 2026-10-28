@@ -410,7 +410,6 @@ pub(crate) mod tests {
         );
         let mut changed = base.clone();
         for (name, value) in [
-            (PREFILL_DMA_ENGRAM, true.into()),
             (SHARED_OVERLAP_MAX_ROWS, 8.into()),
             (PREFILL_PLAN_CACHE_PLANS, 2.into()),
             (PREFILL_PLAN_CACHE_VERIFY, true.into()),
@@ -423,7 +422,6 @@ pub(crate) mod tests {
         assert_eq!(
             decode(&changed, |_| {}).unwrap().execution,
             Options {
-                prefill_dma_engram: true,
                 shared_overlap_max_rows: 8,
                 prefill_plan_cache_plans: 2,
                 prefill_plan_cache_verify: true,
@@ -433,7 +431,6 @@ pub(crate) mod tests {
             }
         );
         for (name, value) in [
-            (PREFILL_DMA_ENGRAM, "true".into()),
             (SHARED_OVERLAP_MAX_ROWS, 0.into()),
             (PREFILL_PLAN_CACHE_PLANS, 65.into()),
             (PREFILL_PLAN_CACHE_VERIFY, "verify".into()),

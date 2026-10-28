@@ -190,8 +190,24 @@ fn sparse_dma_keeps_small_cones_on_the_existing_transport() {
     );
 }
 
+fn assert_prepared_mapped_reads(journal: &[String]) {
+    let first = journal
+        .iter()
+        .position(|line| line.starts_with("launch "))
+        .unwrap();
+    let count = |lines: &[String], prefix: &str| {
+        lines.iter().filter(|line| line.starts_with(prefix)).count()
+    };
+    assert_eq!(count(&journal[..first], "async mapped ids "), 2);
+    assert_eq!(count(journal, "async mapped wait "), 8);
+    assert_eq!(count(journal, "async mapped complete"), 2);
+    // The fake service materializes both planes at each stream's join.
+    assert_eq!(count(&journal[..first], "mapped gather "), 0);
+    assert_eq!(count(&journal[first..], "mapped gather "), 16);
+}
+
 #[test]
-fn sparse_dma_finishes_mapped_uploads_before_compute() {
+fn sparse_dma_enqueues_mapped_reads_before_compute() {
     let host = host();
     host.drafter.set(true);
     host.device.residency.set(Some(BundleRawClusterResidencyV1 {
@@ -226,22 +242,7 @@ fn sparse_dma_finishes_mapped_uploads_before_compute() {
         .unwrap();
     instance.commit().unwrap();
     let journal = host.journal.borrow();
-    assert!(
-        !journal
-            .iter()
-            .any(|line| line.starts_with("async mapped ids "))
-    );
-    let first = journal
-        .iter()
-        .position(|line| line.starts_with("launch "))
-        .unwrap();
-    assert_eq!(
-        journal[..first]
-            .iter()
-            .filter(|line| line.starts_with("mapped gather "))
-            .count(),
-        16
-    );
+    assert_prepared_mapped_reads(&journal);
     assert_eq!(
         journal
             .iter()
@@ -256,29 +257,14 @@ fn sparse_dma_finishes_mapped_uploads_before_compute() {
 }
 
 #[test]
-fn dspark_sparse_dma_gathers_every_plane_before_compute() {
+fn dspark_sparse_dma_joins_every_mapped_plane() {
     let journal = capture_with(8192, Some(true), true);
-    assert!(
-        journal
-            .iter()
-            .all(|line| !line.starts_with("async mapped ids "))
-    );
-    let first = journal
-        .iter()
-        .position(|line| line.starts_with("launch "))
-        .unwrap();
+    assert_prepared_mapped_reads(&journal);
     let mut observed: Vec<_> = journal
         .iter()
         .filter(|line| line.starts_with("mapped gather "))
         .cloned()
         .collect();
-    assert_eq!(
-        journal[..first]
-            .iter()
-            .filter(|line| line.starts_with("mapped gather "))
-            .count(),
-        16
-    );
     let mut expected = Vec::new();
     for rank in 0..4 {
         for layer in [1, 14] {

@@ -8,8 +8,6 @@ use std::collections::BTreeMap;
 pub const SHARED_OVERLAP_MAX_ROWS: &str = "shared_overlap_max_rows";
 pub const PREFILL_PLAN_CACHE_PLANS: &str = "prefill_plan_cache_plans";
 pub const PREFILL_PLAN_CACHE_VERIFY: &str = "prefill_plan_cache_verify";
-/// Candidate: overlap prepared Engram reads with phased DMA prefill.
-pub const PREFILL_DMA_ENGRAM: &str = "prefill_dma_engram";
 /// The candidate switch of short-prefill graphs: the most body programs
 /// captured at once, 0 (the default) keeping every prefill eager.
 pub const PREFILL_GRAPH_PROGRAMS: &str = "prefill_graph_programs";
@@ -24,7 +22,6 @@ pub const DEFAULT_GRAPH_HANDLES_PER_RANK: usize = 512;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Options {
-    pub prefill_dma_engram: bool,
     pub shared_overlap_max_rows: u32,
     pub prefill_plan_cache_plans: usize,
     pub prefill_plan_cache_verify: bool,
@@ -33,7 +30,7 @@ pub struct Options {
     pub diagnostic_step_logs: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 7] {
+pub fn declarations() -> [ModelOptionV1; 6] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -46,10 +43,6 @@ pub fn declarations() -> [ModelOptionV1; 7] {
                 minimum: 0,
                 maximum: i64::MAX,
             },
-        ),
-        (
-            PREFILL_DMA_ENGRAM,
-            OptionDefinitionV1::Boolean { default: false },
         ),
         (
             PREFILL_GRAPH_PROGRAMS,
@@ -110,9 +103,6 @@ impl Options {
                 .map_err(|_| format!("model option {name} exceeds the platform's count range"))
         };
         Ok(Self {
-            prefill_dma_engram: values[PREFILL_DMA_ENGRAM]
-                .as_bool()
-                .expect("checked boolean"),
             shared_overlap_max_rows: values[SHARED_OVERLAP_MAX_ROWS]
                 .as_u64()
                 .expect("checked u32") as u32,
@@ -146,7 +136,6 @@ mod tests {
         let declaration = declaration();
         let defaults = declaration.resolve(&BTreeMap::new()).unwrap();
         let expected = Options {
-            prefill_dma_engram: false,
             shared_overlap_max_rows: u32::MAX,
             prefill_plan_cache_plans: 16,
             prefill_plan_cache_verify: false,
@@ -163,7 +152,6 @@ mod tests {
     fn overrides_reach_the_reader_and_make_identity_unqualified() {
         let declaration = declaration();
         let overrides = BTreeMap::from([
-            (PREFILL_DMA_ENGRAM.into(), "true".into()),
             (SHARED_OVERLAP_MAX_ROWS.into(), "8".into()),
             (PREFILL_PLAN_CACHE_PLANS.into(), "2".into()),
             (PREFILL_PLAN_CACHE_VERIFY.into(), "true".into()),
@@ -175,7 +163,6 @@ mod tests {
         assert_eq!(
             Options::read(&resolved).unwrap(),
             Options {
-                prefill_dma_engram: true,
                 shared_overlap_max_rows: 8,
                 prefill_plan_cache_plans: 2,
                 prefill_plan_cache_verify: true,
@@ -191,7 +178,6 @@ mod tests {
     fn host_and_bundle_refuse_wrong_types_and_out_of_range_values() {
         let declaration = declaration();
         for (name, bad) in [
-            (PREFILL_DMA_ENGRAM, "1"),
             (SHARED_OVERLAP_MAX_ROWS, "0"),
             (SHARED_OVERLAP_MAX_ROWS, "4294967296"),
             (PREFILL_PLAN_CACHE_PLANS, "0"),

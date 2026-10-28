@@ -519,15 +519,15 @@ impl StepModel {
     /// it crosses (`ADAPTIVE_STALL_MILLIS`), weighted by
     /// `ADAPTIVE_STALL_WEIGHT`. The cap minimizes that blocked time per
     /// prefill token:
-    ///   `T(P) (waiting + weight decode lines(T(P))) / P`.
-    /// Within the span of caps that cross the same lines this falls as `P`
-    /// grows, because the fixed cost is shared by more tokens, so the
-    /// minimum is one of the largest caps under each line (never below the
-    /// progress floor) or no cap. Caps are priced at no more than
-    /// `maximum`, what the waiting requests' next chunks can take beside
-    /// the decoders. Without a cap the step takes `whole`: a chunk that
-    /// leaves no room for decoding runs alone, and the decoders wait for it
-    /// and their own step.
+    ///   `T(P) (waiting + weight decode lines(T(P))) / P`
+    /// over every legal cap: the progress floor, each multiple of `GRANULE`
+    /// above it up to `maximum` (what the waiting requests' next chunks can
+    /// take beside the decoders), and no cap. The step model's segment
+    /// fixed terms and its quadratic attention term can put the minimum
+    /// inside a stall band, so every candidate is priced; there are at most
+    /// `maximum / GRANULE + 2`. Without a cap the step takes `whole`: a
+    /// chunk that leaves no room for decoding runs alone, and the decoders
+    /// wait for it and their own step. Ties go to the smaller cap.
     pub(super) fn adaptive_budget(
         &self,
         demand: Demand,
@@ -544,23 +544,6 @@ impl StepModel {
             ))
         };
         let floor = policy.min_prefill_tokens().min(maximum);
-        let mut options: Vec<(Option<usize>, usize, u64)> =
-            Vec::with_capacity(ADAPTIVE_STALL_MILLIS.len() + 2);
-        if floor > 0 {
-            options.push((Some(floor), floor, predict(floor, demand.decode)?));
-        }
-        for line in ADAPTIVE_STALL_MILLIS {
-            let line = line * 1000;
-            let largest = (1..=maximum / GRANULE)
-                .rev()
-                .map(|n| n * GRANULE)
-                .find(|&tokens| {
-                    predict(tokens, demand.decode).is_some_and(|micros| micros <= line)
-                });
-            if let Some(tokens) = largest.filter(|&tokens| tokens > floor) {
-                options.push((Some(tokens), tokens, predict(tokens, demand.decode)?));
-            }
-        }
         let uncapped = match whole {
             Uncapped::Alone(tokens) => (
                 tokens,
@@ -568,9 +551,16 @@ impl StepModel {
             ),
             Uncapped::Mixed(tokens) => (tokens, predict(tokens, demand.decode)?),
         };
-        if uncapped.0 > 0 {
-            options.push((None, uncapped.0, uncapped.1));
-        }
+        // A cap of the whole mixed chunk is the uncapped step.
+        let below = match whole {
+            Uncapped::Alone(_) => usize::MAX,
+            Uncapped::Mixed(tokens) => tokens,
+        };
+        let caps = (floor > 0).then_some(floor).into_iter().chain(
+            (floor / GRANULE + 1..=maximum / GRANULE)
+                .map(|n| n * GRANULE)
+                .take_while(|&tokens| tokens < below),
+        );
         // Blocked time scaled by the weight's denominator, so the
         // comparison of cost per token stays in integers.
         let agents = |micros: u64| {
@@ -582,7 +572,7 @@ impl StepModel {
                 + demand.decode as u128 * lines * ADAPTIVE_STALL_WEIGHT.0
         };
         let mut best: Option<(Option<usize>, u128, u128)> = None;
-        for (cap, tokens, micros) in options {
+        let mut consider = |cap: Option<usize>, tokens: usize, micros: u64| {
             let cost = u128::from(micros) * agents(micros);
             let tokens = tokens as u128;
             if best
@@ -590,6 +580,12 @@ impl StepModel {
             {
                 best = Some((cap, cost, tokens));
             }
+        };
+        for tokens in caps {
+            consider(Some(tokens), tokens, predict(tokens, demand.decode)?);
+        }
+        if uncapped.0 > 0 {
+            consider(None, uncapped.0, uncapped.1);
         }
         Some(best.map_or(Some(floor), |(cap, ..)| cap))
     }
@@ -1068,5 +1064,160 @@ mod tests {
         assert_eq!(model.xtx, fresh.xtx);
         assert_eq!(model.xty, fresh.xty);
         assert_eq!(model.yty, fresh.yty);
+    }
+
+    fn fitted(fixed_ps: [u64; 2], token_ps: u64, mixed_ps: u64, pair_fs: u64) -> StepModel {
+        StepModel {
+            fit: Some(Fit {
+                fixed_ps,
+                token_ps,
+                mixed_ps,
+                pair_fs,
+                seen: [true; 2],
+            }),
+            ..StepModel::default()
+        }
+    }
+
+    /// Blocked time (scaled by the weight's denominator) and tokens of a
+    /// choice, priced as `adaptive_budget` defines its objective.
+    fn blocked(
+        model: &StepModel,
+        demand: Demand,
+        whole: Uncapped,
+        choice: Option<usize>,
+    ) -> (u128, u128) {
+        let predict = |tokens: usize, decode: usize| {
+            model
+                .predicted_micros(StepShape::new(
+                    tokens,
+                    chunk_pairs(demand.context, tokens),
+                    decode,
+                ))
+                .unwrap()
+        };
+        let (tokens, micros) = match (choice, whole) {
+            (Some(tokens), _) => (tokens, predict(tokens, demand.decode)),
+            (None, Uncapped::Alone(tokens)) => (
+                tokens,
+                predict(tokens, 0) + model.decode_micros(demand.decode).unwrap_or(0),
+            ),
+            (None, Uncapped::Mixed(tokens)) => (tokens, predict(tokens, demand.decode)),
+        };
+        let lines = ADAPTIVE_STALL_MILLIS
+            .iter()
+            .filter(|&&line| micros > line * 1000)
+            .count() as u128;
+        let agents = demand.waiting as u128 * ADAPTIVE_STALL_WEIGHT.1
+            + demand.decode as u128 * lines * ADAPTIVE_STALL_WEIGHT.0;
+        (u128::from(micros) * agents, tokens as u128)
+    }
+
+    /// The cheapest blocked time per token over every token count from
+    /// the floor to the maximum and over no cap, by brute force.
+    fn exhaustive(
+        model: &StepModel,
+        demand: Demand,
+        maximum: usize,
+        whole: Uncapped,
+        floor: usize,
+    ) -> (u128, u128) {
+        let floor = floor.min(maximum);
+        let legal =
+            (floor.max(1)..=maximum).filter(|&tokens| tokens == floor || tokens % GRANULE == 0);
+        legal
+            .map(|tokens| blocked(model, demand, whole, Some(tokens)))
+            .chain(std::iter::once(blocked(model, demand, whole, None)))
+            .min_by(|&(a, b), &(c, d)| (a * d).cmp(&(c * b)))
+            .unwrap()
+    }
+
+    #[test]
+    fn adaptive_cap_is_the_exhaustive_minimum_of_its_objective() {
+        let mut models = vec![
+            // A quadratic attention cost: T(P)/P is least inside a band.
+            fitted([10_000_000_000; 2], 0, 0, 100_000_000),
+            // A cheap fixed term below 1024 tokens and a dear one from it.
+            fitted([1_000_000_000, 100_000_000_000], 0, 0, 0),
+            fitted(
+                [32_600_000_000, 48_000_000_000],
+                77_000_000,
+                20_000_000_000,
+                400_000,
+            ),
+            fitted([150_000_000_000, 60_000_000_000], 110_000_000, 0, 2_000_000),
+            trained(&[0, 32_768, 65_536]),
+        ];
+        let mut decoding = fitted(
+            [30_000_000_000, 90_000_000_000],
+            95_000_000,
+            5_000_000_000,
+            1_000_000,
+        );
+        decoding.decode_us = [24_000; BUCKETS];
+        decoding.decode_samples = [2; BUCKETS];
+        models.push(decoding);
+        let mut checked = 0;
+        for model in &models {
+            for floor in [128, 512] {
+                let policy = MixedPolicy::new(150, floor, 0).unwrap();
+                for decode in [1, 4, 13, 32] {
+                    for waiting in [1, 3, 48] {
+                        for context in [0, 50_000, 250_000] {
+                            for maximum in [300, 1024, 4096, 8192] {
+                                for whole in [Uncapped::Mixed(maximum), Uncapped::Alone(8192)] {
+                                    let demand = Demand {
+                                        decode,
+                                        waiting,
+                                        context,
+                                    };
+                                    let choice = model
+                                        .adaptive_budget(demand, maximum, whole, policy)
+                                        .unwrap();
+                                    if let Some(tokens) = choice {
+                                        assert!(tokens >= floor.min(maximum) && tokens <= maximum);
+                                    }
+                                    let (cost, tokens) = blocked(model, demand, whole, choice);
+                                    let (best, best_tokens) =
+                                        exhaustive(model, demand, maximum, whole, floor);
+                                    assert_eq!(
+                                        cost * best_tokens,
+                                        best * tokens,
+                                        "{demand:?} maximum {maximum} {whole:?} floor {floor}: \
+                                         {choice:?} is not the cheapest"
+                                    );
+                                    checked += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(checked, 6 * 2 * 4 * 3 * 3 * 4 * 2);
+    }
+
+    #[test]
+    fn adaptive_cap_finds_minima_inside_a_stall_band() {
+        let demand = Demand {
+            decode: 1,
+            waiting: 1,
+            context: 0,
+        };
+        // T(P) = 10 ms + P(P+1)/20 us: least per token at 512 tokens
+        // (46.3 ms), far under 250 ms; the floor costs 47% more per token.
+        let quadratic = fitted([10_000_000_000; 2], 0, 0, 100_000_000);
+        let floor = MixedPolicy::new(150, 128, 0).unwrap();
+        assert_eq!(
+            quadratic.adaptive_budget(demand, 8192, Uncapped::Mixed(8192), floor),
+            Some(Some(512))
+        );
+        // 1 ms below 1024 tokens and 100 ms from 1024: 896 tokens share the
+        // cheap fixed cost best.
+        let segments = fitted([1_000_000_000, 100_000_000_000], 0, 0, 0);
+        assert_eq!(
+            segments.adaptive_budget(demand, 8192, Uncapped::Mixed(8192), policy(150)),
+            Some(Some(896))
+        );
     }
 }

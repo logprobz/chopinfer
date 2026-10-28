@@ -562,10 +562,10 @@ impl SchedulerConfig {
 
     /// Candidate switch, off by default: with [`PrefillBudget::Tbt`], size the
     /// prefill cap of a step beside decoding requests from demand instead of
-    /// the fixed target. Each step takes
-    /// the cap that costs blocked requests the least time per prefill
-    /// token: the largest step under the 250 ms stall line (at least the
-    /// progress floor), the largest under the 1 s line, or no cap. A grid
+    /// the fixed target. Each step takes the cap that costs blocked
+    /// requests the least time per prefill token, priced over every legal
+    /// cap from the progress floor up and no cap; a decoding request's
+    /// time counts only past the 250 ms and 1 s stall lines. A grid
     /// request with timing cuts is cut at that cap; other requests take it
     /// as the step's prefill budget, as with the fixed target.
     #[must_use]

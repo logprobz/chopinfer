@@ -24,7 +24,7 @@ impl Startup for Anchored {
         Served::servings()
     }
     /// The served envelope and a mandatory set of anchored steps, which
-    /// every anchored sweep runs (the quick tier only, below): packed
+    /// every anchored sweep runs: packed
     /// prompts each keeping an anchor, a ring that
     /// crosses the 4096-row key part, restored odd starts, one whose anchor
     /// lies 135 rows in (seeded rings, the last seeded distance) beside a
@@ -200,23 +200,22 @@ fn anchored_instances_keep_eight_anchor_items() {
 mod anchor_route_sweep {
     use super::*;
 
-    /// Both profiles in turn, beside the served sweeps that run in the same
-    /// process: in parallel the four quick sweeps double the library's peak
-    /// RSS. The CPU and later tiers run the library's sweeps one after
-    /// another, and its peak RSS grows with each, so two more would pass
-    /// the route budget: the quick tier covers the anchored routes.
+    // CI gives each profile its own process and RSS budget.
+    fn sweep(profile: &str) {
+        route_guard::sweep::<Anchored>(
+            profile,
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
+            env!("CARGO_PKG_NAME"),
+        );
+    }
+
     #[test]
-    fn tp4_profiles() {
-        if std::env::var("CHOPINFER_ROUTE_SWEEP").is_ok_and(|tier| tier != "quick") {
-            println!("anchored routes run in the quick tier only");
-            return;
-        }
-        for profile in ["tp4-ar", "tp4-dspark"] {
-            route_guard::sweep::<Anchored>(
-                profile,
-                include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
-                env!("CARGO_PKG_NAME"),
-            );
-        }
+    fn tp4_ar() {
+        sweep("tp4-ar");
+    }
+
+    #[test]
+    fn tp4_dspark() {
+        sweep("tp4-dspark");
     }
 }

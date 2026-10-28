@@ -1016,7 +1016,7 @@ fn anchor_state_dumps_read_their_spares() {
     }
 }
 
-/// DMA reductions preserve each rank's anchor writes before capture and
+/// Default DMA reductions preserve each rank's anchor writes before capture and
 /// restore, including the DSpark raw history and delayed gather joins.
 #[test]
 fn dma_anchors_capture_restore_and_continue_with_both_completion_modes() {
@@ -1031,10 +1031,7 @@ fn dma_anchors_capture_restore_and_continue_with_both_completion_modes() {
                 &host,
                 true,
                 completion_backend(&host, delayed),
-                &[
-                    ("prefill_dma_engram", true.into()),
-                    ("prefill_anchor_items", 1.into()),
-                ],
+                &[("prefill_anchor_items", 1.into())],
             )
             .unwrap();
             let (spares, states) = crate::instance::anchor_spans(instance.handle());

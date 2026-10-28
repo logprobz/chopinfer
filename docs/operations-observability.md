@@ -551,13 +551,16 @@ activity fall inside the window before reading timings.
 
 ### Timing-cut serving option
 
-`--prefill-timing-cuts off|fixed` resolves from the profile field
+`--prefill-timing-cuts off|fixed|adaptive` resolves from the profile field
 `prefill_timing_cuts`, with an explicit flag taking precedence. Every profile
 keeps `off`. `profiles show` reports the resolved value; the `resolved serve`
-startup settings line includes `prefill_timing_cuts: Off|Fixed`. Retain this
+startup settings line includes `prefill_timing_cuts: Off|Fixed|Adaptive`. Retain this
 line with replay receipts, together with the TBT target and
 `--mixed-min-prefill-tokens` progress floor. `fixed` requires the TBT budget and
-negotiated bundle cut support. The timing-cut counters and step records
+negotiated bundle cut support. `adaptive` (a candidate) requires the TBT
+budget, and cut support only on a bundle with a prefill grid. A mixed step's
+`prefill_cap` in the step record is the cap it chose, or null when it chose
+no cap. The timing-cut counters and step records
 above show whether the policy actually cut eligible mixed steps.
 
 On 2026-10-28, DeepSeek TP4 DSpark C8 replay (eight sessions, three turns,

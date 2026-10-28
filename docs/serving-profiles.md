@@ -304,10 +304,11 @@ the package's declared support. Compare it with the same model, workload,
 concurrency and precision. Neither a scheduling flag nor spare capacity
 establishes accuracy or performance qualification.
 
-`--prefill-timing-cuts off|fixed` (`prefill_timing_cuts` in a profile) defaults
-to `off`, including every DeepSeek, Qwen, MiMo and GLM profile. An explicit
-flag overrides the profile. `profiles show` reports the resolved value and
-the `resolved serve` startup settings record the resolved enum (`Off` or `Fixed`).
+`--prefill-timing-cuts off|fixed|adaptive` (`prefill_timing_cuts` in a
+profile) defaults to `off`, including every DeepSeek, Qwen, MiMo and GLM
+profile. An explicit flag overrides the profile. `profiles show` reports the
+resolved value and the `resolved serve` startup settings record the resolved
+enum (`Off`, `Fixed` or `Adaptive`).
 
 With `off`, a declared prefill grid keeps whole chunks under every budget.
 With `fixed`, `--prefill-budget tbt` and a bundle that negotiates prefill cuts
@@ -318,6 +319,24 @@ that multiple leaves fewer tokens than the `--mixed-min-prefill-tokens`
 progress floor, the chunk ends at the first multiple at or past the floor
 if it fits beside the decoders. Timing cuts capture no prefix anchor;
 scored and media requests keep their chunks.
+
+`adaptive` is a candidate under qualification. It needs `--prefill-budget
+tbt` and sizes the tbt cap of a step beside decoding requests from demand
+instead of the fixed target. Each such step takes the cap that costs blocked
+requests the least time per prefill token: every request waiting on prefill
+is blocked for the whole step, and each decoding request is charged the
+whole step, at half weight, once for each stall line (250 ms and 1 s) the
+predicted step crosses. The choice falls on the largest step under 250 ms
+(at least the progress floor), the largest under 1 s, or no cap, each priced
+at what the waiting requests' next chunks can take. Many decoders beside
+little prefill get short steps; many waiting prompts beside few decoders get
+large ones. Without decoders, and until the step model trains, sizing is
+unchanged. It applies to every model: a bundle with a prefill grid needs
+negotiated cuts, as with `fixed`, and ends grid chunks at the chosen cap
+(startup prints `prefill timing cuts on (adaptive): grid chunks ...`); a
+bundle without a grid takes the cap as its ordinary tbt prefill budget and
+takes no timing cut (`prefill timing cuts on (adaptive): the TBT cap ...`).
+A grid bundle without cuts refuses `adaptive`.
 
 ### Fixed timing-cut tradeoff
 

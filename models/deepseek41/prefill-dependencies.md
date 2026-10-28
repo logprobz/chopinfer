@@ -55,9 +55,11 @@ The instance reports its allowance through the optional
 `chop_bundle_prefill_anchors_api_v1` export: its spare count when cuts are
 enabled, otherwise 0. The host applies it to the guaranteed grid in place
 of the manifest's anchor items and keeps the manifest value for bundles
-without the export. With a nonzero allowance an off-grid rounded end runs
-in the same step as the prompt end, and the scheduler captures both after
-that step. Grid ends, shared-prefix cuts and the default schedule are
+without the export. With a nonzero allowance, an item starting at token
+zero may keep an off-grid rounded end in the same step as the prompt end;
+the scheduler captures both after that step. Restored items and
+continuations after an earlier cut keep ordinary split steps. The check
+uses the scheduled start, not the request's original cache-hit count. Grid ends, shared-prefix cuts and the default schedule are
 unchanged. Served evidence (2026-10-28, TP4, eight anchor items against
 none on one install): cold, repeated, probed and restored unaligned AR
 prompts gave identical tokens, logprobs, full-vocabulary logits, cache hits
@@ -80,8 +82,12 @@ reuse stayed at about 74%. Under the paired ABBA rule, output throughput
 regressed by 2.9% in AR and 5.7% in DSpark. AR TTFT p50 rose from 197-200 ms
 to 231 ms; DSpark rose from 202 ms to 241-242 ms. Both profiles also had
 resolved TTFT p95 regressions. These short-turn C1 results reject default
-adoption despite the earlier cold-prompt gains. The candidate stays off;
-concurrent and generated-history stateful acceptance remain unproven.
+adoption despite the earlier cold-prompt gains. The measurements above
+precede the restriction to items starting at token zero. That restriction
+keeps the earlier cold batch shapes eligible and excludes the measured
+short continuations; its served effect remains unproven. The candidate
+stays off; concurrent and generated-history stateful acceptance remain
+unproven.
 
 A shorter grid hit does not suppress a longer observed shared-prefix cut,
 even when the request resumes within its final chunk. The next request can

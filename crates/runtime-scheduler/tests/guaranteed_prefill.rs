@@ -621,7 +621,7 @@ fn grid_anchor_items_keep_the_rounded_prompt_end_inside_one_chunk() {
         ),
         (
             10000,
-            vec![(0, 8192), (8192, 1808)],
+            vec![(0, 8192), (8192, 1792), (9984, 16)],
             vec![8192, 9984, 10000],
         ),
         (50, vec![(0, 50)], vec![50]),
@@ -757,10 +757,10 @@ fn grid_anchor_items_drop_both_captures_of_a_request_cancelled_before_them() {
     s.audit().unwrap();
 }
 
-/// A request restored at an odd prompt end keeps its own longer prompt's
-/// rounded end inside its one remaining chunk.
+/// A request restored at an odd prompt end keeps the next rounded end as
+/// an ordinary cut, even when the instance has anchor spares.
 #[test]
-fn grid_anchor_items_span_from_a_restored_odd_start() {
+fn grid_anchor_items_keep_a_restored_odd_start_split() {
     let mut s = scheduler_with_grid_anchors(8192, true, 1, 0);
     let first: Vec<u32> = (0..789).collect();
     submit(&mut s, 1, &first, false);
@@ -771,7 +771,9 @@ fn grid_anchor_items_span_from_a_restored_odd_start() {
     s.admit().unwrap();
     assert_eq!(s.cached_tokens(RequestId::new(2)).unwrap(), 789);
     s.complete_prefix_restore(RequestId::new(2)).unwrap();
-    assert_eq!(anchored_step(&mut s), [(2, 789, 300, Some(1088))]);
+    assert_eq!(anchored_step(&mut s), [(2, 789, 299, None)]);
+    assert_eq!(anchored_step(&mut s), [(2, 1088, 1, None)]);
+    assert!(s.next_batch().unwrap().is_none());
 }
 
 /// Serves a prompt of `document` to its end as the engine does: its prefill,
@@ -826,7 +828,7 @@ fn grid_anchor_items_keep_every_cache_hit_of_the_split_grid() {
     for grid in [0, 1] {
         let split = |cached: usize, end: usize| {
             let anchor = end / 64 * 64;
-            if grid == 0 && anchor > cached {
+            if (grid == 0 || cached > 0) && anchor > cached {
                 vec![(cached, anchor - cached), (anchor, end - anchor)]
             } else {
                 vec![(cached, end - cached)]
@@ -901,5 +903,146 @@ fn grid_anchor_items_and_aligned_prompt_cuts_keep_separate_boundaries() {
             assert!(s.next_batch().unwrap().is_none());
             s.audit().unwrap();
         }
+    }
+}
+
+#[test]
+fn grid_anchor_items_keep_a_continuation_after_768_split() {
+    let mut s = scheduler_with_grid_anchors(8192, true, 8, 0);
+    let prime: Vec<u32> = (0..839).collect();
+    submit(&mut s, 1, &prime, false);
+    assert_eq!(finish(&mut s, 1), (vec![(0, 839)], vec![832, 839]));
+    let mut prompt = prime[..768].to_vec();
+    prompt.extend(2000..2092);
+    submit(&mut s, 2, &prompt, false);
+    assert_eq!(anchored_step(&mut s), [(2, 0, 768, None)]);
+    assert_eq!(s.cached_tokens(RequestId::new(2)).unwrap(), 0);
+    assert_eq!(anchored_step(&mut s), [(2, 768, 64, None)]);
+    assert_eq!(anchored_step(&mut s), [(2, 832, 28, None)]);
+    assert!(s.next_batch().unwrap().is_none());
+    s.audit().unwrap();
+}
+
+#[test]
+fn grid_anchor_items_preserve_cold_single_and_packed_shapes() {
+    // Cold prompt lengths and packed shapes. Disjoint prefixes prevent an
+    // earlier shared-prefix boundary from changing these whole-prompt items.
+    let shapes: &[&[usize]] = &[
+        &[3],
+        &[6],
+        &[12],
+        &[24],
+        &[49],
+        &[49, 51, 357, 714, 670, 730, 680],
+        &[49, 51, 467, 357, 714, 730, 680],
+        &[49, 357, 714],
+        &[49, 490, 463, 805, 922, 435, 1903],
+        &[49, 805, 490],
+        &[49, 902, 805],
+        &[49, 922, 463, 435, 1903, 805, 490],
+        &[51],
+        &[51, 53, 789, 602, 871, 863, 835],
+        &[51, 53, 871, 835, 602, 863, 789],
+        &[51, 490],
+        &[51, 789, 602],
+        &[51, 871, 789],
+        &[53],
+        &[53, 478],
+        &[53, 478, 835],
+        &[53, 835, 478],
+        &[53, 835, 863],
+        &[53, 863, 835],
+        &[54],
+        &[54, 643, 938],
+        &[54, 865, 938],
+        &[54, 938, 865],
+        &[357],
+        &[357, 714],
+        &[357, 714, 670],
+        &[434],
+        &[434, 54, 788, 835, 458, 938, 865],
+        &[434, 788, 458, 865, 835, 54, 938],
+        &[434, 835, 458],
+        &[435],
+        &[435, 1903, 463],
+        &[458],
+        &[458, 434, 54, 835, 938, 865, 643],
+        &[458, 835, 434, 938, 54, 643, 865],
+        &[463],
+        &[463, 435, 49, 902, 490, 1903, 805],
+        &[463, 435, 922],
+        &[467],
+        &[478],
+        &[478, 863],
+        &[490],
+        &[490, 435, 463, 805, 902, 49, 1903],
+        &[602],
+        &[602, 53, 863, 789, 835, 871, 478],
+        &[602, 789, 871],
+        &[643],
+        &[670],
+        &[680],
+        &[680, 51, 730],
+        &[680, 467, 730],
+        &[714],
+        &[714, 51, 357, 49, 730, 680, 670],
+        &[730],
+        &[730, 51, 357, 49, 714, 680, 467],
+        &[788],
+        &[788, 458, 434],
+        &[789],
+        &[789, 51, 53, 835, 602, 863, 871],
+        &[789, 53, 478, 871, 602, 835, 863],
+        &[789, 602, 51, 871],
+        &[789, 602, 51, 871, 835, 478, 863, 53],
+        &[805],
+        &[835],
+        &[835, 53, 478, 863, 871, 602, 789],
+        &[835, 434, 54, 938, 865, 458, 643],
+        &[835, 434, 458],
+        &[863],
+        &[865],
+        &[871],
+        &[871, 51, 789],
+        &[871, 789, 602],
+        &[902],
+        &[922],
+        &[938],
+        &[1903],
+    ];
+    for &shape in shapes {
+        let config = SchedulerConfig::new(8, 64, 8192, 8192, 1)
+            .unwrap()
+            .with_prefill_granule(64)
+            .unwrap()
+            .with_prefix_cache(1)
+            .with_prefill_cuts(true)
+            .with_guaranteed_prefill_chunks(8192)
+            .unwrap()
+            .with_grid_anchor_items(8);
+        let mut s = Scheduler::new(config, KvGeometry::new(64, 8192).unwrap()).unwrap();
+        let mut expected = Vec::new();
+        for (i, &tokens) in shape.iter().enumerate() {
+            let id = i as u64 + 1;
+            let base = i as u32 * 10000;
+            submit(
+                &mut s,
+                id,
+                &(base..base + tokens as u32).collect::<Vec<_>>(),
+                false,
+            );
+            let anchor = tokens / 64 * 64;
+            expected.push((
+                id,
+                0,
+                tokens,
+                (anchor > 0 && anchor < tokens).then_some(anchor),
+            ));
+        }
+        let mut actual = anchored_step(&mut s);
+        actual.sort_unstable();
+        assert_eq!(actual, expected, "{shape:?}");
+        assert!(s.next_batch().unwrap().is_none());
+        s.audit().unwrap();
     }
 }

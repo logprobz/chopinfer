@@ -3893,6 +3893,11 @@ impl Scheduler {
             return None;
         }
         let start = record.prefilled_tokens;
+        // Keep short continuations on their qualified split routes. The
+        // scheduled start also excludes a cold prompt after an earlier cut.
+        if start != 0 {
+            return None;
+        }
         let anchor = record.end_anchor.filter(|&anchor| {
             anchor > start
                 && record

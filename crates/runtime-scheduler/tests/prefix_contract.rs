@@ -1218,7 +1218,7 @@ fn a_failed_restore_with_a_granule_captures_on_its_multiples() {
 }
 
 #[test]
-fn prompt_ending_chunks_run_past_their_anchor_within_the_anchor_budget() {
+fn continuation_chunks_keep_their_anchor_cut_with_spares_available() {
     let mut scheduler = Scheduler::new(
         SchedulerConfig::new(4, 64, 64, 16, 1)
             .unwrap()
@@ -1280,12 +1280,11 @@ fn prompt_ending_chunks_run_past_their_anchor_within_the_anchor_budget() {
             })
             .collect::<Vec<_>>()
     };
-    // The first request's last chunk runs past its anchor at 40 to the
-    // prompt end and keeps its state there; with one anchor item a step,
-    // the second, in the same steps, ends a chunk at 40 instead.
+    // Both requests already ran earlier chunks, so available anchor spares
+    // cannot fuse either continuation across the anchor at 40.
     assert_eq!(
         prefill(1),
-        [(16, 0, None), (16, 16, None), (13, 32, Some(40))]
+        [(16, 0, None), (16, 16, None), (8, 32, None), (5, 40, None)]
     );
     assert_eq!(
         prefill(2),
@@ -1306,8 +1305,8 @@ fn prompt_ending_chunks_run_past_their_anchor_within_the_anchor_budget() {
 /// An anchor item goes only to a chunk that reaches its prompt-end anchor
 /// in this step: two prompts that stop first at the end of the blocks an
 /// earlier prompt shared (32) keep none, and the third, which only has its
-/// anchor (40), runs past it with one of the two. Their next chunks then run
-/// past their own anchors.
+/// anchor (40), runs past it with one of the two. The continuations keep
+/// their ordinary anchor cuts even though an anchor spare is available.
 #[test]
 fn only_a_chunk_that_reaches_its_anchor_takes_an_anchor_item() {
     let mut scheduler = Scheduler::new(
@@ -1337,7 +1336,7 @@ fn only_a_chunk_that_reaches_its_anchor_takes_an_anchor_item() {
     shared(4, 500);
     submit(&mut scheduler, 5, &prompt(45, 2000), 1);
     let mut chunks = Vec::new();
-    for _ in 0..2 {
+    for _ in 0..3 {
         let batch = scheduler.next_batch().unwrap().unwrap();
         let outcomes = batch
             .items()
@@ -1361,9 +1360,11 @@ fn only_a_chunk_that_reaches_its_anchor_takes_an_anchor_item() {
         chunks,
         [
             (3, BatchPhase::Prefill { tokens: 32 }, None),
-            (3, BatchPhase::Prefill { tokens: 13 }, Some(40)),
+            (3, BatchPhase::Prefill { tokens: 8 }, None),
+            (3, BatchPhase::Prefill { tokens: 5 }, None),
             (4, BatchPhase::Prefill { tokens: 32 }, None),
-            (4, BatchPhase::Prefill { tokens: 13 }, Some(40)),
+            (4, BatchPhase::Prefill { tokens: 8 }, None),
+            (4, BatchPhase::Prefill { tokens: 5 }, None),
             (5, BatchPhase::Prefill { tokens: 45 }, Some(40)),
         ]
     );

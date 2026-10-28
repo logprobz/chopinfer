@@ -774,6 +774,8 @@ mod tests {
         pub prefill_budget: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub decode_tbt_target_ms: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub prefill_timing_cuts: Option<String>,
         pub queue_depth: Option<usize>,
         pub gpu_memory_utilization: f64,
         pub status: ProfileStatus,

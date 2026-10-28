@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use runtime_kv::{KvError, KvGeometry, KvPool, PrefixChainV1, PrefixMediaSpanV1};
@@ -12,6 +13,22 @@ fn prompt(length: u32) -> Vec<u32> {
 
 /// Publishes an anchor over `source`'s committed tokens of `tokens`.
 fn capture(
+    pool: &mut KvPool,
+    tokens: &PrefixChainV1,
+    source: runtime_kv::SequenceHandle,
+    state_pages: usize,
+) -> Option<Vec<runtime_kv::BlockId>> {
+    let boundary = pool.snapshot(source).unwrap().tokens();
+    pool.insert_anchor(
+        tokens.key_at(boundary).unwrap(),
+        tokens.chain(boundary / tokens.block_tokens()).unwrap(),
+        source,
+        state_pages,
+    )
+    .expect("a live source can be anchored")
+}
+
+fn content_capture(
     pool: &mut KvPool,
     tokens: &PrefixChainV1,
     source: runtime_kv::SequenceHandle,
@@ -376,13 +393,13 @@ fn idle_frontier_survives_busy_ancestors_under_pressure() {
     let idle = chain(&[900; 4]);
     let source = pool.create_sequence(4).unwrap();
     pool.append(source, 4).unwrap();
-    capture(&mut pool, &idle, source, 2).unwrap();
+    content_capture(&mut pool, &idle, source, 2).unwrap();
     pool.release(source).unwrap();
     let busy = chain(&prompt(12));
     let source = pool.create_sequence(12).unwrap();
     for _ in 0..3 {
         pool.append(source, 4).unwrap();
-        capture(&mut pool, &busy, source, 2).unwrap();
+        content_capture(&mut pool, &busy, source, 2).unwrap();
     }
     pool.release(source).unwrap();
     assert_eq!(pool.metrics().snapshot().prefix_cache_evictions, 0);
@@ -407,12 +424,16 @@ fn detached_capture(pool: &mut KvPool, chain: &PrefixChainV1, depth: usize, page
     pool.audit().unwrap();
 }
 
-fn assert_classes(pool: &KvPool, entries: &[(PrefixChainV1, usize)]) {
+type Entry = (PrefixChainV1, usize);
+
+fn entry_key(entry: &Entry) -> runtime_kv::PrefixCacheKeyV1 {
+    entry.0.key_at(entry.1).unwrap()
+}
+
+fn oracle_classes(
+    live: &[&Entry],
+) -> BTreeMap<runtime_kv::PrefixCacheKeyV1, runtime_kv::PrefixAnchorClassV1> {
     use runtime_kv::PrefixAnchorClassV1::{Maximal, Retained, Superseded};
-    let live: Vec<_> = entries
-        .iter()
-        .filter(|(c, n)| pool.has_anchor(c.key_at(*n).unwrap()))
-        .collect();
     let ancestor = |a: &(PrefixChainV1, usize), b: &(PrefixChainV1, usize)| {
         a.1 < b.1 && a.0.key_at(a.1) == b.0.key_at(a.1)
     };
@@ -444,17 +465,30 @@ fn assert_classes(pool: &KvPool, entries: &[(PrefixChainV1, usize)]) {
             }
         }
     }
+    live.iter()
+        .map(|entry| {
+            let key = entry_key(entry);
+            let class = if maximal.contains(entry) {
+                Maximal
+            } else if retained.contains(&key) {
+                Retained
+            } else {
+                Superseded
+            };
+            (key, class)
+        })
+        .collect()
+}
+
+fn assert_classes(pool: &KvPool, entries: &[Entry]) {
+    use runtime_kv::PrefixAnchorClassV1::{Maximal, Retained, Superseded};
+    let live: Vec<_> = entries
+        .iter()
+        .filter(|entry| pool.has_anchor(entry_key(entry)))
+        .collect();
     let mut counts = [0; 3];
-    for entry in live {
-        let key = entry.0.key_at(entry.1).unwrap();
-        let expected = if maximal.contains(&entry) {
-            Maximal
-        } else if retained.contains(&key) {
-            Retained
-        } else {
-            Superseded
-        };
-        assert_eq!(pool.anchor_class(key), Some(expected), "depth {}", entry.1);
+    for (key, expected) in oracle_classes(&live) {
+        assert_eq!(pool.anchor_class(key), Some(expected));
         counts[match expected {
             Superseded => 0,
             Retained => 1,
@@ -463,6 +497,73 @@ fn assert_classes(pool: &KvPool, entries: &[(PrefixChainV1, usize)]) {
     }
     assert_eq!(pool.metrics().snapshot().prefix_anchors_by_class, counts);
     pool.audit().unwrap();
+}
+
+/// Deliberately slow: recompute classes after each victim and count physical
+/// references independently of the radix index and its ordered victim map.
+fn expected_evictions(
+    pool: &KvPool,
+    entries: &[Entry],
+    last_used: &BTreeMap<runtime_kv::PrefixCacheKeyV1, u64>,
+    needed: usize,
+    incoming: Option<(&PrefixChainV1, usize)>,
+) -> BTreeSet<runtime_kv::PrefixCacheKeyV1> {
+    use runtime_kv::PrefixAnchorClassV1::{Maximal, Retained, Superseded};
+    if incoming.is_some_and(|(chain, depth)| pool.has_anchor(chain.key_at(depth).unwrap())) {
+        return BTreeSet::new();
+    }
+    let mut live: Vec<_> = entries
+        .iter()
+        .filter(|entry| pool.has_anchor(entry_key(entry)))
+        .collect();
+    let mut refs = BTreeMap::new();
+    let mut pages = BTreeMap::new();
+    for entry in &live {
+        let key = entry_key(entry);
+        let (_, mut kv, state) = pool.anchor_pages(key).unwrap();
+        kv.extend(state);
+        for page in &kv {
+            refs.insert(*page, pool.block_ref_count(*page).unwrap());
+        }
+        pages.insert(key, kv);
+    }
+    let mut free = pool.stats().free_blocks();
+    let mut victims = BTreeSet::new();
+    while free < needed && !live.is_empty() {
+        let classes = oracle_classes(&live);
+        let tier = [Superseded, Retained, Maximal]
+            .into_iter()
+            .find(|tier| classes.values().any(|class| class == tier))
+            .unwrap();
+        let own = |entry: &Entry| {
+            incoming.is_some_and(|(chain, depth)| {
+                entry.1 < depth && chain.key_at(entry.1) == Some(entry_key(entry))
+            })
+        };
+        let prefer_own = tier == Maximal && live.iter().any(|entry| own(entry));
+        let victim = live
+            .iter()
+            .filter(|entry| classes[&entry_key(entry)] == tier && (!prefer_own || own(entry)))
+            .map(|entry| entry_key(entry))
+            .min_by_key(|key| (last_used[key], *key))
+            .unwrap();
+        for page in &pages[&victim] {
+            let refs = refs.get_mut(page).unwrap();
+            *refs -= 1;
+            free += usize::from(*refs == 0);
+        }
+        victims.insert(victim);
+        live.retain(|entry| entry_key(entry) != victim);
+    }
+    victims
+}
+
+fn live_keys(pool: &KvPool, entries: &[Entry]) -> BTreeSet<runtime_kv::PrefixCacheKeyV1> {
+    entries
+        .iter()
+        .map(entry_key)
+        .filter(|key| pool.has_anchor(*key))
+        .collect()
 }
 
 #[test]
@@ -509,7 +610,7 @@ fn content_ancestry_ignores_cow_ids_and_discriminates_tails_salts_and_media() {
     let base = chain(&prompt(16));
     let source = pool.create_sequence(16).unwrap();
     pool.append(source, 5).unwrap();
-    capture(&mut pool, &base, source, 1).unwrap();
+    content_capture(&mut pool, &base, source, 1).unwrap();
     let before = pool.snapshot(source).unwrap();
     let append = pool.append(source, 7).unwrap();
     assert!(append.copy().is_some());
@@ -517,7 +618,7 @@ fn content_ancestry_ignores_cow_ids_and_discriminates_tails_salts_and_media() {
         before.blocks()[1],
         pool.snapshot(source).unwrap().blocks()[1]
     );
-    capture(&mut pool, &base, source, 1).unwrap();
+    content_capture(&mut pool, &base, source, 1).unwrap();
     pool.release(source).unwrap();
     assert_eq!(pool.anchor_class(base.key_at(5).unwrap()), Some(Retained));
     let mut divergent = prompt(9);
@@ -564,9 +665,9 @@ fn incoming_ancestor_tie_break_and_failed_capture_do_not_pin_old_anchors() {
         let busy = chain(&prompt(8));
         let source = pool.create_sequence(8).unwrap();
         pool.append(source, 4).unwrap();
-        capture(&mut pool, &busy, source, 1).unwrap();
+        content_capture(&mut pool, &busy, source, 1).unwrap();
         pool.append(source, 4).unwrap();
-        capture(&mut pool, &busy, source, 2).unwrap();
+        content_capture(&mut pool, &busy, source, 2).unwrap();
         assert_eq!(pool.has_anchor(idle.key_at(4).unwrap()), enabled);
         if enabled {
             assert!(!pool.has_anchor(busy.key_at(4).unwrap()));
@@ -589,7 +690,7 @@ fn private_restore_and_transfer_pins_survive_candidate_eviction() {
     let public = chain(&prompt(8));
     let source = pool.create_sequence(8).unwrap();
     pool.append(source, 4).unwrap();
-    let state = capture(&mut pool, &public, source, 1).unwrap();
+    let state = content_capture(&mut pool, &public, source, 1).unwrap();
     let private = PrefixCacheKeyV1::new([91; 32]);
     pool.insert_private_anchor(private, source, 1)
         .unwrap()
@@ -624,51 +725,150 @@ fn private_restore_and_transfer_pins_survive_candidate_eviction() {
     pool.audit().unwrap();
 }
 
+struct Rng(u64);
+
+impl Rng {
+    fn below(&mut self, limit: u64) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0 % limit
+    }
+}
+
+fn random_chain(rng: &mut Rng) -> (PrefixChainV1, bool) {
+    let mut tokens = prompt(64);
+    for _ in 0..rng.below(3) {
+        tokens[rng.below(64) as usize] += 1 + rng.below(2) as u32;
+    }
+    let mut media = Vec::new();
+    if rng.below(3) == 0 {
+        media.push(PrefixMediaSpanV1 {
+            identity: [rng.below(2) as u8; 32],
+            start: rng.below(56) as usize,
+            rows: 1 + rng.below(6) as usize,
+            media_row: rng.below(2) as u32,
+        });
+    }
+    let has_media = !media.is_empty();
+    let salt = [rng.below(2) as u8];
+    (
+        PrefixChainV1::salted(4, tokens.into(), media, (salt[0] == 1).then_some(&salt[..]))
+            .unwrap(),
+        has_media,
+    )
+}
+
 #[test]
 fn random_capture_remove_touch_and_pressure_match_slow_content_oracle() {
-    let mut pool = content_pool(96);
-    let mut entries = Vec::new();
-    let mut random = 0x12345678u64;
-    for iteration in 0..1200 {
-        random ^= random << 13;
-        random ^= random >> 7;
-        random ^= random << 17;
-        let depth = 1 + (random as usize % 48);
-        let branch = (random >> 16) as u32 % 5;
-        let mut tokens = prompt(48);
-        tokens[12] += branch;
-        tokens[27] += (random >> 32) as u32 % 3;
-        let identity =
-            PrefixChainV1::salted(4, tokens.into(), vec![], Some(&[(iteration % 3) as u8]))
-                .unwrap();
-        match random % 5 {
-            0 if !entries.is_empty() => {
-                let (c, n): &(PrefixChainV1, usize) = &entries[random as usize % entries.len()];
-                pool.remove_anchor(c.key_at(*n).unwrap()).unwrap();
-            }
-            1 => {
-                if let Some(hit) = pool.resume_prefix(&identity, depth, 48).unwrap() {
-                    pool.finish_restore(hit.handle()).unwrap();
-                    pool.release(hit.handle()).unwrap();
+    use runtime_kv::PrefixAnchorClassV1::Maximal;
+    let (mut maximal_victims, mut lower_victims, mut own_victims, mut media_captures) =
+        (0, 0, 0, 0);
+    for seed in 1..=40 {
+        let mut rng = Rng(0x9e3779b97f4a7c15 ^ seed);
+        let capacity = 60 + rng.below(80) as usize;
+        let mut pool = content_pool(capacity);
+        let mut entries = Vec::new();
+        let mut last_used = BTreeMap::new();
+        let mut clock = 0;
+        for _ in 0..400 {
+            match rng.below(6) {
+                0 | 1 if !entries.is_empty() => {
+                    let entry = &entries[rng.below(entries.len() as u64) as usize];
+                    pool.remove_anchor(entry_key(entry)).unwrap();
+                }
+                2 => {
+                    let (chain, _) = random_chain(&mut rng);
+                    let limit = 1 + rng.below(64) as usize;
+                    if let Some(hit) = pool.resume_prefix(&chain, limit, 64).unwrap() {
+                        clock += 1;
+                        last_used.insert(chain.key_at(hit.tokens()).unwrap(), clock);
+                        pool.finish_restore(hit.handle()).unwrap();
+                        pool.release(hit.handle()).unwrap();
+                    }
+                }
+                _ => {
+                    let (chain, media) = random_chain(&mut rng);
+                    let depth = (1 + rng.below(64) as usize..=64)
+                        .find(|depth| !chain.splits_media(*depth))
+                        .unwrap();
+                    let source = pool.create_sequence(depth).unwrap();
+                    let before = live_keys(&pool, &entries);
+                    let expected =
+                        expected_evictions(&pool, &entries, &last_used, depth.div_ceil(4), None);
+                    pool.append(source, depth).unwrap();
+                    let actual = before
+                        .difference(&live_keys(&pool, &entries))
+                        .copied()
+                        .collect::<BTreeSet<_>>();
+                    assert_eq!(actual, expected, "append victims, seed {seed}");
+                    pool.audit().unwrap();
+                    let before = live_keys(&pool, &entries);
+                    let classes = oracle_classes(
+                        &entries
+                            .iter()
+                            .filter(|entry| before.contains(&entry_key(entry)))
+                            .collect::<Vec<_>>(),
+                    );
+                    let state = 1 + rng.below(3) as usize;
+                    let expected = expected_evictions(
+                        &pool,
+                        &entries,
+                        &last_used,
+                        state,
+                        Some((&chain, depth)),
+                    );
+                    pool.insert_content_anchor(&chain, source, depth, state)
+                        .unwrap();
+                    let actual = before
+                        .difference(&live_keys(&pool, &entries))
+                        .copied()
+                        .collect::<BTreeSet<_>>();
+                    assert_eq!(actual, expected, "capture victims, seed {seed}");
+                    for key in actual {
+                        if classes[&key] == Maximal {
+                            maximal_victims += 1;
+                            let ancestor = entries
+                                .iter()
+                                .find(|entry| entry_key(entry) == key)
+                                .unwrap();
+                            if ancestor.1 < depth && chain.key_at(ancestor.1) == Some(key) {
+                                own_victims += 1;
+                            }
+                        } else {
+                            lower_victims += 1;
+                        }
+                    }
+                    media_captures += usize::from(media);
+                    let key = chain.key_at(depth).unwrap();
+                    assert!(pool.has_anchor(key));
+                    clock += 1;
+                    last_used.insert(key, clock);
+                    if !entries.iter().any(|entry| entry_key(entry) == key) {
+                        entries.push((chain, depth));
+                    }
+                    pool.release(source).unwrap();
                 }
             }
-            _ => {
-                detached_capture(&mut pool, &identity, depth, 2);
-                let key = identity.key_at(depth).unwrap();
-                if !entries.iter().any(|(c, n)| c.key_at(*n) == Some(key)) {
-                    entries.push((identity, depth));
-                }
-            }
+            assert_classes(&pool, &entries);
+            let clone = pool.clone();
+            assert_eq!(clone, pool);
+            assert_eq!(clone.metrics().snapshot(), pool.metrics().snapshot());
+            clone.audit().unwrap();
         }
-        assert_classes(&pool, &entries);
-        let clone = pool.clone();
-        assert_eq!(clone, pool);
-        assert_eq!(clone.metrics().snapshot(), pool.metrics().snapshot());
-        clone.audit().unwrap();
+        for entry in &entries {
+            pool.remove_anchor(entry_key(entry)).unwrap();
+        }
+        assert_eq!(pool.stats().free_blocks(), capacity);
+        assert_eq!(pool.metrics().snapshot().prefix_anchors_by_class, [0; 3]);
+        assert_eq!(
+            pool.metrics().snapshot().prefix_snapshot_pages_by_class,
+            [0; 3]
+        );
+        pool.audit().unwrap();
     }
-    for (chain, depth) in entries {
-        pool.remove_anchor(chain.key_at(depth).unwrap()).unwrap();
-    }
-    assert_eq!(pool.stats().free_blocks(), 96);
-    pool.audit().unwrap();
+    assert!(maximal_victims > 0 && lower_victims > 0 && own_victims > 0 && media_captures > 0);
+    println!(
+        "maximal victims {maximal_victims}, lower-tier victims {lower_victims}, incoming ancestor victims {own_victims}, media captures {media_captures}"
+    );
 }

@@ -129,7 +129,7 @@ pub const PREFIX_REGISTRY_DIGESTS_V1: usize = 1 << 18;
 
 /// One cached prefix: a boundary, the pages covering it, and the pages that
 /// hold the bundle's snapshot of its own state at that boundary.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq)]
 struct PrefixAnchorV1 {
     /// The digest of the anchor's full blocks, which indexes it for lookup.
     chain: PrefixCacheKeyV1,
@@ -140,6 +140,22 @@ struct PrefixAnchorV1 {
     created_at: std::time::Instant,
     class: PrefixAnchorClassV1,
     private: bool,
+    /// Public content identity is present in the ancestry index.
+    indexed: bool,
+}
+
+// Capture age is observability, not logical pool state.
+impl PartialEq for PrefixAnchorV1 {
+    fn eq(&self, other: &Self) -> bool {
+        self.chain == other.chain
+            && self.tokens == other.tokens
+            && self.blocks == other.blocks
+            && self.state == other.state
+            && self.last_used == other.last_used
+            && self.class == other.class
+            && self.private == other.private
+            && self.indexed == other.indexed
+    }
 }
 
 /// A request resumed from an anchor.
@@ -966,6 +982,7 @@ impl KvPool {
 
     /// Captures a boundary with its complete logical identity. Legacy digest-only
     /// captures remain maximal because their ancestry cannot be reconstructed.
+    /// A mismatched block geometry or media-splitting boundary is skipped.
     pub fn insert_content_anchor(
         &mut self,
         identity: &PrefixChainV1,
@@ -974,7 +991,7 @@ impl KvPool {
         state_pages: usize,
     ) -> Result<Option<Vec<BlockId>>, KvError> {
         if identity.block_tokens() != self.geometry.block_tokens || identity.splits_media(tokens) {
-            return Err(KvError::InvalidPrefixMedia);
+            return Ok(None);
         }
         let key = identity.key_at(tokens).ok_or(KvError::InvariantViolation)?;
         let chain = identity
@@ -1072,11 +1089,12 @@ impl KvPool {
                 created_at: std::time::Instant::now(),
                 class: PrefixAnchorClassV1::Maximal,
                 private,
+                indexed: !private && self.ancestry.is_some() && identity.is_some(),
             },
         );
         self.metrics
             .anchor_added(PrefixAnchorClassV1::Maximal, state_pages, private);
-        if let (Some(index), Some(identity)) = (&mut self.ancestry, identity) {
+        if !private && let (Some(index), Some(identity)) = (&mut self.ancestry, identity) {
             index.insert(identity, tokens, key);
             self.reclassify_anchors();
         }
@@ -1885,7 +1903,14 @@ impl KvPool {
                 *refs = refs.checked_add(1).ok_or(KvError::InvariantViolation)?;
             }
         }
-        if self.ancestry.as_ref().is_some_and(|index| !index.audit()) {
+        if self.ancestry.as_ref().is_some_and(|index| {
+            !index.audit(
+                self.anchors
+                    .iter()
+                    .filter(|(_, anchor)| anchor.indexed)
+                    .map(|(key, anchor)| (*key, anchor.tokens)),
+            )
+        }) {
             return Err(KvError::InvariantViolation);
         }
         let mut indexed = 0usize;
@@ -1911,12 +1936,17 @@ impl KvPool {
                     .anchor_order
                     .get(&(anchor.class, anchor.last_used, *key))
                     != Some(key)
-                || self
-                    .ancestry
-                    .as_ref()
-                    .and_then(|index| index.class(*key))
-                    .unwrap_or_default()
-                    != anchor.class
+                || (anchor.indexed && anchor.private)
+                || if anchor.indexed {
+                    self.ancestry.as_ref().and_then(|index| index.class(*key)) != Some(anchor.class)
+                } else {
+                    anchor.class != PrefixAnchorClassV1::Maximal
+                        || self
+                            .ancestry
+                            .as_ref()
+                            .and_then(|index| index.class(*key))
+                            .is_some()
+                }
             {
                 return Err(KvError::InvariantViolation);
             }

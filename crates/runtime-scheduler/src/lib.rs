@@ -4776,6 +4776,104 @@ impl Error for ScheduleError {}
 mod tests {
     use super::*;
 
+    #[test]
+    fn two_boundaries_from_one_commit_reuse_snapshot_pages_in_capture_order() {
+        for enabled in [false, true] {
+            let mut scheduler = Scheduler::new(
+                SchedulerConfig::new(2, 8, 16, 8, 1)
+                    .unwrap()
+                    .with_prefix_cache(1)
+                    .with_prefix_ancestry(enabled),
+                KvGeometry::new(4, 5).unwrap(),
+            )
+            .unwrap();
+            let idle = PrefixChainV1::new(4, vec![90; 4].into(), vec![]).unwrap();
+            let idle_key = idle.key_at(4).unwrap();
+            let source = scheduler.kv.create_sequence(4).unwrap();
+            scheduler.kv.append(source, 4).unwrap();
+            scheduler
+                .kv
+                .insert_content_anchor(&idle, source, 4, 1)
+                .unwrap()
+                .unwrap();
+            scheduler.kv.release(source).unwrap();
+
+            let id = RequestId::new(1);
+            let chain =
+                Arc::new(PrefixChainV1::new(4, (0..8).collect::<Vec<_>>().into(), vec![]).unwrap());
+            scheduler
+                .submit_with_prefix(
+                    RequestSpec::new(id, 8, 1).unwrap(),
+                    Some(PrefixRequestV1::new(Arc::clone(&chain), true)),
+                )
+                .unwrap();
+            let batch = scheduler.next_batch().unwrap().unwrap();
+            assert_eq!(batch.items().len(), 1);
+            assert_eq!(batch.items()[0].phase(), BatchPhase::Prefill { tokens: 8 });
+            scheduler
+                .commit_batch(
+                    batch.id(),
+                    &[BatchOutcome::success(id, batch.items()[0].phase(), 1, true)],
+                )
+                .unwrap();
+            let mut captures = scheduler.take_prefix_captures();
+            assert_eq!(captures.len(), 1);
+            let end = captures.pop().unwrap();
+            assert!(end.deferred);
+            let source = end.handle;
+            let interior_key = chain.key_at(4).unwrap();
+            let end_key = chain.key_at(8).unwrap();
+            // Supply the interior snapshot kept by this same committed step.
+            // Only the final capture may release their shared source handle.
+            let interior = PrefixCaptureV1 {
+                tokens: 4,
+                key: interior_key,
+                chain: chain.chain(1).unwrap(),
+                interior: true,
+                deferred: false,
+                ..end.clone()
+            };
+            scheduler.captures = vec![interior, end];
+            assert_eq!(scheduler.kv.stats().free_blocks(), 1);
+            let mut device_pages = BTreeMap::new();
+            let mut writes = Vec::new();
+            for capture in scheduler.take_prefix_captures() {
+                let pages = scheduler.begin_prefix_capture(&capture).unwrap().unwrap();
+                assert_eq!(pages.len(), 1);
+                // Model the executor's ordered snapshot writes before ending
+                // each capture, as the engine's capture loop does.
+                device_pages.insert(pages[0], capture.tokens);
+                writes.push((capture.tokens, pages[0]));
+                scheduler.end_prefix_capture(&capture).unwrap();
+                if capture.interior {
+                    assert_eq!(scheduler.kv.snapshot(source).unwrap().tokens(), 8);
+                }
+                scheduler.kv.audit().unwrap();
+            }
+            assert_eq!(
+                writes.iter().map(|(tokens, _)| *tokens).collect::<Vec<_>>(),
+                [4, 8]
+            );
+            assert_eq!(writes[0].1 == writes[1].1, enabled);
+            assert_eq!(scheduler.kv.has_anchor(idle_key), enabled);
+            assert_eq!(scheduler.kv.has_anchor(interior_key), !enabled);
+            assert!(scheduler.kv.has_anchor(end_key));
+            assert!(matches!(
+                scheduler.kv.snapshot(source),
+                Err(KvError::StaleHandle)
+            ));
+            let restored = scheduler.kv.resume_anchor(end_key, 8).unwrap();
+            assert_eq!(device_pages[&restored.state()[0]], 8);
+            scheduler.kv.finish_restore(restored.handle()).unwrap();
+            scheduler.kv.release(restored.handle()).unwrap();
+            for key in [idle_key, interior_key, end_key] {
+                scheduler.kv.remove_anchor(key).unwrap();
+            }
+            assert_eq!(scheduler.kv.stats().free_blocks(), 5);
+            scheduler.kv.audit().unwrap();
+        }
+    }
+
     fn check_new_preemption_replaces_old_anchor(evicted: bool) {
         let mut s = Scheduler::new(
             SchedulerConfig::new(2, 8, 32, 8, 1)

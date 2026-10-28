@@ -219,13 +219,13 @@ impl KvMetrics {
 
     pub(crate) fn anchor_removed(&self, class: PrefixAnchorClassV1, pages: usize, private: bool) {
         if private {
-            self.inner
-                .prefix_private_anchors
-                .fetch_sub(1, Ordering::Relaxed);
+            saturating_sub(&self.inner.prefix_private_anchors, 1);
         } else {
-            self.inner.prefix_anchors_by_class[class.index()].fetch_sub(1, Ordering::Relaxed);
-            self.inner.prefix_snapshot_pages_by_class[class.index()]
-                .fetch_sub(pages as u64, Ordering::Relaxed);
+            saturating_sub(&self.inner.prefix_anchors_by_class[class.index()], 1);
+            saturating_sub(
+                &self.inner.prefix_snapshot_pages_by_class[class.index()],
+                pages as u64,
+            );
         }
     }
 

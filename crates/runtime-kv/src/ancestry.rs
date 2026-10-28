@@ -410,8 +410,18 @@ impl PrefixAncestry {
         result
     }
 
-    pub(crate) fn audit(&self) -> bool {
-        if !self.dirty.is_empty() {
+    pub(crate) fn audit(&self, expected: impl Iterator<Item = (PrefixCacheKeyV1, usize)>) -> bool {
+        let mut count = 0;
+        for (key, depth) in expected {
+            let Some(node) = self.anchors.get(&key).and_then(|id| self.nodes.get(id)) else {
+                return false;
+            };
+            if node.depth != depth {
+                return false;
+            }
+            count += 1;
+        }
+        if count != self.anchors.len() || !self.dirty.is_empty() {
             return false;
         }
         for (id, node) in &self.nodes {
@@ -472,5 +482,115 @@ impl PrefixAncestry {
                     .get(id)
                     .is_some_and(|node| node.anchor == Some(*key))
             })
+    }
+}
+
+#[cfg(test)]
+mod audit_tests {
+    use super::*;
+    use crate::{KvError, KvGeometry, KvPool};
+
+    fn fixture() -> (KvPool, PrefixChainV1, PrefixCacheKeyV1) {
+        let chain = PrefixChainV1::new(4, vec![1, 2, 3, 4].into(), vec![]).unwrap();
+        let mut pool = KvPool::new(KvGeometry::new(4, 16).unwrap(), 2)
+            .unwrap()
+            .with_prefix_ancestry(true);
+        let source = pool.create_sequence(4).unwrap();
+        pool.append(source, 4).unwrap();
+        pool.insert_content_anchor(&chain, source, 4, 1)
+            .unwrap()
+            .unwrap();
+        pool.release(source).unwrap();
+        let key = chain.key_at(4).unwrap();
+        (pool, chain, key)
+    }
+
+    #[test]
+    fn pool_equality_ignores_capture_age() {
+        let (pool, _, key) = fixture();
+        let mut clone = pool.clone();
+        clone.anchors.get_mut(&key).unwrap().created_at += std::time::Duration::from_secs(1);
+        assert_eq!(pool, clone);
+    }
+
+    #[test]
+    fn unsupported_content_boundaries_skip_without_pool_changes() {
+        let (mut pool, _, _) = fixture();
+        let source = pool.create_sequence(8).unwrap();
+        pool.append(source, 8).unwrap();
+        let before = pool.clone();
+        let wrong_blocks = PrefixChainV1::new(8, vec![1; 8].into(), vec![]).unwrap();
+        assert_eq!(
+            pool.insert_content_anchor(&wrong_blocks, source, 4, 1),
+            Ok(None)
+        );
+        let media = PrefixChainV1::new(
+            4,
+            vec![1; 8].into(),
+            vec![crate::PrefixMediaSpanV1 {
+                identity: [2; 32],
+                start: 3,
+                rows: 2,
+                media_row: 0,
+            }],
+        )
+        .unwrap();
+        assert_eq!(pool.insert_content_anchor(&media, source, 4, 1), Ok(None));
+        assert_eq!(pool, before);
+        assert_eq!(pool.metrics().snapshot(), before.metrics().snapshot());
+        pool.audit().unwrap();
+    }
+
+    #[test]
+    fn audit_accepts_content_legacy_and_private_anchors_together() {
+        let (mut pool, _, _) = fixture();
+        let source = pool.create_sequence(4).unwrap();
+        pool.append(source, 4).unwrap();
+        pool.insert_anchor(
+            PrefixCacheKeyV1::new([7; 32]),
+            PrefixCacheKeyV1::new([8; 32]),
+            source,
+            1,
+        )
+        .unwrap()
+        .unwrap();
+        pool.insert_private_anchor(PrefixCacheKeyV1::new([9; 32]), source, 1)
+            .unwrap()
+            .unwrap();
+        pool.release(source).unwrap();
+        pool.audit().unwrap();
+    }
+
+    #[test]
+    fn audit_rejects_missing_ancestry_membership() {
+        let (mut pool, _, _) = fixture();
+        pool.ancestry = Some(PrefixAncestry::default());
+        assert_eq!(pool.audit(), Err(KvError::InvariantViolation));
+    }
+
+    #[test]
+    fn audit_rejects_ancestry_without_a_pool_anchor() {
+        let (mut pool, _, _) = fixture();
+        let orphan = PrefixChainV1::new(4, vec![9, 8, 7, 6].into(), vec![]).unwrap();
+        let index = pool.ancestry.as_mut().unwrap();
+        index.insert(&orphan, 4, orphan.key_at(4).unwrap());
+        index.changes();
+        assert_eq!(pool.audit(), Err(KvError::InvariantViolation));
+    }
+
+    #[test]
+    fn audit_rejects_indexed_private_anchors() {
+        let (mut pool, _, key) = fixture();
+        pool.anchors.get_mut(&key).unwrap().private = true;
+        assert_eq!(pool.audit(), Err(KvError::InvariantViolation));
+    }
+
+    #[test]
+    fn audit_rejects_index_depth_different_from_anchor_tokens() {
+        let (mut pool, _, key) = fixture();
+        // Both lengths fit the same physical page, so the page audit alone
+        // cannot detect this mismatch with the content index.
+        pool.anchors.get_mut(&key).unwrap().tokens = 3;
+        assert_eq!(pool.audit(), Err(KvError::InvariantViolation));
     }
 }

@@ -5051,3 +5051,100 @@ fn mapped_row_set_registration_owns_names_and_preserves_older_tails() {
     );
     assert_eq!(backend.registered_row_planes.borrow().len(), 2);
 }
+
+#[test]
+fn mapped_only_sampling_is_not_a_recoverable_validation_refusal() {
+    use abi::device_results::*;
+    // SAFETY-REVIEWED: the host lends these native arguments for this callback.
+    #[allow(unsafe_code)]
+    unsafe extern "C" fn execute(
+        handle: abi::BundleHandleV1,
+        request: abi::BundleByteViewV1,
+        sink: *const BundleMappedDeviceResultSinkV1,
+    ) -> abi::BundleStatusV1 {
+        // SAFETY-REVIEWED: forward the caller's unmodified borrowed pointers.
+        unsafe {
+            abi::dispatch_bundle_execute_mapped_device_results_v1(
+                handle,
+                request,
+                sink,
+                |_, _, sink| {
+                    let buffer = |slot, length| abi::BundleDeviceBufferViewV1 {
+                        buffer: abi::BundleDeviceBufferHandleV1::from_parts(1, slot),
+                        length,
+                        ..abi::BundleDeviceBufferViewV1::empty()
+                    };
+                    sink.sample_mapped_device_logits(BundleMappedDeviceSamplingRequestV1 {
+                        struct_size: size_of::<BundleMappedDeviceSamplingRequestV1>() as u32,
+                        reserved: 0,
+                        source: BundleReadyLogitsViewV1 {
+                            struct_size: size_of::<BundleReadyLogitsViewV1>() as u32,
+                            flags: 0,
+                            cycle_epoch: 1,
+                            logits: abi::BundleLogitsViewV1 {
+                                context: abi::BundleContextHandleV1::from_parts(1, 1),
+                                element_type: abi::BUNDLE_LOGITS_ELEMENT_V1_F32,
+                                buffer: buffer(1, 8),
+                                row_count: 1,
+                                live_width: 2,
+                                row_stride_elements: 2,
+                                ..abi::BundleLogitsViewV1::empty()
+                            },
+                            ready: abi::BundleEventHandleV1::from_parts(1, 1),
+                        },
+                        first_sample_row: 0,
+                        sample_rows: 1,
+                        row_indices: buffer(2, 4),
+                        output: buffer(3, 256),
+                        done: abi::BundleEventHandleV1::from_parts(1, 2),
+                    })
+                    .unwrap();
+                    abi::BundleStatusV1::InvalidArgument
+                },
+            )
+        }
+    }
+    #[derive(Default)]
+    struct Sink {
+        calls: usize,
+    }
+    impl LogitsRowSinkV1 for Sink {
+        fn limits(&self) -> ResultSinkLimitsV1 {
+            ResultSinkLimitsV1::new(1, 2, 2)
+        }
+        fn emit_row(&mut self, _: OwnedLogitsRowV1) -> HostServiceResultV1<()> {
+            panic!("mapped only")
+        }
+        fn device_results_enabled(&self) -> bool {
+            true
+        }
+        fn mapped_sampling_enabled(&self) -> bool {
+            true
+        }
+        fn sample_mapped_device_logits(
+            &mut self,
+            _: BundleMappedDeviceSamplingRequestV1,
+        ) -> HostServiceResultV1<()> {
+            self.calls += 1;
+            Ok(())
+        }
+    }
+    let _guard = TEST_LOCK.lock().unwrap();
+    reset_calls();
+    let api = fixture_api()
+        .with_mapped_device_results_api(BundleMappedDeviceResultsApiV1 {
+            struct_size: size_of::<BundleMappedDeviceResultsApiV1>() as u32,
+            abi_version: abi::BUNDLE_ABI_VERSION_V1,
+            execute_mapped_device_results_v1: Some(execute),
+        })
+        .unwrap();
+    let mut instance = api.create(fixture_table(), &[]).unwrap();
+    let mut sink = Sink::default();
+    assert_eq!(
+        instance.execute(&[], &mut sink),
+        Err(BundleAbiError::Status(abi::BundleStatusV1::InvalidArgument))
+    );
+    assert_eq!(sink.calls, 1);
+    assert_eq!(instance.last_execute_refusal(), None);
+    instance.destroy().unwrap();
+}

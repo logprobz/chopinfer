@@ -3542,6 +3542,7 @@ impl<S: LogitsRowSinkV1> LogitsRowSinkV1 for ObservedExecuteSinkV1<'_, S> {
         &mut self,
         request: device_results::BundleMappedDeviceSamplingRequestV1,
     ) -> HostServiceResultV1<()> {
+        self.emitted = true;
         self.sink.sample_mapped_device_logits(request)
     }
     fn sample_device_logits(

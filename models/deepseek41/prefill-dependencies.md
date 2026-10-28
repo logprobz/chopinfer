@@ -55,8 +55,8 @@ at the anchor too. Snapshots hold no drafter rings; a restore rebuilds them
 from the raw window, so a capture at the anchor needs no drafter state at
 the anchor. The drafter rings after the step are those of the uncut step.
 The instance reports its allowance through the optional
-`chop_bundle_prefill_anchors_api_v1` export: its spare count when cuts are
-enabled, otherwise 0. The declaration also gives a minimum fused width,
+`chop_bundle_prefill_anchors_api_v1` export: its spare count when TP4 cuts
+are enabled, otherwise 0. The declaration also gives a minimum fused width,
 357 rows, the smallest anchored prompt in the measured cold batch shapes.
 The host keeps grid and manifest allowances separate. With a nonzero grid
 allowance, an item starting at token zero with at least that width may keep
@@ -92,8 +92,8 @@ adoption despite the earlier cold-prompt gains. The measurements above
 precede the restriction to items starting at token zero with at least
 357 rows. That restriction keeps the earlier cold batch shapes eligible
 and excludes the measured short continuations; its served effect remains
-unproven. The candidate stays off; concurrent and generated-history stateful acceptance remain
-unproven.
+unproven. The candidate stays off; concurrent and generated-history
+stateful acceptance remain unproven.
 
 A shorter grid hit does not suppress a longer observed shared-prefix cut,
 even when the request resumes within its final chunk. The next request can

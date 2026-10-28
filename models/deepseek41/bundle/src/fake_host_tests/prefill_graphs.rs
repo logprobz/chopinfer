@@ -244,6 +244,62 @@ fn prefill_graphs_capture_only_admitted_short_continuations() {
     }
 }
 
+/// DMA Engram changes only DMA steps. Short continuations keep their full
+/// eager/capture/replay journals and program keys; a 512-row DMA body never
+/// enters either graph store, even when prepared gathers are enabled.
+#[test]
+fn dma_engram_keeps_short_graph_segments_and_wide_steps_eager() {
+    use model_deepseek41_contract::execution_options::PREFILL_DMA_ENGRAM;
+    for dspark in [false, true] {
+        let mut reference = None;
+        for dma_engram in [false, true] {
+            let (host, mut instance) = skip_host(
+                Ranks::TP4,
+                dspark,
+                true,
+                4,
+                &[
+                    (PREFILL_GRAPH_PROGRAMS, 4.into()),
+                    (PREFILL_DMA_ENGRAM, dma_engram.into()),
+                    (DIAGNOSTIC_STEP_LOGS, true.into()),
+                ],
+            );
+            let mut short = Vec::new();
+            for (shape, rows) in [31, 511].into_iter().enumerate() {
+                for repeat in 0..3 {
+                    let request = 1 + (shape * 3 + repeat) as u64;
+                    let lines = turn(&host, &mut instance, request, rows, true);
+                    assert!(lines.iter().all(|s| !s.contains("chop_comm_owned_sum_")));
+                    if repeat == 2 {
+                        assert_eq!(count(&lines, "capture "), 0);
+                        assert!(count(&lines, "replay ") > 0);
+                    }
+                    short.push(lines);
+                    instance.retire_request(request).unwrap();
+                }
+            }
+            let programs = records(&host);
+            assert_eq!(programs.len(), 12);
+            assert!(programs.iter().all(|p| p["eligible"] == true));
+            if let Some((expected, keys)) = &reference {
+                assert_eq!(&short, expected, "dspark {dspark}");
+                assert_eq!(&programs, keys, "dspark {dspark}");
+            } else {
+                reference = Some((short, programs));
+            }
+            for request in 7..=8 {
+                let lines = turn(&host, &mut instance, request, 512, false);
+                assert!(lines.iter().any(|s| s.contains("chop_comm_owned_sum_")));
+                assert_eq!(count(&lines, "capture ") + count(&lines, "replay "), 0);
+                assert_eq!(records(&host).last().unwrap()["eligible"], false);
+                instance.retire_request(request).unwrap();
+            }
+            instance.destroy().unwrap();
+            assert_eq!(host.acquired.get(), host.released.get());
+        }
+    }
+}
+
 /// The capture log lines of the prefill stores: body programs and heads.
 fn captures(host: &Host) -> (usize, usize) {
     let logs = host.logs.borrow();

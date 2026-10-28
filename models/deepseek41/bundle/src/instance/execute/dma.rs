@@ -72,6 +72,33 @@ pub(super) struct Call {
 }
 
 impl Call {
+    /// Include all streams' transfer spans and generated arithmetic. The
+    /// original program audit alone cannot see these owner-local launches.
+    pub(in crate::instance::execute) fn audit_pending(
+        &self,
+        pending: &[DeviceBufferSpanV1],
+        consumers: Option<&Consumers>,
+        producers: Option<&Producers>,
+    ) -> Result<(), String> {
+        audit_spans(pending, &self.footprint)?;
+        for rounds in &self.rounds {
+            crate::shared_overlap::disjoint_copy_spans(pending, rounds)?;
+        }
+        for rounds in &self.sends {
+            for launch in rounds.iter().flatten() {
+                crate::shared_overlap::disjoint_copy_spans(pending, std::slice::from_ref(launch))?;
+            }
+        }
+        crate::shared_overlap::disjoint_copy_spans(pending, &self.sums)?;
+        if let Some(consumers) = consumers {
+            consumers.audit_pending(pending)?;
+        }
+        if let Some(producers) = producers {
+            producers.audit_pending(pending)?;
+        }
+        Ok(())
+    }
+
     /// The reduction of rows `first..first + rows` that replaces the four
     /// ranks' `collectives`, carrying the payload they send. `None` where
     /// the rows or the collectives are outside the transport; `composed`
@@ -227,6 +254,33 @@ impl Call {
             },
         )
     }
+}
+
+fn audit_spans(
+    pending: &[DeviceBufferSpanV1],
+    copies: &[DeviceBufferSpanV1],
+) -> Result<(), String> {
+    for &a in pending {
+        let a_end = a
+            .offset
+            .checked_add(a.length)
+            .ok_or("DMA Engram span overflow")?;
+        for &b in copies {
+            let b_end = b
+                .offset
+                .checked_add(b.length)
+                .ok_or("DMA copy span overflow")?;
+            if a.buffer == b.buffer
+                && a.length != 0
+                && b.length != 0
+                && a.offset < b_end
+                && b.offset < a_end
+            {
+                return Err("DMA transfer aliases pending Engram rows or IDs".into());
+            }
+        }
+    }
+    Ok(())
 }
 
 struct Arithmetic<'a> {

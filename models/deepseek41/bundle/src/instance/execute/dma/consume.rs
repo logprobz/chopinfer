@@ -34,6 +34,15 @@ pub(super) fn overlaps(a: DeviceBufferSpanV1, b: DeviceBufferSpanV1) -> bool {
 }
 
 impl Consumers {
+    pub(super) fn audit_pending(&self, pending: &[DeviceBufferSpanV1]) -> Result<(), String> {
+        for owners in &self.launches {
+            for chain in owners {
+                crate::shared_overlap::disjoint_copy_spans(pending, chain)?;
+            }
+        }
+        Ok(())
+    }
+
     /// The number of launches each rank's chain takes from its program.
     pub(in crate::instance::execute) const LAUNCHES: usize = CHAIN.len();
 

@@ -378,6 +378,17 @@ impl Plan {
         self.dma.is_some()
     }
 
+    pub(super) fn prepare_engram(
+        &self,
+        plan: &mut crate::instance::prefill_engram::Plan,
+        gathers: &crate::instance::prefill_engram::Gathers,
+    ) -> Result<(), String> {
+        if let Some(dma) = &self.dma {
+            dma.prepare_engram(plan, gathers)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn execute(
         &self,
         instance: &Instance,
@@ -385,12 +396,12 @@ impl Plan {
     ) -> Result<(), BundleAbiError> {
         let streams: Vec<_> = instance.ranks.iter().map(|r| r.2).collect();
         if let Some(dma) = &self.dma {
-            if gathers.is_some() {
+            if gathers.is_some() && !instance.config.execution.prefill_dma_engram {
                 return Err(BundleAbiError::Status(
                     runtime_bundle_abi::BundleStatusV1::InvalidState,
                 ));
             }
-            dma.execute(instance, &self.body)?;
+            dma.execute(instance, &self.body, gathers)?;
         } else {
             if let Some(gathers) = gathers {
                 gathers.execute(instance, &self.body.0, &self.body.1)

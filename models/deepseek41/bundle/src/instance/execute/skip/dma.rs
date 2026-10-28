@@ -118,6 +118,29 @@ pub(super) struct Plan {
 }
 
 impl Plan {
+    pub(super) fn prepare_engram(
+        &self,
+        plan: &mut crate::instance::prefill_engram::Plan,
+        gathers: &crate::instance::prefill_engram::Gathers,
+    ) -> Result<(), String> {
+        let mut joined = 0;
+        let mut pieces = Vec::new();
+        for block in &self.blocks {
+            pieces.push(plan.split_dma(&block.compute, &mut joined)?);
+            block.reduce.audit_pending(
+                &gathers.pending_spans(joined),
+                block.consume.as_ref(),
+                block.produce.as_ref(),
+            )?;
+        }
+        pieces.push(plan.split_dma(&self.tail, &mut joined)?);
+        if joined != plan.layer_count() {
+            return Err("DMA omitted an Engram join boundary".into());
+        }
+        plan.dma = pieces;
+        Ok(())
+    }
+
     pub(super) fn prepare(
         instance: &Instance,
         run: &Run,
@@ -221,6 +244,7 @@ impl Plan {
         &self,
         instance: &Instance,
         body: &Programs,
+        gathers: Option<&crate::instance::prefill_engram::Plan>,
     ) -> Result<(), BundleAbiError> {
         let streams = instance.ranks.iter().map(|rank| rank.2).collect::<Vec<_>>();
         let executor = Executor::new(instance, &streams);
@@ -238,9 +262,30 @@ impl Plan {
                     .collect::<Vec<_>>(),
             )
         };
+        let compute = |index: usize, spans: &[Range<usize>]| {
+            if let Some(plan) = gathers {
+                let pending = instance
+                    .prefill_engram
+                    .as_ref()
+                    .ok_or(bundle_runtime::dispatch::DispatchError::InvalidPlan)?;
+                let pieces = plan
+                    .dma
+                    .get(index)
+                    .ok_or(bundle_runtime::dispatch::DispatchError::InvalidPlan)?;
+                for crate::instance::prefill_engram::DmaPiece { spans, join } in pieces {
+                    if let Some(layer) = join {
+                        pending.join(&instance.services, &streams, *layer)?;
+                    }
+                    issue(spans)?;
+                }
+                Ok(())
+            } else {
+                issue(spans)
+            }
+        };
         let result = executor.run(|| {
-            for block in &self.blocks {
-                issue(&block.compute)?;
+            for (index, block) in self.blocks.iter().enumerate() {
+                compute(index, &block.compute)?;
                 block.reduce.execute(
                     instance,
                     &streams,
@@ -248,7 +293,7 @@ impl Plan {
                     block.produce.as_ref(),
                 )?;
             }
-            issue(&self.tail)
+            compute(self.blocks.len(), &self.tail)
         });
         if result.is_err() {
             instance.collectives.poison();

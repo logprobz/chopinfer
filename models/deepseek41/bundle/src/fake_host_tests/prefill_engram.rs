@@ -6,6 +6,7 @@ use model_deepseek41_contract::own_ops::engram::HashTables;
 use runtime_bundle_sdk::prefill::{Boundary, encode};
 
 mod defaults;
+mod dma;
 
 fn completion_backend(host: &Rc<Host>, delayed: bool) -> dspark::host::MappedHost {
     if delayed {

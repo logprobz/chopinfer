@@ -25,6 +25,16 @@ pub(in crate::instance::execute) struct Producers {
 }
 
 impl Producers {
+    pub(super) fn audit_pending(
+        &self,
+        pending: &[runtime_bundle_abi::DeviceBufferSpanV1],
+    ) -> Result<(), String> {
+        for slices in &self.launches {
+            crate::shared_overlap::disjoint_copy_spans(pending, slices)?;
+        }
+        Ok(())
+    }
+
     /// `producers[rank]` is the launch before the call on that rank and
     /// `flags[rank]` its collective flag. `None` keeps it before the call.
     pub(in crate::instance::execute) fn prepare(

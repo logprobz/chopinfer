@@ -770,11 +770,17 @@ impl Instance {
                 } else {
                     (&run.programs, &run.collectives, &run.stages)
                 };
-                let plan = super::prefill_engram::Plan::new(gathers, programs, flags, stages)
+                let mut plan = super::prefill_engram::Plan::new(gathers, programs, flags, stages)
                     .map_err(|error| {
+                    self.log(&error);
+                    BundleStatusV1::InternalError
+                })?;
+                if let Some(skip) = run.execution.skip() {
+                    skip.prepare_engram(&mut plan, gathers).map_err(|error| {
                         self.log(&error);
                         BundleStatusV1::InternalError
                     })?;
+                }
                 match &mut run.execution {
                     Execution::Skip { engram, .. } => *engram = Some(plan),
                     _ => run.execution = Execution::PrefillEngram(plan),
@@ -796,7 +802,9 @@ impl Instance {
             Some(SyncReason::Media)
         } else if self.taps.text() {
             Some(SyncReason::Taps)
-        } else if run.execution.skip().is_some_and(|skip| skip.uses_dma()) {
+        } else if run.execution.skip().is_some_and(|skip| skip.uses_dma())
+            && !self.config.execution.prefill_dma_engram
+        {
             Some(SyncReason::PrefillSchedule)
         } else if self.prefill_engram.is_none() {
             Some(self.prefill_engram_fallback)

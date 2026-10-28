@@ -1,7 +1,7 @@
 //! Prepared, per-layer Engram uploads for eager text prefills.
 //! Enqueue before compute, then join each transfer at its first consumer.
 mod plan;
-pub(super) use plan::Plan;
+pub(super) use plan::{DmaPiece, Plan};
 
 use super::{
     Instance,
@@ -85,7 +85,7 @@ impl Gathers {
         result
     }
 
-    fn join(
+    pub(in crate::instance) fn join(
         &self,
         services: &HostServicesV1,
         streams: &[BundleStreamHandleV1],
@@ -107,6 +107,16 @@ impl Gathers {
         result?;
         self.joined.set(at + 1);
         Ok(())
+    }
+
+    /// All ranks' destinations and immutable IDs still owned by pending reads.
+    pub(in crate::instance) fn pending_spans(&self, joined: usize) -> Vec<Span> {
+        self.layers[joined..]
+            .iter()
+            .flat_map(|layer| {
+                std::iter::once(layer.indices).chain(layer.destinations.iter().copied())
+            })
+            .collect()
     }
 
     /// Existing row-status readbacks have completed all consumer streams.

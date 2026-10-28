@@ -1,4 +1,17 @@
 //! CPU model of the unchanged qualified peer-copy joins with private owners.
+#[test]
+fn pending_engram_rows_and_ids_cannot_alias_dma_transfers() {
+    use runtime_bundle_abi::{BundleDeviceBufferHandleV1, DeviceBufferSpanV1};
+    let span = |offset, length| {
+        DeviceBufferSpanV1::new(BundleDeviceBufferHandleV1::from_parts(1, 1), offset, length)
+    };
+    assert!(super::audit_spans(&[span(64, 64)], &[span(0, 64), span(128, 64)]).is_ok());
+    for copied in [span(0, 65), span(64, 64), span(127, 1), span(0, 256)] {
+        assert!(super::audit_spans(&[span(64, 64)], &[copied]).is_err());
+    }
+    assert!(super::audit_spans(&[span(u64::MAX, 1)], &[span(0, 1)]).is_err());
+}
+
 type Clock = [u64; 12];
 fn before(a: Clock, b: Clock) -> bool {
     a.iter().zip(b).all(|(a, b)| *a <= b)

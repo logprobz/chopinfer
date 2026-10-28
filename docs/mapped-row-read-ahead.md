@@ -16,7 +16,7 @@ and [mapped-row hints](../crates/runtime-host/src/host_rows.rs).
 
 ## Caller audit
 
-The 2026-10-24 source audit found these production async consumers. None
+The source audit includes these production async consumers. None
 reads the policy setting or relies on advice being off.
 
 | Consumer | Async gather use |
@@ -26,6 +26,7 @@ reads the policy setting or relies on advice being off.
 | DeepSeek DSpark first-target-row prefetch | Separate early gathers in the same target-cycle module. |
 | DeepSeek DSpark decode without drafts | Reuses the target layer gathers with deferred host-hashed IDs. |
 | DeepSeek eager text prefill | [Prepared per-layer gathers](../models/deepseek41/bundle/src/instance/prefill_engram.rs), including DSpark prefill. |
+| DeepSeek DMA text prefill | Prepared per-layer gathers when the default-off candidate `prefill_dma_engram=true` is selected, on the TP4 native-KV single-item upper-skip path. |
 | GLM | No mapped-gather caller; text and encoder plans have no special mapped views. |
 | MiMo | No mapped-gather caller; acquisition places its views in the device arena. |
 | Qwen | No mapped-gather caller. Its optional n-gram table uses pinned host placement read by kernels, a separate route. |
@@ -60,21 +61,17 @@ symbol `host.gather_mapped_rows` and entry `engram/sync/<reason>`:
 
 | Reason | Synchronous selection |
 | --- | --- |
-| `ar_prefill` | AR prefill preparation is off by default. |
-| `media` | A prefill has media. |
-| `taps` | A prefill records text taps. |
-| `prefill_schedule` | A prefill uses an alternate DMA, micro or overlap schedule. |
-| `no_async_service` | The host lacks prepared mapped-gather services. |
-| `ar_decode_disabled` | The AR decode preparation switch is off. |
-| `prefill_disabled` | DSpark prefill preparation is off. |
-| `undrafted_disabled` | DSpark undrafted decode preparation is off. |
-| `mixed_target` | A host target combines different input kinds. |
-| `host_target` | Other host-target phases, including supplied verify rows. |
-| `no_prepared_gather` | No prepared gather state serves the phase. |
+| `media` | Media flags and token hashing retain the synchronous staging boundary. |
+| `taps` | Text taps retain their diagnostic stage and readback order. |
+| `prefill_schedule` | Upper-skip DMA prefill with `prefill_dma_engram=false` (the default). |
+| `no_async_service` | The host lacks the optional prepared mapped-gather services. |
+| `mixed_target` | A host target combines input kinds without a prepared layer plan. |
+| `host_target` | Supplied target/verify rows retain their host hashing boundary. |
+| `no_prepared_gather` | The phase has no prepared gather state or hashes. |
 | `gather_capacity` | Undrafted hashes exceed the prepared gather capacity. |
 
-Prefill reasons take precedence in this order: media, taps, alternate
-schedule, missing async service, then disabled or unavailable preparation.
+Prefill reasons take precedence in this order: media, taps, default DMA
+schedule, missing async service, then unavailable preparation.
 Reasons are carried from preparation state or the selected phase, never
 inferred from journal text. A graph reservation failure keeps the prepared
 gather and executes eagerly, so it is not a synchronous fallback.
@@ -86,9 +83,7 @@ Raw `host.gather_mapped_rows` counts must exactly match selected entries,
 including when no tag was declared. Missing and duplicated selections fail
 before allowance checks. Fast metadata on this reserved synchronous symbol is
 invalid, even when its counts match. Every synchronous shape needs an allowance with a
-reason and removal task, including a constant synchronous route. AR prefill
-uses `ar-prefill-engram`; old test-default routes name the chunk that removes
-them. Other models with no mapped gathers need no tags or allowances.
+reason and removal task, including a constant synchronous route. Other models with no mapped gathers need no tags or allowances.
 
 The [profile checker](../tools/route_guard/check.py) accepts `host.` symbols
 from step records without Nsight kernel evidence. It still validates entry
@@ -97,7 +92,32 @@ kernels in a mixed capture. The raw synchronous count is a fake-host sweep
 check, not an independent counter in serving step records. No synthetic CUDA
 launch or new journal line is introduced by this guard.
 
-DeepSeek depth-tuning jobs temporarily allow the `engram_gather` fallback
-family because AR prefill still gathers synchronously. C10 removes that
-allowance when AR prefill moves to prepared gathers. The tuner seals the
-job's allowances into its runtime configuration and checks every window.
+## DMA prefill candidate
+
+`--model-option prefill_dma_engram=true` enables the candidate for reductions
+of 512 through 8192 rows on the existing DMA path. Both layers' IDs are
+uploaded into dedicated buffers and their gathers enqueue before compute.
+Each layer joins every target stream immediately before its Engram decoder.
+Collective order, row intervals and arithmetic stay the same. Completion is
+checked after consolidated status readbacks, before publishing results.
+
+Preparation audits pending IDs and destinations against the original launches
+(including tensor maps and pointer arrays), DMA transfer spans, generated
+rounding and sum launches, and the producers and consumers moved into owner
+intervals. No pending gather span may be touched by that work. DMA owner
+joins still precede subsequent compute; eager prefill has no graph side-stream
+fork. Failed gathers cannot be reused. Destruction drains compute, DMA and
+side streams, then releases gather handles, whose host service fences pending
+callbacks and transfers before any referenced destination allocation is freed.
+A terminal execution or cancellation failure keeps resources retained.
+
+Cold-row experiments must keep async read-ahead enabled. The shared defaults
+already enable it; `CHOPINFER_MAPPED_ASYNC_READ_AHEAD=1` makes the setting
+explicit even when another read-ahead control was inherited. The candidate
+does not override host policy. Reset the mapped-row cache and advise only the
+sealed Engram file ranges before each cold visit, never host-wide caches.
+CPU ordering tests do not establish cold-row latency or GPU equality. Keep
+the candidate off until full-logits/state exactness and cold/warm TTFT ABBA
+support adoption. Media is the next possible caller to investigate if operator
+traffic uses it often; its hashing and destination lifetimes need a separate
+audit.

@@ -4685,6 +4685,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         gather: runtime_bundle_abi::BundleMappedGatherHandleV1,
         rows: u64,
     ) -> HostServiceResultV1<()> {
+        let _range = runtime_engine::profile::ranges::Range::new(c"host.enqueue_mapped_gather");
         let mut state = self.state.borrow_mut();
         let record = state.mapped_gathers.get(key_of_v1!(gather))?;
         for &stream in &record.streams {
@@ -4699,6 +4700,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         gather: runtime_bundle_abi::BundleMappedGatherHandleV1,
         consumer: BundleStreamHandleV1,
     ) -> HostServiceResultV1<()> {
+        let _range = runtime_engine::profile::ranges::Range::new(c"host.wait_mapped_gather");
         let mut state = self.state.borrow_mut();
         let record = state.mapped_gathers.get(key_of_v1!(gather))?;
         let key = key_of_v1!(consumer);
@@ -5616,6 +5618,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         config: LaunchConfigV1,
         arguments: &[KernelArgumentV1],
     ) -> HostServiceResultV1<()> {
+        let _range = runtime_engine::profile::ranges::Range::new(c"host.kernel_submit");
         let mut state = self.state.borrow_mut();
         state.admit_during_capture(key_of_v1!(stream), CaptureSubmissionV1::Launch)?;
         let stream_object = state.stream_object(stream)?;
@@ -6072,6 +6075,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         operation: &[u8],
         arguments: &[KernelArgumentV1],
     ) -> HostServiceResultV1<()> {
+        let _range = runtime_engine::profile::ranges::Range::new(c"host.collective_submit");
         let mut state = self.state.borrow_mut();
         state.refuse_during_capture(state.streams.get(key_of_v1!(stream))?.context)?;
         let binding = state

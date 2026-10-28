@@ -443,6 +443,14 @@ impl EngineGenerationBackend {
             .name("bundle-engine".to_owned())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let _ranges = match crate::profile_ranges::initialize() {
+                        Ok(ranges) => ranges,
+                        Err(error) => {
+                            let _ = startup_sender
+                                .send(Err(EngineBackendStartupError::EngineUnavailable(error)));
+                            return WorkerExit::Shutdown;
+                        }
+                    };
                     worker_progress.mark(WorkerPhase::Startup);
                     let mut engine = match engine_factory() {
                         Ok(engine) => engine,

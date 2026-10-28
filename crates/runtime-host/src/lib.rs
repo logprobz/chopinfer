@@ -55,6 +55,7 @@ mod overlap;
 pub mod page_cache;
 pub mod preparation;
 mod probe;
+mod profile_ranges;
 mod profiles;
 mod reference_forcing;
 #[cfg(all(target_os = "linux", feature = "linux-cuda-host"))]

@@ -2177,6 +2177,7 @@ impl<E: ModelExecutor> Engine<E> {
     /// metrics side sees the pool as the last transition left it rather than
     /// as the last successful one did.
     pub fn step(&mut self) -> Result<StepStatus, EngineError> {
+        let _range = profile::ranges::Range::new(c"engine.step");
         self.ensure_retirement_ready()?;
         if self.model_state_failed {
             return Err(EngineError::ModelStateFailed);

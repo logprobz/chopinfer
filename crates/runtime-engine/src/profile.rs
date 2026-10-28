@@ -5,6 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+pub mod ranges;
+
 /// Host work categories, inclusive of nested calls in other categories.
 #[derive(Clone, Copy, Debug)]
 pub enum StepPhase {
@@ -132,6 +134,7 @@ impl Drop for TraceTotals {
 pub struct PhaseTimer {
     phase: StepPhase,
     started: Option<Instant>,
+    _range: Option<ranges::Range>,
     _thread: std::marker::PhantomData<std::rc::Rc<()>>,
 }
 
@@ -147,6 +150,25 @@ impl PhaseTimer {
         Self {
             phase,
             started: ACTIVE.get().then(Instant::now),
+            _range: ranges::Range::new(match phase {
+                StepPhase::Scheduling => c"host.scheduling",
+                StepPhase::Upload => c"host.upload",
+                StepPhase::GraphLaunch => c"host.graph_launch",
+                StepPhase::DeviceWait => c"host.device_wait",
+                StepPhase::Sampling => c"host.sampling",
+                StepPhase::Deferred => c"host.deferred",
+                StepPhase::BundleExecute => c"host.bundle_execute",
+                StepPhase::ResultCollect => c"host.result_collect",
+                StepPhase::ResultConvert => c"host.result_convert",
+                StepPhase::PrefixCapture => c"host.prefix_capture",
+                StepPhase::BundleLog => c"host.bundle_log",
+                StepPhase::SchedulerCommit => c"host.scheduler_commit",
+                StepPhase::ModelCommit => c"host.model_commit",
+                StepPhase::Publication => c"host.publication",
+                StepPhase::MappedGather => c"host.mapped_gather",
+                StepPhase::UploadCopy => c"host.upload_copy",
+                StepPhase::UploadBackpressure => c"host.upload_backpressure",
+            }),
             _thread: std::marker::PhantomData,
         }
     }

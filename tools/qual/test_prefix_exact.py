@@ -807,7 +807,7 @@ class PromptLogprobPrimerTests(unittest.TestCase):
         return result, bodies
 
     def test_scored_producer_and_unscored_hit_use_the_ordinary_granule(self):
-        # Scoring disables DeepSeek's exact guaranteed prompt-end capture.
+        # Scoring disables the guaranteed grid's exact prompt-end capture.
         policy = {**prefix_exact.prefix_policy(), "prefill_granule": 64, "exact_prompt_ends": True}
         with mock.patch.object(prefix_exact, "prefix_policy", return_value=policy):
             result, bodies = self.run_arm()

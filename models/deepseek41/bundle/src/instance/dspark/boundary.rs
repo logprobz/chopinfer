@@ -123,6 +123,7 @@ impl Instance {
         if let Some((metadata, _)) = feedback {
             let packet = output.split_off(at + diagnostic_bytes as usize);
             *pending.feedback.borrow_mut() = Some(crate::dspark::prefetch::Feedback {
+                allocated: pending.allocation.is_some(),
                 metadata: metadata.clone(),
                 inputs: pending.inputs.clone(),
                 packet,

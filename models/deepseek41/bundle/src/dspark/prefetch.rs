@@ -46,6 +46,7 @@ impl Cache {
 
 #[derive(Clone)]
 pub(crate) struct Feedback {
+    pub allocated: bool,
     pub metadata: DeviceCycleMetadataV1,
     pub inputs: Vec<Input>,
     pub packet: Vec<u8>,

@@ -41,6 +41,7 @@ type TextMasks = BTreeMap<u64, Vec<bool>>;
 struct Work<'a> {
     instance: &'a mut Instance,
     request: &'a [u8],
+    allocated: bool,
     step: Option<PackedStep>,
     sink: Option<&'a mut ExecuteResultSinkV1>,
     target_times: Option<crate::dspark::timing::TargetTimes>,
@@ -67,7 +68,7 @@ impl Program for Work<'_> {
     }
 
     fn draft(&mut self, inputs: &[crate::dspark::execution::DraftInput]) -> Result<(), String> {
-        self.instance.dspark_draft(inputs)
+        self.instance.dspark_draft(inputs, self.allocated)
     }
 
     fn computed_positions(&self) -> u32 {
@@ -355,7 +356,10 @@ impl Instance {
         }
         let mut runtime = device.runtime.take().expect("checked lifecycle");
         let mut staging = device.staging.take().expect("checked staging");
+        let allocated = self.config.dspark_compact_allocation
+            && BatchCodecV1::decode(request).is_ok_and(|batch| batch.verify_allocation().is_some());
         let mut program = Work {
+            allocated,
             instance: self,
             request,
             step,
@@ -437,7 +441,9 @@ impl Instance {
             self.log("DSpark allocated verify steps need device results");
             return BundleStatusV1::Unsupported;
         }
-        if let Err(error) = self.consume_dspark_prefetch(&inputs) {
+        if let Err(error) = self
+            .consume_dspark_prefetch(&inputs, allocated && self.config.dspark_compact_allocation)
+        {
             if let Some(runtime) = self
                 .dspark
                 .as_mut()

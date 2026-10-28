@@ -23,7 +23,11 @@ fn chunk_ranges(items: usize, maximum: usize) -> impl Iterator<Item = std::ops::
 }
 
 impl Instance {
-    pub(super) fn dspark_draft(&mut self, inputs: &[DraftInput]) -> Result<(), String> {
+    pub(super) fn dspark_draft(
+        &mut self,
+        inputs: &[DraftInput],
+        allocated: bool,
+    ) -> Result<(), String> {
         // A reused successor already holds every item's draft; no chunk runs.
         if self
             .dspark
@@ -39,15 +43,8 @@ impl Instance {
         if inputs.len() <= chunk_items {
             let positions = if device.shape.geometry.id == FLASH.id
                 && device.shape.ranks() == 4
-                && compact_heads(
-                    inputs,
-                    self.config.dspark_compact_allocation
-                        && device
-                            .cycle
-                            .pending
-                            .as_ref()
-                            .is_some_and(|p| p.allocation.is_some()),
-                ) {
+                && compact_heads(inputs, allocated)
+            {
                 3
             } else {
                 BLOCK_ROWS

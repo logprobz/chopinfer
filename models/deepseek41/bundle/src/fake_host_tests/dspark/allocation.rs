@@ -599,3 +599,5 @@ fn compact_allocation_scores_only_computed_rows_and_keeps_reserved_samples() {
         assert_eq!(host.acquired.get(), host.released.get());
     }
 }
+
+mod heads;

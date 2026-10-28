@@ -66,6 +66,7 @@ impl Instance {
         let Some(feedback) = device.prefetch.feedback.take() else {
             return Ok(());
         };
+        let allocated = self.config.dspark_compact_allocation && feedback.allocated;
         let state = device
             .runtime
             .as_ref()
@@ -98,7 +99,7 @@ impl Instance {
         self.swap_prefetch_outputs();
         let queued = self
             .project_successor(&plan)
-            .and_then(|()| self.dspark_draft(&plan.drafts));
+            .and_then(|()| self.dspark_draft(&plan.drafts, allocated));
         self.swap_prefetch_outputs();
         queued?;
         // No later rank may reuse collective scratch while another rank is
@@ -114,7 +115,11 @@ impl Instance {
         Ok(())
     }
 
-    pub(super) fn consume_dspark_prefetch(&mut self, inputs: &[Input]) -> Result<(), String> {
+    pub(super) fn consume_dspark_prefetch(
+        &mut self,
+        inputs: &[Input],
+        allocated: bool,
+    ) -> Result<(), String> {
         let device = self.dspark.as_mut().ok_or("DSpark absent")?;
         device.prefetch.feedback = None;
         device.prefetch.reused = false;
@@ -123,7 +128,17 @@ impl Instance {
         };
         let runtime = device.runtime.as_mut().ok_or("DSpark lifecycle borrowed")?;
         let mut probe = runtime.state().clone();
-        if !plan.matches(runtime.state(), inputs)
+        let required_positions = if allocated {
+            crate::dspark::state::BLOCK_ROWS
+        } else {
+            inputs
+                .iter()
+                .map(|input| input.rows.kind.drafts())
+                .max()
+                .unwrap_or(0)
+        };
+        if device.prefetch.computed_positions < required_positions
+            || !plan.matches(runtime.state(), inputs)
             || probe
                 .prepare(inputs.iter().map(|input| input.rows).collect())
                 .is_err()

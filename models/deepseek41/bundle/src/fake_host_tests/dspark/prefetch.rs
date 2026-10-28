@@ -24,6 +24,7 @@ fn feedback(request: u64, start: u64, accepted: u32) -> Feedback {
     let sample = crate::dspark::results::SAMPLE_OFFSET as usize + accepted as usize * 256;
     packet[sample..sample + 4].copy_from_slice(&7_u32.to_le_bytes());
     Feedback {
+        allocated: false,
         inputs: vec![Input {
             rows: Rows {
                 request,

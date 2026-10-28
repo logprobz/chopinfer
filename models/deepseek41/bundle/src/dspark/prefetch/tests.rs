@@ -82,6 +82,7 @@ fn pending(items: u32, k: u32, start: u64) -> (State, Feedback) {
     (
         state,
         Feedback {
+            allocated: false,
             metadata,
             inputs,
             packet,

@@ -1551,13 +1551,13 @@ mod tests {
 
     #[test]
     fn prefill_timing_cuts_profile_resolution_and_flag_override() {
-        for value in ["off", "fixed"] {
+        for value in ["off", "fixed", "adaptive"] {
             let mut data = fixture();
             data["profiles"]["test"]["prefill_budget"] = "tbt".into();
             data["profiles"]["test"]["prefill_timing_cuts"] = value.into();
             let file = Profiles::parse(&serde_json::to_vec(&data).unwrap()).unwrap();
             let defaults = file.get("test").unwrap().arguments(&file.served_model_name);
-            for override_value in [None, Some("off"), Some("fixed")] {
+            for override_value in [None, Some("off"), Some("fixed"), Some("adaptive")] {
                 let explicit = override_value
                     .map(|v| vec!["--prefill-timing-cuts".into(), v.into()])
                     .unwrap_or_default();
@@ -1593,7 +1593,7 @@ mod tests {
             ),
             (
                 serde_json::json!({"prefill_timing_cuts": "auto", "prefill_budget": "tbt"}),
-                "--prefill-timing-cuts must be off or fixed",
+                "--prefill-timing-cuts must be off, fixed or adaptive",
             ),
             (
                 serde_json::json!({"prefill_timing_cuts": true, "prefill_budget": "tbt"}),
@@ -1624,11 +1624,11 @@ mod tests {
         let bundle = package("timing-cuts");
         let mut data = fixture();
         data["profiles"]["test"]["prefill_budget"] = "tbt".into();
-        for default in ["off", "fixed"] {
+        for default in ["off", "fixed", "adaptive"] {
             data["profiles"]["test"]["prefill_timing_cuts"] = default.into();
             std::fs::write(&path, serde_json::to_vec(&data).unwrap()).unwrap();
             for profile_first in [false, true] {
-                for explicit in ["off", "fixed"] {
+                for explicit in ["off", "fixed", "adaptive"] {
                     let mut args = vec![
                         "serve".into(),
                         "--bundle".into(),

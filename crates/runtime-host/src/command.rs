@@ -153,7 +153,7 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]
   [--speculation-costs ITEMS:BASE:STEP:DRAFTING:ROW,...] [--speculation-depths ITEMS:DEPTH,...]
   [--speculation-widths ROWS,...] [--speculation-graph-rows N] [--speculation-confidence JSON|off]
   [--draft-cost per-token|per-block] [--prefix-cache on|off] [--verify-warmup on|off]
-  [--prefill-budget fixed|decode-aware|tbt] [--prefill-timing-cuts off|fixed] [--prefill-itl-target-ms N | --prefill-decode-steps N]
+  [--prefill-budget fixed|decode-aware|tbt] [--prefill-timing-cuts off|fixed|adaptive] [--prefill-itl-target-ms N | --prefill-decode-steps N]
   [--decode-tbt-target-ms N] [--mixed-min-prefill-tokens N] [--mixed-decode-steps N]
   [--kv-offload-gib N] [--kv-offload-min-tokens N] [--kv-offload-gbps F] [--kv-offload-prefix off]
   [--admission reserved|optimistic] [--admission-watermark F] [--max-preemptions N]
@@ -365,6 +365,10 @@ pub struct FixtureScenarioReportV1 {
 
 const FIXED_PREFILL_TIMING_CUTS_STARTUP_V1: &str = "prefill timing cuts on (fixed): grid chunks beside decoding \
      requests end at the TBT cap";
+const ADAPTIVE_PREFILL_TIMING_CUTS_STARTUP_V1: &str = "prefill timing cuts on (adaptive): grid chunks beside \
+     decoding requests end at the demand-adaptive TBT cap";
+const ADAPTIVE_PREFILL_BUDGET_STARTUP_V1: &str = "prefill timing cuts on (adaptive): the TBT cap beside decoding \
+     requests is sized from demand (no prefill grid)";
 
 /// The serving policy for timing-selected prefill cuts beside decoding requests.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -374,6 +378,11 @@ pub enum PrefillTimingCutsV1 {
     Off,
     /// Size cuts against the configured TBT target and progress floor.
     Fixed,
+    /// Candidate: size the TBT cap beside decoding requests from demand
+    /// (`SchedulerConfig::with_adaptive_prefill_budget`). Grid bundles cut
+    /// their chunks at it; bundles without a grid take it as the ordinary
+    /// TBT cap.
+    Adaptive,
 }
 
 impl PrefillTimingCutsV1 {
@@ -381,6 +390,7 @@ impl PrefillTimingCutsV1 {
         match value {
             "off" => Some(Self::Off),
             "fixed" => Some(Self::Fixed),
+            "adaptive" => Some(Self::Adaptive),
             _ => None,
         }
     }
@@ -391,6 +401,7 @@ impl PrefillTimingCutsV1 {
         match self {
             Self::Off => "off",
             Self::Fixed => "fixed",
+            Self::Adaptive => "adaptive",
         }
     }
 }
@@ -3592,8 +3603,8 @@ impl ServedEngineV1 {
                 .with_prefill_cuts(prefill_cuts.chunk_tokens != 0)
         };
         let config = negotiate_prefill_timing_cuts_v1(config, self.prefill_timing_cuts)?;
-        if config.prefill_timing_cuts() {
-            println!("{FIXED_PREFILL_TIMING_CUTS_STARTUP_V1}");
+        if let Some(marker) = prefill_timing_cuts_startup_v1(config) {
+            println!("{marker}");
         }
         let aligned_prompt_capture = std::env::var_os("CHOPINFER_CANDIDATE_ALIGNED_PROMPT_CAPTURE")
             .is_some_and(|value| value == "1");
@@ -4735,6 +4746,27 @@ fn validate_prefill_timing_cuts_v1(
         PrefillTimingCutsV1::Fixed => {
             Err("--prefill-timing-cuts fixed needs --prefill-budget tbt".into())
         }
+        PrefillTimingCutsV1::Adaptive
+            if matches!(budget, runtime_scheduler::PrefillBudget::Tbt(_)) =>
+        {
+            Ok(())
+        }
+        PrefillTimingCutsV1::Adaptive => {
+            Err("--prefill-timing-cuts adaptive needs --prefill-budget tbt".into())
+        }
+    }
+}
+
+/// The startup marker of the negotiated policy, when it is on.
+const fn prefill_timing_cuts_startup_v1(config: EngineConfig) -> Option<&'static str> {
+    match (
+        config.adaptive_prefill_budget(),
+        config.prefill_timing_cuts(),
+    ) {
+        (true, true) => Some(ADAPTIVE_PREFILL_TIMING_CUTS_STARTUP_V1),
+        (true, false) => Some(ADAPTIVE_PREFILL_BUDGET_STARTUP_V1),
+        (false, true) => Some(FIXED_PREFILL_TIMING_CUTS_STARTUP_V1),
+        (false, false) => None,
     }
 }
 
@@ -4744,12 +4776,35 @@ fn negotiate_prefill_timing_cuts_v1(
     policy: PrefillTimingCutsV1,
 ) -> Result<EngineConfig, String> {
     match policy {
-        PrefillTimingCutsV1::Off => Ok(config.with_prefill_timing_cuts(false)),
+        PrefillTimingCutsV1::Off => Ok(config
+            .with_prefill_timing_cuts(false)
+            .with_adaptive_prefill_budget(false)),
         PrefillTimingCutsV1::Fixed => {
             let config = config.with_prefill_timing_cuts(true);
             if !config.prefill_timing_cuts() {
                 return Err(
                     "--prefill-timing-cuts fixed needs --prefill-budget tbt and a bundle that declares prefill cuts"
+                        .into(),
+                );
+            }
+            Ok(config)
+        }
+        // The adaptive cap applies to every model through the TBT cap. A
+        // bundle with a prefill grid keeps whole chunks unless it can cut
+        // them, so there it needs negotiated cuts like `fixed`; without a
+        // grid it sizes the ordinary TBT cap and takes no timing cut.
+        PrefillTimingCutsV1::Adaptive => {
+            let config = config.with_adaptive_prefill_budget(true);
+            if !config.adaptive_prefill_budget() {
+                return Err("--prefill-timing-cuts adaptive needs --prefill-budget tbt".into());
+            }
+            if config.guaranteed_prefill_chunks().is_none() {
+                return Ok(config.with_prefill_timing_cuts(false));
+            }
+            let config = config.with_prefill_timing_cuts(true);
+            if !config.prefill_timing_cuts() {
+                return Err(
+                    "--prefill-timing-cuts adaptive needs a bundle that declares prefill cuts when it declares a prefill grid"
                         .into(),
                 );
             }
@@ -5674,8 +5729,9 @@ impl ArgumentsV1 {
                     flag,
                 )?,
                 "--prefill-timing-cuts" => {
-                    let policy = PrefillTimingCutsV1::parse(value)
-                        .ok_or_else(|| usage_error("--prefill-timing-cuts must be off or fixed"))?;
+                    let policy = PrefillTimingCutsV1::parse(value).ok_or_else(|| {
+                        usage_error("--prefill-timing-cuts must be off, fixed or adaptive")
+                    })?;
                     set_once_v1(&mut parsed.prefill_timing_cuts, policy, flag)?;
                 }
                 "--prefill-budget" => {
@@ -7643,6 +7699,15 @@ mod tests {
             message.starts_with("prefill timing cuts on (fixed):"),
             "{message}"
         );
+        for message in [
+            super::ADAPTIVE_PREFILL_TIMING_CUTS_STARTUP_V1,
+            super::ADAPTIVE_PREFILL_BUDGET_STARTUP_V1,
+        ] {
+            assert!(
+                message.starts_with("prefill timing cuts on (adaptive):"),
+                "{message}"
+            );
+        }
     }
 
     #[test]
@@ -7663,7 +7728,7 @@ mod tests {
             panic!("serve command");
         };
         assert_eq!(serving.prefill_timing_cuts, PrefillTimingCutsV1::Off);
-        for value in ["off", "fixed"] {
+        for value in ["off", "fixed", "adaptive"] {
             let args = [
                 "serve",
                 "--bundle",
@@ -7718,6 +7783,18 @@ mod tests {
                 ])
                 .contains("--prefill-timing-cuts fixed needs --prefill-budget tbt")
             );
+            assert!(
+                refusal(&[
+                    "serve",
+                    "--bundle",
+                    "fixture",
+                    "--prefill-budget",
+                    budget,
+                    "--prefill-timing-cuts",
+                    "adaptive"
+                ])
+                .contains("--prefill-timing-cuts adaptive needs --prefill-budget tbt")
+            );
         }
         let args = [
             "serve",
@@ -7735,7 +7812,7 @@ mod tests {
 
     #[test]
     fn prefill_timing_cuts_refuses_unknown_values() {
-        for value in ["", "1", "true", "on", "adaptive", "auto"] {
+        for value in ["", "1", "true", "on", "Adaptive", "auto"] {
             assert!(
                 refusal(&[
                     "serve",
@@ -7744,7 +7821,7 @@ mod tests {
                     "--prefill-timing-cuts",
                     value
                 ])
-                .contains("--prefill-timing-cuts must be off or fixed")
+                .contains("--prefill-timing-cuts must be off, fixed or adaptive")
             );
         }
     }
@@ -7783,6 +7860,38 @@ mod tests {
                     } else {
                         assert!(enabled.unwrap_err().contains("--prefill-timing-cuts fixed needs --prefill-budget tbt and a bundle that declares prefill cuts"));
                     }
+                    let adaptive =
+                        negotiate_prefill_timing_cuts_v1(config, PrefillTimingCutsV1::Adaptive);
+                    let tbt = matches!(budget, runtime_scheduler::PrefillBudget::Tbt(_));
+                    if !tbt {
+                        assert!(
+                            adaptive.unwrap_err().contains(
+                                "--prefill-timing-cuts adaptive needs --prefill-budget tbt"
+                            )
+                        );
+                    } else if !grid {
+                        // Without a grid, the ordinary TBT cap: no timing cut.
+                        let adaptive = adaptive.unwrap();
+                        assert!(adaptive.adaptive_prefill_budget());
+                        assert!(!adaptive.prefill_timing_cuts());
+                        assert_eq!(
+                            super::prefill_timing_cuts_startup_v1(adaptive),
+                            Some(super::ADAPTIVE_PREFILL_BUDGET_STARTUP_V1)
+                        );
+                    } else if cuts {
+                        let adaptive = adaptive.unwrap();
+                        assert!(adaptive.adaptive_prefill_budget());
+                        assert!(adaptive.prefill_timing_cuts());
+                        assert_eq!(
+                            super::prefill_timing_cuts_startup_v1(adaptive),
+                            Some(super::ADAPTIVE_PREFILL_TIMING_CUTS_STARTUP_V1)
+                        );
+                    } else {
+                        assert!(adaptive.unwrap_err().contains(
+                            "--prefill-timing-cuts adaptive needs a bundle that declares prefill cuts"
+                        ));
+                    }
+                    assert_eq!(super::prefill_timing_cuts_startup_v1(config), None);
                 }
             }
         }

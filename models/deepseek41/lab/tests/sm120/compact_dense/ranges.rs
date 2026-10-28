@@ -12,6 +12,7 @@ const SHAPES: &[(u32, u32, u32)] = &[
     (5120, 576, 1),
     (4096, 1280, 1),
     (25600, 6144, 1),
+    (5120, 15360, 1),
 ];
 
 struct Case {
@@ -59,6 +60,9 @@ fn configured(value: Value) -> LabResult<Case> {
             || (129..=511).contains(&first) && last <= 511)
     {
         return Err("range case is outside the TP4 candidate bands or matched shapes".into());
+    }
+    if (n, k) == (5120, 15360) && first < 129 {
+        return Err("DSpark main projection currently qualifies only the upper band".into());
     }
     let neighbors = value["neighbors"]
         .as_bool()
@@ -132,8 +136,35 @@ fn calls(
     rows: u32,
     buffers: &[Buffers<View>; 3],
 ) -> LabResult<[Vec<Launch>; 3]> {
+    let baseline = if (case.entry.base.query.n, case.entry.base.query.k) == (5120, 15360) {
+        // DSpark Prepared::main uses the generic fold above its small-row
+        // capacity. Comparing against the prefill wrapper would miss that gap.
+        let mut b = buffers[0];
+        let q = case.entry.base.query;
+        b.weights = if arena.session.is_some() {
+            let codes = arena.read(b.weights)?;
+            let packed = kernel_core::weight_transform::mxfp8_fold::Mxfp8FoldLayout {
+                groups: q.groups as usize,
+                n: q.n as usize,
+                k: q.k as usize,
+            }
+            .pack(&codes[..b.weights.bytes as usize])
+            .map_err(|e| e.to_string())?;
+            arena.bytes(&packed)?
+        } else {
+            arena.filled(b.weights.bytes, 0)?
+        };
+        registration::register(Sm120::new(), &FLASH, case.ranks)?
+            .with_packed_fold_weights()
+            .mxfp8_fold_gemm(&q, Need::rows(rows))
+            .map_err(|e| e.to_string())?
+            .launches(&b, View::EMPTY, Counts::rows(rows))
+            .map_err(|e| e.to_string())?
+    } else {
+        prepare_at_rank(arena, &case.entry, rows, &buffers[0], false, case.ranks)?
+    };
     Ok([
-        prepare_at_rank(arena, &case.entry, rows, &buffers[0], false, case.ranks)?,
+        baseline,
         prepare_at_rank(arena, &case.entry, rows, &buffers[1], true, case.ranks)?,
         packed_candidate(arena, &case.entry, rows, &buffers[2])?,
     ])
@@ -173,6 +204,28 @@ fn range_configuration_covers_bands_and_neighbours() {
     let mut wrong = value(65, 127);
     wrong["ranks"] = json!(1);
     assert!(configured(wrong).is_err());
+
+    let case = configured(json!({"n":5120,"k":15360,"groups":1,"stages":2,"ranks":4,
+                                "first":192,"last":192,"neighbors":true}))
+    .unwrap();
+    assert_eq!(case.rows, vec![191, 192, 193]);
+    let mut arena = Arena::new(None);
+    let size = case.entry.base.bytes(1);
+    let weights = [
+        arena.filled(size.weights, 0).unwrap(),
+        arena.filled(size.weight_scales, 0).unwrap(),
+    ];
+    let banks = banks(&mut arena, &case.entry, 192, weights).unwrap();
+    let arms = calls(&mut arena, &case, 192, &banks).unwrap();
+    assert!(
+        arms[0].iter().any(|call| call.symbol
+            == "chop_deepseek41_mxfp8_fold_m8192_n5120_k15360_g1_f32_v2_packed_v1")
+    );
+    assert!(
+        arms[2]
+            .iter()
+            .any(|call| call.symbol.contains("_compact_") && call.symbol.ends_with("_packed_v1"))
+    );
 }
 
 #[test]
@@ -278,4 +331,55 @@ fn range_bitwise_gpu() {
         Ok(())
     })
     .unwrap();
+}
+
+#[test]
+#[ignore = "requires CHOPINFER_DEEPSEEK41_COMPACT_RANGE and staged compact cubins"]
+fn range_timing_gpu() {
+    let case = from_env().unwrap();
+    kernel_harness::gpu_test_with(kernel_harness::Cubins::NONE, 8 << 30, |s| {
+        let mut arena = Arena::new(Some(s));
+        let e = &case.entry;
+        let size = e.base.bytes(1);
+        let weights = [arena.bytes(&seed(size.weights as usize, false, 901))?,
+                       arena.bytes(&seed(size.weight_scales as usize, true, 1901))?];
+        let keep = arena.next;
+        let started = std::time::Instant::now();
+        let mut completed = 0;
+        for &rows in &case.rows {
+            if started.elapsed().as_secs() >= 240 {
+                return Err("compact timing exceeded its budget; coverage is incomplete".into());
+            }
+            let banks = banks(&mut arena, e, rows, weights)?;
+            arena.write(banks[0].activations, &seed(banks[0].activations.bytes as usize, false, 1771))?;
+            arena.write(banks[0].activation_scales, &seed(banks[0].activation_scales.bytes as usize, true, 2771))?;
+            let arms = calls(&mut arena, &case, rows, &banks)?;
+            let functions = functions(s, &arms.concat())?;
+            let graphs = [0, 2].map(|arm| s.capture(|stream| issue(s, &arena, &functions, &arms[arm], stream)));
+            let [baseline, candidate] = graphs;
+            let graphs = [baseline?, candidate?];
+            for (graph, bank) in graphs.iter().zip([&banks[0], &banks[2]]) {
+                reset(&arena, bank, rows, rows, false)?;
+                graph.launch(&s.stream).map_err(|e| e.to_string())?;
+            }
+            equality(&arena, &banks[0], &banks[2], rows, rows, false)?;
+            let aa_before = timing::pair(s, |_, stream| graphs[0].launch(stream).map_err(|e| e.to_string()))?;
+            let ab = timing::pair(s, |arm, stream| graphs[arm].launch(stream).map_err(|e| e.to_string()))?;
+            let aa_after = timing::pair(s, |_, stream| graphs[0].launch(stream).map_err(|e| e.to_string()))?;
+            equality(&arena, &banks[0], &banks[2], rows, rows, false)?;
+            println!("compact_range_timing {}", json!({"n":e.base.query.n,"k":e.base.query.k,"groups":e.base.query.groups,
+                "stages":e.stages,"ranks":case.ranks,"rows":rows,"bitwise":true,"packed_twin":true,"serving_enabled":false,
+                "baseline_symbols":arms[0].iter().map(|c|&c.symbol).collect::<Vec<_>>(),
+                "candidate_symbols":arms[2].iter().map(|c|&c.symbol).collect::<Vec<_>>(),
+                "aa_before":aa_before,"ab":ab,"aa_after":aa_after}));
+            completed += 1;
+            arena.buffers.retain(|&handle, _| handle <= keep);
+            arena.next = keep;
+        }
+        if completed != case.rows.len() || completed == 0 {
+            return Err("incomplete compact timing range".into());
+        }
+        println!("compact_range_timing_complete {}", json!({"cases":completed,"serving_enabled":false}));
+        Ok(())
+    }).unwrap();
 }

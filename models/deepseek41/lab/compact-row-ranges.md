@@ -55,3 +55,18 @@ MiMo and Qwen can reuse the model-neutral MXFP8 template work only where
 their arithmetic policies match. MiMo's served block-scale fragment
 projections and Qwen's lab-only MXFP8 experts do not inherit a DeepSeek
 dense-route admission. Their served paths require separate qualification.
+
+The DSpark main-projection case N5120/K15360/G1 uses the serving generic
+fold as its baseline. `Prepared::main` bypasses the prefill wrapper above
+64 rows. The measured mixed steps retain three 192-row projections, so
+comparing this case with the ordinary dense prefill wrapper would test the
+wrong baseline. This case currently accepts only the upper candidate band.
+
+`ranges::range_timing_gpu` compares the baseline with the packed compact
+arm after full-output/status equality. Each width brackets its A/B CUDA
+event rounds with A/A rounds on the identical baseline graph and operands.
+The job must run on two owned idle GPUs, retain every sample, report A/A
+spread and clock/power observations, and finish within five minutes. A
+resolved lab gain is only a reason to continue qualification. Boundary
+pilots do not admit the intervening row range or replace the PDL, chunk,
+route-sweep, journal and served acceptance gates above.

@@ -3910,7 +3910,7 @@ mod tests {
     }
 
     #[test]
-    fn guaranteed_profile_reuses_complete_response_state_on_the_next_turn() {
+    fn guaranteed_profile_prefills_response_rows_from_the_prompt_anchor() {
         use runtime_engine::{Engine, EngineConfig, EngineRequest};
         use runtime_model_api::ModelVocabulary;
         use runtime_scheduler::SchedulerConfig;
@@ -3956,7 +3956,7 @@ mod tests {
         for _ in 0..3 {
             engine.step().unwrap();
         }
-        assert_eq!(engine.executor().instance.captured, [(1, 65), (1, 67)]);
+        assert_eq!(engine.executor().instance.captured, [(1, 65)]);
         let mut next = vec![0; 65];
         next.extend([1, 1, 1, 0]);
         engine.submit(request(2, next, 1)).unwrap();
@@ -3965,8 +3965,8 @@ mod tests {
         assert!(instance.calls.contains(&CallV1::Restore(2, None)));
         let envelope =
             runtime_bundle_sdk::prefill::decode(instance.envelopes.last().unwrap()).unwrap();
-        assert_eq!(envelope.batch.appends()[0].previous_tokens(), 67);
-        assert_eq!(envelope.batch.items()[0].phase_tokens(), 2);
+        assert_eq!(envelope.batch.appends()[0].previous_tokens(), 65);
+        assert_eq!(envelope.batch.items()[0].phase_tokens(), 4);
     }
 
     #[test]

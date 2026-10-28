@@ -1354,7 +1354,6 @@ struct RequestRecord {
     /// The scheduling tick when the request was queued.
     queued_tick: u64,
     prefix: Option<PrefixRequestV1>,
-    decode_capture: Option<usize>,
     /// A sibling that must commit this cacheable boundary before admission.
     prefix_dependency: Option<(RequestId, usize)>,
     /// Prompt boundaries to capture anchors at, ascending.
@@ -1694,7 +1693,6 @@ impl Scheduler {
             last_scheduled: 0,
             queued_tick: self.scheduling_tick,
             prefix,
-            decode_capture: None,
             prefix_dependency: None,
             captures: Vec::new(),
             end_anchor: None,
@@ -2728,14 +2726,10 @@ impl Scheduler {
                 return Err(ScheduleError::InvalidOutcome(item.request_id));
             }
             let terminal = outcome.terminal || next_emitted == record.spec.maximum_new_tokens;
-            let decode_capture = record.decode_capture.filter(|&tokens| {
-                terminal
-                    && !matches!(item.phase, BatchPhase::Prefill { .. })
-                    && tokens == record.spec.prompt_tokens + next_emitted - 1
-            });
-            let capture = decode_capture.is_some()
-                || (matches!(item.phase, BatchPhase::Prefill { .. })
-                    && record.captures.contains(&prefilled_tokens));
+            // Public anchors must contain prefill-written state. Decode and
+            // verify rows are only retained by request-owned preemption snapshots.
+            let capture = matches!(item.phase, BatchPhase::Prefill { .. })
+                && record.captures.contains(&prefilled_tokens);
             let anchor = item
                 .anchor
                 .filter(|anchor| record.captures.contains(anchor));
@@ -2750,7 +2744,7 @@ impl Scheduler {
                 },
                 terminal,
                 capture,
-                capture_tokens: decode_capture.unwrap_or(prefilled_tokens),
+                capture_tokens: prefilled_tokens,
                 anchor,
                 release_tail: record.shared_tail,
             });
@@ -3381,39 +3375,6 @@ impl Scheduler {
         Ok(record
             .guaranteed_prefill_chunks
             .map(|chunk| (chunk, Self::prefill_target(record))))
-    }
-
-    /// Supplies a complete accepted text history for a terminal decode capture.
-    /// The final sampled token has no KV yet and must be excluded. Only the
-    /// opt-in profile publishes these public response-end anchors.
-    pub fn prepare_decode_capture(
-        &mut self,
-        id: RequestId,
-        prefix: PrefixRequestV1,
-    ) -> Result<(), ScheduleError> {
-        let index = self.record_index(id)?;
-        let record = &mut self.requests[index];
-        if self.config.prefix_state_pages.is_none() || record.guaranteed_prefill_chunks.is_none() {
-            return Ok(());
-        }
-        let Some(prior) = &record.prefix else {
-            return Ok(());
-        };
-        if self.pending.as_ref().is_none_or(|batch| {
-            !batch.items.iter().any(|item| {
-                item.request_id == id && !matches!(item.phase, BatchPhase::Prefill { .. })
-            })
-        }) {
-            return Err(ScheduleError::InvalidOutcome(id));
-        }
-        let tokens = prefix.chain.tokens().len();
-        let prompt = record.spec.prompt_tokens;
-        if tokens < prompt || prefix.chain.key_at(prompt) != prior.chain.key_at(prompt) {
-            return Err(ScheduleError::InvalidOutcome(id));
-        }
-        record.decode_capture = Some(tokens);
-        record.prefix = Some(prefix);
-        Ok(())
     }
 
     /// Takes the anchors the last commits made due, in commit order.

@@ -2056,6 +2056,7 @@ fn warm_prefix_cache_captures_every_swap_under_copy_leases() {
             );
             e.executor_mut().delay = delay;
             run(&mut e, &requests()).unwrap();
+            let captured_before = e.executor().captures.len();
             let before = e.metrics().snapshot().offload;
             let kv0 = e.kv_metrics().snapshot();
             run(&mut e, &second).unwrap();
@@ -2067,6 +2068,15 @@ fn warm_prefix_cache_captures_every_swap_under_copy_leases() {
             // the 30 preemption swaps capture under private keys, which are
             // not cache entries.
             assert_eq!(kv.prefix_cache_captures - kv0.prefix_cache_captures, 20);
+            assert!(
+                e.executor().captures[captured_before..]
+                    .iter()
+                    .any(|(id, tokens)| {
+                        let prompt_tokens = 9 + (id.get() - 100) % 7;
+                        *tokens > prompt_tokens as usize
+                    }),
+                "private preemption still snapshots decode-written state"
+            );
         }
     }
 }

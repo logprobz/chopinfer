@@ -552,6 +552,13 @@ enforces it on every run: prefix hits at 1,024 and 2,000 tokens must equal
 the cold send bit for bit, and 1,024-token chunks must return the bits of
 2,048-token chunks.
 
+Public prefix anchors contain only prefill-written state. Decode-written
+rows differ in bits from cold prefill rows, even at aligned boundaries, so
+response ends are never shared anchors. The next turn resumes at a retained
+prompt-end or grid anchor and prefills the response history. Private
+preemption snapshots are different: they belong to the same request and
+resume its committed decode state without claiming cold-prefill equivalence.
+
 MiMo anchors sit at any position. Qwen anchors sit on multiples of 64 (its
 prefill granule): a prompt-end capture moves to the last multiple of 64 at
 or below the prompt end, kept inside the prompt's last chunk from

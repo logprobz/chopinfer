@@ -59,6 +59,7 @@ struct FoldCommit<'a> {
     staged: Vec<(RequestId, (u64, usize))>,
     anchors: &'a mut BTreeMap<RequestId, (u64, usize)>,
     staged_anchors: Vec<(RequestId, (u64, usize))>,
+    verified: BTreeMap<RequestId, Vec<(u64, usize)>>,
 }
 
 impl ModelTransactionState for FoldCommit<'_> {
@@ -69,6 +70,18 @@ impl ModelTransactionState for FoldCommit<'_> {
         self.anchors.clear();
         self.anchors.extend(self.staged_anchors.drain(..));
         Ok(())
+    }
+
+    fn commit_kept(&mut self, kept: &[runtime_engine::KeptRows]) -> Result<(), ExecutorError> {
+        for row in kept {
+            let state = self.verified[&row.request_id][row.kept_rows - 1];
+            self.staged
+                .iter_mut()
+                .find(|(id, _)| *id == row.request_id)
+                .unwrap()
+                .1 = state;
+        }
+        self.commit()
     }
 
     fn rollback(&mut self) -> Result<(), ExecutorError> {
@@ -163,6 +176,9 @@ impl ModelExecutor for FoldingExecutor {
         let mut staged = Vec::new();
         let mut staged_anchors = Vec::new();
         let mut rows = Vec::new();
+        let mut prompt_rows = Vec::new();
+        let mut verified = BTreeMap::new();
+        let mut drafts = Vec::new();
         for (item, append) in items.iter().zip(kv_plan.appends()) {
             if !self.admitted.contains(&item.request_id()) {
                 return Err(ExecutorError::new("the request was never admitted").unwrap());
@@ -185,16 +201,34 @@ impl ModelExecutor for FoldingExecutor {
                 staged_anchors.push((item.request_id(), (kept, anchor)));
                 self.anchor_items += 1;
             }
-            let state = fold(state, item.input_tokens());
-            staged.push((
-                item.request_id(),
-                (state, length + item.input_tokens().len()),
-            ));
-            if item.expects_logits() {
+            let logits = |state: u64| {
                 let mut logits = vec![-10.0; VOCABULARY];
                 logits[1 + (state % 30) as usize] = 10.0;
-                rows.push(LogitsRow::new(item.request_id(), logits)?);
+                LogitsRow::new(item.request_id(), logits).unwrap()
+            };
+            for position in 0..item.prompt_targets().len() {
+                prompt_rows.push(logits(fold(state, &item.input_tokens()[..=position])));
             }
+            let mut state = fold(state, item.input_tokens());
+            let mut end = length + item.input_tokens().len();
+            if let Some(draft) = item.draft() {
+                let mut tokens = Vec::new();
+                let mut states = vec![(state, end)];
+                rows.push(logits(state));
+                for _ in 0..draft.tokens() {
+                    let token = 1 + (state % 30) as u32;
+                    tokens.push(token);
+                    state = fold(state, &[token]);
+                    end += 1;
+                    states.push((state, end));
+                    rows.push(logits(state));
+                }
+                verified.insert(item.request_id(), states);
+                drafts.push(runtime_engine::DraftRow::new(item.request_id(), tokens));
+            } else if item.expects_logits() {
+                rows.push(logits(state));
+            }
+            staged.push((item.request_id(), (state, end)));
         }
         Ok(ModelTransaction::new(
             rows,
@@ -203,8 +237,11 @@ impl ModelExecutor for FoldingExecutor {
                 staged,
                 anchors: &mut self.anchors,
                 staged_anchors,
+                verified,
             },
-        ))
+        )
+        .with_drafts(drafts)
+        .with_prompt_rows(prompt_rows))
     }
 }
 
@@ -782,4 +819,41 @@ fn a_prompt_ending_chunk_keeps_its_anchor_inside_one_step() {
         steps[0],
         "the kept anchor saves one prefill step"
     );
+}
+
+fn response_ends_only_reuse_prefill(speculative: bool) {
+    let mut cfg = config(true).with_guaranteed_prefill_chunks(8).unwrap();
+    if speculative {
+        cfg = cfg.with_speculation(
+            runtime_engine::SpeculationConfig::new(
+                3,
+                16,
+                runtime_engine::SpeculationMode::Fixed,
+                runtime_engine::DraftSource::Bundle,
+            )
+            .unwrap(),
+        );
+    }
+    let mut engine = Engine::new(cfg, FoldingExecutor::default()).unwrap();
+    let prompt = words(4, 1);
+    let (tokens, _) = run(&mut engine, 1, &prompt, 9);
+    assert_eq!(tokens, cold(&prompt, 9));
+    // Every row past the prompt was written by decode or accepted verify.
+    // Such a state is private to this request, never a public cold-prefill anchor.
+    assert_eq!(engine.executor().captures, [(RequestId::new(1), 4)]);
+    let mut next_turn = prompt;
+    next_turn.extend(tokens);
+    let (output, cached) = run(&mut engine, 2, &next_turn, 3);
+    assert_eq!(cached, Some(4));
+    assert_eq!(output, cold(&next_turn, 3));
+}
+
+#[test]
+fn guaranteed_response_ar_keeps_only_prefill_anchors() {
+    response_ends_only_reuse_prefill(false);
+}
+
+#[test]
+fn guaranteed_response_speculation_keeps_only_prefill_anchors() {
+    response_ends_only_reuse_prefill(true);
 }

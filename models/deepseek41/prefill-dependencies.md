@@ -51,8 +51,10 @@ multiple at or past the progress floor when the cap's falls short and it
 fits beside the decodes, unless the next grid boundary, a capture point or
 the prompt end comes first. A timing cut is an ordinary admitted cut: complete
 state and results identical to the uncut schedule. It publishes no
-snapshot, so it costs no anchor pages; grid, shared, prompt-end and
-response-end anchors are unchanged.
+snapshot, so it costs no anchor pages; grid, shared and prompt-end anchors
+are unchanged. Response ends are not public anchors: decode-written state
+is not bitwise equal to cold prefill, including at aligned boundaries.
+Private preemption snapshots still preserve the same request's decode state.
 
 State after a timing-cut history is byte-equal to full arithmetic at the
 same history, but not to the uncut schedule's bytes in six DSpark raw
@@ -515,12 +517,13 @@ preparation, sparse dispatch overhead and snapshot costs are not free. At
 11.1 seconds or 23.3 seconds. These are estimates, not performance evidence.
 
 For a reusable prefix uniformly distributed across the 64-token residues of
-a C-token grid, and with no retained prompt/response anchor between grid
+a C-token grid, and with no retained prompt anchor between grid
 points, additional recompute is 0,64,...,C-64. Its mean is (C-64)/2: 992
 rows for C=2048, or 4064 for C=8192. Its maximum is 1984 or 8128 rows.
-An exact retained prompt or response boundary loses no additional reuse.
-The last sampled response token still needs one row of computation because
-it has not been a model input; this is separate from the capture restriction.
+An exact retained prompt boundary loses no additional prompt reuse. Response
+rows are prefilled again on the next turn, starting from that prompt or grid
+anchor. The last sampled response token also needs computation because it
+has not yet been a model input.
 The actual workload mean depends on where turns diverge and cache eviction.
 
 Reproduce the implemented counts with:

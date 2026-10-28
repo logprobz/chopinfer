@@ -19,7 +19,8 @@ import struct
 def family(name):
     if name.startswith("chop_comm_") or "prefill_dma_sum" in name:
         return "collective"
-    if "dspark" in name or "draft_" in name:
+    if ("dspark" in name or "draft_" in name or "e128" in name
+            or "moe_ceil_w1728" in name):
         return "drafter"
     if "engram_" in name or "ceil_w6144" in name:
         return "engram"
@@ -32,7 +33,7 @@ def family(name):
     if "scale_tiles_expand" in name:
         return "moe_scale_expand"
     if "moe" in name or "_route_" in name or "prefill_e384" in name:
-        if "gateup" in name or "gate_up" in name:
+        if "gateup" in name or "gate_up" in name or "_gate_" in name:
             return "moe_gate_up"
         if "down" in name:
             return "moe_down"
@@ -41,8 +42,11 @@ def family(name):
         return "moe_glue"
     if "compressor" in name or "compressed_key" in name:
         return "compressor"
-    if "position_blocks" in name:
-        return "indexer_topk" if "select" in name else "indexer_score"
+    if "position_blocks" in name or "position_indexer" in name:
+        if "select" in name:
+            return "indexer_topk"
+        if "scores" in name:
+            return "indexer_score"
     if "position_query" in name:
         return "indexer_query"
     if any(word in name for word in ("indexer", "index_query", "index_key", "candidate_block_ids", "topk")):
@@ -54,11 +58,15 @@ def family(name):
     shape = re.search(r"_n(\d+)_k(\d+)", name)
     if shape:
         n, k = map(int, shape.groups())
+        if (n, k) == (5120, 15360):
+            return "drafter_catchup"
+        if n == 32320:
+            return "logits"
         if (n, k) in ((576, 5120), (5120, 576)):
             return "moe_shared"
         if (n, k) == (25600, 6144):
             return "engram"
-        if "dense_f32" in name:
+        if "dense_f32" in name or "verify_f32" in name:
             return "moe_router" if n == 384 else "compressor" if n == 512 else "indexer"
         if (n, k) == (4096, 1280):
             return "indexer"
@@ -83,6 +91,7 @@ def exclusive(kernels, start, end):
     if not start < end:
         raise ValueError("empty time window")
     charged, raw, counts = defaultdict(int), defaultdict(int), defaultdict(int)
+    symbols = defaultdict(int)
     frontier = start
     for row in sorted(kernels, key=lambda r: (r["start"], r["end"], r["name"])):
         a, b = max(start, row["start"]), min(end, row["end"])
@@ -91,12 +100,15 @@ def exclusive(kernels, start, end):
         name = row["name"]
         raw[name] += b - a
         counts[name] += 1
-        charged[family(name)] += max(0, b - max(a, frontier))
+        advance = max(0, b - max(a, frontier))
+        charged[family(name)] += advance
+        symbols[name] += advance
         frontier = max(frontier, b)
     busy = sum(charged.values())
     return {"window_ns": end - start, "kernel_union_ns": busy,
             "no_kernel_ns": end - start - busy, "exclusive_family_ns": dict(charged),
-            "raw_symbol_ns": dict(raw), "launches": dict(counts)}
+            "raw_symbol_ns": dict(raw), "exclusive_symbol_ns": dict(symbols),
+            "launches": dict(counts)}
 
 
 def clock_epoch(metadata, anchors):

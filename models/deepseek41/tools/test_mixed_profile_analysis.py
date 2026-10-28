@@ -9,6 +9,15 @@ from mixed_profile_analysis import analyze, bounded_profile_steps, clock_epoch, 
 
 
 class MixedProfileTest(unittest.TestCase):
+    def test_long_context_scores_and_target_moe_are_not_hidden_in_glue(self):
+        self.assertEqual(family("chop_position_indexer_deepseek41_r2_all_scores_v3_live_v1_mma_fp4_guard_fast_v1"), "indexer_score")
+        self.assertEqual(family("chop_position_indexer_deepseek41_r1_all_select_v3_live_v1"), "indexer_topk")
+        self.assertEqual(family("chop_deepseek41_moe_absorb_lanes_e384_k6_gate_small_scale_tiles_w1_v1"), "moe_gate_up")
+        self.assertEqual(family("chop_moe_chain_before_gateup_e128k3_n1152_k5120_stream_small_v1"), "drafter")
+        self.assertEqual(family("chop_deepseek41_mxfp8_fold_m8192_n5120_k15360_g1_f32_v2_packed_v1"), "drafter_catchup")
+        self.assertEqual(family("chop_deepseek41_verify_f32_n384_k5120_v1_spans_m64_compute_v1"), "moe_router")
+        self.assertEqual(family("chop_deepseek41_verify_f32_n32320_k5120_v1_spans_m64_compute_v1"), "logits")
+
     def test_bounded_capture_requires_full_controls_and_exact_mixed_width(self):
         for profile, key in (("tp4-ar", "decode_rows"), ("tp4-dspark", "verify_items")):
             steps = [dict(batch=i, prefill_tokens=512 if i == 3 else 0, **{key: 16})
@@ -44,6 +53,7 @@ class MixedProfileTest(unittest.TestCase):
         self.assertEqual(result["kernel_union_ns"], 80)
         self.assertEqual(result["no_kernel_ns"], 20)
         self.assertEqual(sum(result["raw_symbol_ns"].values()), 110)
+        self.assertEqual(sum(result["exclusive_symbol_ns"].values()), 80)
 
     def test_mixed_widths_are_separate_launch_domains(self):
         self.assertEqual(phase_widths({"prefill_tokens": 512, "decode_rows": 8, "verify_rows": 32}),

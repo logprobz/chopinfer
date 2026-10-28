@@ -363,6 +363,9 @@ pub struct FixtureScenarioReportV1 {
     pub live_resources: usize,
 }
 
+const FIXED_PREFILL_TIMING_CUTS_STARTUP_V1: &str = "prefill timing cuts on (fixed): grid chunks beside decoding \
+     requests end at the TBT cap";
+
 /// The serving policy for timing-selected prefill cuts beside decoding requests.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum PrefillTimingCutsV1 {
@@ -3590,10 +3593,7 @@ impl ServedEngineV1 {
         };
         let config = negotiate_prefill_timing_cuts_v1(config, self.prefill_timing_cuts)?;
         if config.prefill_timing_cuts() {
-            println!(
-                "prefill timing cuts fixed (--prefill-timing-cuts fixed): grid chunks beside decoding \
-                 requests end at the TBT cap"
-            );
+            println!("{FIXED_PREFILL_TIMING_CUTS_STARTUP_V1}");
         }
         let aligned_prompt_capture = std::env::var_os("CHOPINFER_CANDIDATE_ALIGNED_PROMPT_CAPTURE")
             .is_some_and(|value| value == "1");
@@ -7633,6 +7633,15 @@ mod tests {
         assert!(
             super::HOST_COMMAND_USAGE_V1
                 .contains("--prefill-itl-target-ms N | --prefill-decode-steps N")
+        );
+    }
+
+    #[test]
+    fn prefill_timing_cuts_startup_preserves_enabled_marker_and_names_policy() {
+        let message = super::FIXED_PREFILL_TIMING_CUTS_STARTUP_V1;
+        assert!(
+            message.starts_with("prefill timing cuts on (fixed):"),
+            "{message}"
         );
     }
 

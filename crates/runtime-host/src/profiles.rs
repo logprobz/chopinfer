@@ -1578,23 +1578,43 @@ mod tests {
 
     #[test]
     fn prefill_timing_cuts_profile_refuses_invalid_values_and_budgets() {
-        for fields in [
-            serde_json::json!({"prefill_timing_cuts": "fixed"}),
-            serde_json::json!({"prefill_timing_cuts": "fixed", "prefill_budget": "fixed"}),
-            serde_json::json!({"prefill_timing_cuts": "fixed", "prefill_budget": "decode-aware"}),
-            serde_json::json!({"prefill_timing_cuts": "auto", "prefill_budget": "tbt"}),
-            serde_json::json!({"prefill_timing_cuts": true, "prefill_budget": "tbt"}),
+        for (fields, expected) in [
+            (
+                serde_json::json!({"prefill_timing_cuts": "fixed"}),
+                "--prefill-timing-cuts fixed needs --prefill-budget tbt",
+            ),
+            (
+                serde_json::json!({"prefill_timing_cuts": "fixed", "prefill_budget": "fixed"}),
+                "--prefill-timing-cuts fixed needs --prefill-budget tbt",
+            ),
+            (
+                serde_json::json!({"prefill_timing_cuts": "fixed", "prefill_budget": "decode-aware"}),
+                "--prefill-timing-cuts fixed needs --prefill-budget tbt",
+            ),
+            (
+                serde_json::json!({"prefill_timing_cuts": "auto", "prefill_budget": "tbt"}),
+                "--prefill-timing-cuts must be off or fixed",
+            ),
+            (
+                serde_json::json!({"prefill_timing_cuts": true, "prefill_budget": "tbt"}),
+                "invalid type: boolean `true`, expected a string",
+            ),
         ] {
             let mut data = fixture();
             data["profiles"]["test"]
                 .as_object_mut()
                 .unwrap()
                 .extend(fields.as_object().unwrap().clone());
-            assert!(
-                Profiles::parse(&serde_json::to_vec(&data).unwrap()).is_err(),
-                "{fields}"
-            );
+            let refusal = Profiles::parse(&serde_json::to_vec(&data).unwrap())
+                .unwrap_err()
+                .to_string();
+            assert!(refusal.contains(expected), "{fields}: {refusal}");
+            assert!(!refusal.contains("unknown field"), "{fields}: {refusal}");
         }
+        let mut data = fixture();
+        data["profiles"]["test"]["prefill_timing_cuts"] = "fixed".into();
+        data["profiles"]["test"]["prefill_budget"] = "tbt".into();
+        Profiles::parse(&serde_json::to_vec(&data).unwrap()).unwrap();
     }
 
     #[test]

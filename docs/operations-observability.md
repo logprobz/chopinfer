@@ -562,9 +562,12 @@ above show whether the policy actually cut eligible mixed steps.
 
 On 2026-10-28, DeepSeek TP4 DSpark C8 replay (eight sessions, three turns,
 32K/64K contexts, session-specific cache salts, temperature 1, 150 ms TBT
-target, 512-token floor) resolved about 75% less stall time above 250 ms
-and no gaps above 1 s with `fixed`. The reported paired verdict also showed
-about 40% worse TTFT p95, 3.5% lower output tok/s and 9.5% higher J/token.
-The option therefore remains off by default. See the
-[prefill policy](serving-profiles.md#prefill-policy) for the tradeoff and
-measurement envelope.
+target, 512-token floor) measured 75.7% and 84.0% less stall time above
+250 ms per 1,000 gaps in the two pairs, with no gaps above 1 s with `fixed`.
+TTFT p95 rose from 1.764 to 3.061 s (+73.6%) and from 1.911 to 3.046 s
+(+59.4%). Energy per output token rose from 3.353 to 3.764 J (+12.3%) and
+from 3.440 to 3.746 J (+8.9%). Output tok/s fell 4.0% and 3.0%, averaging
+3.5%. These are changes in the measured quantities within each pair.
+The option remains off by default. See the
+[fixed timing-cut tradeoff](serving-profiles.md#fixed-timing-cut-tradeoff)
+for the measurement envelope and policy choice.

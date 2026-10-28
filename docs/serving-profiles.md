@@ -319,14 +319,21 @@ progress floor, the chunk ends at the first multiple at or past the floor
 if it fits beside the decoders. Timing cuts capture no prefix anchor;
 scored and media requests keep their chunks.
 
+### Fixed timing-cut tradeoff
+
 On 2026-10-28, DeepSeek TP4 DSpark stateful replay at C8 (eight sessions,
 three turns each, 32K/64K contexts, session-specific cache salts,
 temperature 1, 150 ms TBT target and 512-token progress floor) resolved a
-tradeoff for `fixed` against `off`. Stall time above 250 ms fell about 75%
-and no gaps exceeded 1 s, while the reported TTFT p95 regression was about
-40%, output throughput fell 3.5% and energy per output token rose 9.5%.
-These are paired replay verdict figures; the 250 ms stall threshold was
-declared before measurement. Stalls between 100 and 250 ms became more
-frequent. Select `fixed` when smoother concurrent streaming matters more than
-first-token latency, throughput and energy. This evidence covers that
-cell and configuration; it does not support a default change in any profile.
+tradeoff for `fixed` against `off`. Stall time above 250 ms per 1,000 gaps
+fell 75.7% in the first pair and 84.0% in the second, and no gaps exceeded
+1 s with `fixed`. TTFT p95 rose from 1.764 to 3.061 s (+73.6%) and from
+1.911 to 3.046 s (+59.4%). Energy per output token rose from 3.353 to
+3.764 J (+12.3%) and from 3.440 to 3.746 J (+8.9%). Output throughput
+fell 4.0% and 3.0%, averaging 3.5% across the two pairs.
+
+These percentages compare the measured quantities within each pair. The
+250 ms stall threshold was declared before measurement. Stalls between
+100 and 250 ms became more frequent. Select `fixed` when smoother concurrent
+streaming matters more than first-token latency, throughput and energy.
+This evidence covers that cell and configuration; it does not support a
+default change in any profile.

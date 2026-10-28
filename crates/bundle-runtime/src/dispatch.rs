@@ -104,18 +104,26 @@ pub fn launch_config(plan: LaunchPlan) -> Result<LaunchConfigV1, DispatchError> 
     })
 }
 
-fn tensor_map(map: &TensorMap, bindings: &BufferBindings) -> Result<TensorMapV1, DispatchError> {
+/// Every check `arguments` makes of a planned tensor map but its buffer
+/// binding: valid geometry, an innermost stride of one element and a rank
+/// the host ABI holds.
+pub(crate) fn check_tensor_map(map: &TensorMap) -> Result<(), DispatchError> {
     map.validate()
         .map_err(|_| DispatchError::InvalidTensorMap)?;
-    let rank = map.dims.len();
     let element_bytes = match map.element {
         TensorMapElement::F16 | TensorMapElement::Bf16 => 2,
         TensorMapElement::F32 => 4,
         _ => 1,
     };
-    if map.strides_bytes[0] != element_bytes || rank > 5 {
+    if map.strides_bytes[0] != element_bytes || map.dims.len() > 5 {
         return Err(DispatchError::InvalidTensorMap);
     }
+    Ok(())
+}
+
+fn tensor_map(map: &TensorMap, bindings: &BufferBindings) -> Result<TensorMapV1, DispatchError> {
+    check_tensor_map(map)?;
+    let rank = map.dims.len();
     let mut dims = [0; 5];
     let mut strides = [0; 4];
     let mut boxes = [0; 5];

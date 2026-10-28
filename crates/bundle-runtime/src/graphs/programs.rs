@@ -86,9 +86,11 @@ impl Hasher for Digests {
     }
 }
 
-/// The fingerprint of `launches`; a launch the host would refuse to
-/// resolve has none. Arguments hash as the host resolves them, each buffer
-/// as its view, without building the resolved argument lists.
+/// The fingerprint of `launches`; a launch the bundle's resolver
+/// (`dispatch::launch_config` and `dispatch::arguments`) refuses has none.
+/// Arguments hash as it resolves them, each buffer as its view, without
+/// building the resolved argument lists. The host's own checks, of buffer
+/// ranges and symbols for instance, still run when a launch is issued.
 pub fn fingerprint(launches: &[PreparedLaunch]) -> Result<Fingerprint, DispatchError> {
     let mut digests = Digests {
         sip: DefaultHasher::new(),
@@ -147,6 +149,7 @@ fn hash_argument(
         Argument::I32(value) => (3_u8, value).hash(digest),
         Argument::U64(value) => (4_u8, value).hash(digest),
         Argument::TensorMap(map) => {
+            dispatch::check_tensor_map(map)?;
             6_u8.hash(digest);
             hash_view(map.base_buffer, bindings, digest)?;
             (
@@ -547,9 +550,13 @@ fn release<K, G>(
 #[cfg(test)]
 mod tests {
     use super::fingerprint;
+    use crate::dispatch;
     use crate::dispatch::BufferBindings;
     use crate::pipeline::PreparedLaunch;
-    use kernel_core::contract::{Argument, ArgumentList, LaunchPlan};
+    use kernel_core::contract::{
+        Argument, ArgumentList, LaunchPlan, TensorMap, TensorMapElement, TensorMapInterleave,
+        TensorMapL2Promotion, TensorMapOobFill, TensorMapSwizzle,
+    };
     use runtime_bundle_abi::{BundleDeviceBufferHandleV1, DeviceBufferSpanV1};
 
     /// One launch of `symbol` reading `offset` of a buffer and `scalar`,
@@ -600,5 +607,251 @@ mod tests {
         rows.rows = 2;
         assert_ne!(base, print(&[rows, launch("j", 0, 1, 0)]));
         assert_eq!(print(&[]).launches, 0);
+    }
+
+    /// An F32 tensor map over view `id`.
+    fn map(id: u64) -> TensorMap {
+        TensorMap {
+            base_buffer: id,
+            dims: vec![64, 8],
+            strides_bytes: vec![4, 256],
+            box_dims: vec![32, 1],
+            element_strides: vec![1, 1],
+            swizzle: TensorMapSwizzle::None,
+            interleave: TensorMapInterleave::None,
+            l2_promotion: TensorMapL2Promotion::None,
+            oob_fill: TensorMapOobFill::Zero,
+            element: TensorMapElement::F32,
+        }
+    }
+
+    /// A launch of `arguments` under `plan`, with views 1 to 3 bound.
+    fn planned(plan: LaunchPlan, arguments: Vec<Argument>) -> PreparedLaunch {
+        let mut bindings = BufferBindings::default();
+        let buffer = BundleDeviceBufferHandleV1::from_parts(1, 1);
+        for at in 0..3 {
+            bindings.bind(DeviceBufferSpanV1::new(buffer, at * 4096, 4096));
+        }
+        PreparedLaunch {
+            symbol: "k".into(),
+            rows: 1,
+            plan,
+            arguments: ArgumentList(arguments),
+            bindings,
+        }
+    }
+
+    const PLAN: LaunchPlan = LaunchPlan {
+        grid: [2, 1, 1],
+        block: [32, 1, 1],
+        dynamic_shared_bytes: 0,
+        workspace_bytes: 0,
+        cluster: [1, 1, 1],
+        pdl: false,
+    };
+
+    /// A fingerprint exists exactly when the resolver accepts the launch,
+    /// and every resolved field of each argument kind and of the launch
+    /// configuration changes it.
+    #[test]
+    fn fingerprints_refuse_what_the_resolver_refuses_and_follow_every_field() {
+        let resolves = |launch: &PreparedLaunch| {
+            dispatch::launch_config(launch.plan).is_ok()
+                && dispatch::arguments(&launch.arguments, &launch.bindings).is_ok()
+        };
+        let strided = TensorMap {
+            strides_bytes: vec![2, 256],
+            ..map(1)
+        };
+        let deep = TensorMap {
+            dims: vec![1; 6],
+            strides_bytes: vec![4; 6],
+            box_dims: vec![1; 6],
+            element_strides: vec![1; 6],
+            ..map(1)
+        };
+        let accepted = [
+            planned(PLAN, vec![Argument::TensorMap(map(1))]),
+            planned(
+                PLAN,
+                vec![Argument::TensorMap(TensorMap {
+                    element: TensorMapElement::Bf16,
+                    strides_bytes: vec![2, 256],
+                    ..map(2)
+                })],
+            ),
+            planned(PLAN, vec![Argument::DevicePointerArray(vec![1, 2, 3])]),
+            planned(
+                PLAN,
+                vec![
+                    Argument::I32(-5),
+                    Argument::U64(5),
+                    Argument::NullDevicePointer,
+                ],
+            ),
+            planned(
+                LaunchPlan {
+                    pdl: true,
+                    cluster: [2, 1, 1],
+                    dynamic_shared_bytes: 1024,
+                    ..PLAN
+                },
+                vec![],
+            ),
+        ];
+        let refused = [
+            planned(PLAN, vec![Argument::TensorMap(strided)]),
+            planned(PLAN, vec![Argument::TensorMap(deep)]),
+            planned(
+                PLAN,
+                vec![Argument::TensorMap(TensorMap {
+                    box_dims: vec![0, 1],
+                    ..map(1)
+                })],
+            ),
+            planned(PLAN, vec![Argument::TensorMap(map(9))]),
+            planned(PLAN, vec![Argument::DevicePointerArray(vec![])]),
+            planned(PLAN, vec![Argument::DevicePointerArray(vec![1; 9])]),
+            planned(PLAN, vec![Argument::DevicePointerArray(vec![1, 9])]),
+            planned(PLAN, vec![Argument::DeviceBuffer(9)]),
+            planned(
+                LaunchPlan {
+                    dynamic_shared_bytes: 101_377,
+                    ..PLAN
+                },
+                vec![],
+            ),
+            planned(
+                LaunchPlan {
+                    cluster: [3, 3, 1],
+                    ..PLAN
+                },
+                vec![],
+            ),
+            planned(
+                LaunchPlan {
+                    grid: [0, 1, 1],
+                    ..PLAN
+                },
+                vec![],
+            ),
+        ];
+        for launch in &accepted {
+            assert!(resolves(launch), "{:?}", launch.arguments);
+            assert!(fingerprint(std::slice::from_ref(launch)).is_ok());
+        }
+        for launch in &refused {
+            assert!(
+                !resolves(launch),
+                "{:?} {:?}",
+                launch.plan,
+                launch.arguments
+            );
+            assert!(fingerprint(std::slice::from_ref(launch)).is_err());
+        }
+        let variants = [
+            planned(PLAN, vec![Argument::U32(5)]),
+            planned(PLAN, vec![Argument::I32(5)]),
+            planned(PLAN, vec![Argument::U64(5)]),
+            planned(PLAN, vec![Argument::NullDevicePointer]),
+            planned(PLAN, vec![Argument::DeviceBuffer(1)]),
+            planned(PLAN, vec![Argument::DevicePointerArray(vec![1, 2])]),
+            planned(PLAN, vec![Argument::DevicePointerArray(vec![2, 1])]),
+            planned(PLAN, vec![Argument::TensorMap(map(1))]),
+            planned(PLAN, vec![Argument::TensorMap(map(2))]),
+            planned(
+                PLAN,
+                vec![Argument::TensorMap(TensorMap {
+                    box_dims: vec![16, 1],
+                    ..map(1)
+                })],
+            ),
+            planned(
+                PLAN,
+                vec![Argument::TensorMap(TensorMap {
+                    swizzle: TensorMapSwizzle::B64,
+                    ..map(1)
+                })],
+            ),
+            planned(
+                PLAN,
+                vec![Argument::TensorMap(TensorMap {
+                    interleave: TensorMapInterleave::B16,
+                    ..map(1)
+                })],
+            ),
+            planned(
+                PLAN,
+                vec![Argument::TensorMap(TensorMap {
+                    l2_promotion: TensorMapL2Promotion::B128,
+                    ..map(1)
+                })],
+            ),
+            planned(
+                PLAN,
+                vec![Argument::TensorMap(TensorMap {
+                    oob_fill: TensorMapOobFill::Nan,
+                    ..map(1)
+                })],
+            ),
+            planned(
+                PLAN,
+                vec![Argument::TensorMap(TensorMap {
+                    dims: vec![64, 9],
+                    ..map(1)
+                })],
+            ),
+            planned(
+                PLAN,
+                vec![Argument::TensorMap(TensorMap {
+                    strides_bytes: vec![4, 512],
+                    ..map(1)
+                })],
+            ),
+            planned(
+                PLAN,
+                vec![Argument::TensorMap(TensorMap {
+                    element_strides: vec![2, 1],
+                    ..map(1)
+                })],
+            ),
+            planned(PLAN, vec![]),
+            planned(LaunchPlan { pdl: true, ..PLAN }, vec![]),
+            planned(
+                LaunchPlan {
+                    cluster: [2, 1, 1],
+                    ..PLAN
+                },
+                vec![],
+            ),
+            planned(
+                LaunchPlan {
+                    dynamic_shared_bytes: 1024,
+                    ..PLAN
+                },
+                vec![],
+            ),
+            planned(
+                LaunchPlan {
+                    block: [64, 1, 1],
+                    ..PLAN
+                },
+                vec![],
+            ),
+            planned(
+                LaunchPlan {
+                    workspace_bytes: 64,
+                    ..PLAN
+                },
+                vec![],
+            ),
+        ];
+        let prints = variants
+            .iter()
+            .map(|launch| fingerprint(std::slice::from_ref(launch)).unwrap())
+            .collect::<Vec<_>>();
+        for (at, print) in prints.iter().enumerate() {
+            assert!(!prints[..at].contains(print), "variant {at} collides");
+        }
     }
 }

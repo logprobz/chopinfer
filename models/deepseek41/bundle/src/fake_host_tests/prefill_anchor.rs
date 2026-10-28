@@ -417,7 +417,10 @@ fn anchor_flags_need_spares_an_interior_granule_and_an_upper_skip() {
         ) {
             Ok(mut instance) => {
                 assert!(created);
-                assert_eq!(instance.prefill_anchor_items(), Ok(Some(1)));
+                assert_eq!(instance.prefill_anchor_items(), Ok(Some(0)));
+                // TP1 retains its spare for direct probes but advertises no grid items.
+                let (spares, _) = crate::instance::anchor_spans(instance.handle());
+                assert_eq!(spares.len(), 1);
                 instance.destroy().unwrap();
             }
             Err(error) => {

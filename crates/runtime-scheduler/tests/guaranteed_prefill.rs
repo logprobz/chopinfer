@@ -855,3 +855,51 @@ fn grid_anchor_items_keep_every_cache_hit_of_the_split_grid() {
         }
     }
 }
+
+#[test]
+fn grid_anchor_items_and_aligned_prompt_cuts_keep_separate_boundaries() {
+    for aligned in [false, true] {
+        for anchors in [0, 1] {
+            let config = SchedulerConfig::new(4, 64, 8192, 8192, 1)
+                .unwrap()
+                .with_prefill_granule(64)
+                .unwrap()
+                .with_prefix_cache(1)
+                .with_prefill_cuts(true)
+                .with_guaranteed_prefill_chunks(8192)
+                .unwrap()
+                .with_grid_anchor_items(anchors)
+                .with_aligned_prompt_capture(aligned);
+            let mut s = Scheduler::new(config, KvGeometry::new(64, 8192).unwrap()).unwrap();
+            submit(&mut s, 1, &(0..128).collect::<Vec<_>>(), false);
+            submit(&mut s, 2, &(1000..1789).collect::<Vec<_>>(), false);
+            let first = anchored_step(&mut s);
+            assert_eq!(
+                first,
+                [
+                    (1, 0, if aligned { 64 } else { 128 }, None),
+                    if anchors == 0 {
+                        (2, 0, 768, None)
+                    } else {
+                        (2, 0, 789, Some(768))
+                    },
+                ],
+                "aligned={aligned}, anchors={anchors}"
+            );
+            let mut tail = Vec::new();
+            if aligned {
+                tail.push((1, 64, 64, None));
+            }
+            if anchors == 0 {
+                tail.push((2, 768, 21, None));
+            }
+            if !tail.is_empty() {
+                let mut actual = anchored_step(&mut s);
+                actual.sort_unstable();
+                assert_eq!(actual, tail);
+            }
+            assert!(s.next_batch().unwrap().is_none());
+            s.audit().unwrap();
+        }
+    }
+}

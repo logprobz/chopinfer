@@ -7,6 +7,7 @@ use runtime_bundle_sdk::prefill::{Boundary, encode};
 
 mod defaults;
 mod dma;
+mod legacy;
 
 fn completion_backend(host: &Rc<Host>, delayed: bool) -> dspark::host::MappedHost {
     if delayed {
@@ -38,6 +39,16 @@ fn create_backend_with_options(
     backend: dspark::host::MappedHost,
     overrides: &[(&str, serde_json::Value)],
 ) -> Result<BundleInstanceV1, BundleAbiError> {
+    create_backend_with_api(host, skip, backend, overrides, api())
+}
+
+fn create_backend_with_api(
+    host: &Rc<Host>,
+    skip: bool,
+    backend: dspark::host::MappedHost,
+    overrides: &[(&str, serde_json::Value)],
+    api: BundleApiV1,
+) -> Result<BundleInstanceV1, BundleAbiError> {
     host.drafter.set(true);
     let mut record = crate::config::tests::record(
         &host.shape,
@@ -64,8 +75,7 @@ fn create_backend_with_options(
     let options = serde_json::to_vec(&options).unwrap();
     record.extend_from_slice(&(options.len() as u32).to_le_bytes());
     record.extend_from_slice(&options);
-    api()
-        .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
+    api.with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
         .unwrap()
         .create(HostServicesTableV1::new(Rc::new(backend)), &record)
 }

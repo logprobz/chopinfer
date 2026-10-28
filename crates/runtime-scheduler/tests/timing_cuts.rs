@@ -776,3 +776,94 @@ fn continuous_arrivals_do_not_starve_a_cut_prompt() {
     // each.
     assert!(steps <= 24, "{steps}");
 }
+
+/// Timing cuts and grid anchor items together: while a
+/// decoder waits, a grid chunk under the timing cap never keeps the rounded
+/// prompt end inside an anchor item, so it never spans a timing cut; the
+/// chunk ends at the cut or the anchor, as without anchor items. With no
+/// decoder the prompt runs past its anchor in one anchored chunk.
+#[test]
+fn anchor_items_never_span_a_timing_cut_beside_decodes() {
+    let anchored = |decoding: bool, prompt: usize| {
+        let config = SchedulerConfig::new(16, 256, GRID, GRID, 1)
+            .unwrap()
+            .with_prefill_granule(GRANULE)
+            .unwrap()
+            .with_prefix_cache(1)
+            .with_lone_prefill_expansion(true)
+            .with_guaranteed_prefill_chunks(GRID)
+            .unwrap()
+            .with_prefill_cuts(true)
+            .with_prefill_budget(tbt(512))
+            .with_admission(AdmissionPolicy::Reserved)
+            .with_prefill_timing_cuts(true)
+            .with_grid_anchor_items(8);
+        let mut s = Scheduler::new(config, KvGeometry::new(GRANULE, 16384).unwrap()).unwrap();
+        if decoding {
+            decoders(&mut s, 2);
+        }
+        submit(&mut s, 1, prompt, 4);
+        let (mut rows, mut anchors, mut captures, mut caps) = (vec![], vec![], vec![], vec![]);
+        while prefilling(&s, 1) {
+            assert!(rows.len() < 64);
+            let batch = s.next_batch().unwrap().unwrap();
+            caps.push(batch.prefill_cap());
+            for (item, append) in batch.items().iter().zip(batch.kv_plan().appends()) {
+                if let (1, BatchPhase::Prefill { tokens }) = (item.request_id().get(), item.phase())
+                {
+                    rows.push((append.previous_tokens(), tokens));
+                    anchors.push(item.anchor_tokens());
+                }
+            }
+            let outcomes = batch
+                .items()
+                .iter()
+                .map(|item| {
+                    BatchOutcome::success(
+                        item.request_id(),
+                        item.phase(),
+                        usize::from(item.expects_output()),
+                        false,
+                    )
+                })
+                .collect::<Vec<_>>();
+            s.commit_batch(batch.id(), &outcomes).unwrap();
+            for capture in s.take_prefix_captures() {
+                if capture.request_id().get() == 1 {
+                    captures.push(capture.tokens());
+                }
+                let exists = s.has_capture_anchor(&capture);
+                assert!(s.begin_prefix_capture(&capture).unwrap().is_some() || exists);
+                s.end_prefix_capture(&capture).unwrap();
+            }
+            s.audit().unwrap();
+        }
+        (rows, anchors, captures, caps)
+    };
+    for (prompt, cut) in [
+        (789, vec![(0, 512), (512, 256), (768, 21)]),
+        (300, vec![(0, 256), (256, 44)]),
+        (
+            GRID + 100,
+            (0..16)
+                .map(|n| (n * 512, 512))
+                .chain([(GRID, 64), (GRID + 64, 36)])
+                .collect(),
+        ),
+    ] {
+        let (rows, anchors, captures, caps) = anchored(true, prompt);
+        assert!(caps.iter().all(Option::is_some), "{prompt}: {caps:?}");
+        assert_eq!(rows, cut, "{prompt}");
+        assert!(anchors.iter().all(Option::is_none), "{prompt}: {anchors:?}");
+        assert_eq!(captures.last(), Some(&prompt));
+        assert!(
+            captures.contains(&(prompt / GRANULE * GRANULE)),
+            "{prompt}: {captures:?}"
+        );
+    }
+    let (rows, anchors, captures, _) = anchored(false, 789);
+    assert_eq!(
+        (rows, anchors, captures),
+        (vec![(0, 789)], vec![Some(768)], vec![768, 789])
+    );
+}

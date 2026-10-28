@@ -176,6 +176,7 @@ them. A non-default value is unqualified.
 | `dspark_compact_allocation` | `false` | Candidate: score and exchange only computed rows for allocated steps up to 64 rows; sample the reserved rows through an index map and reuse allocation metadata staging. |
 | `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |
 | `dspark_graph_handles_per_rank` | `512` | Graph handles per rank, from 0 to 9223372036854775807; 0 keeps DSpark eager. The total across ranks must fit the platform's count range. |
+| `prefill_dma_engram` | `false` | Candidate: enqueue both prepared Engram reads before DMA prefill compute and join at their decoders. |
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit again and refuse a differing plan. |

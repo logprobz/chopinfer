@@ -385,6 +385,7 @@ impl Plan {
     ) -> Result<(), String> {
         if let Some(dma) = &self.dma {
             dma.prepare_engram(plan, gathers)?;
+            plan.check_dma_collectives(&self.body.0, &self.body.1)?;
         }
         Ok(())
     }

@@ -214,7 +214,7 @@ impl Call {
                         sum.symbol.clone(),
                         kernel_core::route::RouteClass::Fast,
                         "prefill_dma",
-                        [],
+                        [512..=PREFILL_TOKENS],
                     )));
             }
             sums.push(sum);

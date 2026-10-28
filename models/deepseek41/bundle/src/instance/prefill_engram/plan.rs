@@ -129,6 +129,30 @@ impl Plan {
         Ok(pieces)
     }
 
+    pub(in crate::instance) fn check_dma_collectives(
+        &self,
+        programs: &[Vec<PreparedLaunch>],
+        flags: &[Vec<bool>],
+    ) -> Result<(), String> {
+        for piece in self.dma.iter().flatten() {
+            let launches = piece
+                .spans
+                .iter()
+                .enumerate()
+                .map(|(rank, span)| &programs[rank][span.clone()])
+                .collect::<Vec<_>>();
+            let waits = piece
+                .spans
+                .iter()
+                .enumerate()
+                .map(|(rank, span)| &flags[rank][span.clone()])
+                .collect::<Vec<_>>();
+            check_collectives(&launches, &waits)
+                .map_err(|error| format!("DMA Engram collective boundary: {error:?}"))?;
+        }
+        Ok(())
+    }
+
     pub(in crate::instance) fn layer_count(&self) -> usize {
         self.ranges[0].len() - 1
     }
@@ -281,5 +305,21 @@ mod tests {
             plan.split_dma(&vec![2..4; 4], &mut joined).unwrap()[1].join,
             Some(0)
         );
+    }
+
+    #[test]
+    fn dma_piece_collective_imbalance_is_refused_before_enqueue() {
+        let programs = vec![vec![op(span(1))], vec![op(span(2))]];
+        let flags = vec![vec![true], vec![true]];
+        let mut plan = Plan {
+            ranges: Vec::new(),
+            dma: vec![vec![DmaPiece {
+                spans: vec![0..1, 0..1],
+                join: None,
+            }]],
+        };
+        plan.check_dma_collectives(&programs, &flags).unwrap();
+        plan.dma[0][0].spans[1] = 0..0;
+        assert!(plan.check_dma_collectives(&programs, &flags).is_err());
     }
 }

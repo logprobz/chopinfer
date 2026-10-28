@@ -16,7 +16,7 @@ and [mapped-row hints](../crates/runtime-host/src/host_rows.rs).
 
 ## Caller audit
 
-The source audit includes these production async consumers. None
+The source audit on 2026-10-28 includes these production async consumers. None
 reads the policy setting or relies on advice being off.
 
 | Consumer | Async gather use |
@@ -102,9 +102,12 @@ Collective order, row intervals and arithmetic stay the same. Completion is
 checked after consolidated status readbacks, before publishing results.
 
 With `CHOPINFER_ROUTE_COUNTERS=1`, submitted DMA owner sums appear in the
-`prefill_dma` family with their `chop_comm_owned_sum_` symbols. Require this
+entries with family `prefill_dma` and their `chop_comm_owned_sum_` symbols.
+Fast entries do not increment the fallback-only family totals. Require this
 execution witness in every measured prefill step, plus two prepared gathers
-and eight waits per chunk when the candidate is on. The synchronous
+and a completion record per candidate chunk. Its `waits` field is the configured
+rank count times layer count, not an independent event counter. The completion
+record establishes that both joins reached the result boundary. The synchronous
 `prefill_schedule` reason identifies a selected DMA plan with the candidate
 off; it alone does not witness submitted arithmetic.
 
@@ -116,7 +119,18 @@ joins still precede subsequent compute; eager prefill has no graph side-stream
 fork. Failed gathers cannot be reused. Destruction drains compute, DMA and
 side streams, then releases gather handles, whose host service fences pending
 callbacks and transfers before any referenced destination allocation is freed.
-A terminal execution or cancellation failure keeps resources retained.
+A refused status or result sink settles healthy pending gathers: join remaining
+layers, synchronize every target stream, then complete before another step can
+reuse their rows. AR then serves the next request. DSpark retains its existing
+terminal host-error policy; its target settles healthy gathers before returning
+the error that poisons the drafter runtime. Failed callbacks or handles remain
+terminal. An unmatched
+collective keeps resources retained and must not be synchronized.
+
+Plan-time overlap or collective-balance audit failures refuse the request before
+enqueue. The candidate fails closed instead of silently selecting synchronous
+gathers. Its owner-sum tags change route metadata when counters are enabled;
+journal identity does not claim route-tag identity.
 
 Cold-row experiments must keep async read-ahead enabled. The shared defaults
 already enable it; `CHOPINFER_MAPPED_ASYNC_READ_AHEAD=1` makes the setting

@@ -601,3 +601,5 @@ fn compact_allocation_scores_only_computed_rows_and_keeps_reserved_samples() {
 }
 
 mod heads;
+
+mod journals;

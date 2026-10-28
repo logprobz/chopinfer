@@ -180,15 +180,10 @@ impl Step {
     /// reserved layout: every item's rows are its one row and its reserved
     /// drafts, and the items with drafts take the drafter's confidence rows
     /// in order. A step with no allocation is `None`.
-    #[cfg(test)]
-    pub fn of(batch: &BatchRequestV1, decode: &PhaseInputs) -> Result<Option<Self>, String> {
-        Self::with_rule_cache(batch, decode, None)
-    }
-
     pub fn with_rule_cache(
         batch: &BatchRequestV1,
         decode: &PhaseInputs,
-        cache: Option<&std::cell::RefCell<RuleCache>>,
+        cache: &std::cell::RefCell<RuleCache>,
     ) -> Result<Option<Self>, String> {
         let Some(allocation) = batch.verify_allocation() else {
             return Ok(None);
@@ -230,17 +225,8 @@ impl Step {
             width: allocation.width(),
             reserved_rows: first_row,
             items,
-            rule: cache.map_or_else(
-                || encode_rule(allocation),
-                |cache| cache.borrow_mut().encode(allocation),
-            ),
+            rule: cache.borrow_mut().encode(allocation),
         }))
-    }
-
-    /// The items as the allocation's U32 item rows.
-    #[cfg(test)]
-    pub fn item_words(&self) -> Vec<u32> {
-        self.items.iter().flat_map(|item| item.encode()).collect()
     }
 }
 
@@ -314,10 +300,11 @@ mod tests {
         let cache = std::cell::RefCell::new(RuleCache::default());
         for width in [7, 8, 7] {
             let (batch, decode) = step(width);
-            let expected = Step::of(&batch, &decode).unwrap();
-            let actual = Step::with_rule_cache(&batch, &decode, Some(&cache)).unwrap();
-            assert_eq!(actual, expected);
-            assert_eq!(actual.unwrap().rule[0], width);
+            let actual = Step::with_rule_cache(&batch, &decode, &cache)
+                .unwrap()
+                .unwrap();
+            assert_eq!(actual.rule, encode_rule(batch.verify_allocation().unwrap()));
+            assert_eq!(actual.rule[0], width);
         }
     }
 
@@ -326,7 +313,9 @@ mod tests {
     #[test]
     fn a_step_reads_each_items_reservation_from_the_packed_layout() {
         let (batch, decode) = step(7);
-        let step = Step::of(&batch, &decode).unwrap().unwrap();
+        let step = Step::with_rule_cache(&batch, &decode, &Default::default())
+            .unwrap()
+            .unwrap();
         assert_eq!((step.width, step.reserved_rows), (7, 11));
         assert_eq!(
             step.items,
@@ -351,10 +340,13 @@ mod tests {
                 },
             ]
         );
-        assert_eq!(step.item_words()[4..8], [0, 0, NONE, 6]);
+        assert_eq!(step.items[1].encode(), [0, 0, NONE, 6]);
         assert_eq!(step.rule[..2], [7, 1]);
         let (unallocated, decode) = step_without_allocation();
-        assert_eq!(Step::of(&unallocated, &decode), Ok(None));
+        assert_eq!(
+            Step::with_rule_cache(&unallocated, &decode, &Default::default()),
+            Ok(None)
+        );
     }
 
     /// A width outside the items' rows or packed rows that differ from the
@@ -363,14 +355,17 @@ mod tests {
     fn inconsistent_steps_are_refused() {
         for width in [2, 12] {
             let (batch, decode) = step(width);
-            assert!(Step::of(&batch, &decode).is_err(), "{width}");
+            assert!(
+                Step::with_rule_cache(&batch, &decode, &Default::default()).is_err(),
+                "{width}"
+            );
         }
         let (batch, mut decode) = step(7);
         decode.q_start[2] = 6;
-        assert!(Step::of(&batch, &decode).is_err());
+        assert!(Step::with_rule_cache(&batch, &decode, &Default::default()).is_err());
         let (batch, mut decode) = step(7);
         decode.positions.pop();
-        assert!(Step::of(&batch, &decode).is_err());
+        assert!(Step::with_rule_cache(&batch, &decode, &Default::default()).is_err());
     }
 
     fn step_without_allocation() -> (BatchRequestV1, PhaseInputs) {

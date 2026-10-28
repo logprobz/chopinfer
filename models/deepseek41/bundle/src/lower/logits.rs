@@ -60,7 +60,7 @@ impl Lowering<'_> {
     }
 
     /// The head over `rows` rows of `input`, `live_rows` of them live.
-    pub(crate) fn lm_head_over(
+    fn lm_head_over(
         &self,
         phase: Phase,
         input: Span,
@@ -77,12 +77,6 @@ impl Lowering<'_> {
             logits: scratch.head,
             live_rows,
             state: crate::ops::exact_f32::state(self.buffers, "head.weight"),
-        };
-        // An allocated head scores reserved rows, which can exceed the
-        // target's computed width. Select its route from those scored rows.
-        let phase = match phase {
-            Phase::Verify { items, .. } => Phase::Verify { rows, items },
-            phase => phase,
         };
         ops.head(phase, rows, &views)
             .map(Some)

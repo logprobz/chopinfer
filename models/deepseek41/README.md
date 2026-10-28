@@ -229,9 +229,12 @@ within noise, and no cell had a resolved step-time, acceptance or
 throughput regression. All 311 matched request keys and seven unmatched
 replays agreed bitwise on emitted tokens and selected logprobs; the fixed
 batch comparison also checked logits, proposals, acceptance and state.
-Compact allocation is the default implementation. Widths above 64 rows
-are admitted through the same computed-row path but are unqualified for
-timing; the measured cells do not establish their performance.
+Compact allocation is the default implementation. The 2026-10-28 adopted
+fixed-batch GPU smoke passed at 12, 32 and 65 computed rows, with greedy
+and fixed-seed logits, proposals, per-request acceptance and committed
+state equal to the previous implementation. GPU exactness evidence ends
+at the tested width of 65; widths 66-192 have CPU coverage only. Widths
+above 64 remain unqualified for timing.
 
 See [confidence allocation](dspark-confidence.md) for the measured coding
 and chat tradeoff.

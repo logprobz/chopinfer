@@ -5,6 +5,11 @@ use crate::{
 };
 use std::ffi::c_void;
 
+/// A package requiring mapped sampling declares this capability so an older
+/// host refuses it during package admission, before native instance creation.
+/// The host supplies the separate mapped-result sink when device results run.
+pub const MAPPED_DEVICE_RESULTS_CAPABILITY_V1: &str = "chop.mapped-device-results.v1";
+
 pub const MAPPED_DEVICE_RESULTS_API_SYMBOL_V1: &[u8] =
     b"chop_bundle_get_mapped_device_results_api_v1\0";
 

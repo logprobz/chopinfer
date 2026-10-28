@@ -350,6 +350,9 @@ fn topology_draft(
             runtime_bundle_abi::device_results::DEVICE_RESULTS_DEFAULT_CAPABILITY_V1,
         )?);
         capabilities.push(id(runtime_bundle_abi::VERIFY_ALLOCATION_CAPABILITY_V1)?);
+        capabilities.push(id(
+            runtime_bundle_abi::device_results::MAPPED_DEVICE_RESULTS_CAPABILITY_V1,
+        )?);
     }
     if media {
         capabilities.push(id(model_deepseek41_contract::encoder::MEDIA_CAPABILITY)?);

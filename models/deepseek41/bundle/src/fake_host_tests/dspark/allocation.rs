@@ -561,7 +561,7 @@ fn compact_allocation_scores_only_computed_rows_and_keeps_reserved_samples() {
             assert_eq!(sink.inner.completion.unwrap().sample_rows, items * 6);
             assert!(sink.inner.drafts.iter().all(|d| d.computed_tokens == 5));
             let journal = host.journal.borrow();
-            if cycle == 1 && width <= 32 {
+            if cycle == 1 {
                 let hash = launch_of(
                     &journal[start..],
                     host.rank_streams.borrow()[&0],
@@ -581,6 +581,37 @@ fn compact_allocation_scores_only_computed_rows_and_keeps_reserved_samples() {
                             .all(|line| line.contains(&format!("ScalarU32({width})"))),
                         "{head:#?}"
                     );
+                    if width > 64 {
+                        assert_eq!(head.len(), 2, "one split prepare and compute per rank");
+                        assert!(head[0].contains("_split_prepare_v2 "), "{}", head[0]);
+                        assert!(head[1].contains("_split_v2 "), "{}", head[1]);
+                        assert!(
+                            head[1].contains(&format!("grid_y: {},", width.div_ceil(8))),
+                            "{}",
+                            head[1]
+                        );
+                        let target = &journal[start + hash..];
+                        let gather: Vec<_> = target
+                            .iter()
+                            .filter(|line| {
+                                line.starts_with(&format!(
+                                    "launch {stream} chop_comm_gather_rows_f32_v1 "
+                                ))
+                            })
+                            .collect();
+                        assert_eq!(gather.len(), 1, "computed logits gather per rank");
+                        assert!(
+                            gather[0].contains(&format!("ScalarU32({width})")),
+                            "{}",
+                            gather[0]
+                        );
+                        assert!(
+                            !target.iter().any(|line| line.starts_with(&format!(
+                                "launch {stream} chop_comm_exchange_rows_f32_v1 "
+                            ))),
+                            "allocated logits must not use reserved-row exchange"
+                        );
+                    }
                 }
             }
             drop(journal);

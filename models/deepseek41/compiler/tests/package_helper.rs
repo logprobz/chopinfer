@@ -288,6 +288,39 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
             &root.join(format!("package-{top_k}-{blocks}")),
         )
         .unwrap();
+        // Package admission runs before loading the native create entry.
+        let capabilities: Vec<_> = FLASH_TOPOLOGIES
+            .iter()
+            .flat_map(|&(ranks, _)| {
+                package
+                    .manifest()
+                    .for_topology(&topology_id(&FLASH, ranks))
+                    .unwrap()
+                    .resource_requirements()
+                    .required_capabilities()
+                    .to_vec()
+            })
+            .collect();
+        let host = runtime_bundle::BundleHostCompatibilityV1::new("sm_120f", 1).unwrap();
+        let missing_mapped = host.clone().with_capabilities(
+            capabilities
+                .iter()
+                .filter(|id| id.as_str() != "chop.mapped-device-results.v1")
+                .cloned(),
+        );
+        let refusal =
+            runtime_bundle::BundlePackageV1::verify_directory(package.root(), &missing_mapped)
+                .expect_err("a host without mapped sampling must fail before create")
+                .to_string();
+        assert!(
+            refusal.contains("unsupported host capability chop.mapped-device-results.v1"),
+            "{refusal}"
+        );
+        runtime_bundle::BundlePackageV1::verify_directory(
+            package.root(),
+            &host.with_capabilities(capabilities),
+        )
+        .unwrap();
         let args = [
             "serve",
             "--bundle",
@@ -459,6 +492,11 @@ fn the_manifest_declares_each_topology_s_resources() {
         );
         assert_eq!(
             capabilities.contains(&runtime_bundle_abi::VERIFY_ALLOCATION_CAPABILITY_V1),
+            ranks == 4,
+        );
+        assert_eq!(
+            capabilities
+                .contains(&runtime_bundle_abi::device_results::MAPPED_DEVICE_RESULTS_CAPABILITY_V1),
             ranks == 4,
         );
         let kv = topology.kv_layout();

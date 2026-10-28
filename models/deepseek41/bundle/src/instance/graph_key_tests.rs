@@ -775,13 +775,8 @@ fn prefill_graph_keys_follow_timing_cuts_and_compact_allocation() {
     ];
     let mut planned = Vec::new();
     for dspark in [false, true] {
-        let (host, mut instance) = crate::fake_host_tests::indexer_workloads::skip_host(
-            Ranks::TP4,
-            dspark,
-            true,
-            8,
-            &[],
-        );
+        let (host, mut instance) =
+            crate::fake_host_tests::indexer_workloads::skip_host(Ranks::TP4, dspark, true, 8, &[]);
         super::super::INSTANCES.with(|table| {
             let mut table = table.borrow_mut();
             let live = table.get_mut(instance.handle()).unwrap();

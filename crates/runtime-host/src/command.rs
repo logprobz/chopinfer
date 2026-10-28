@@ -6313,6 +6313,9 @@ impl ArgumentsV1 {
             .chain(std::iter::once(
                 runtime_bundle_abi::SPECULATIVE_EXACT_GRAPHS_CAPABILITY_V1,
             ))
+            .chain(std::iter::once(
+                runtime_bundle_abi::device_results::MAPPED_DEVICE_RESULTS_CAPABILITY_V1,
+            ))
             .chain(std::iter::once(crate::executor::MEDIA_INPUTS_CAPABILITY_V1))
             .chain(std::iter::once(
                 crate::executor::POSITION_AXES_CAPABILITY_V1,
@@ -9955,6 +9958,7 @@ mod tests {
                 runtime_bundle_abi::FP8_KV_CAPABILITY_V1,
                 runtime_bundle::MIXED_PLANE_KV_CAPABILITY_V1,
                 crate::offload::KV_OFFLOAD_CAPABILITY_V1,
+                runtime_bundle_abi::device_results::MAPPED_DEVICE_RESULTS_CAPABILITY_V1,
                 crate::executor::MEDIA_INPUTS_CAPABILITY_V1,
                 runtime_bundle_abi::MODEL_OPTIONS_CAPABILITY_V1,
                 crate::executor::POSITION_AXES_CAPABILITY_V1,
@@ -10007,6 +10011,10 @@ mod tests {
                 &BundleOpaqueId::new(runtime_bundle_abi::FP8_KV_CAPABILITY_V1).unwrap(),
                 &BundleOpaqueId::new(runtime_bundle::MIXED_PLANE_KV_CAPABILITY_V1).unwrap(),
                 &BundleOpaqueId::new(crate::offload::KV_OFFLOAD_CAPABILITY_V1).unwrap(),
+                &BundleOpaqueId::new(
+                    runtime_bundle_abi::device_results::MAPPED_DEVICE_RESULTS_CAPABILITY_V1
+                )
+                .unwrap(),
                 &BundleOpaqueId::new(crate::executor::MEDIA_INPUTS_CAPABILITY_V1).unwrap(),
                 &BundleOpaqueId::new(runtime_bundle_abi::MODEL_OPTIONS_CAPABILITY_V1).unwrap(),
                 &BundleOpaqueId::new(crate::executor::POSITION_AXES_CAPABILITY_V1).unwrap(),

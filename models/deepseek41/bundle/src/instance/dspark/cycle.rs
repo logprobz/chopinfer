@@ -210,14 +210,12 @@ impl Instance {
         let allocation = crate::dspark::allocation::Step::with_rule_cache(
             &batch,
             &step.decode,
-            Some(
-                &self
-                    .dspark
-                    .as_ref()
-                    .ok_or("DSpark is absent")?
-                    .allocation
-                    .rule_cache,
-            ),
+            &self
+                .dspark
+                .as_ref()
+                .ok_or("DSpark is absent")?
+                .allocation
+                .rule_cache,
         )?;
         let device = self.dspark.as_mut().ok_or("DSpark is absent")?;
         if device.cycle.pending.is_some() || device.cycle.gathering {

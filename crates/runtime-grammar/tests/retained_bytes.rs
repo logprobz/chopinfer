@@ -117,8 +117,8 @@ fn retained_bytes_bound_what_the_allocator_keeps() {
             let before = live();
             let compiled =
                 Arc::new(CompiledGrammar::new(&grammar, Arc::clone(&vocabulary)).unwrap());
-            // One worker runs on this thread. A spawned worker frees its own
-            // thread state after it is joined, which this count would see.
+            // One worker runs on this thread, so its allocations are counted;
+            // a spawned worker's would not be.
             if precompute {
                 compiled.precompute(1).unwrap();
             }

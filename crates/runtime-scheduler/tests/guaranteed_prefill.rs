@@ -655,17 +655,17 @@ fn grid_anchor_items_need_an_instance_allowance_and_cuts() {
     }
 }
 
-/// The instance allowance replaces the manifest's anchor items and alone
-/// marks the grid's anchors.
+/// Grid and manifest allowances remain independent.
 #[test]
-fn grid_anchor_items_replace_the_manifest_value() {
+fn grid_anchor_items_keep_the_manifest_allowance_separate() {
     let config = SchedulerConfig::new(4, 64, 8192, 8192, 1)
         .unwrap()
         .with_anchor_items(2);
     assert!(!config.grid_anchors());
     for items in [0, 3] {
         let grid = config.with_grid_anchor_items(items);
-        assert_eq!(grid.anchor_items(), items);
+        assert_eq!(grid.anchor_items(), 2);
+        assert_eq!(grid.grid_anchor_items(), items);
         assert_eq!(grid.grid_anchors(), items > 0);
     }
 }
@@ -1019,7 +1019,8 @@ fn grid_anchor_items_preserve_cold_single_and_packed_shapes() {
             .with_prefill_cuts(true)
             .with_guaranteed_prefill_chunks(8192)
             .unwrap()
-            .with_grid_anchor_items(8);
+            .with_grid_anchor_items(8)
+            .with_grid_anchor_minimum_rows(357);
         let mut s = Scheduler::new(config, KvGeometry::new(64, 8192).unwrap()).unwrap();
         let mut expected = Vec::new();
         for (i, &tokens) in shape.iter().enumerate() {
@@ -1042,6 +1043,37 @@ fn grid_anchor_items_preserve_cold_single_and_packed_shapes() {
         let mut actual = anchored_step(&mut s);
         actual.sort_unstable();
         assert_eq!(actual, expected, "{shape:?}");
+        assert!(s.next_batch().unwrap().is_none());
+        s.audit().unwrap();
+    }
+}
+
+#[test]
+fn grid_anchor_minimum_rows_splits_short_cold_prompts() {
+    for rows in [65, 92, 127, 129, 143, 154, 200, 201, 356, 357, 789] {
+        let config = SchedulerConfig::new(4, 64, 8192, 8192, 1)
+            .unwrap()
+            .with_prefill_granule(64)
+            .unwrap()
+            .with_prefix_cache(1)
+            .with_prefill_cuts(true)
+            .with_guaranteed_prefill_chunks(8192)
+            .unwrap()
+            .with_grid_anchor_items(8)
+            .with_grid_anchor_minimum_rows(357);
+        let mut s = Scheduler::new(config, KvGeometry::new(64, 8192).unwrap()).unwrap();
+        submit(&mut s, 1, &(0..rows as u32).collect::<Vec<_>>(), false);
+        let end = rows / 64 * 64;
+        if rows < 357 {
+            assert_eq!(anchored_step(&mut s), [(1, 0, end, None)], "{rows}");
+            assert_eq!(
+                anchored_step(&mut s),
+                [(1, end, rows - end, None)],
+                "{rows}"
+            );
+        } else {
+            assert_eq!(anchored_step(&mut s), [(1, 0, rows, Some(end))], "{rows}");
+        }
         assert!(s.next_batch().unwrap().is_none());
         s.audit().unwrap();
     }

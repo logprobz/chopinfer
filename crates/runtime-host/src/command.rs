@@ -3613,10 +3613,11 @@ impl ServedEngineV1 {
             u8::from(aligned_prompt_capture)
         );
         let config = config.with_aligned_prompt_capture(aligned_prompt_capture);
+        let anchor_policy = instance
+            .prefill_anchor_policy()
+            .map_err(|error| format!("invalid bundle prefill anchors declaration: {error}"))?;
         let anchor_items = grid_anchor_items_v1(
-            instance
-                .prefill_anchor_items()
-                .map_err(|error| format!("invalid bundle prefill anchors declaration: {error}"))?,
+            anchor_policy.map(|policy| policy.anchor_items),
             loaded
                 .manifest()
                 .batch_limits()
@@ -3628,7 +3629,13 @@ impl ServedEngineV1 {
                 if items > 0 {
                     println!("prefill anchor items: {items} per step on the guaranteed grid");
                 }
-                config.with_grid_anchor_items(items)
+                config
+                    .with_grid_anchor_items(items)
+                    .with_grid_anchor_minimum_rows(
+                        anchor_policy
+                            .expect("present grid policy")
+                            .minimum_fused_rows as usize,
+                    )
             }
         };
         let snapshot_pages = if prefix_capability

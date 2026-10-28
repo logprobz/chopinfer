@@ -24,6 +24,9 @@ pub const DEFAULT_GRAPH_HANDLES_PER_RANK: usize = 512;
 /// prompt end in anchor spares. Each spare holds one slot's captured state:
 /// rings, tails and, with DSpark, the raw feature history.
 pub const MAX_ANCHOR_ITEMS: u32 = 8;
+/// Smallest anchored prompt in the measured cold single/packed shapes.
+/// Short widths retain split routes until wider fused routes are qualified.
+pub const MIN_ANCHOR_ROWS: u32 = 357;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Options {

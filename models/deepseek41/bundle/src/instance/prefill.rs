@@ -22,7 +22,11 @@ fn describe_anchors(handle: BundleHandleV1) -> BundlePrefillAnchorsV1 {
         })
     });
     if status == BundleStatusV1::Success {
-        BundlePrefillAnchorsV1::kept(items)
+        BundlePrefillAnchorsV1::kept(items).with_minimum_fused_rows(if items == 0 {
+            0
+        } else {
+            model_deepseek41_contract::execution_options::MIN_ANCHOR_ROWS
+        })
     } else {
         BundlePrefillAnchorsV1::failure(status)
     }

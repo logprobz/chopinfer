@@ -180,7 +180,7 @@ fn c_header_and_rust_layouts_match() {
             offset_of!(abi::prefill::BundlePrefillAnchorsV1, struct_size),
             offset_of!(abi::prefill::BundlePrefillAnchorsV1, status),
             offset_of!(abi::prefill::BundlePrefillAnchorsV1, anchor_items),
-            offset_of!(abi::prefill::BundlePrefillAnchorsV1, reserved),
+            offset_of!(abi::prefill::BundlePrefillAnchorsV1, minimum_fused_rows),
         ],
     );
     assert_layout(
@@ -2859,9 +2859,11 @@ abi::export_prefill_anchors_api_v1!(FIXTURE_PREFILL_ANCHORS_API, |_| {
     abi::prefill::BundlePrefillAnchorsV1::kept(
         FIXTURE_ANCHOR_ITEMS.load(std::sync::atomic::Ordering::Relaxed),
     )
+    .with_minimum_fused_rows(FIXTURE_ANCHOR_ROWS.load(std::sync::atomic::Ordering::Relaxed))
 },);
 
 static FIXTURE_ANCHOR_ITEMS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static FIXTURE_ANCHOR_ROWS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// The anchors export is optional: absent, the manifest's anchor items
 /// apply. Present, it reports the instance's allowance, and a nonzero
@@ -2909,6 +2911,32 @@ fn optional_prefill_anchors_report_the_instance_allowance() {
         );
         grid.destroy().unwrap();
     }
+    FIXTURE_ANCHOR_ITEMS.store(3, std::sync::atomic::Ordering::Relaxed);
+    for minimum in [357, 2049] {
+        FIXTURE_ANCHOR_ROWS.store(minimum, std::sync::atomic::Ordering::Relaxed);
+        let mut instance = cuts()
+            .with_prefill_anchors_api(FIXTURE_PREFILL_ANCHORS_API)
+            .unwrap()
+            .create(fixture_table(), &[])
+            .unwrap();
+        if minimum <= 2048 {
+            assert_eq!(
+                instance
+                    .prefill_anchor_policy()
+                    .unwrap()
+                    .unwrap()
+                    .minimum_fused_rows,
+                minimum
+            );
+        } else {
+            assert_eq!(
+                instance.prefill_anchor_policy(),
+                Err(BundleAbiError::InvalidRange("prefill anchors policy"))
+            );
+        }
+        instance.destroy().unwrap();
+    }
+    FIXTURE_ANCHOR_ROWS.store(0, std::sync::atomic::Ordering::Relaxed);
     FIXTURE_ANCHOR_ITEMS.store(0, std::sync::atomic::Ordering::Relaxed);
     assert!(
         abi::prefill::BundlePrefillAnchorsApiV1 {
@@ -4152,7 +4180,7 @@ int main(void) {
   printf("api-prefix-state-slot %zu %zu %zu\n", sizeof(chop_bundle_api_with_prefix_state_slot_v1), P(chop_bundle_api_with_prefix_state_slot_v1, base), P(chop_bundle_api_with_prefix_state_slot_v1, restore_prefix_state_in_slot_v1));
   printf("prefill-policy %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_prefill_policy_v1), P(chop_bundle_prefill_policy_v1, struct_size), P(chop_bundle_prefill_policy_v1, status), P(chop_bundle_prefill_policy_v1, chunk_tokens), P(chop_bundle_prefill_policy_v1, reserved));
   printf("prefill-api %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_prefill_table_v1), P(chop_bundle_prefill_table_v1, struct_size), P(chop_bundle_prefill_table_v1, abi_version), P(chop_bundle_prefill_table_v1, describe_prefill_v1), P(chop_bundle_prefill_table_v1, execute_prefill_v1));
-  printf("prefill-anchors %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_prefill_anchors_v1), P(chop_bundle_prefill_anchors_v1, struct_size), P(chop_bundle_prefill_anchors_v1, status), P(chop_bundle_prefill_anchors_v1, anchor_items), P(chop_bundle_prefill_anchors_v1, reserved));
+  printf("prefill-anchors %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_prefill_anchors_v1), P(chop_bundle_prefill_anchors_v1, struct_size), P(chop_bundle_prefill_anchors_v1, status), P(chop_bundle_prefill_anchors_v1, anchor_items), P(chop_bundle_prefill_anchors_v1, minimum_fused_rows));
   printf("prefill-anchors-api %zu %zu %zu %zu\n", sizeof(chop_bundle_prefill_anchors_table_v1), P(chop_bundle_prefill_anchors_table_v1, struct_size), P(chop_bundle_prefill_anchors_table_v1, abi_version), P(chop_bundle_prefill_anchors_table_v1, describe_prefill_anchors_v1));
   printf("weight-plan-sink %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_weight_plan_sink_v1), P(chop_bundle_weight_plan_sink_v1, struct_size), P(chop_bundle_weight_plan_sink_v1, layout), P(chop_bundle_weight_plan_sink_v1, context), P(chop_bundle_weight_plan_sink_v1, emit), P(chop_bundle_weight_plan_sink_v1, emit_error));
   printf("weight-transform-call %zu %zu %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_weight_transform_call_v1), P(chop_bundle_weight_transform_call_v1, struct_size), P(chop_bundle_weight_transform_call_v1, transform), P(chop_bundle_weight_transform_call_v1, params), P(chop_bundle_weight_transform_call_v1, sources), P(chop_bundle_weight_transform_call_v1, source_count), P(chop_bundle_weight_transform_call_v1, output_offset), P(chop_bundle_weight_transform_call_v1, output));

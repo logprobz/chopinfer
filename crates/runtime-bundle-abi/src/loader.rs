@@ -650,6 +650,12 @@ pub struct LoadedBundleInstanceV1 {
 }
 
 impl LoadedBundleInstanceV1 {
+    pub fn prefill_anchor_policy(
+        &self,
+    ) -> Result<Option<crate::prefill::BundlePrefillAnchorsV1>, BundleAbiError> {
+        self.instance.prefill_anchor_policy()
+    }
+
     pub fn prefill_anchor_items(&self) -> Result<Option<u32>, BundleAbiError> {
         self.instance.prefill_anchor_items()
     }

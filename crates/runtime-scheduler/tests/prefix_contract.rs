@@ -1414,6 +1414,8 @@ fn manifest_anchor_allowances_keep_restored_warm_turns_fused() {
             .with_prefill_granule(8)
             .unwrap()
             .with_anchor_items(anchors)
+            .with_grid_anchor_items(8)
+            .with_grid_anchor_minimum_rows(357)
             .with_prefix_cache(STATE_PAGES);
         let mut scheduler = Scheduler::new(config, KvGeometry::new(4, 128).unwrap()).unwrap();
         submit(&mut scheduler, 1, &prompt(16, 0), 1);

@@ -425,7 +425,8 @@ pub struct SchedulerConfig {
     rewrites_last_page: bool,
     prefix_ancestry: bool,
     anchor_items: usize,
-    grid_anchors: bool,
+    grid_anchor_items: usize,
+    grid_anchor_minimum_rows: usize,
 }
 
 impl SchedulerConfig {
@@ -482,7 +483,8 @@ impl SchedulerConfig {
             rewrites_last_page: false,
             prefix_ancestry: false,
             anchor_items: 0,
-            grid_anchors: false,
+            grid_anchor_items: 0,
+            grid_anchor_minimum_rows: 0,
         })
     }
 
@@ -648,7 +650,7 @@ impl SchedulerConfig {
     }
 
     /// The anchor items an instance declares for its guaranteed grid with
-    /// cuts, replacing the manifest's ([`Self::with_anchor_items`]). Only a
+    /// cuts, separate from the manifest's ([`Self::with_anchor_items`]). Only a
     /// nonzero allowance lets a request on that grid run past its prompt-end
     /// anchor to the prompt end in one chunk and capture the anchor after
     /// the step; with zero every such anchor ends a chunk. Grid ends and
@@ -656,14 +658,26 @@ impl SchedulerConfig {
     /// declares.
     #[must_use]
     pub const fn with_grid_anchor_items(mut self, items: usize) -> Self {
-        self.anchor_items = items;
-        self.grid_anchors = items > 0;
+        self.grid_anchor_items = items;
         self
     }
 
     #[must_use]
     pub const fn grid_anchors(self) -> bool {
-        self.grid_anchors
+        self.grid_anchor_items > 0
+    }
+
+    #[must_use]
+    pub const fn grid_anchor_items(self) -> usize {
+        self.grid_anchor_items
+    }
+
+    /// Minimum rows in a fused grid item, as declared by its bundle.
+    /// Zero adds no width restriction. Manifest anchors are unaffected.
+    #[must_use]
+    pub const fn with_grid_anchor_minimum_rows(mut self, rows: usize) -> Self {
+        self.grid_anchor_minimum_rows = rows;
+        self
     }
 
     /// Selects the mixed-step prefill policy. Fixed preserves competing chunks.
@@ -1391,6 +1405,7 @@ struct RequestRecord {
     /// A guaranteed-grid request with cuts whose instance keeps prompt-end
     /// anchors inside an item ([`SchedulerConfig::with_grid_anchor_items`]).
     grid_anchors: bool,
+    grid_anchor_minimum_rows: usize,
     state: RequestState,
     handle: Option<SequenceHandle>,
     reserved_blocks: usize,
@@ -1738,7 +1753,8 @@ impl Scheduler {
             prefill_cuts: guaranteed_prefill_chunks.is_some() && self.config.prefill_cuts,
             grid_anchors: guaranteed_prefill_chunks.is_some()
                 && self.config.prefill_cuts
-                && self.config.grid_anchors,
+                && self.config.grid_anchor_items > 0,
+            grid_anchor_minimum_rows: self.config.grid_anchor_minimum_rows,
             state: RequestState::Queued,
             handle: None,
             reserved_blocks: 0,
@@ -2095,10 +2111,14 @@ impl Scheduler {
             let granule = self.config.prefill_granule;
             let prompt = self.requests[index].spec.prompt_tokens;
             let end = prompt / granule * granule;
-            self.requests[index].end_anchor = (self.config.anchor_items > 0
-                && end < prompt
-                && self.requests[index].captures.contains(&end))
-            .then_some(end);
+            let allowance = if self.requests[index].grid_anchors {
+                self.config.grid_anchor_items
+            } else {
+                self.config.anchor_items
+            };
+            self.requests[index].end_anchor =
+                (allowance > 0 && end < prompt && self.requests[index].captures.contains(&end))
+                    .then_some(end);
             self.requests[index].prefilled_tokens = prefilled;
             if self.requests[index].preemptions == 0 {
                 self.requests[index].cached_tokens = prefilled;
@@ -2440,6 +2460,7 @@ impl Scheduler {
         // A prompt-ending chunk that reaches its prompt-end anchor runs past
         // it while the bundle's anchor items last (`push_prefill`).
         let mut anchors = self.config.anchor_items;
+        let mut grid_anchors = self.config.grid_anchor_items;
         let media_arena = self.config.media_pages;
         let mut media_budget = media_arena;
 
@@ -2554,7 +2575,11 @@ impl Scheduler {
                     0,
                     &mut chunk_media,
                     &mut overrun,
-                    &mut anchors,
+                    if self.requests[$index].grid_anchors {
+                        &mut grid_anchors
+                    } else {
+                        &mut anchors
+                    },
                 )
             };
         }
@@ -3221,9 +3246,13 @@ impl Scheduler {
                 record.captures.push(end);
                 record.captures.sort_unstable();
             }
+            let allowance = if record.grid_anchors {
+                self.config.grid_anchor_items
+            } else {
+                self.config.anchor_items
+            };
             record.end_anchor =
-                (self.config.anchor_items > 0 && end < prompt && record.captures.contains(&end))
-                    .then_some(end);
+                (allowance > 0 && end < prompt && record.captures.contains(&end)).then_some(end);
         }
         if self.requests[index].guaranteed_prefill_chunks.is_some() {
             self.requests[index].captures = self.capture_points(index, 0, false);
@@ -3895,7 +3924,10 @@ impl Scheduler {
         let start = record.prefilled_tokens;
         // Keep short continuations on their qualified split routes. The
         // scheduled start also excludes a cold prompt after an earlier cut.
-        if record.grid_anchors && start != 0 {
+        if record.grid_anchors
+            && (start != 0
+                || Self::prefill_target(record) - start < record.grid_anchor_minimum_rows)
+        {
             return None;
         }
         let anchor = record.end_anchor.filter(|&anchor| {

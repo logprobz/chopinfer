@@ -114,7 +114,10 @@ pub(crate) fn ring_cells(g: &model_deepseek41_contract::geometry::Geometry) -> u
 /// or none when the instance keeps no spares (`spares` 0): the host then
 /// cannot capture inside an item and drops such an anchor. An anchor item
 /// must end off the granule with a granule multiple strictly inside it,
-/// as the host captures there.
+/// as the host captures there. This validates execution capability, including
+/// nonzero starts used by direct state-equivalence tests. Served grid items
+/// have the stricter start/width admission declared by the instance API;
+/// the scheduler enforces that policy before setting an anchor flag.
 pub(crate) fn anchors(inputs: &PhaseInputs, spares: u32) -> Result<Vec<Anchor>, String> {
     if spares == 0 {
         return Ok(Vec::new());

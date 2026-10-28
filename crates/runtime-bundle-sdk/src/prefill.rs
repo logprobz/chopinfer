@@ -110,6 +110,9 @@ pub fn encode(original: &[u8], boundaries: &[Boundary]) -> Result<Vec<u8>, Error
 
 /// Encode endpoints for a separately negotiated complete-state cuts API.
 /// The scheduler and bundle enforce the bundle's declared prefill granule.
+/// This execution envelope also supports manifest anchors at nonzero starts.
+/// Grid-only admission bounds (start zero and minimum fused rows) belong to
+/// the negotiated instance policy and are enforced by the scheduler.
 pub fn encode_with_cuts(original: &[u8], boundaries: &[Boundary]) -> Result<Vec<u8>, Error> {
     encode_policy(original, boundaries, true)
 }

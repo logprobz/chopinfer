@@ -1,3 +1,7 @@
+//! These direct execution sweeps stress anchor-state capability at cold and
+//! restored starts, including widths below the served minimum. They are not
+//! a claim that the scheduler admits those items; scheduler tests cover the
+//! instance's start-zero and minimum-width policy.
 //! Route coverage with prompt-end anchors kept inside items, the
 //! default-off `prefill_anchor_items` candidate: both served profiles, their
 //! instances created with eight anchor items, where each step's first eight
@@ -172,6 +176,16 @@ fn anchored_instances_keep_eight_anchor_items() {
                 "{}",
                 serving.profile
             );
+            if anchors {
+                assert_eq!(
+                    instance
+                        .prefill_anchor_policy()
+                        .unwrap()
+                        .unwrap()
+                        .minimum_fused_rows,
+                    model_deepseek41_contract::execution_options::MIN_ANCHOR_ROWS
+                );
+            }
             instance.destroy().unwrap();
         }
         let adapter = Anchored::new(&serving);

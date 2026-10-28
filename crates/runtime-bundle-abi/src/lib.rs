@@ -3620,9 +3620,11 @@ impl BundleInstanceV1 {
     }
 
     /// The instance's anchor-item allowance on its guaranteed grid, or
-    /// `None` when the bundle does not export one and the manifest's anchor
-    /// items apply. A nonzero allowance needs an enabled cuts policy.
-    pub fn prefill_anchor_items(&self) -> Result<Option<u32>, BundleAbiError> {
+    /// `None` when the bundle does not export one. Manifest anchors remain
+    /// independent. A nonzero allowance needs an enabled cuts policy.
+    pub fn prefill_anchor_policy(
+        &self,
+    ) -> Result<Option<prefill::BundlePrefillAnchorsV1>, BundleAbiError> {
         if self.is_poisoned() {
             return Err(BundleAbiError::Poisoned);
         }
@@ -3631,10 +3633,19 @@ impl BundleInstanceV1 {
         };
         let policy = api.describe_prefill_anchors_v1.expect("validated callback")(self.handle);
         policy.validate()?;
-        if policy.anchor_items != 0 && self.prefill_cuts_policy()?.chunk_tokens == 0 {
-            return Err(BundleAbiError::InvalidRange("prefill anchors policy"));
+        if policy.anchor_items != 0 {
+            let chunk = self.prefill_cuts_policy()?.chunk_tokens;
+            if chunk == 0 || policy.minimum_fused_rows > chunk {
+                return Err(BundleAbiError::InvalidRange("prefill anchors policy"));
+            }
         }
-        Ok(Some(policy.anchor_items))
+        Ok(Some(policy))
+    }
+
+    pub fn prefill_anchor_items(&self) -> Result<Option<u32>, BundleAbiError> {
+        Ok(self
+            .prefill_anchor_policy()?
+            .map(|policy| policy.anchor_items))
     }
 
     pub fn execute_prefill_cuts<S: LogitsRowSinkV1>(

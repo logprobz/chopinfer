@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 #[path = "../../../sm120/compact_dense.rs"]
 mod family;
 mod matrix;
+mod ranges;
 #[path = "../exact_prefill/timing.rs"]
 mod timing;
 const ENV: &str = "CHOPINFER_DEEPSEEK41_COMPACT_DENSE_CUBINS";
@@ -127,6 +128,19 @@ fn prepare(
     b: &Buffers<View>,
     candidate: bool,
 ) -> LabResult<Vec<Launch>> {
+    prepare_at_rank(a, e, rows, b, candidate, topology(e)[0])
+}
+fn prepare_at_rank(
+    a: &mut Arena<'_>,
+    e: &Entry,
+    rows: u32,
+    b: &Buffers<View>,
+    candidate: bool,
+    rank: u32,
+) -> LabResult<Vec<Launch>> {
+    if !topology(e).contains(&rank) {
+        return Err("compact comparison topology does not match the entry".into());
+    }
     let mut b = *b;
     if !candidate {
         b.weights = if a.session.is_some() {
@@ -147,7 +161,6 @@ fn prepare(
     let op = if candidate {
         e.prepare(rows).map_err(|e| e.to_string())?
     } else {
-        let rank = topology(e)[0];
         let backend = registration::register(Sm120::new(), &FLASH, rank)?;
         let backend = bundle_deepseek41::sm120::prefill_matrix::register(backend, &FLASH, rank)?;
         let backend =

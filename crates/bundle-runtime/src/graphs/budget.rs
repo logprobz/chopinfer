@@ -44,6 +44,14 @@ pub struct GraphReservation {
 }
 
 impl GraphReservation {
+    /// Returns the credits no capture used to the shared ledger now, as a
+    /// drop would. The ledger refuses releases while credits are reserved,
+    /// so a failed group returns them before it releases what it captured.
+    pub fn return_unused(&mut self) {
+        self.ledger.borrow_mut().budget.reserved -= self.remaining;
+        self.remaining = 0;
+    }
+
     pub(super) fn validate<G>(
         &self,
         cache: &GraphCache<G>,

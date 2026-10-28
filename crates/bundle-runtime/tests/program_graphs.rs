@@ -392,6 +392,87 @@ fn a_failed_capture_releases_what_it_took_and_stops_captures() {
     }
 }
 
+/// How a capture fails at rank zero of a program's second nonempty
+/// segment, once every rank captured the first.
+#[derive(Clone, Copy, Debug)]
+enum Early {
+    Issue,
+    Refused(FakeRefusalV1),
+}
+
+/// A failure before the reservation is spent returns its unused credits,
+/// so the segments captured before it are released rather than left
+/// pinned in the ledger.
+#[test]
+fn an_early_capture_failure_releases_the_segments_captured_before_it() {
+    for ranks in rank_counts() {
+        for early in [
+            Early::Issue,
+            Early::Refused(FakeRefusalV1::BeginGraphCapture),
+            Early::Refused(FakeRefusalV1::InstantiateGraph),
+            Early::Refused(FakeRefusalV1::EndGraphCapture),
+        ] {
+            let (table, backend, streams, baseline) = host(ranks);
+            let mut owner = GraphCache::<Steps>::new(ranks);
+            decode(&mut owner, &table, &streams, 1);
+            let mut store = Store::new(LIMITS);
+            for _ in 0..2 {
+                run(&mut store, &owner, &table, &streams, 1).unwrap();
+            }
+            let (before, live) = (backend.live_resource_count(), owner.stats().live);
+            run(&mut store, &owner, &table, &streams, 2).unwrap();
+            let Admission::Capture(mut reservation) = store
+                .admit(table.caller(), &owner, &2, 2, || Ok(()))
+                .unwrap()
+            else {
+                panic!("admitted");
+            };
+            if let Early::Refused(refusal) = early {
+                // Every rank's first segment captures first.
+                backend.with_device_mut(|device| device.refuse_after(refusal, ranks.count()));
+            }
+            let launches = [launch(), launch(), launch()];
+            let failed = store.capture(
+                table.caller(),
+                &owner,
+                2,
+                &mut reservation,
+                &streams,
+                &segments(ranks, &launches),
+                ("prefill", None),
+                |rank, launches| match early {
+                    Early::Issue if rank == 0 && launches.len() == 2 => {
+                        Err(DispatchError::InvalidPlan)
+                    }
+                    _ => Ok(()),
+                },
+            );
+            assert!(failed.is_err(), "{ranks:?} {early:?}");
+            assert_eq!(owner.stats().reserved, 0, "{ranks:?} {early:?}");
+            drop(reservation);
+            if let Early::Refused(FakeRefusalV1::EndGraphCapture) = early {
+                // A refusal before the capture ended leaves rank zero
+                // capturing until it is ended.
+                let graph = table.caller().end_graph_capture(streams[0]).unwrap();
+                table.caller().release_graph(graph).unwrap();
+            }
+            assert_eq!(owner.stats().live, live, "{ranks:?} {early:?}");
+            assert_eq!(backend.live_resource_count(), before, "{ranks:?} {early:?}");
+            assert_eq!(owner.stats().release_failures, 0);
+            assert!(store.contains(&1) && !store.contains(&2));
+            assert_eq!(store.stats().failures, 1);
+            let collectives = Collectives::default();
+            assert!(
+                store
+                    .replay(table.caller(), &1, &streams, &collectives, |_| Ok(()))
+                    .unwrap()
+            );
+            owner.release_all(table.caller()).unwrap();
+            assert_eq!(backend.live_resource_count(), baseline);
+        }
+    }
+}
+
 #[test]
 fn a_failed_release_leaves_its_graphs_to_the_ledger_and_stops_captures() {
     let ranks = Ranks::TP4;

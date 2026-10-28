@@ -405,8 +405,9 @@ impl<K: Clone + Eq, G: BundleGeometry> Programs<K, G> {
     /// enqueues them on the rank's stream while it captures. A segment
     /// empty on every rank takes no graph; one empty on some ranks only is
     /// refused before anything is captured. `label` names the programs in
-    /// the ledger's telemetry. A failure releases what this capture took,
-    /// newest first, and stops captures.
+    /// the ledger's telemetry. A failure returns `reservation`'s unused
+    /// credits, releases what this capture took, newest first, and stops
+    /// captures; a graph whose release fails stays charged to the ledger.
     #[allow(clippy::too_many_arguments)]
     pub fn capture(
         &mut self,
@@ -466,6 +467,7 @@ impl<K: Clone + Eq, G: BundleGeometry> Programs<K, G> {
         if let Err(error) = captured {
             self.stats.failures += 1;
             self.stopped = true;
+            reservation.return_unused();
             let _ = release(services, &mut program);
             return Err(error);
         }

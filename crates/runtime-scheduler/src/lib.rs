@@ -1304,9 +1304,8 @@ struct PreparedCommitItem {
     emitted_tokens: usize,
     state: RequestState,
     terminal: bool,
-    /// Whether this commit publishes complete state at capture_tokens.
+    /// Whether this commit publishes complete state at prefilled_tokens.
     capture: bool,
-    capture_tokens: usize,
     /// The anchor the item kept its state at inside its rows.
     anchor: Option<usize>,
     /// Whether the commit replaces a tail page the request shared,
@@ -2026,8 +2025,9 @@ impl Scheduler {
                         hit_pages(prefilled, pins.len(), own_hit)
                     }
                 });
-            // A recompute captures nothing new: its preemption published its
-            // prefix, and its first admission already captured its prompt.
+            // Recompute admission adds no public capture points. Preemption
+            // snapshots are private; abandoning a restore can re-plan prompt
+            // captures on a guaranteed grid from a fresh prefill.
             self.requests[index].captures = if self.requests[index].replayed_tokens > 0 {
                 Vec::new()
             } else {
@@ -2744,7 +2744,6 @@ impl Scheduler {
                 },
                 terminal,
                 capture,
-                capture_tokens: prefilled_tokens,
                 anchor,
                 release_tail: record.shared_tail,
             });
@@ -2850,7 +2849,7 @@ impl Scheduler {
             // point only when it is its own anchor.
             let captured = match item.anchor {
                 Some(anchor) => Some((anchor, true)),
-                None => item.capture.then_some((item.capture_tokens, false)),
+                None => item.capture.then_some((item.prefilled_tokens, false)),
             };
             if let Some((tokens, interior)) = captured
                 && let (Some(prefix), Some(handle)) = (&record.prefix, record.handle)
@@ -3402,6 +3401,19 @@ impl Scheduler {
                 .insert_private_anchor(capture.key, capture.handle, state_pages)
                 .map_err(ScheduleError::Kv);
         }
+        self.audit_public_capture(capture)?;
+        // A non-interior insertion captures the handle's whole committed
+        // state. Reject stale metadata that would disguise decode rows.
+        if !capture.interior
+            && self
+                .kv
+                .snapshot(capture.handle)
+                .map_err(ScheduleError::Kv)?
+                .tokens()
+                != capture.tokens
+        {
+            return Err(ScheduleError::InvariantViolation);
+        }
         let Some(state_pages) = self.config.prefix_state_pages else {
             return Ok(None);
         };
@@ -3605,6 +3617,9 @@ impl Scheduler {
 
     pub fn audit(&self) -> Result<(), ScheduleError> {
         self.kv.audit().map_err(ScheduleError::Kv)?;
+        for capture in &self.captures {
+            self.audit_public_capture(capture)?;
+        }
         let active = self
             .requests
             .iter()
@@ -3711,6 +3726,20 @@ impl Scheduler {
                 seen[index] = true;
             }
         } else if self.kv.prepared_id().is_some() {
+            return Err(ScheduleError::InvariantViolation);
+        }
+        Ok(())
+    }
+
+    fn audit_public_capture(&self, capture: &PrefixCaptureV1) -> Result<(), ScheduleError> {
+        if !capture.private
+            && capture.tokens
+                > self
+                    .record(capture.request_id)
+                    .map_err(|_| ScheduleError::InvariantViolation)?
+                    .spec
+                    .prompt_tokens
+        {
             return Err(ScheduleError::InvariantViolation);
         }
         Ok(())
@@ -4736,6 +4765,94 @@ impl Error for ScheduleError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn capture_past_prompt(ancestry: bool, interior: bool) -> (Scheduler, PrefixCaptureV1) {
+        let mut scheduler = Scheduler::new(
+            SchedulerConfig::new(1, 8, 16, 8, 1)
+                .unwrap()
+                .with_prefix_cache(1)
+                .with_prefix_ancestry(ancestry),
+            KvGeometry::new(4, 32).unwrap(),
+        )
+        .unwrap();
+        let id = RequestId::new(1);
+        let chain = Arc::new(PrefixChainV1::new(4, vec![1; 4].into(), vec![]).unwrap());
+        scheduler
+            .submit_with_prefix(
+                RequestSpec::new(id, 4, 8).unwrap(),
+                Some(PrefixRequestV1::new(chain, true)),
+            )
+            .unwrap();
+        let batch = scheduler.next_batch().unwrap().unwrap();
+        scheduler
+            .commit_batch(
+                batch.id(),
+                &[BatchOutcome::success(
+                    id,
+                    batch.items()[0].phase(),
+                    1,
+                    false,
+                )],
+            )
+            .unwrap();
+        let mut capture = scheduler.take_prefix_captures().pop().unwrap();
+        let batch = scheduler.next_batch().unwrap().unwrap();
+        scheduler
+            .commit_batch(
+                batch.id(),
+                &[BatchOutcome::success(
+                    id,
+                    batch.items()[0].phase(),
+                    1,
+                    false,
+                )],
+            )
+            .unwrap();
+        assert_eq!(scheduler.kv.snapshot(capture.handle).unwrap().tokens(), 5);
+        let chain = Arc::new(PrefixChainV1::new(4, vec![1; 5].into(), vec![]).unwrap());
+        capture.tokens = 5;
+        capture.key = chain.key_at(5).unwrap();
+        capture.chain = chain.chain(1).unwrap();
+        capture.ancestry = ancestry.then_some(chain);
+        capture.interior = interior;
+        scheduler.audit().unwrap();
+        (scheduler, capture)
+    }
+
+    #[test]
+    fn public_capture_past_producers_prompt_is_refused() {
+        for (ancestry, interior) in [(false, false), (false, true), (true, false)] {
+            let (mut scheduler, capture) = capture_past_prompt(ancestry, interior);
+            let free = scheduler.kv.stats().free_blocks();
+            assert_eq!(
+                scheduler.begin_prefix_capture(&capture),
+                Err(ScheduleError::InvariantViolation)
+            );
+            assert!(!scheduler.kv.has_anchor(capture.key));
+            assert_eq!(scheduler.kv.stats().free_blocks(), free);
+            scheduler.audit().unwrap();
+        }
+    }
+
+    #[test]
+    fn audit_refuses_public_capture_past_producers_prompt() {
+        let (mut scheduler, capture) = capture_past_prompt(false, false);
+        scheduler.captures.push(capture);
+        assert_eq!(scheduler.audit(), Err(ScheduleError::InvariantViolation));
+    }
+
+    #[test]
+    fn stale_capture_metadata_cannot_publish_later_committed_state() {
+        let (mut scheduler, mut capture) = capture_past_prompt(false, false);
+        let chain = PrefixChainV1::new(4, vec![1; 4].into(), vec![]).unwrap();
+        capture.tokens = 4;
+        capture.key = chain.key_at(4).unwrap();
+        assert_eq!(
+            scheduler.begin_prefix_capture(&capture),
+            Err(ScheduleError::InvariantViolation)
+        );
+        assert!(!scheduler.kv.has_anchor(capture.key));
+    }
 
     #[test]
     fn two_boundaries_from_one_commit_reuse_snapshot_pages_in_capture_order() {

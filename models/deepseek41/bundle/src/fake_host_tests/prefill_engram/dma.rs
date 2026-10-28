@@ -502,3 +502,151 @@ fn dspark_status_refusal_settles_gathers_before_terminal_poison() {
         }
     }
 }
+
+#[cfg(not(feature = "diagnostic-taps"))]
+#[test]
+fn ready_prefill_refusal_settles_after_publication_and_serves_next_cycle() {
+    // runtime-host/src/executor.rs:1222 rejects device-result sampling on the
+    // negotiated prefill envelope. Use ordinary AR execute for this order;
+    // the negotiated-prefill tests above cover DMA separately.
+    use super::super::device_results::ReadySink;
+    for (rows, enabled) in [(193, false), (512, true)] {
+        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+        let mut instance = create_backend_with_options(
+            &host,
+            true,
+            completion_backend(&host, true),
+            &[("prefill_dma_engram", enabled.into())],
+        )
+        .unwrap();
+        let sources = FLASH.shape.csa.index_sources.len();
+        let mut status = vec![0; rows as usize * 4];
+        status[0] = 1;
+        host.injected_after.set(sources);
+        host.injected.replace(Some(status));
+        for (epoch, id) in [(9, 7), (10, 9)] {
+            let mut sink = ReadySink {
+                host: host.clone(),
+                epoch,
+                ids: vec![id],
+                ready: Vec::new(),
+                legacy: Vec::new(),
+            };
+            let from = host.journal.borrow().len();
+            let result = instance.execute(&prompt(id, 0, 0, rows, true), &mut sink);
+            assert!(sink.legacy.is_empty());
+            assert_eq!(
+                sink.ready
+                    .iter()
+                    .map(|view| view.logits.row_count)
+                    .sum::<u32>(),
+                1
+            );
+            let lines = host.journal.borrow()[from..].to_vec();
+            let ready = lines
+                .iter()
+                .position(|line| line == "ready-sample")
+                .unwrap();
+            let status = lines
+                .iter()
+                .position(|line| line.starts_with("download "))
+                .unwrap();
+            let complete = lines
+                .iter()
+                .position(|line| line == "async mapped complete")
+                .unwrap();
+            assert!(
+                ready < status && status < complete,
+                "device result, status, gather completion order: {rows}"
+            );
+            if id == 7 {
+                assert_eq!(
+                    result,
+                    Err(BundleAbiError::Status(BundleStatusV1::BundleError))
+                );
+                assert!(host.injected.borrow().is_none());
+                assert!(instance.commit().is_err());
+                assert_gathers_settled(&lines);
+            } else {
+                result.unwrap();
+                instance.commit().unwrap();
+            }
+            instance.retire_request(id).unwrap();
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+}
+
+#[test]
+fn poisoned_dma_prefill_never_waits_on_healthy_pending_gathers() {
+    let create = || {
+        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+        let instance = create_backend_with_options(
+            &host,
+            true,
+            completion_backend(&host, true),
+            &[("prefill_dma_engram", true.into())],
+        )
+        .unwrap();
+        (host, instance)
+    };
+    let (reference, mut instance) = create();
+    let from = reference.journal.borrow().len();
+    instance
+        .execute_prefill(&status_request(7, 769), &mut Views::default())
+        .unwrap();
+    let lines = reference.journal.borrow()[from..].to_vec();
+    instance.commit().unwrap();
+    instance.retire_request(7).unwrap();
+    instance.destroy().unwrap();
+    let at = lines
+        .iter()
+        .position(|line| line.starts_with("launch ") && line.contains("chop_comm_owned_sum_"))
+        .unwrap();
+    let before = lines[..at]
+        .iter()
+        .filter(|line| line.starts_with("launch "))
+        .count();
+    let (host, mut instance) = create();
+    host.device.fail_launch.set(Some(before as u32));
+    let from = host.journal.borrow().len();
+    assert_eq!(
+        instance.execute_prefill(&status_request(7, 769), &mut Views::default()),
+        Err(BundleAbiError::Status(BundleStatusV1::HostError))
+    );
+    let failed = host.journal.borrow()[from..].to_vec();
+    assert_eq!(
+        failed
+            .iter()
+            .filter(|line| line.starts_with("async mapped ids "))
+            .count(),
+        2
+    );
+    assert!(!failed.iter().any(|line| line == "async mapped complete"));
+    assert!(
+        host.logs
+            .borrow()
+            .iter()
+            .any(|line| line.contains("collectives unmatched"))
+    );
+    let from = host.journal.borrow().len();
+    assert_eq!(
+        instance.execute_prefill(&status_request(9, 769), &mut Views::default()),
+        Err(BundleAbiError::Status(BundleStatusV1::InvalidState))
+    );
+    // The public retry refuses at the table poison check first. Pin the settle
+    // invariant directly too, so that earlier refusal cannot mask a missing guard.
+    let settled = crate::instance::prefill_engram::settle_refused(instance.handle());
+    assert!(
+        host.journal.borrow()[from..].iter().all(
+            |line| !line.starts_with("synchronize ") && !line.starts_with("async mapped wait ")
+        ),
+        "poisoned collective must refuse before any gather join or stream fence"
+    );
+    assert_eq!(
+        settled,
+        Err(BundleAbiError::Status(BundleStatusV1::InvalidState))
+    );
+    assert!(instance.destroy().is_err());
+}

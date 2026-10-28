@@ -397,3 +397,19 @@ pub(crate) fn refusal_state(handle: runtime_bundle_abi::BundleHandleV1) -> (bool
     });
     result.expect("live instance")
 }
+
+#[cfg(test)]
+pub(crate) fn settle_refused(
+    handle: runtime_bundle_abi::BundleHandleV1,
+) -> Result<(), BundleAbiError> {
+    use bundle_runtime::entry::Bundle;
+    // Deliberately reach the local guard even when the ABI table's outer
+    // poison check would reject the call first.
+    Instance::instances().with(|table| {
+        table
+            .borrow_mut()
+            .get_mut(handle)
+            .expect("live instance")
+            .settle_prefill_engram()
+    })
+}

@@ -4,12 +4,12 @@ use runtime_bundle_abi::device_results::*;
 #[cfg(not(feature = "diagnostic-taps"))]
 mod undrafted;
 
-struct ReadySink {
-    host: Rc<Host>,
-    epoch: u64,
-    ids: Vec<u64>,
-    ready: Vec<BundleReadyLogitsViewV1>,
-    legacy: Vec<OwnedLogitsViewV1>,
+pub(super) struct ReadySink {
+    pub(super) host: Rc<Host>,
+    pub(super) epoch: u64,
+    pub(super) ids: Vec<u64>,
+    pub(super) ready: Vec<BundleReadyLogitsViewV1>,
+    pub(super) legacy: Vec<OwnedLogitsViewV1>,
 }
 impl LogitsRowSinkV1 for ReadySink {
     fn limits(&self) -> ResultSinkLimitsV1 {

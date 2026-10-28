@@ -99,6 +99,9 @@ repeat distributions, not random counters. The sampler validates source and
 map ownership, retains both buffers through completion, and rejects invalid
 map entries through failed sample records without reading beyond the source.
 The bundle must check mapped-sampling support before requesting this path.
+Hosts that support it advertise the `chop.mapped-device-results.v1`
+capability, and a package whose topology depends on mapped sampling requires
+it, so a host without it refuses the package at admission.
 Ordinary packages and ordinary sampling continue through their existing APIs.
 
 ## Frontend export

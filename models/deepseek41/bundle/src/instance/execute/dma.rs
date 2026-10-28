@@ -197,7 +197,7 @@ impl Call {
                 sends.push(by_owner);
             }
             rounds.push(round);
-            sums.push(crate::Kernels::prefill_dma_sum(
+            let mut sum = crate::Kernels::prefill_dma_sum(
                 payload,
                 own(input, 4)?,
                 inbox,
@@ -205,7 +205,19 @@ impl Call {
                 slot,
                 rank as u32,
                 count,
-            )?);
+            )?;
+            // Generated DMA launches bypass normal lowering's route tags.
+            // Attach metadata to the binding so only submitted sums count.
+            if kernel_core::route::Metadata::enabled() {
+                sum.bindings
+                    .set_route(Some(kernel_core::route::RouteTag::new(
+                        sum.symbol.clone(),
+                        kernel_core::route::RouteClass::Fast,
+                        "prefill_dma",
+                        [],
+                    )));
+            }
+            sums.push(sum);
             footprint.extend([input, output, inbox]);
             sent.push(outbox);
             outputs.push(output);

@@ -191,3 +191,68 @@ fn dma_prefill_option_preserves_launches_through_cancel_and_reuse() {
         }
     }
 }
+
+#[test]
+fn dma_owner_route_counts_match_submitted_kernels() {
+    for speculative in [false, true] {
+        for enabled in [false, true] {
+            bundle_runtime::routes::with_logging(|| {
+                let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+                if speculative {
+                    host.speculation.set(Some((5, 32)));
+                }
+                let mut instance = create_backend_with_options(
+                    &host,
+                    true,
+                    completion_backend(&host, true),
+                    &[("prefill_dma_engram", enabled.into())],
+                )
+                .unwrap();
+                let request = encode(
+                    &prompt(7, 0, 0, 512, true),
+                    &[Boundary {
+                        request_id: 7,
+                        prompt_tokens: 512,
+                        chunk_end: 512,
+                        chunk_tokens: 8192,
+                    }],
+                )
+                .unwrap();
+                let begin = host.journal.borrow().len();
+                let log_begin = host.logs.borrow().len();
+                instance
+                    .execute_prefill(&request, &mut Views::default())
+                    .unwrap();
+                let issued = host.journal.borrow()[begin..]
+                    .iter()
+                    .filter(|line| {
+                        line.starts_with("launch ") && line.contains("chop_comm_owned_sum_")
+                    })
+                    .count() as u64;
+                assert!(issued > 0);
+                let counted: u64 = host.logs.borrow()[log_begin..]
+                    .iter()
+                    .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                    .filter(|value| value["schema"] == "chopinfer.route.v1")
+                    .flat_map(|value| {
+                        value["entries"]
+                            .as_object()
+                            .unwrap()
+                            .values()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    })
+                    .filter(|entry| entry["family"] == "prefill_dma")
+                    .map(|entry| entry["launches"].as_u64().unwrap())
+                    .sum();
+                assert_eq!(
+                    counted, issued,
+                    "every submitted DMA owner sum must be witnessed"
+                );
+                instance.commit().unwrap();
+                instance.retire_request(7).unwrap();
+                instance.destroy().unwrap();
+            });
+        }
+    }
+}

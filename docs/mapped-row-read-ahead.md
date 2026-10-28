@@ -101,6 +101,13 @@ Each layer joins every target stream immediately before its Engram decoder.
 Collective order, row intervals and arithmetic stay the same. Completion is
 checked after consolidated status readbacks, before publishing results.
 
+With `CHOPINFER_ROUTE_COUNTERS=1`, submitted DMA owner sums appear in the
+`prefill_dma` family with their `chop_comm_owned_sum_` symbols. Require this
+execution witness in every measured prefill step, plus two prepared gathers
+and eight waits per chunk when the candidate is on. The synchronous
+`prefill_schedule` reason identifies a selected DMA plan with the candidate
+off; it alone does not witness submitted arithmetic.
+
 Preparation audits pending IDs and destinations against the original launches
 (including tensor maps and pointer arrays), DMA transfer spans, generated
 rounding and sum launches, and the producers and consumers moved into owner

@@ -284,7 +284,9 @@ class SplitTests(unittest.TestCase):
         rows.append(split_row(192, -0.5, -0.500001))
         summary = prefix_exact.summarize_split(rows, 64)
         self.assertFalse(summary["passed"])
-        self.assertEqual(summary["differing"], [{"text": "a", "position": 193, "anchor": 192}])
+        self.assertEqual(len(summary["differing"]), 1)
+        self.assertEqual(summary["differing"][0]["position"], 193)
+        self.assertEqual(summary["differing"][0]["first_difference"]["field"], "output.logprob[0]")
         # A hit at the primer's end, off the granule, is not what Qwen captures.
         self.assertFalse(prefix_exact.summarize_split([split_row(100, -0.5, -0.5)], 64)["passed"])
 
@@ -307,7 +309,7 @@ class SplitTests(unittest.TestCase):
         lock = threading.Lock()
         observed = []
 
-        def score(client, model, name, ids, position, anchor, run_id, tokens):
+        def score(client, model, name, ids, position, anchor, run_id, tokens, prompt_logprob_primer):
             nonlocal active
             with lock:
                 active += 1
@@ -783,6 +785,80 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(result["totals"]["hit"], {"draft_tokens": 16, "accepted_tokens": 8,
                                                    "rate": 0.5})
         self.assertTrue(result["passed"])
+
+
+class PromptLogprobPrimerTests(unittest.TestCase):
+    def run_arm(self):
+        ids = list(range(1000, 1400))
+        server = FakeServer(64, ids, granule=64)
+        bodies = []
+
+        def request(path, body):
+            bodies.append(copy.deepcopy(body))
+            response, seconds = server.request(path, body)
+            if "prompt_logprobs" in body:
+                response["choices"][0]["prompt_logprobs"] = [None] + [
+                    {str(token): {"logprob": -0.5}} for token in body["prompt"][1:]]
+            return response, seconds
+
+        client = mock.Mock(request=request)
+        result = prefix_exact.score_split(client, "m", "scored", ids, 193, 129, "run",
+                                          prompt_logprob_primer=True)
+        return result, bodies
+
+    def test_scored_producer_and_unscored_hit_use_the_ordinary_granule(self):
+        # Scoring disables DeepSeek's exact guaranteed prompt-end capture.
+        policy = {**prefix_exact.prefix_policy(), "prefill_granule": 64, "exact_prompt_ends": True}
+        with mock.patch.object(prefix_exact, "prefix_policy", return_value=policy):
+            result, bodies = self.run_arm()
+            self.assertEqual(result["cached"], {"primer": 0, "hit": 128, "control": 0})
+            self.assertEqual(result["primer_logprob_rows"], 128)
+            self.assertTrue(prefix_exact.summarize_split(
+                [result], 64, prompt_logprob_primer=True)["passed"])
+            self.assertFalse(prefix_exact.summarize_split([result], 64)["passed"])
+        self.assertEqual(["prompt_logprobs" in body for body in bodies], [True, False, False])
+        self.assertEqual(bodies[0]["cache_salt"], bodies[1]["cache_salt"])
+        self.assertNotEqual(bodies[1]["cache_salt"], bodies[2]["cache_salt"])
+
+    def test_missing_prompt_scores_are_refused(self):
+        ids = list(range(200))
+        with self.assertRaisesRegex(RuntimeError, "every prompt-logprob row"):
+            prefix_exact.score_split(FakeServer(64, ids), "m", "a", ids, 130, 129, "run",
+                                     prompt_logprob_primer=True)
+
+    def test_missing_selected_prompt_score_is_refused(self):
+        response = {"choices": [{"prompt_logprobs": [None, {}]}]}
+        with self.assertRaisesRegex(RuntimeError, "row 1 is missing"):
+            prefix_exact.complete(mock.Mock(request=lambda *_: (response, 0)), "m", [1, 2], "s",
+                                  prompt_logprobs=True)
+
+    def test_every_output_channel_and_cache_count_is_checked(self):
+        with mock.patch.object(prefix_exact, "prefix_policy", return_value={"prefill_granule": 64}):
+            original, _ = self.run_arm()
+            for field in ("token_ids", "logprob", "top", "cached", "primer_logprob_rows"):
+                bad = copy.deepcopy(original)
+                if field == "cached":
+                    bad["cached"]["hit"] = 129
+                elif field == "primer_logprob_rows":
+                    bad.pop(field)
+                elif field == "token_ids":
+                    bad["hit"][field][-1] += 1
+                elif field == "logprob":
+                    bad["hit"][field][-1] -= 1e-12
+                else:
+                    bad["hit"][field][-1]["t1"] -= 1e-12
+                with self.subTest(field=field):
+                    self.assertFalse(prefix_exact.summarize_split(
+                        [bad], 64, prompt_logprob_primer=True)["passed"])
+            self.assertFalse(prefix_exact.summarize_split(
+                [], 64, prompt_logprob_primer=True)["passed"])
+
+    def test_first_difference_keeps_float_bits_and_rejects_nonfinite(self):
+        difference = prefix_exact.output_difference({"logprob": [0.0]}, {"logprob": [-0.0]})
+        self.assertEqual(difference, {"field": "output.logprob[0]", "hit": 0.0, "cold": -0.0,
+                                     "hit_bits": "0000000000000000", "cold_bits": "8000000000000000"})
+        self.assertIsNotNone(prefix_exact.output_difference(float("nan"), float("nan")))
+        self.assertIsNotNone(prefix_exact.output_difference(float("inf"), float("inf")))
 
 
 def grouped_server(page=64, size=None):

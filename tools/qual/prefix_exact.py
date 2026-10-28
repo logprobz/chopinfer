@@ -100,6 +100,13 @@ The release preview's determinism gate (tools/qual/determinism.py) checks
 hits and chunk sizes on every run; this tool covers every page boundary of
 the reference, off-page primer ends whose prompt-end anchors are rounded
 down to the prefill granule, media keys and drafter acceptance.
+
+`record --split N --prompt-logprob-primer` adds the scored-producer pairing:
+the primer requests prompt logprobs, while its hit and cold control do not.
+Scoring disables guaranteed-grid prompt ends, so expected hits use the
+ordinary prefill granule. Every output token ID, logprob bit and top-k bit
+must match cold, including continuation rows. This emits a split receipt;
+`report --split-record` retains the scored-primer rule when rescoring it.
 """
 
 import common
@@ -283,7 +290,7 @@ def resumed(position, anchor, reuse):
     return max((tokens for tokens in points if tokens < position), default=0)
 
 
-def prompt_end_resumed(anchor, reuse):
+def prompt_end_resumed(anchor, reuse, scored=False):
     """The cached tokens of a hit after a primer that ended at `anchor`: its
     prompt end on the granule, once that spans a unit of `reuse` tokens. The
     primer's final-chunk point lies at or before that end, so it adds none.
@@ -292,7 +299,8 @@ def prompt_end_resumed(anchor, reuse):
     exactly, whatever its length (runtime-scheduler `capture_points`); the
     policy declares this as `exact_prompt_ends`. The hit then resumes
     `anchor` itself, which lies before its last token."""
-    if prefix_policy().get("exact_prompt_ends", False):
+    # Prompt scoring disables the guaranteed grid, including its exact ends.
+    if not scored and prefix_policy().get("exact_prompt_ends", False):
         return anchor
     tokens = granule_floor(anchor)
     return tokens if tokens >= reuse else 0
@@ -305,19 +313,32 @@ def granule_floor(tokens):
     return tokens // granule * granule
 
 
-def complete(client, model, prompt, salt, max_tokens=1, forced=True):
+def complete(client, model, prompt, salt, max_tokens=1, forced=True, prompt_logprobs=False):
     body = {"model": model, "prompt": prompt, "max_tokens": max_tokens, "temperature": 0,
             "top_p": 1, "logprobs": TOP_LOGPROBS, "return_token_ids": True,
             "skip_special_tokens": False, "cache_salt": salt}
     if forced or max_tokens > 1:
         body["ignore_eos"] = True
+    if prompt_logprobs:
+        body["prompt_logprobs"] = TOP_LOGPROBS
     response, seconds = client.request("/v1/completions", body)
     choice = response["choices"][0]
+    scored = {}
+    if prompt_logprobs:
+        rows = choice.get("prompt_logprobs") or response.get("prompt_logprobs")
+        if not isinstance(rows, list) or len(rows) != len(prompt) or rows[0] is not None:
+            raise RuntimeError("primer did not return every prompt-logprob row")
+        for index, token in enumerate(prompt[1:], 1):
+            value = (rows[index] or {}).get(str(token), {}).get("logprob")
+            if not isinstance(value, (int, float)) or not math.isfinite(value):
+                raise RuntimeError(f"primer prompt-logprob row {index} is missing or nonfinite")
+        scored["prompt_logprob_rows"] = len(rows) - 1
     logprobs = choice["logprobs"]
     usage = response["usage"]
     return {"token_ids": choice.get("token_ids") or [], "logprob": logprobs["token_logprobs"],
             "top": logprobs["top_logprobs"], "seconds": seconds,
-            "cached_tokens": (usage.get("prompt_tokens_details") or {}).get("cached_tokens")}
+            "cached_tokens": (usage.get("prompt_tokens_details") or {}).get("cached_tokens"),
+            **scored}
 
 
 def score_position(client, model, text, position, anchor, run_id):
@@ -717,22 +738,29 @@ def split_positions(prompts, chunk, deltas=SPLIT_DELTAS, max_anchors=None):
     return sorted(scored, key=lambda entry: (entry[0], entry[2], entry[1]))
 
 
-def score_split(client, model, name, ids, position, anchor, run_id, tokens=SPLIT_TOKENS):
+def score_split(client, model, name, ids, position, anchor, run_id, tokens=SPLIT_TOKENS,
+                prompt_logprob_primer=False):
     """Greedy continuations of ids[:p] after a hit at the prompt-end anchor
     of the primer ids[:anchor], and after a cold prefill: every row must be
     equal."""
     salt = f"prefix-exact/{run_id}/split/{name}/{position}"
-    requests = {"primer": complete(client, model, ids[:anchor], salt, forced=False),
+    if prompt_logprob_primer:
+        salt += "/prompt-logprob-primer"
+    requests = {"primer": complete(client, model, ids[:anchor], salt, forced=False,
+                                  prompt_logprobs=prompt_logprob_primer),
                 "hit": complete(client, model, ids[:position], salt, tokens, forced=False),
                 "control": complete(client, model, ids[:position], salt + "/cold", tokens,
                                     forced=False)}
     return {"text": name, "position": position, "anchor": anchor,
+            **({"primer_logprob_rows": requests["primer"]["prompt_logprob_rows"]}
+               if prompt_logprob_primer else {}),
             **{arm: {key: requests[arm][key] for key in ("token_ids", "logprob", "top")}
                for arm in ("hit", "control")},
             "cached": {arm: result["cached_tokens"] for arm, result in requests.items()}}
 
 
-def score_split_passes(client, model, prompts, entries, run_id, concurrency):
+def score_split_passes(client, model, prompts, entries, run_id, concurrency,
+                       prompt_logprob_primer=False):
     """Concurrent prefill rows, then isolated continuations on an idle server.
 
     Decode reduction order depends on batch shape. Separate salts keep both
@@ -742,7 +770,7 @@ def score_split_passes(client, model, prompts, entries, run_id, concurrency):
         index, position, anchor = entry
         name, ids = prompts[index]
         return score_split(client, model, name, ids, position, anchor,
-                           f"{run_id}/{phase}", tokens)
+                           f"{run_id}/{phase}", tokens, prompt_logprob_primer)
 
     prefill = scored_concurrently(concurrency, lambda entry: score(entry, "prefill", 1), entries)
     rows = [score(entry, "continuation", SPLIT_TOKENS) for entry in entries]
@@ -751,14 +779,40 @@ def score_split_passes(client, model, prompts, entries, run_id, concurrency):
     return rows
 
 
-def summarize_split(rows, reuse, tokens=SPLIT_TOKENS):
+def output_difference(left, right, path="output"):
+    """First differing field, retaining binary64 bits even for signed zero."""
+    if isinstance(left, float) and isinstance(right, float):
+        a, b = struct.pack(">d", left).hex(), struct.pack(">d", right).hex()
+        if a == b and math.isfinite(left):
+            return None
+        return {"field": path, "hit": left, "cold": right, "hit_bits": a, "cold_bits": b}
+    if type(left) is type(right) and isinstance(left, dict) and left.keys() == right.keys():
+        for key in left:
+            difference = output_difference(left[key], right[key], f"{path}.{key}")
+            if difference:
+                return difference
+        return None
+    if type(left) is type(right) and isinstance(left, list) and len(left) == len(right):
+        for index, (a, b) in enumerate(zip(left, right)):
+            difference = output_difference(a, b, f"{path}[{index}]")
+            if difference:
+                return difference
+        return None
+    return None if type(left) is type(right) and left == right else {
+        "field": path, "hit": left, "cold": right}
+
+
+def summarize_split(rows, reuse, tokens=SPLIT_TOKENS, prompt_logprob_primer=False):
     """Every hit equal to its cold control, and hits and misses as the anchor
     rules give on a server reusing units of `reuse` tokens."""
-    differing = [{"text": row["text"], "position": row["position"], "anchor": row["anchor"]}
-                 for row in rows if row["hit"] != row["control"]]
+    differing = [{"text": row["text"], "position": row["position"], "anchor": row["anchor"],
+                  "first_difference": difference}
+                 for row in rows
+                 if (difference := output_difference(row["hit"], row["control"]))]
     errors = [{"text": row["text"], "position": row["position"], "cached": row["cached"]}
               for row in rows
-              if row["cached"] != {"primer": 0, "hit": prompt_end_resumed(row["anchor"], reuse),
+              if row["cached"] != {"primer": 0, "hit": prompt_end_resumed(
+                  row["anchor"], reuse, scored=prompt_logprob_primer),
                                    "control": 0}]
     row_errors = [{"text": row["text"], "position": row["position"], "arm": arm,
                    "expected": tokens, "lengths": lengths}
@@ -766,11 +820,16 @@ def summarize_split(rows, reuse, tokens=SPLIT_TOKENS):
                   for lengths in [{key: len(row[arm][key])
                                    for key in ("token_ids", "logprob", "top")}]
                   if any(length != tokens for length in lengths.values())]
+    if prompt_logprob_primer:
+        row_errors += [{"text": row["text"], "position": row["position"], "arm": "primer",
+                        "expected": row["anchor"] - 1, "rows": row.get("primer_logprob_rows")}
+                       for row in rows if row.get("primer_logprob_rows") != row["anchor"] - 1]
     compared = [(a, b) for row in rows
                 for a, b in zip(row["hit"]["logprob"], row["control"]["logprob"])]
     prefill = [row["concurrent_prefill"] for row in rows if "concurrent_prefill" in row]
     if prefill:
-        concurrent = summarize_split(prefill, reuse, tokens=1)
+        concurrent = summarize_split(prefill, reuse, tokens=1,
+                                     prompt_logprob_primer=prompt_logprob_primer)
         differing += concurrent["differing"]
         errors += concurrent["cache_errors"]
         row_errors += concurrent["row_errors"]
@@ -835,14 +894,17 @@ def record_split(args, client, server, model, exact):
                 for index, tokens in enumerate(args.split_prompt_tokens)]
     entries = split_positions([ids for _, ids in prompts], args.split,
                               max_anchors=args.split_max_anchors)
-    rows = score_split_passes(client, model, prompts, entries, args.run_id, args.concurrency)
+    scored_primer = args.prompt_logprob_primer
+    rows = score_split_passes(client, model, prompts, entries, args.run_id, args.concurrency,
+                             prompt_logprob_primer=scored_primer)
     reuse = reuse_tokens(server)
-    summary = summarize_split(rows, reuse)
+    summary = summarize_split(rows, reuse, prompt_logprob_primer=scored_primer)
     confirm_live(client, server)
     # Its per-request seconds are diagnostics of an accuracy check, not timing evidence, so no host load
     # samples bound them and the receipt's timing reads informational.
     receipt("prefix-exact-split", server, {
         "run_id": args.run_id, "chunk": args.split, "reuse_tokens": reuse,
+        "prompt_logprob_primer": scored_primer,
         "prefill_concurrency": args.concurrency, "continuation_concurrency": 1,
         "family": prefix_policy()["family"],
         "prompts": {name: len(ids) for name, ids in prompts}, "rows": rows, **summary})
@@ -1095,7 +1157,9 @@ def report(args):
     if split_records:
         for split in split_records:
             validate_policy(exact, split)
-        splits = [summarize_split(split["rows"], record_reuse(split)) for split in split_records]
+        splits = [summarize_split(split["rows"], record_reuse(split),
+                                 prompt_logprob_primer=split.get("prompt_logprob_primer", False))
+                  for split in split_records]
         result = {"main": result, "splits": splits,
                   "passed": result["passed"] and all(split["passed"] for split in splits)}
     if unpinned(path):
@@ -1162,6 +1226,9 @@ def main():
                         help="record: the server's startup log; when given, it must be the live server's")
     parser.add_argument("--split", type=int,
                         help="record: only the split receipt, with anchors every this many tokens")
+    parser.add_argument("--prompt-logprob-primer", action="store_true",
+                        help="record --split: score the producer prompt, then compare its "
+                             "unscored hit bitwise with cold (including every continuation row)")
     parser.add_argument("--split-prompt-tokens", type=int, action="append", default=[],
                         help="record --split: add a synthetic prompt of this many tokens")
     parser.add_argument("--split-max-anchors", type=int,
@@ -1169,6 +1236,8 @@ def main():
     parser.add_argument("--split-record", action="append", default=[],
                         help="report: a split receipt that must pass too")
     args = parser.parse_args()
+    if args.prompt_logprob_primer and (args.command != "record" or not args.split):
+        parser.error("--prompt-logprob-primer requires record --split")
     if args.command == "report":
         if not args.record:
             parser.error("report needs --record")

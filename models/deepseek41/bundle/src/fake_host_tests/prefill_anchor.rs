@@ -1001,3 +1001,110 @@ fn anchor_state_dumps_read_their_spares() {
         std::fs::remove_dir_all(root).unwrap();
     }
 }
+
+/// DMA reductions preserve each rank's anchor writes before capture and
+/// restore, including the DSpark raw history and delayed gather joins.
+#[test]
+fn dma_anchors_capture_restore_and_continue_with_both_completion_modes() {
+    use super::prefill_engram::{completion_backend, create_backend_with_options};
+    for speculative in [false, true] {
+        for delayed in [false, true] {
+            let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+            if speculative {
+                host.speculation.set(Some((5, 32)));
+            }
+            let mut instance = create_backend_with_options(
+                &host,
+                true,
+                completion_backend(&host, delayed),
+                &[
+                    ("prefill_dma_engram", true.into()),
+                    ("prefill_anchor_items", 1.into()),
+                ],
+            )
+            .unwrap();
+            let (spares, states) = crate::instance::anchor_spans(instance.handle());
+            let first = host.device.journal.borrow().len();
+            instance
+                .execute_prefill_cuts(
+                    &cuts(&anchored(1, 0, 0, 789, true), 1, 789, 789),
+                    &mut Sink::default(),
+                )
+                .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+            let step = host.device.journal.borrow()[first..].to_vec();
+            assert!(
+                step.iter()
+                    .any(|line| line.contains("chop_comm_owned_sum_"))
+            );
+            assert_eq!(
+                step.iter()
+                    .filter(|line| line.starts_with("async mapped wait "))
+                    .count(),
+                8
+            );
+            assert_eq!(
+                step.iter()
+                    .filter(|line| line.starts_with("async mapped complete"))
+                    .count(),
+                2
+            );
+            for (spare, state) in spares.iter().zip(&states) {
+                check_anchor_stores(
+                    &step,
+                    state.named("window.ring").unwrap(),
+                    spare.buffers[0].unwrap(),
+                    spare.zeros,
+                    632..768,
+                );
+            }
+            instance.commit().unwrap();
+            let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
+            let before = host.device.journal.borrow().len();
+            instance.capture_prefix_state(1, 768, &pages).unwrap();
+            let captured = copies(&host.device.journal.borrow()[before..]);
+            for (spare, state) in spares.iter().zip(&states) {
+                let buffers: Vec<_> = spare.buffers.iter().flatten().copied().collect();
+                let payload = LAYERS * (CODES + SCALES)
+                    + 3 * 32768
+                    + if speculative {
+                        feature_row().0 * feature_row().1
+                    } else {
+                        0
+                    };
+                assert_eq!(
+                    captured
+                        .iter()
+                        .filter(|(source, _)| buffers.iter().any(|&b| inside(*source, b)))
+                        .map(|(source, _)| source.2)
+                        .sum::<u64>(),
+                    payload
+                );
+                for name in ["window.ring", "compressor.tail", "dspark.features"] {
+                    if let Some(buffer) = state.named(name) {
+                        assert!(!captured.iter().any(|(source, _)| inside(*source, buffer)));
+                    }
+                }
+            }
+            instance.retire_request(1).unwrap();
+            instance
+                .restore_prefix_state_in_slot(2, &(0..768).collect::<Vec<_>>(), &pages, 0)
+                .unwrap();
+            let mut sink = Sink::default();
+            instance
+                .execute_prefill_cuts(
+                    &cuts(&anchored(2, 0, 768, 21, false), 2, 789, 789),
+                    &mut sink,
+                )
+                .unwrap();
+            assert_eq!(sink.views.iter().map(|v| v.raw().row_count).sum::<u32>(), 1);
+            instance.commit().unwrap();
+            if speculative {
+                let context = crate::instance::dspark_context(instance.handle(), 2).unwrap();
+                assert_eq!((context.slot, context.end), (0, 789));
+            }
+            instance.retire_request(2).unwrap();
+            instance.destroy().unwrap();
+            assert_eq!(host.acquired.get(), host.released.get());
+        }
+    }
+}

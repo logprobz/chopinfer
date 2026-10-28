@@ -9,7 +9,7 @@ mod defaults;
 mod dma;
 mod legacy;
 
-fn completion_backend(host: &Rc<Host>, delayed: bool) -> dspark::host::MappedHost {
+pub(super) fn completion_backend(host: &Rc<Host>, delayed: bool) -> dspark::host::MappedHost {
     if delayed {
         dspark::host::MappedHost::with_delayed_completion(Rc::clone(host))
     } else {
@@ -33,7 +33,7 @@ fn create_backend(
     create_backend_with_options(host, skip, backend, &[])
 }
 
-fn create_backend_with_options(
+pub(super) fn create_backend_with_options(
     host: &Rc<Host>,
     skip: bool,
     backend: dspark::host::MappedHost,
@@ -76,6 +76,10 @@ fn create_backend_with_api(
     record.extend_from_slice(&(options.len() as u32).to_le_bytes());
     record.extend_from_slice(&options);
     api.with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
+        .unwrap()
+        .with_prefill_cuts_api(crate::instance::prefill::PREFILL_CUTS_API)
+        .unwrap()
+        .with_prefill_anchors_api(crate::instance::prefill::PREFILL_ANCHORS_API)
         .unwrap()
         .create(HostServicesTableV1::new(Rc::new(backend)), &record)
 }

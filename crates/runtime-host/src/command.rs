@@ -3564,6 +3564,13 @@ impl ServedEngineV1 {
         } else {
             config
         };
+        let aligned_prompt_capture = std::env::var_os("CHOPINFER_CANDIDATE_ALIGNED_PROMPT_CAPTURE")
+            .is_some_and(|value| value == "1");
+        eprintln!(
+            "startup aligned_prompt_capture: {}",
+            u8::from(aligned_prompt_capture)
+        );
+        let config = config.with_aligned_prompt_capture(aligned_prompt_capture);
         let snapshot_pages = if prefix_capability
             && (self.prefix_cache || (offload_capability && self.kv_offload.budget_bytes != 0))
         {

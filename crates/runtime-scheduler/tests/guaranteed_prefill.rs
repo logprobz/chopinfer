@@ -425,3 +425,120 @@ fn abandoned_declared_restore_does_not_observe_its_own_prompt() {
         s.audit().unwrap();
     }
 }
+
+#[test]
+fn aligned_short_prompt_keeps_an_anchor_for_its_first_repeat() {
+    let config = SchedulerConfig::new(4, 64, 256, 256, 1)
+        .unwrap()
+        .with_prefill_granule(64)
+        .unwrap()
+        .with_prefix_cache(1)
+        .with_aligned_prompt_capture(true);
+    let mut s = Scheduler::new(config, KvGeometry::new(64, 128).unwrap()).unwrap();
+    let prompt: Vec<_> = (0..128).collect();
+    submit(&mut s, 1, &prompt, false);
+    let (rows, captures) = finish(&mut s, 1);
+    assert_eq!(captures, [64, 128]);
+    assert_eq!(rows, [(0, 64), (64, 64)]);
+    submit(&mut s, 2, &prompt, false);
+    s.admit().unwrap();
+    assert_eq!(s.cached_tokens(RequestId::new(2)).unwrap(), 64);
+}
+
+#[test]
+fn aligned_capture_respects_grid_admission_scored_rows_and_model_granules() {
+    for granule in [1usize, 8, 64] {
+        let chunk = 4 * granule;
+        for guaranteed in [false, true] {
+            for cuts in [false, true] {
+                for scored in [false, true] {
+                    for length in [
+                        granule.saturating_sub(1).max(1),
+                        granule,
+                        granule + 1,
+                        2 * granule,
+                        chunk - 1,
+                        chunk,
+                        chunk + 1,
+                    ] {
+                        let mut config = SchedulerConfig::new(4, 64, 2 * chunk, chunk, 1)
+                            .unwrap()
+                            .with_prefill_granule(granule)
+                            .unwrap()
+                            .with_maximum_scored_rows(chunk)
+                            .unwrap()
+                            .with_prefix_cache(1)
+                            .with_aligned_prompt_capture(true)
+                            .with_prefill_cuts(cuts);
+                        if guaranteed {
+                            config = config.with_guaranteed_prefill_chunks(chunk).unwrap();
+                        }
+                        let mut s =
+                            Scheduler::new(config, KvGeometry::new(64, 128).unwrap()).unwrap();
+                        let tokens: Vec<_> = (0..length as u32).collect();
+                        submit(&mut s, 1, &tokens, scored);
+                        let (rows, captures) = finish(&mut s, 1);
+                        assert_eq!(rows.iter().map(|(_, n)| n).sum::<usize>(), length);
+                        assert!(rows.iter().all(|(_, n)| *n > 0 && *n <= chunk));
+                        if guaranteed && !cuts && !scored {
+                            assert!(captures.iter().all(|&n| n == length || n % chunk == 0));
+                        } else if length == 2 * granule && granule >= 64 {
+                            assert_eq!(captures, [granule, length]);
+                        }
+                        submit(&mut s, 2, &tokens, scored);
+                        s.admit().unwrap();
+                        if scored {
+                            assert_eq!(s.cached_tokens(RequestId::new(2)).unwrap(), 0);
+                        }
+                        s.audit().unwrap();
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn aligned_candidate_does_not_cut_granule_one_prompts() {
+    for enabled in [false, true] {
+        let config = SchedulerConfig::new(4, 64, 256, 256, 1)
+            .unwrap()
+            .with_prefix_cache(1)
+            .with_aligned_prompt_capture(enabled);
+        let mut s = Scheduler::new(config, KvGeometry::new(64, 128).unwrap()).unwrap();
+        submit(&mut s, 1, &(0..100).collect::<Vec<_>>(), false);
+        let (rows, captures) = finish(&mut s, 1);
+        assert_eq!(rows, [(0, 100)]);
+        assert_eq!(captures, [100]);
+    }
+}
+
+#[test]
+fn aligned_short_capture_does_not_split_media() {
+    let config = SchedulerConfig::new(4, 64, 256, 256, 1)
+        .unwrap()
+        .with_prefill_granule(64)
+        .unwrap()
+        .with_prefix_cache(1)
+        .with_aligned_prompt_capture(true);
+    let mut s = Scheduler::new(config, KvGeometry::new(64, 128).unwrap()).unwrap();
+    let chain = PrefixChainV1::new(
+        64,
+        Arc::from(vec![1; 128]),
+        vec![runtime_kv::PrefixMediaSpanV1 {
+            identity: [3; 32],
+            start: 32,
+            rows: 64,
+            media_row: 0,
+        }],
+    )
+    .unwrap();
+    s.submit_with_prefix(
+        RequestSpec::new(RequestId::new(1), 128, 1).unwrap(),
+        Some(PrefixRequestV1::new(Arc::new(chain), true)),
+    )
+    .unwrap();
+    let (rows, captures) = finish(&mut s, 1);
+    assert_eq!(rows, [(0, 128)]);
+    assert_eq!(captures, [128]);
+}

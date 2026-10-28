@@ -857,3 +857,91 @@ fn guaranteed_response_ar_keeps_only_prefill_anchors() {
 fn guaranteed_response_speculation_keeps_only_prefill_anchors() {
     response_ends_only_reuse_prefill(true);
 }
+
+#[test]
+fn aligned_prompt_boundaries_preserve_cold_repeat_and_extension_outputs() {
+    for anchors in [0, 2] {
+        for length in [7, 8, 9, 16, 31, 32, 33] {
+            for enabled in [false, true] {
+                let scheduler = SchedulerConfig::new(4, 16, 64, 32, 1)
+                    .unwrap()
+                    .with_prefill_granule(8)
+                    .unwrap()
+                    .with_aligned_prompt_capture(enabled)
+                    .with_anchor_items(anchors);
+                let cfg = EngineConfig::new(
+                    scheduler,
+                    KvGeometry::new(4, 128).unwrap(),
+                    ModelVocabulary::new(VOCABULARY).unwrap(),
+                    128,
+                    4,
+                )
+                .unwrap()
+                .with_prefix_cache(1);
+                let mut engine = Engine::new(cfg, FoldingExecutor::default()).unwrap();
+                let prompt = words(length, 1);
+                let (output, _) = run(&mut engine, 1, &prompt, 2);
+                assert_eq!(output, cold(&prompt, 2));
+                let expected = match length {
+                    7 | 8 | 32 => None,
+                    9 => Some(8),
+                    16 => enabled.then_some(8),
+                    31 => Some(24),
+                    33 => Some(32),
+                    _ => unreachable!(),
+                };
+                let (repeat, cached) = run(&mut engine, 2, &prompt, 2);
+                assert_eq!(cached, expected, "length={length}, enabled={enabled}");
+                assert_eq!(repeat, output);
+                let mut extension = prompt;
+                extension.extend(words(3, 2));
+                let (output, cached) = run(&mut engine, 3, &extension, 2);
+                let expected = (length >= 8).then_some(length as usize / 8 * 8);
+                assert_eq!(
+                    cached, expected,
+                    "extension length={length}, enabled={enabled}"
+                );
+                assert_eq!(output, cold(&extension, 2));
+            }
+        }
+    }
+}
+
+#[test]
+fn aligned_prompt_cuts_preserve_every_prompt_logprob_row() {
+    for length in [7, 8, 9, 16, 31, 32, 33] {
+        let mut results = Vec::new();
+        for enabled in [false, true] {
+            let scheduler = SchedulerConfig::new(4, 16, 64, 32, 1)
+                .unwrap()
+                .with_prefill_granule(8)
+                .unwrap()
+                .with_aligned_prompt_capture(enabled);
+            let cfg = EngineConfig::new(
+                scheduler,
+                KvGeometry::new(4, 128).unwrap(),
+                ModelVocabulary::new(VOCABULARY).unwrap(),
+                128,
+                4,
+            )
+            .unwrap()
+            .with_prefix_cache(1);
+            let mut engine = Engine::new(cfg, FoldingExecutor::default()).unwrap();
+            engine
+                .submit(request(1, &words(length, 1), 2).with_prompt_logprobs(2))
+                .unwrap();
+            engine.run_until_idle(64).unwrap();
+            let positions: Vec<_> = engine
+                .drain_events()
+                .into_iter()
+                .flat_map(|event| match event.kind() {
+                    EngineEventKind::PromptLogprobs { positions } => positions.clone(),
+                    _ => Vec::new(),
+                })
+                .collect();
+            assert_eq!(positions.len(), length as usize - 1);
+            results.push(positions);
+        }
+        assert_eq!(results[0], results[1]);
+    }
+}

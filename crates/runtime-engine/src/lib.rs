@@ -182,6 +182,13 @@ impl EngineConfig {
         self
     }
 
+    /// Enables the default-off aligned short-prompt capture candidate.
+    #[must_use]
+    pub const fn with_aligned_prompt_capture(mut self, enabled: bool) -> Self {
+        self.scheduler = self.scheduler.with_aligned_prompt_capture(enabled);
+        self
+    }
+
     #[must_use]
     pub const fn prefix_cache(self) -> Option<usize> {
         self.scheduler.prefix_state_pages()

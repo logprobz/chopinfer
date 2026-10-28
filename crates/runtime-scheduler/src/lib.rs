@@ -417,6 +417,7 @@ pub struct SchedulerConfig {
     capacity_profile: SchedulerCapacityProfile,
     media_pages: usize,
     prefix_state_pages: Option<usize>,
+    aligned_prompt_capture: bool,
     admission: AdmissionPolicy,
     prefill_budget: PrefillBudget,
     prefill_granule: usize,
@@ -471,6 +472,7 @@ impl SchedulerConfig {
             },
             media_pages: 0,
             prefix_state_pages: None,
+            aligned_prompt_capture: false,
             admission: AdmissionPolicy::Reserved,
             prefill_budget: PrefillBudget::Fixed,
             prefill_granule: 1,
@@ -668,6 +670,13 @@ impl SchedulerConfig {
     #[must_use]
     pub const fn with_prefix_cache(mut self, state_pages: usize) -> Self {
         self.prefix_state_pages = Some(state_pages);
+        self
+    }
+
+    /// Candidate extra cut for a cold aligned short prompt with granule > 1.
+    #[must_use]
+    pub const fn with_aligned_prompt_capture(mut self, enabled: bool) -> Self {
+        self.aligned_prompt_capture = enabled;
         self
     }
 
@@ -3945,6 +3954,20 @@ impl Scheduler {
             .is_none_or(|grid| repeat > (prompt - 1) / grid * grid);
         if repeat > start && improves_grid && absent(repeat) {
             points.push(repeat);
+        }
+        // An aligned short prompt otherwise retains only its complete end,
+        // which lookup cannot use for an exact repeat. Use an ordinary cut.
+        if self.config.aligned_prompt_capture
+            && granule > 1
+            && hit == 0
+            && prompt < chunk
+            && prompt.is_multiple_of(granule)
+            && !points.iter().any(|&point| point > hit && point < prompt)
+        {
+            let boundary = (prompt - 1) / granule * granule;
+            if boundary > hit && absent(boundary) {
+                points.push(boundary);
+            }
         }
         if let Some(chunk) = self.requests[index].guaranteed_prefill_chunks {
             let mut next = hit / chunk * chunk;

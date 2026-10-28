@@ -581,6 +581,15 @@ so the anchor changes no bit and adds no step. Beyond two such prompts in one
 step the anchor ends a chunk instead, one extra step of the last 1 to 63
 rows.
 
+`CHOPINFER_CANDIDATE_ALIGNED_PROMPT_CAPTURE=1` enables an extra ordinary
+prefill cut for a cold prompt shorter than a chunk whose length P is a
+multiple of its model's granule G, with G greater than 1. If no earlier
+capture covers it, the cut is at `floor((P - 1) / G) * G`, subject to the
+normal media and minimum-reuse bounds. This lets the first exact repeat hit
+before its final token. The candidate is off by default; it adds a prefill
+step and snapshot, and requires stateful replay acceptance before adoption.
+Models with granule 1 keep their existing capture points.
+
 Bitwise equality is the gate. `tools/qual/prefix_exact.py` checks it at
 every page boundary of a model's exact reference: per scored position a cold
 one-shot prefill, a cold prefill with a chunk ending at the anchor and a

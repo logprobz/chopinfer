@@ -326,12 +326,12 @@ instead of the fixed target. Each such step takes the cap that costs blocked
 requests the least time per prefill token: every request waiting on prefill
 is blocked for the whole step, and each decoding request is charged the
 whole step, at half weight, once for each stall line (250 ms and 1 s) the
-predicted step crosses. The choice falls on the largest step under 250 ms
-(at least the progress floor), the largest under 1 s, or no cap, each priced
-at what the waiting requests' next chunks can take. Many decoders beside
-little prefill get short steps; many waiting prompts beside few decoders get
-large ones. Without decoders, and until the step model trains, sizing is
-unchanged. It applies to every model: a bundle with a prefill grid needs
+predicted step crosses. Every legal cap is priced: the progress floor, each
+128-token multiple above it up to what the waiting requests' next chunks can
+take, and no cap. Many decoders beside little prefill get short steps; many
+waiting prompts beside few decoders get large ones. Without decoders the
+step is not capped, and until the step model trains the cap is the progress
+floor, as with the fixed target. It applies to every model: a bundle with a prefill grid needs
 negotiated cuts, as with `fixed`, and ends grid chunks at the chosen cap
 (startup prints `prefill timing cuts on (adaptive): grid chunks ...`); a
 bundle without a grid takes the cap as its ordinary tbt prefill budget and

@@ -38,6 +38,34 @@ const FEATURES: usize = 5;
 /// mega-pairs; the response is in milliseconds.
 const SCALE: [f64; FEATURES] = [1.0, 1.0, 1.0, 1e-3, 1e-6];
 
+/// The stall lines of the adaptive cap, milliseconds: a decoding request's
+/// gap is counted once for each line it crosses (the stall thresholds of
+/// stateful replay acceptance).
+pub(crate) const ADAPTIVE_STALL_MILLIS: [u64; 2] = [250, 1000];
+/// The weight of a decoding request's stall against a waiting request's
+/// time, as a fraction (numerator, denominator).
+pub(crate) const ADAPTIVE_STALL_WEIGHT: (u128, u128) = (1, 2);
+
+/// What the adaptive cap is sized from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Demand {
+    /// Decoding (decode and verify) requests.
+    pub(crate) decode: usize,
+    /// Requests waiting on prefill.
+    pub(crate) waiting: usize,
+    /// The longest context among them.
+    pub(crate) context: usize,
+}
+
+/// What an uncapped step prefills.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Uncapped {
+    /// A whole chunk of these tokens, alone: it leaves no room for decoding.
+    Alone(usize),
+    /// Up to these tokens beside the decoding requests.
+    Mixed(usize),
+}
+
 /// What one step executed, as the model sees it.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct StepShape {
@@ -479,6 +507,89 @@ impl StepModel {
             .find(|&tokens| predict(tokens).is_some_and(|micros| micros <= target));
         let floor = policy.min_prefill_tokens().min(maximum);
         Some(largest.unwrap_or(floor).max(floor))
+    }
+
+    /// The demand-adaptive cap of a step beside decoding requests
+    /// (`SchedulerConfig::with_adaptive_prefill_budget`): `Some(None)` for
+    /// no cap, `Some(Some(tokens))` for a cap, None until trained.
+    ///
+    /// Every request waiting on prefill is blocked for the whole step. A
+    /// decoding request is blocked, in its output stream, only by a step
+    /// longer than a stall line, and then for the whole step once per line
+    /// it crosses (`ADAPTIVE_STALL_MILLIS`), weighted by
+    /// `ADAPTIVE_STALL_WEIGHT`. The cap minimizes that blocked time per
+    /// prefill token:
+    ///   `T(P) (waiting + weight decode lines(T(P))) / P`.
+    /// Within the span of caps that cross the same lines this falls as `P`
+    /// grows, because the fixed cost is shared by more tokens, so the
+    /// minimum is one of the largest caps under each line (never below the
+    /// progress floor) or no cap. Without a cap the step takes `whole`:
+    /// a chunk that leaves no room for decoding runs alone, and the
+    /// decoders wait for it and their own step.
+    pub(super) fn adaptive_budget(
+        &self,
+        demand: Demand,
+        maximum: usize,
+        whole: Uncapped,
+        policy: MixedPolicy,
+    ) -> Option<Option<usize>> {
+        self.fit?;
+        let predict = |tokens: usize, decode: usize| {
+            self.predicted_micros(StepShape::new(
+                tokens,
+                chunk_pairs(demand.context, tokens),
+                decode,
+            ))
+        };
+        let floor = policy.min_prefill_tokens().min(maximum);
+        let mut options: Vec<(Option<usize>, usize, u64)> =
+            Vec::with_capacity(ADAPTIVE_STALL_MILLIS.len() + 2);
+        if floor > 0 {
+            options.push((Some(floor), floor, predict(floor, demand.decode)?));
+        }
+        for line in ADAPTIVE_STALL_MILLIS {
+            let line = line * 1000;
+            let largest = (1..=maximum / GRANULE)
+                .rev()
+                .map(|n| n * GRANULE)
+                .find(|&tokens| {
+                    predict(tokens, demand.decode).is_some_and(|micros| micros <= line)
+                });
+            if let Some(tokens) = largest.filter(|&tokens| tokens > floor) {
+                options.push((Some(tokens), tokens, predict(tokens, demand.decode)?));
+            }
+        }
+        let uncapped = match whole {
+            Uncapped::Alone(tokens) => (
+                tokens,
+                predict(tokens, 0)?.saturating_add(self.decode_micros(demand.decode).unwrap_or(0)),
+            ),
+            Uncapped::Mixed(tokens) => (tokens, predict(tokens, demand.decode)?),
+        };
+        if uncapped.0 > 0 {
+            options.push((None, uncapped.0, uncapped.1));
+        }
+        // Blocked time scaled by the weight's denominator, so the
+        // comparison of cost per token stays in integers.
+        let agents = |micros: u64| {
+            let lines = ADAPTIVE_STALL_MILLIS
+                .iter()
+                .filter(|&&line| micros > line * 1000)
+                .count() as u128;
+            demand.waiting as u128 * ADAPTIVE_STALL_WEIGHT.1
+                + demand.decode as u128 * lines * ADAPTIVE_STALL_WEIGHT.0
+        };
+        let mut best: Option<(Option<usize>, u128, u128)> = None;
+        for (cap, tokens, micros) in options {
+            let cost = u128::from(micros) * agents(micros);
+            let tokens = tokens as u128;
+            if best
+                .is_none_or(|(_, best_cost, best_tokens)| cost * best_tokens < best_cost * tokens)
+            {
+                best = Some((cap, cost, tokens));
+            }
+        }
+        Some(best.map_or(Some(floor), |(cap, ..)| cap))
     }
 
     pub(super) fn estimates(&self) -> MixedEstimates {

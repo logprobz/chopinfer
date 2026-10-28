@@ -411,6 +411,7 @@ pub struct SchedulerConfig {
     guaranteed_prefill_chunks: Option<usize>,
     prefill_cuts: bool,
     prefill_timing_cuts: bool,
+    adaptive_prefill_budget: bool,
     lone_prefill_expansion: bool,
     maximum_scored_rows: usize,
     decode_cost: usize,
@@ -463,6 +464,7 @@ impl SchedulerConfig {
             guaranteed_prefill_chunks: None,
             prefill_cuts: false,
             prefill_timing_cuts: false,
+            adaptive_prefill_budget: false,
             lone_prefill_expansion: false,
             maximum_scored_rows: usize::MAX,
             decode_cost,
@@ -556,6 +558,27 @@ impl SchedulerConfig {
             && self.prefill_cuts
             && self.guaranteed_prefill_chunks.is_some()
             && matches!(self.prefill_budget, PrefillBudget::Tbt(_))
+    }
+
+    /// Candidate switch, off by default: with [`PrefillBudget::Tbt`], size the
+    /// prefill cap of a step beside decoding requests from demand instead of
+    /// the fixed target. Each step takes
+    /// the cap that costs blocked requests the least time per prefill
+    /// token: the largest step under the 250 ms stall line (at least the
+    /// progress floor), the largest under the 1 s line, or no cap. A grid
+    /// request with timing cuts is cut at that cap; other requests take it
+    /// as the step's prefill budget, as with the fixed target.
+    #[must_use]
+    pub const fn with_adaptive_prefill_budget(mut self, enabled: bool) -> Self {
+        self.adaptive_prefill_budget = enabled;
+        self
+    }
+
+    /// Whether the TBT cap is sized from demand: the candidate switch and
+    /// the TBT budget together.
+    #[must_use]
+    pub const fn adaptive_prefill_budget(self) -> bool {
+        self.adaptive_prefill_budget && matches!(self.prefill_budget, PrefillBudget::Tbt(_))
     }
 
     /// Positions a chunk may end at before the prompt end: multiples of
@@ -2201,11 +2224,39 @@ impl Scheduler {
                 // Beside decoding requests, bound the step, including the
                 // first observations before a fit exists. This is a token
                 // bound, not a latency guarantee.
-                Some(
+                let floor = policy.min_prefill_tokens().min(decode_room);
+                if self.config.adaptive_prefill_budget && !prefill.is_empty() {
+                    // Sized from demand; a grid chunk too long to share
+                    // the step runs alone when uncapped.
+                    let whole = self.config.guaranteed_prefill_chunks.map_or(
+                        mixed_budget::Uncapped::Mixed(decode_room),
+                        |chunk| {
+                            if chunk > decode_room {
+                                mixed_budget::Uncapped::Alone(chunk)
+                            } else {
+                                mixed_budget::Uncapped::Mixed(chunk)
+                            }
+                        },
+                    );
                     self.step_model
-                        .budget(decode.len(), context, decode_room, policy)
-                        .unwrap_or_else(|| policy.min_prefill_tokens().min(decode_room)),
-                )
+                        .adaptive_budget(
+                            mixed_budget::Demand {
+                                decode: decode.len(),
+                                waiting: prefill.len(),
+                                context,
+                            },
+                            decode_room,
+                            whole,
+                            policy,
+                        )
+                        .unwrap_or(Some(floor))
+                } else {
+                    Some(
+                        self.step_model
+                            .budget(decode.len(), context, decode_room, policy)
+                            .unwrap_or(floor),
+                    )
+                }
             }
             _ => None,
         };

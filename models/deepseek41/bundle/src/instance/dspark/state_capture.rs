@@ -272,6 +272,74 @@ impl Instance {
         Ok(())
     }
 
+    /// The ordered proposal IDs of each item a cycle drafts, with the
+    /// tokens it requests and, with device results, the draft tokens the
+    /// host reserved for the step it verifies, as `drafts/step-N.json`.
+    #[cfg(feature = "diagnostic-taps")]
+    pub(crate) fn capture_profile_drafts(
+        &self,
+        drafts: &[(u64, u32, &[u32])],
+        reserved: &[(u64, u32)],
+    ) -> Result<(), String> {
+        if self.config.prefill.chunk == 0 {
+            return Ok(());
+        }
+        let Some(root) = self.active_dspark_state_capture() else {
+            return Ok(());
+        };
+        let items: Vec<_> = drafts
+            .iter()
+            .map(|&(request, requested, tokens)| {
+                serde_json::json!({"request": request, "requested": requested, "tokens": tokens})
+            })
+            .collect();
+        let reserved: Vec<_> = reserved
+            .iter()
+            .map(|&(request, tokens)| serde_json::json!({"request": request, "tokens": tokens}))
+            .collect();
+        self.write_capture_record(
+            root,
+            &format!("step-{}.json", self.steps.get()),
+            &serde_json::json!({"proposals": items, "reserved": reserved}),
+        )
+    }
+
+    /// The rows the host keeps of each verified item, as
+    /// `drafts/kept-N.json` for the step it commits.
+    #[cfg(feature = "diagnostic-taps")]
+    pub(crate) fn capture_profile_kept(
+        &self,
+        records: &[runtime_bundle_abi::BundleKeptRowsV1],
+    ) -> Result<(), String> {
+        if self.config.prefill.chunk == 0 || self.dspark.is_none() {
+            return Ok(());
+        }
+        let Some(root) = self.active_dspark_state_capture() else {
+            return Ok(());
+        };
+        let kept: Vec<_> = records
+            .iter()
+            .map(|r| serde_json::json!({"request": r.request_id, "kept": r.kept_rows}))
+            .collect();
+        self.write_capture_record(
+            root,
+            &format!("kept-{}.json", self.steps.get()),
+            &serde_json::json!({"kept": kept}),
+        )
+    }
+
+    #[cfg(feature = "diagnostic-taps")]
+    fn write_capture_record(
+        &self,
+        root: &Path,
+        name: &str,
+        value: &serde_json::Value,
+    ) -> Result<(), String> {
+        let directory = root.join("drafts");
+        std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+        std::fs::write(directory.join(name), value.to_string()).map_err(|e| e.to_string())
+    }
+
     pub(super) fn read_capture_spans(
         &self,
         rank: usize,

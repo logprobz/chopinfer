@@ -1236,6 +1236,11 @@ impl Bundle for Instance {
     }
 
     fn commit_accepted(&mut self, records: &[BundleKeptRowsV1]) -> BundleStatusV1 {
+        #[cfg(feature = "diagnostic-taps")]
+        if let Err(error) = self.capture_profile_kept(records) {
+            self.log(&error);
+            return BundleStatusV1::HostError;
+        }
         transaction::commit_accepted(self, records)
     }
 

@@ -647,6 +647,29 @@ impl Instance {
         {
             return Err("DSpark device draft ID is outside vocabulary".into());
         }
+        #[cfg(feature = "diagnostic-taps")]
+        {
+            let drafts: Vec<_> = pending
+                .drafts
+                .iter()
+                .zip(&ids)
+                .map(|(draft, tokens)| {
+                    (
+                        draft.block.request,
+                        draft.block.emit_rows,
+                        &tokens[..draft.block.emit_rows as usize],
+                    )
+                })
+                .collect();
+            let reserved: Vec<_> = device
+                .results
+                .metadata
+                .iter()
+                .flat_map(|metadata| &metadata.items)
+                .map(|item| (item.request_id, item.acceptance.draft_tokens))
+                .collect();
+            self.capture_profile_drafts(&drafts, &reserved)?;
+        }
         for (draft, tokens) in pending
             .drafts
             .iter()

@@ -507,3 +507,85 @@ fn device_result_logits_reach_the_diagnostic_capture() {
     instance.destroy().unwrap();
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// Diagnostic taps record each drafting cycle's ordered proposal IDs with
+/// the tokens requested, the draft tokens the host reserved for the step it
+/// verifies, and the rows the host keeps at commit.
+#[cfg(feature = "diagnostic-taps")]
+#[test]
+fn device_result_proposals_and_kept_rows_reach_the_diagnostic_capture() {
+    let root = std::path::PathBuf::from(std::env::var_os("CHOPINFER_DATA").unwrap())
+        .join("deepseek41-tests")
+        .join(format!("dspark-device-drafts-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let (host, mut instance) = create_with_options(
+        shape,
+        1,
+        32,
+        &[(
+            model_deepseek41_contract::prefill_profile::CHUNK,
+            8192.into(),
+        )],
+    );
+    crate::instance::set_dspark_state_capture_root_for_test(instance.handle(), Some(root.clone()));
+    std::fs::write(root.join("enabled"), []).unwrap();
+    execute(
+        &mut instance,
+        &host,
+        &super::super::prompt(1, 0, 0, 3, true),
+    );
+    instance.commit().unwrap();
+    let mut sink = DeviceSink {
+        host: Rc::clone(&host),
+        metadata: Some(metadata(1, 5, 1)),
+        legacy: Sink::default(),
+        drafts: Vec::new(),
+        samples: Vec::new(),
+        completion: None,
+    };
+    instance.execute(&batch(1, 3, 5), &mut sink).unwrap();
+    instance.commit_accepted(&[kept(1, 1)]).unwrap();
+    let read = |prefix: &str| -> Vec<serde_json::Value> {
+        let mut paths: Vec<_> = std::fs::read_dir(root.join("drafts"))
+            .map(|entries| entries.map(|entry| entry.unwrap().path()).collect())
+            .unwrap_or_default();
+        paths.retain(|path: &std::path::PathBuf| {
+            path.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with(prefix)
+        });
+        paths
+            .iter()
+            .map(|path| serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap())
+            .collect()
+    };
+    let cycles = read("step-");
+    let proposals: Vec<_> = cycles
+        .iter()
+        .flat_map(|cycle| cycle["proposals"].as_array().unwrap().clone())
+        .filter(|item| item["request"] == 1)
+        .collect();
+    assert!(!proposals.is_empty(), "no proposal record: {cycles:?}");
+    for item in &proposals {
+        let requested = item["requested"].as_u64().unwrap();
+        assert!(requested > 0);
+        assert_eq!(item["tokens"].as_array().unwrap().len() as u64, requested);
+    }
+    assert!(cycles.iter().any(|cycle| {
+        cycle["reserved"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["request"] == 1 && item["tokens"] == 5)
+    }));
+    let kept = read("kept-");
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert_eq!(kept[0]["kept"][0]["request"], 1);
+    assert_eq!(kept[0]["kept"][0]["kept"], 1);
+    instance.retire_request(1).unwrap();
+    instance.destroy().unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}

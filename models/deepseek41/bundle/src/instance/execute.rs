@@ -1622,6 +1622,8 @@ impl Instance {
             measure(
                 times.as_deref_mut().map(|t| &mut t.upload_us),
                 || -> Result<(), BundleAbiError> {
+                    #[cfg(feature = "diagnostic-taps")]
+                    self.poison_prefill_scratch(run)?;
                     self.upload(run)?;
                     if run.ar_engram {
                         self.begin_ar_engram(

@@ -156,6 +156,11 @@ pub struct Instance {
     state_capture_root: Option<std::path::PathBuf>,
     #[cfg(feature = "state-capture")]
     transition_capture_bytes: std::cell::Cell<u64>,
+    /// Admitted short prefills whose stage scratch was poisoned, when the
+    /// create environment set `CHOPINFER_PREFILL_SCRATCH_POISON`
+    /// (`Instance::poison_prefill_scratch`).
+    #[cfg(feature = "diagnostic-taps")]
+    scratch_poison: Option<std::cell::Cell<u64>>,
     /// Per-layer taps of prefills (`crate::taps`), when the environment
     /// asks for them.
     taps: crate::taps::StepTaps,
@@ -1041,6 +1046,9 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         state_capture_root: std::env::var_os("CHOPINFER_DSPARK_STATE_DIR").map(Into::into),
         #[cfg(feature = "state-capture")]
         transition_capture_bytes: std::cell::Cell::new(0),
+        #[cfg(feature = "diagnostic-taps")]
+        scratch_poison: std::env::var_os("CHOPINFER_PREFILL_SCRATCH_POISON")
+            .map(|_| std::cell::Cell::new(0)),
         config,
         prefill_counts: Vec::new(),
         prefill_boundaries: Vec::new(),
@@ -1645,5 +1653,20 @@ pub(crate) fn kv_overlap_for_test(
         let instance = table.get_mut(handle).expect("a live instance");
         instance.shared_overlap.kv = enabled;
         instance.shared_overlap
+    })
+}
+
+/// Poisons `handle`'s stage scratch before each admitted short prefill, as
+/// `CHOPINFER_PREFILL_SCRATCH_POISON` at create does, and returns how many
+/// prefills were poisoned so far.
+#[cfg(all(test, feature = "diagnostic-taps"))]
+pub(crate) fn poison_prefill_scratch_for_test(handle: runtime_bundle_abi::BundleHandleV1) -> u64 {
+    INSTANCES.with(|table| {
+        let mut table = table.borrow_mut();
+        let poison = &mut table
+            .get_mut(handle)
+            .expect("a live instance")
+            .scratch_poison;
+        poison.get_or_insert_with(|| std::cell::Cell::new(0)).get()
     })
 }

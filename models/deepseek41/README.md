@@ -247,7 +247,12 @@ raw-history retention, graph reuse, cancellation and prefix restore.
 For untimed transition diagnostics, `state-capture` and
 `CHOPINFER_DSPARK_STATE_DIR` record selected before-draft/after-commit
 boundaries. `diagnostic_step_logs` defaults to false and controls step and
-confidence JSON, without changing confidence computation.
+confidence JSON, without changing confidence computation. A
+`diagnostic-taps` build also places each short-prefill program record (its
+slot and page table), and with `CHOPINFER_PREFILL_SCRATCH_POISON` set at
+create fills the transient stage scratch with NaN bytes before each
+admitted short prefill of an instance without a drafter, for graph
+exactness jobs.
 
 ## Reference
 

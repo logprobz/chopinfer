@@ -346,3 +346,115 @@ fn diagnostic_logs_record_each_graph_decision() {
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
 }
+
+/// Three turns of an instance with graphs: each request's 64-row prompt,
+/// a decoded token, then a 31-row continuation. Returns each step's
+/// journal lines, in order, and the prefills poisoned, after poisoning its
+/// stage scratch first when `poison`.
+#[cfg(feature = "diagnostic-taps")]
+fn poisoned_turns(poison: bool) -> (Vec<Vec<String>>, u64) {
+    let (host, mut instance) = skip_host(
+        Ranks::TP4,
+        false,
+        true,
+        4,
+        &[(PREFILL_GRAPH_PROGRAMS, 4.into())],
+    );
+    if poison {
+        crate::instance::poison_prefill_scratch_for_test(instance.handle());
+    }
+    let mut steps = Vec::new();
+    for request in 1..=3 {
+        steps.push(step(&host, &mut instance, request, 0, 64));
+        decode_one(&host, &mut instance, request, 64);
+        steps.push(step(&host, &mut instance, request, 65, 31));
+    }
+    let poisoned = if poison {
+        crate::instance::poison_prefill_scratch_for_test(instance.handle())
+    } else {
+        0
+    };
+    for request in 1..=3 {
+        instance.retire_request(request).unwrap();
+    }
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+    (steps, poisoned)
+}
+
+/// A diagnostic build's scratch poison runs before each admitted short
+/// prefill uploads or launches anything, and only adds uploads: each
+/// continuation's journal is the unpoisoned one with poison uploads before
+/// its first upload, and prompts at position zero are left alone.
+#[cfg(feature = "diagnostic-taps")]
+#[test]
+fn scratch_poison_uploads_precede_each_admitted_prefill_and_change_nothing_else() {
+    let (clean, _) = poisoned_turns(false);
+    let (poisoned, count) = poisoned_turns(true);
+    assert_eq!(count, 3);
+    for (index, (clean, poisoned)) in clean.iter().zip(&poisoned).enumerate() {
+        if index % 2 == 0 {
+            assert_eq!(clean, poisoned, "prompt step {index}");
+            continue;
+        }
+        let at = clean
+            .iter()
+            .zip(poisoned)
+            .position(|(a, b)| a != b)
+            .expect("poison uploads");
+        let added = poisoned.len() - clean.len();
+        assert!(added >= 4, "step {index}: {added} poison uploads");
+        assert!(
+            poisoned[at..at + added]
+                .iter()
+                .all(|line| line.starts_with("upload "))
+        );
+        assert_eq!(poisoned[at + added..], clean[at..], "step {index}");
+        let first = |prefix: &str| clean.iter().position(|line| line.starts_with(prefix));
+        assert!(
+            first("upload ").is_none_or(|upload| at <= upload),
+            "step {index}"
+        );
+        assert!(
+            first("launch ").is_none_or(|launch| at < launch),
+            "step {index}"
+        );
+    }
+}
+
+/// A diagnostic build's program record places the step: its request's
+/// slot and page table, which differ between the requests one graph
+/// replays for.
+#[cfg(feature = "diagnostic-taps")]
+#[test]
+fn diagnostic_program_records_place_each_step() {
+    let (host, mut instance) = skip_host(
+        Ranks::TP4,
+        false,
+        true,
+        4,
+        &[
+            (PREFILL_GRAPH_PROGRAMS, 4.into()),
+            (DIAGNOSTIC_STEP_LOGS, true.into()),
+        ],
+    );
+    for request in 1..=3 {
+        turn(&host, &mut instance, request, 31, true);
+    }
+    let turns: Vec<_> = records(&host)
+        .into_iter()
+        .filter(|record| record["start"] != 0)
+        .collect();
+    assert_eq!(turns.len(), 3);
+    for (request, record) in (1..=3).zip(&turns) {
+        assert_eq!(record["slot"], request % 4, "{record}");
+        assert!(!record["pages"].as_array().unwrap().is_empty(), "{record}");
+    }
+    assert_ne!(turns[0]["pages"], turns[1]["pages"]);
+    assert_ne!(turns[1]["pages"], turns[2]["pages"]);
+    for request in 1..=3 {
+        instance.retire_request(request).unwrap();
+    }
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}

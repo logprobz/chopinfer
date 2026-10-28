@@ -366,8 +366,75 @@ impl Instance {
                 Err(error) => record += &format!(",\"error\":{error:?}"),
             }
         }
+        // A diagnostic build also places the step: its slot and page table.
+        #[cfg(feature = "diagnostic-taps")]
+        if let (Some(slot), Some(pages)) =
+            (run.inputs.slot_ids.first(), run.inputs.block_tables.first())
+        {
+            record += &format!(",\"slot\":{slot},\"pages\":{pages:?}");
+        }
         record.push('}');
         let _ = self.services.log(record.as_bytes());
+    }
+
+    /// A diagnostic build created with `CHOPINFER_PREFILL_SCRATCH_POISON`
+    /// set fills every rank's transient stage scratch (the members of
+    /// `buffers::REGIONS`, which each stage writes before the next reads)
+    /// with 0xff bytes, NaN in every float format, before an admitted short
+    /// prefill of an instance without a drafter uploads anything: graphs
+    /// and eager runs alike must not read what an earlier step left there.
+    #[cfg(feature = "diagnostic-taps")]
+    pub(super) fn poison_prefill_scratch(&self, run: &Run) -> Result<(), BundleAbiError> {
+        use kernel_core::allocation::Traversal;
+        const CHUNK: u64 = 16 << 20;
+        let Some(poisoned) = &self.scratch_poison else {
+            return Ok(());
+        };
+        let super::Execution::Skip { plan, .. } = &run.execution else {
+            return Ok(());
+        };
+        if self.prefill_graphs.is_none() || self.dspark.is_some() || !admits(run, plan) {
+            return Ok(());
+        }
+        let members = crate::buffers::REGIONS
+            .iter()
+            .flat_map(|region| region.members.iter().copied())
+            .collect::<Vec<_>>();
+        let pattern = vec![0xff_u8; CHUNK as usize];
+        for (buffers, &(_, _, stream)) in self.buffers.iter().zip(&self.ranks) {
+            let mut spans = Vec::new();
+            buffers.scratch.visit_named(&mut |name, span| {
+                if members.contains(&name) {
+                    spans.push(*span);
+                }
+            });
+            for span in spans {
+                let mut at = 0;
+                while at < span.length {
+                    let bytes = (span.length - at).min(CHUNK);
+                    let part = runtime_bundle_abi::DeviceBufferSpanV1::new(
+                        span.buffer,
+                        span.offset + at,
+                        bytes,
+                    );
+                    bundle_runtime::resources::upload_bytes(
+                        &self.services,
+                        stream,
+                        part,
+                        &pattern[..bytes as usize],
+                    )?;
+                    at += bytes;
+                }
+            }
+        }
+        poisoned.set(poisoned.get() + 1);
+        if poisoned.get().is_power_of_two() {
+            self.log(&format!(
+                "prefill scratch poisoned before {} admitted prefills",
+                poisoned.get()
+            ));
+        }
+        Ok(())
     }
 }
 

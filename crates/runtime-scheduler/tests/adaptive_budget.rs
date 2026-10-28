@@ -503,3 +503,53 @@ fn an_untrained_model_keeps_the_progress_floor() {
     let batch = s.next_batch().unwrap().unwrap();
     assert_eq!(batch.prefill_cap(), Some(FLOOR));
 }
+
+/// Uncapped fusion is a different candidate from stopping at the anchor.
+/// At 653 rows the former crosses the model's 250 ms stall line; a 640-row
+/// timing cut stays below it and must remain among the priced candidates.
+#[test]
+fn adaptive_caps_price_the_uncapped_anchor_tail() {
+    use runtime_kv::PrefixChainV1;
+    use runtime_scheduler::PrefixRequestV1;
+    use std::sync::Arc;
+
+    for (anchors, decode, cap, rows, anchor) in [
+        (0, 1, None, 640, None),
+        (8, 1, Some(640), 640, None),
+        (8, 0, None, 653, Some(640)),
+    ] {
+        let config = SchedulerConfig::new(64, 256, GRID, GRID, 1)
+            .unwrap()
+            .with_prefill_granule(GRANULE)
+            .unwrap()
+            .with_guaranteed_prefill_chunks(GRID)
+            .unwrap()
+            .with_prefix_cache(1)
+            .with_prefill_cuts(true)
+            .with_grid_anchor_items(anchors)
+            .with_grid_anchor_minimum_rows(357)
+            .with_prefill_timing_cuts(true)
+            .with_prefill_budget(tbt())
+            .with_adaptive_prefill_budget(true);
+        let mut s = Scheduler::new(config, KvGeometry::new(GRANULE, 65536).unwrap()).unwrap();
+        train(&mut s);
+        decoders(&mut s, decode);
+        let tokens = Arc::from((0..653).map(|n| 10_000 + n).collect::<Vec<u32>>());
+        let chain = PrefixChainV1::new(GRANULE, tokens, Vec::new()).unwrap();
+        s.submit_with_prefix(
+            RequestSpec::new(RequestId::new(1), 653, 4).unwrap(),
+            Some(PrefixRequestV1::new(Arc::new(chain), true)),
+        )
+        .unwrap();
+        let batch = s.next_batch().unwrap().unwrap();
+        assert_eq!(batch.prefill_cap(), cap);
+        let item = batch
+            .items()
+            .iter()
+            .find(|item| item.request_id() == RequestId::new(1))
+            .unwrap();
+        assert_eq!(item.phase(), BatchPhase::Prefill { tokens: rows });
+        assert_eq!(item.anchor_tokens(), anchor);
+        assert!(cost(batch.shape()) < 250_000);
+    }
+}

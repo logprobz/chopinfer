@@ -2276,25 +2276,58 @@ impl Scheduler {
                     // Sized from demand: what the waiting requests' next
                     // uncapped chunks could take together. A grid chunk too
                     // long to share the step runs alone when uncapped.
-                    let (mut tokens, mut longest) = (0usize, 0usize);
+                    let (mut tokens, mut mixed, mut longest, mut alone) =
+                        (0usize, 0usize, 0usize, 0usize);
+                    let mut grid_anchors = self.config.grid_anchor_items;
+                    let mut manifest_anchors = self.config.anchor_items;
                     for &index in &prefill {
+                        let record = &self.requests[index];
                         let chunk = Self::chunk_tokens(
-                            &self.requests[index],
+                            record,
                             self.config.prefill_chunk_limit,
                             None,
                             self.config.maximum_scored_rows,
                             self.config.prefill_granule,
                             false,
                         );
+                        let remaining = Self::prefill_target(record) - record.prefilled_tokens;
+                        let anchors = if record.grid_anchors {
+                            &mut grid_anchors
+                        } else {
+                            &mut manifest_anchors
+                        };
+                        let runs_alone =
+                            self.config.guaranteed_prefill_chunks.is_some() && chunk > decode_room;
+                        // A timing cap stops at the anchor, but an uncapped
+                        // item may include its tail. Price those separately;
+                        // a cap at the anchor is then a distinct candidate.
+                        let whole = if *anchors > 0
+                            && remaining <= self.config.scheduled_token_budget
+                            && (remaining <= decode_room || runs_alone)
+                            && Self::spannable_anchor(
+                                record,
+                                self.config.prefill_chunk_limit,
+                                self.config.maximum_scored_rows,
+                            )
+                            .is_some()
+                        {
+                            *anchors -= 1;
+                            remaining
+                        } else {
+                            chunk
+                        };
                         tokens = tokens.saturating_add(chunk);
+                        mixed =
+                            mixed.saturating_add(if whole <= decode_room { whole } else { chunk });
                         longest = longest.max(chunk);
+                        alone = alone.max(whole);
                     }
                     let whole = if self.config.guaranteed_prefill_chunks.is_some()
                         && longest > decode_room
                     {
-                        mixed_budget::Uncapped::Alone(longest)
+                        mixed_budget::Uncapped::Alone(alone)
                     } else {
-                        mixed_budget::Uncapped::Mixed(tokens.min(decode_room))
+                        mixed_budget::Uncapped::Mixed(mixed.min(decode_room))
                     };
                     self.step_model
                         .adaptive_budget(

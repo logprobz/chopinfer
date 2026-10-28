@@ -2787,6 +2787,7 @@ impl crate::executor::DeviceLogitsSamplerV1
         ticket: u64,
     ) -> HostServiceResultV1<Vec<u8>> {
         crate::overlap::device_wait();
+        let _range = runtime_engine::profile::ranges::Range::new(c"host.readback");
         let _profile = runtime_engine::profile::PhaseTimer::new(
             runtime_engine::profile::StepPhase::DeviceWait,
         );
@@ -2807,6 +2808,7 @@ impl crate::executor::DeviceLogitsSamplerV1
         items: &[&runtime_engine::ModelBatchItem],
         dispatch: crate::executor::SamplingDispatch,
     ) -> HostServiceResultV1<Vec<runtime_engine::SampledRow>> {
+        let _range = runtime_engine::profile::ranges::Range::new(c"host.sampling_submit");
         let raw = view.raw();
         let mut state = self.state.borrow_mut();
         let (context_object, range) = state.resolve_logits_view(raw)?;
@@ -2821,6 +2823,7 @@ impl crate::executor::DeviceLogitsSamplerV1
         items: &[&runtime_engine::ModelBatchItem],
         dispatch: crate::executor::SamplingDispatch,
     ) -> HostServiceResultV1<bool> {
+        let _range = runtime_engine::profile::ranges::Range::new(c"host.sampling_submit");
         let raw = view.raw();
         let mut state = self.state.borrow_mut();
         let (context_object, range) = state.resolve_logits_view(raw)?;
@@ -3949,6 +3952,9 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
     }
 
     fn log(&self, message: &[u8]) -> HostServiceResultV1<()> {
+        if runtime_engine::profile::ranges::diagnostic_note(message) {
+            return Ok(());
+        }
         self.state.borrow_mut().device.log(message)
     }
 
@@ -5358,6 +5364,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         destination: &mut [u8],
         source: DeviceBufferSpanV1,
     ) -> HostServiceResultV1<()> {
+        let _range = runtime_engine::profile::ranges::Range::new(c"host.readback");
         let mut state = self.state.borrow_mut();
         state.refuse_during_capture(state.streams.get(key_of_v1!(stream))?.context)?;
         let stream_object = state.stream_object(stream)?;

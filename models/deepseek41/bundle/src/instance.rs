@@ -1189,10 +1189,12 @@ impl Bundle for Instance {
 
     /// A step with verify items commits through `commit_accepted`.
     fn commit(&mut self) -> BundleStatusV1 {
+        let _range = bundle_runtime::profile_ranges::Range::new(&self.services, "bundle.commit");
         transaction::commit(self)
     }
 
     fn commit_accepted(&mut self, records: &[BundleKeptRowsV1]) -> BundleStatusV1 {
+        let _range = bundle_runtime::profile_ranges::Range::new(&self.services, "bundle.commit");
         #[cfg(feature = "diagnostic-taps")]
         if let Err(error) = self.capture_profile_kept(records) {
             self.log(&error);

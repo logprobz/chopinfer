@@ -129,11 +129,15 @@ pub fn with_route_counter<T: Bundle>(
     let counter = (crate::routes::logging_enabled() && !crate::routes::active())
         .then(|| crate::routes::RouteCounter::begin(true));
     let status = execute(instance);
-    if let Some(counts) = counter.and_then(crate::routes::RouteCounter::finish) {
-        let mut record = counts.json();
-        record["schema"] = "chopinfer.route.v1".into();
+    if let Some(counter) = counter {
         let (services, _) = instance.resources();
-        let _ = services.log(record.to_string().as_bytes());
+        let _range =
+            crate::profile_ranges::BorrowedRange::new(services, "bundle.route_diagnostics");
+        if let Some(counts) = counter.finish() {
+            let mut record = counts.json();
+            record["schema"] = "chopinfer.route.v1".into();
+            let _ = services.log(record.to_string().as_bytes());
+        }
     }
     status
 }

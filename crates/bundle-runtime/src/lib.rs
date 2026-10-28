@@ -60,3 +60,6 @@ const _: () = assert!(
 );
 
 pub mod routes;
+
+/// Optional host scopes sent through the existing log callback.
+pub mod profile_ranges;

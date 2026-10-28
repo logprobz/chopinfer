@@ -599,6 +599,14 @@ impl Instance {
         advance_step: impl FnOnce(),
     ) -> Result<Run, BundleStatusV1> {
         let (phase, arena, layout, mut graph) = self.phase_of(inputs)?;
+        let _range = bundle_runtime::profile_ranges::Range::new(
+            &self.services,
+            match arena {
+                PREFILL => "bundle.prefill.plan",
+                DECODE => "bundle.decode.plan",
+                _ => "bundle.verify.plan",
+            },
+        );
         // An allocated step's items verify device-chosen counts, so it
         // takes the route that reads no host count, in its own bank.
         let allocated = self.allocated_tail_rows().filter(|_| inputs.verify);
@@ -872,6 +880,14 @@ impl Instance {
     /// Uploads `run`'s packed inputs and the changed block-table rows to
     /// every rank's phase arena.
     fn upload(&mut self, run: &Run) -> Result<(), BundleAbiError> {
+        let _range = bundle_runtime::profile_ranges::Range::new(
+            &self.services,
+            match run.arena {
+                PREFILL => "bundle.prefill.upload",
+                DECODE => "bundle.decode.upload",
+                _ => "bundle.verify.upload",
+            },
+        );
         // Only a prefill gathers its logits rows; decode rows are its items.
         let rows = if run.execution.skip().is_some() {
             (0..run.head_rows).collect()
@@ -1017,6 +1033,14 @@ impl Instance {
     /// the instance: its peers would wait forever at the collectives that
     /// rank queued.
     fn launch(&mut self, run: &mut Run) -> Result<(), BundleAbiError> {
+        let _range = bundle_runtime::profile_ranges::Range::new(
+            &self.services,
+            match run.arena {
+                PREFILL => "bundle.prefill.submit",
+                DECODE => "bundle.decode.submit",
+                _ => "bundle.verify.submit",
+            },
+        );
         if run.graph.is_some() {
             self.activate_indexer_graphs(run.bank);
         }
@@ -1345,6 +1369,7 @@ impl Instance {
         sink: &mut ExecuteResultSinkV1,
         ready_epoch: Option<u64>,
     ) -> Result<(), BundleAbiError> {
+        let _range = bundle_runtime::profile_ranges::Range::new(&self.services, "bundle.results");
         let views = self.logits_views(runs)?;
         if let Some(cycle_epoch) = ready_epoch {
             use runtime_bundle_abi::device_results::BundleReadyLogitsViewV1;

@@ -59,6 +59,16 @@ impl Instance {
     /// a live row, as `check_index_status` then `check_row_status` do: with
     /// the packet when it holds the phase's rows, else with those reads.
     pub(super) fn check_status(&self, run: &Run) -> Result<(), BundleAbiError> {
+        let _range = bundle_runtime::profile_ranges::Range::new(
+            &self.services,
+            if run.phase.prefill() {
+                "bundle.prefill.status"
+            } else if run.inputs.verify {
+                "bundle.verify.status"
+            } else {
+                "bundle.decode.status"
+            },
+        );
         let rows = run.inputs.live_tokens();
         match &self.ar_status {
             Some(packet) if rows > 0 && rows <= ROWS && self.dspark.is_none() => {

@@ -573,6 +573,10 @@ impl<P: Program> Host for Adapter<'_, P> {
         self.program.computed_positions()
     }
     fn read_draft_ids(&mut self, ids: &mut [[u32; BLOCK_ROWS as usize]]) -> Result<(), String> {
+        let _range = bundle_runtime::profile_ranges::BorrowedRange::new(
+            self.services,
+            "bundle.draft.readback",
+        );
         let source = prefix(
             self.readback.draft_ids,
             (ids.len() * BLOCK_ROWS as usize * 4) as u64,

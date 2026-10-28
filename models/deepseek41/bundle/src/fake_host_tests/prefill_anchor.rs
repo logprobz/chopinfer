@@ -1035,6 +1035,8 @@ fn dma_anchors_capture_restore_and_continue_with_both_completion_modes() {
             )
             .unwrap();
             let (spares, states) = crate::instance::anchor_spans(instance.handle());
+            assert_eq!(spares.len(), 4);
+            assert_eq!(states.len(), 4);
             let first = host.device.journal.borrow().len();
             instance
                 .execute_prefill_cuts(
@@ -1059,7 +1061,36 @@ fn dma_anchors_capture_restore_and_continue_with_both_completion_modes() {
                     .count(),
                 2
             );
+            let launch = step
+                .iter()
+                .position(|line| line.starts_with("launch "))
+                .unwrap();
+            let seeds = copies(&step[..launch]);
             for (spare, state) in spares.iter().zip(&states) {
+                let tails = state.named("compressor.tail").unwrap();
+                let kept = spare.buffers[1].unwrap();
+                assert_eq!(kept.length, 3 * 32768);
+                assert_eq!(tails.length % kept.length, 0);
+                let slots = tails.length / kept.length;
+                let tail_seeds: Vec<_> = seeds
+                    .iter()
+                    .filter(|(_, destination)| inside(*destination, kept))
+                    .collect();
+                assert_eq!(tail_seeds.len(), 3);
+                for (layer, &&(source, destination)) in tail_seeds.iter().enumerate() {
+                    assert_eq!(
+                        source,
+                        (
+                            tails.buffer.raw,
+                            tails.offset + layer as u64 * slots * 32768,
+                            32768
+                        )
+                    );
+                    assert_eq!(
+                        destination,
+                        (kept.buffer.raw, kept.offset + layer as u64 * 32768, 32768)
+                    );
+                }
                 check_anchor_stores(
                     &step,
                     state.named("window.ring").unwrap(),
@@ -1068,7 +1099,46 @@ fn dma_anchors_capture_restore_and_continue_with_both_completion_modes() {
                     632..768,
                 );
             }
+            let commit_start = host.device.journal.borrow().len();
             instance.commit().unwrap();
+            if speculative {
+                let index = model_deepseek41_contract::state::request_state(
+                    &FLASH,
+                    KvStorage::Native,
+                    true,
+                )
+                .buffers
+                .iter()
+                .position(|buffer| buffer.name == "dspark.features")
+                .unwrap();
+                let commit = host.device.journal.borrow()[commit_start..].to_vec();
+                let (_, cells) = feature_row();
+                for (spare, state) in spares.iter().zip(&states) {
+                    let features = state.named("dspark.features").unwrap();
+                    let kept = spare.buffers[index].unwrap();
+                    let writes = feature_writes(&commit, features, kept);
+                    assert_eq!(
+                        writes
+                            .iter()
+                            .map(|&(_, destination)| destination)
+                            .collect::<Vec<_>>(),
+                        [
+                            history(kept, 0, 0, cells),
+                            history(kept, 0, 640, 30),
+                            history(kept, 0, 670, 98),
+                            history(features, 0, 655, 6),
+                            history(features, 0, 661, 9),
+                            history(features, 0, 670, 119),
+                        ]
+                    );
+                    assert_eq!(writes[0].0, history(features, 0, 0, cells));
+                    assert!(
+                        writes[1..]
+                            .iter()
+                            .all(|&(source, _)| !inside(source, features) && !inside(source, kept))
+                    );
+                }
+            }
             let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
             let before = host.device.journal.borrow().len();
             instance.capture_prefix_state(1, 768, &pages).unwrap();

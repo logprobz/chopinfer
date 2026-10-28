@@ -4,7 +4,7 @@ use runtime_bundle_abi::BundleStatusV1;
 use runtime_cuda::{Context, DeviceBuffer, Event, PinnedHostBuffer, Stream};
 
 type Result<T> = std::result::Result<T, BundleStatusV1>;
-const MAX_PACKET_BYTES: usize = 1 << 20;
+pub(crate) const MAX_PACKET_BYTES: usize = 1 << 20;
 
 struct Slot {
     pinned: PinnedHostBuffer,

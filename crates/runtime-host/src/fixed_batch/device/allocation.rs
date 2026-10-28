@@ -159,8 +159,27 @@ impl RecordingSampler {
         Ok(())
     }
     fn read_ready(&self, view: BundleReadyDeviceViewV1) -> HostServiceResultV1<Vec<u8>> {
-        let ticket = self.backend.enqueue_device_readback(view)?;
-        self.backend.collect_device_readback(view, ticket)
+        view.validate(1)?;
+        let mut bytes = Vec::new();
+        let mut offset = 0;
+        // Diagnostic logits can exceed the completion transport's packet bound.
+        // Each chunk keeps the producer event and is collected before slot reuse.
+        while offset < view.buffer.length {
+            let length = (view.buffer.length - offset)
+                .min(crate::sampling_readback::MAX_PACKET_BYTES as u64);
+            let chunk = BundleReadyDeviceViewV1 {
+                buffer: runtime_bundle_abi::BundleDeviceBufferViewV1 {
+                    offset: view.buffer.offset + offset,
+                    length,
+                    ..view.buffer
+                },
+                ..view
+            };
+            let ticket = self.backend.enqueue_device_readback(chunk)?;
+            bytes.extend(self.backend.collect_device_readback(chunk, ticket)?);
+            offset += length;
+        }
+        Ok(bytes)
     }
 
     pub(super) fn capture_ready(
@@ -405,5 +424,74 @@ mod dispatch_tests {
             .unwrap();
             assert_eq!(host.calls[2].1.as_ref(), Some(&metadata));
         }
+    }
+}
+
+#[cfg(all(test, target_os = "linux", feature = "cuda-fake-driver-tests"))]
+mod readback_tests {
+    use super::*;
+    use crate::services::{HostInstanceConfigV1, HostTopologyV1};
+    use runtime_bundle_abi::{BundleDeviceBufferViewV1, DeviceBufferSpanV1, HostServicesBackendV1};
+    use runtime_cuda::fake_driver;
+
+    #[test]
+    fn recorder_reads_large_logits_through_bounded_transport() {
+        fake_driver::reset();
+        let backend = Rc::new(Backend::new(
+            crate::cuda::CudaHostDeviceV1::new().unwrap(),
+            HostInstanceConfigV1::new(HostTopologyV1::new(vec![0]).unwrap()),
+        ));
+        let context = backend.select_context(0, 0).unwrap();
+        let pool = backend.select_memory_pool(context).unwrap();
+        let stream = backend.create_stream(context, 0).unwrap();
+        let bytes = (0..3 * (1 << 20) + 37)
+            .map(|i| (i % 251) as u8)
+            .collect::<Vec<_>>();
+        let buffer = backend
+            .allocate_device_buffer(pool, stream, bytes.len() as u64, 8)
+            .unwrap();
+        backend
+            .copy_host_to_device(
+                stream,
+                DeviceBufferSpanV1::new(buffer, 0, bytes.len() as u64),
+                &bytes,
+            )
+            .unwrap();
+        let ready = backend.create_event(context).unwrap();
+        backend.record_event(ready, stream).unwrap();
+        let view = BundleReadyDeviceViewV1 {
+            context,
+            rank: 0,
+            reserved: 0,
+            buffer: BundleDeviceBufferViewV1 {
+                buffer,
+                offset: 19,
+                length: (bytes.len() - 19) as u64,
+                ..BundleDeviceBufferViewV1::empty()
+            },
+            ready,
+        };
+        // Exercise the same transport refusal as a real device before recording.
+        assert_eq!(
+            backend.enqueue_device_readback(view),
+            Err(BundleStatusV1::InvalidArgument)
+        );
+        let recorder = RecordingSampler {
+            backend,
+            capture: RefCell::default(),
+            budget: None,
+            device_results: true,
+            device_drafts: RefCell::default(),
+        };
+        assert_eq!(recorder.read_ready(view).unwrap(), bytes[19..]);
+        let small = BundleReadyDeviceViewV1 {
+            buffer: BundleDeviceBufferViewV1 {
+                length: 20,
+                ..view.buffer
+            },
+            ..view
+        };
+        assert_eq!(recorder.read_ready(small).unwrap(), bytes[19..39]);
+        assert_eq!(fake_driver::ordering_violations(), 0);
     }
 }

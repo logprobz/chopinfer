@@ -256,3 +256,249 @@ fn dma_owner_route_counts_match_submitted_kernels() {
         }
     }
 }
+
+/// on every stream, the first launch that reads a layer's
+/// emulated Engram rows comes after that stream's join for the layer.
+#[test]
+fn dma_join_precedes_first_destination_read_on_every_stream() {
+    fn spans(line: &str) -> Vec<(u64, u64, u64)> {
+        let mut out = Vec::new();
+        let mut rest = line;
+        while let Some(at) = rest.find("raw: ") {
+            rest = &rest[at + 5..];
+            let raw: u64 = rest[..rest.find(' ').unwrap()].parse().unwrap();
+            let at = rest.find("offset: ").unwrap();
+            rest = &rest[at + 8..];
+            let offset: u64 = rest[..rest.find(',').unwrap()].parse().unwrap();
+            let at = rest.find("length: ").unwrap();
+            rest = &rest[at + 8..];
+            let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap();
+            out.push((raw, offset, rest[..end].parse().unwrap()));
+        }
+        out
+    }
+    for speculative in [false, true] {
+        for rows in [512, 769, 8192] {
+            let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+            if speculative {
+                host.speculation.set(Some((5, 32)));
+            }
+            let mut instance = create_backend_with_options(
+                &host,
+                true,
+                completion_backend(&host, true),
+                &[("prefill_dma_engram", true.into())],
+            )
+            .unwrap();
+            let begin = host.journal.borrow().len();
+            let request = encode(
+                &prompt(7, 0, 0, rows, true),
+                &[Boundary {
+                    request_id: 7,
+                    prompt_tokens: rows,
+                    chunk_end: rows,
+                    chunk_tokens: 8192,
+                }],
+            )
+            .unwrap();
+            instance
+                .execute_prefill(&request, &mut Views::default())
+                .unwrap();
+            {
+                let journal = host.journal.borrow();
+                let step = &journal[begin..];
+                let mut checked = 0;
+                for (at, line) in step.iter().enumerate() {
+                    let Some(rest) = line.strip_prefix("async mapped wait ") else {
+                        continue;
+                    };
+                    let stream = rest.trim().to_owned();
+                    let uploads: Vec<_> = step[at + 1..]
+                        .iter()
+                        .take_while(|l| {
+                            !l.starts_with("launch ") && !l.starts_with("async mapped wait ")
+                        })
+                        .filter(|l| l.starts_with(&format!("upload {stream} ")))
+                        .flat_map(|l| spans(l))
+                        .collect();
+                    assert!(!uploads.is_empty(), "{line}: no emulated rows");
+                    let reads = |l: &str| {
+                        spans(l).iter().any(|&(raw, offset, length)| {
+                            uploads
+                                .iter()
+                                .any(|&(r, o, n)| r == raw && offset < o + n && o < offset + length)
+                        })
+                    };
+                    let first = step
+                        .iter()
+                        .position(|l| l.starts_with(&format!("launch {stream} ")) && reads(l))
+                        .expect("a consumer reads the joined rows");
+                    assert!(
+                        first > at,
+                        "speculative={speculative} rows={rows}: stream {stream} reads Engram rows at {first} before its join at {at}"
+                    );
+                    checked += 1;
+                }
+                assert_eq!(checked, 8);
+            }
+            instance.commit().unwrap();
+            instance.retire_request(7).unwrap();
+            instance.destroy().unwrap();
+        }
+    }
+}
+
+fn refused_prefill(
+    host: &Rc<Host>,
+    instance: &mut BundleInstanceV1,
+    speculative: bool,
+    rows: u64,
+) -> Vec<String> {
+    let sources = FLASH.shape.csa.index_sources.len();
+    // Large AR prefills read one status plane at a time. DSpark prefills
+    // have no draft cycle, so rank 0 reads its saved planes together.
+    let planes = if speculative { sources + 2 } else { 1 };
+    let mut status = vec![0; planes * rows as usize * 4];
+    let offset = if speculative {
+        sources * rows as usize * 4
+    } else {
+        0
+    };
+    status[offset] = 1;
+    host.injected_after
+        .set(if speculative { 0 } else { sources });
+    host.injected.replace(Some(status));
+    let begin = host.journal.borrow().len();
+    let mut sink = Views::default();
+    assert_eq!(
+        instance
+            .execute_prefill(&status_request(7, rows), &mut sink)
+            .unwrap_err(),
+        BundleAbiError::Status(BundleStatusV1::BundleError)
+    );
+    assert_eq!(sink.rows(), 0);
+    assert!(
+        host.injected.borrow().is_none(),
+        "row-status refusal must consume its injected read"
+    );
+    assert!(
+        host.logs
+            .borrow()
+            .iter()
+            .any(|line| line.contains("quantized input on rank 0"))
+    );
+    host.journal.borrow()[begin..].to_vec()
+}
+
+fn status_request(id: u64, rows: u64) -> Vec<u8> {
+    encode(
+        &prompt(id, 0, 0, rows, true),
+        &[Boundary {
+            request_id: id,
+            prompt_tokens: rows,
+            chunk_end: rows,
+            chunk_tokens: 8192,
+        }],
+    )
+    .unwrap()
+}
+
+fn assert_gathers_settled(refused: &[String]) {
+    assert_eq!(
+        refused
+            .iter()
+            .filter(|s| s.starts_with("async mapped wait "))
+            .count(),
+        8
+    );
+    let complete = refused
+        .iter()
+        .position(|line| line == "async mapped complete")
+        .expect("the refused target must release pending gather ownership");
+    assert_eq!(
+        refused
+            .iter()
+            .filter(|line| *line == "async mapped complete")
+            .count(),
+        2
+    );
+    for stream in 2..=5 {
+        let joined = refused
+            .iter()
+            .rposition(|line| line == &format!("async mapped wait {stream}"))
+            .unwrap();
+        assert!(
+            refused[joined + 1..complete]
+                .iter()
+                .any(|line| line == &format!("synchronize {stream}"))
+        );
+    }
+}
+
+#[test]
+fn prefill_status_refusal_settles_gathers_and_serves_next_step() {
+    for rows in [193, 512, 769] {
+        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+        let mut instance = create_backend_with_options(
+            &host,
+            true,
+            completion_backend(&host, true),
+            &[("prefill_dma_engram", true.into())],
+        )
+        .unwrap();
+        let refused = refused_prefill(&host, &mut instance, false, rows);
+        assert!(instance.commit().is_err());
+        instance.retire_request(7).unwrap();
+        instance
+            .execute_prefill(&status_request(9, rows), &mut Views::default())
+            .unwrap_or_else(|e| panic!("rows={rows}: {e:?}: {:?}", host.logs.borrow()));
+        assert_gathers_settled(&refused);
+        instance.commit().unwrap();
+        instance.retire_request(9).unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+}
+
+#[test]
+fn dspark_status_refusal_settles_gathers_before_terminal_poison() {
+    for rows in [193, 512, 769] {
+        for enabled in [false, true] {
+            let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+            host.speculation.set(Some((5, 32)));
+            let mut instance = create_backend_with_options(
+                &host,
+                true,
+                completion_backend(&host, true),
+                &[("prefill_dma_engram", enabled.into())],
+            )
+            .unwrap();
+            let refused = refused_prefill(&host, &mut instance, true, rows);
+            if enabled || rows < 512 {
+                assert_gathers_settled(&refused);
+            }
+            // execute_packed settles the target before returning the error to
+            // Runtime::host_result, which retains DSpark's terminal policy.
+            assert_eq!(
+                crate::instance::prefill_engram::refusal_state(instance.handle()),
+                (true, true)
+            );
+            assert_eq!(
+                instance.retire_request(7).unwrap_err(),
+                BundleAbiError::Status(BundleStatusV1::InvalidState)
+            );
+            assert!(
+                instance
+                    .execute_prefill(&status_request(9, rows), &mut Views::default())
+                    .is_err()
+            );
+            match instance.destroy() {
+                Ok(()) => assert_eq!(host.acquired.get(), host.released.get()),
+                Err(error) => {
+                    assert_eq!(error, BundleAbiError::Poisoned);
+                    assert!(instance.is_poisoned());
+                }
+            }
+        }
+    }
+}

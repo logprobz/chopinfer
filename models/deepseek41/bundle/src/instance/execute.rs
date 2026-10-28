@@ -1417,12 +1417,9 @@ impl Instance {
         if self.ledger.step().is_some() {
             return BundleStatusV1::InvalidState;
         }
-        if self
-            .prefill_engram
-            .as_ref()
-            .is_some_and(|gathers| !gathers.idle())
-        {
-            return BundleStatusV1::InvalidState;
+        if let Err(error) = self.settle_prefill_engram() {
+            self.log(&format!("prefill Engram: a failed step's uploads: {error}"));
+            return status(error);
         }
         if let Err(error) = self.settle_ar_engram() {
             self.log(&format!("AR Engram: a failed step's uploads: {error}"));
@@ -1562,6 +1559,12 @@ impl Instance {
                     "execute left collectives unmatched across ranks; the instance is poisoned",
                 );
                 return status(error);
+            }
+            // A status or sink refusal does not invalidate healthy gather
+            // handles. Fence every destination before releasing their pending
+            // ownership; an unmatched collective above must never be waited on.
+            if let Err(settle) = self.settle_prefill_engram() {
+                self.log(&format!("prefill Engram cleanup failed: {settle}"));
             }
             let _ = self.ledger.cancel();
             if let Some(engram) = self.engram.as_mut().filter(|_| self.dspark.is_none()) {

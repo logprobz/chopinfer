@@ -167,6 +167,34 @@ impl Gathers {
         Ok(())
     }
 
+    /// Settle a refused step before any later upload can reuse its rows.
+    /// Host callback/handle failures remain terminal; they cannot be retried.
+    fn settle(
+        &self,
+        services: &HostServicesV1,
+        streams: &[BundleStreamHandleV1],
+    ) -> Result<(), BundleAbiError> {
+        if self.failed.get() {
+            return Err(BundleAbiError::Status(BundleStatusV1::InvalidState));
+        }
+        if !self.pending.get() {
+            return Ok(());
+        }
+        let result = (|| {
+            for layer in self.joined.get()..self.layers.len() {
+                self.join(services, streams, layer)?;
+            }
+            for &stream in streams {
+                services.synchronize_stream(stream)?;
+            }
+            self.finish(services, streams.len())
+        })();
+        if result.is_err() {
+            self.failed.set(true);
+        }
+        result
+    }
+
     pub(super) fn release(&mut self, services: &HostServicesV1) -> Result<(), BundleAbiError> {
         // The host fences unfinished callbacks and DMA before releasing their
         // pinned buffers. This precedes release of every referenced allocation.
@@ -179,6 +207,21 @@ impl Gathers {
 }
 
 impl Instance {
+    pub(super) fn settle_prefill_engram(&self) -> Result<(), BundleAbiError> {
+        if let Some(gathers) = self
+            .prefill_engram
+            .as_ref()
+            .filter(|gathers| !gathers.idle())
+        {
+            if self.collectives.is_poisoned() {
+                return Err(BundleAbiError::Status(BundleStatusV1::InvalidState));
+            }
+            let streams = self.ranks.iter().map(|rank| rank.2).collect::<Vec<_>>();
+            gathers.settle(&self.services, &streams)?;
+        }
+        Ok(())
+    }
+
     /// The exact row domain read by the target, for both prepared gathers
     /// and their synchronous fallback. DSpark separates prefill and decode.
     pub(super) fn engram_destinations(
@@ -332,4 +375,25 @@ pub(crate) fn indices(handle: runtime_bundle_abi::BundleHandleV1) -> Vec<(u32, S
         assert_eq!(status, BundleStatusV1::Success);
     });
     result
+}
+
+#[cfg(test)]
+pub(crate) fn refusal_state(handle: runtime_bundle_abi::BundleHandleV1) -> (bool, bool) {
+    use bundle_runtime::entry::Bundle;
+    let mut result = None;
+    Instance::instances().with(|table| {
+        let status = bundle_runtime::table::with_instance(table, handle, |instance| {
+            result = Some((
+                instance.prefill_engram.as_ref().is_none_or(Gathers::idle),
+                instance
+                    .dspark
+                    .as_ref()
+                    .and_then(|device| device.runtime.as_ref())
+                    .is_some_and(|runtime| runtime.state().is_poisoned()),
+            ));
+            BundleStatusV1::Success
+        });
+        assert_eq!(status, BundleStatusV1::Success);
+    });
+    result.expect("live instance")
 }

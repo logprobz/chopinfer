@@ -20,7 +20,10 @@ def metric_text(offload=True):
     text = "# ignored help\nother_histogram_sum 0.25\n"
     for name in kvo.COUNTERS.values():
         if offload or not name.startswith("chop_kv_offload_"):
-            text += f"{name} 0\n"
+            if name == kvo.COUNTERS["prefix_evictions"]:
+                text += ''.join(f'{name}{{class="{tier}"}} 0\n' for tier in ('superseded', 'retained', 'maximal'))
+            else:
+                text += f"{name} 0\n"
     if offload:
         text += ('chop_kv_offload_host_pages{kind="used"} 0\n'
                  'chop_kv_offload_host_pages{kind="free"} 1024\n'
@@ -30,6 +33,12 @@ def metric_text(offload=True):
 
 
 class Offload(unittest.TestCase):
+    def test_eviction_counter_sums_all_classes(self):
+        text = metric_text().replace('class="superseded"} 0', 'class="superseded"} 2')
+        text = text.replace('class="retained"} 0', 'class="retained"} 3')
+        text = text.replace('class="maximal"} 0', 'class="maximal"} 5')
+        self.assertEqual(kvo.metrics(text)["prefix_evictions"], 10)
+
     def test_arm_overrides_replace_configuration_options_without_duplicates(self):
         import release_preview as runner
         configuration = {"page_tokens": 64, "serve": ["--speculative-tokens", "5", "--context-parallel-size", "2"]}
@@ -226,7 +235,7 @@ class Offload(unittest.TestCase):
 
 
 def pool_text(capacity=128, tokens=32768, used=0, cached=0, anchors=0, evictions=0, offload=True):
-    return (metric_text(offload).replace("chop_prefix_cache_evictions_total 0", f"chop_prefix_cache_evictions_total {evictions}")
+    return (metric_text(offload).replace('chop_prefix_cache_evictions_total{class="maximal"} 0', f'chop_prefix_cache_evictions_total{{class="maximal"}} {evictions}')
             + f"chop_kv_block_capacity {capacity}\nchop_kv_capacity_tokens {tokens}\n"
             f"chop_kv_blocks_used {used}\nchop_prefix_cache_blocks {cached}\nchop_prefix_cache_anchors {anchors}\n")
 

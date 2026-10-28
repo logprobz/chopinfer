@@ -982,7 +982,7 @@ maximal tier and cannot supersede public anchors. The candidate changes
 retention, not capture boundaries, snapshot bytes or restore arithmetic.
 It needs stateful replay exactness and acceptance before adoption; adoption
 deletes the candidate switch and old policy. See the
-[prefix eviction metrics](operations-observability.md#prefix-eviction-candidate-metrics).
+[prefix eviction metrics](operations-observability.md#prefix-cache-accounting).
 
 Offload is disabled by default. Transfers retain page references until all
 ranks complete; swap-in restores newly reserved pages before admission.

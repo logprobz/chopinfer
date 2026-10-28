@@ -59,10 +59,11 @@ def main(recorded, output):
         counters = None
         if prom.exists():
             text = prom.read_text()
-            found = [tune.PREEMPTIONS.findall(text), tune.EVICTIONS.findall(text)]
-            if any(len(x) != 1 for x in found):
-                raise SystemExit(f'{label}: metrics lack one preemption and one eviction counter')
-            counters = {'preemptions': float(found[0][0]), 'prefix_cache_evictions': float(found[1][0])}
+            try:
+                counters = tune.parse_counters(text, label)
+            except RuntimeError as error:
+                raise SystemExit(str(error)) from error
+
         steps = r.trace_rows(directory / 'server' / 'server.log')
         if not steps:
             raise SystemExit(f'{label}: no engine step records')

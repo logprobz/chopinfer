@@ -162,6 +162,24 @@ def ab_fixture(root, **overrides):
 
 
 class Tuner(unittest.TestCase):
+    def test_counters_sum_eviction_classes_and_keep_legacy_recordings(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        for values in [(0, 0, 0), (2, 3, 5)]:
+            text = 'vllm:num_preemptions_total{model_name="fixture",engine="0"} 7\n'
+            text += ''.join(f'chop_prefix_cache_evictions_total{{class="{name}"}} {value}\n'
+                            for name, value in zip(('superseded', 'retained', 'maximal'), values))
+            with self.subTest(values=values), tempfile.TemporaryDirectory() as directory:
+                server = SimpleNamespace(url='http://fixture', directory=Path(directory))
+                with patch.object(tune.r, 'http', return_value=text):
+                    self.assertEqual(tune.counters(server, 'final'),
+                                     {'preemptions': 7, 'prefix_cache_evictions': sum(values)})
+                self.assertEqual((server.directory / 'final.prom').read_text(), text)
+        legacy = 'vllm:num_preemptions_total 7\nchop_prefix_cache_evictions_total 11\n'
+        with tempfile.TemporaryDirectory() as directory, patch.object(tune.r, 'http', return_value=legacy):
+            server = SimpleNamespace(url='http://fixture', directory=Path(directory))
+            self.assertEqual(tune.counters(server, 'final'), {'preemptions': 7, 'prefix_cache_evictions': 11})
+
     def test_external_prompt_file_seals_literals_and_checks_tokenized_lengths(self):
         import os
         import subprocess
@@ -1691,7 +1709,9 @@ class Tuner(unittest.TestCase):
                     'schema': 'chopinfer.fixture.commit-shape.v1',
                     'instance_id': '1', 'step_id': str(x['batch']), 'micros': {'total': 100}})]
             (server / 'server.log').write_text('\n'.join(log) + '\n')
-            (server / 'final.prom').write_text('vllm:num_preemptions_total 0\nchop_prefix_cache_evictions_total 0\n')
+            (server / 'final.prom').write_text('vllm:num_preemptions_total 0\n' + ''.join(
+                f'chop_prefix_cache_evictions_total{{class="{name}"}} {value}\n'
+                for name, value in [('superseded', 2), ('retained', 3), ('maximal', 5)]))
             window = run / 'd3' / 'windows' / 'greedy-c8.json'
             window.parent.mkdir()
             window.write_text(json.dumps({'name': 'greedy-c8', 'kind': 'greedy', 'concurrency': 8, 'depth': 3,
@@ -1700,6 +1720,8 @@ class Tuner(unittest.TestCase):
             result = json.loads((out / 'recorded-check.json').read_text())
             costs = json.loads((out / 'costs.json').read_text())
             self.assertEqual((result['servers'], result['windows']), (1, 1))
+            summary = json.loads((out / 'summary.json').read_text())
+            self.assertEqual(summary['processes']['d3']['metrics']['prefix_cache_evictions'], 10)
             self.assertEqual(recorded.r.trace_rows(server / 'server.log'), steps)
             self.assertEqual(costs['cells']['i8-r32']['steps'], 3)
             (server / 'server.log').write_text('\n'.join(log[:3]) + '\n')

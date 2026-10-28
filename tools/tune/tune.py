@@ -658,14 +658,19 @@ def first_difference(reference, exact):
     return 'stream count'
 
 
+def parse_counters(text, name):
+    """Sum eviction classes, retaining support for older unlabelled recordings."""
+    preemptions = PREEMPTIONS.findall(text)
+    evictions = EVICTIONS.findall(text)
+    if len(preemptions) != 1 or not evictions:
+        raise RuntimeError(f'{name}: metrics need one preemption counter and at least one eviction series')
+    return {'preemptions': float(preemptions[0]), 'prefix_cache_evictions': sum(map(float, evictions))}
+
+
 def counters(server, name):
     text = r.http(server.url, '/metrics')
     (server.directory / f'{name}.prom').write_text(text)
-    found = [PREEMPTIONS.findall(text), EVICTIONS.findall(text)]
-    if any(len(x) != 1 for x in found):
-        raise RuntimeError(f'{name}: metrics lack one preemption and one eviction counter')
-    preemptions, evictions = (float(x[0]) for x in found)
-    return {'preemptions': preemptions, 'prefix_cache_evictions': evictions}
+    return parse_counters(text, name)
 
 
 def weight_source(log):

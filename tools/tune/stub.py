@@ -210,7 +210,9 @@ def stub(args):
                     drafted, accepted = dict(state['drafted']), dict(state['accepted'])
                     items = state['verify_items']
                 lines = [f'vllm:num_preemptions_total{{{label},engine="0"}} {1 if preempt else 0}',
-                         'chop_prefix_cache_evictions_total 0',
+                         'chop_prefix_cache_evictions_total{class="superseded"} 0',
+                         'chop_prefix_cache_evictions_total{class="retained"} 0',
+                         'chop_prefix_cache_evictions_total{class="maximal"} 0',
                          f'chop_spec_verify_items_total{{{label}}} {items}',
                          f'chop_spec_draft_tokens_total{{{label}}} {sum(drafted.values())}',
                          f'chop_spec_accepted_tokens_total{{{label}}} {sum(accepted.values())}']

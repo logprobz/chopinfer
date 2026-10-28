@@ -711,6 +711,136 @@ fn a_changed_graph_launch_changes_the_prefill_key() {
     assert_eq!(host.acquired.get(), host.released.get());
 }
 
+/// One launch as the host resolves it.
+type ResolvedLaunch = (
+    String,
+    u32,
+    LaunchPlan,
+    runtime_bundle_abi::LaunchConfigV1,
+    Vec<KernelArgumentV1>,
+);
+
+/// Each graph segment's launches on each rank, as the host resolves them.
+fn resolved_segments(
+    programs: &[Vec<PreparedLaunch>],
+    graphs: &[Vec<std::ops::Range<usize>>],
+) -> Vec<Vec<Vec<ResolvedLaunch>>> {
+    graphs
+        .iter()
+        .map(|ranks| {
+            ranks
+                .iter()
+                .enumerate()
+                .map(|(rank, range)| {
+                    programs[rank][range.clone()]
+                        .iter()
+                        .map(|launch| {
+                            (
+                                launch.symbol.clone(),
+                                launch.rows,
+                                launch.plan,
+                                dispatch::launch_config(launch.plan).unwrap(),
+                                dispatch::arguments(&launch.arguments, &launch.bindings).unwrap(),
+                            )
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Steps the scheduler's timing cuts end early (non-final chunks ending on
+/// the granule, without logits) and final chunks of the same rows and
+/// starts, in AR, DSpark and DSpark with compact allocation instances: two
+/// steps share a body or head key exactly when their graph segments issue
+/// the same launches as the host resolves them, so neither a timing-cut
+/// step nor a compact-allocation DSpark step can replay another program's
+/// graph.
+#[test]
+fn prefill_graph_keys_follow_timing_cuts_and_compact_allocation() {
+    use model_deepseek41_contract::dspark_options::COMPACT_ALLOCATION;
+    use runtime_bundle_sdk::prefill::Boundary;
+    // (rows, start, prompt tokens): a cut ends on the granule before its
+    // prompt ends; a final chunk ends its prompt.
+    let cases: [(u32, u32, u32); 10] = [
+        (64, 1024, 9000),
+        (64, 1024, 1088),
+        (64, 1472, 1500),
+        (28, 1472, 1500),
+        (47, 529, 2029),
+        (47, 529, 576),
+        (448, 1024, 9000),
+        (448, 1024, 1472),
+        (64, 40_000, 50_000),
+        (64, 40_000, 40_064),
+    ];
+    let mut planned = Vec::new();
+    for (dspark, compact) in [(false, false), (true, false), (true, true)] {
+        let options = [(COMPACT_ALLOCATION, compact.into())];
+        let (host, mut instance) = crate::fake_host_tests::indexer_workloads::skip_host(
+            Ranks::TP4,
+            dspark,
+            true,
+            8,
+            if compact { &options[..] } else { &[] },
+        );
+        super::super::INSTANCES.with(|table| {
+            let mut table = table.borrow_mut();
+            let live = table.get_mut(instance.handle()).unwrap();
+            live.skip_prefill = true;
+            for (index, &(rows, start, prompt)) in cases.iter().enumerate() {
+                let end = start + rows;
+                let last = end == prompt;
+                live.prefill_boundaries = vec![Boundary {
+                    request_id: 1,
+                    prompt_tokens: u64::from(prompt),
+                    chunk_end: u64::from(end),
+                    chunk_tokens: 8192,
+                }];
+                let mut inputs = prefill_inputs(rows, start, (index % 4) as i32, index as u32);
+                inputs.emits_row = vec![last];
+                let run = live.plan_run(inputs, None, None).unwrap_or_else(|error| {
+                    panic!("case {index}: {error:?} {:?}", host.logs.borrow())
+                });
+                let skip = run.execution.skip().expect("an upper-skip plan");
+                assert!(prefill_graphs::eligible(&run, skip));
+                assert_eq!(run.head_rows > 0, last, "case {index}");
+                let joins = run.execution.prefill_engram().map(|plan| plan.joins());
+                let split = prefill_graphs::split(live, skip.body(), joins.as_deref()).unwrap();
+                let head = prefill_graphs::whole(&skip.head().0);
+                planned.push((
+                    (dspark, compact, index),
+                    prefill_graphs::Key::of(rows, &skip.body().0, &split).unwrap(),
+                    resolved_segments(&skip.body().0, &split.graphs),
+                    prefill_graphs::Key::of(run.head_rows, &skip.head().0, &head).unwrap(),
+                    resolved_segments(&skip.head().0, &head.graphs),
+                ));
+            }
+        });
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+    let (mut shared, mut distinct) = (0, 0);
+    for (at, a) in planned.iter().enumerate() {
+        for b in &planned[at + 1..] {
+            assert_eq!(a.1 == b.1, a.2 == b.2, "body {:?} {:?}", a.0, b.0);
+            assert_eq!(a.3 == b.3, a.4 == b.4, "head {:?} {:?}", a.0, b.0);
+            if a.1 == b.1 {
+                shared += 1;
+            } else {
+                distinct += 1;
+            }
+        }
+    }
+    // Some programs repeat (the same rows within a context class) and most
+    // do not.
+    assert!(
+        shared > 0 && distinct > shared,
+        "{shared} shared, {distinct} distinct"
+    );
+}
+
 fn clone_launch(launch: &PreparedLaunch) -> PreparedLaunch {
     PreparedLaunch {
         symbol: launch.symbol.clone(),

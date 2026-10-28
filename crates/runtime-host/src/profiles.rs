@@ -37,6 +37,8 @@ pub(crate) struct Profile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefill_budget: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefill_timing_cuts: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decode_tbt_target_ms: Option<u32>,
     pub queue_depth: Option<usize>,
     /// `--context-parallel-size`; absent serves size 1. It must divide the
@@ -353,6 +355,9 @@ impl Profile {
         }
         if let Some(budget) = &self.prefill_budget {
             args.extend(["--prefill-budget".into(), budget.clone()]);
+        }
+        if let Some(cuts) = &self.prefill_timing_cuts {
+            args.extend(["--prefill-timing-cuts".into(), cuts.clone()]);
         }
         if let Some(target) = self.decode_tbt_target_ms {
             args.extend(["--decode-tbt-target-ms".into(), target.to_string()]);
@@ -847,6 +852,7 @@ pub(crate) fn inspect(arguments: &[String]) -> Result<String, HostCommandErrorV1
                 }
             };
             shown["prefill_budget"] = budget.into();
+            shown["prefill_timing_cuts"] = serving.prefill_timing_cuts.name().into();
             if let Some(target) = target {
                 shown["decode_tbt_target_ms"] = target.into();
             }
@@ -1519,9 +1525,11 @@ mod tests {
         else {
             panic!("profile inspection");
         };
+        let mut expected = value["profiles"]["test"].clone();
+        expected["prefill_timing_cuts"] = "off".into();
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&text).unwrap(),
-            value["profiles"]["test"]
+            expected
         );
 
         // Old profiles still default to fixed and accept an explicit TBT override.
@@ -1537,6 +1545,105 @@ mod tests {
             ),
             PrefillBudget::Tbt(MixedPolicy::new(150, 512, 0).unwrap())
         );
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir_all(bundle).unwrap();
+    }
+
+    #[test]
+    fn prefill_timing_cuts_profile_resolution_and_flag_override() {
+        for value in ["off", "fixed"] {
+            let mut data = fixture();
+            data["profiles"]["test"]["prefill_budget"] = "tbt".into();
+            data["profiles"]["test"]["prefill_timing_cuts"] = value.into();
+            let file = Profiles::parse(&serde_json::to_vec(&data).unwrap()).unwrap();
+            let defaults = file.get("test").unwrap().arguments(&file.served_model_name);
+            for override_value in [None, Some("off"), Some("fixed")] {
+                let explicit = override_value
+                    .map(|v| vec!["--prefill-timing-cuts".into(), v.into()])
+                    .unwrap_or_default();
+                let mut args = vec!["serve".into()];
+                args.extend(apply_defaults(&defaults, &explicit));
+                let crate::HostCommandV1::Serve { serving, .. } =
+                    crate::parse_host_command_v1(&args).unwrap()
+                else {
+                    panic!("serve command");
+                };
+                assert_eq!(
+                    serving.prefill_timing_cuts.name(),
+                    override_value.unwrap_or(value)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn prefill_timing_cuts_profile_refuses_invalid_values_and_budgets() {
+        for fields in [
+            serde_json::json!({"prefill_timing_cuts": "fixed"}),
+            serde_json::json!({"prefill_timing_cuts": "fixed", "prefill_budget": "fixed"}),
+            serde_json::json!({"prefill_timing_cuts": "fixed", "prefill_budget": "decode-aware"}),
+            serde_json::json!({"prefill_timing_cuts": "auto", "prefill_budget": "tbt"}),
+            serde_json::json!({"prefill_timing_cuts": true, "prefill_budget": "tbt"}),
+        ] {
+            let mut data = fixture();
+            data["profiles"]["test"]
+                .as_object_mut()
+                .unwrap()
+                .extend(fields.as_object().unwrap().clone());
+            assert!(
+                Profiles::parse(&serde_json::to_vec(&data).unwrap()).is_err(),
+                "{fields}"
+            );
+        }
+    }
+
+    #[test]
+    fn prefill_timing_cuts_file_profile_override_and_inspection() {
+        let path =
+            std::env::temp_dir().join(format!("timing-cuts-profile-{}.json", std::process::id()));
+        let bundle = package("timing-cuts");
+        let mut data = fixture();
+        data["profiles"]["test"]["prefill_budget"] = "tbt".into();
+        for default in ["off", "fixed"] {
+            data["profiles"]["test"]["prefill_timing_cuts"] = default.into();
+            std::fs::write(&path, serde_json::to_vec(&data).unwrap()).unwrap();
+            for profile_first in [false, true] {
+                for explicit in ["off", "fixed"] {
+                    let mut args = vec![
+                        "serve".into(),
+                        "--bundle".into(),
+                        bundle.display().to_string(),
+                    ];
+                    let profile = vec!["--profile".into(), format!("{}#test", path.display())];
+                    let flags = vec!["--prefill-timing-cuts".into(), explicit.into()];
+                    if profile_first {
+                        args.extend(profile);
+                        args.extend(flags);
+                    } else {
+                        args.extend(flags);
+                        args.extend(profile);
+                    }
+                    let crate::HostCommandV1::Serve { serving, .. } =
+                        crate::parse_host_command_v1(&args).unwrap()
+                    else {
+                        panic!("serve command");
+                    };
+                    assert_eq!(serving.prefill_timing_cuts.name(), explicit);
+                    assert!(format!("{serving:?}").contains(&format!(
+                        "prefill_timing_cuts: {:?}",
+                        serving.prefill_timing_cuts
+                    )));
+                }
+            }
+            let args = ["profiles", "show", path.to_str().unwrap(), "test"].map(String::from);
+            let crate::HostCommandV1::Display { text } =
+                crate::parse_host_command_v1(&args).unwrap()
+            else {
+                panic!("profile inspection");
+            };
+            let shown: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(shown["prefill_timing_cuts"], default);
+        }
         std::fs::remove_file(path).unwrap();
         std::fs::remove_dir_all(bundle).unwrap();
     }
@@ -1578,6 +1685,7 @@ mod tests {
             };
             let mut expected = value["profiles"]["test"].clone();
             expected["prefill_budget"] = policy.into();
+            expected["prefill_timing_cuts"] = "off".into();
             if let Some(target) = target {
                 expected["decode_tbt_target_ms"] = target.into();
             }

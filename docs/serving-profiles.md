@@ -304,15 +304,29 @@ the package's declared support. Compare it with the same model, workload,
 concurrency and precision. Neither a scheduling flag nor spare capacity
 establishes accuracy or performance qualification.
 
-A declared prefill grid keeps whole chunks under every budget. The
-candidate switch `CHOPINFER_PREFILL_TIMING_CUTS=1`, with
-`--prefill-budget tbt` and a bundle that declares prefill cuts, instead
-ends a grid chunk that runs while requests decode at the last prefill
-granule multiple the tbt cap reaches, so the decoders share the step. When
+`--prefill-timing-cuts off|fixed` (`prefill_timing_cuts` in a profile) defaults
+to `off`, including every DeepSeek, Qwen, MiMo and GLM profile. An explicit
+flag overrides the profile. `profiles show` reports the resolved value and
+the `resolved serve` startup settings record the resolved enum (`Off` or `Fixed`).
+
+With `off`, a declared prefill grid keeps whole chunks under every budget.
+With `fixed`, `--prefill-budget tbt` and a bundle that negotiates prefill cuts
+are required; startup refuses incompatible settings and unknown values.
+A grid chunk that runs while requests decode ends at the last prefill
+granule multiple the TBT cap reaches, so the decoders share the step. When
 that multiple leaves fewer tokens than the `--mixed-min-prefill-tokens`
-floor, the chunk ends at the first multiple at or past the floor instead,
-if it fits beside the decoders. The
-server refuses to start with the switch otherwise. Timing cuts capture no
-prefix anchor, and scored and media requests keep their chunks. The switch
-is a candidate under qualification: it is removed when the behavior is
-adopted or dropped.
+progress floor, the chunk ends at the first multiple at or past the floor
+if it fits beside the decoders. Timing cuts capture no prefix anchor;
+scored and media requests keep their chunks.
+
+On 2026-10-28, DeepSeek TP4 DSpark stateful replay at C8 (eight sessions,
+three turns each, 32K/64K contexts, session-specific cache salts,
+temperature 1, 150 ms TBT target and 512-token progress floor) resolved a
+tradeoff for `fixed` against `off`. Stall time above 250 ms fell about 75%
+and no gaps exceeded 1 s, while the reported TTFT p95 regression was about
+40%, output throughput fell 3.5% and energy per output token rose 9.5%.
+These are paired replay verdict figures; the 250 ms stall threshold was
+declared before measurement. Stalls between 100 and 250 ms became more
+frequent. Select `fixed` when smoother concurrent streaming matters more than
+first-token latency, throughput and energy. This evidence covers that
+cell and configuration; it does not support a default change in any profile.

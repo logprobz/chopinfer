@@ -17,7 +17,7 @@ chunk is split again. Profiles with no guaranteed grid do not enable it. The
 scheduler retains the absolute grid after an extra cut, so a cut at 4032 is
 followed by 8192 unless another selected anchor or the prompt end comes first. This mechanism
 does not enable timing-budget cuts. TBT-selected timing cuts are a separate
-candidate (`CHOPINFER_PREFILL_TIMING_CUTS=1` with `--prefill-budget tbt`),
+serving option (`--prefill-timing-cuts fixed` with `--prefill-budget tbt`),
 off by default and described below.
 
 On default `tp4-ar` and `tp4-dspark`, every eligible prompt with a complete

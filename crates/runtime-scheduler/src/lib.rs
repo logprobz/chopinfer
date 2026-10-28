@@ -536,7 +536,7 @@ impl SchedulerConfig {
         self
     }
 
-    /// Candidate switch, off by default: with [`PrefillBudget::Tbt`] and
+    /// Timing-cut serving policy, off by default: with [`PrefillBudget::Tbt`] and
     /// [`Self::with_prefill_cuts`], a grid request prefilling beside
     /// decoding requests ends its chunk early, at the granule multiple the
     /// TBT cap reaches, so the decoders share the step. Such a timing cut is
@@ -548,7 +548,7 @@ impl SchedulerConfig {
         self
     }
 
-    /// Whether grid requests take timing cuts: the candidate switch, the
+    /// Whether grid requests take timing cuts: the serving policy, the
     /// TBT budget and the bundle's cuts together.
     #[must_use]
     pub const fn prefill_timing_cuts(self) -> bool {

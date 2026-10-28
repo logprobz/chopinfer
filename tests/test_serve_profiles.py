@@ -308,6 +308,7 @@ print(json.dumps({'result': 'prepared-direct', 'bundle': str(bundle)}))
                 with self.subTest(path=path, name=name):
                     self.assertEqual(profile['kv_cache_dtype'], 'auto')
                     self.assertIsNone(profile['queue_depth'])
+                    self.assertEqual(profile['prefill_timing_cuts'], 'off')
                     at_64 = self.qualified_at_64(path, name) or (data['model'], name) == ('mimo26', 'tp4-dflash')
                     self.check_cap(profile, at_64)
                     if (data['model'], name) == ('mimo26', 'tp4-dflash'):
@@ -351,6 +352,7 @@ print(json.dumps({'result': 'prepared-direct', 'bundle': str(bundle)}))
                     self.assertEqual(result.returncode, 0, result.stderr)
                     expected = dict(profile)
                     expected.setdefault('prefill_budget', 'fixed')
+                    expected.setdefault('prefill_timing_cuts', 'off')
                     if expected['prefill_budget'] == 'tbt':
                         expected.setdefault('decode_tbt_target_ms', 100)
                     self.assertEqual(profile_comparison(json.loads(result.stdout)), profile_comparison(expected))

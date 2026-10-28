@@ -159,7 +159,7 @@ impl EngineConfig {
         self
     }
 
-    /// Candidate switch for timing-cut grid chunks beside decoding requests
+    /// Serving policy for timing-cut grid chunks beside decoding requests
     /// ([`runtime_scheduler::SchedulerConfig::with_prefill_timing_cuts`]).
     #[must_use]
     pub const fn with_prefill_timing_cuts(mut self, enabled: bool) -> Self {
@@ -167,7 +167,7 @@ impl EngineConfig {
         self
     }
 
-    /// Whether grid chunks take timing cuts: the switch, the TBT budget and
+    /// Whether grid chunks take timing cuts: the policy, the TBT budget and
     /// the bundle's cuts together.
     #[must_use]
     pub const fn prefill_timing_cuts(self) -> bool {

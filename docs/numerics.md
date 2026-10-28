@@ -552,12 +552,26 @@ enforces it on every run: prefix hits at 1,024 and 2,000 tokens must equal
 the cold send bit for bit, and 1,024-token chunks must return the bits of
 2,048-token chunks.
 
-Public prefix anchors contain only prefill-written state. Decode-written
+Public prefix anchors contain only prefill-written target state. Decode-written
 rows differ in bits from cold prefill rows, even at aligned boundaries, so
 response ends are never shared anchors. The next turn resumes at a retained
 prompt-end or grid anchor and prefills the response history. Private
 preemption snapshots are different: they belong to the same request and
 resume its committed decode state without claiming cold-prefill equivalence.
+
+Qwen's drafter rows at prefill chunk starts can carry chunk-dependent
+arithmetic into a hit, affecting drafts and acceptance. Inside Qwen's declared
+exact scope (K3 at C1), target bits are unaffected. Outside it, changed
+acceptance and verify shapes can change served bits. This is under
+investigation; it does not relax the strict prefix-equality gate.
+
+Physical snapshot buffers are not canonical byte representations of live
+state. They also copy unread ring cells, spare retained rows, unused tail
+cells and padding, which can retain a previous slot occupant's data. Byte
+comparisons must mask cells the continuation cannot read, using the model's
+live-state bounds at the captured position. Compare all readable state and
+served output bits; a difference in an unread cell alone is not a numerical
+failure.
 
 MiMo anchors sit at any position. Qwen anchors sit on multiples of 64 (its
 prefill granule): a prompt-end capture moves to the last multiple of 64 at

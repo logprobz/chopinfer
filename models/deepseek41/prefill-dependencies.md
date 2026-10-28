@@ -1,8 +1,8 @@
 The serving profile guarantees a fixed chunk grid (2048 or 8192 rows), every
 prompt end, and complete state after each chunk. It also admits the
 scheduler's repeat anchors, previously observed shared prefixes and boundaries
-shared by queued requests. These extra cuts align to 64 tokens. It publishes
-complete terminal decode state for multi-turn reuse. The exact dependency cone is implemented
+shared by queued requests. These extra cuts align to 64 tokens.
+The exact dependency cone is implemented
 behind the `prefill_upper_skip` model option, which the default `tp4-ar` and
 `tp4-dspark` profiles set. For a full-schedule diagnostic configuration, set
 `prefill_upper_skip=false` and `prefill_chunk_tokens=0` explicitly.
@@ -99,6 +99,10 @@ workload reached a 66.46% cached-prompt-token rate with anchors, versus 66.35%
 for full-prefill and 35.56% for grid-only upper-skip. Matched cache-hit TTFT
 improved by 7.34% for AR and 3.43% for DSpark against full-prefill across two
 paired visits. Current global anchor eviction was used.
+The anchors and grid-only arms still published response-end anchors in this
+measurement; the full-prefill arm did not. Response-end anchors are no longer
+published, so the matched-hit TTFT gain over full prefill may be overstated.
+No corrected measurement is available.
 
 On ten matched cold, unaligned requests per profile, rounded-end cuts added
 one endpoint, one tail step and one snapshot each. Mean cold TTFT changed
@@ -492,12 +496,10 @@ Scored/media requests and diagnostic per-layer taps use full execution.
 The device-result executor path also keeps full execution until it has a
 negotiated prefill entry; it still respects the declared capture grid.
 
-For terminal text decode, the engine supplies the accepted token history
-excluding its final sampled token, which has no KV yet. The scheduler
-publishes that complete boundary as a public anchor
-(`crates/runtime-scheduler/src/lib.rs:3123`). This covers autoregressive and
-accepted speculative histories. Existing private preemption snapshots keep
-their semantics. No intermediate historical decode boundary is synthesized.
+Terminal decode publishes no public anchor, for either autoregressive or
+speculative histories. Only private preemption snapshots retain decode-written
+state for the same request. A later turn restores a prefill-written prompt
+or grid anchor and prefills the response rows again.
 
 | Prompt rows | Chunk rows | Upper output rows skipped | Upper window rows skipped | Equal-row TTFT estimate |
 | --- | --- | --- | --- | --- |
@@ -536,6 +538,10 @@ python3 -B models/deepseek41/prefill_cone.py --contract guaranteed --chunk 8192
 The diagnostic build's opt-in capture hook records full physical snapshot
 buffers, retained compressed/index pages and raw F32 logits. It records
 state both at each chunk commit and after prefix capture catches up the
-drafter. The GPU jobs must compare these bytes and served token/logprob bits,
+drafter. Byte comparisons must mask unread cells and padding: physical
+snapshots are not canonical across slot histories. In particular, exclude
+ring cells outside the live window, unused compressor-tail rows and the six
+unread DSpark history cells described above. Compare every cell a continuation
+can read, together with served token/logprob bits,
 then measure cold TTFT with capture instrumentation disabled. CPU dependency
 and fake-host tests establish scheduling and address invariants only.

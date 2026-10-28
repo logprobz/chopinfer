@@ -58,7 +58,11 @@ rows. An anchor costs 53 pages (2.88 MiB) per rank for AR or 125 pages
 On 2026-10-27, TP4 shared-document and multi-turn comparisons measured a
 cached-prompt-token rate of 66.46%, against 66.35% for the full schedule and
 35.56% for the previous upper-skip schedule. Matched-hit TTFT fell 72.2% for
-AR and 72.3% for DSpark against that previous schedule. Cold unaligned
+AR and 72.3% for DSpark against that previous schedule. The anchors and
+grid-only arms still published response-end anchors; the full-prefill arm
+did not. Those anchors are no longer published, so the measured matched-hit
+TTFT gain over full prefill may be overstated. No corrected measurement is
+available. Cold unaligned
 prompts cost an additional 39.8 ms for AR (941 to 981 ms) and 29.3 ms for
 DSpark (966 to 996 ms). The separate full-prefill and 2048-token profiles
 were removed after this comparison. `prefill_upper_skip` and

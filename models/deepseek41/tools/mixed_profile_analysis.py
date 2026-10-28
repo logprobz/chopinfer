@@ -134,6 +134,27 @@ def cohort_readiness(progress, count, outputs, minimum_remaining=64):
             "required_remaining_tokens": minimum_remaining, "decoders": count}
 
 
+def bounded_profile_steps(steps, count, profile):
+    """Select one exact mixed step and two complete controls on either side.
+
+    A third trailing control supplies a capture guard. Never substitute a
+    smaller cohort, a split prefill, or a different DSpark verify-item count.
+    """
+    if profile not in ("tp4-ar", "tp4-dspark") or count < 1:
+        raise ValueError("invalid profile or concurrency")
+    key = "decode_rows" if profile == "tp4-ar" else "verify_items"
+    mixed = [s for s in steps if s["prefill_tokens"] == 512]
+    if len(mixed) != 1 or mixed[0].get(key, 0) != count:
+        raise ValueError("expected exactly one 512-row mixed step at full concurrency")
+    target = mixed[0]
+    controls = [s for s in steps if s["prefill_tokens"] == 0 and s.get(key, 0) == count]
+    before = [s for s in controls if s["batch"] < target["batch"]]
+    after = [s for s in controls if s["batch"] > target["batch"]]
+    if len(before) < 2 or len(after) < 3:
+        raise ValueError("missing full-concurrency controls or trailing capture guard")
+    return before[-2:] + [target] + after[:2]
+
+
 def moe_payload(rows, distinct_experts=None):
     """TP4 Flash's logical selected weight footprint and arithmetic, per layer.
 

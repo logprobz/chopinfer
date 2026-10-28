@@ -5,10 +5,22 @@ import struct
 import sqlite3
 import tempfile
 
-from mixed_profile_analysis import analyze, clock_epoch, cohort_readiness, exclusive, expert_census, family, moe_payload, phase_widths
+from mixed_profile_analysis import analyze, bounded_profile_steps, clock_epoch, cohort_readiness, exclusive, expert_census, family, moe_payload, phase_widths
 
 
 class MixedProfileTest(unittest.TestCase):
+    def test_bounded_capture_requires_full_controls_and_exact_mixed_width(self):
+        for profile, key in (("tp4-ar", "decode_rows"), ("tp4-dspark", "verify_items")):
+            steps = [dict(batch=i, prefill_tokens=512 if i == 3 else 0, **{key: 16})
+                     for i in range(7)]
+            self.assertEqual([s["batch"] for s in bounded_profile_steps(steps, 16, profile)],
+                             [1, 2, 3, 4, 5])
+            for broken in (steps[:-1], steps[2:], steps + [steps[3]],
+                           [dict(s, **{key: 15}) if s["batch"] == 3 else s for s in steps],
+                           [dict(s, prefill_tokens=256) if s["batch"] == 3 else s for s in steps]):
+                with self.assertRaises(ValueError):
+                    bounded_profile_steps(broken, 16, profile)
+
     def test_short_cohorts_cannot_pass_readiness_after_one_decoder_drains(self):
         progress = [{"emitted": 1, "finished": False} for _ in range(8)]
         progress[0] = {"emitted": 32, "finished": True}

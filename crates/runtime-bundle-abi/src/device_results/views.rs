@@ -2,7 +2,6 @@
 use crate::{
     BundleAbiError, BundleContextHandleV1, BundleDeviceBufferViewV1, BundleEventHandleV1,
     BundleLogitsViewV1, BundleStatusV1, validate_device_buffer_view_v1,
-    validate_execute_logits_view_v1,
 };
 
 pub const DEVICE_RESULTS_CAPABILITY_V1: &str = "chop.device-results.v1";
@@ -138,6 +137,10 @@ pub struct BundleReadyLogitsViewV1 {
 
 impl BundleReadyLogitsViewV1 {
     pub fn validate(self) -> Result<(), BundleAbiError> {
+        self.validate_source_rows(64)
+    }
+
+    pub(super) fn validate_source_rows(self, maximum_rows: u32) -> Result<(), BundleAbiError> {
         if self.struct_size != std::mem::size_of::<Self>() as u32
             || self.flags != 0
             || self.cycle_epoch == 0
@@ -145,7 +148,7 @@ impl BundleReadyLogitsViewV1 {
         {
             return Err(BundleAbiError::Status(BundleStatusV1::InvalidArgument));
         }
-        validate_execute_logits_view_v1(self.logits)
+        crate::validate_execute_logits_view_rows_v1(self.logits, maximum_rows)
     }
 }
 

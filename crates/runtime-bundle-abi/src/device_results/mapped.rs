@@ -27,7 +27,10 @@ pub struct BundleMappedDeviceSamplingRequestV1 {
 
 impl BundleMappedDeviceSamplingRequestV1 {
     pub fn validate(self) -> Result<(), BundleAbiError> {
-        self.source.validate()?;
+        // Logical sampling chunks may index a wider computed source. Its
+        // complete byte span and overflow checks still apply; the host
+        // bounds the source by the active cycle before splitting chunks.
+        self.source.validate_source_rows(u32::MAX)?;
         crate::validate_device_buffer_view_v1(self.row_indices)?;
         crate::validate_device_buffer_view_v1(self.output)?;
         if self.struct_size < size_of::<Self>() as u32
@@ -181,6 +184,27 @@ mod tests {
             done: BundleEventHandleV1::from_parts(2, 1),
         }
     }
+    #[test]
+    fn mapped_sources_cover_wide_computed_rows_without_widening_ordinary_views() {
+        for rows in [65, 192] {
+            let mut mapped = request();
+            mapped.source.logits.row_count = rows;
+            mapped.source.logits.buffer.length = u64::from(rows) * 16;
+            // A logical sampling chunk can select from the entire computed source.
+            mapped.validate().unwrap();
+            assert!(mapped.source.validate().is_err());
+            let mut short = mapped;
+            short.source.logits.buffer.length -= 1;
+            assert!(short.validate().is_err());
+            let mut overflow = mapped;
+            overflow.source.logits.row_stride_elements = u64::MAX;
+            assert!(overflow.validate().is_err());
+            let mut unready = mapped;
+            unready.source.cycle_epoch = 0;
+            assert!(unready.validate().is_err());
+        }
+    }
+
     #[test]
     fn mapped_input_bounds_physical_and_logical_rows_separately() {
         let valid = request();

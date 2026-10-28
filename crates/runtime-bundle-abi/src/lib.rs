@@ -3008,6 +3008,13 @@ pub fn validate_cluster_residency_v1(
 
 /// Validates one ordered device view before the host resolves its buffer.
 pub fn validate_execute_logits_view_v1(view: BundleLogitsViewV1) -> Result<(), BundleAbiError> {
+    validate_execute_logits_view_rows_v1(view, 64)
+}
+
+pub(crate) fn validate_execute_logits_view_rows_v1(
+    view: BundleLogitsViewV1,
+    maximum_rows: u32,
+) -> Result<(), BundleAbiError> {
     validate_struct_size(
         "device logits view",
         view.struct_size,
@@ -3023,7 +3030,7 @@ pub fn validate_execute_logits_view_v1(view: BundleLogitsViewV1) -> Result<(), B
         _ => return Err(BundleAbiError::InvalidLogitsView),
     };
     if view.row_count == 0
-        || view.row_count > 64
+        || view.row_count > maximum_rows
         || view.live_width == 0
         || view.live_width > 1 << 20
         || view.row_stride_elements < u64::from(view.live_width)

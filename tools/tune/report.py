@@ -35,6 +35,8 @@ import statistics
 import sys
 from pathlib import Path
 
+import prefill_report
+
 
 def load(run, allow_void=False):
     run = Path(run)
@@ -47,7 +49,12 @@ def load(run, allow_void=False):
         for path in sorted(directory.glob('*.json')):
             record = json.loads(path.read_text())
             record.pop('exact', None)
-            record.pop('steps', None)
+            steps = record.pop('steps', [])
+            if config['model'].get('prefill_rows'):
+                fields = ('prefill_items', 'prefill_tokens', 'decode_rows', 'verify_items', 'execution_us')
+                record['prefill_steps'] = [{key: step.get(key, 0) for key in fields}
+                                           for step in steps if step.get('prefill_items')]
+            del steps
             rows.append({**record, 'label': directory.parent.name})
     return config, rows
 
@@ -575,7 +582,9 @@ def validate_cell_weights(model):
         decode = re.fullmatch(r'decode(?:_step)?:c([1-9]\d*)', key)
         verify = re.fullmatch(r'verify:r([1-9]\d*)', key)
         shape = re.fullmatch(r'c([1-9]\d*)/i([1-9]\d*)-r([1-9]\d*)', key)
-        valid = (decode and int(decode[1]) in concurrencies) or verify or (
+        prefill = re.fullmatch(r'prefill:c([1-9]\d*):r([1-9]\d*)', key)
+        valid = (prefill and int(prefill[1]) in concurrencies
+                 and int(prefill[2]) in model.get('prefill_rows', {}).get(prefill[1], [])) or (decode and int(decode[1]) in concurrencies) or verify or (
             shape and int(shape[1]) in concurrencies and shape[1] == shape[2])
         if not valid or type(weight) not in (int, float) or not math.isfinite(weight) or weight < 0:
             raise ValueError(f'invalid served cell weight: {key}')
@@ -747,6 +756,8 @@ def ab(run):
                 result['cells'] = decision_cells(model, selected, c, change)
                 current = {f'decode:c{c}': result}
                 current.update({f'c{c}/{shape}': cell for shape, cell in result['cells'].items()})
+                result['prefill_cells'] = prefill_report.decision_cells(model, selected, c, change, paired)
+                current.update(result['prefill_cells'])
                 for name, cell in current.items():
                     aliases = [name]
                     if name == f'c{c}/i{c}-r{c}':

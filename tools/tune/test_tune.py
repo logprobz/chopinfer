@@ -11,6 +11,7 @@ import calibrate  # noqa: E402
 import prompts  # noqa: E402
 import recorded  # noqa: E402
 import report  # noqa: E402
+import prefill_report  # noqa: E402
 import stage  # noqa: E402
 import tune  # noqa: E402
 
@@ -1992,6 +1993,72 @@ class Calibration(unittest.TestCase):
             (root / 'run' / 'config.json').write_text(json.dumps({'kinds': {'sampled': 1.0}}))
             self.assertEqual(calibrate.main(['--sampled', str(root / 'run'), '--positions', '2',
                                              '--min-samples', '50', '--out', str(root / 'd.json')]), 0)
+
+
+def prefill_fixture(root, gain=.1, control_regression=False):
+    ab_fixture(root, concurrencies=[1], change='table_row',
+               prefill_rows={'1': [192, 256]}, target_cells=['prefill:c1:r192'])
+    for path in root.glob('*/windows/*.json'):
+        row = json.loads(path.read_text())
+        row['steps'] = []
+        for width in (192, 256):
+            micros = 100000
+            if row['arm'] == 'b':
+                micros *= 1 - gain if width == 192 else 1.1 if control_regression else 1
+            row['steps'].extend(dict(prefill_items=1, prefill_tokens=width,
+                                     decode_rows=0, verify_items=0, execution_us=micros)
+                                for _ in range(20))
+        path.write_text(json.dumps(row))
+
+
+class PrefillReport(unittest.TestCase):
+    def test_synthetic_prefill_cells_never_qualify_timing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prefill_fixture(root)
+            config, rows = report.load(root)
+            rows.sort(key=lambda row: row['visit'])
+            for row in rows:
+                row['synthetic'] = True
+            cells = prefill_report.decision_cells(config['model'], rows, 1, 'table_row', report.paired)
+            self.assertTrue(all(cell['mechanics_only'] for cell in cells.values()))
+            self.assertFalse(any(cell['accepted'] for cell in cells.values()))
+
+    def test_affected_prefill_bucket_can_be_the_declared_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prefill_fixture(root)
+            result = report.ab(root)
+            self.assertTrue(result['weighted']['a/b']['timing_accepted'])
+            cell = result['pairs']['a/b']['1']['prefill_cells']['prefill:c1:r192']
+            self.assertEqual(cell['steps'], [20] * 4)
+            self.assertEqual(cell['execution_ms_median'], [100, 90, 90, 100])
+
+    def test_control_regression_and_subthreshold_gain_prevent_adoption(self):
+        for gain, regression in ((.1, True), (.01, False)):
+            with self.subTest(gain=gain, regression=regression), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                prefill_fixture(root, gain, regression)
+                self.assertFalse(report.ab(root)['weighted']['a/b']['timing_accepted'])
+
+    def test_missing_or_mixed_prefill_cannot_supply_required_coverage(self):
+        for mutation in ('missing', 'mixed', 'invalid'):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                prefill_fixture(root)
+                path = next(root.glob('*/windows/*.json'))
+                row = json.loads(path.read_text())
+                if mutation == 'missing':
+                    row['steps'] = [s for s in row['steps'] if s['prefill_tokens'] != 256]
+                elif mutation == 'mixed':
+                    for step in row['steps']:
+                        step['verify_items'] = 1
+                else:
+                    row['steps'][0]['execution_us'] = 0
+                path.write_text(json.dumps(row))
+                with self.assertRaises(ValueError):
+                    report.ab(root)
+
 
 
 if __name__ == '__main__':

@@ -369,6 +369,16 @@ with an in-job A/A help locate work to improve.
 - Report each cell and weight cells by served shapes: decode C1, C2, C4,
   C8, C16 and C32, and DSpark verify widths 6, 8, 16, 32 and 64.
 
+For a prefill route, declare `prefill_rows` by concurrency in the tuner
+model, for example `{"1": [192, 256]}`, and name the affected target as
+`prefill:c1:r192` in `target_cells`. These cells use complete step execution
+times, with exactly the declared prefill item and token counts and no
+decode or verify work in the step. Every declared width, including a
+control, must have sufficient samples in all four visits. They use the
+same minimum sample/time-share policy, paired spread, regression veto and
+1.5% table-row threshold as other cells. Synthetic dry runs never qualify
+prefill timing. Mixed steps need a separate declared measurement protocol.
+
 Report full-graph step times and paired served rates. In the formulas below,
 A1, B1, B2 and A2 are higher-is-better rates; use inverse step time when
 judging a step-time reduction. For each cell, compute:

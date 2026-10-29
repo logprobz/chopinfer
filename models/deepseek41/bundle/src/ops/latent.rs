@@ -555,7 +555,7 @@ pub(crate) struct CompressedViews {
 }
 
 /// One eager prefill's bounded physical-page span.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CacheRange {
     pub offset: u32,
     pub first_page: u32,

@@ -8,6 +8,7 @@ use crate::lower::Lowering;
 use crate::ops::Lowered;
 use crate::program::{Phase, Stage, Sublayer};
 use bundle_runtime::pipeline::PreparedLaunch;
+use bundle_runtime::template::{self, Patch, Site};
 use bundle_runtime::upload::DeviceInputs;
 use model_deepseek41_contract::prefill_cone::{self, Item};
 use model_deepseek41_contract::serving::PREFILL_TOKENS;
@@ -20,16 +21,151 @@ mod dma;
 #[cfg(test)]
 pub(crate) use dma::with_enabled as with_dma;
 
+#[cfg(test)]
+thread_local! { static PATCHES: std::cell::Cell<bool> = const { std::cell::Cell::new(true) }; }
+
+/// Runs `run` with every template reused as kept, its index selections not
+/// lowered again, so a test can show the verify mode refuses it.
+#[cfg(test)]
+pub(crate) fn without_patches<T>(run: impl FnOnce() -> T) -> T {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            PATCHES.set(self.0);
+        }
+    }
+    let _reset = Reset(PATCHES.replace(false));
+    run()
+}
+
 pub(super) struct Plan {
     /// Each rank's copies before the step writes its slots: the anchor
     /// spares' seeds (`seeds`).
     seeds: Vec<Vec<Copy>>,
     body: Programs,
+    /// The body's index selections, the only launches that read the
+    /// positions: a kept template lowers them again (`patch`).
+    sites: Vec<Site<Selection>>,
     dma: Option<dma::Plan>,
     head: Programs,
     copies: Vec<Vec<Copy>>,
     /// The (request, tokens) each anchor item keeps in its spare.
     kept: Vec<(u64, u64)>,
+}
+
+/// An index selection of the body: its layer, and the packed rows of the
+/// part whose lowering issued it, none for the full-width layers below the
+/// cone. Its batches and their widths follow the positions of those rows.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct Selection {
+    layer: u32,
+    part: Option<Range<u32>>,
+}
+
+/// What an upper-skip lowering reads of its run besides its positions: the
+/// items, the anchors, the cone with its scored rows and, with DSpark, each
+/// item's retained feature rows. The positions reach only the index
+/// selections (`Selection`).
+pub(super) struct Layout {
+    items: Vec<Item>,
+    anchors: Vec<super::anchors::Anchor>,
+    cone: prefill_cone::Plan,
+    features: Vec<PrefillFeatureRange>,
+}
+
+impl Layout {
+    pub(super) fn of(instance: &Instance, run: &Run) -> Result<Self, String> {
+        let g = instance.config.shape.geometry;
+        let inputs = &run.inputs;
+        let items: Vec<_> = inputs
+            .q_start
+            .iter()
+            .zip(&inputs.q_len)
+            .zip(&inputs.prefix_len)
+            .map(|((&start, &len), &prefix)| Item {
+                rows: start as u32..(start + len) as u32,
+                prefix: prefix as u32,
+            })
+            .collect();
+        let logits = inputs.logit_rows();
+        let anchors = super::anchors::anchors(inputs, instance.anchor_spare_count())?;
+        let mut ends = vec![None; if anchors.is_empty() { 0 } else { items.len() }];
+        for anchor in &anchors {
+            ends[anchor.item] = Some(anchor.tokens);
+        }
+        let cone = prefill_cone::Plan::with_anchors(
+            g,
+            &items,
+            &ends,
+            &logits,
+            instance.dspark.is_some(),
+            64,
+        )?;
+        let features: Vec<_> = if instance.dspark.is_some() {
+            items
+                .iter()
+                .zip(&cone.endpoints)
+                .enumerate()
+                .map(|(index, (item, &end))| {
+                    let rows = item.rows.end - item.rows.start;
+                    let window = g.shape.attention.window;
+                    let mut keep = rows - prefill_cone::feature_offset(item.prefix, rows, window);
+                    // An anchor item also packs the raw rows a chunk ending at
+                    // its anchor retains, for the anchor's history spare.
+                    if let Some(&Some(anchor)) = ends.get(index) {
+                        let first = prefill_cone::anchor_feature_start(item.prefix, anchor, window);
+                        keep = keep.max(end - first);
+                    }
+                    PrefillFeatureRange {
+                        packed_start: item.rows.end - keep,
+                        rows: keep,
+                        position: u64::from(end - keep),
+                        end: u64::from(end),
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Ok(Self {
+            items,
+            anchors,
+            cone,
+            features,
+        })
+    }
+
+    /// The part of the layout a plan's launches other than its index
+    /// selections depend on: the items' packed rows, the cone and the
+    /// retained feature rows, without the absolute endpoints and feature
+    /// positions, which lowering only checks against each other. `None`
+    /// when the plan keeps anchors, whose spare seeds follow the items'
+    /// slots.
+    pub(super) fn structure(&self) -> Option<Structure> {
+        if !self.anchors.is_empty() {
+            return None;
+        }
+        Some(Structure {
+            items: self.items.iter().map(|item| item.rows.clone()).collect(),
+            cone: prefill_cone::Plan {
+                endpoints: Vec::new(),
+                ..self.cone.clone()
+            },
+            features: self
+                .features
+                .iter()
+                .map(|feature| (feature.packed_start, feature.rows))
+                .collect(),
+        })
+    }
+}
+
+/// `Layout::structure`.
+#[derive(Debug, Eq, PartialEq)]
+pub(super) struct Structure {
+    items: Vec<Range<u32>>,
+    cone: prefill_cone::Plan,
+    features: Vec<(u32, u32)>,
 }
 
 fn byte_range(span: Span, first: u64, bytes: u64) -> Result<Span, String> {
@@ -124,32 +260,14 @@ fn lowering<'a>(
 
 impl Plan {
     pub(super) fn prepare(instance: &Instance, run: &Run) -> Result<Self, String> {
+        Self::lower(instance, run, &Layout::of(instance, run)?)
+    }
+
+    /// The plan of `run`, whose layout is `layout`.
+    pub(super) fn lower(instance: &Instance, run: &Run, layout: &Layout) -> Result<Self, String> {
         let g = instance.config.shape.geometry;
         let inputs = &run.inputs;
-        let items: Vec<_> = inputs
-            .q_start
-            .iter()
-            .zip(&inputs.q_len)
-            .zip(&inputs.prefix_len)
-            .map(|((&start, &len), &prefix)| Item {
-                rows: start as u32..(start + len) as u32,
-                prefix: prefix as u32,
-            })
-            .collect();
-        let logits = inputs.logit_rows();
-        let anchors = super::anchors::anchors(inputs, instance.anchor_spare_count())?;
-        let mut ends = vec![None; if anchors.is_empty() { 0 } else { items.len() }];
-        for anchor in &anchors {
-            ends[anchor.item] = Some(anchor.tokens);
-        }
-        let cone = prefill_cone::Plan::with_anchors(
-            g,
-            &items,
-            &ends,
-            &logits,
-            instance.dspark.is_some(),
-            64,
-        )?;
+        let (anchors, cone, features) = (&layout.anchors, &layout.cone, &layout.features);
         let cells = super::anchors::ring_cells(g);
         let ring_buffer = instance
             .state
@@ -157,35 +275,10 @@ impl Plan {
             .iter()
             .position(|buffer| buffer.name == "window.ring")
             .ok_or("the request state has no window rings")?;
-        let features: Vec<_> = if instance.dspark.is_some() {
-            items
-                .iter()
-                .zip(&cone.endpoints)
-                .enumerate()
-                .map(|(index, (item, &end))| {
-                    let rows = item.rows.end - item.rows.start;
-                    let window = g.shape.attention.window;
-                    let mut keep = rows - prefill_cone::feature_offset(item.prefix, rows, window);
-                    // An anchor item also packs the raw rows a chunk ending at
-                    // its anchor retains, for the anchor's history spare.
-                    if let Some(&Some(anchor)) = ends.get(index) {
-                        let first = prefill_cone::anchor_feature_start(item.prefix, anchor, window);
-                        keep = keep.max(end - first);
-                    }
-                    PrefillFeatureRange {
-                        packed_start: item.rows.end - keep,
-                        rows: keep,
-                        position: u64::from(end - keep),
-                        end: u64::from(end),
-                    }
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
         let full_stages = crate::program::stages(g, run.phase);
         let mut seeds = Vec::new();
         let mut body = (Vec::new(), Vec::new(), Vec::new());
+        let mut sites = Vec::new();
         let mut head = (Vec::new(), Vec::new(), Vec::new());
         let mut copies = Vec::new();
         for (rank, buffers) in instance.buffers.iter().enumerate() {
@@ -200,7 +293,7 @@ impl Plan {
                     .iter()
                     .map(|&(_, span)| span)
                     .collect();
-                for anchor in &anchors {
+                for anchor in anchors {
                     let slot = u32::try_from(inputs.slot_ids[anchor.item])
                         .map_err(|_| "an anchor item has no state slot")?;
                     rank_seeds.extend(super::anchors::seed_copies(
@@ -224,7 +317,7 @@ impl Plan {
                                  layer: u32,
                                  part: &Range<u32>|
              -> Result<(), String> {
-                for anchor in &anchors {
+                for anchor in anchors {
                     let ring = anchor.ring_rows(cells);
                     let rows = ring.start.max(part.start)..ring.end.min(part.end);
                     if rows.is_empty() {
@@ -286,7 +379,16 @@ impl Plan {
                         run.cache,
                     )?,
                 };
+                let at = program.0.len();
                 push(&mut program, stage, required(ops, stage)?);
+                if let Stage::IndexSelect(layer) = stage {
+                    sites.push(Site {
+                        rank,
+                        at,
+                        len: program.0.len() - at,
+                        input: Selection { layer, part: None },
+                    });
+                }
                 if let Stage::WindowRingWrite(layer) = stage {
                     anchor_writes(&mut program, &base, layer, &(0..cone.rows))?;
                 }
@@ -380,6 +482,7 @@ impl Plan {
                         {
                             continue;
                         }
+                        let at = program.0.len();
                         push(
                             &mut program,
                             stage,
@@ -393,10 +496,21 @@ impl Plan {
                                 stage,
                             )?,
                         );
+                        if let Stage::IndexSelect(layer) = stage {
+                            sites.push(Site {
+                                rank,
+                                at,
+                                len: program.0.len() - at,
+                                input: Selection {
+                                    layer,
+                                    part: Some(range.clone()),
+                                },
+                            });
+                        }
                     }
                 }
             }
-            for &feature in &features {
+            for &feature in features {
                 let counts = instance
                     .dspark
                     .as_ref()
@@ -466,6 +580,7 @@ impl Plan {
         Ok(Self {
             seeds,
             body,
+            sites,
             dma,
             head,
             copies,
@@ -476,10 +591,14 @@ impl Plan {
         })
     }
 
-    /// Whether `other` issues the same launches, copies and head.
+    /// Whether `other` issues the same launches, transport, copies and head.
     pub(super) fn same(&self, other: &Self) -> Result<bool, String> {
-        Ok(self.dma.is_none()
-            && other.dma.is_none()
+        let dma = match (&self.dma, &other.dma) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.same(b)?,
+            _ => false,
+        };
+        Ok(dma
             && self.seeds == other.seeds
             && self.kept == other.kept
             && self.copies == other.copies
@@ -487,12 +606,89 @@ impl Plan {
             && super::plan_cache::same_programs(&self.head, &other.head)?)
     }
 
+    /// Whether this plan may be kept as a template: its sites hold, and
+    /// none lies among the launches its DMA reads or replaces, so a patch
+    /// leaves the DMA as a fresh lowering would plan it.
+    pub(super) fn templatable(&self) -> bool {
+        template::check_sites(&self.body.0, &self.body.1, &self.sites).is_ok()
+            && self.dma.as_ref().is_none_or(|dma| {
+                self.sites.iter().all(|site| {
+                    dma.reads(site.rank)
+                        .iter()
+                        .all(|read| site.at + site.len <= read.start || read.end <= site.at)
+                })
+            })
+    }
+
+    /// Lowers the body's index selections again from `run`'s positions, as
+    /// `lower` does; `run` has this plan's layout structure.
+    pub(super) fn patch(&mut self, instance: &Instance, run: &Run) -> Result<Patch, String> {
+        #[cfg(test)]
+        if !PATCHES.get() {
+            return Ok(Patch::Applied);
+        }
+        let positions = &run.inputs.positions;
+        let patched = template::patch(&mut self.body.0, &self.body.1, &self.sites, |site| {
+            let stage = Stage::IndexSelect(site.input.layer);
+            let full = DeviceInputs::within(instance.arenas[PREFILL][site.rank], &run.layout);
+            let lowered = match &site.input.part {
+                None => lowering(instance, run, site.rank, &full, None)
+                    .stage_with_prefill_context(run.phase, stage, positions, run.cache)?,
+                Some(range) => {
+                    let input = part(instance, site.rank, full, range)?;
+                    let phase = Phase::Prefill {
+                        rows: range.end - range.start,
+                    };
+                    lowering(instance, run, site.rank, &input, Some(range.start))
+                        .stage_with_prefill_context(
+                            phase,
+                            stage,
+                            &positions[range.start as usize..range.end as usize],
+                            run.cache,
+                        )?
+                }
+            };
+            Ok::<_, String>(
+                required(lowered, stage)?
+                    .into_iter()
+                    .map(|op| (op.launch, op.collective))
+                    .collect(),
+            )
+        })?;
+        // A site holding a collective keeps the lowering's cross-rank check.
+        let collective = self
+            .sites
+            .iter()
+            .any(|site| self.body.1[site.rank][site.at..site.at + site.len].contains(&true));
+        if patched == Patch::Applied && collective {
+            bundle_runtime::pipeline::check_collectives(&self.body.0, &self.body.1)
+                .map_err(|e| format!("prefill body collectives: {e:?}"))?;
+        }
+        Ok(patched)
+    }
+
     pub(super) fn body(&self) -> &Programs {
         &self.body
     }
 
+    /// Each rank's body and head launches.
+    #[cfg(test)]
+    pub(super) fn launches(&self) -> Vec<usize> {
+        self.body
+            .0
+            .iter()
+            .zip(&self.head.0)
+            .map(|(body, head)| body.len() + head.len())
+            .collect()
+    }
+
     pub(super) fn uses_dma(&self) -> bool {
         self.dma.is_some()
+    }
+
+    /// Whether `run`'s body may take upper-skip DMA (`dma::applies`).
+    pub(super) fn dma_applies(instance: &Instance, run: &Run) -> bool {
+        dma::applies(instance, run)
     }
 
     pub(super) fn prepare_engram(

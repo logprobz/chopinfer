@@ -13,19 +13,22 @@
 //! tags and Engram rows reach the kernels through the per-step uploads and
 //! are never part of a plan.
 //!
-//! `prefill_plan_cache_verify` lowers every hit again and refuses the step
-//! if the fresh plan differs from the kept one. It defaults to false.
+//! A plan this cache does not keep may still be kept as a template by its
+//! structure, with its index selections lowered again each step
+//! (`plan_templates`, off by default).
+//!
+//! `prefill_plan_cache_verify` lowers every hit, and every reused template,
+//! again and refuses the step if the fresh plan differs from the kept one.
+//! It defaults to false.
 //!
 //! At most `prefill_plan_cache_plans` plans are kept (1 to 64, default 16).
 //! Keeping one more drops the least recently used. A dropped plan is
 //! lowered again on its next use, with the same launches, so the limit
 //! moves only host time and memory.
 
-use super::{PREFILL, Run, skip};
+use super::{PREFILL, Run, plan_templates, skip};
 use crate::instance::Instance;
 use crate::program::Phase;
-use bundle_runtime::dispatch::{arguments, launch_config};
-use bundle_runtime::pipeline::PreparedLaunch;
 use bundle_runtime::upload::InputLayout;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -64,6 +67,8 @@ pub(crate) struct Cache {
     hits: Cell<u64>,
     misses: Cell<u64>,
     evictions: Cell<u64>,
+    /// The candidate's templates of the plans this cache does not keep.
+    templates: Option<plan_templates::Templates>,
 }
 
 impl Cache {
@@ -82,7 +87,16 @@ impl Cache {
             hits: Cell::new(0),
             misses: Cell::new(0),
             evictions: Cell::new(0),
+            templates: plan_templates::Templates::new(options.prefill_plan_templates),
         }
+    }
+
+    /// What the templates did, none without templates.
+    #[cfg(test)]
+    pub(super) fn template_counts(&self) -> Option<bundle_runtime::template::Counts> {
+        self.templates
+            .as_ref()
+            .map(plan_templates::Templates::counts)
     }
 
     /// Plans served from the cache and plans lowered for it.
@@ -115,6 +129,9 @@ impl Cache {
     pub(super) fn plan(&self, instance: &Instance, run: &Run) -> Result<Rc<skip::Plan>, String> {
         let key = key(run);
         let Some(key) = key else {
+            if let Some(templates) = &self.templates {
+                return templates.plan(instance, run, self.mode == Mode::Verify);
+            }
             return skip::Plan::prepare(instance, run).map(Rc::new);
         };
         let at = key.rows as usize - 1;
@@ -198,33 +215,12 @@ fn key(run: &Run) -> Option<Key> {
 }
 
 /// Whether two programs issue the same launches with the same arguments as
-/// the host resolves them, the same collectives and the same stages.
+/// the host resolves them, the same selected routes, the same collectives
+/// and the same stages.
 pub(super) fn same_programs(a: &super::Programs, b: &super::Programs) -> Result<bool, String> {
-    if a.1 != b.1 || a.2 != b.2 || a.0.len() != b.0.len() {
-        return Ok(false);
-    }
-    for (a, b) in a.0.iter().zip(&b.0) {
-        if a.len() != b.len() {
-            return Ok(false);
-        }
-        for (a, b) in a.iter().zip(b) {
-            if !same_launch(a, b)? {
-                return Ok(false);
-            }
-        }
-    }
-    Ok(true)
-}
-
-fn same_launch(a: &PreparedLaunch, b: &PreparedLaunch) -> Result<bool, String> {
-    let resolve = |launch: &PreparedLaunch| {
-        Ok::<_, String>((
-            launch_config(launch.plan).map_err(|e| format!("{}: {e:?}", launch.symbol))?,
-            arguments(&launch.arguments, &launch.bindings)
-                .map_err(|e| format!("{}: {e:?}", launch.symbol))?,
-        ))
-    };
-    Ok(a.symbol == b.symbol && a.rows == b.rows && a.plan == b.plan && resolve(a)? == resolve(b)?)
+    Ok(a.2 == b.2
+        && bundle_runtime::template::same_programs(&a.0, &a.1, &b.0, &b.1)
+            .map_err(|e| format!("{e:?}"))?)
 }
 
 /// The (hits, misses) of the instance `handle`.

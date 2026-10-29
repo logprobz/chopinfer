@@ -25,6 +25,19 @@ pub(in crate::instance::execute) struct Producers {
 }
 
 impl Producers {
+    /// Whether `other` issues the same producer slices.
+    pub(in crate::instance::execute) fn same(&self, other: &Self) -> Result<bool, String> {
+        if self.launches.len() != other.launches.len() {
+            return Ok(false);
+        }
+        for (a, b) in self.launches.iter().zip(&other.launches) {
+            if !super::same_launches(a, b)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     pub(super) fn audit_pending(
         &self,
         pending: &[runtime_bundle_abi::DeviceBufferSpanV1],

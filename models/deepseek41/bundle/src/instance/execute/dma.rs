@@ -71,7 +71,63 @@ pub(super) struct Call {
     footprint: Vec<DeviceBufferSpanV1>,
 }
 
+/// Whether two launch lists issue the same calls
+/// (`bundle_runtime::template::same_launch`).
+pub(in crate::instance::execute) fn same_launches(
+    a: &[PreparedLaunch],
+    b: &[PreparedLaunch],
+) -> Result<bool, String> {
+    if a.len() != b.len() {
+        return Ok(false);
+    }
+    for (a, b) in a.iter().zip(b) {
+        if !bundle_runtime::template::same_launch(a, b)
+            .map_err(|e| format!("{}: {e:?}", a.symbol))?
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 impl Call {
+    /// Whether `other` reduces the same rows with the same transfers,
+    /// roundings, sends and sums.
+    pub(super) fn same(&self, other: &Self) -> Result<bool, String> {
+        if (self.first, self.rows, self.embedding) != (other.first, other.rows, other.embedding)
+            || self.transport != other.transport
+            || self.footprint != other.footprint
+            || self.rounds.len() != other.rounds.len()
+            || self.sends.len() != other.sends.len()
+            || !same_launches(&self.sums, &other.sums)?
+        {
+            return Ok(false);
+        }
+        for (a, b) in self.rounds.iter().zip(&other.rounds) {
+            if !same_launches(a, b)? {
+                return Ok(false);
+            }
+        }
+        for (a, b) in self.sends.iter().zip(&other.sends) {
+            if a.len() != b.len() {
+                return Ok(false);
+            }
+            for (a, b) in a.iter().zip(b) {
+                let same = match (a, b) {
+                    (None, None) => true,
+                    (Some(a), Some(b)) => {
+                        same_launches(std::slice::from_ref(a), std::slice::from_ref(b))?
+                    }
+                    _ => false,
+                };
+                if !same {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+
     /// Include all streams' transfer spans and generated arithmetic. The
     /// original program audit alone cannot see these owner-local launches.
     pub(in crate::instance::execute) fn audit_pending(

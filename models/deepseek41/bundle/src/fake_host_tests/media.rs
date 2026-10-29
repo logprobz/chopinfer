@@ -68,6 +68,7 @@ impl MediaHost {
             memory: RefCell::new(Memory::default()),
             layouts: RefCell::new(std::collections::BTreeMap::new()),
             pull_only: Cell::new(false),
+            fail_upload: Default::default(),
         };
         Rc::new(Backend::new(MediaHost {
             host,

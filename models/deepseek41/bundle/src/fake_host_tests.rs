@@ -46,6 +46,7 @@ mod prefill_dma;
 mod prefill_gate_journal;
 mod prefill_matrix;
 mod prefill_plan_cache;
+mod prefill_plan_templates;
 mod prefill_reduce;
 #[cfg(feature = "diagnostic-taps")]
 mod prefill_selected;
@@ -414,6 +415,8 @@ pub(crate) struct FakeHost {
     /// Refuse a peer copy on the source's stream, as a host from before
     /// pushes does.
     pub pull_only: Cell<bool>,
+    /// Fail an upload, after its journal record, once this many more pass.
+    pub fail_upload: bundle_runtime::fake_host::Countdown,
 }
 
 pub(crate) type Host = Backend<FakeHost>;
@@ -638,6 +641,7 @@ impl FakeHost {
             memory: RefCell::new(Memory::default()),
             layouts: RefCell::new(BTreeMap::new()),
             pull_only: Cell::new(false),
+            fail_upload: Default::default(),
         }))
     }
 
@@ -759,6 +763,9 @@ impl FakePackage for FakeHost {
         destination: DeviceBufferSpanV1,
         source: &[u8],
     ) -> HostServiceResultV1<()> {
+        if self.fail_upload.fails() {
+            return Err(BundleStatusV1::HostError);
+        }
         let mut uploads = self.uploads.borrow_mut();
         let bytes = uploads
             .entry((destination.buffer.raw, destination.offset))

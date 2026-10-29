@@ -115,9 +115,54 @@ struct Block {
 pub(super) struct Plan {
     blocks: Vec<Block>,
     tail: Vec<Range<usize>>,
+    /// Each rank's body launches the plan read to prepare its calls: each
+    /// call's producer through its consumers. The launches it replaces lie
+    /// among them.
+    reads: Vec<Vec<Range<usize>>>,
+}
+
+impl Block {
+    fn same(&self, other: &Self) -> Result<bool, String> {
+        let consume = match (&self.consume, &other.consume) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.same(b)?,
+            _ => false,
+        };
+        let produce = match (&self.produce, &other.produce) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.same(b)?,
+            _ => false,
+        };
+        Ok(self.compute == other.compute
+            && consume
+            && produce
+            && self.reduce.same(&other.reduce)?)
+    }
 }
 
 impl Plan {
+    /// Whether `other` issues the same compute spans, calls and owner-local
+    /// launches.
+    pub(super) fn same(&self, other: &Self) -> Result<bool, String> {
+        if self.tail != other.tail
+            || self.reads != other.reads
+            || self.blocks.len() != other.blocks.len()
+        {
+            return Ok(false);
+        }
+        for (a, b) in self.blocks.iter().zip(&other.blocks) {
+            if !a.same(b)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Rank `rank`'s body launches this plan read (`reads`).
+    pub(super) fn reads(&self, rank: usize) -> &[Range<usize>] {
+        self.reads.get(rank).map_or(&[], Vec::as_slice)
+    }
+
     pub(super) fn prepare_engram(
         &self,
         plan: &mut crate::instance::prefill_engram::Plan,
@@ -146,13 +191,7 @@ impl Plan {
         run: &Run,
         body: &Programs,
     ) -> Result<Option<Self>, String> {
-        if !crate::instance::execute::dma::eligible(instance, run)
-            || instance.config.kv.storage != KvStorage::Native
-        {
-            return Ok(None);
-        }
-        #[cfg(test)]
-        if !ENABLED.get() {
+        if !applies(instance, run) {
             return Ok(None);
         }
         if body.0.len() != 4 || body.1.len() != 4 || body.2.len() != 4 {
@@ -166,6 +205,7 @@ impl Plan {
         }
         let mut cursors = [0; 4];
         let mut blocks = Vec::new();
+        let mut reads = vec![Vec::new(); 4];
         for (index, reference) in ranks[0].iter().enumerate() {
             if ranks.iter().any(|rank| {
                 let r = &rank[index];
@@ -187,6 +227,13 @@ impl Plan {
             else {
                 continue;
             };
+            for (rank, read) in reads.iter_mut().enumerate() {
+                let r = &ranks[rank][index];
+                read.push(
+                    r.collective.saturating_sub(1)
+                        ..(r.end + Consumers::LAUNCHES).min(body.0[rank].len()),
+                );
+            }
             let following = (0..4)
                 .map(|rank| &body.0[rank][ranks[rank][index].end..])
                 .collect::<Vec<_>>();
@@ -237,7 +284,11 @@ impl Plan {
         if blocks.is_empty() {
             return Ok(None);
         }
-        Ok(Some(Self { blocks, tail }))
+        Ok(Some(Self {
+            blocks,
+            tail,
+            reads,
+        }))
     }
 
     pub(super) fn execute(
@@ -300,6 +351,17 @@ impl Plan {
         }
         result.map_err(|error| instance.dispatch_failed(error))
     }
+}
+
+/// Whether `run`'s body may take upper-skip DMA; it does when its
+/// reductions admit any call.
+pub(super) fn applies(instance: &Instance, run: &Run) -> bool {
+    #[cfg(test)]
+    if !ENABLED.get() {
+        return false;
+    }
+    crate::instance::execute::dma::eligible(instance, run)
+        && instance.config.kv.storage == KvStorage::Native
 }
 
 #[cfg(test)]

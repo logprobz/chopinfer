@@ -34,6 +34,24 @@ pub(super) fn overlaps(a: DeviceBufferSpanV1, b: DeviceBufferSpanV1) -> bool {
 }
 
 impl Consumers {
+    /// Whether `other` issues the same chains over the same owners.
+    pub(in crate::instance::execute) fn same(&self, other: &Self) -> Result<bool, String> {
+        if self.launches.len() != other.launches.len() {
+            return Ok(false);
+        }
+        for (a, b) in self.launches.iter().zip(&other.launches) {
+            if a.len() != b.len() {
+                return Ok(false);
+            }
+            for (a, b) in a.iter().zip(b) {
+                if !super::same_launches(a, b)? {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+
     pub(super) fn audit_pending(&self, pending: &[DeviceBufferSpanV1]) -> Result<(), String> {
         for owners in &self.launches {
             for chain in owners {

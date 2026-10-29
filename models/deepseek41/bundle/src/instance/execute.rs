@@ -44,6 +44,9 @@ mod graph_key_tests;
 #[path = "indexer_workload_tests.rs"]
 mod indexer_workload_tests;
 pub(crate) mod plan_cache;
+pub(crate) mod plan_templates;
+#[cfg(test)]
+pub(crate) mod plan_timing;
 pub(crate) mod skip;
 
 /// Phase-arena indexes (`Instance::arenas`).

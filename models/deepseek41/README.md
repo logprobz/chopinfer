@@ -178,7 +178,8 @@ them. A non-default value is unqualified.
 | `prefill_anchor_items` | `0` | Cold whole-prompt upper-skip items of at least 357 rows per step that keep their rounded prompt end in anchor spares instead of ending a chunk there, from 0 to 8; TP4 upper-skip AR and DSpark only. Other rank counts advertise no grid allowance. The instance offers them on its guaranteed grid through the optional prefill anchors export. Measurement prototype. |
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
-| `prefill_plan_cache_verify` | `false` | Lower each cache hit again and refuse a differing plan. |
+| `prefill_plan_cache_verify` | `false` | Lower each cache hit and each reused plan template again and refuse a differing plan. |
+| `prefill_plan_templates` | `0` | Candidate switch: upper-skip plans the short-prompt cache does not keep (no anchors, media rows or position axes), kept as templates by everything their lowering reads but the positions, at most this many at once, from 0 to 64. A later step of the same structure lowers only its index selections again from its positions. 0 lowers every such plan in full. Unqualified. |
 | `prefill_upper_skip` | `true` | Use upper-skip prefill; requires nonzero guaranteed chunk ends. |
 | `shared_overlap_max_rows` | `4294967295` | Largest graph bucket that overlaps shared-expert and eligible window-KV work. Positive values only; the default covers every admitted bucket. |
 | `text_config.candidate_topk_blocks` | `2048` | Candidate block pool, checked with index top-k and the partial newest block. |

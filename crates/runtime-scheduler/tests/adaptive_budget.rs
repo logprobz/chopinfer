@@ -1,15 +1,17 @@
 //! Adaptive TBT caps (`SchedulerConfig::with_adaptive_prefill_budget`):
 //! under a prefill backlog, a step beside decoding requests takes the
 //! largest legal cap whose predicted time, with the step model's margin,
-//! keeps the target. A backlog that uncut
+//! keeps the target, and the backlog prefills the shortest remaining prompt
+//! first, an aged prompt first on every second step. A backlog that uncut
 //! chunks clear within `TRANSIENT_BACKLOG_MICROS` is served as without the
 //! switch. Grid requests with cuts take the cap as a timing cut; other
 //! requests take it as the step's prefill budget.
 
 use runtime_kv::KvGeometry;
 use runtime_scheduler::{
-    BatchOutcome, BatchPhase, MixedPolicy, PrefillBudget, PrefillEnd, RequestId, RequestSpec,
-    RequestState, Scheduler, SchedulerConfig, StepShape, TRANSIENT_BACKLOG_MICROS,
+    BatchOutcome, BatchPhase, MixedPolicy, PREFILL_AGE_MICROS, PrefillBudget, PrefillEnd,
+    RequestId, RequestSpec, RequestState, Scheduler, SchedulerConfig, StepShape,
+    TRANSIENT_BACKLOG_MICROS,
 };
 
 const GRID: usize = 8192;
@@ -336,6 +338,64 @@ fn light_load_serves_as_without_the_switch() {
 }
 
 #[test]
+fn shortest_remaining_prefill_goes_first_under_a_backlog() {
+    // A long prompt queued first and a short one after it: the short one
+    // prefills before the long one takes any chunk.
+    let mut s = scheduler(grid(true));
+    decoders(&mut s, 1);
+    submit(&mut s, 1, 6 * GRID, 4);
+    submit(&mut s, 2, 2 * GRID, 4);
+    let steps = prefill(&mut s, 2, 40);
+    assert!(chunks(&steps, 1).is_empty(), "{steps:#?}");
+    assert_legal(&chunks(&steps, 2), 2 * GRID);
+}
+
+#[test]
+fn an_aged_prompt_goes_first_on_every_second_step() {
+    // Shorter prompts keep arriving ahead of a long one. Once it has been
+    // queued for PREFILL_AGE_MICROS of step time, the long prompt takes a
+    // chunk at least on every second step.
+    let prompt = 8 * GRID;
+    let mut s = scheduler(grid(true));
+    decoders(&mut s, 1);
+    submit(&mut s, 1, prompt, 4);
+    let mut steps = Vec::new();
+    let mut clock = 0u64;
+    let mut aged_at = None;
+    let mut next = 2;
+    while prefilling(&s, 1) {
+        assert!(steps.len() < 400, "the long prompt starved");
+        if steps.len() % 3 == 0 {
+            submit(&mut s, next, 3 * GRID, 2);
+            next += 1;
+        }
+        let step = step(&mut s).unwrap();
+        clock += step.micros;
+        if aged_at.is_none() && clock >= PREFILL_AGE_MICROS + 2_000_000 {
+            aged_at = Some(steps.len());
+        }
+        steps.push(step);
+    }
+    let aged_at = aged_at.expect("the long prompt aged");
+    // Before aging it waited behind the shorter prompts.
+    assert!(
+        remaining(&steps[..aged_at], 1, prompt) > prompt / 2,
+        "{:?}",
+        chunks(&steps[..aged_at], 1)
+    );
+    // After aging, no two consecutive steps without its chunk, apart
+    // from the decode step after a whole chunk that ran alone.
+    let served: Vec<bool> = steps[aged_at..]
+        .iter()
+        .map(|step| step.prefills.iter().any(|item| item.0 == 1))
+        .collect();
+    for window in served.windows(3) {
+        assert!(window.iter().any(|&served| served), "{served:?}");
+    }
+    assert_legal(&chunks(&steps, 1), prompt);
+}
+
+#[test]
 fn plain_requests_take_the_cadence_cap_as_their_step_budget() {
     // Two decoders beside five 8,000-token prompts: a backlog of about
     // 8 s. Each step's prefill budget is the largest that keeps the
@@ -361,10 +421,8 @@ fn without_decoders_there_is_no_cap() {
     submit(&mut s, 2, 3 * GRID, 4);
     let first = step(&mut s).unwrap();
     assert_eq!(first.cap, None);
-    assert_eq!(
-        first.prefills.iter().map(|item| item.2).sum::<usize>(),
-        GRID
-    );
+    // The shorter prompt first, a whole chunk.
+    assert_eq!(first.prefills, [(2, 0, GRID)]);
 }
 
 #[test]

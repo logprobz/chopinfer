@@ -267,6 +267,10 @@ pub const MAXIMUM_MIXED_DECODE_STEPS: u32 = 8;
 /// as without the switch. It costs each decoding request a few long gaps,
 /// while cutting it would cost its prompts a fixed step cost per cut.
 pub const TRANSIENT_BACKLOG_MICROS: u64 = 4_000_000;
+/// Adaptive prefill sizing: under a backlog, a prompt queued this long, in
+/// observed step time, goes first on every second step, so shortest
+/// remaining first cannot starve it.
+pub const PREFILL_AGE_MICROS: u64 = 30_000_000;
 
 /// The decode stall bound of `PrefillBudget::Tbt`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -578,9 +582,11 @@ impl SchedulerConfig {
     /// errors, stays within the target; never a smaller one, since each
     /// extra step adds its fixed cost to the prefill. A backlog that uncapped
     /// chunks clear within `TRANSIENT_BACKLOG_MICROS` is served as without
-    /// the switch: whole grid chunks, or the fixed-target cap. A grid
-    /// request with timing cuts is cut at the cap; other requests take it as
-    /// the step's prefill budget.
+    /// the switch: whole grid chunks, or the fixed-target cap. A longer
+    /// backlog also prefills the shortest remaining prompt first, and a
+    /// prompt queued for `PREFILL_AGE_MICROS` first on every second step. A
+    /// grid request with timing cuts is cut at the cap; other requests take
+    /// it as the step's prefill budget.
     #[must_use]
     pub const fn with_adaptive_prefill_budget(mut self, enabled: bool) -> Self {
         self.adaptive_prefill_budget = enabled;
@@ -1432,6 +1438,8 @@ struct RequestRecord {
     last_scheduled: u64,
     /// The scheduling tick when the request was queued.
     queued_tick: u64,
+    /// The scheduler clock (`Scheduler::clock_micros`) when it was queued.
+    queued_micros: u64,
     prefix: Option<PrefixRequestV1>,
     /// A sibling that must commit this cacheable boundary before admission.
     prefix_dependency: Option<(RequestId, usize)>,
@@ -1556,6 +1564,9 @@ pub struct Scheduler {
     watermark_pages: usize,
     step_times: StepTimes,
     step_model: StepModel,
+    /// Observed batch time under `PrefillBudget::Tbt`, microseconds: the
+    /// clock adaptive prefill ages queued prompts by.
+    clock_micros: u64,
     /// Decode-only steps `PrefillBudget::Tbt` still owes after a mixed step.
     mixed_decode_steps: u32,
     offload: Option<OffloadConfig>,
@@ -1582,6 +1593,7 @@ impl Clone for Scheduler {
             watermark_pages: self.watermark_pages,
             step_times: self.step_times.clone(),
             step_model: self.step_model.clone(),
+            clock_micros: self.clock_micros,
             mixed_decode_steps: self.mixed_decode_steps,
             offload: self.offload,
             resumes: self.resumes.clone(),
@@ -1607,6 +1619,7 @@ impl PartialEq for Scheduler {
             && self.watermark_pages == other.watermark_pages
             && self.step_times == other.step_times
             && self.step_model == other.step_model
+            && self.clock_micros == other.clock_micros
             && self.mixed_decode_steps == other.mixed_decode_steps
             && self.offload == other.offload
             && self.resumes == other.resumes
@@ -1660,6 +1673,7 @@ impl Scheduler {
             watermark_pages,
             step_times: StepTimes::default(),
             step_model: StepModel::default(),
+            clock_micros: 0,
             mixed_decode_steps: 0,
             offload: None,
             resumes: BTreeMap::new(),
@@ -1681,6 +1695,7 @@ impl Scheduler {
     pub fn observe_batch_time(&mut self, shape: StepShape, micros: u64) {
         if matches!(self.config.prefill_budget, PrefillBudget::Tbt(_)) {
             self.step_model.observe(shape, micros);
+            self.clock_micros = self.clock_micros.saturating_add(micros);
         }
     }
 
@@ -1775,6 +1790,7 @@ impl Scheduler {
             arrival,
             last_scheduled: 0,
             queued_tick: self.scheduling_tick,
+            queued_micros: self.clock_micros,
             prefix,
             prefix_dependency: None,
             captures: Vec::new(),
@@ -2450,7 +2466,9 @@ impl Scheduler {
             }
             return Ok(None);
         }
-        if matches!(self.config.prefill_budget, PrefillBudget::Tbt(_))
+        if backlogged {
+            self.order_backlog(&mut prefill);
+        } else if matches!(self.config.prefill_budget, PrefillBudget::Tbt(_))
             && (aware || timing.is_some())
         {
             // A capped step fits few chunks, and new arrivals, which never
@@ -4251,6 +4269,33 @@ impl Scheduler {
             total = total.saturating_add(self.step_model.drain_micros(chunks, decode)?);
         }
         Some(total)
+    }
+
+    /// Adaptive sizing under a backlog: the shortest remaining prefill first;
+    /// on every second step the earliest request queued for at least
+    /// `PREFILL_AGE_MICROS` of observed step time goes first instead.
+    fn order_backlog(&self, prefill: &mut [usize]) {
+        prefill.sort_by_key(|&index| {
+            let record = &self.requests[index];
+            (
+                Self::prefill_target(record).saturating_sub(record.prefilled_tokens),
+                record.arrival,
+            )
+        });
+        if self.scheduling_tick.is_multiple_of(2)
+            && let Some(position) = prefill
+                .iter()
+                .enumerate()
+                .filter(|&(_, &index)| {
+                    self.clock_micros
+                        .saturating_sub(self.requests[index].queued_micros)
+                        >= PREFILL_AGE_MICROS
+                })
+                .min_by_key(|&(_, &index)| self.requests[index].arrival)
+                .map(|(position, _)| position)
+        {
+            prefill[..=position].rotate_right(1);
+        }
     }
 
     /// How long a request has waited for prefill: since its last scheduled

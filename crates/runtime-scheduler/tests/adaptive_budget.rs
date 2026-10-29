@@ -7,12 +7,13 @@
 //! switch. Grid requests with cuts take the cap as a timing cut; other
 //! requests take it as the step's prefill budget.
 
-use runtime_kv::KvGeometry;
+use runtime_kv::{KvGeometry, PrefixChainV1};
 use runtime_scheduler::{
-    BatchOutcome, BatchPhase, MixedPolicy, PREFILL_AGE_MICROS, PrefillBudget, PrefillEnd,
-    RequestId, RequestSpec, RequestState, Scheduler, SchedulerConfig, StepShape,
-    TRANSIENT_BACKLOG_MICROS,
+    AdmissionPolicy, BatchOutcome, BatchPhase, MixedPolicy, OptimisticAdmission,
+    PREFILL_AGE_MICROS, PrefillBudget, PrefillEnd, PrefixRequestV1, RequestId, RequestSpec,
+    RequestState, Scheduler, SchedulerConfig, StepShape, TRANSIENT_BACKLOG_MICROS,
 };
+use std::sync::Arc;
 
 const GRID: usize = 8192;
 const GRANULE: usize = 64;
@@ -537,10 +538,6 @@ fn an_untrained_model_keeps_the_progress_floor() {
 /// anchor (640 rows), and the step keeps the target.
 #[test]
 fn adaptive_caps_price_the_uncapped_anchor_tail() {
-    use runtime_kv::PrefixChainV1;
-    use runtime_scheduler::PrefixRequestV1;
-    use std::sync::Arc;
-
     for (anchors, decode, backlog, capped, rows, anchor) in [
         (0, 1, false, false, 640, None),
         (8, 1, false, false, 653, Some(640)),
@@ -758,6 +755,251 @@ fn every_waiting_prompt_progresses_within_a_bounded_number_of_steps() {
                 }
             }
             waiting.retain(|&id, _| prefilling(&s, id));
+        }
+    }
+}
+
+#[test]
+fn owed_steps_rollbacks_and_cancellations_leave_every_prompt_progressing() {
+    // A long prompt behind a stream of shorter ones, with owed decode-only
+    // steps, live cancellations and rolled-back batches. A rolled-back
+    // batch replans the same items and cap (nothing it planned commits),
+    // and the long prompt and every surviving short prompt prefill.
+    for k in [0, 1, 2, 3, 7] {
+        for base in [grid(true), plain(true)] {
+            for lead in 0..2 {
+                let setup = Setup {
+                    budget: owing(k),
+                    ..base
+                };
+                let mut s = scheduler(setup);
+                decoders(&mut s, 2);
+                for _ in 0..lead {
+                    step(&mut s).unwrap();
+                }
+                let prompt = 8 * GRID + 13;
+                submit(&mut s, 1, prompt, 2);
+                let mut waiting = std::collections::BTreeSet::from([1u64]);
+                let (mut steps, mut progress, mut cancelled) = (0, 0, 0);
+                while steps < 80 || !waiting.is_empty() {
+                    assert!(
+                        steps < 8000,
+                        "k {k} {setup:?} lead {lead}: {waiting:?} still waiting"
+                    );
+                    if steps < 80 && steps % 2 == 0 {
+                        let id = 1000 + steps as u64;
+                        submit(&mut s, id, [653, 4097, 3 * GRID, 8191][(steps / 2) % 4], 2);
+                        waiting.insert(id);
+                    }
+                    if steps < 80 && steps % 6 == 0 && steps >= 2 {
+                        let id = RequestId::new(1000 + steps as u64 - 2);
+                        if !s.request_state(id).unwrap().is_terminal() {
+                            s.cancel(id).unwrap();
+                            cancelled += 1;
+                        }
+                        waiting.remove(&id.get());
+                    }
+                    if steps % 5 == 0 {
+                        let first = s.next_batch().unwrap().unwrap();
+                        let (items, cap) = (first.items().to_vec(), first.prefill_cap());
+                        s.rollback_batch(first.id()).unwrap();
+                        let second = s.next_batch().unwrap().unwrap();
+                        assert_eq!(items, second.items());
+                        assert_eq!(cap, second.prefill_cap());
+                        s.rollback_batch(second.id()).unwrap();
+                    }
+                    let step = step(&mut s).unwrap();
+                    progress += step
+                        .prefills
+                        .iter()
+                        .filter(|item| item.0 == 1)
+                        .map(|item| item.2)
+                        .sum::<usize>();
+                    waiting.retain(|&id| prefilling(&s, id));
+                    steps += 1;
+                }
+                assert_eq!(progress, prompt);
+                assert!(cancelled > 0);
+            }
+        }
+    }
+}
+
+/// A grid scheduler with prefix caching, anchors and optional forced
+/// preemption, for the restore and preemption paths.
+fn prefix_scheduler(anchors: usize, owed: u32, preempt: bool) -> Scheduler {
+    let mut config = SchedulerConfig::new(64, 256, GRID, GRID, 1)
+        .unwrap()
+        .with_prefill_granule(GRANULE)
+        .unwrap()
+        .with_guaranteed_prefill_chunks(GRID)
+        .unwrap()
+        .with_prefix_cache(1)
+        .with_prefill_cuts(true)
+        .with_grid_anchor_items(anchors)
+        .with_grid_anchor_minimum_rows(357)
+        .with_prefill_timing_cuts(true)
+        .with_prefill_budget(owing(owed))
+        .with_adaptive_prefill_budget(true);
+    if preempt {
+        config = config.with_admission(AdmissionPolicy::Optimistic(
+            OptimisticAdmission::new(0, 2)
+                .unwrap()
+                .with_forced_preemption(2)
+                .unwrap(),
+        ));
+    }
+    let mut s = Scheduler::new(config, KvGeometry::new(GRANULE, 262_144).unwrap()).unwrap();
+    train(&mut s);
+    s
+}
+
+fn submit_prefix(s: &mut Scheduler, id: u64, tokens: Vec<u32>, output: usize) {
+    let chain = PrefixChainV1::new(GRANULE, Arc::from(tokens.clone()), Vec::new()).unwrap();
+    s.submit_with_prefix(
+        RequestSpec::new(RequestId::new(id), tokens.len(), output).unwrap(),
+        Some(PrefixRequestV1::new(Arc::new(chain), true)),
+    )
+    .unwrap();
+}
+
+/// One step with the host's restore and capture work done around it.
+fn prefix_step(s: &mut Scheduler) -> Step {
+    let restores: Vec<_> = s
+        .pending_prefix_restores()
+        .iter()
+        .map(|restore| restore.request_id())
+        .collect();
+    for id in restores {
+        s.complete_prefix_restore(id).unwrap();
+    }
+    let result = step(s).unwrap();
+    for capture in s.take_prefix_captures() {
+        let present = s.has_capture_anchor(&capture);
+        assert!(s.begin_prefix_capture(&capture).unwrap().is_some() || present);
+        s.end_prefix_capture(&capture).unwrap();
+    }
+    s.audit().unwrap();
+    result
+}
+
+#[test]
+fn restored_prefixes_and_cancellations_keep_the_long_prompt_progressing() {
+    // A long prompt restores a cached prefix, then prefills its remainder
+    // behind a stream of shorter prompts, some cancelled, with owed
+    // decode-only steps and anchors off or on.
+    for anchors in [0, 8] {
+        for owed in [1, 3] {
+            let mut s = prefix_scheduler(anchors, owed, false);
+            let tokens = |n: usize| (0..n).map(|i| 20_000 + i as u32).collect::<Vec<u32>>();
+            submit_prefix(&mut s, 50, tokens(GRID + 653), 1);
+            while prefilling(&s, 50) {
+                prefix_step(&mut s);
+            }
+            decoders(&mut s, 2);
+            let prompt = 8 * GRID + 653;
+            submit_prefix(&mut s, 1, tokens(prompt), 2);
+            s.admit().unwrap();
+            let cached = s.cached_tokens(RequestId::new(1)).unwrap();
+            assert!(cached >= GRID, "{cached}");
+            let (mut steps, mut progress, mut cancelled) = (0, 0, 0);
+            while prefilling(&s, 1) || steps < 100 {
+                assert!(
+                    steps < 1500,
+                    "anchors {anchors} owed {owed}: the restored prompt starved"
+                );
+                if steps < 100 && steps % 4 == 0 {
+                    submit_prefix(&mut s, 1000 + steps as u64, tokens(3 * GRID + 13), 2);
+                }
+                if steps < 100 && steps % 8 == 4 {
+                    let id = RequestId::new(1000 + steps as u64 - 4);
+                    if !s.request_state(id).unwrap().is_terminal() {
+                        s.cancel(id).unwrap();
+                        cancelled += 1;
+                    }
+                }
+                progress += prefix_step(&mut s)
+                    .prefills
+                    .iter()
+                    .filter(|item| item.0 == 1)
+                    .map(|item| item.2)
+                    .sum::<usize>();
+                steps += 1;
+            }
+            assert_eq!(cached + progress, prompt);
+            assert!(cancelled > 0);
+        }
+    }
+}
+
+#[test]
+fn preempted_requests_do_not_freeze_backlog_aging() {
+    // Forced preemptions while a long prompt waits behind shorter ones: it
+    // still prefills, and preemption is exercised.
+    for owed in [1, 3] {
+        let mut s = prefix_scheduler(0, owed, true);
+        decoders(&mut s, 2);
+        submit(&mut s, 1, 8 * GRID + 13, 2);
+        let (mut steps, mut preempted) = (0, 0);
+        while prefilling(&s, 1) || steps < 80 {
+            assert!(
+                steps < 1500,
+                "owed {owed}: preemption stalled the long prompt"
+            );
+            if steps < 80 && steps % 4 == 0 {
+                submit(&mut s, 1000 + steps as u64, 3 * GRID + 13, 2);
+            }
+            preempted += s.preempt_for_next_step(0, |_, _| None).unwrap().len();
+            prefix_step(&mut s);
+            steps += 1;
+        }
+        assert!(preempted >= 2, "{preempted}");
+    }
+}
+
+#[test]
+fn the_fused_anchor_tail_changes_the_uncapped_cadence_price() {
+    // Under a backlog, a restored long prompt has 64 rows to its next grid
+    // boundary and a cold 4,927-row prompt has an anchor at 4,864 and a
+    // 63-row tail. Without anchors the uncapped 4,928-row step keeps the
+    // target. With anchors the uncapped item would fuse its tail (4,991
+    // rows) and cross it, so the cap stops at the anchor instead.
+    for anchors in [0, 8] {
+        let mut s = prefix_scheduler(anchors, 0, false);
+        submit_prefix(&mut s, 50, (0..8129).map(|i| 20_000 + i).collect(), 1);
+        while prefilling(&s, 50) {
+            prefix_step(&mut s);
+        }
+        decoders(&mut s, 1);
+        submit_prefix(&mut s, 1, (0..4927).map(|i| 200_000 + i).collect(), 2);
+        let long = (0..8 * GRID as u32)
+            .map(|i| if i < 8128 { 20_000 + i } else { 900_000 + i })
+            .collect();
+        submit_prefix(&mut s, 2, long, 2);
+        s.admit().unwrap();
+        assert_eq!(s.cached_tokens(RequestId::new(2)).unwrap(), 8128);
+        let restores: Vec<_> = s
+            .pending_prefix_restores()
+            .iter()
+            .map(|restore| restore.request_id())
+            .collect();
+        for id in restores {
+            s.complete_prefix_restore(id).unwrap();
+        }
+        let batch = s.next_batch().unwrap().unwrap();
+        assert_eq!(
+            batch.prefill_cap().is_some(),
+            anchors > 0,
+            "anchors {anchors}: {batch:?}"
+        );
+        if anchors > 0 {
+            let item = batch
+                .items()
+                .iter()
+                .find(|item| item.request_id() == RequestId::new(1))
+                .unwrap();
+            assert_eq!(item.anchor_tokens(), None);
+            assert!(matches!(item.phase(), BatchPhase::Prefill { tokens } if tokens <= 4864));
         }
     }
 }

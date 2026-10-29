@@ -44,7 +44,6 @@ mod graph_key_tests;
 #[path = "indexer_workload_tests.rs"]
 mod indexer_workload_tests;
 pub(crate) mod plan_cache;
-pub(super) mod prefill_graphs;
 pub(crate) mod skip;
 
 /// Phase-arena indexes (`Instance::arenas`).
@@ -1032,12 +1031,6 @@ impl Instance {
         }
         match &run.execution {
             Execution::Skip { plan, engram } => {
-                if self.config.execution.diagnostic_step_logs {
-                    self.log_prefill_program(run, plan, engram.as_ref());
-                }
-                if self.prefill_graphs.is_some() && prefill_graphs::admits(run, plan) {
-                    return self.launch_prefill_graphs(run, plan, engram.as_ref());
-                }
                 return plan.execute(self, engram.as_ref());
             }
             Execution::PrefillEngram(plan) => {
@@ -1634,14 +1627,10 @@ impl Instance {
         } else {
             None
         };
-        #[cfg(feature = "diagnostic-taps")]
-        let alone = runs.len() == 1;
         for run in runs.iter_mut() {
             measure(
                 times.as_deref_mut().map(|t| &mut t.upload_us),
                 || -> Result<(), BundleAbiError> {
-                    #[cfg(feature = "diagnostic-taps")]
-                    self.poison_prefill_scratch(run, alone)?;
                     self.upload(run)?;
                     if run.ar_engram {
                         self.begin_ar_engram(

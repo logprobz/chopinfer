@@ -8,15 +8,11 @@ use std::collections::BTreeMap;
 pub const SHARED_OVERLAP_MAX_ROWS: &str = "shared_overlap_max_rows";
 pub const PREFILL_PLAN_CACHE_PLANS: &str = "prefill_plan_cache_plans";
 pub const PREFILL_PLAN_CACHE_VERIFY: &str = "prefill_plan_cache_verify";
-/// The candidate switch of short-prefill graphs: the most body programs
-/// captured at once, 0 (the default) keeping every prefill eager.
-pub const PREFILL_GRAPH_PROGRAMS: &str = "prefill_graph_programs";
 pub const DSPARK_GRAPH_HANDLES_PER_RANK: &str = "dspark_graph_handles_per_rank";
 pub const DIAGNOSTIC_STEP_LOGS: &str = "diagnostic_step_logs";
 pub const PREFILL_ANCHOR_ITEMS: &str = "prefill_anchor_items";
 pub const DEFAULT_PLANS: usize = 16;
 pub const MAX_PLANS: usize = 64;
-pub const MAX_PREFILL_GRAPH_PROGRAMS: usize = 64;
 /// The served warmup fits within 512 graph handles per rank, leaving room
 /// for completion tails that serving captures lazily.
 pub const DEFAULT_GRAPH_HANDLES_PER_RANK: usize = 512;
@@ -33,7 +29,6 @@ pub struct Options {
     pub shared_overlap_max_rows: u32,
     pub prefill_plan_cache_plans: usize,
     pub prefill_plan_cache_verify: bool,
-    pub prefill_graph_programs: usize,
     pub dspark_graph_handles_per_rank: usize,
     pub diagnostic_step_logs: bool,
     /// Anchor spares of an upper-skip instance; 0 keeps every prompt-end
@@ -41,7 +36,7 @@ pub struct Options {
     pub prefill_anchor_items: u32,
 }
 
-pub fn declarations() -> [ModelOptionV1; 7] {
+pub fn declarations() -> [ModelOptionV1; 6] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -61,14 +56,6 @@ pub fn declarations() -> [ModelOptionV1; 7] {
                 default: 0,
                 minimum: 0,
                 maximum: i64::from(MAX_ANCHOR_ITEMS),
-            },
-        ),
-        (
-            PREFILL_GRAPH_PROGRAMS,
-            OptionDefinitionV1::Integer {
-                default: 0,
-                minimum: 0,
-                maximum: MAX_PREFILL_GRAPH_PROGRAMS as i64,
             },
         ),
         (
@@ -126,7 +113,6 @@ impl Options {
                 .as_u64()
                 .expect("checked u32") as u32,
             prefill_plan_cache_plans: count(PREFILL_PLAN_CACHE_PLANS)?,
-            prefill_graph_programs: count(PREFILL_GRAPH_PROGRAMS)?,
             prefill_plan_cache_verify: values[PREFILL_PLAN_CACHE_VERIFY]
                 .as_bool()
                 .expect("checked boolean"),
@@ -154,6 +140,14 @@ mod tests {
     }
 
     #[test]
+    fn removed_short_prefill_graph_option_is_rejected() {
+        for value in ["0", "16"] {
+            let options = BTreeMap::from([("prefill_graph_programs".into(), value.into())]);
+            assert!(declaration().resolve(&options).is_err());
+        }
+    }
+
+    #[test]
     fn declared_and_legacy_defaults_keep_the_served_bounds_and_quiet_logs() {
         let declaration = declaration();
         let defaults = declaration.resolve(&BTreeMap::new()).unwrap();
@@ -161,7 +155,6 @@ mod tests {
             shared_overlap_max_rows: u32::MAX,
             prefill_plan_cache_plans: 16,
             prefill_plan_cache_verify: false,
-            prefill_graph_programs: 0,
             dspark_graph_handles_per_rank: 512,
             diagnostic_step_logs: false,
             prefill_anchor_items: 0,
@@ -178,7 +171,6 @@ mod tests {
             (SHARED_OVERLAP_MAX_ROWS.into(), "8".into()),
             (PREFILL_PLAN_CACHE_PLANS.into(), "2".into()),
             (PREFILL_PLAN_CACHE_VERIFY.into(), "true".into()),
-            (PREFILL_GRAPH_PROGRAMS.into(), "8".into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK.into(), "0".into()),
             (DIAGNOSTIC_STEP_LOGS.into(), "true".into()),
             (PREFILL_ANCHOR_ITEMS.into(), "2".into()),
@@ -190,7 +182,6 @@ mod tests {
                 shared_overlap_max_rows: 8,
                 prefill_plan_cache_plans: 2,
                 prefill_plan_cache_verify: true,
-                prefill_graph_programs: 8,
                 dspark_graph_handles_per_rank: 0,
                 diagnostic_step_logs: true,
                 prefill_anchor_items: 2,
@@ -209,8 +200,6 @@ mod tests {
             (PREFILL_PLAN_CACHE_PLANS, "65"),
             (PREFILL_PLAN_CACHE_PLANS, "1.5"),
             (PREFILL_PLAN_CACHE_VERIFY, "1"),
-            (PREFILL_GRAPH_PROGRAMS, "-1"),
-            (PREFILL_GRAPH_PROGRAMS, "65"),
             (DIAGNOSTIC_STEP_LOGS, "\"true\""),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),
@@ -230,8 +219,6 @@ mod tests {
             (SHARED_OVERLAP_MAX_ROWS, i64::from(u32::MAX)),
             (PREFILL_PLAN_CACHE_PLANS, 1),
             (PREFILL_PLAN_CACHE_PLANS, 64),
-            (PREFILL_GRAPH_PROGRAMS, 0),
-            (PREFILL_GRAPH_PROGRAMS, 64),
             (DSPARK_GRAPH_HANDLES_PER_RANK, 0),
             (DSPARK_GRAPH_HANDLES_PER_RANK, i64::MAX),
             (PREFILL_ANCHOR_ITEMS, 0),

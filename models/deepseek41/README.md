@@ -171,13 +171,12 @@ them. A non-default value is unqualified.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `diagnostic_step_logs` | `false` | Emit DSpark phase, prefetch, Engram, commit and drafter-confidence JSON records, each upper-skip prefill's program record (`chopinfer.deepseek41.prefill-program.v1`: rows, start, graph segments and program digests) and, with `prefill_graph_programs`, each graph decision (`chopinfer.deepseek41.prefill-graph.v1`). |
+| `diagnostic_step_logs` | `false` | Emit DSpark phase, prefetch, Engram, commit and drafter-confidence JSON records. |
 | `dspark_coupled_drafts` | `true` | Couple sampled drafts to the target sampler's noise. |
 | `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |
 | `dspark_graph_handles_per_rank` | `512` | Graph handles per rank, from 0 to 9223372036854775807; 0 keeps DSpark eager. The total across ranks must fit the platform's count range. |
 | `prefill_anchor_items` | `0` | Cold whole-prompt upper-skip items of at least 357 rows per step that keep their rounded prompt end in anchor spares instead of ending a chunk there, from 0 to 8; TP4 upper-skip AR and DSpark only. Other rank counts advertise no grid allowance. The instance offers them on its guaranteed grid through the optional prefill anchors export. Measurement prototype. |
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
-| `prefill_graph_programs` | `0` | Candidate switch: short text continuations (one item after a prefix, under 512 rows, no upper-skip DMA) captured as graph segments at their second run, at most this many body programs at once, from 0 to 64; 0 keeps every prefill eager. Unqualified. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit again and refuse a differing plan. |
 | `prefill_upper_skip` | `true` | Use upper-skip prefill; requires nonzero guaranteed chunk ends. |
@@ -210,6 +209,26 @@ timing and confidence captures; this changes diagnostic output only.
 longer selects the bundle's step or commit records. Existing diagnostic
 capture directories, AR Engram tracing and the shared
 `CHOPINFER_DEVICE_RESULTS` control remain available.
+
+### Removed short-prefill graph candidate
+
+The short-prefill CUDA graph candidate was removed after the 2026-10-28
+TP4 C1 sampled continuation replay. Graphs increased median total prefill
+time per continuation by 7.04% in AR and 7.08% in DSpark with five fixed
+draft tokens, with exact output IDs and served logprob bits. The hot 128-row
+program captured once and replayed 30 times per visit, yet those replays were
+4.7-5.6 ms slower per step than the matched eager route. Each measured
+visit also spent 470-584 ms capturing and instantiating 11-13 programs;
+rare tail shapes often did not amortize that cost. The eager route remains.
+
+A future attempt must measure fingerprinting and eager-gap costs separately,
+avoid captures that cannot amortize, and demonstrate a net served gain on
+both AR and DSpark. Parameter updates or larger graph segments must preserve
+exact resolved arguments, reduction order, live-row writes and the index
+selection and Engram gather dependencies. Higher cache capacity alone does
+not address this result: no eviction or capacity refusal occurred.
+The removal's [identity declaration](journal-changes/remove-short-prefill-graphs.json)
+allows no changes to pinned journals, instance creation or device history.
 
 ## DSpark execution
 
@@ -277,17 +296,7 @@ raw-history retention, graph reuse, cancellation and prefix restore.
 For untimed transition diagnostics, `state-capture` and
 `CHOPINFER_DSPARK_STATE_DIR` record selected before-draft/after-commit
 boundaries. `diagnostic_step_logs` defaults to false and controls step and
-confidence JSON, without changing confidence computation. A
-`diagnostic-taps` build also places each short-prefill program record (its
-slot and page table), and with `CHOPINFER_PREFILL_SCRATCH_POISON` set at
-create fills per-step scratch, sorted routes, workspaces and mixer partials
-with NaN bytes before each admitted short prefill uploads anything, for
-graph exactness jobs. Text constants, the immutable count table, mixer
-tickets, request state and communication state are preserved. A DSpark step
-is poisoned only when it prefills alone with prepared gathers, as its
-Engram rows may be staged earlier otherwise. Its raw feature taps and
-prefill packed-feature prefix are poisoned too; the decode suffix stays
-intact.
+confidence JSON, without changing confidence computation.
 
 ## Reference
 

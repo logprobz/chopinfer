@@ -168,5 +168,6 @@ layer-1 join time remained exposed. This does not imply that all gather work
 was hidden. Media, taps, host-target rows, missing async service and the other
 listed preparation fallbacks still use their synchronous path. The candidate
 option and DMA-only synchronous fallback are removed. Default tests exercise
-the adopted path; short-prefill graphs remain a separate candidate below 512
-rows.
+the adopted path. The short-prefill graph candidate was removed after
+regressing continuation-prefill timing; see the
+[removal record](../models/deepseek41/README.md#removed-short-prefill-graph-candidate).

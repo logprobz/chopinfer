@@ -491,10 +491,6 @@ impl Plan {
         &self.body
     }
 
-    pub(super) fn head(&self) -> &Programs {
-        &self.head
-    }
-
     pub(super) fn uses_dma(&self) -> bool {
         self.dma.is_some()
     }
@@ -536,7 +532,7 @@ impl Plan {
 
     /// The body: through upper-skip DMA, between prepared gather joins, or
     /// in one eager unit.
-    pub(super) fn execute_body(
+    fn execute_body(
         &self,
         instance: &Instance,
         gathers: Option<&crate::instance::prefill_engram::Plan>,
@@ -555,7 +551,7 @@ impl Plan {
     }
 
     /// Moves each scored row to its logits position for the head.
-    pub(super) fn compact_rows(&self, instance: &Instance) -> Result<(), BundleAbiError> {
+    fn compact_rows(&self, instance: &Instance) -> Result<(), BundleAbiError> {
         for (rank, copies) in self.copies.iter().enumerate() {
             for &(destination, source) in copies {
                 instance.services.copy_device_to_device(
@@ -568,7 +564,7 @@ impl Plan {
         Ok(())
     }
 
-    pub(super) fn execute_head(&self, instance: &Instance) -> Result<(), BundleAbiError> {
+    fn execute_head(&self, instance: &Instance) -> Result<(), BundleAbiError> {
         let streams: Vec<_> = instance.ranks.iter().map(|r| r.2).collect();
         instance
             .launch_eager(&streams, &self.head.0, &self.head.1)

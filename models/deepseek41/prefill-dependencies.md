@@ -165,9 +165,9 @@ templates matched full lowering bitwise in output IDs, logprobs,
 full-vocabulary logits and prompt-end state after 33024-token AR and
 100032-token DSpark prefixes. An ABBA of served DSpark steps after a
 100032-token context beside 16 decoders at temperature 1 cut the 512-row
-mixed step from 254.8 and 256.8 ms to 237.7 and 237.0 ms (7.8% less, pair
-spread 1.2 points), with identical outputs; steps without a prefill did not
-change.
+mixed step from 254.8 and 256.8 ms to 237.7 and 237.0 ms (about 7.2% less
+time, a 7.8% higher step rate, pair spread 1.2 points), with identical
+outputs; steps without a prefill did not change.
 
 For the implemented 64-row outward alignment, the 32K equal-cost layer-row
 estimate is 20.07% at chunk size 2048 and 42.20% at 8192. These are CPU

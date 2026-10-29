@@ -1,9 +1,26 @@
 import unittest
+import sqlite3
+import tempfile
+from pathlib import Path
 
-from host_profile_analysis import charge, idle, osrt_evidence, ownership
+from host_profile_analysis import charge, idle, open_read_only, osrt_evidence, ownership
 
 
 class HostProfileTest(unittest.TestCase):
+    def test_sqlite_path_metacharacters_are_literal_and_read_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "capture?#%.sqlite"
+            with sqlite3.connect(path) as database:
+                database.execute("create table marker (value integer)")
+                database.execute("insert into marker values (7)")
+            database = open_read_only(path)
+            try:
+                self.assertEqual(database.execute("select value from marker").fetchone(), (7,))
+                with self.assertRaises(sqlite3.OperationalError):
+                    database.execute("insert into marker values (8)")
+            finally:
+                database.close()
+
     def test_no_qualifying_main_thread_call_is_a_valid_zero(self):
         rows = [dict(start=0, end=1, globalTid=1, name="futex"),
                 dict(start=5, end=6, globalTid=2, name="preadv2")]

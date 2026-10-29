@@ -172,7 +172,6 @@ them. A non-default value is unqualified.
 | Option | Default | Meaning |
 |---|---|---|
 | `diagnostic_step_logs` | `false` | Emit DSpark phase, prefetch, Engram, commit and drafter-confidence JSON records. |
-| `dspark_main_compact` | `false` | Candidate: TP4 Flash DSpark main projection uses the existing stage-2 compact template for every width 129..511. Short rows and generic fallbacks outside that range retain their routes. Lab bitwise and A/A timing passed; served exactness and step-time acceptance remain required before adoption. |
 | `dspark_coupled_drafts` | `true` | Couple sampled drafts to the target sampler's noise. |
 | `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |
 | `dspark_graph_handles_per_rank` | `512` | Graph handles per rank, from 0 to 9223372036854775807; 0 keeps DSpark eager. The total across ranks must fit the platform's count range. |
@@ -370,3 +369,9 @@ the repository under `CHOPINFER_DATA`.
 declared verify bounds and GSM8K at least 193/200 in each arm. Forced verify
 capacities are judged separately against paired AR, without pooling away an
 uncovered capacity.
+
+TP4 DSpark main projections use the existing stage-2 compact MXFP8 template
+for retained inner widths 129..511. This range is owned by the dense-prefill
+tuning table; smaller and larger widths retain the previous routes. The
+[qualification record](lab/compact-row-ranges.md) states the bitwise,
+served-boundary and retirement-state evidence and the served timing gate.

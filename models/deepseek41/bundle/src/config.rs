@@ -421,7 +421,6 @@ pub(crate) mod tests {
         assert_eq!(
             decode(&changed, |_| {}).unwrap().execution,
             Options {
-                dspark_main_compact: false,
                 shared_overlap_max_rows: 8,
                 prefill_plan_cache_plans: 2,
                 prefill_plan_cache_verify: true,

@@ -321,14 +321,13 @@ impl crate::Kernels {
         shape: &crate::shape::Shape,
         query: kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery,
         need: kernel_core::backend::Need,
-        enabled: bool,
     ) -> Result<
         kernel_core::backend::Prepared<
             kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers<kernel_core::backend::View>,
         >,
         kernel_core::backend::Refused,
     > {
-        dspark_main::prepare(backend, shape, query, need, enabled)
+        dspark_main::prepare(backend, shape, query, need)
     }
 
     #[cfg(test)]
@@ -337,7 +336,7 @@ impl crate::Kernels {
             .expect("registered route metadata")
             .backend
             .route_tags();
-        tags.extend(dspark_main::route_tags(shape, false));
+        tags.extend(dspark_main::route_tags(shape));
         tags.extend(wide_routes::catalogue(shape).expect("qualified wide route metadata"));
         if let Some(backend) = Self::small_decode_norm_backend(shape) {
             tags.extend(backend.route_tags());

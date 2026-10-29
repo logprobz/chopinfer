@@ -84,9 +84,33 @@ and 782 timings, including shard overlaps. Every width beat its bracketed
 A/A spread. Recomputed gains were 86.81..94.07%, with A/A spread
 0.25..13.84%. At 192 rows, stage 2 saved 2.750..2.763 ms per projection.
 
-The default-off `dspark_main_compact` candidate admits retained inner rows
-129..511 through this existing stage-2 template. The tuning table owns the
-range. Disabled and out-of-range calls preserve the previous launches and
-route tags. Complete served boundary/final-state exactness and served
-step-time ABBA acceptance remain required before adoption. Pair timing is
-not a served speedup claim.
+TP4 DSpark main projections use this existing stage-2 template at retained
+inner rows 129..511. The tuning table owns the contiguous range. Other
+rows and topologies keep the original launches and route tags. The
+candidate option and its test overrides are removed by the adoption series.
+
+On 2026-10-29, served exactness exercised all ten intended inner widths
+128/129, 255/256/257, 383/384/385 and 511/512. The 20 greedy/sampled A/B
+cases and two fresh A/A controls compared 38 retirement states and 1,007
+full-vocabulary logit views, with zero masking. Each case asserted the
+actual projection-row total and route use. That GPU run used the frozen
+candidate install. The later integration fix changes only route reporting
+and adds an operand-guarantees refusal; it preserves the measured launches
+and arithmetic, so the exactness evidence still applies.
+
+On 2026-10-29, a served DSpark C1 ABBA passed the declared table-row rule.
+The 192-row target had median step times 186.270, 177.523, 177.741 and
+185.439 ms in ABBA order. Its paired rate gains were 4.927% and 4.331%,
+averaging 4.629% against 0.596 percentage points of spread, above the 1.5%
+minimum. The paired step-time saving averaged 8.223 ms. Each visit provided
+15 or 16 target steps and at least 17.7% time share, above the declared 5%
+support threshold. The 256-row and six-row verify controls had resolved
+gains of 0.696% and 0.099%; aggregate request rate gained 1.142%. There
+were no resolved control regressions or coverage gaps. Both seed pairs
+passed timed output equality. Energy was comparable at unchanged limits,
+with a provisional mean J/token change of -0.613% and no veto.
+
+The ABBA used the same frozen candidate install as served exactness. It
+isolates this route's effect; it does not measure the combined speed of
+later integration changes. Adoption still requires the audited journal
+pins, full-history proof and CPU gates. No AR benefit is claimed.

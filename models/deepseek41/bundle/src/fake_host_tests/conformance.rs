@@ -16,7 +16,6 @@ use model_deepseek41_contract::serving::DECODE_BATCH;
 use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
 
 mod allocated;
-mod main_compact;
 mod templated;
 
 /// A served configuration: its rank count and the host's (drafts, verify
@@ -464,15 +463,6 @@ impl conformance::Startup for Served {
     fn route_tags(&self) -> Vec<kernel_core::route::RouteTag> {
         let shape = self.host.shape.with_verify_rows(self.serving.verify_rows());
         let mut tags = crate::Kernels::route_tags(&shape);
-        if self
-            .serving
-            .model_options
-            .get("dspark_main_compact")
-            .is_some_and(|v| v == "true")
-        {
-            tags.retain(|tag| tag.family != "dspark_main");
-            tags.extend(crate::sm120::dspark_main::route_tags(&shape, true));
-        }
         tags.extend(crate::engram_rows::route_tags());
         tags
     }
@@ -521,7 +511,7 @@ impl conformance::Startup for Served {
     type Limits = Limits;
 
     fn profiles() -> &'static str {
-        main_compact::profiles(include_str!("../../../profiles.json"))
+        include_str!("../../../profiles.json")
     }
     fn servings() -> Vec<conformance::Serving> {
         let serving = |profile: &str, draft_tokens: u32| {
@@ -568,7 +558,7 @@ impl conformance::Startup for Served {
                 );
             }
         }
-        main_compact::servings(configurations)
+        configurations
     }
     fn new(serving: &conformance::Serving) -> Self {
         let ranks = Ranks::new(serving.tensor_parallel).expect("a supported rank count");

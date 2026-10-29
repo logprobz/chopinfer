@@ -150,16 +150,7 @@ impl Prepared {
     pub fn shape(&self) -> Shape {
         self.shape
     }
-    #[cfg(test)]
     pub fn prepare(backend: &dyn Backend, shape: Shape) -> Result<Self, Refused> {
-        Self::prepare_with_main_compact(backend, shape, false)
-    }
-
-    pub fn prepare_with_main_compact(
-        backend: &dyn Backend,
-        shape: Shape,
-        enabled: bool,
-    ) -> Result<Self, Refused> {
         let g = shape.geometry;
         let need = Need::rows(PREFILL_TOKENS);
         let feature = backend.sinkhorn_head(
@@ -195,8 +186,7 @@ impl Prepared {
             output: DType::F32,
             execution: BlockScaledExecution::NativeBlockScaledMma,
         };
-        let main_project =
-            crate::Kernels::dspark_main_projection(backend, &shape, query, need, enabled)?;
+        let main_project = crate::Kernels::dspark_main_projection(backend, &shape, query, need)?;
         let main_project_small = (1..=crate::Kernels::dense_decode_capacity())
             .map(|rows| {
                 backend.mxfp8_fold_gemm(

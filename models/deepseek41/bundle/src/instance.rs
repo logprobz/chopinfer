@@ -984,7 +984,6 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
                 } else {
                     crate::lower::dspark::DraftMode::Greedy
                 },
-                config.execution.dspark_main_compact,
             )
             .map_err(|error| {
                 log(&error);

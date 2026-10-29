@@ -1,4 +1,4 @@
-//! The candidate main-projection range, using the existing compact template.
+//! The qualified main-projection range, using the existing compact template.
 use kernel_core::backend::{
     Backend, Counts, Launch, Need, OpInfo, Prepared, PreparedOp, Refused, View,
 };
@@ -16,8 +16,10 @@ const FAMILY: &str = "dspark_main";
 fn recipe(
     shape: &crate::shape::Shape,
     query: Mxfp8FoldGemmQuery,
-) -> Option<(RangeInclusive<u32>, u32)> {
-    let table = table(shape.geometry, Family::DensePrefill)?;
+) -> Result<Option<(RangeInclusive<u32>, u32)>, Refusal> {
+    let Some(table) = table(shape.geometry, Family::DensePrefill) else {
+        return Ok(None);
+    };
     let key: std::collections::BTreeMap<String, u32> = [
         ("n".into(), query.n),
         ("k".into(), query.k),
@@ -25,29 +27,44 @@ fn recipe(
         ("ranks".into(), shape.ranks()),
     ]
     .into();
-    let mut rows = table.rows().iter().filter(|row| {
+    let rows = table.rows().iter().filter(|row| {
         row.key.op == SITE
             && row.key.weights == "mxfp8"
             && row.key.shape == key
             && row.key.bucket == query.m_capacity
     });
-    let row = rows.next()?;
-    assert!(
-        rows.next().is_none(),
-        "main projection needs one contiguous range"
-    );
-    let [first, last] = row.key.rows.expect("main projection range");
-    assert_eq!(row.schedule, "prefill_tiles");
-    assert_eq!(row.knobs["matrix_fetch"].flag(), Some(false));
-    assert_eq!(row.knobs["tile_rows"].count(), Some(Entry::tile(first)));
-    assert_eq!(Entry::tile(first), Entry::tile(last));
-    Some((
-        first..=last,
-        row.knobs["stages"].count().expect("compact stages"),
-    ))
+    recipe_row(rows)
 }
 
-fn candidate(
+fn recipe_row<'a>(
+    mut rows: impl Iterator<Item = &'a kernel_build::tuning::Row>,
+) -> Result<Option<(RangeInclusive<u32>, u32)>, Refusal> {
+    let Some(row) = rows.next() else {
+        return Ok(None);
+    };
+    if rows.next().is_some() {
+        return Err(Refusal("main projection needs one contiguous range"));
+    }
+    let [first, last] = row
+        .key
+        .rows
+        .ok_or(Refusal("main projection range is absent"))?;
+    if row.schedule != "prefill_tiles"
+        || row.knobs.get("matrix_fetch").and_then(|v| v.flag()) != Some(false)
+        || row.knobs.get("tile_rows").and_then(|v| v.count()) != Some(Entry::tile(first))
+        || Entry::tile(first) != Entry::tile(last)
+    {
+        return Err(Refusal("unsupported main compact recipe"));
+    }
+    let stages = row
+        .knobs
+        .get("stages")
+        .and_then(|v| v.count())
+        .ok_or(Refusal("main compact stages are absent"))?;
+    Ok(Some((first..=last, stages)))
+}
+
+fn compact_backend(
     shape: &crate::shape::Shape,
     query: Mxfp8FoldGemmQuery,
     rows: RangeInclusive<u32>,
@@ -73,18 +90,14 @@ pub(crate) fn prepare(
     shape: &crate::shape::Shape,
     query: Mxfp8FoldGemmQuery,
     need: Need,
-    enabled: bool,
 ) -> Result<Prepared<Buffers<View>>, Refused> {
     let fallback = backend.mxfp8_fold_gemm(&query, need)?;
-    if !enabled {
-        return Ok(fallback);
-    }
-    let Some((rows, stages)) = recipe(shape, query) else {
+    let Some((rows, stages)) = recipe(shape, query)? else {
         return Ok(fallback);
     };
     let mut info = fallback.info().clone();
     let compact = {
-        let backend = candidate(shape, query, rows.clone(), stages)?;
+        let backend = compact_backend(shape, query, rows.clone(), stages)?;
         let op = backend.mxfp8_prefill_gemm(&query, need)?;
         if op.info().bytes != info.bytes
             || op.info().weight_layouts != info.weight_layouts
@@ -162,17 +175,14 @@ impl PreparedOp<Buffers<View>> for Main {
 }
 
 #[cfg(test)]
-pub(crate) fn route_tags(shape: &crate::shape::Shape, enabled: bool) -> Vec<RouteTag> {
+pub(crate) fn route_tags(shape: &crate::shape::Shape) -> Vec<RouteTag> {
     let mut tags = Vec::new();
-    if !enabled {
-        return tags;
-    }
     for base in super::mxfp8_fold::prefill_entries(shape.geometry, shape.ranks()).unwrap() {
-        let Some((rows, stages)) = recipe(shape, base.query) else {
+        let Some((rows, stages)) = recipe(shape, base.query).unwrap() else {
             continue;
         };
-        if enabled {
-            let backend = candidate(shape, base.query, rows.clone(), stages).unwrap();
+        {
+            let backend = compact_backend(shape, base.query, rows.clone(), stages).unwrap();
             tags.extend(
                 backend
                     .route_tags()
@@ -200,6 +210,15 @@ mod tests {
     use model_deepseek41_contract::geometry::FLASH;
 
     #[test]
+    fn duplicate_main_ranges_are_refused_without_panicking() {
+        let table = table(&FLASH, Family::DensePrefill).unwrap();
+        let row = table.rows().iter().find(|row| row.key.op == SITE).unwrap();
+        assert!(recipe_row([row].into_iter()).unwrap().is_some());
+        assert!(recipe_row([row, row].into_iter()).is_err());
+        assert!(recipe_row(std::iter::empty()).unwrap().is_none());
+    }
+
+    #[test]
     fn contiguous_main_range_keeps_every_other_launch_and_layout() {
         for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
             let shape = crate::shape::Shape::new(&FLASH, ranks).unwrap();
@@ -214,20 +233,12 @@ mod tests {
                 .backend
                 .mxfp8_fold_gemm(&q, Need::rows(q.m_capacity))
                 .unwrap();
-            let old = prepare(
-                backend.backend.as_ref(),
-                &shape,
-                q,
-                Need::rows(q.m_capacity),
-                false,
-            )
-            .unwrap();
+            let old = previous;
             let new = prepare(
                 backend.backend.as_ref(),
                 &shape,
                 q,
                 Need::rows(q.m_capacity),
-                true,
             )
             .unwrap();
             assert_eq!(new.info().bytes, old.info().bytes);
@@ -250,13 +261,6 @@ mod tests {
                 let counts = Counts::rows(count);
                 let a = old.launches(&buffers, View::EMPTY, counts).unwrap();
                 let b = new.launches(&buffers, View::EMPTY, counts).unwrap();
-                for call in &a {
-                    assert_eq!(
-                        old.route(counts, call),
-                        previous.route(counts, call),
-                        "disabled route changed: rank={ranks:?} rows={count}"
-                    );
-                }
                 if ranks == Ranks::TP4 && (129..=511).contains(&count) {
                     assert_eq!(a.len(), 1);
                     assert_eq!(b.len(), 2);
@@ -278,7 +282,7 @@ mod tests {
                 } else {
                     assert_eq!(a, b, "rank={ranks:?} rows={count}");
                     for call in &b {
-                        assert_eq!(new.route(counts, call), previous.route(counts, call));
+                        assert_eq!(new.route(counts, call), old.route(counts, call));
                     }
                 }
             }

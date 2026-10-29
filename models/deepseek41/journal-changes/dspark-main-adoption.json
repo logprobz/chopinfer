@@ -1,0 +1,751 @@
+{
+  "schema": "chopinfer.journal-proof.spec.v1",
+  "description": "Adopt the qualified TP4 Flash DSpark compact main projection at retained rows 129 through 511. Twelve device fixtures each add four exactly positioned configurations of an already resolved symbol. The shared-prefix fixture also expands exactly twelve 192-row generic projections into admission and compute, preserving compute operands and both output/status bindings. Every other journal, resource and device-history operation remains identical. Direct template digest audits are documented separately.",
+  "fixtures": [
+    {
+      "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-1.jsonl",
+      "create": "deepseek41-allocation-c4.journal",
+      "journals": [
+        "deepseek41-allocation-c4.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-2.jsonl",
+      "create": "deepseek41-allocation-c8.journal",
+      "journals": [
+        "deepseek41-allocation-c8.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-3.jsonl",
+      "create": "deepseek41-allocation-c4-d3.journal",
+      "journals": [
+        "deepseek41-allocation-c4-d3.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-4.jsonl",
+      "create": "deepseek41-allocation-c16-odd.journal",
+      "journals": [
+        "deepseek41-allocation-c16-odd.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-5.jsonl",
+      "create": "deepseek41-allocation-c32-maximum.journal",
+      "journals": [
+        "deepseek41-allocation-c32-maximum.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-1.jsonl",
+      "create": "deepseek41-flash-tp1.native.journal",
+      "journals": [
+        "deepseek41-flash-tp1.native.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-2.jsonl",
+      "create": "deepseek41-flash-tp1.bf16.journal",
+      "journals": [
+        "deepseek41-flash-tp1.bf16.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-3.jsonl",
+      "create": "deepseek41-flash-tp2.native.journal",
+      "journals": [
+        "deepseek41-flash-tp2.native.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-4.jsonl",
+      "create": "deepseek41-flash-tp2.bf16.journal",
+      "journals": [
+        "deepseek41-flash-tp2.bf16.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-5.jsonl",
+      "create": "deepseek41-flash-tp4.native.journal",
+      "journals": [
+        "deepseek41-flash-tp4.native.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-6.jsonl",
+      "create": "deepseek41-flash-tp4.bf16.journal",
+      "journals": [
+        "deepseek41-flash-tp4.bf16.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-1.jsonl",
+      "create": "deepseek41-flash-tp2.media.journal",
+      "journals": [
+        "deepseek41-flash-tp2.media.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-2.jsonl",
+      "create": "deepseek41-flash-tp4.media.journal",
+      "journals": [
+        "deepseek41-flash-tp4.media.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-1.jsonl",
+      "create": "deepseek41-flash-tp4.native-moe.native.journal",
+      "journals": [
+        "deepseek41-flash-tp4.native-moe.native.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-2.jsonl",
+      "create": "deepseek41-flash-tp4.native-moe.bf16.journal",
+      "journals": [
+        "deepseek41-flash-tp4.native-moe.bf16.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-1.jsonl",
+      "create": "flash-tp4-ar-shared-anchor.journal",
+      "journals": [
+        "flash-tp4-ar-shared-anchor.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-2.jsonl",
+      "create": "flash-tp4-dspark-shared-anchor.journal",
+      "journals": [
+        "flash-tp4-dspark-shared-anchor.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-1.jsonl",
+      "create": "verify-hc-4.journal",
+      "journals": [
+        "verify-hc-4.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-2.jsonl",
+      "create": "verify-hc-6.journal",
+      "journals": [
+        "verify-hc-6.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-3.jsonl",
+      "create": "verify-hc-8.journal",
+      "journals": [
+        "verify-hc-8.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-4.jsonl",
+      "create": "verify-hc-12.journal",
+      "journals": [
+        "verify-hc-12.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-5.jsonl",
+      "create": "verify-hc-16.journal",
+      "journals": [
+        "verify-hc-16.journal"
+      ]
+    },
+    {
+      "name": "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-6.jsonl",
+      "create": "verify-hc-32.journal",
+      "journals": [
+        "verify-hc-32.journal"
+      ]
+    }
+  ],
+  "journals": {
+    "deepseek41-allocation-c4.journal": {
+      "added_configures": [
+        {
+          "bytes": 50944,
+          "ids": [
+            974,
+            3483,
+            5992,
+            8501
+          ],
+          "count": 4,
+          "positions": [
+            1087,
+            3611,
+            6135,
+            8659
+          ]
+        }
+      ]
+    },
+    "deepseek41-allocation-c8.journal": {
+      "added_configures": [
+        {
+          "bytes": 50944,
+          "ids": [
+            974,
+            3483,
+            5992,
+            8501
+          ],
+          "count": 4,
+          "positions": [
+            1087,
+            3611,
+            6135,
+            8659
+          ]
+        }
+      ]
+    },
+    "deepseek41-allocation-c4-d3.journal": {
+      "added_configures": [
+        {
+          "bytes": 50944,
+          "ids": [
+            974,
+            3483,
+            5992,
+            8501
+          ],
+          "count": 4,
+          "positions": [
+            1087,
+            3611,
+            6135,
+            8659
+          ]
+        }
+      ]
+    },
+    "deepseek41-allocation-c16-odd.journal": {
+      "added_configures": [
+        {
+          "bytes": 50944,
+          "ids": [
+            974,
+            3483,
+            5992,
+            8501
+          ],
+          "count": 4,
+          "positions": [
+            1087,
+            3611,
+            6135,
+            8659
+          ]
+        }
+      ]
+    },
+    "deepseek41-allocation-c32-maximum.journal": {
+      "added_configures": [
+        {
+          "bytes": 50944,
+          "ids": [
+            974,
+            3483,
+            5992,
+            8501
+          ],
+          "count": 4,
+          "positions": [
+            1087,
+            3611,
+            6135,
+            8659
+          ]
+        }
+      ]
+    },
+    "flash-tp4-dspark-shared-anchor.journal": {
+      "added_configures": [
+        {
+          "bytes": 50944,
+          "ids": [
+            1039,
+            3534,
+            6029,
+            8524
+          ],
+          "count": 4,
+          "positions": [
+            1156,
+            3665,
+            6174,
+            8683
+          ]
+        }
+      ],
+      "expansions": [
+        {
+          "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k15360_g1_f32_v2_packed_v1",
+          "count": 12,
+          "lines": [
+            30405,
+            30417,
+            30429,
+            30441,
+            30493,
+            30505,
+            30517,
+            30529,
+            30581,
+            30593,
+            30605,
+            30617
+          ],
+          "where": {
+            "grid_x": {
+              "eq": 160
+            },
+            "grid_y": {
+              "eq": 12
+            },
+            "block_x": {
+              "eq": 128
+            }
+          },
+          "sequence": [
+            {
+              "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k15360_g1_f32_v2_compact_m64_n128_s2_v1_admit_v1",
+              "config": {
+                "grid_x": 192,
+                "grid_y": 1,
+                "block_x": 128,
+                "shared_memory_bytes": 0
+              },
+              "args": [
+                {
+                  "arg": 0
+                },
+                {
+                  "arg": 1
+                },
+                {
+                  "arg": 5
+                },
+                {
+                  "arg": 6
+                },
+                {
+                  "arg": 7
+                },
+                {
+                  "arg": 8
+                }
+              ]
+            },
+            {
+              "symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k15360_g1_f32_v2_compact_m64_n128_s2_v1_packed_v1",
+              "config": {
+                "grid_x": 40,
+                "grid_y": 3,
+                "block_x": 256,
+                "shared_memory_bytes": 50944
+              },
+              "args": [
+                {
+                  "arg": 0
+                },
+                {
+                  "arg": 1
+                },
+                {
+                  "arg": 2
+                },
+                {
+                  "arg": 3
+                },
+                {
+                  "arg": 4
+                },
+                {
+                  "arg": 5
+                },
+                {
+                  "arg": 6
+                },
+                {
+                  "arg": 7
+                },
+                {
+                  "arg": 8
+                }
+              ]
+            }
+          ],
+          "outputs": [
+            {
+              "from_arg": 4,
+              "to_launch": 1,
+              "to_arg": 4
+            },
+            {
+              "from_arg": 6,
+              "to_launch": 0,
+              "to_arg": 3
+            },
+            {
+              "from_arg": 6,
+              "to_launch": 1,
+              "to_arg": 6
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "auxiliary_rules": {
+    "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-1.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {
+        "added_configures": [
+          {
+            "bytes": 50944,
+            "ids": [
+              974,
+              3483,
+              5992,
+              8501
+            ],
+            "count": 4,
+            "positions": [
+              1087,
+              3611,
+              6135,
+              8659
+            ]
+          }
+        ]
+      }
+    },
+    "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-2.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {
+        "added_configures": [
+          {
+            "bytes": 50944,
+            "ids": [
+              974,
+              3483,
+              5992,
+              8501
+            ],
+            "count": 4,
+            "positions": [
+              1087,
+              3611,
+              6135,
+              8659
+            ]
+          }
+        ]
+      }
+    },
+    "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-3.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {
+        "added_configures": [
+          {
+            "bytes": 50944,
+            "ids": [
+              974,
+              3483,
+              5992,
+              8501
+            ],
+            "count": 4,
+            "positions": [
+              1087,
+              3611,
+              6135,
+              8659
+            ]
+          }
+        ]
+      }
+    },
+    "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-4.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {
+        "added_configures": [
+          {
+            "bytes": 50944,
+            "ids": [
+              974,
+              3483,
+              5992,
+              8501
+            ],
+            "count": 4,
+            "positions": [
+              1087,
+              3611,
+              6135,
+              8659
+            ]
+          }
+        ]
+      }
+    },
+    "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-5.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {
+        "added_configures": [
+          {
+            "bytes": 50944,
+            "ids": [
+              974,
+              3483,
+              5992,
+              8501
+            ],
+            "count": 4,
+            "positions": [
+              1087,
+              3611,
+              6135,
+              8659
+            ]
+          }
+        ]
+      }
+    },
+    "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-1.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {}
+    },
+    "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-2.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {}
+    },
+    "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-3.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {}
+    },
+    "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-4.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {}
+    },
+    "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-5.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {}
+    },
+    "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-6.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {}
+    },
+    "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-1.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {}
+    },
+    "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-2.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {}
+    },
+    "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-1.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {}
+    },
+    "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-2.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {}
+    },
+    "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-1.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {}
+    },
+    "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-2.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {
+        "added_configures": [
+          {
+            "bytes": 50944,
+            "ids": [
+              1039,
+              3534,
+              6029,
+              8524
+            ],
+            "count": 4,
+            "positions": [
+              1156,
+              3665,
+              6174,
+              8683
+            ]
+          }
+        ]
+      }
+    },
+    "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-1.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {
+        "added_configures": [
+          {
+            "bytes": 50944,
+            "ids": [
+              974,
+              3464,
+              5954,
+              8444
+            ],
+            "count": 4,
+            "positions": [
+              1087,
+              3593,
+              6099,
+              8605
+            ]
+          }
+        ]
+      }
+    },
+    "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-2.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {
+        "added_configures": [
+          {
+            "bytes": 50944,
+            "ids": [
+              974,
+              3464,
+              5954,
+              8444
+            ],
+            "count": 4,
+            "positions": [
+              1087,
+              3593,
+              6099,
+              8605
+            ]
+          }
+        ]
+      }
+    },
+    "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-3.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {
+        "added_configures": [
+          {
+            "bytes": 50944,
+            "ids": [
+              974,
+              3464,
+              5954,
+              8444
+            ],
+            "count": 4,
+            "positions": [
+              1087,
+              3593,
+              6099,
+              8605
+            ]
+          }
+        ]
+      }
+    },
+    "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-4.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {
+        "added_configures": [
+          {
+            "bytes": 50944,
+            "ids": [
+              974,
+              3464,
+              5954,
+              8444
+            ],
+            "count": 4,
+            "positions": [
+              1087,
+              3593,
+              6099,
+              8605
+            ]
+          }
+        ]
+      }
+    },
+    "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-5.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {
+        "added_configures": [
+          {
+            "bytes": 50944,
+            "ids": [
+              974,
+              3464,
+              5954,
+              8444
+            ],
+            "count": 4,
+            "positions": [
+              1087,
+              3593,
+              6099,
+              8605
+            ]
+          }
+        ]
+      }
+    },
+    "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-6.jsonl": {
+      "added_resolves": [],
+      "added_modules": [],
+      "create_policy": {
+        "added_configures": [
+          {
+            "bytes": 50944,
+            "ids": [
+              974,
+              3464,
+              5954,
+              8444
+            ],
+            "count": 4,
+            "positions": [
+              1087,
+              3593,
+              6099,
+              8605
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

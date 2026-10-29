@@ -1,6 +1,9 @@
-# Compact DSpark main-projection candidate
+# Compact DSpark main-projection candidate history
 
-The [declaration](dspark-main-compact.json) permits no change to the
+The [adoption series](dspark-main-adoption.md) removes the switch after
+qualification. This document records its earlier candidate stage.
+
+The historical [declaration](dspark-main-compact.json) permits no change to the
 existing pinned journals or complete device histories. The declared model
 option `dspark_main_compact` defaults to false. The candidate selects one
 contiguous tuning-table range, TP4 Flash N5120/K15360/G1 at 129..511 rows,

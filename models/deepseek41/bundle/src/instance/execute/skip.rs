@@ -43,6 +43,33 @@ pub(crate) fn without_patches<T>(run: impl FnOnce() -> T) -> T {
 #[cfg(test)]
 thread_local! { static ENGRAM_REUSES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
 
+#[cfg(test)]
+thread_local! { static STALE_ENGRAM: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+/// `plan`, its first DMA join moved under `with_stale_engram`.
+#[cfg(test)]
+fn stale(mut plan: Engram) -> Engram {
+    if STALE_ENGRAM.get() {
+        assert!(plan.move_first_join(), "a DMA Engram plan with a join");
+    }
+    plan
+}
+
+/// Runs `run` with every reused Engram plan's first DMA join moved to
+/// another layer, as a stale kept plan would hold it, so a test can show
+/// that the reuse audit accepts it and the verify mode refuses it.
+#[cfg(test)]
+pub(crate) fn with_stale_engram<T>(run: impl FnOnce() -> T) -> T {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            STALE_ENGRAM.set(self.0);
+        }
+    }
+    let _reset = Reset(STALE_ENGRAM.replace(true));
+    run()
+}
+
 /// The Engram plans kept templates reused on this thread (`Plan::engram`).
 #[cfg(test)]
 pub(crate) fn engram_reuses() -> u64 {
@@ -733,6 +760,8 @@ impl Plan {
             .iter()
             .map(|site| (site.rank, site.at..site.at + site.len));
         let plan = plan.reuse(gathers, &self.body.0, &self.body.1, sites)?;
+        #[cfg(test)]
+        let plan = stale(plan);
         if self.dma.is_some() {
             plan.check_dma_collectives(&self.body.0, &self.body.1)?;
         }

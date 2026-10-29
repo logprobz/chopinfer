@@ -438,6 +438,37 @@ fn verify_refuses_a_template_whose_selections_were_not_patched() {
     instance.destroy().unwrap();
 }
 
+/// A reused Engram plan that differs from a fresh one, here a stale kept
+/// plan whose first DMA join names another layer, passes the reuse audit,
+/// which checks only the patched launches and the collectives. The verify
+/// mode makes the plan again and refuses the step.
+#[test]
+fn verify_refuses_a_reused_engram_plan_that_differs_from_a_fresh_one() {
+    for verify in [false, true] {
+        let host = host(true);
+        let mut instance = create(&host, 4, verify);
+        let request = |prefix| batch(&[chunk(1, 0, prefix, 512)], &[], false).0;
+        assert_eq!(outcome(&instance, &request(200_000)), Outcome::Kept);
+        let planned = crate::instance::execute::skip::with_stale_engram(|| {
+            plan_timing::plan(instance.handle(), &request(200_128))
+        });
+        let refused = host
+            .logs
+            .borrow()
+            .iter()
+            .any(|l| l.contains("a reused prefill Engram plan differs from a fresh one"));
+        if verify {
+            assert!(planned.is_err() && refused, "verify={verify}");
+        } else {
+            let planned = planned.unwrap_or_else(|e| panic!("{e}"));
+            assert_eq!(planned.engram, Some(true));
+            assert!(!refused);
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+}
+
 /// What a step does after it executes.
 #[derive(Clone, Copy)]
 enum Then {

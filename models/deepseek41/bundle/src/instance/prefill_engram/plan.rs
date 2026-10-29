@@ -227,6 +227,18 @@ impl Plan {
         Ok(())
     }
 
+    /// Moves the first DMA piece's join to another layer; whether there was
+    /// one to move.
+    #[cfg(test)]
+    pub(in crate::instance) fn move_first_join(&mut self) -> bool {
+        let join = self
+            .dma
+            .iter_mut()
+            .flatten()
+            .find_map(|piece| piece.join.as_mut());
+        join.map(|join| *join += 42).is_some()
+    }
+
     pub(in crate::instance) fn layer_count(&self) -> usize {
         self.ranges[0].len() - 1
     }

@@ -80,7 +80,7 @@ pub fn subspan(span: Span, offset: u64, length: u64) -> Result<Span, &'static st
 }
 
 /// One owner's contiguous output interval and rank-indexed local inputs.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Owner {
     pub input: Span,
     pub inbox: Span,
@@ -90,7 +90,7 @@ pub struct Owner {
     pub rows: u32,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Transfer {
     source: usize,
     destination: usize,
@@ -121,6 +121,8 @@ impl Payload {
     }
 }
 
+/// Equal calls move the same bytes between the same views in the same order.
+#[derive(Eq, PartialEq)]
 pub struct Call {
     scatter: [Vec<Transfer>; 3],
     gather: [Vec<Transfer>; 3],

@@ -47,6 +47,7 @@ pub mod state;
 pub mod submission;
 pub mod table;
 pub mod taps;
+pub mod template;
 pub mod transaction;
 pub mod upload;
 

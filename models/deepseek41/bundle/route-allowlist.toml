@@ -1244,3 +1244,34 @@ symbol = "chop_deepseek41_dense_decode_n1024_k4096_g2_single_e4m3_ue8m0_k32x4_f3
 rows = [[64, 64], [128, 128], [193, 250], [257, 8192]]
 reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends retain a separate aligned 64-row output cone at these exact outer widths. The N1024/K4096/G2 prefetch admit and packed stages serve inner width 64 outside the reuse range of 17 through 32, retaining reuse-fallback metadata. Qualify this packed-cone reuse range and remove this exception"
 task = "MXFP8-fold-packed-cones"
+
+
+[[allow]]
+profiles = ["tp4-dspark"]
+phase = "prefill"
+family = "dspark_main"
+entry = "dspark_main/generic-below-range/chop_deepseek41_mxfp8_fold_m8192_n5120_k15360_g1_f32_v2_packed_v1"
+symbol = "chop_deepseek41_mxfp8_fold_m8192_n5120_k15360_g1_f32_v2_packed_v1"
+rows = [[1, 8192]]
+reason = "Prepared::main uses its short route through 64 inner rows; this branch is only inner 65..128, below compact admission. Enclosing prefill widths can differ because catch-up retains each item's window."
+task = "SWL-main-compact-adoption"
+
+[[allow]]
+profiles = ["tp4-dspark"]
+phase = "prefill"
+family = "dspark_main"
+entry = "dspark_main/generic-above-range/chop_deepseek41_mxfp8_fold_m8192_n5120_k15360_g1_f32_v2_packed_v1"
+symbol = "chop_deepseek41_mxfp8_fold_m8192_n5120_k15360_g1_f32_v2_packed_v1"
+rows = [[1, 8192]]
+reason = "This branch requires at least 512 retained inner rows, above compact admission. Packed continuations can retain many windows even at small enclosing prefill widths."
+task = "SWL-main-compact-adoption"
+
+[[allow]]
+profiles = ["tp4-dspark"]
+phase = "prefill"
+family = "dspark_main"
+entry = "dspark_main/candidate-off/chop_deepseek41_mxfp8_fold_m8192_n5120_k15360_g1_f32_v2_packed_v1"
+symbol = "chop_deepseek41_mxfp8_fold_m8192_n5120_k15360_g1_f32_v2_packed_v1"
+rows = [[1, 8192]]
+reason = "This branch requires inner rows 129..511 with the candidate option disabled. Remove this allowance when the compact range passes served acceptance and becomes the default."
+task = "SWL-main-compact-adoption"

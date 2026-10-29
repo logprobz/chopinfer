@@ -70,6 +70,7 @@ use model_deepseek41_contract::state::KvStorage;
 
 #[path = "lower/dspark/journal.rs"]
 mod dspark_journal;
+mod dspark_main_compact;
 
 const KV_PAGES: u64 = 256;
 const IMAGE_SLOT: u32 = 1_000_000;

@@ -16,6 +16,7 @@ pub mod dspark_argmax;
 #[allow(dead_code, reason = "the build compiles the drafter auxiliary entries")]
 mod dspark_aux;
 pub mod dspark_entries;
+pub(crate) mod dspark_main;
 pub mod dspark_noise;
 pub mod dspark_peer_embedding;
 pub mod dspark_projection;
@@ -315,12 +316,28 @@ fn register_f32_projections_for(
 include!(concat!(env!("OUT_DIR"), "/argument_access.rs"));
 
 impl crate::Kernels {
+    pub(crate) fn dspark_main_projection(
+        backend: &dyn kernel_core::backend::Backend,
+        shape: &crate::shape::Shape,
+        query: kernel_core::mxfp8_gemm::Mxfp8FoldGemmQuery,
+        need: kernel_core::backend::Need,
+        enabled: bool,
+    ) -> Result<
+        kernel_core::backend::Prepared<
+            kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers<kernel_core::backend::View>,
+        >,
+        kernel_core::backend::Refused,
+    > {
+        dspark_main::prepare(backend, shape, query, need, enabled)
+    }
+
     #[cfg(test)]
     pub(crate) fn route_tags(shape: &crate::shape::Shape) -> Vec<kernel_core::route::RouteTag> {
         let mut tags = Self::new_for_kv(shape, model_deepseek41_contract::state::KvStorage::Native)
             .expect("registered route metadata")
             .backend
             .route_tags();
+        tags.extend(dspark_main::route_tags(shape, false));
         tags.extend(wide_routes::catalogue(shape).expect("qualified wide route metadata"));
         if let Some(backend) = Self::small_decode_norm_backend(shape) {
             tags.extend(backend.route_tags());

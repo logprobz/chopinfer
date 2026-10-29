@@ -16,6 +16,7 @@ use model_deepseek41_contract::serving::DECODE_BATCH;
 use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
 
 mod allocated;
+mod main_compact;
 mod templated;
 
 /// A served configuration: its rank count and the host's (drafts, verify
@@ -455,6 +456,13 @@ impl conformance::Startup for Served {
         }
         envelope.chunk_offsets = vec![8192, 16384, 32768, 40960];
         envelope.probes = vec![446, 789, 1803, 3658, 4542, 7754];
+        if serving.profile == "tp4-dspark" {
+            envelope
+                .probes
+                .extend([64, 65, 127, 128, 129, 130, 510, 511, 512, 513]);
+            envelope.probes.sort_unstable();
+            envelope.probes.dedup();
+        }
         if serving.draft_tokens > 0 {
             // Exercise direct 9-12-item drafts and balanced 9+8, 12+12 and
             // 9+8+8 partitions. The existing 32-item wave runs 11+11+10.
@@ -485,6 +493,15 @@ impl conformance::Startup for Served {
     fn route_tags(&self) -> Vec<kernel_core::route::RouteTag> {
         let shape = self.host.shape.with_verify_rows(self.serving.verify_rows());
         let mut tags = crate::Kernels::route_tags(&shape);
+        if self
+            .serving
+            .model_options
+            .get("dspark_main_compact")
+            .is_some_and(|v| v == "true")
+        {
+            tags.retain(|tag| tag.family != "dspark_main");
+            tags.extend(crate::sm120::dspark_main::route_tags(&shape, true));
+        }
         tags.extend(crate::engram_rows::route_tags());
         tags
     }
@@ -533,7 +550,7 @@ impl conformance::Startup for Served {
     type Limits = Limits;
 
     fn profiles() -> &'static str {
-        include_str!("../../../profiles.json")
+        main_compact::profiles(include_str!("../../../profiles.json"))
     }
     fn servings() -> Vec<conformance::Serving> {
         let serving = |profile: &str, draft_tokens: u32| {
@@ -580,7 +597,7 @@ impl conformance::Startup for Served {
                 );
             }
         }
-        configurations
+        main_compact::servings(configurations)
     }
     fn new(serving: &conformance::Serving) -> Self {
         let ranks = Ranks::new(serving.tensor_parallel).expect("a supported rank count");

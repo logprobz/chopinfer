@@ -5,6 +5,8 @@ use runtime_bundle::model_options::{ModelOptionV1, OptionDefinitionV1};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+/// Candidate: compact TP4 DSpark main projection at its qualified row range.
+pub const DSPARK_MAIN_COMPACT: &str = "dspark_main_compact";
 pub const SHARED_OVERLAP_MAX_ROWS: &str = "shared_overlap_max_rows";
 pub const PREFILL_PLAN_CACHE_PLANS: &str = "prefill_plan_cache_plans";
 pub const PREFILL_PLAN_CACHE_VERIFY: &str = "prefill_plan_cache_verify";
@@ -17,6 +19,7 @@ pub const MAX_PLANS: usize = 64;
 pub const DEFAULT_GRAPH_HANDLES_PER_RANK: usize = 512;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Options {
+    pub dspark_main_compact: bool,
     pub shared_overlap_max_rows: u32,
     pub prefill_plan_cache_plans: usize,
     pub prefill_plan_cache_verify: bool,
@@ -24,7 +27,7 @@ pub struct Options {
     pub diagnostic_step_logs: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 5] {
+pub fn declarations() -> [ModelOptionV1; 6] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -37,6 +40,10 @@ pub fn declarations() -> [ModelOptionV1; 5] {
                 minimum: 0,
                 maximum: i64::MAX,
             },
+        ),
+        (
+            DSPARK_MAIN_COMPACT,
+            OptionDefinitionV1::Boolean { default: false },
         ),
         (
             PREFILL_PLAN_CACHE_PLANS,
@@ -89,6 +96,9 @@ impl Options {
                 .map_err(|_| format!("model option {name} exceeds the platform's count range"))
         };
         Ok(Self {
+            dspark_main_compact: values[DSPARK_MAIN_COMPACT]
+                .as_bool()
+                .expect("checked boolean"),
             shared_overlap_max_rows: values[SHARED_OVERLAP_MAX_ROWS]
                 .as_u64()
                 .expect("checked u32") as u32,
@@ -145,6 +155,7 @@ mod tests {
         let declaration = declaration();
         let defaults = declaration.resolve(&BTreeMap::new()).unwrap();
         let expected = Options {
+            dspark_main_compact: false,
             shared_overlap_max_rows: u32::MAX,
             prefill_plan_cache_plans: 16,
             prefill_plan_cache_verify: false,
@@ -160,6 +171,7 @@ mod tests {
     fn overrides_reach_the_reader_and_make_identity_unqualified() {
         let declaration = declaration();
         let overrides = BTreeMap::from([
+            (DSPARK_MAIN_COMPACT.into(), "true".into()),
             (SHARED_OVERLAP_MAX_ROWS.into(), "8".into()),
             (PREFILL_PLAN_CACHE_PLANS.into(), "2".into()),
             (PREFILL_PLAN_CACHE_VERIFY.into(), "true".into()),
@@ -170,6 +182,7 @@ mod tests {
         assert_eq!(
             Options::read(&resolved).unwrap(),
             Options {
+                dspark_main_compact: true,
                 shared_overlap_max_rows: 8,
                 prefill_plan_cache_plans: 2,
                 prefill_plan_cache_verify: true,
@@ -184,6 +197,7 @@ mod tests {
     fn host_and_bundle_refuse_wrong_types_and_out_of_range_values() {
         let declaration = declaration();
         for (name, bad) in [
+            (DSPARK_MAIN_COMPACT, "1"),
             (SHARED_OVERLAP_MAX_ROWS, "0"),
             (SHARED_OVERLAP_MAX_ROWS, "4294967296"),
             (PREFILL_PLAN_CACHE_PLANS, "0"),

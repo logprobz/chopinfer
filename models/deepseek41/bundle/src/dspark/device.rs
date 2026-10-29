@@ -167,6 +167,7 @@ impl Device {
         context_tokens: u64,
         draft_chunk_items: usize,
         mode: DraftMode,
+        main_compact: bool,
     ) -> Result<Self, String> {
         let g = shape.geometry;
         if !(1..=DECODE_BATCH as usize).contains(&draft_chunk_items) {
@@ -201,8 +202,9 @@ impl Device {
         if let Some(missing) = ops.missing.first() {
             return Err(missing.clone());
         }
-        let prepared = Prepared::prepare(kernels.backend.as_ref(), shape)
-            .map_err(|e| format!("DSpark operations: {e:?}"))?;
+        let prepared =
+            Prepared::prepare_with_main_compact(kernels.backend.as_ref(), shape, main_compact)
+                .map_err(|e| format!("DSpark operations: {e:?}"))?;
         let heads = Heads::prepare(kernels.backend.as_ref(), kernels.own.as_ref(), shape, mode)
             .map_err(|e| format!("DSpark heads: {e:?}"))?;
         let ring_gathers = [1, 32]

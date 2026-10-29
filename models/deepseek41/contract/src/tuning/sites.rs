@@ -31,7 +31,9 @@ pub(super) fn validate(row: &Row) -> Result<(), TuningError> {
             (&["local_wide"], &["stages", "tile_n", "tile_rows"], &[])
         }
         "dense_fold.stream.decode" => (&["stream"], &[], &[]),
-        "dense_prefill.compact.prefill" | "dense_prefill.matrix.prefill" => (
+        "dense_prefill.compact.prefill"
+        | "dense_prefill.matrix.prefill"
+        | "dense_prefill.dspark_main.prefill" => (
             &["prefill_tiles"],
             &["stages", "tile_rows"],
             &["matrix_fetch"],
@@ -205,7 +207,7 @@ fn validate_values(row: &Row) -> Result<(), TuningError> {
                 && (8..=64).contains(&count("tile_n"))
                 && count("tile_n") % 8 == 0
         }
-        "dense_prefill.compact.prefill" => {
+        "dense_prefill.compact.prefill" | "dense_prefill.dspark_main.prefill" => {
             !flag("matrix_fetch")
                 && count("tile_rows") == compact_tile(first)
                 && count("tile_rows") == compact_tile(last)

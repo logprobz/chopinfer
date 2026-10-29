@@ -1,0 +1,4 @@
+{
+  "schema": "chopinfer.journal-proof.layout.v1",
+  "description": "Add a default-off compact DSpark main-projection range. Existing pinned device lifetimes keep their default generic route. No resource, handle, operation, module, kernel lock or text edit is permitted. Candidate-enabled routing is checked separately; adoption requires its own route-flip declaration and served acceptance."
+}

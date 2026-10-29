@@ -378,7 +378,8 @@ pub enum PrefillTimingCutsV1 {
     Off,
     /// Size cuts against the configured TBT target and progress floor.
     Fixed,
-    /// Candidate: size the TBT cap beside decoding requests from demand
+    /// Candidate: under a prefill backlog, size the TBT cap beside decoding
+    /// requests from the TBT target as a decode cadence
     /// (`SchedulerConfig::with_adaptive_prefill_budget`). Grid bundles cut
     /// their chunks at it; bundles without a grid take it as the ordinary
     /// TBT cap.

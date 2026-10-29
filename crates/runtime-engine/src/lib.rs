@@ -196,7 +196,7 @@ impl EngineConfig {
         self
     }
 
-    /// Candidate demand-adaptive TBT cap
+    /// Candidate cadence-sized TBT cap
     /// ([`runtime_scheduler::SchedulerConfig::with_adaptive_prefill_budget`]).
     #[must_use]
     pub const fn with_adaptive_prefill_budget(mut self, enabled: bool) -> Self {
@@ -204,8 +204,8 @@ impl EngineConfig {
         self
     }
 
-    /// Whether the TBT cap is sized from demand: the candidate and the TBT
-    /// budget together.
+    /// Whether the TBT cap is sized from the decode cadence: the candidate
+    /// and the TBT budget together.
     #[must_use]
     pub const fn adaptive_prefill_budget(self) -> bool {
         self.scheduler.adaptive_prefill_budget()

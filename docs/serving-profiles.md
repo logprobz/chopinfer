@@ -321,17 +321,22 @@ if it fits beside the decoders. Timing cuts capture no prefix anchor;
 scored and media requests keep their chunks.
 
 `adaptive` is a candidate under qualification. It needs `--prefill-budget
-tbt` and sizes the tbt cap of a step beside decoding requests from demand
-instead of the fixed target. Each such step takes the cap that costs blocked
-requests the least time per prefill token: every request waiting on prefill
-is blocked for the whole step, and each decoding request is charged the
-whole step, at half weight, once for each stall line (250 ms and 1 s) the
-predicted step crosses. Every legal cap is priced: the progress floor, each
-128-token multiple above it up to what the waiting requests' next chunks can
-take, and no cap. Many decoders beside little prefill get short steps; many
-waiting prompts beside few decoders get large ones. Without decoders the
-step is not capped, and until the step model trains the cap is the progress
-floor, as with the fixed target. It applies to every model: a bundle with a prefill grid needs
+tbt` and takes `--decode-tbt-target-ms` as a decode cadence target: a
+decoding request's gap is the step it shares, so while a prefill backlog
+lasts, each step beside decoding requests takes the largest legal cap (the
+progress floor, each 128-token multiple up to what the waiting requests'
+next chunks can take, or no cap) whose predicted time, with a margin, stays
+within the target. The margin is the 90th percentile of the step model's
+last 128 relative prediction errors, at least 5%, so a prediction close to
+the target counts as crossing it. No smaller cap is taken, since each extra
+step adds its fixed cost to the prefill. A backlog that uncut chunks are
+predicted to clear within 4 s is served as `off` serves it (whole grid
+chunks, or the fixed-target cap without a grid); a longer one also prefills
+the shortest remaining prompt first, and a prompt queued for 30 s of step
+time first on every second step. Without decoders the step is not capped,
+and until the step model trains the cap is the progress floor. Its useful
+targets are about 500 ms to 1 s; the 100 ms default cuts nearly as hard as
+`fixed`. It applies to every model: a bundle with a prefill grid needs
 negotiated cuts, as with `fixed`, and ends grid chunks at the chosen cap
 (startup prints `prefill timing cuts on (adaptive): grid chunks ...`); a
 bundle without a grid takes the cap as its ordinary tbt prefill budget and

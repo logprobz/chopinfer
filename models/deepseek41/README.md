@@ -187,14 +187,6 @@ them. A non-default value is unqualified.
 | `text_config.indexer_prefill_tile` | `true` | Enable the qualified Flash tiled indexer routes. |
 | `verify_graph_rows` | `64` | Widest graphed verify step; wider admitted steps run eagerly. |
 
-The prompt-end grid-anchor candidate is removed. A TP4 C1 replay on
-2026-10-29 matched all 40 turn pairs bitwise but regressed throughput by
-0.66% and TTFT p95 in both pairs. An off-grid 789-row prefill took
-311-313 ms, while separate 768- and 21-row steps totaled 288-294 ms.
-The tail selected split-tail dense routes instead of exact-row folds.
-A future proposal needs served stateful acceptance across cold and warm
-turns before adding a new grid-anchor ABI or changing the default schedule.
-
 TP4 native-KV single-item DMA prefill overlaps both prepared Engram gathers
 by default at 512-8192 rows. The model joins each layer before its decoder;
 media, taps and unavailable prepared row services retain their existing
@@ -217,6 +209,19 @@ timing and confidence captures; this changes diagnostic output only.
 longer selects the bundle's step or commit records. Existing diagnostic
 capture directories, AR Engram tracing and the shared
 `CHOPINFER_DEVICE_RESULTS` control remain available.
+
+### Removed prompt-end grid-anchor candidate
+
+The prompt-end grid-anchor candidate is removed. A TP4 AR C1 replay on
+2026-10-29 matched all 40 turn pairs bitwise but regressed throughput by
+0.66% and TTFT p95 in both pairs. An off-grid 789-row prefill took
+311-313 ms, while separate 768- and 21-row steps totaled 288-294 ms.
+The tail selected split-tail dense routes instead of exact-row folds.
+The final DSpark C1 gate also regressed TTFT p95 in both pairs: 303.03
+to 324.71 ms and 308.08 to 321.54 ms. The declared gate failed despite
+the cold AR C4 throughput gain.
+A future proposal needs served stateful acceptance across cold and warm
+turns before adding a new grid-anchor ABI or changing the default schedule.
 
 ### Removed short-prefill graph candidate
 

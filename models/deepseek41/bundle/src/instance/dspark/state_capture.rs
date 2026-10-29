@@ -64,38 +64,35 @@ impl Instance {
             .ledger
             .committed(request, end)
             .map_err(|error| format!("state capture ledger: {error:?}"))?;
-        let holder = Holder::Slot(slot);
         let retained_start = context.map_or(
             end.saturating_sub(u64::from(self.config.shape.geometry.shape.attention.window)),
             |c| c.retained_start,
         );
         let projected = context.map_or_else(Vec::new, |c| c.projected().to_vec());
-        let mut table = Table::new(&self.state, self.extent, holder)
+        let mut table = Table::new(&self.state, self.extent, Holder::Slot(slot))
             .map_err(|e| format!("DSpark state capture table: {e:?}"))?;
         // Prefix restore rebuilds the drafter rings from retained features.
-        // Parity captures include a slot's rings as well as the prefix payload.
+        // Parity captures include those rings as well as the prefix payload.
+        for (index, buffer) in self
+            .state
+            .buffers
+            .iter()
+            .enumerate()
+            .filter(|(_, buffer)| buffer.drafter && buffer.capture == Capture::None)
         {
-            for (index, buffer) in self
-                .state
-                .buffers
-                .iter()
-                .enumerate()
-                .filter(|(_, buffer)| buffer.drafter && buffer.capture == Capture::None)
-            {
-                let entries = buffer.entries(self.extent);
-                for layer in 0..buffer.layers {
-                    let mut plane_start = layer * buffer.layer_stride(entries);
-                    for &length in &buffer.planes {
-                        let at = table.header_at();
-                        table.descriptors.push(Descriptor {
-                            buffer: index,
-                            spare: false,
-                            offset: plane_start + u64::from(slot) * length,
-                            length,
-                            at,
-                        });
-                        plane_start += entries * length;
-                    }
+            let entries = buffer.entries(self.extent);
+            for layer in 0..buffer.layers {
+                let mut plane_start = layer * buffer.layer_stride(entries);
+                for &length in &buffer.planes {
+                    let at = table.header_at();
+                    table.descriptors.push(Descriptor {
+                        buffer: index,
+                        spare: false,
+                        offset: plane_start + u64::from(slot) * length,
+                        length,
+                        at,
+                    });
+                    plane_start += entries * length;
                 }
             }
         }
@@ -111,8 +108,14 @@ impl Instance {
                 .descriptors
                 .iter()
                 .map(|part| {
-                    let buffer = buffers.state.buffers[part.buffer].1;
-                    slice(buffer, part.offset, part.length)
+                    if part.spare {
+                        return Err("DSpark state capture has an unsupported spare".into());
+                    }
+                    slice(
+                        buffers.state.buffers[part.buffer].1,
+                        part.offset,
+                        part.length,
+                    )
                 })
                 .collect::<Result<Vec<_>, String>>()?;
             let mut paged = Vec::new();

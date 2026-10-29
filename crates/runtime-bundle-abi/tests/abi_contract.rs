@@ -5148,11 +5148,3 @@ fn mapped_only_sampling_is_not_a_recoverable_validation_refusal() {
     assert_eq!(instance.last_execute_refusal(), None);
     instance.destroy().unwrap();
 }
-
-#[test]
-fn public_header_has_no_retired_grid_anchor_exports() {
-    let header = include_str!("../../../include/chop_bundle_v1.h");
-    assert!(!header.contains("chop_bundle_prefill_anchors_api_v1"));
-    assert!(!header.contains("chop_bundle_prefill_anchors_api_v2"));
-    assert!(header.contains("chop_bundle_prefill_cuts_api_v1(void)"));
-}

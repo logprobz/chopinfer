@@ -48,16 +48,6 @@ pub(super) fn create_profile_with_options(
     skip: bool,
     options: &[(&str, serde_json::Value)],
 ) -> BundleInstanceV1 {
-    try_create_profile_with_options(host, chunk, skip, options)
-        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()))
-}
-
-pub(super) fn try_create_profile_with_options(
-    host: &Rc<Host>,
-    chunk: u32,
-    skip: bool,
-    options: &[(&str, serde_json::Value)],
-) -> Result<BundleInstanceV1, runtime_bundle_abi::BundleAbiError> {
     let mut record = crate::config::tests::record(&host.shape, host.kv, 4, false);
     let at = record
         .windows(MODEL_OPTIONS_TAG_V1.len())
@@ -84,6 +74,7 @@ pub(super) fn try_create_profile_with_options(
         .with_device_results_api(crate::api::BUNDLE_DEEPSEEK41_DEVICE_RESULTS_API_V1)
         .unwrap()
         .create(services, &record)
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()))
 }
 
 #[test]
@@ -522,4 +513,74 @@ fn packed_items_keep_original_row_origins_and_distinct_logits() {
     instance.retire_request(2).unwrap();
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
+}
+
+/// DeepSeek declares no manifest anchors. Unsupported V3 anchor flags are
+/// refused by both the raw execution guard and the negotiated envelope,
+/// for upper-skip AR, full-schedule AR and DSpark, without publishing work.
+#[test]
+fn unsupported_anchor_flags_are_refused_by_every_prefill_profile() {
+    use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
+    for (dspark, skip) in [(false, true), (false, false), (true, true)] {
+        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+        host.drafter.set(dspark);
+        if dspark {
+            host.speculation.set(Some((5, 32)));
+        }
+        let mut instance = create_profile(&host, 8192, skip);
+        let batch = |anchor| {
+            BatchRequestV1::new(
+                BatchWireVersionV1::V3,
+                vec![BatchItemV1::new(7, false, 65, true, (0..65).collect()).with_anchor(anchor)],
+                vec![BatchAppendV1::new(0, 65, 65, vec![0, 1], None)],
+            )
+            .with_state_slots(vec![0])
+            .encode()
+            .unwrap()
+        };
+        let ordinary = batch(false);
+        let anchored = batch(true);
+        let mut envelope = encode(
+            &ordinary,
+            &[Boundary {
+                request_id: 7,
+                prompt_tokens: 65,
+                chunk_end: 65,
+                chunk_tokens: 8192,
+            }],
+        )
+        .unwrap();
+        // Encode refuses anchored items itself. Replace only the embedded
+        // batch to exercise a caller supplying unsupported wire bytes.
+        let at = envelope
+            .windows(ordinary.len())
+            .position(|w| w == ordinary)
+            .unwrap();
+        assert_eq!(ordinary.len(), anchored.len());
+        envelope[at..at + anchored.len()].copy_from_slice(&anchored);
+        let before = host.device.journal.borrow().len();
+        let mut sink = Sink::default();
+        for negotiated in [false, true] {
+            let result = if negotiated {
+                instance.execute_prefill(&envelope, &mut sink)
+            } else {
+                instance.execute(&anchored, &mut sink)
+            };
+            assert_eq!(
+                result,
+                Err(runtime_bundle_abi::BundleAbiError::Status(
+                    BundleStatusV1::InvalidArgument
+                )),
+                "dspark={dspark} skip={skip} negotiated={negotiated}"
+            );
+        }
+        assert!(sink.views.is_empty());
+        assert_eq!(host.device.journal.borrow().len(), before);
+        assert_eq!(
+            crate::instance::ledger_state(instance.handle(), 0),
+            (None, false)
+        );
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
 }

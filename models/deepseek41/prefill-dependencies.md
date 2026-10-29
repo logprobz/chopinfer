@@ -16,9 +16,10 @@ schedule at every admitted 64-token end, including when a restored final
 chunk is split again. Profiles with no guaranteed grid do not enable it. The
 scheduler retains the absolute grid after an extra cut, so a cut at 4032 is
 followed by 8192 unless another selected anchor or the prompt end comes
-first. This mechanism does not enable timing-budget cuts. TBT-selected timing cuts are a separate
-serving option (`--prefill-timing-cuts fixed` with `--prefill-budget tbt`),
-off by default and described below.
+first. This mechanism does not enable timing-budget cuts. TBT-selected
+timing cuts are a separate serving option
+(`--prefill-timing-cuts fixed` with `--prefill-budget tbt`), off by default
+and described below.
 
 On default `tp4-ar` and `tp4-dspark`, every eligible prompt with a complete
 64-token block and a trailing 1-63 tokens is cut at `prompt / 64 * 64`,
@@ -32,11 +33,12 @@ prompts, as well as any cost of shared-prefix cuts.
 
 The in-step prompt-end anchor candidate is removed. It could save a tail
 step on cold packed prompts, but C1 stateful replay exposed a dense-route
-cost: fusing 768+21 rows into 789 selected split-tail projections and took
-311-313 ms rather than 288-294 ms. The TP4 AR replay on 2026-10-29 matched
-40 turn pairs bitwise but regressed output throughput by 0.66% and TTFT p95
-in both pairs. Ordinary cuts remain, with no per-instance grid-anchor ABI,
-spare buffers or changed manifest-anchor behavior in other models.
+cost. A fused 789-row step selected split-tail projections and took
+311-313 ms; separate 768- and 21-row steps totaled 288-294 ms. The TP4 AR
+replay on 2026-10-29 matched 40 turn pairs bitwise but regressed output
+throughput by 0.66% and TTFT p95 in both pairs. Ordinary cuts remain, with
+no per-instance grid-anchor ABI, spare buffers or changed manifest-anchor
+behavior in other models.
 
 The final TP4 gate on 2026-10-29 measured a 12.71% AR C4 throughput gain,
 but DSpark C1 replay regressed TTFT p95 in both pairs: 303.03 to 324.71 ms

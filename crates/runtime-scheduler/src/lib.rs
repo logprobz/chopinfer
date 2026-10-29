@@ -2290,7 +2290,7 @@ impl Scheduler {
                             // long to share the step runs alone when uncapped.
                             let (mut tokens, mut mixed, mut longest, mut alone) =
                                 (0usize, 0usize, 0usize, 0usize);
-                            let mut manifest_anchors = self.config.anchor_items;
+                            let mut anchors = self.config.anchor_items;
                             for &index in &prefill {
                                 let record = &self.requests[index];
                                 let chunk = Self::chunk_tokens(
@@ -2303,14 +2303,13 @@ impl Scheduler {
                                 );
                                 let remaining =
                                     Self::prefill_target(record) - record.prefilled_tokens;
-                                let anchors = &mut manifest_anchors;
                                 let runs_alone = self.config.guaranteed_prefill_chunks.is_some()
                                     && chunk > decode_room;
                                 // A timing cap stops at the anchor, but an
                                 // uncapped item may include its tail. Price
                                 // those separately: the uncapped step with the
                                 // fused tail, the cuts up to the anchor.
-                                let whole = if *anchors > 0
+                                let whole = if anchors > 0
                                     && remaining <= self.config.scheduled_token_budget
                                     && (remaining <= decode_room || runs_alone)
                                     && Self::spannable_anchor(
@@ -2320,7 +2319,7 @@ impl Scheduler {
                                     )
                                     .is_some()
                                 {
-                                    *anchors -= 1;
+                                    anchors -= 1;
                                     remaining
                                 } else {
                                     chunk

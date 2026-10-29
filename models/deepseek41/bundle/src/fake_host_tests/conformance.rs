@@ -378,47 +378,6 @@ fn adopted_ar_buffers_precede_serving_kv_sizing() {
     );
 }
 
-impl Served {
-    /// The instance of this serving.
-    fn create_with(&self) -> Result<BundleInstanceV1, BundleAbiError> {
-        if self.host.device.symbols_only.get() {
-            // The mapped index also serves AR. Speculation is negotiated separately.
-            self.host.drafter.set(true);
-            self.host
-                .kv_pages
-                .set(1024 * u64::from(self.serving.sequences));
-        }
-        let mut record = crate::config::tests::record(
-            &self.host.shape,
-            self.host.kv,
-            self.serving.sequences,
-            false,
-        );
-        if !self.serving.model_options.is_empty() {
-            let tag = runtime_bundle_abi::MODEL_OPTIONS_TAG_V1;
-            let at = record.windows(tag.len()).position(|w| w == tag).unwrap() + tag.len();
-            let mut options: serde_json::Value = serde_json::from_slice(&record[at + 4..]).unwrap();
-            for (key, value) in &self.serving.model_options {
-                options[key] = serde_json::from_str(value).unwrap();
-            }
-            let options = serde_json::to_vec(&options).unwrap();
-            record.truncate(at);
-            record.extend_from_slice(&(options.len() as u32).to_le_bytes());
-            record.extend_from_slice(&options);
-        }
-        let api = if self.host.device.symbols_only.get() {
-            api()
-                .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
-                .expect("prefill API")
-                .with_prefill_cuts_api(crate::instance::prefill::PREFILL_CUTS_API)
-                .expect("prefill cuts API")
-        } else {
-            api()
-        };
-        api.create(HostServicesTableV1::new(Rc::clone(&self.observed)), &record)
-    }
-}
-
 impl conformance::Startup for Served {
     type Observer = bundle_runtime::fake_host::NoObserver;
 
@@ -629,7 +588,41 @@ impl conformance::Startup for Served {
         }
     }
     fn create(&self) -> Result<BundleInstanceV1, BundleAbiError> {
-        self.create_with()
+        if self.host.device.symbols_only.get() {
+            // The mapped index also serves AR. Speculation is negotiated separately.
+            self.host.drafter.set(true);
+            self.host
+                .kv_pages
+                .set(1024 * u64::from(self.serving.sequences));
+        }
+        let mut record = crate::config::tests::record(
+            &self.host.shape,
+            self.host.kv,
+            self.serving.sequences,
+            false,
+        );
+        if !self.serving.model_options.is_empty() {
+            let tag = runtime_bundle_abi::MODEL_OPTIONS_TAG_V1;
+            let at = record.windows(tag.len()).position(|w| w == tag).unwrap() + tag.len();
+            let mut options: serde_json::Value = serde_json::from_slice(&record[at + 4..]).unwrap();
+            for (key, value) in &self.serving.model_options {
+                options[key] = serde_json::from_str(value).unwrap();
+            }
+            let options = serde_json::to_vec(&options).unwrap();
+            record.truncate(at);
+            record.extend_from_slice(&(options.len() as u32).to_le_bytes());
+            record.extend_from_slice(&options);
+        }
+        let api = if self.host.device.symbols_only.get() {
+            api()
+                .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
+                .expect("prefill API")
+                .with_prefill_cuts_api(crate::instance::prefill::PREFILL_CUTS_API)
+                .expect("prefill cuts API")
+        } else {
+            api()
+        };
+        api.create(HostServicesTableV1::new(Rc::clone(&self.observed)), &record)
     }
     fn step(&self, items: &[conformance::Item]) -> Vec<u8> {
         let items: Vec<_> = items

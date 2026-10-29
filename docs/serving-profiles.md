@@ -328,8 +328,12 @@ progress floor, each 128-token multiple up to what the waiting requests'
 next chunks can take, or no cap) whose predicted time, with a margin, stays
 within the target. The margin is the 90th percentile of the step model's
 last 128 relative prediction errors, at least 5%, so a prediction close to
-the target counts as crossing it. No smaller cap is taken, since each extra
-step adds its fixed cost to the prefill. A backlog that uncut chunks are
+the target counts as crossing it. When no cap keeps the target, as at a
+long context where even the floor's step is predicted past it, the step
+takes the progress floor and exceeds the target, so the target is not a
+latency bound. No smaller cap is taken, since each extra step adds its
+fixed cost to the prefill. Uncapped, an item may also run past an anchor
+to its prompt end, and that longer step is what is priced. A backlog that uncut chunks are
 predicted to clear within 4 s is served as `off` serves it (whole grid
 chunks, or the fixed-target cap without a grid); a longer one also prefills
 the shortest remaining prompt first, and a prompt queued for 30 s of step

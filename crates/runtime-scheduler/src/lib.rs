@@ -580,8 +580,9 @@ impl SchedulerConfig {
     /// shares, so the cap is the largest legal one (the progress floor, each
     /// 128-token multiple up to what the waiting chunks can take, or no
     /// cap) whose predicted step, with a margin from the step model's recent
-    /// errors, stays within the target; never a smaller one, since each
-    /// extra step adds its fixed cost to the prefill. A backlog that uncapped
+    /// errors, stays within the target, or the progress floor when none
+    /// does; never a smaller one, since each extra step adds its fixed cost
+    /// to the prefill. A backlog that uncapped
     /// chunks clear within `TRANSIENT_BACKLOG_MICROS` is served as without
     /// the switch: whole grid chunks, or the fixed-target cap. A longer
     /// backlog also prefills the shortest remaining prompt first, and a

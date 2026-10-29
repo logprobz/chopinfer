@@ -741,3 +741,103 @@ fn planning_time() {
         }
     }
 }
+
+/// Bytes of live allocations: glibc's in-use heap and mapped chunks.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn allocated() -> i64 {
+    /// glibc's `struct mallinfo2`, ten `size_t` counters.
+    #[repr(C)]
+    struct Mallinfo2([usize; 10]);
+    #[allow(unsafe_code)]
+    unsafe extern "C" {
+        fn mallinfo2() -> Mallinfo2;
+    }
+    // SAFETY-REVIEWED: mallinfo2 takes no arguments and returns
+    // allocator-owned counters by value.
+    #[allow(unsafe_code)]
+    let Mallinfo2(counts) = unsafe { mallinfo2() };
+    // hblkhd and uordblks.
+    (counts[4] + counts[7]) as i64
+}
+
+/// Host memory a full cache of 64 templates holds at the served
+/// long-context shapes, in a release build with
+/// `CHOPINFER_PLAN_TEMPLATE_BENCH=1`: `cargo test --release -p
+/// bundle-deepseek41 --lib prefill_plan_templates::template_memory --
+/// --nocapture`. A shape's first key is one chunk after the context; the
+/// others move rows to a second, short-context item, each boundary its own
+/// key. What the templates hold is the live bytes after planning every key
+/// less those of an instance keeping none. Other runs plan two keys of one
+/// shape and check that each kept its own template.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn template_memory() {
+    let measured = std::env::var("CHOPINFER_PLAN_TEMPLATE_BENCH").is_ok_and(|v| v == "1");
+    let limit = if measured { 64 } else { 2 };
+    let shapes: &[(bool, u64, u64)] = if measured {
+        &[
+            (false, 100_032, 512),
+            (false, 200_000, 512),
+            (true, 100_032, 512),
+            (true, 200_000, 512),
+            (false, 200_000, 8192),
+            (true, 200_000, 8192),
+        ]
+    } else {
+        &[(false, 200_000, 512)]
+    };
+    for &(dspark, prefix, rows) in shapes {
+        let moved = rows / 64;
+        let requests: Vec<_> = (0..limit as u64)
+            .map(|at| {
+                let first = chunk(1, 0, prefix, rows - at * moved);
+                let chunks = if at == 0 {
+                    vec![first]
+                } else {
+                    vec![first, chunk(2, 1, 8192, at * moved)]
+                };
+                batch(&chunks, &[], false).0
+            })
+            .collect();
+        let plan = |instance: &BundleInstanceV1, request: &[u8]| {
+            plan_timing::plan(instance.handle(), request).unwrap_or_else(|e| panic!("{e}"));
+        };
+        // State made at a first lowering stays outside the count.
+        {
+            let host = host(dspark);
+            let mut instance = create(&host, 0, false);
+            plan(&instance, &requests[0]);
+            instance.destroy().unwrap();
+        }
+        let mut held = Vec::new();
+        for templates in [0, limit] {
+            let host = host(dspark);
+            let mut instance = create(&host, templates, false);
+            let before = allocated();
+            plan(&instance, &requests[0]);
+            let first = allocated() - before;
+            for request in &requests[1..] {
+                plan(&instance, request);
+            }
+            held.push((first, allocated() - before));
+            if templates > 0 {
+                let counts = counts(&instance);
+                let limit = limit as u64;
+                assert_eq!(
+                    (counts.misses, counts.kept, counts.evicted),
+                    (limit, limit, 0)
+                );
+            }
+            instance.destroy().unwrap();
+        }
+        if measured {
+            let mib = |bytes: i64| bytes as f64 / f64::from(1 << 20);
+            println!(
+                "dspark={dspark} prefix={prefix} rows={rows}: {limit} templates hold {:.1} MiB, \
+                 the first {:.1} MiB",
+                mib(held[1].1 - held[0].1),
+                mib(held[1].0 - held[0].0),
+            );
+        }
+    }
+}

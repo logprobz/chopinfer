@@ -333,7 +333,8 @@ step adds its fixed cost to the prefill. A backlog that uncut chunks are
 predicted to clear within 4 s is served as `off` serves it (whole grid
 chunks, or the fixed-target cap without a grid); a longer one also prefills
 the shortest remaining prompt first, and a prompt queued for 30 s of step
-time first on every second step. Without decoders the step is not capped,
+time first on every second step that takes prefill (owed decode-only
+steps do not count). Without decoders the step is not capped,
 and until the step model trains the cap is the progress floor. Its useful
 targets are about 500 ms to 1 s; the 100 ms default cuts nearly as hard as
 `fixed`. It applies to every model: a bundle with a prefill grid needs

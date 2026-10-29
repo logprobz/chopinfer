@@ -2,7 +2,7 @@
 //! under a prefill backlog, a step beside decoding requests takes the
 //! largest legal cap whose predicted time, with the step model's margin,
 //! keeps the target, and the backlog prefills the shortest remaining prompt
-//! first, an aged prompt first on every second step. A backlog that uncut
+//! first, an aged prompt first on every second prefill step. A backlog that uncut
 //! chunks clear within `TRANSIENT_BACKLOG_MICROS` is served as without the
 //! switch. Grid requests with cuts take the cap as a timing cut; other
 //! requests take it as the step's prefill budget.
@@ -592,5 +592,172 @@ fn adaptive_caps_price_the_uncapped_anchor_tail() {
         );
         assert_eq!(item.anchor_tokens(), anchor, "{anchors} {decode} {backlog}");
         assert!(cost(batch.shape()) * 105 <= u64::from(TARGET_MS) * 100_000);
+    }
+}
+
+fn owing(decode_steps: u32) -> PrefillBudget {
+    PrefillBudget::Tbt(MixedPolicy::new(TARGET_MS, FLOOR, decode_steps).unwrap())
+}
+
+#[test]
+fn an_aged_prompt_progresses_when_decode_only_steps_follow_each_mixed_step() {
+    // One owed decode-only step after each mixed step puts every step that
+    // takes prefill on one scheduling-tick parity. A 65,536-token prompt
+    // queued behind a stream of shorter prompts still takes a chunk on
+    // every second prefill step once aged, whichever parity its backlog
+    // starts on.
+    for lead in 0..2 {
+        for base in [grid(true), plain(true)] {
+            let setup = Setup {
+                budget: owing(1),
+                ..base
+            };
+            let mut s = scheduler(setup);
+            decoders(&mut s, 2);
+            for _ in 0..lead {
+                step(&mut s).unwrap();
+            }
+            let prompt = 8 * GRID;
+            submit(&mut s, 1, prompt, 4);
+            let mut steps = Vec::new();
+            let mut clock = 0u64;
+            let mut next = 1000;
+            while prefilling(&s, 1) {
+                assert!(
+                    steps.len() < 600,
+                    "{setup:?} lead {lead}: starved after {} ms of steps with {} of {prompt} tokens left",
+                    clock / 1000,
+                    prompt
+                        - steps
+                            .iter()
+                            .flat_map(|(_, step): &(u64, Step)| &step.prefills)
+                            .filter(|item| item.0 == 1)
+                            .map(|item| item.2)
+                            .sum::<usize>()
+                );
+                if steps.len() % 4 == 0 {
+                    submit(&mut s, next, 3 * GRID, 2);
+                    next += 1;
+                }
+                let step = step(&mut s).unwrap();
+                clock += step.micros;
+                steps.push((clock, step));
+            }
+            // Once aged, under the backlog the shorter prompts keep, it takes
+            // a chunk on at least every second step that takes prefill.
+            let served: Vec<bool> = steps
+                .iter()
+                .filter(|(at, step)| {
+                    *at >= PREFILL_AGE_MICROS + 2_000_000 && !step.prefills.is_empty()
+                })
+                .map(|(_, step)| step.prefills.iter().any(|item| item.0 == 1))
+                .collect();
+            for pair in served.windows(2) {
+                assert!(
+                    pair.iter().any(|&served| served),
+                    "{setup:?} lead {lead}: {served:?}"
+                );
+            }
+            let steps: Vec<Step> = steps.into_iter().map(|(_, step)| step).collect();
+            assert_legal(&chunks(&steps, 1), prompt);
+        }
+    }
+}
+
+/// xorshift64*: a fixed-seed generator for the randomized arrivals.
+struct Rng(u64);
+
+impl Rng {
+    fn below(&mut self, bound: u64) -> u64 {
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        self.0.wrapping_mul(0x2545_f491_4f6c_dd1d) % bound
+    }
+}
+
+#[test]
+fn every_waiting_prompt_progresses_within_a_bounded_number_of_steps() {
+    // Randomized arrivals, prompt sizes, decoder counts and owed
+    // decode-only steps k, on grid and plain requests, through backlogs and
+    // transient windows. Two bounds hold on every step:
+    // - while a prompt waits, at most k + 1 steps without prefill pass
+    //   between steps that take prefill (the owed decode-only steps and one
+    //   decode turn before a grid chunk that runs alone);
+    // - once the earliest waiting prompt has been queued for
+    //   PREFILL_AGE_MICROS, it misses at most one prefill-taking step per
+    //   other waiting prompt, plus one: under a backlog it goes first on
+    //   every second one, and a transient window's order serves each prompt
+    //   that waited longer at most once before it.
+    // So, by induction over arrivals, every prompt's wait is bounded in
+    // steps, and once arrivals stop every prompt prefills.
+    let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+    for trial in 0..18_u64 {
+        let k = (trial % 3) as u32;
+        let base = if trial % 2 == 0 {
+            grid(true)
+        } else {
+            plain(true)
+        };
+        let setup = Setup {
+            budget: owing(k),
+            ..base
+        };
+        let mut s = scheduler(setup);
+        decoders(&mut s, 1 + rng.below(6));
+        // Waiting prompts: id -> clock when queued.
+        let mut waiting = std::collections::BTreeMap::new();
+        let (mut clock, mut next, mut steps) = (0u64, 1000, 0);
+        let (mut idle, mut missed, mut others, mut current) = (0, 0, 0, None);
+        while steps < 240 || !waiting.is_empty() {
+            assert!(
+                steps < 4000,
+                "trial {trial} {setup:?}: {waiting:?} still waiting"
+            );
+            if steps < 240 && rng.below(4) == 0 {
+                let prompt = match rng.below(20) {
+                    0 => 6 * GRID + rng.below(4 * GRID as u64) as usize,
+                    1..=5 => 4096 + rng.below(2 * GRID as u64) as usize,
+                    _ => 64 + rng.below(4032) as usize,
+                };
+                submit(&mut s, next, prompt, 1 + rng.below(4) as usize);
+                waiting.insert(next, clock);
+                next += 1;
+            }
+            let earliest = waiting
+                .iter()
+                .next()
+                .filter(|&(_, &queued)| clock - queued >= PREFILL_AGE_MICROS)
+                .map(|(&id, _)| id);
+            if earliest != current {
+                (current, missed, others) = (earliest, 0, 0);
+            }
+            others = others.max(waiting.len().saturating_sub(1));
+            let waited = !waiting.is_empty();
+            let step = step(&mut s).unwrap();
+            clock += step.micros;
+            steps += 1;
+            if step.prefills.is_empty() {
+                idle = if waited { idle + 1 } else { 0 };
+                assert!(
+                    idle <= k + 1,
+                    "trial {trial} {setup:?}: {idle} steps without prefill while {waiting:?} waited"
+                );
+            } else {
+                idle = 0;
+                if let Some(id) = earliest {
+                    if step.prefills.iter().any(|item| item.0 == id) {
+                        missed = 0;
+                    } else {
+                        missed += 1;
+                        assert!(
+                            missed <= others + 1,
+                            "trial {trial} {setup:?}: aged {id} missed {missed} prefill steps beside {others} others"
+                        );
+                    }
+                }
+            }
+            waiting.retain(|&id, _| prefilling(&s, id));
+        }
     }
 }

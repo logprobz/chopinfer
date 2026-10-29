@@ -268,8 +268,9 @@ pub const MAXIMUM_MIXED_DECODE_STEPS: u32 = 8;
 /// while cutting it would cost its prompts a fixed step cost per cut.
 pub const TRANSIENT_BACKLOG_MICROS: u64 = 4_000_000;
 /// Adaptive prefill sizing: under a backlog, a prompt queued this long, in
-/// observed step time, goes first on every second step, so shortest
-/// remaining first cannot starve it.
+/// observed step time, goes first on every second backlog step that takes
+/// prefill, so neither shortest remaining first nor owed decode-only steps
+/// can starve it.
 pub const PREFILL_AGE_MICROS: u64 = 30_000_000;
 
 /// The decode stall bound of `PrefillBudget::Tbt`.
@@ -584,7 +585,8 @@ impl SchedulerConfig {
     /// chunks clear within `TRANSIENT_BACKLOG_MICROS` is served as without
     /// the switch: whole grid chunks, or the fixed-target cap. A longer
     /// backlog also prefills the shortest remaining prompt first, and a
-    /// prompt queued for `PREFILL_AGE_MICROS` first on every second step. A
+    /// prompt queued for `PREFILL_AGE_MICROS` first on every second backlog
+    /// step that takes prefill, whatever decode-only steps fall between. A
     /// grid request with timing cuts is cut at the cap; other requests take
     /// it as the step's prefill budget.
     #[must_use]
@@ -1408,6 +1410,7 @@ pub struct PreparedBatchCommit {
     next_tick: u64,
     prefer_decode_after: bool,
     mixed_decode_steps_after: u32,
+    backlog_steps_after: u64,
     active_sequences_after: usize,
     reserved_blocks_after: usize,
 }
@@ -1482,6 +1485,8 @@ struct PendingBatch {
     prefer_decode_after: bool,
     /// The owed decode-only steps once this batch commits.
     mixed_decode_steps_after: u32,
+    /// `Scheduler::backlog_steps` once this batch commits.
+    backlog_steps_after: u64,
     kv_plan_id: PreparedAppendId,
 }
 
@@ -1525,6 +1530,7 @@ impl SchedulerPreflightState {
                 items,
                 prefer_decode_after: pending.prefer_decode_after,
                 mixed_decode_steps_after: pending.mixed_decode_steps_after,
+                backlog_steps_after: pending.backlog_steps_after,
                 kv_plan_id: pending.kv_plan_id,
             },
         })
@@ -1569,6 +1575,11 @@ pub struct Scheduler {
     clock_micros: u64,
     /// Decode-only steps `PrefillBudget::Tbt` still owes after a mixed step.
     mixed_decode_steps: u32,
+    /// Committed adaptive backlog steps that took prefill. Its parity, not
+    /// the scheduling tick's, puts an aged prompt first (`order_backlog`):
+    /// owed decode-only steps take ticks without prefill, so with one owed
+    /// step every prefill step would fall on one tick parity.
+    backlog_steps: u64,
     offload: Option<OffloadConfig>,
     resumes: BTreeMap<RequestId, ResumePlan>,
 }
@@ -1595,6 +1606,7 @@ impl Clone for Scheduler {
             step_model: self.step_model.clone(),
             clock_micros: self.clock_micros,
             mixed_decode_steps: self.mixed_decode_steps,
+            backlog_steps: self.backlog_steps,
             offload: self.offload,
             resumes: self.resumes.clone(),
         }
@@ -1621,6 +1633,7 @@ impl PartialEq for Scheduler {
             && self.step_model == other.step_model
             && self.clock_micros == other.clock_micros
             && self.mixed_decode_steps == other.mixed_decode_steps
+            && self.backlog_steps == other.backlog_steps
             && self.offload == other.offload
             && self.resumes == other.resumes
     }
@@ -1675,6 +1688,7 @@ impl Scheduler {
             step_model: StepModel::default(),
             clock_micros: 0,
             mixed_decode_steps: 0,
+            backlog_steps: 0,
             offload: None,
             resumes: BTreeMap::new(),
         })
@@ -2761,6 +2775,11 @@ impl Scheduler {
             PrefillBudget::Tbt(policy) if shape.prefill_tokens() > 0 => policy.decode_steps(),
             _ => self.mixed_decode_steps,
         };
+        let backlog_steps_after = if backlogged && shape.prefill_tokens() > 0 {
+            self.backlog_steps.saturating_add(1)
+        } else {
+            self.backlog_steps
+        };
 
         let id = BatchId(self.next_batch_id);
         let next_batch_id = self
@@ -2811,6 +2830,7 @@ impl Scheduler {
             items: pending_items,
             prefer_decode_after,
             mixed_decode_steps_after,
+            backlog_steps_after,
             kv_plan_id: batch.kv_plan.id(),
         });
         self.next_batch_id = next_batch_id;
@@ -2998,6 +3018,7 @@ impl Scheduler {
             .ok_or(ScheduleError::InvariantViolation)?;
         let prefer_decode_after = batch.prefer_decode_after;
         let mixed_decode_steps_after = batch.mixed_decode_steps_after;
+        let backlog_steps_after = batch.backlog_steps_after;
         let preflight_state = SchedulerPreflightState::capture(self, batch)?;
         let kv_commit = self
             .kv
@@ -3014,6 +3035,7 @@ impl Scheduler {
             next_tick,
             prefer_decode_after,
             mixed_decode_steps_after,
+            backlog_steps_after,
             active_sequences_after,
             reserved_blocks_after,
         })
@@ -3113,6 +3135,7 @@ impl Scheduler {
         self.reserved_blocks = prepared.reserved_blocks_after;
         self.prefer_decode = prepared.prefer_decode_after;
         self.mixed_decode_steps = prepared.mixed_decode_steps_after;
+        self.backlog_steps = prepared.backlog_steps_after;
         Ok(CommitReport {
             completed: prepared.completed,
         })
@@ -4272,8 +4295,9 @@ impl Scheduler {
     }
 
     /// Adaptive sizing under a backlog: the shortest remaining prefill first;
-    /// on every second step the earliest request queued for at least
-    /// `PREFILL_AGE_MICROS` of observed step time goes first instead.
+    /// on every second backlog step that takes prefill (`backlog_steps`),
+    /// the earliest request queued for at least `PREFILL_AGE_MICROS` of
+    /// observed step time goes first instead.
     fn order_backlog(&self, prefill: &mut [usize]) {
         prefill.sort_by_key(|&index| {
             let record = &self.requests[index];
@@ -4282,7 +4306,7 @@ impl Scheduler {
                 record.arrival,
             )
         });
-        if self.scheduling_tick.is_multiple_of(2)
+        if self.backlog_steps.is_multiple_of(2)
             && let Some(position) = prefill
                 .iter()
                 .enumerate()

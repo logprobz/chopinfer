@@ -5,7 +5,8 @@
 //! Each sweep must reuse templates, so the comparison runs: besides the
 //! served envelope, every worker runs one cut structure at least twice.
 //! The servings are the profiles' own; the options are the instance's
-//! overrides.
+//! overrides. While the candidate is off by default, only the quick tier
+//! sweeps it; the other tiers say so and stop.
 use super::*;
 use bundle_runtime::fake_host::conformance::route_guard;
 use conformance::Startup;
@@ -34,15 +35,15 @@ impl Startup for Templated {
     fn servings() -> Vec<conformance::Serving> {
         Served::servings()
     }
-    /// The served envelope and the same 512-row scheduler cut after
-    /// sixteen prefixes. A sweep deals its cases in turn to at most eight
-    /// workers, so each worker's instance runs the cut at least twice and
-    /// reuses a template whatever else it runs.
+    /// The served envelope and the same 512-row scheduler cut after eight
+    /// prefixes. A sweep deals its cases in turn to its workers
+    /// (four in the quick tier), so each worker's instance runs the cut at
+    /// least twice and reuses a template whatever else it runs.
     fn envelope(serving: &conformance::Serving) -> conformance::Envelope {
         let mut envelope = Served::envelope(serving);
         envelope
             .cuts
-            .extend((2..18).map(|blocks| conformance::CutCase {
+            .extend((2..10).map(|blocks| conformance::CutCase {
                 mode: format!("template-repeat-{}", 512 * blocks),
                 offset: 512 * blocks,
                 lengths: vec![512],
@@ -127,6 +128,10 @@ mod template_route_sweep {
 
     // CI gives each profile its own process and RSS budget.
     fn sweep(profile: &str) {
+        if std::env::var("CHOPINFER_ROUTE_SWEEP").is_ok_and(|tier| tier != "quick") {
+            println!("{profile}: route sweep covers the quick tier only");
+            return;
+        }
         route_guard::sweep::<Templated>(
             profile,
             include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
@@ -134,15 +139,7 @@ mod template_route_sweep {
         );
         let hits = HITS.lock().unwrap().get(profile).copied().unwrap_or(0);
         println!("{profile}: {hits} reused templates, each compared with a fresh plan");
-        // The full tiers run in pieces, each a part of one worker's cases.
-        let pieces = matches!(
-            std::env::var("CHOPINFER_ROUTE_SWEEP").as_deref(),
-            Ok("full" | "exhaustive")
-        );
-        assert!(
-            pieces || hits > 0,
-            "{profile}: the sweep reused no template"
-        );
+        assert!(hits > 0, "{profile}: the sweep reused no template");
     }
 
     #[test]

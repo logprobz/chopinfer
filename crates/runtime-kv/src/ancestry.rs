@@ -5,6 +5,13 @@
 //! Fractional nominations flow toward the root until a cached ancestor at or
 //! below their target absorbs them. Fork nominations stop at the first anchor.
 //! Updates propagate nomination deltas, never scan all resident anchors.
+//!
+//! Each anchor also carries three flags for its lifetime. Extended: a
+//! successful public restore found no resident descendant below it, so the
+//! request continued from it. Consumed: an anchor below it was extended, so a
+//! conversation has moved past it. Shared: it was a fork, or a successful
+//! restore used it while it had a resident descendant. Only consumed,
+//! unshared ancestors rank below recency.
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{PrefixCacheKeyV1, PrefixChainV1, prefix::PrefixAtom};
@@ -21,6 +28,24 @@ impl PrefixAnchorClassV1 {
     pub(crate) const fn index(self) -> usize {
         self as usize
     }
+}
+
+/// Eviction priority, lowest first; least recently used within each tier.
+/// The metric class labels Retained anchors of both the spaced and the live
+/// tier, so ordering never uses the class.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum PrefixEvictionTierV1 {
+    /// A strict ancestor a conversation has moved past: one nearest
+    /// descendant, consumed, never shared and not a spaced ancestor.
+    Superseded,
+    /// The same, but the deepest cached ancestor at or below half, a quarter
+    /// or an eighth of a maximal frontier.
+    Spaced,
+    /// Everything else, by recency alone: maximal frontiers, shared
+    /// anchors, ancestors nothing has moved past, private and digest-only
+    /// anchors.
+    #[default]
+    Live,
 }
 
 type NodeId = u64;
@@ -73,6 +98,10 @@ struct Node {
     // Unabsorbed nominations arriving from children, with multiplicity.
     targets: BTreeMap<usize, usize>,
     forks: usize,
+    // Lifetime flags of the anchor at this node; false without an anchor.
+    extended: bool,
+    consumed: bool,
+    shared: bool,
 }
 
 impl Node {
@@ -80,16 +109,20 @@ impl Node {
         self.anchor.is_some() && self.children.is_empty()
     }
 
-    fn class(&self) -> PrefixAnchorClassV1 {
+    fn fork(&self) -> bool {
+        self.forks > 0 || self.children.len() >= 2
+    }
+
+    fn rank(&self) -> (PrefixAnchorClassV1, PrefixEvictionTierV1) {
+        use PrefixAnchorClassV1::{Maximal, Retained, Superseded};
         if self.maximal() {
-            PrefixAnchorClassV1::Maximal
-        } else if self.forks > 0
-            || self.children.len() >= 2
-            || self.targets.range(self.depth..).next().is_some()
-        {
-            PrefixAnchorClassV1::Retained
+            (Maximal, PrefixEvictionTierV1::Live)
+        } else if self.fork() || self.shared || !self.consumed {
+            (Retained, PrefixEvictionTierV1::Live)
+        } else if self.targets.range(self.depth..).next().is_some() {
+            (Retained, PrefixEvictionTierV1::Spaced)
         } else {
-            PrefixAnchorClassV1::Superseded
+            (Superseded, PrefixEvictionTierV1::Superseded)
         }
     }
 
@@ -307,10 +340,74 @@ impl PrefixAncestry {
             }
             start = end;
         }
+        let consumed = self.consumed_below(node);
         self.modify(node, |node| {
             node.anchor = Some(key);
+            node.extended = false;
+            node.consumed = consumed;
+            node.shared = false;
         });
         self.anchors.insert(key, node);
+    }
+
+    /// Whether an anchor below `id` was extended or moved past. Consumed is
+    /// closed upward over anchors, so the search stops at the nearest
+    /// anchors and returns at the first one that answers it.
+    fn consumed_below(&self, id: NodeId) -> bool {
+        let mut stack: Vec<NodeId> = self.nodes[&id].children.values().copied().collect();
+        while let Some(id) = stack.pop() {
+            let node = &self.nodes[&id];
+            if node.anchor.is_some() {
+                if node.extended || node.consumed {
+                    return true;
+                }
+            } else {
+                stack.extend(node.children.values().copied());
+            }
+        }
+        false
+    }
+
+    /// Records a successful public restore of `key`, which the pool
+    /// classified when it resumed: a branch restore had a resident
+    /// descendant, an extension restore had none.
+    pub(crate) fn restored(&mut self, key: PrefixCacheKeyV1, branch: bool) {
+        let Some(&id) = self.anchors.get(&key) else {
+            return;
+        };
+        if branch {
+            self.nodes.get_mut(&id).expect("live radix node").shared = true;
+            self.dirty.insert(id);
+            return;
+        }
+        self.nodes.get_mut(&id).expect("live radix node").extended = true;
+        let mut parent = self.nodes[&id].parent;
+        while let Some(id) = parent {
+            let node = self.nodes.get_mut(&id).expect("live radix node");
+            if node.anchor.is_some() {
+                if node.consumed {
+                    break;
+                }
+                node.consumed = true;
+                self.dirty.insert(id);
+            }
+            parent = node.parent;
+        }
+    }
+
+    /// Whether `key` has a resident descendant.
+    pub(crate) fn has_descendant(&self, key: PrefixCacheKeyV1) -> bool {
+        self.anchors
+            .get(&key)
+            .is_some_and(|id| !self.nodes[id].children.is_empty())
+    }
+
+    /// Whether `key` is shared now or was shared during its lifetime.
+    pub(crate) fn shared(&self, key: PrefixCacheKeyV1) -> bool {
+        self.anchors.get(&key).is_some_and(|id| {
+            let node = &self.nodes[id];
+            node.shared || node.fork()
+        })
     }
 
     pub(crate) fn remove(&mut self, key: PrefixCacheKeyV1) {
@@ -319,6 +416,9 @@ impl PrefixAncestry {
         };
         self.modify(id, |node| {
             node.anchor = None;
+            node.extended = false;
+            node.consumed = false;
+            node.shared = false;
         });
         while self.nodes[&id].anchor.is_none() && self.nodes[&id].children.is_empty() {
             let node = self.nodes.remove(&id).unwrap();
@@ -357,57 +457,33 @@ impl PrefixAncestry {
         }
     }
 
-    pub(crate) fn changes(&mut self) -> Vec<(PrefixCacheKeyV1, PrefixAnchorClassV1)> {
-        std::mem::take(&mut self.dirty)
-            .into_iter()
-            .filter_map(|id| {
-                let node = self.nodes.get(&id)?;
-                Some((node.anchor?, node.class()))
-            })
-            .collect()
-    }
-
-    pub(crate) fn class(&self, key: PrefixCacheKeyV1) -> Option<PrefixAnchorClassV1> {
-        self.anchors.get(&key).map(|id| self.nodes[id].class())
-    }
-
-    pub(crate) fn ancestors(&self, chain: &PrefixChainV1, tokens: usize) -> Vec<PrefixCacheKeyV1> {
-        let Some(mut node) = chain
-            .chain(0)
-            .and_then(|root| self.roots.get(&root))
-            .copied()
-        else {
-            return Vec::new();
-        };
-        let mut result = Vec::new();
-        let mut start = 0;
-        while start < tokens {
-            let end = (start + chain.block_tokens()).min(tokens);
-            let atoms = chain.ancestry_atoms(start, end);
-            let mut offset = 0;
-            while offset < atoms.len() {
-                let Some(child) = self.nodes[&node].children.get(&atoms[offset]).copied() else {
-                    return result;
-                };
-                let edge = &self.nodes[&child].edge;
-                if edge.len() > atoms.len() - offset
-                    || !edge
-                        .iter()
-                        .eq(atoms[offset..offset + edge.len()].iter().copied())
-                {
-                    return result;
-                }
-                offset += edge.len();
-                node = child;
-                if self.nodes[&node].depth < tokens
-                    && let Some(key) = self.nodes[&node].anchor
-                {
-                    result.push(key);
-                }
+    /// Classes and tiers of the anchors changed since the last call. A fork
+    /// seen here marks its anchor shared for the rest of its lifetime.
+    pub(crate) fn changes(
+        &mut self,
+    ) -> Vec<(PrefixCacheKeyV1, PrefixAnchorClassV1, PrefixEvictionTierV1)> {
+        let mut changes = Vec::new();
+        for id in std::mem::take(&mut self.dirty) {
+            let Some(node) = self.nodes.get_mut(&id) else {
+                continue;
+            };
+            let Some(key) = node.anchor else {
+                continue;
+            };
+            if node.fork() {
+                node.shared = true;
             }
-            start = end;
+            let (class, tier) = node.rank();
+            changes.push((key, class, tier));
         }
-        result
+        changes
+    }
+
+    pub(crate) fn rank(
+        &self,
+        key: PrefixCacheKeyV1,
+    ) -> Option<(PrefixAnchorClassV1, PrefixEvictionTierV1)> {
+        self.anchors.get(&key).map(|id| self.nodes[id].rank())
     }
 
     pub(crate) fn audit(&self, expected: impl Iterator<Item = (PrefixCacheKeyV1, usize)>) -> bool {
@@ -463,6 +539,11 @@ impl PrefixAncestry {
             if targets != node.targets || forks != node.forks {
                 return false;
             }
+            if node.anchor.is_none() && (node.extended || node.consumed || node.shared)
+                || node.anchor.is_some() && node.fork() && !node.shared
+            {
+                return false;
+            }
             if let Some(key) = node.anchor
                 && self.anchors.get(&key) != Some(id)
             {
@@ -472,6 +553,23 @@ impl PrefixAncestry {
                 && self.full.get(&digest) != Some(id)
             {
                 return false;
+            }
+        }
+        // Consumed is closed upward over anchors: every anchor above an
+        // extended or consumed anchor is consumed.
+        for node in self.nodes.values() {
+            if node.anchor.is_none() || !(node.extended || node.consumed) {
+                continue;
+            }
+            let mut parent = node.parent;
+            while let Some(id) = parent {
+                let Some(above) = self.nodes.get(&id) else {
+                    return false;
+                };
+                if above.anchor.is_some() && !above.consumed {
+                    return false;
+                }
+                parent = above.parent;
             }
         }
         self.roots

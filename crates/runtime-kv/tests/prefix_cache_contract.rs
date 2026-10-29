@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use runtime_kv::{KvError, KvGeometry, KvPool, PrefixChainV1, PrefixMediaSpanV1};
+use runtime_kv::{
+    KvError, KvGeometry, KvPool, PrefixAnchorClassV1, PrefixChainV1, PrefixEvictionTierV1,
+    PrefixMediaSpanV1,
+};
 
 fn chain(tokens: &[u32]) -> PrefixChainV1 {
     PrefixChainV1::new(4, Arc::from(tokens), Vec::new()).expect("the fixture chain is valid")
@@ -385,28 +388,55 @@ fn an_own_restore_holds_every_page_from_its_prompt_end_alone() {
     pool.audit().unwrap();
 }
 
+/// One conversation turn on `history`: resume the frontier, prefill, and
+/// capture the new prompt end with `pages` snapshot pages.
+fn conversation_turn(pool: &mut KvPool, history: &[u32], pages: usize) {
+    let identity = chain(history);
+    let tokens = history.len();
+    let source = match pool.resume_prefix(&identity, tokens - 1, tokens).unwrap() {
+        Some(hit) => {
+            pool.finish_restore(hit.handle()).unwrap();
+            hit.handle()
+        }
+        None => pool.create_sequence(tokens).unwrap(),
+    };
+    let committed = pool.snapshot(source).unwrap().tokens();
+    pool.append(source, tokens - committed).unwrap();
+    pool.insert_content_anchor(&identity, source, tokens, pages)
+        .unwrap()
+        .unwrap();
+    pool.release(source).unwrap();
+}
+
+/// A busy conversation resumes its frontier every turn, so ancestry
+/// eviction takes an ancestor it moved past before an idle frontier. LRU
+/// evicts the idle frontier, the oldest anchor.
 #[test]
 fn idle_frontier_survives_busy_ancestors_under_pressure() {
-    let mut pool = KvPool::new(KvGeometry::new(4, 12).unwrap(), 4)
-        .unwrap()
-        .with_prefix_ancestry(true);
-    let idle = chain(&[900; 4]);
-    let source = pool.create_sequence(4).unwrap();
-    pool.append(source, 4).unwrap();
-    content_capture(&mut pool, &idle, source, 2).unwrap();
-    pool.release(source).unwrap();
-    let busy = chain(&prompt(12));
-    let source = pool.create_sequence(12).unwrap();
-    for _ in 0..3 {
+    for ancestry in [false, true] {
+        let mut pool = KvPool::new(KvGeometry::new(4, 14).unwrap(), 4)
+            .unwrap()
+            .with_prefix_ancestry(ancestry);
+        let idle = chain(&[900; 4]);
+        let source = pool.create_sequence(4).unwrap();
         pool.append(source, 4).unwrap();
-        content_capture(&mut pool, &busy, source, 2).unwrap();
+        content_capture(&mut pool, &idle, source, 2).unwrap();
+        pool.release(source).unwrap();
+        let busy = prompt(16);
+        for depth in [4, 8, 12] {
+            conversation_turn(&mut pool, &busy[..depth], 2);
+        }
+        assert_eq!(pool.metrics().snapshot().prefix_cache_evictions, 0);
+        conversation_turn(&mut pool, &busy, 2);
+        assert_eq!(pool.metrics().snapshot().prefix_cache_evictions, 1);
+        assert_eq!(pool.has_anchor(idle.key_at(4).unwrap()), ancestry);
+        assert_eq!(
+            pool.has_anchor(chain(&busy).key_at(8).unwrap()),
+            !ancestry,
+            "the busy conversation moved past its anchor at 8"
+        );
+        pool.audit().unwrap();
     }
-    pool.release(source).unwrap();
-    assert_eq!(pool.metrics().snapshot().prefix_cache_evictions, 0);
-    let pressure = pool.create_sequence(4).unwrap();
-    pool.append(pressure, 4).unwrap();
-    assert!(pool.has_anchor(idle.key_at(4).unwrap()));
-    pool.audit().unwrap();
 }
 
 fn content_pool(pages: usize) -> KvPool {
@@ -415,187 +445,302 @@ fn content_pool(pages: usize) -> KvPool {
         .with_prefix_ancestry(true)
 }
 
-fn detached_capture(pool: &mut KvPool, chain: &PrefixChainV1, depth: usize, pages: usize) {
-    let source = pool.create_sequence(depth).unwrap();
-    pool.append(source, depth).unwrap();
-    pool.insert_content_anchor(chain, source, depth, pages)
-        .unwrap();
-    pool.release(source).unwrap();
-    pool.audit().unwrap();
-}
-
 type Entry = (PrefixChainV1, usize);
+type Key = runtime_kv::PrefixCacheKeyV1;
 
-fn entry_key(entry: &Entry) -> runtime_kv::PrefixCacheKeyV1 {
+fn entry_key(entry: &Entry) -> Key {
     entry.0.key_at(entry.1).unwrap()
 }
 
-fn oracle_classes(
-    live: &[&Entry],
-) -> BTreeMap<runtime_kv::PrefixCacheKeyV1, runtime_kv::PrefixAnchorClassV1> {
-    use runtime_kv::PrefixAnchorClassV1::{Maximal, Retained, Superseded};
-    let ancestor = |a: &(PrefixChainV1, usize), b: &(PrefixChainV1, usize)| {
-        a.1 < b.1 && a.0.key_at(a.1) == b.0.key_at(a.1)
-    };
-    let maximal: Vec<_> = live
-        .iter()
-        .copied()
-        .filter(|a| !live.iter().any(|b| ancestor(a, b)))
-        .collect();
-    let mut retained = std::collections::BTreeSet::new();
-    for frontier in &maximal {
-        for divisor in [2, 4, 8] {
-            if let Some(a) = live
-                .iter()
-                .filter(|a| ancestor(a, frontier) && a.1 <= frontier.1 / divisor)
-                .max_by_key(|a| a.1)
-            {
-                retained.insert(a.0.key_at(a.1).unwrap());
-            }
-        }
-    }
-    for (i, a) in maximal.iter().enumerate() {
-        for b in maximal.iter().skip(i + 1) {
-            if let Some(common) = live
-                .iter()
-                .filter(|c| ancestor(c, a) && ancestor(c, b))
-                .max_by_key(|c| c.1)
-            {
-                retained.insert(common.0.key_at(common.1).unwrap());
-            }
-        }
-    }
-    live.iter()
-        .map(|entry| {
-            let key = entry_key(entry);
-            let class = if maximal.contains(entry) {
-                Maximal
-            } else if retained.contains(&key) {
-                Retained
-            } else {
-                Superseded
-            };
-            (key, class)
-        })
-        .collect()
+/// Whether `a` is a strict content ancestor of `b`.
+fn above(a: &Entry, b: &Entry) -> bool {
+    a.1 < b.1 && a.0.key_at(a.1) == b.0.key_at(a.1)
 }
 
-fn assert_classes(pool: &KvPool, entries: &[Entry]) {
-    use runtime_kv::PrefixAnchorClassV1::{Maximal, Retained, Superseded};
-    let live: Vec<_> = entries
-        .iter()
-        .filter(|entry| pool.has_anchor(entry_key(entry)))
-        .collect();
-    let mut counts = [0; 3];
-    for (key, expected) in oracle_classes(&live) {
-        assert_eq!(pool.anchor_class(key), Some(expected));
-        counts[match expected {
-            Superseded => 0,
-            Retained => 1,
-            Maximal => 2,
-        }] += 1;
-    }
-    assert_eq!(pool.metrics().snapshot().prefix_anchors_by_class, counts);
-    pool.audit().unwrap();
+#[derive(Clone, Copy, Debug, Default)]
+struct Flags {
+    extended: bool,
+    consumed: bool,
+    shared: bool,
 }
 
-/// Deliberately slow: recompute classes after each victim and count physical
-/// references independently of the radix index and its ordered victim map.
-fn expected_evictions(
-    pool: &KvPool,
-    entries: &[Entry],
-    last_used: &BTreeMap<runtime_kv::PrefixCacheKeyV1, u64>,
-    needed: usize,
-    incoming: Option<(&PrefixChainV1, usize)>,
-) -> BTreeSet<runtime_kv::PrefixCacheKeyV1> {
-    use runtime_kv::PrefixAnchorClassV1::{Maximal, Retained, Superseded};
-    if incoming.is_some_and(|(chain, depth)| pool.has_anchor(chain.key_at(depth).unwrap())) {
-        return BTreeSet::new();
-    }
-    let mut live: Vec<_> = entries
-        .iter()
-        .filter(|entry| pool.has_anchor(entry_key(entry)))
-        .collect();
-    let mut refs = BTreeMap::new();
-    let mut pages = BTreeMap::new();
-    for entry in &live {
-        let key = entry_key(entry);
-        let (_, mut kv, state) = pool.anchor_pages(key).unwrap();
-        kv.extend(state);
-        for page in &kv {
-            refs.insert(*page, pool.block_ref_count(*page).unwrap());
-        }
-        pages.insert(key, kv);
-    }
-    let mut free = pool.stats().free_blocks();
-    let mut victims = BTreeSet::new();
-    while free < needed && !live.is_empty() {
-        let classes = oracle_classes(&live);
-        let tier = [Superseded, Retained, Maximal]
-            .into_iter()
-            .find(|tier| classes.values().any(|class| class == tier))
-            .unwrap();
-        let own = |entry: &Entry| {
-            incoming.is_some_and(|(chain, depth)| {
-                entry.1 < depth && chain.key_at(entry.1) == Some(entry_key(entry))
-            })
-        };
-        let prefer_own = tier == Maximal && live.iter().any(|entry| own(entry));
-        let victim = live
+/// Deliberately slow model of ancestry eviction. It recomputes the content
+/// structure from scratch after every event and replays the anchors'
+/// lifetime flags from capture, successful public restore and removal
+/// events alone, independently of the radix index and its ordered map.
+#[derive(Clone, Default)]
+struct Model {
+    entries: Vec<Entry>,
+    flags: BTreeMap<Key, Flags>,
+    last_used: BTreeMap<Key, u64>,
+    clock: u64,
+}
+
+impl Model {
+    fn live(&self) -> Vec<&Entry> {
+        self.entries
             .iter()
-            .filter(|entry| classes[&entry_key(entry)] == tier && (!prefer_own || own(entry)))
-            .map(|entry| entry_key(entry))
-            .min_by_key(|key| (last_used[key], *key))
-            .unwrap();
-        for page in &pages[&victim] {
-            let refs = refs.get_mut(page).unwrap();
-            *refs -= 1;
-            free += usize::from(*refs == 0);
-        }
-        victims.insert(victim);
-        live.retain(|entry| entry_key(entry) != victim);
+            .filter(|entry| self.flags.contains_key(&entry_key(entry)))
+            .collect()
     }
-    victims
+
+    fn entry(&self, key: Key) -> &Entry {
+        self.entries
+            .iter()
+            .find(|entry| entry_key(entry) == key)
+            .unwrap()
+    }
+
+    /// Resident anchors below `a` with no resident anchor between.
+    fn nearest_descendants(live: &[&Entry], a: &Entry) -> usize {
+        live.iter()
+            .filter(|d| above(a, d) && !live.iter().any(|c| above(a, c) && above(c, d)))
+            .count()
+    }
+
+    fn has_descendant(&self, key: Key) -> bool {
+        let a = self.entry(key);
+        self.live().iter().any(|d| above(a, d))
+    }
+
+    /// A fork after any event stays shared for its anchor's lifetime.
+    fn mark_forks(&mut self) {
+        let live = self.live();
+        let forks: Vec<Key> = live
+            .iter()
+            .filter(|a| Self::nearest_descendants(&live, a) >= 2)
+            .map(|a| entry_key(a))
+            .collect();
+        for key in forks {
+            self.flags.get_mut(&key).unwrap().shared = true;
+        }
+    }
+
+    fn touch(&mut self, key: Key) {
+        self.clock += 1;
+        self.last_used.insert(key, self.clock);
+    }
+
+    /// A capture of a new key.
+    fn insert(&mut self, entry: Entry) {
+        let key = entry_key(&entry);
+        let consumed = self.live().iter().any(|d| {
+            above(&entry, d) && {
+                let flags = self.flags[&entry_key(d)];
+                flags.consumed || flags.extended
+            }
+        });
+        if !self.entries.iter().any(|known| entry_key(known) == key) {
+            self.entries.push(entry);
+        }
+        self.flags.insert(
+            key,
+            Flags {
+                consumed,
+                ..Flags::default()
+            },
+        );
+        self.touch(key);
+        self.mark_forks();
+    }
+
+    /// A successful public restore, classified when it resumed.
+    fn restore(&mut self, key: Key, branch: bool) {
+        if branch {
+            self.flags.get_mut(&key).unwrap().shared = true;
+        } else {
+            self.flags.get_mut(&key).unwrap().extended = true;
+            let restored = self.entry(key).clone();
+            let ancestors: Vec<Key> = self
+                .live()
+                .iter()
+                .filter(|a| above(a, &restored))
+                .map(|a| entry_key(a))
+                .collect();
+            for ancestor in ancestors {
+                self.flags.get_mut(&ancestor).unwrap().consumed = true;
+            }
+        }
+        self.mark_forks();
+    }
+
+    fn remove(&mut self, key: Key) {
+        self.flags.remove(&key);
+        self.last_used.remove(&key);
+        self.mark_forks();
+    }
+
+    fn ranks(&self) -> BTreeMap<Key, (PrefixAnchorClassV1, PrefixEvictionTierV1)> {
+        let live = self.live();
+        let maximal = |a: &Entry| !live.iter().any(|d| above(a, d));
+        let mut nominated = BTreeSet::new();
+        for frontier in live.iter().filter(|a| maximal(a)) {
+            for divisor in [2, 4, 8] {
+                if let Some(a) = live
+                    .iter()
+                    .filter(|a| above(a, frontier) && a.1 <= frontier.1 / divisor)
+                    .max_by_key(|a| a.1)
+                {
+                    nominated.insert(entry_key(a));
+                }
+            }
+        }
+        live.iter()
+            .map(|a| {
+                let key = entry_key(a);
+                let flags = self.flags[&key];
+                let fork = Self::nearest_descendants(&live, a) >= 2;
+                let rank = if maximal(a) {
+                    (PrefixAnchorClassV1::Maximal, PrefixEvictionTierV1::Live)
+                } else if fork || flags.shared || !flags.consumed {
+                    (PrefixAnchorClassV1::Retained, PrefixEvictionTierV1::Live)
+                } else if nominated.contains(&key) {
+                    (PrefixAnchorClassV1::Retained, PrefixEvictionTierV1::Spaced)
+                } else {
+                    (
+                        PrefixAnchorClassV1::Superseded,
+                        PrefixEvictionTierV1::Superseded,
+                    )
+                };
+                (key, rank)
+            })
+            .collect()
+    }
+
+    /// The victims, in order, of an allocation of `needed` free pages,
+    /// counting physical references independently of the pool's map.
+    fn expected_evictions(&self, pool: &KvPool, needed: usize, replaced: Option<Key>) -> Vec<Key> {
+        let mut model = self.clone();
+        let mut refs = BTreeMap::new();
+        let mut pages = BTreeMap::new();
+        for entry in model.live() {
+            let key = entry_key(entry);
+            let (_, mut kv, state) = pool.anchor_pages(key).unwrap();
+            kv.extend(state);
+            for page in &kv {
+                refs.insert(*page, pool.block_ref_count(*page).unwrap());
+            }
+            pages.insert(key, kv);
+        }
+        let mut free = pool.stats().free_blocks();
+        let mut replaced = replaced;
+        let mut victims = Vec::new();
+        while free < needed && !model.flags.is_empty() {
+            let ranks = model.ranks();
+            let lowest = ranks.values().map(|(_, tier)| *tier).min().unwrap();
+            let victim = match replaced.take() {
+                Some(key) if lowest == PrefixEvictionTierV1::Live && ranks.contains_key(&key) => {
+                    key
+                }
+                other => {
+                    replaced = other;
+                    *ranks
+                        .iter()
+                        .filter(|(_, (_, tier))| *tier == lowest)
+                        .map(|(key, _)| key)
+                        .min_by_key(|key| (model.last_used[key], **key))
+                        .unwrap()
+                }
+            };
+            for page in &pages[&victim] {
+                let refs = refs.get_mut(page).unwrap();
+                *refs -= 1;
+                free += usize::from(*refs == 0);
+            }
+            model.remove(victim);
+            victims.push(victim);
+        }
+        victims
+    }
+
+    fn check(&self, pool: &KvPool) {
+        let live: BTreeSet<Key> = self.flags.keys().copied().collect();
+        for entry in &self.entries {
+            let key = entry_key(entry);
+            assert_eq!(pool.has_anchor(key), live.contains(&key));
+        }
+        let mut counts = [0; 3];
+        for (key, (class, tier)) in self.ranks() {
+            assert_eq!(pool.anchor_class(key), Some(class), "class of {key:?}");
+            assert_eq!(pool.anchor_tier(key), Some(tier), "tier of {key:?}");
+            counts[class as usize] += 1;
+        }
+        assert_eq!(pool.metrics().snapshot().prefix_anchors_by_class, counts);
+        pool.audit().unwrap();
+    }
 }
 
-fn live_keys(pool: &KvPool, entries: &[Entry]) -> BTreeSet<runtime_kv::PrefixCacheKeyV1> {
-    entries
-        .iter()
-        .map(entry_key)
-        .filter(|key| pool.has_anchor(*key))
-        .collect()
+/// A capture from a fresh sequence over `depth` tokens of `chain`.
+fn detached_capture(
+    pool: &mut KvPool,
+    model: &mut Model,
+    chain: &PrefixChainV1,
+    depth: usize,
+    pages: usize,
+) {
+    let source = pool.create_sequence(depth).unwrap();
+    pool.append(source, depth).unwrap();
+    let new = !pool.has_anchor(chain.key_at(depth).unwrap());
+    let state = pool
+        .insert_content_anchor(chain, source, depth, pages)
+        .unwrap();
+    pool.release(source).unwrap();
+    if new {
+        assert!(state.is_some());
+        model.insert((chain.clone(), depth));
+    } else {
+        model.touch(chain.key_at(depth).unwrap());
+    }
+    model.check(pool);
+}
+
+/// Resumes `limit` tokens of `chain` and finishes the restore successfully.
+fn restore(pool: &mut KvPool, model: &mut Model, chain: &PrefixChainV1, limit: usize) -> usize {
+    let hit = pool.resume_prefix(chain, limit, 64).unwrap().unwrap();
+    let key = chain.key_at(hit.tokens()).unwrap();
+    let branch = model.has_descendant(key);
+    model.touch(key);
+    pool.finish_restore(hit.handle()).unwrap();
+    model.restore(key, branch);
+    pool.release(hit.handle()).unwrap();
+    model.check(pool);
+    hit.tokens()
 }
 
 #[test]
 fn forks_rewinds_and_failed_descendants_reclassify_without_pressure() {
     use runtime_kv::PrefixAnchorClassV1::{Maximal, Retained};
     let mut pool = content_pool(512);
+    let mut model = Model::default();
     let main = chain(&prompt(64));
-    let mut entries = Vec::new();
     for depth in [4, 8, 16, 24, 32, 48, 64] {
-        detached_capture(&mut pool, &main, depth, 2);
-        entries.push((main.clone(), depth));
-        assert_classes(&pool, &entries);
+        detached_capture(&mut pool, &mut model, &main, depth, 2);
     }
     assert_eq!(pool.metrics().snapshot().prefix_cache_evictions, 0);
     assert_eq!(pool.anchor_count(), 7, "supersession alone never evicts");
-    let hit = pool.resume_prefix(&main, 33, 64).unwrap().unwrap();
-    assert_eq!(hit.tokens(), 32, "rewind hits a retained ancestor");
-    pool.finish_restore(hit.handle()).unwrap();
-    pool.release(hit.handle()).unwrap();
+    assert_eq!(
+        restore(&mut pool, &mut model, &main, 33),
+        32,
+        "rewind hits an ancestor"
+    );
+    assert_eq!(
+        pool.anchor_tier(main.key_at(32).unwrap()),
+        Some(PrefixEvictionTierV1::Live),
+        "a hit its descendants could not serve shares it"
+    );
     let mut branch = prompt(40);
     branch[25] += 900;
     let branch = chain(&branch);
-    detached_capture(&mut pool, &branch, 40, 2);
-    entries.push((branch.clone(), 40));
+    detached_capture(&mut pool, &mut model, &branch, 40, 2);
     assert_eq!(pool.anchor_class(main.key_at(24).unwrap()), Some(Retained));
-    assert_classes(&pool, &entries);
     // Abandoning a capture uses the same removal path as explicit deletion.
     pool.remove_anchor(branch.key_at(40).unwrap()).unwrap();
-    assert_classes(&pool, &entries);
+    model.remove(branch.key_at(40).unwrap());
+    model.check(&pool);
     for depth in [64, 48, 32, 24, 16, 8] {
         pool.remove_anchor(main.key_at(depth).unwrap()).unwrap();
-        assert_classes(&pool, &entries);
+        model.remove(main.key_at(depth).unwrap());
+        model.check(&pool);
     }
     assert_eq!(pool.anchor_class(main.key_at(4).unwrap()), Some(Maximal));
     pool.remove_anchor(main.key_at(4).unwrap()).unwrap();
@@ -607,10 +752,12 @@ fn forks_rewinds_and_failed_descendants_reclassify_without_pressure() {
 fn content_ancestry_ignores_cow_ids_and_discriminates_tails_salts_and_media() {
     use runtime_kv::PrefixAnchorClassV1::{Maximal, Retained};
     let mut pool = content_pool(128);
+    let mut model = Model::default();
     let base = chain(&prompt(16));
     let source = pool.create_sequence(16).unwrap();
     pool.append(source, 5).unwrap();
     content_capture(&mut pool, &base, source, 1).unwrap();
+    model.insert((base.clone(), 5));
     let before = pool.snapshot(source).unwrap();
     let append = pool.append(source, 7).unwrap();
     assert!(append.copy().is_some());
@@ -619,19 +766,20 @@ fn content_ancestry_ignores_cow_ids_and_discriminates_tails_salts_and_media() {
         pool.snapshot(source).unwrap().blocks()[1]
     );
     content_capture(&mut pool, &base, source, 1).unwrap();
+    model.insert((base.clone(), 12));
     pool.release(source).unwrap();
     assert_eq!(pool.anchor_class(base.key_at(5).unwrap()), Some(Retained));
     let mut divergent = prompt(9);
     divergent[4] += 50;
     let divergent = chain(&divergent);
-    detached_capture(&mut pool, &divergent, 9, 1);
+    detached_capture(&mut pool, &mut model, &divergent, 9, 1);
     assert_eq!(base.chain(1), divergent.chain(1));
     assert_eq!(
         pool.anchor_class(divergent.key_at(9).unwrap()),
         Some(Maximal)
     );
     let salted = PrefixChainV1::salted(4, prompt(16).into(), vec![], Some(b"other")).unwrap();
-    detached_capture(&mut pool, &salted, 16, 1);
+    detached_capture(&mut pool, &mut model, &salted, 16, 1);
     let media = PrefixChainV1::new(
         4,
         prompt(16).into(),
@@ -643,44 +791,187 @@ fn content_ancestry_ignores_cow_ids_and_discriminates_tails_salts_and_media() {
         }],
     )
     .unwrap();
-    detached_capture(&mut pool, &media, 16, 1);
-    let entries = [
-        (base.clone(), 5),
-        (base, 12),
-        (divergent, 9),
-        (salted, 16),
-        (media, 16),
-    ];
-    assert_classes(&pool, &entries);
+    detached_capture(&mut pool, &mut model, &media, 16, 1);
+    model.check(&pool);
 }
 
+/// When only live anchors remain, a turn's capture replaces the frontier its
+/// own sequence extended, not an unrelated idle frontier. A failed capture
+/// removes only its new anchor: the replaced frontier stays evicted.
 #[test]
-fn incoming_ancestor_tie_break_and_failed_capture_do_not_pin_old_anchors() {
-    for enabled in [false, true] {
+fn capture_replaces_its_extended_frontier_and_failure_does_not_restore_it() {
+    for ancestry in [false, true] {
         let mut pool = KvPool::new(KvGeometry::new(4, 6).unwrap(), 4)
             .unwrap()
-            .with_prefix_ancestry(enabled);
+            .with_prefix_ancestry(ancestry);
+        let mut model = Model::default();
         let idle = chain(&[900; 4]);
-        detached_capture(&mut pool, &idle, 4, 1);
+        detached_capture(&mut pool, &mut model, &idle, 4, 1);
         let busy = chain(&prompt(8));
-        let source = pool.create_sequence(8).unwrap();
-        pool.append(source, 4).unwrap();
-        content_capture(&mut pool, &busy, source, 1).unwrap();
-        pool.append(source, 4).unwrap();
-        content_capture(&mut pool, &busy, source, 2).unwrap();
-        assert_eq!(pool.has_anchor(idle.key_at(4).unwrap()), enabled);
-        if enabled {
-            assert!(!pool.has_anchor(busy.key_at(4).unwrap()));
-        }
+        detached_capture(&mut pool, &mut model, &busy, 4, 1);
+        let hit = pool.resume_prefix(&busy, 7, 8).unwrap().unwrap();
+        assert_eq!(hit.tokens(), 4);
+        pool.finish_restore(hit.handle()).unwrap();
+        pool.append(hit.handle(), 4).unwrap();
+        assert_eq!(pool.stats().free_blocks(), 1);
+        content_capture(&mut pool, &busy, hit.handle(), 2).unwrap();
+        assert_eq!(pool.has_anchor(idle.key_at(4).unwrap()), ancestry);
+        assert_eq!(pool.has_anchor(busy.key_at(4).unwrap()), !ancestry);
         pool.remove_anchor(busy.key_at(8).unwrap()).unwrap();
         pool.metrics().prefix_capture_failed();
-        // A failed replacement does not resurrect its evicted ancestor.
-        if enabled {
-            assert!(!pool.has_anchor(busy.key_at(4).unwrap()));
-        }
-        pool.release(source).unwrap();
+        assert_eq!(pool.has_anchor(busy.key_at(4).unwrap()), !ancestry);
+        pool.release(hit.handle()).unwrap();
         pool.audit().unwrap();
     }
+}
+
+/// Only a successful public restore marks ancestry: a failed restore and an
+/// own-boundary restore leave the passed ancestor live.
+#[test]
+fn failed_and_own_boundary_restores_mark_no_ancestry() {
+    let mut pool = content_pool(32);
+    let mut model = Model::default();
+    let tokens = chain(&prompt(16));
+    detached_capture(&mut pool, &mut model, &tokens, 8, 1);
+    detached_capture(&mut pool, &mut model, &tokens, 12, 1);
+    let passed = tokens.key_at(8).unwrap();
+    let frontier = tokens.key_at(12).unwrap();
+    assert_eq!(pool.anchor_tier(passed), Some(PrefixEvictionTierV1::Live));
+    let failed = pool.resume_prefix(&tokens, 15, 16).unwrap().unwrap();
+    assert_eq!(failed.tokens(), 12);
+    pool.release(failed.handle()).unwrap();
+    model.touch(frontier);
+    model.check(&pool);
+    let own = pool.resume_anchor(frontier, 16).unwrap();
+    pool.finish_owned_restore(own.handle()).unwrap();
+    pool.release(own.handle()).unwrap();
+    model.touch(frontier);
+    model.check(&pool);
+    assert_eq!(pool.anchor_tier(passed), Some(PrefixEvictionTierV1::Live));
+    // The successful extension of the frontier moves past the anchor at 8.
+    assert_eq!(restore(&mut pool, &mut model, &tokens, 15), 12);
+    assert_eq!(
+        pool.anchor_tier(passed),
+        Some(PrefixEvictionTierV1::Superseded)
+    );
+}
+
+/// A restore mark belongs to the anchor lifetime it resumed: evicting and
+/// recapturing the key before the restore finishes marks nothing.
+#[test]
+fn a_restore_mark_dies_with_its_anchor() {
+    let mut pool = content_pool(32);
+    let mut model = Model::default();
+    let tokens = chain(&prompt(12));
+    detached_capture(&mut pool, &mut model, &tokens, 4, 1);
+    detached_capture(&mut pool, &mut model, &tokens, 8, 1);
+    let hit = pool.resume_prefix(&tokens, 11, 12).unwrap().unwrap();
+    model.touch(tokens.key_at(8).unwrap());
+    pool.remove_anchor(tokens.key_at(8).unwrap()).unwrap();
+    model.remove(tokens.key_at(8).unwrap());
+    detached_capture(&mut pool, &mut model, &tokens, 8, 1);
+    pool.finish_restore(hit.handle()).unwrap();
+    pool.release(hit.handle()).unwrap();
+    model.check(&pool);
+    assert_eq!(
+        pool.anchor_tier(tokens.key_at(4).unwrap()),
+        Some(PrefixEvictionTierV1::Live)
+    );
+}
+
+/// A consumed spaced ancestor that a branch restore shares keeps its
+/// Retained class but moves to the live tier, so a plain spaced ancestor
+/// goes first under pressure.
+#[test]
+fn a_branch_restore_moves_a_spaced_ancestor_to_the_live_tier() {
+    let mut pool = content_pool(40);
+    let mut model = Model::default();
+    let history = prompt(32);
+    let mut previous = 0;
+    for depth in [4, 8, 16, 32] {
+        let identity = chain(&history[..depth]);
+        let source = if previous == 0 {
+            pool.create_sequence(depth).unwrap()
+        } else {
+            let hit = pool
+                .resume_prefix(&identity, depth - 1, depth)
+                .unwrap()
+                .unwrap();
+            assert_eq!(hit.tokens(), previous);
+            let key = identity.key_at(previous).unwrap();
+            let branch = model.has_descendant(key);
+            model.touch(key);
+            pool.finish_restore(hit.handle()).unwrap();
+            model.restore(key, branch);
+            hit.handle()
+        };
+        let committed = pool.snapshot(source).unwrap().tokens();
+        pool.append(source, depth - committed).unwrap();
+        content_capture(&mut pool, &identity, source, 1).unwrap();
+        model.insert((identity, depth));
+        pool.release(source).unwrap();
+        model.check(&pool);
+        previous = depth;
+    }
+    let full = chain(&history);
+    for depth in [4, 8] {
+        let key = full.key_at(depth).unwrap();
+        assert_eq!(pool.anchor_tier(key), Some(PrefixEvictionTierV1::Spaced));
+        assert_eq!(pool.anchor_class(key), Some(PrefixAnchorClassV1::Retained));
+    }
+    let mut diverging = prompt(12);
+    diverging[10] += 500;
+    assert_eq!(restore(&mut pool, &mut model, &chain(&diverging), 11), 8);
+    let shared = full.key_at(8).unwrap();
+    assert_eq!(pool.anchor_tier(shared), Some(PrefixEvictionTierV1::Live));
+    assert_eq!(
+        pool.anchor_class(shared),
+        Some(PrefixAnchorClassV1::Retained)
+    );
+    let free = pool.stats().free_blocks();
+    let expected = model.expected_evictions(&pool, free + 1, None);
+    assert_eq!(expected, [full.key_at(4).unwrap()]);
+    let pressure = pool.create_sequence(4 * (free + 1)).unwrap();
+    pool.append(pressure, 4 * (free + 1)).unwrap();
+    for victim in expected {
+        model.remove(victim);
+    }
+    model.check(&pool);
+    pool.release(pressure).unwrap();
+}
+
+/// Private and digest-only anchors stay maximal and live: their ancestry
+/// cannot be reconstructed. A duplicate capture only refreshes recency.
+#[test]
+fn private_digest_only_and_duplicate_captures_keep_their_tier() {
+    let mut pool = content_pool(32);
+    let tokens = chain(&prompt(8));
+    let source = pool.create_sequence(8).unwrap();
+    pool.append(source, 8).unwrap();
+    pool.insert_content_anchor(&tokens, source, 4, 1)
+        .unwrap()
+        .unwrap();
+    pool.insert_anchor(
+        tokens.key_at(8).unwrap(),
+        tokens.chain(2).unwrap(),
+        source,
+        1,
+    )
+    .unwrap()
+    .unwrap();
+    let private = runtime_kv::PrefixCacheKeyV1::new([91; 32]);
+    pool.insert_private_anchor(private, source, 1)
+        .unwrap()
+        .unwrap();
+    for key in [tokens.key_at(8).unwrap(), private] {
+        assert_eq!(pool.anchor_tier(key), Some(PrefixEvictionTierV1::Live));
+        assert_eq!(pool.anchor_class(key), Some(PrefixAnchorClassV1::Maximal));
+    }
+    let before = pool.anchor_tier(tokens.key_at(4).unwrap());
+    assert_eq!(pool.insert_content_anchor(&tokens, source, 4, 1), Ok(None));
+    assert_eq!(pool.anchor_tier(tokens.key_at(4).unwrap()), before);
+    pool.release(source).unwrap();
+    pool.audit().unwrap();
 }
 
 #[test]
@@ -709,6 +1000,7 @@ fn private_restore_and_transfer_pins_survive_candidate_eviction() {
     assert_eq!(pool.anchor_count(), 0);
     assert_eq!(pool.block_ref_count(state[0]).unwrap(), 2);
     pool.audit().unwrap();
+    // The restore's anchor is gone, so finishing it marks nothing.
     pool.finish_restore(hit.handle()).unwrap();
     pool.release(hit.handle()).unwrap();
     pool.release(pressure).unwrap();
@@ -759,32 +1051,131 @@ fn random_chain(rng: &mut Rng) -> (PrefixChainV1, bool) {
     )
 }
 
+/// A capture of `depth` tokens of `chain` from `source` with `state`
+/// snapshot pages.
+struct Capture<'a> {
+    chain: &'a PrefixChainV1,
+    source: runtime_kv::SequenceHandle,
+    depth: usize,
+    state: usize,
+}
+
+/// Applies a capture and checks its victims against the model.
+fn checked_capture(
+    pool: &mut KvPool,
+    model: &mut Model,
+    capture: &Capture<'_>,
+    replaced: Option<Key>,
+    seed: u64,
+) -> Vec<Key> {
+    let Capture {
+        chain,
+        source,
+        depth,
+        state,
+    } = *capture;
+    let key = chain.key_at(depth).unwrap();
+    let duplicate = pool.has_anchor(key);
+    let expected = if duplicate {
+        Vec::new()
+    } else {
+        model.expected_evictions(pool, state, replaced)
+    };
+    let captured = pool
+        .insert_content_anchor(chain, source, depth, state)
+        .unwrap();
+    for victim in &expected {
+        model.remove(*victim);
+    }
+    if duplicate {
+        model.touch(key);
+    } else if captured.is_some() {
+        model.insert((chain.clone(), depth));
+    }
+    model.check(pool);
+    assert!(
+        model.flags.contains_key(&key) || captured.is_none(),
+        "capture of {key:?}, seed {seed}"
+    );
+    expected
+}
+
 #[test]
-fn random_capture_remove_touch_and_pressure_match_slow_content_oracle() {
-    use runtime_kv::PrefixAnchorClassV1::Maximal;
-    let (mut maximal_victims, mut lower_victims, mut own_victims, mut media_captures) =
-        (0, 0, 0, 0);
+fn random_capture_restore_remove_and_pressure_match_slow_content_model() {
+    let mut counts = BTreeMap::<&str, usize>::new();
     for seed in 1..=40 {
         let mut rng = Rng(0x9e3779b97f4a7c15 ^ seed);
         let capacity = 60 + rng.below(80) as usize;
         let mut pool = content_pool(capacity);
-        let mut entries = Vec::new();
-        let mut last_used = BTreeMap::new();
-        let mut clock = 0;
+        let mut model = Model::default();
         for _ in 0..400 {
-            match rng.below(6) {
-                0 | 1 if !entries.is_empty() => {
-                    let entry = &entries[rng.below(entries.len() as u64) as usize];
-                    pool.remove_anchor(entry_key(entry)).unwrap();
+            match rng.below(7) {
+                0 | 1 if !model.flags.is_empty() => {
+                    let keys: Vec<Key> = model.flags.keys().copied().collect();
+                    let key = keys[rng.below(keys.len() as u64) as usize];
+                    pool.remove_anchor(key).unwrap();
+                    model.remove(key);
                 }
-                2 => {
+                2 | 3 => {
                     let (chain, _) = random_chain(&mut rng);
                     let limit = 1 + rng.below(64) as usize;
-                    if let Some(hit) = pool.resume_prefix(&chain, limit, 64).unwrap() {
-                        clock += 1;
-                        last_used.insert(chain.key_at(hit.tokens()).unwrap(), clock);
-                        pool.finish_restore(hit.handle()).unwrap();
-                        pool.release(hit.handle()).unwrap();
+                    let Some(hit) = pool.resume_prefix(&chain, limit, 64).unwrap() else {
+                        continue;
+                    };
+                    let key = chain.key_at(hit.tokens()).unwrap();
+                    let branch = model.has_descendant(key);
+                    model.touch(key);
+                    match rng.below(4) {
+                        0 => {
+                            pool.release(hit.handle()).unwrap();
+                            *counts.entry("failed restores").or_default() += 1;
+                        }
+                        1 => {
+                            pool.finish_owned_restore(hit.handle()).unwrap();
+                            pool.release(hit.handle()).unwrap();
+                            *counts.entry("own restores").or_default() += 1;
+                        }
+                        _ => {
+                            pool.finish_restore(hit.handle()).unwrap();
+                            model.restore(key, branch);
+                            *counts
+                                .entry(if branch {
+                                    "branch restores"
+                                } else {
+                                    "extension restores"
+                                })
+                                .or_default() += 1;
+                            model.check(&pool);
+                            // Extend the restored sequence and capture deeper
+                            // when the append needs no eviction, so the
+                            // capture alone exercises the replaced frontier.
+                            let depth =
+                                hit.tokens() + 1 + rng.below(65 - hit.tokens() as u64) as usize;
+                            let pages = depth.div_ceil(4) - hit.tokens().div_ceil(4) + 1;
+                            if depth <= 64
+                                && !chain.splits_media(depth)
+                                && pool.stats().free_blocks() > pages
+                            {
+                                pool.append(hit.handle(), depth - hit.tokens()).unwrap();
+                                model.check(&pool);
+                                let replaced =
+                                    (!branch && !model.flags[&key].shared).then_some(key);
+                                let state = 1 + rng.below(3) as usize;
+                                let capture = Capture {
+                                    chain: &chain,
+                                    source: hit.handle(),
+                                    depth,
+                                    state,
+                                };
+                                let victims = checked_capture(
+                                    &mut pool, &mut model, &capture, replaced, seed,
+                                );
+                                if victims.first() == Some(&key) {
+                                    *counts.entry("replaced frontiers").or_default() += 1;
+                                }
+                            }
+                            pool.release(hit.handle()).unwrap();
+                        }
                     }
                 }
                 _ => {
@@ -793,71 +1184,42 @@ fn random_capture_remove_touch_and_pressure_match_slow_content_oracle() {
                         .find(|depth| !chain.splits_media(*depth))
                         .unwrap();
                     let source = pool.create_sequence(depth).unwrap();
-                    let before = live_keys(&pool, &entries);
-                    let expected =
-                        expected_evictions(&pool, &entries, &last_used, depth.div_ceil(4), None);
+                    let expected = model.expected_evictions(&pool, depth.div_ceil(4), None);
                     pool.append(source, depth).unwrap();
-                    let actual = before
-                        .difference(&live_keys(&pool, &entries))
-                        .copied()
-                        .collect::<BTreeSet<_>>();
-                    assert_eq!(actual, expected, "append victims, seed {seed}");
-                    pool.audit().unwrap();
-                    let before = live_keys(&pool, &entries);
-                    let classes = oracle_classes(
-                        &entries
-                            .iter()
-                            .filter(|entry| before.contains(&entry_key(entry)))
-                            .collect::<Vec<_>>(),
-                    );
+                    for victim in &expected {
+                        model.remove(*victim);
+                    }
+                    model.check(&pool);
+                    let ranks = model.ranks();
                     let state = 1 + rng.below(3) as usize;
-                    let expected = expected_evictions(
-                        &pool,
-                        &entries,
-                        &last_used,
+                    let capture = Capture {
+                        chain: &chain,
+                        source,
+                        depth,
                         state,
-                        Some((&chain, depth)),
-                    );
-                    pool.insert_content_anchor(&chain, source, depth, state)
-                        .unwrap();
-                    let actual = before
-                        .difference(&live_keys(&pool, &entries))
-                        .copied()
-                        .collect::<BTreeSet<_>>();
-                    assert_eq!(actual, expected, "capture victims, seed {seed}");
-                    for key in actual {
-                        if classes[&key] == Maximal {
-                            maximal_victims += 1;
-                            let ancestor = entries
-                                .iter()
-                                .find(|entry| entry_key(entry) == key)
-                                .unwrap();
-                            if ancestor.1 < depth && chain.key_at(ancestor.1) == Some(key) {
-                                own_victims += 1;
-                            }
-                        } else {
-                            lower_victims += 1;
-                        }
+                    };
+                    for victim in checked_capture(&mut pool, &mut model, &capture, None, seed) {
+                        *counts
+                            .entry(match ranks[&victim].1 {
+                                PrefixEvictionTierV1::Superseded => "superseded victims",
+                                PrefixEvictionTierV1::Spaced => "spaced victims",
+                                PrefixEvictionTierV1::Live => "live victims",
+                            })
+                            .or_default() += 1;
                     }
-                    media_captures += usize::from(media);
-                    let key = chain.key_at(depth).unwrap();
-                    assert!(pool.has_anchor(key));
-                    clock += 1;
-                    last_used.insert(key, clock);
-                    if !entries.iter().any(|entry| entry_key(entry) == key) {
-                        entries.push((chain, depth));
-                    }
+                    *counts.entry("media captures").or_default() += usize::from(media);
                     pool.release(source).unwrap();
                 }
             }
-            assert_classes(&pool, &entries);
+            model.check(&pool);
             let clone = pool.clone();
             assert_eq!(clone, pool);
             assert_eq!(clone.metrics().snapshot(), pool.metrics().snapshot());
             clone.audit().unwrap();
         }
-        for entry in &entries {
-            pool.remove_anchor(entry_key(entry)).unwrap();
+        let keys: Vec<Key> = model.flags.keys().copied().collect();
+        for key in keys {
+            pool.remove_anchor(key).unwrap();
         }
         assert_eq!(pool.stats().free_blocks(), capacity);
         assert_eq!(pool.metrics().snapshot().prefix_anchors_by_class, [0; 3]);
@@ -867,8 +1229,21 @@ fn random_capture_remove_touch_and_pressure_match_slow_content_oracle() {
         );
         pool.audit().unwrap();
     }
-    assert!(maximal_victims > 0 && lower_victims > 0 && own_victims > 0 && media_captures > 0);
-    println!(
-        "maximal victims {maximal_victims}, lower-tier victims {lower_victims}, incoming ancestor victims {own_victims}, media captures {media_captures}"
-    );
+    println!("{counts:?}");
+    for kind in [
+        "failed restores",
+        "own restores",
+        "branch restores",
+        "extension restores",
+        "replaced frontiers",
+        "superseded victims",
+        "spaced victims",
+        "live victims",
+        "media captures",
+    ] {
+        assert!(
+            counts.get(kind).is_some_and(|count| *count > 0),
+            "no {kind}: {counts:?}"
+        );
+    }
 }

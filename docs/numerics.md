@@ -994,15 +994,24 @@ A request resumed within its final chunk needs no extra shared-page anchor.
 Prompt-end anchors serve extensions; same-prompt repeats must still prefill
 their last token. Prompt-logprob requests cannot skip rows they must report.
 Unused anchors are evictable under page pressure. The default remains global
-LRU. The default-off `CHOPINFER_PREFIX_ANCESTRY=1` host candidate first evicts
-superseded public ancestors, then retained ancestors, then maximal frontiers,
-using LRU within each class. Each frontier retains the deepest cached
-ancestors at or below half, quarter and eighth of its token depth; forks
-retain their deepest cached ancestor. Retention is a priority, not a pin or
-a TTL. When only maximal anchors remain, an incoming capture replaces its
-own older ancestor before an unrelated frontier. Failed captures remove
-only their new anchor and reclassify surviving ancestors; they cannot
-resurrect a pressure victim.
+LRU. The default-off `CHOPINFER_PREFIX_ANCESTRY=1` host candidate evicts in
+three tiers, LRU within each. First go superseded public ancestors: one
+nearest cached descendant, consumed, never shared. Next go the same
+ancestors when they are spaced: the deepest cached ancestor at or below half,
+a quarter or an eighth of a maximal frontier. Everything else follows by
+recency alone: frontiers, shared anchors, ancestors nothing has moved past
+yet, private and digest-only anchors. An anchor is extended when a
+successful public restore found no cached descendant below it, consumed when
+an anchor below it was extended, and shared when it was a fork or a
+successful restore used it while it had a cached descendant. These flags
+last for the anchor's lifetime; failed, own-boundary and private restores
+set none, and a restore that finishes after its anchor was evicted marks
+nothing. Consumed is a heuristic for a conversation moving past an ancestor,
+not proof that the ancestor will not be reused. Retention is a priority, not
+a pin or a TTL. When only the last tier remains, a capture replaces the
+unshared frontier its own sequence extended before an unrelated anchor.
+Failed captures remove only their new anchor; they cannot resurrect a
+pressure victim, and a fork they caused keeps its ancestor shared.
 
 Ancestry follows salted token and media content through shared full-block
 digest paths and exact partial radix edges, never physical page IDs.

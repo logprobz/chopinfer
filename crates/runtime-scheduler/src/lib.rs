@@ -5179,9 +5179,11 @@ mod tests {
                 writes.iter().map(|(tokens, _)| *tokens).collect::<Vec<_>>(),
                 [4, 8]
             );
-            assert_eq!(writes[0].1 == writes[1].1, enabled);
-            assert_eq!(scheduler.kv.has_anchor(idle_key), enabled);
-            assert_eq!(scheduler.kv.has_anchor(interior_key), !enabled);
+            // In both policies the end capture takes the older idle anchor's
+            // page: the interior written beside it is no passed ancestor.
+            assert_ne!(writes[0].1, writes[1].1);
+            assert!(!scheduler.kv.has_anchor(idle_key));
+            assert!(scheduler.kv.has_anchor(interior_key));
             assert!(scheduler.kv.has_anchor(end_key));
             assert!(matches!(
                 scheduler.kv.snapshot(source),

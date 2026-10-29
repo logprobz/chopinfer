@@ -87,8 +87,8 @@ count lookups; the vLLM ones count tokens.
 | `chop_prefix_cache_{queries,hits}_total`, `chop_prefix_cache_{queried,reused}_tokens_total` | Prefix-cache lookups and restored hits, and their prompt and reused tokens |
 | `chop_prefix_cache_recomputed_seen_tokens_total` | Prompt tokens a committed prefill computed although an earlier request's committed prefill had computed the same leading full pages, short of the last prompt token: repeats and shared prefixes no anchor covered ([where anchors are captured](numerics.md#kv-offload-and-prefix-state)) |
 | `chop_prefix_cache_{captures,capture_failures,restore_failures}_total`, `chop_prefix_cache_{anchors,blocks}` | Anchor captures, captures and restores the bundle refused, and the anchors and pages held now |
-| `chop_prefix_cache_evictions_total{class}` | Public anchor evictions by `superseded`, `retained` or `maximal` tier; sum all classes for the total |
-| `chop_prefix_cache_public_anchors{class}` | Public anchors currently owned by each tier |
+| `chop_prefix_cache_evictions_total{class}` | Public anchor evictions by `superseded`, `retained` or `maximal` class; sum all classes for the total |
+| `chop_prefix_cache_public_anchors{class}` | Public anchors currently in each class |
 | `chop_prefix_cache_snapshot_pages{class}` | Snapshot pages owned by those anchors; excludes pins surviving anchor removal |
 | `chop_prefix_cache_pages_freed_total{class}` | Pages actually returned to the free list at eviction, including KV pages; shared or pinned pages count only when their last reference disappears |
 | `chop_prefix_cache_private_anchors` | Owned private preemption anchors |
@@ -125,8 +125,12 @@ These prefix-cache series are emitted in both eviction policies. The labelled
 migrate dashboards to `sum(chop_prefix_cache_evictions_total)`. There is no
 additional unlabelled total to double-count, and these series have no host
 labels. With the candidate off, or for digest-only captures whose ancestry
-is unknown, public anchors are counted in the maximal tier. Private anchors
-are excluded from the public class counters and gauges.
+is unknown, public anchors are counted in the maximal class. Private anchors
+are excluded from the public class counters and gauges. With the candidate
+on, the class is a label, not the eviction order: `superseded` anchors are
+the first tier, `retained` covers both spaced ancestors (the second tier)
+and shared or not yet passed ancestors (ordered by recency with the
+`maximal` frontiers).
 
 The total anchor gauge includes private anchors. The cached-block gauge
 counts unique pages held only by anchors; class snapshot counts do not

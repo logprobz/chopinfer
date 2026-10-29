@@ -2,7 +2,7 @@
 
 mod ancestry;
 use ancestry::PrefixAncestry;
-pub use ancestry::PrefixAnchorClassV1;
+pub use ancestry::{PrefixAnchorClassV1, PrefixEvictionTierV1};
 mod context_parallel;
 mod declared_pages;
 mod offload;
@@ -139,6 +139,9 @@ struct PrefixAnchorV1 {
     last_used: u64,
     created_at: std::time::Instant,
     class: PrefixAnchorClassV1,
+    tier: PrefixEvictionTierV1,
+    /// Distinguishes this anchor from a later capture of the same key.
+    serial: u64,
     private: bool,
     /// Public content identity is present in the ancestry index.
     indexed: bool,
@@ -153,6 +156,8 @@ impl PartialEq for PrefixAnchorV1 {
             && self.state == other.state
             && self.last_used == other.last_used
             && self.class == other.class
+            && self.tier == other.tier
+            && self.serial == other.serial
             && self.private == other.private
             && self.indexed == other.indexed
     }
@@ -405,6 +410,17 @@ impl KvStats {
     }
 }
 
+/// What a sequence's restore means for ancestry eviction. A mark is taken
+/// when an indexed public anchor is resumed and applied only by a successful
+/// public restore of that same anchor lifetime.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct SlotAncestry {
+    /// Anchor, serial and whether it had a resident descendant at resume.
+    pending: Option<(PrefixCacheKeyV1, u64, bool)>,
+    /// The anchor this sequence extended by a successful restore.
+    extended_from: Option<(PrefixCacheKeyV1, u64)>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SequenceSlot {
     generation: u64,
@@ -416,6 +432,7 @@ struct SequenceSlot {
     pinned: Vec<BlockId>,
     /// None: usable, Some(false): awaiting DMA, Some(true): awaiting restore.
     restoring: Option<bool>,
+    ancestry: SlotAncestry,
 }
 
 #[derive(Debug)]
@@ -435,10 +452,11 @@ pub struct KvPool {
     anchors: BTreeMap<PrefixCacheKeyV1, PrefixAnchorV1>,
     /// Anchor keys by the digest of their full blocks.
     anchor_chains: BTreeMap<PrefixCacheKeyV1, std::collections::BTreeSet<PrefixCacheKeyV1>>,
-    /// Anchor keys by last use, oldest first.
-    anchor_order: BTreeMap<(PrefixAnchorClassV1, u64, PrefixCacheKeyV1), PrefixCacheKeyV1>,
+    /// Anchor keys by eviction tier, then last use, oldest first.
+    anchor_order: BTreeMap<(PrefixEvictionTierV1, u64, PrefixCacheKeyV1), PrefixCacheKeyV1>,
     ancestry: Option<PrefixAncestry>,
     anchor_clock: u64,
+    anchor_serial: u64,
     /// References each block holds on behalf of anchors.
     anchor_refs: Vec<u32>,
     registry: PrefixRegistryV1,
@@ -474,6 +492,7 @@ impl Clone for KvPool {
             anchor_order: self.anchor_order.clone(),
             ancestry: self.ancestry.clone(),
             anchor_clock: self.anchor_clock,
+            anchor_serial: self.anchor_serial,
             anchor_refs: self.anchor_refs.clone(),
             registry: self.registry.clone(),
             produced: self.produced.clone(),
@@ -504,6 +523,7 @@ impl PartialEq for KvPool {
             && self.ancestry == other.ancestry
             && self.anchor_order == other.anchor_order
             && self.anchor_clock == other.anchor_clock
+            && self.anchor_serial == other.anchor_serial
             && self.anchor_chains == other.anchor_chains
             && self.registry == other.registry
             && self.produced == other.produced
@@ -559,6 +579,7 @@ impl KvPool {
             blocks: Arc::new(Vec::new()),
             pinned: Vec::new(),
             restoring: None,
+            ancestry: SlotAncestry::default(),
         });
 
         let mut free_sequences = Vec::new();
@@ -589,6 +610,7 @@ impl KvPool {
             anchor_order: BTreeMap::new(),
             ancestry: None,
             anchor_clock: 0,
+            anchor_serial: 0,
             anchor_refs,
             registry: PrefixRegistryV1::new(PREFIX_REGISTRY_DIGESTS_V1),
             produced: PrefixRegistryV1::new(PREFIX_REGISTRY_DIGESTS_V1),
@@ -619,6 +641,11 @@ impl KvPool {
     #[must_use]
     pub fn anchor_class(&self, key: PrefixCacheKeyV1) -> Option<PrefixAnchorClassV1> {
         self.anchors.get(&key).map(|anchor| anchor.class)
+    }
+
+    #[must_use]
+    pub fn anchor_tier(&self, key: PrefixCacheKeyV1) -> Option<PrefixEvictionTierV1> {
+        self.anchors.get(&key).map(|anchor| anchor.tier)
     }
 
     /// Declares that an append may rewrite committed rows of the sequence's
@@ -685,6 +712,7 @@ impl KvPool {
             blocks,
             pinned: Vec::new(),
             restoring: None,
+            ancestry: SlotAncestry::default(),
         };
         self.active_sequences += 1;
         Ok(SequenceHandle { slot, generation })
@@ -744,6 +772,7 @@ impl KvPool {
             blocks: Arc::new(shared_blocks),
             pinned: Vec::new(),
             restoring: None,
+            ancestry: SlotAncestry::default(),
         };
         self.active_sequences += 1;
         self.metrics.explicit_shared_prefix(source_tokens);
@@ -874,6 +903,13 @@ impl KvPool {
             });
         }
         let anchor = &self.anchors[&key];
+        let mark = anchor.indexed.then(|| {
+            let branch = self
+                .ancestry
+                .as_ref()
+                .is_some_and(|index| index.has_descendant(key));
+            (key, anchor.serial, branch)
+        });
         for block in anchor.blocks.iter().chain(&anchor.state) {
             match self.blocks.get(block.index()) {
                 Some(&0) | None => return Err(KvError::InvariantViolation),
@@ -914,6 +950,10 @@ impl KvPool {
             blocks: Arc::new(shared),
             pinned,
             restoring: None,
+            ancestry: SlotAncestry {
+                pending: mark,
+                extended_from: None,
+            },
         };
         self.active_sequences += 1;
         self.touch_anchor(key);
@@ -934,14 +974,31 @@ impl KvPool {
         self.ensure_restored(slot)?;
         self.metrics
             .prefix_cache_restored(self.sequences[slot].tokens);
+        // Only a successful public restore of the same anchor lifetime marks
+        // ancestry; a recapture of the key since the resume starts fresh.
+        if let Some((key, serial, branch)) = self.sequences[slot].ancestry.pending.take()
+            && self
+                .anchors
+                .get(&key)
+                .is_some_and(|anchor| anchor.serial == serial)
+            && let Some(index) = &mut self.ancestry
+        {
+            index.restored(key, branch);
+            self.reclassify_anchors();
+            if !branch {
+                self.sequences[slot].ancestry.extended_from = Some((key, serial));
+            }
+        }
         self.finish_owned_restore(handle)
     }
 
     /// Releases an own-boundary restore without claiming a prompt-cache hit.
+    /// It marks no ancestry: the request resumed its own boundary.
     pub fn finish_owned_restore(&mut self, handle: SequenceHandle) -> Result<(), KvError> {
         self.ensure_no_prepared()?;
         let slot = self.validate(handle)?;
         self.ensure_restored(slot)?;
+        self.sequences[slot].ancestry.pending = None;
         let pinned = std::mem::take(&mut self.sequences[slot].pinned);
         for block in pinned.into_iter().rev() {
             self.release_block(block);
@@ -1042,15 +1099,8 @@ impl KvPool {
             return Err(KvError::ReferenceCountOverflow { block: *block });
         }
         if self.free_blocks.len() < state_pages {
-            let ancestors = match (&self.ancestry, identity) {
-                (Some(index), Some(identity)) => index.ancestors(identity, tokens),
-                _ => Vec::new(),
-            };
-            let incoming = ancestors
-                .into_iter()
-                .map(|key| (self.anchors[&key].last_used, key))
-                .collect();
-            self.evict_anchors_for_incoming(state_pages, incoming);
+            let replaced = self.replaced_frontier(slot, identity, tokens);
+            self.evict_anchors_preferring(state_pages, replaced);
         }
         if self.free_blocks.len() < state_pages {
             return Ok(None);
@@ -1076,8 +1126,9 @@ impl KvPool {
         }
         self.anchor_chains.entry(chain).or_default().insert(key);
         self.anchor_clock += 1;
+        self.anchor_serial += 1;
         self.anchor_order
-            .insert((PrefixAnchorClassV1::Maximal, self.anchor_clock, key), key);
+            .insert((PrefixEvictionTierV1::Live, self.anchor_clock, key), key);
         self.anchors.insert(
             key,
             PrefixAnchorV1 {
@@ -1088,6 +1139,8 @@ impl KvPool {
                 last_used: self.anchor_clock,
                 created_at: std::time::Instant::now(),
                 class: PrefixAnchorClassV1::Maximal,
+                tier: PrefixEvictionTierV1::Live,
+                serial: self.anchor_serial,
                 private,
                 indexed: !private && self.ancestry.is_some() && identity.is_some(),
             },
@@ -1112,25 +1165,46 @@ impl KvPool {
 
     /// Evicts only under allocation pressure. LRU remains the default.
     fn evict_anchors_for(&mut self, needed: usize) {
-        self.evict_anchors_for_incoming(needed, std::collections::BTreeSet::new());
+        self.evict_anchors_preferring(needed, None);
     }
 
-    fn evict_anchors_for_incoming(
-        &mut self,
-        needed: usize,
-        mut incoming: std::collections::BTreeSet<(u64, PrefixCacheKeyV1)>,
-    ) {
+    /// The frontier a capture from `slot` replaces: the unshared anchor the
+    /// sequence extended by a successful restore, when it is still the same
+    /// anchor lifetime and an ancestor of the capture.
+    fn replaced_frontier(
+        &self,
+        slot: usize,
+        identity: Option<&PrefixChainV1>,
+        tokens: usize,
+    ) -> Option<PrefixCacheKeyV1> {
+        let (key, serial) = self.sequences[slot].ancestry.extended_from?;
+        let index = self.ancestry.as_ref()?;
+        let anchor = self.anchors.get(&key)?;
+        (anchor.serial == serial
+            && anchor.tokens < tokens
+            && identity?.key_at(anchor.tokens) == Some(key)
+            && !index.shared(key))
+        .then_some(key)
+    }
+
+    /// Evicts the lowest tier's least recently used anchor first. When only
+    /// the live tier remains, a capture replaces the frontier its own
+    /// sequence extended before any other live anchor.
+    fn evict_anchors_preferring(&mut self, needed: usize, mut replaced: Option<PrefixCacheKeyV1>) {
         while self.free_blocks.len() < needed {
-            let Some(((class, _, _), oldest)) = self.anchor_order.first_key_value() else {
+            let Some(((tier, _, _), oldest)) = self.anchor_order.first_key_value() else {
                 return;
             };
-            let key = if *class == PrefixAnchorClassV1::Maximal {
-                incoming.first().map_or(*oldest, |(_, key)| *key)
-            } else {
-                *oldest
+            let key = match replaced {
+                Some(key)
+                    if *tier == PrefixEvictionTierV1::Live && self.anchors.contains_key(&key) =>
+                {
+                    replaced = None;
+                    key
+                }
+                _ => *oldest,
             };
             let anchor = &self.anchors[&key];
-            incoming.remove(&(anchor.last_used, key));
             let public = !anchor.private;
             let class = anchor.class;
             let age = anchor.created_at.elapsed().as_secs();
@@ -1149,16 +1223,19 @@ impl KvPool {
             .as_mut()
             .map(PrefixAncestry::changes)
             .unwrap_or_default();
-        for (key, class) in changes {
+        for (key, class, tier) in changes {
             let anchor = self.anchors.get_mut(&key).expect("indexed anchor exists");
             if anchor.class != class {
-                self.anchor_order
-                    .remove(&(anchor.class, anchor.last_used, key));
                 self.metrics
                     .anchor_reclassified(anchor.class, class, anchor.state.len());
                 anchor.class = class;
+            }
+            // A tier can change while the class label stays Retained.
+            if anchor.tier != tier {
                 self.anchor_order
-                    .insert((class, anchor.last_used, key), key);
+                    .remove(&(anchor.tier, anchor.last_used, key));
+                anchor.tier = tier;
+                self.anchor_order.insert((tier, anchor.last_used, key), key);
             }
         }
     }
@@ -1168,7 +1245,7 @@ impl KvPool {
             return false;
         };
         self.anchor_order
-            .remove(&(anchor.class, anchor.last_used, key));
+            .remove(&(anchor.tier, anchor.last_used, key));
         self.metrics
             .anchor_removed(anchor.class, anchor.state.len(), anchor.private);
         if let Some(index) = &mut self.ancestry {
@@ -1193,11 +1270,11 @@ impl KvPool {
             return;
         };
         self.anchor_order
-            .remove(&(anchor.class, anchor.last_used, key));
+            .remove(&(anchor.tier, anchor.last_used, key));
         self.anchor_clock += 1;
         anchor.last_used = self.anchor_clock;
         self.anchor_order
-            .insert((anchor.class, self.anchor_clock, key), key);
+            .insert((anchor.tier, self.anchor_clock, key), key);
     }
 
     fn set_block_references(&mut self, block: BlockId, refs: u32, transfers: u32) {
@@ -1778,6 +1855,7 @@ impl KvPool {
         self.sequences[slot].active = false;
         self.sequences[slot].tokens = 0;
         self.sequences[slot].quota = 0;
+        self.sequences[slot].ancestry = SlotAncestry::default();
         self.free_sequences.push(slot);
         self.active_sequences -= 1;
     }
@@ -1864,6 +1942,7 @@ impl KvPool {
                     || sequence.quota != 0
                     || !sequence.blocks.is_empty()
                     || !sequence.pinned.is_empty()
+                    || sequence.ancestry != SlotAncestry::default()
                 {
                     return Err(KvError::InvariantViolation);
                 }
@@ -1934,17 +2013,21 @@ impl KvPool {
                 || self.geometry.blocks_for(anchor.tokens)? != anchor.blocks.len()
                 || self
                     .anchor_order
-                    .get(&(anchor.class, anchor.last_used, *key))
+                    .get(&(anchor.tier, anchor.last_used, *key))
                     != Some(key)
                 || (anchor.indexed && anchor.private)
+                || anchor.serial == 0
+                || anchor.serial > self.anchor_serial
                 || if anchor.indexed {
-                    self.ancestry.as_ref().and_then(|index| index.class(*key)) != Some(anchor.class)
+                    self.ancestry.as_ref().and_then(|index| index.rank(*key))
+                        != Some((anchor.class, anchor.tier))
                 } else {
                     anchor.class != PrefixAnchorClassV1::Maximal
+                        || anchor.tier != PrefixEvictionTierV1::Live
                         || self
                             .ancestry
                             .as_ref()
-                            .and_then(|index| index.class(*key))
+                            .and_then(|index| index.rank(*key))
                             .is_some()
                 }
             {

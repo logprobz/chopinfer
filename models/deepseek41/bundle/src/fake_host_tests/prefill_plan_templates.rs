@@ -360,44 +360,10 @@ fn templates_patch_their_step_values_and_key_their_structure() {
     }
 }
 
-/// Plans that keep anchors are never kept, and an instance keeps up to 64
-/// templates.
+/// An instance keeps up to 64 plan templates.
 #[test]
-fn anchored_plans_keep_no_templates_and_instances_keep_64() {
+fn default_instances_keep_64_templates() {
     let host = host(true);
-    let instance = super::prefill_skip::create_profile_with_options(
-        &host,
-        8192,
-        true,
-        &[(
-            model_deepseek41_contract::execution_options::PREFILL_ANCHOR_ITEMS,
-            2.into(),
-        )],
-    );
-    let anchored = |request, slot| {
-        BatchRequestV1::new(
-            BatchWireVersionV1::V3,
-            vec![BatchItemV1::new(request, false, 789, true, (0..789).collect()).with_anchor(true)],
-            vec![BatchAppendV1::new(
-                0,
-                789,
-                789,
-                (0..13).map(|page| slot * SLOT_PAGES + page).collect(),
-                None,
-            )],
-        )
-        .with_state_slots(vec![slot])
-        .encode()
-        .unwrap()
-    };
-    for (request, slot) in [(1, 0), (2, 1)] {
-        assert_eq!(
-            outcome(&instance, &anchored(request, slot)),
-            Outcome::Lowered
-        );
-    }
-    let mut instance = instance;
-    instance.destroy().unwrap();
     let mut default = super::prefill_skip::create_profile(&host, 8192, true);
     let request = batch(&[chunk(1, 0, 200_000, 512)], &[], false).0;
     assert_eq!(outcome(&default, &request), Outcome::Kept);

@@ -44,58 +44,13 @@ pub(crate) fn ring(
         .iter()
         .find(|buffer| buffer.name == RING_BUFFER)
         .ok_or("the request state has no window rings")?;
-    ring_of(g, buffer, buffer.entries(extent), span, layer)
-}
-
-/// Layer `layer`'s ring of anchor spare `anchor` alone, in the separate
-/// spare buffer `span` of `anchors` entries
-/// (`state::request_state_with_anchors`): a ring of one sequence.
-pub(crate) fn spare_ring(
-    g: &Geometry,
-    storage: KvStorage,
-    anchors: u32,
-    span: DeviceBufferSpanV1,
-    layer: u32,
-    anchor: u32,
-) -> Result<Ring, String> {
-    let declaration = state::request_state(g, storage, false);
-    let buffer = declaration
-        .buffers
-        .iter()
-        .find(|buffer| buffer.name == RING_BUFFER)
-        .ok_or("the request state has no window rings")?;
-    if anchor >= anchors {
-        return Err(format!("anchor spare {anchor} of {anchors} does not exist"));
-    }
-    let all = ring_of(g, buffer, u64::from(anchors), span, layer)?;
-    let one = |plane: DeviceBufferSpanV1, stride: u64| {
-        DeviceBufferSpanV1::new(
-            plane.buffer,
-            plane.offset + u64::from(anchor) * stride,
-            stride,
-        )
-    };
-    Ok(Ring {
-        codes: one(all.codes, all.code_stride),
-        scales: all.scales.map(|scales| one(scales, all.scale_stride)),
-        slots: 1,
-        ..all
-    })
-}
-
-fn ring_of(
-    g: &Geometry,
-    buffer: &bundle_runtime::state::StateBuffer,
-    entries: u64,
-    span: DeviceBufferSpanV1,
-    layer: u32,
-) -> Result<Ring, String> {
     // Codes then scales, or the BF16 layout's one plane of values.
     let (codes, scales) = match buffer.planes[..] {
         [codes, scales] => (codes, Some(scales)),
         [values] => (values, None),
         _ => return Err("the window ring keeps neither code and scale planes nor values".into()),
     };
+    let entries = buffer.entries(extent);
     let base = span.offset + u64::from(layer) * buffer.layer_stride(entries);
     let scale_stride = scales.unwrap_or(0);
     if layer >= g.layers() || base + entries * (codes + scale_stride) > span.offset + span.length {
@@ -129,58 +84,6 @@ impl Lowering<'_> {
             span,
             layer,
         )
-    }
-
-    /// Layer `layer`'s window write of `rows` rows into the one-sequence
-    /// ring `spare` (`spare_ring`): the rows at `local` of this lowering's
-    /// transient key scratch, which hold packed rows from `packed` on. Each
-    /// row's sequence is read from the I32 zeros `zeros`, `last` holds the
-    /// anchor's last position and `live` the row count, so exactly the rows
-    /// within a ring of the anchor are written, as a chunk ending there
-    /// writes them into its slot.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn spare_ring_write(
-        &self,
-        layer: u32,
-        local: u32,
-        packed: u32,
-        rows: u32,
-        spare: Ring,
-        positions: DeviceBufferSpanV1,
-        last: DeviceBufferSpanV1,
-        zeros: DeviceBufferSpanV1,
-        live: DeviceBufferSpanV1,
-    ) -> Result<Option<Vec<Lowered>>, String> {
-        let Some(glue) = &self.ops.glue else {
-            return Ok(None);
-        };
-        let scratch = &self.buffers.scratch;
-        let transient = |span| crate::buffers::row_range(span, local, rows);
-        let carried = |span| crate::buffers::row_range(span, packed, rows);
-        let rope = match latent_glue::rope_table(self.shape.geometry, layer)? {
-            RopeTable::Window => scratch.rope_window,
-            RopeTable::Compressed => scratch.rope_compressed_rows,
-        };
-        let views = WindowWriteViews {
-            input: transient(scratch.kv)?,
-            weight: self
-                .buffers
-                .view(&layer_view(layer, "attn.kv_norm.weight"))?,
-            latent: transient(scratch.window_latent)?,
-            codes: transient(scratch.window_codes)?,
-            scales: transient(scratch.window_scales)?,
-            cos_sin: carried(rope)?,
-            positions,
-            row_slots: zeros,
-            last_positions: last,
-            ring: spare,
-            live_rows: live,
-            workspace: self.buffers.workspace,
-            status: carried(scratch.row_status)?,
-        };
-        glue.window_write(Phase::Prefill { rows }, &views, None)
-            .map(Some)
-            .map_err(|refusal| format!("anchor window write of layer {layer}: {refusal}"))
     }
 
     /// The step rows' RoPE rows of `table`.

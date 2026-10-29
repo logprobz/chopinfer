@@ -6,10 +6,7 @@
 //! sources' compressed latents and index keys live in the shared pages
 //! already. A ring holds its last window of positions; a tail the open
 //! group's row. The Engram history needs no pages: a restore names every
-//! prefix token, and the history takes the last of them. A capture at an
-//! anchor kept inside a prompt-ending item copies that anchor's spares
-//! instead of a slot (`execute::anchors`), DSpark's raw feature history
-//! included; a restore rebuilds the drafter's rings from those rows.
+//! prefix token, and the history takes the last of them.
 
 use bundle_runtime::prefix::{
     Header, HeaderLayout, PrefixInstance, Stamp, layout_digest, may_restore,
@@ -36,8 +33,7 @@ impl Instance {
         }
     }
 
-    /// The table of `holder`'s snapshot: a slot's, or an anchor item's
-    /// spares.
+    /// The table of slot `slot`'s snapshot.
     fn snapshot_table(&self, holder: Holder) -> Result<Table, BundleStatusV1> {
         HEADER
             .check(&self.state)
@@ -45,19 +41,19 @@ impl Instance {
         Table::new(&self.state, self.extent, holder).map_err(|_| BundleStatusV1::InternalError)
     }
 
-    /// Copies `holder`'s state to the snapshot `pages` (with `header`) or
-    /// back into a slot on every rank, and returns once every rank's
+    /// Copies `slot`'s state to the snapshot `pages` (with `header`) or
+    /// back into the slot on every rank, and returns once every rank's
     /// copies are done, with the header bytes rank 0 read on a restore.
     /// Every rank's copies are planned before any rank starts; a drain that
     /// cannot be confirmed is INTERNAL_ERROR, which keeps the host from
     /// reusing the pages.
     fn copy_snapshot(
         &self,
-        holder: Holder,
+        slot: u32,
         pages: &[u64],
         header: Option<Vec<u8>>,
     ) -> Result<Vec<u8>, BundleStatusV1> {
-        let table = self.snapshot_table(holder)?;
+        let table = self.snapshot_table(Holder::Slot(slot))?;
         let to_pages = header.is_some();
         let plans = self
             .buffers
@@ -71,10 +67,7 @@ impl Instance {
                         .iter()
                         .map(|&(_, span)| Some(span))
                         .collect(),
-                    spares: self.anchor_spares.get(rank).map_or_else(
-                        || vec![None; buffers.state.buffers.len()],
-                        |spares| spares.buffers.clone(),
-                    ),
+                    spares: vec![None; buffers.state.buffers.len()],
                 };
                 let paged = Pages {
                     pool: buffers.kv_pool,
@@ -123,16 +116,10 @@ impl PrefixInstance for Instance {
         if !request.token_ids.is_empty() || request.tokens == 0 {
             return Err(BundleStatusV1::InvalidState);
         }
-        // A capture at an anchor the last step kept inside a prompt-ending
-        // item copies that anchor item's spares (`execute::anchors`).
-        let holder = match self.ledger.anchor(request.request_id, request.tokens) {
-            Ok(anchor) => Holder::Anchor(anchor),
-            Err(_) => Holder::Slot(
-                self.ledger
-                    .committed(request.request_id, request.tokens)
-                    .map_err(|_| BundleStatusV1::InvalidState)?,
-            ),
-        };
+        let slot = self
+            .ledger
+            .committed(request.request_id, request.tokens)
+            .map_err(|_| BundleStatusV1::InvalidState)?;
         self.dspark_catch_up(request.request_id)?;
         if let Some(device) = &self.dspark {
             let snapshot = device
@@ -142,13 +129,7 @@ impl PrefixInstance for Instance {
                 .state()
                 .snapshot(request.request_id)
                 .map_err(|_| BundleStatusV1::InvalidState)?;
-            // The drafter keeps only raw rows in a snapshot, and an anchor's
-            // spare holds those of its anchor, inside the slot's history.
-            let kept = match holder {
-                Holder::Slot(_) => snapshot.end == request.tokens,
-                Holder::Anchor(_) => request.tokens < snapshot.end,
-            };
-            if !kept {
+            if snapshot.end != request.tokens {
                 return Err(BundleStatusV1::InvalidState);
             }
         }
@@ -160,7 +141,7 @@ impl PrefixInstance for Instance {
         }
         .encode(&HEADER, self.stamp())
         .map_err(|_| BundleStatusV1::InternalError)?;
-        self.copy_snapshot(holder, &request.pages, Some(header))?;
+        self.copy_snapshot(slot, &request.pages, Some(header))?;
         #[cfg(feature = "diagnostic-taps")]
         self.capture_profile_boundary(request.request_id, request.tokens, "snapshot")
             .map_err(|error| {
@@ -190,7 +171,7 @@ impl PrefixInstance for Instance {
             .map_err(|_| BundleStatusV1::InvalidState)?;
         self.dspark_validate_restore(request.request_id, slot, request.tokens)?;
         let read = self
-            .copy_snapshot(Holder::Slot(slot), &request.pages, None)
+            .copy_snapshot(slot, &request.pages, None)
             .inspect_err(|_| {
                 self.dspark_poison();
             })?;

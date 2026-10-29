@@ -34,7 +34,6 @@ use crate::indexer_workloads::Route as IndexerRoute;
 use crate::lower::{KvExtent, TailUpload, tail_upload};
 use crate::program::{Phase, Stage};
 
-pub(crate) mod anchors;
 pub(crate) mod ar_status;
 pub(crate) mod dma;
 #[cfg(test)]
@@ -986,14 +985,6 @@ impl Instance {
                 if let Some(media) = &run.media {
                     self.upload_flags(rank, media)?;
                 }
-                // Anchor spares copy the slots' state before any write of
-                // the step reaches it, the tails' seed copies below included.
-                if let Some(plan) = run.execution.skip() {
-                    for &(destination, source) in plan.seeds(rank) {
-                        self.services
-                            .copy_device_to_device(stream, destination, source)?;
-                    }
-                }
                 if let Some(tails) = run.tails.get(rank) {
                     let scratch = &self.buffers[rank].scratch;
                     for (span, ids) in [
@@ -1211,15 +1202,6 @@ impl Instance {
             }
         }
         Ok(())
-    }
-
-    /// The anchor spares each captured buffer keeps: none without spares.
-    pub(super) fn anchor_spare_count(&self) -> u32 {
-        if self.anchor_spares.is_empty() {
-            0
-        } else {
-            self.config.execution.prefill_anchor_items
-        }
     }
 
     fn dispatch_failed(&self, error: DispatchError) -> BundleAbiError {
@@ -1492,16 +1474,11 @@ impl Instance {
             .as_mut()
             .and_then(StagedPrefill::inputs_mut)
             .unwrap_or(&mut step.prefill);
-        let mut items = items(prefill);
-        items.extend(self::items(&step.decode));
-        // Anchor items an upper-skip prefill keeps must end off the granule
-        // past one inside them, within the spares (`anchors::anchors`).
-        if self.skip_prefill
-            && let Err(error) = anchors::anchors(prefill, self.anchor_spare_count())
-        {
-            self.log(&error);
+        if prefill.anchors.contains(&true) {
             return BundleStatusV1::InvalidArgument;
         }
+        let mut items = items(prefill);
+        items.extend(self::items(&step.decode));
         // The encoder runs before the step opens: a failure leaves no step
         // to cancel, and the prefill's injects read what it wrote.
         let media = match self.encode(request, prefill) {
@@ -1555,13 +1532,7 @@ impl Instance {
                 Err(error) => return error,
             }
         }
-        // An upper-skip prefill names the anchors its spares keep.
-        let kept = runs
-            .iter()
-            .filter_map(|run| run.execution.skip())
-            .flat_map(|plan| plan.kept().iter().copied())
-            .collect();
-        if self.ledger.preview(&items).is_err() || self.ledger.begin(&items, kept).is_err() {
+        if self.ledger.preview(&items).is_err() || self.ledger.begin(&items, Vec::new()).is_err() {
             return BundleStatusV1::InvalidArgument;
         }
         if let Some(engram) = self.engram.as_mut().filter(|_| self.dspark.is_none()) {

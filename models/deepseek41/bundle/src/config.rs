@@ -415,7 +415,6 @@ pub(crate) mod tests {
             (PREFILL_PLAN_CACHE_VERIFY, true.into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK, 32.into()),
             (DIAGNOSTIC_STEP_LOGS, true.into()),
-            (PREFILL_ANCHOR_ITEMS, 2.into()),
         ] {
             changed = with_option(changed, name, value);
         }
@@ -427,7 +426,6 @@ pub(crate) mod tests {
                 prefill_plan_cache_verify: true,
                 dspark_graph_handles_per_rank: 32,
                 diagnostic_step_logs: true,
-                prefill_anchor_items: 2,
             }
         );
         for (name, value) in [
@@ -436,7 +434,6 @@ pub(crate) mod tests {
             (PREFILL_PLAN_CACHE_VERIFY, "verify".into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK, (-1).into()),
             (DIAGNOSTIC_STEP_LOGS, 1.into()),
-            (PREFILL_ANCHOR_ITEMS, 9.into()),
         ] {
             assert_eq!(
                 decode(&with_option(base.clone(), name, value), |_| {}).unwrap_err(),

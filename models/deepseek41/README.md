@@ -175,7 +175,6 @@ them. A non-default value is unqualified.
 | `dspark_coupled_drafts` | `true` | Couple sampled drafts to the target sampler's noise. |
 | `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |
 | `dspark_graph_handles_per_rank` | `512` | Graph handles per rank, from 0 to 9223372036854775807; 0 keeps DSpark eager. The total across ranks must fit the platform's count range. |
-| `prefill_anchor_items` | `0` | Cold whole-prompt upper-skip items of at least 357 rows per step that keep their rounded prompt end in anchor spares instead of ending a chunk there, from 0 to 8; TP4 upper-skip AR and DSpark only. Other rank counts advertise no grid allowance. The instance offers them on its guaranteed grid through the optional prefill anchors export. Measurement prototype. |
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit and each reused plan template again and refuse a differing plan. |
@@ -186,6 +185,14 @@ them. A non-default value is unqualified.
 | `text_config.indexer_mma` | `true` | Use the guarded native Flash index scorer where eligible. |
 | `text_config.indexer_prefill_tile` | `true` | Enable the qualified Flash tiled indexer routes. |
 | `verify_graph_rows` | `64` | Widest graphed verify step; wider admitted steps run eagerly. |
+
+The prompt-end grid-anchor candidate is removed. A TP4 C1 replay on
+2026-10-29 matched all 40 turn pairs bitwise but regressed throughput by
+0.66% and TTFT p95 in both pairs. An off-grid 789-row prefill took
+311-313 ms, while separate 768- and 21-row steps totaled 288-294 ms.
+The tail selected split-tail dense routes instead of exact-row folds.
+A future proposal needs served stateful acceptance across cold and warm
+turns before adding a new grid-anchor ABI or changing the default schedule.
 
 TP4 native-KV single-item DMA prefill overlaps both prepared Engram gathers
 by default at 512-8192 rows. The model joins each layer before its decoder;

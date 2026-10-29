@@ -60,17 +60,11 @@ impl Instance {
         root: &Path,
         budget: Option<(&std::cell::Cell<u64>, u64)>,
     ) -> Result<(), String> {
-        // A capture at an anchor the last step kept inside an item reads that
-        // anchor's spares (`execute::anchors`), whose slot has moved on.
-        let holder = match self.ledger.anchor(request, end) {
-            Ok(anchor) => Holder::Anchor(anchor),
-            Err(_) => Holder::Slot(
-                self.ledger
-                    .committed(request, end)
-                    .map_err(|error| format!("state capture ledger: {error:?}"))?,
-            ),
-        };
-        let context = context.filter(|_| matches!(holder, Holder::Slot(_)));
+        let slot = self
+            .ledger
+            .committed(request, end)
+            .map_err(|error| format!("state capture ledger: {error:?}"))?;
+        let holder = Holder::Slot(slot);
         let retained_start = context.map_or(
             end.saturating_sub(u64::from(self.config.shape.geometry.shape.attention.window)),
             |c| c.retained_start,
@@ -79,9 +73,8 @@ impl Instance {
         let mut table = Table::new(&self.state, self.extent, holder)
             .map_err(|e| format!("DSpark state capture table: {e:?}"))?;
         // Prefix restore rebuilds the drafter rings from retained features.
-        // Parity captures include a slot's rings as well as the prefix
-        // payload; an anchor keeps only the payload.
-        if let Holder::Slot(slot) = holder {
+        // Parity captures include a slot's rings as well as the prefix payload.
+        {
             for (index, buffer) in self
                 .state
                 .buffers
@@ -118,14 +111,7 @@ impl Instance {
                 .descriptors
                 .iter()
                 .map(|part| {
-                    let buffer = if part.spare {
-                        self.anchor_spares
-                            .get(rank)
-                            .and_then(|spares| spares.buffers[part.buffer])
-                            .ok_or("DSpark state capture spare is absent")?
-                    } else {
-                        buffers.state.buffers[part.buffer].1
-                    };
+                    let buffer = buffers.state.buffers[part.buffer].1;
                     slice(buffer, part.offset, part.length)
                 })
                 .collect::<Result<Vec<_>, String>>()?;

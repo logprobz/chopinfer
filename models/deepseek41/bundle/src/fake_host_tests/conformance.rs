@@ -16,7 +16,6 @@ use model_deepseek41_contract::serving::DECODE_BATCH;
 use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
 
 mod allocated;
-mod anchored;
 mod templated;
 
 /// A served configuration: its rank count and the host's (drafts, verify
@@ -379,9 +378,8 @@ fn adopted_ar_buffers_precede_serving_kv_sizing() {
 }
 
 impl Served {
-    /// The instance of this serving; with `anchors`, also that many
-    /// prefill anchor items, through the prefill cuts and anchors exports.
-    fn create_with(&self, anchors: Option<u32>) -> Result<BundleInstanceV1, BundleAbiError> {
+    /// The instance of this serving.
+    fn create_with(&self) -> Result<BundleInstanceV1, BundleAbiError> {
         if self.host.device.symbols_only.get() {
             // The mapped index also serves AR. Speculation is negotiated separately.
             self.host.drafter.set(true);
@@ -395,23 +393,19 @@ impl Served {
             self.serving.sequences,
             false,
         );
-        if !self.serving.model_options.is_empty() || anchors.is_some() {
+        if !self.serving.model_options.is_empty() {
             let tag = runtime_bundle_abi::MODEL_OPTIONS_TAG_V1;
             let at = record.windows(tag.len()).position(|w| w == tag).unwrap() + tag.len();
             let mut options: serde_json::Value = serde_json::from_slice(&record[at + 4..]).unwrap();
             for (key, value) in &self.serving.model_options {
                 options[key] = serde_json::from_str(value).unwrap();
             }
-            if let Some(items) = anchors {
-                options[model_deepseek41_contract::execution_options::PREFILL_ANCHOR_ITEMS] =
-                    items.into();
-            }
             let options = serde_json::to_vec(&options).unwrap();
             record.truncate(at);
             record.extend_from_slice(&(options.len() as u32).to_le_bytes());
             record.extend_from_slice(&options);
         }
-        let mut api = if self.host.device.symbols_only.get() || anchors.is_some() {
+        let api = if self.host.device.symbols_only.get() {
             api()
                 .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
                 .expect("prefill API")
@@ -420,11 +414,6 @@ impl Served {
         } else {
             api()
         };
-        if anchors.is_some() {
-            api = api
-                .with_prefill_anchors_api(crate::instance::prefill::PREFILL_ANCHORS_API)
-                .expect("prefill anchors API");
-        }
         api.create(HostServicesTableV1::new(Rc::clone(&self.observed)), &record)
     }
 }
@@ -611,7 +600,7 @@ impl conformance::Startup for Served {
         }
     }
     fn create(&self) -> Result<BundleInstanceV1, BundleAbiError> {
-        self.create_with(None)
+        self.create_with()
     }
     fn step(&self, items: &[conformance::Item]) -> Vec<u8> {
         let items: Vec<_> = items

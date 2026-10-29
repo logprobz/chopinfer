@@ -24,7 +24,6 @@ mod query_prefill;
 mod routes;
 
 pub use compressor::{TailUpload, tail_upload};
-pub(crate) use latent::spare_ring;
 
 use bundle_runtime::state::Extent;
 use bundle_runtime::upload::DeviceInputs;

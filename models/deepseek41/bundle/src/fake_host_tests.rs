@@ -38,7 +38,6 @@ mod media;
 mod moe_pipeline;
 mod norm_quantize;
 mod position_valid;
-mod prefill_anchor;
 mod prefill_attention;
 mod prefill_cache;
 mod prefill_cache_capacity;

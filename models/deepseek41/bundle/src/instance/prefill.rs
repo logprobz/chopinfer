@@ -3,36 +3,10 @@
 use super::Instance;
 use bundle_runtime::entry::Bundle;
 use bundle_runtime::table::with_instance;
-use runtime_bundle_abi::prefill::{BundlePrefillAnchorsV1, BundlePrefillPolicyV1};
+use runtime_bundle_abi::prefill::BundlePrefillPolicyV1;
 use runtime_bundle_abi::{BundleHandleV1, BundleStatusV1, ExecuteResultSinkV1};
 
 runtime_bundle_abi::export_prefill_cuts_api_v1!(PREFILL_CUTS_API, describe_cuts, execute_cuts,);
-runtime_bundle_abi::export_prefill_anchors_api_v1!(PREFILL_ANCHORS_API, describe_anchors);
-
-/// The prompt-end anchors an upper-skip instance keeps inside items on its
-/// grid (`execution_options::PREFILL_ANCHOR_ITEMS`); the measured width
-/// policy is TP4 only. Other rank counts advertise no grid allowance.
-fn describe_anchors(handle: BundleHandleV1) -> BundlePrefillAnchorsV1 {
-    let mut items = 0;
-    let status = Instance::instances().with(|table| {
-        with_instance(table, handle, |instance| {
-            if instance.config.prefill.scheduler_cuts() && instance.config.shape.ranks() == 4 {
-                items = instance.anchor_spare_count();
-            }
-            BundleStatusV1::Success
-        })
-    });
-    if status == BundleStatusV1::Success {
-        BundlePrefillAnchorsV1::kept(items).with_minimum_fused_rows(if items == 0 {
-            0
-        } else {
-            model_deepseek41_contract::execution_options::MIN_ANCHOR_ROWS
-        })
-    } else {
-        BundlePrefillAnchorsV1::failure(status)
-    }
-}
-
 pub(crate) fn describe(handle: BundleHandleV1) -> BundlePrefillPolicyV1 {
     policy(handle, false)
 }

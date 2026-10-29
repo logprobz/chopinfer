@@ -79,8 +79,6 @@ fn create_backend_with_api(
         .unwrap()
         .with_prefill_cuts_api(crate::instance::prefill::PREFILL_CUTS_API)
         .unwrap()
-        .with_prefill_anchors_api(crate::instance::prefill::PREFILL_ANCHORS_API)
-        .unwrap()
         .create(HostServicesTableV1::new(Rc::new(backend)), &record)
 }
 

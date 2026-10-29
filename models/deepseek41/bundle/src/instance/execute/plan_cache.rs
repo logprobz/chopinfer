@@ -203,7 +203,6 @@ fn key(run: &Run) -> Option<Key> {
         && inputs.q_start == [0]
         && inputs.q_len == [rows as i32]
         && inputs.prefix_len == [0]
-        && !inputs.anchors.contains(&true)
         && inputs.position_axes.is_empty()
         && inputs.positions.iter().copied().eq(0..rows as i32)
         && inputs.logit_rows() == [rows - 1]

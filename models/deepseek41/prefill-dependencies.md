@@ -15,8 +15,8 @@ Declaring cuts promises complete state and results identical to the uncut
 schedule at every admitted 64-token end, including when a restored final
 chunk is split again. Profiles with no guaranteed grid do not enable it. The
 scheduler retains the absolute grid after an extra cut, so a cut at 4032 is
-followed by 8192 unless another selected anchor or the prompt end comes first. This mechanism
-does not enable timing-budget cuts. TBT-selected timing cuts are a separate
+followed by 8192 unless another selected anchor or the prompt end comes
+first. This mechanism does not enable timing-budget cuts. TBT-selected timing cuts are a separate
 serving option (`--prefill-timing-cuts fixed` with `--prefill-budget tbt`),
 off by default and described below.
 
@@ -26,74 +26,22 @@ then executes those last tokens as a separate prefill step. This applies to
 all such cold traffic, including unrelated prompts with no shared prefix.
 It adds a step and snapshot when the rounded end is not already a grid
 boundary. Prompts shorter than 64 tokens have no interior aligned cut; a hit
-at the rounded end only needs the tail step. Full-prefill can capture the
-same point inside a step when its anchor-item allowance permits. Cold TTFT
+at the rounded end only needs the tail step. Cold TTFT
 therefore includes the extra cone, tail step and snapshot for unaligned
 prompts, as well as any cost of shared-prefix cuts.
 
-The `prefill_anchor_items` model option (default 0, at most 8) is a
-prototype that keeps such a rounded end inside one upper-skip step
-instead. AR and DSpark upper-skip instances accept it; only TP4 advertises
-the measured grid admission policy. TP1 and TP2 retain direct anchor
-execution for state probes but advertise no grid allowance. Full-schedule
-profiles refuse it at create. Each allowed anchor item gets one spare entry
-of every captured state buffer (window rings, compressor tails and, with
-DSpark, the raw feature history), in separate buffers per rank. Before any
-write of the step reaches the slot,
-the spare is seeded from the slot's tails, and from its rings when the item
-starts less than 136 rows before the anchor. Every layer's window write is
-then repeated into the spare ring for the rows within a ring of the anchor,
-and the cone also roots those rows. The spare then holds the bytes a chunk
-ending at the anchor leaves in its slot, and a capture at the anchor copies
-it. With DSpark the step also packs the raw feature rows a chunk ending at
-the anchor retains: all of them while they fit the drafter's 134-row
-history, else its last 128. The drafter's commit, before its own retention,
-copies the slot's history entry into the spare and then those rows. It also
-retains in the slot the up to six rows such a chunk leaves there that the
-item's own last window does not, so the slot's history matches the item cut
-at the anchor too. Snapshots hold no drafter rings; a restore rebuilds them
-from the raw window, so a capture at the anchor needs no drafter state at
-the anchor. The drafter rings after the step are those of the uncut step.
-The instance reports its allowance through the optional
-`chop_bundle_prefill_anchors_api_v1` export: its spare count when TP4 cuts
-are enabled, otherwise 0. The declaration also gives a minimum fused width,
-357 rows, the smallest anchored prompt in the measured cold batch shapes.
-The host keeps grid and manifest allowances separate. With a nonzero grid
-allowance, an item starting at token zero with at least that width may keep
-an off-grid rounded end in the same step as the prompt end;
-the scheduler captures both after that step. Restored items and
-continuations after an earlier cut keep ordinary split steps. The check
-uses the scheduled start, not the request's original cache-hit count.
-Grid ends and shared-prefix cuts are unchanged. DeepSeek's default-off
-schedule is unchanged; other models retain their manifest-anchor policy.
-Served evidence (2026-10-28, TP4, eight anchor items against
-none on one install): cold, repeated, probed and restored unaligned AR
-prompts gave identical tokens, logprobs, full-vocabulary logits, cache hits
-and captured state, and DSpark the same outputs, logits of every prefill and
-verify step, cache hits, proposed token IDs, draft lengths and kept rows of
-every drafting cycle, and published snapshot payloads, with drafter rings
-and cursors equal at every caught-up snapshot. A sampled ABBA on 32 cold
-coding and chat prompts with 64 output tokens measured AR request throughput
-12.6% higher at C4 and 13.1% higher at C8, neutral at C2. A DSpark ABBA on
-the same prompts, both arms on the anchor arm's 316,922 KV pages per rank,
-measured 5.6% higher request throughput at C4 (2.9% and 8.4% in its two
-pairs), neutral at C1 and C2. With DSpark the eight spares cost 1,178 KV
-pages per rank (0.37%).
+The in-step prompt-end anchor candidate is removed. It could save a tail
+step on cold packed prompts, but C1 stateful replay exposed a dense-route
+cost: fusing 768+21 rows into 789 selected split-tail projections and took
+311-313 ms rather than 288-294 ms. The TP4 AR replay on 2026-10-29 matched
+40 turn pairs bitwise but regressed output throughput by 0.66% and TTFT p95
+in both pairs. Ordinary cuts remain, with no per-instance grid-anchor ABI,
+spare buffers or changed manifest-anchor behavior in other models.
 
-A stateful replay on the same date found a different C1 tradeoff: four
-canonical sessions of five turns, 64 output tokens at temperature 1, and
-32,768 KV pages per rank in both arms. Each profile's 40 matched turn pairs
-had identical output token IDs, streamed logprobs and cache hits. Cache
-reuse stayed at about 74%. Under the paired ABBA rule, output throughput
-regressed by 2.9% in AR and 5.7% in DSpark. AR TTFT p50 rose from 197-200 ms
-to 231 ms; DSpark rose from 202 ms to 241-242 ms. Both profiles also had
-resolved TTFT p95 regressions. These short-turn C1 results reject default
-adoption despite the earlier cold-prompt gains. The measurements above
-precede the restriction to items starting at token zero with at least
-357 rows. That restriction keeps the earlier cold batch shapes eligible
-and excludes the measured short continuations; its served effect remains
-unproven. The candidate stays off; concurrent and generated-history
-stateful acceptance remain unproven.
+The final TP4 gate on 2026-10-29 measured a 12.71% AR C4 throughput gain,
+but DSpark C1 replay regressed TTFT p95 in both pairs: 303.03 to 324.71 ms
+and 308.08 to 321.54 ms. The declared rule forbade a resolved p95 regression
+in either decision cell, so the candidate failed despite its cold gain.
 
 A shorter grid hit does not suppress a longer observed shared-prefix cut,
 even when the request resumes within its final chunk. The next request can

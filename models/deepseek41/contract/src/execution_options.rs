@@ -10,20 +10,11 @@ pub const PREFILL_PLAN_CACHE_PLANS: &str = "prefill_plan_cache_plans";
 pub const PREFILL_PLAN_CACHE_VERIFY: &str = "prefill_plan_cache_verify";
 pub const DSPARK_GRAPH_HANDLES_PER_RANK: &str = "dspark_graph_handles_per_rank";
 pub const DIAGNOSTIC_STEP_LOGS: &str = "diagnostic_step_logs";
-pub const PREFILL_ANCHOR_ITEMS: &str = "prefill_anchor_items";
 pub const DEFAULT_PLANS: usize = 16;
 pub const MAX_PLANS: usize = 64;
 /// The served warmup fits within 512 graph handles per rank, leaving room
 /// for completion tails that serving captures lazily.
 pub const DEFAULT_GRAPH_HANDLES_PER_RANK: usize = 512;
-/// The most prompt-ending items one upper-skip step keeps at their rounded
-/// prompt end in anchor spares. Each spare holds one slot's captured state:
-/// rings, tails and, with DSpark, the raw feature history.
-pub const MAX_ANCHOR_ITEMS: u32 = 8;
-/// Smallest anchored prompt in the measured cold single/packed shapes.
-/// Short widths retain split routes until wider fused routes are qualified.
-pub const MIN_ANCHOR_ROWS: u32 = 357;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Options {
     pub shared_overlap_max_rows: u32,
@@ -31,12 +22,9 @@ pub struct Options {
     pub prefill_plan_cache_verify: bool,
     pub dspark_graph_handles_per_rank: usize,
     pub diagnostic_step_logs: bool,
-    /// Anchor spares of an upper-skip instance; 0 keeps every prompt-end
-    /// anchor at a chunk end.
-    pub prefill_anchor_items: u32,
 }
 
-pub fn declarations() -> [ModelOptionV1; 6] {
+pub fn declarations() -> [ModelOptionV1; 5] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -48,14 +36,6 @@ pub fn declarations() -> [ModelOptionV1; 6] {
                 default: DEFAULT_GRAPH_HANDLES_PER_RANK as i64,
                 minimum: 0,
                 maximum: i64::MAX,
-            },
-        ),
-        (
-            PREFILL_ANCHOR_ITEMS,
-            OptionDefinitionV1::Integer {
-                default: 0,
-                minimum: 0,
-                maximum: i64::from(MAX_ANCHOR_ITEMS),
             },
         ),
         (
@@ -120,9 +100,6 @@ impl Options {
             diagnostic_step_logs: values[DIAGNOSTIC_STEP_LOGS]
                 .as_bool()
                 .expect("checked boolean"),
-            prefill_anchor_items: values[PREFILL_ANCHOR_ITEMS]
-                .as_u64()
-                .expect("checked integer") as u32,
         })
     }
 }
@@ -136,6 +113,14 @@ mod tests {
         ModelOptionsV1 {
             schema: CAPABILITY.into(),
             options: declarations().into(),
+        }
+    }
+
+    #[test]
+    fn removed_prefill_anchor_option_is_rejected() {
+        for value in ["0", "8"] {
+            let options = BTreeMap::from([("prefill_anchor_items".into(), value.into())]);
+            assert!(declaration().resolve(&options).is_err());
         }
     }
 
@@ -165,7 +150,6 @@ mod tests {
             prefill_plan_cache_verify: false,
             dspark_graph_handles_per_rank: 512,
             diagnostic_step_logs: false,
-            prefill_anchor_items: 0,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -181,7 +165,6 @@ mod tests {
             (PREFILL_PLAN_CACHE_VERIFY.into(), "true".into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK.into(), "0".into()),
             (DIAGNOSTIC_STEP_LOGS.into(), "true".into()),
-            (PREFILL_ANCHOR_ITEMS.into(), "2".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -192,7 +175,6 @@ mod tests {
                 prefill_plan_cache_verify: true,
                 dspark_graph_handles_per_rank: 0,
                 diagnostic_step_logs: true,
-                prefill_anchor_items: 2,
             }
         );
         assert!(!declaration.is_qualified(&resolved));
@@ -211,8 +193,6 @@ mod tests {
             (DIAGNOSTIC_STEP_LOGS, "\"true\""),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),
-            (PREFILL_ANCHOR_ITEMS, "-1"),
-            (PREFILL_ANCHOR_ITEMS, "9"),
         ] {
             assert!(
                 declaration
@@ -229,8 +209,6 @@ mod tests {
             (PREFILL_PLAN_CACHE_PLANS, 64),
             (DSPARK_GRAPH_HANDLES_PER_RANK, 0),
             (DSPARK_GRAPH_HANDLES_PER_RANK, i64::MAX),
-            (PREFILL_ANCHOR_ITEMS, 0),
-            (PREFILL_ANCHOR_ITEMS, 8),
         ] {
             assert!(Options::read(&BTreeMap::from([(name.into(), value.into())])).is_ok());
         }

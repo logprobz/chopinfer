@@ -15,8 +15,8 @@
 //! A selection that lowers to another launch count or other collective
 //! flags refuses the patch, so the step tries the key's other templates,
 //! then lowers in full and keeps one more: a key keeps a template for each
-//! set of index batches its contexts take. Plans that keep anchors, read
-//! media rows or take position axes are never kept.
+//! set of index batches its contexts take. Plans that read media rows or
+//! take position axes are never kept.
 //!
 //! A template keeps the Engram plan of its first step with prepared
 //! gathers, and later steps audit only its index selections against the
@@ -64,7 +64,7 @@ impl Key {
             head_rows: run.head_rows,
             cache: run.cache,
             dma: skip::Plan::dma_applies(instance, run),
-            structure: layout.structure()?,
+            structure: layout.structure(),
         })
     }
 }

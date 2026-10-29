@@ -44,7 +44,6 @@ fn allowlist() -> String {
     sections.join("[[allow]]")
 }
 
-#[test]
 fn candidate_main_tp4_dspark_route_sweep() {
     struct Reset;
     impl Drop for Reset {
@@ -64,4 +63,11 @@ fn candidate_sweep_narrows_only_the_main_projection_allowance() {
     assert!(changed.contains("entry = \"dspark_main/generic-below-range/"));
     assert!(changed.contains("entry = \"dspark_main/generic-above-range/"));
     assert!(profiles(include_str!("../../../../profiles.json")).contains("tp4-dspark"));
+}
+
+mod route_sweep {
+    #[test]
+    fn candidate_main_tp4_dspark() {
+        super::candidate_main_tp4_dspark_route_sweep();
+    }
 }

@@ -128,6 +128,19 @@ fn pin_untuned_served_keys() {
     for ranks in [1, 2, 4] {
         for entry in crate::sm120::mxfp8_fold::prefill_entries(&FLASH, ranks).unwrap() {
             let q = entry.query;
+            if (q.n, q.k, q.groups) == (5120, 15360, 1) {
+                domain.insert(key(
+                    "dense_prefill.dspark_main.prefill",
+                    "mxfp8",
+                    &[
+                        ("n", q.n),
+                        ("k", q.k),
+                        ("groups", q.groups),
+                        ("ranks", ranks),
+                    ],
+                    q.m_capacity,
+                ));
+            }
             for site in ["compact", "matrix", "tma_scales"] {
                 let mut shape = vec![("n", q.n), ("k", q.k), ("groups", q.groups)];
                 if site != "compact" {
@@ -142,7 +155,7 @@ fn pin_untuned_served_keys() {
             }
         }
     }
-    assert_eq!(domain.len(), 80);
+    assert_eq!(domain.len(), 83);
     assert_untuned(
         Family::DensePrefill,
         domain,
@@ -175,6 +188,9 @@ const UNTUNED: &[&str] = &[
     "dense_prefill.compact.prefill mxfp8 groups=2,k=4096,n=1024 buckets=8192 rows=1..127,129..511,513..2047,2049..4095,4097..8191",
     "dense_prefill.compact.prefill mxfp8 groups=4,k=4096,n=1024 buckets=8192 rows=1..127,129..511,513..2047,2049..4095,4097..8191",
     "dense_prefill.compact.prefill mxfp8 groups=8,k=4096,n=1024 buckets=8192 rows=1..127,129..511,513..2047,2049..4095,4097..8191",
+    "dense_prefill.dspark_main.prefill mxfp8 groups=1,k=15360,n=5120,ranks=1 buckets=8192 rows=all",
+    "dense_prefill.dspark_main.prefill mxfp8 groups=1,k=15360,n=5120,ranks=2 buckets=8192 rows=all",
+    "dense_prefill.dspark_main.prefill mxfp8 groups=1,k=15360,n=5120,ranks=4 buckets=8192 rows=1..128,512..8192",
     "dense_prefill.matrix.prefill mxfp8 groups=1,k=1152,n=5120,ranks=2 buckets=8192 rows=all",
     "dense_prefill.matrix.prefill mxfp8 groups=1,k=1280,n=16384,ranks=2 buckets=8192 rows=all",
     "dense_prefill.matrix.prefill mxfp8 groups=1,k=1280,n=32768,ranks=1 buckets=8192 rows=all",

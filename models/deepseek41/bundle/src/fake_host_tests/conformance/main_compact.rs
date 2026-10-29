@@ -29,7 +29,7 @@ pub(super) fn servings(mut values: Vec<conformance::Serving>) -> Vec<conformance
 
 fn candidate_main_tp4_dspark_route_sweep() {
     if std::env::var("CHOPINFER_ROUTE_SWEEP").is_ok_and(|tier| tier != "quick") {
-        println!("tp4-dspark: candidate route sweep covers the quick tier only");
+        println!("tp4-dspark: route sweep covers the quick tier only");
         return;
     }
     struct Reset;

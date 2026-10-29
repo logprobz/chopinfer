@@ -1,4 +1,4 @@
-//! Upper-skip plan templates (`prefill_plan_templates`): a reused template
+//! Upper-skip plan templates (`plan_templates`): a reused template
 //! issues exactly what a fresh lowering issues, its key holds every input
 //! but the positions, and a template whose index selections no longer
 //! match falls back to a full lowering.
@@ -6,9 +6,7 @@ use super::*;
 use crate::instance::execute::{plan_templates, plan_timing};
 use bundle_runtime::fake_host::RecordingSink;
 use bundle_runtime::template::Counts;
-use model_deepseek41_contract::execution_options::{
-    PREFILL_PLAN_CACHE_VERIFY, PREFILL_PLAN_TEMPLATES,
-};
+use model_deepseek41_contract::execution_options::PREFILL_PLAN_CACHE_VERIFY;
 use runtime_bundle_sdk::prefill::{Boundary, encode};
 use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
 
@@ -125,26 +123,18 @@ fn host(dspark: bool) -> Rc<Host> {
     host
 }
 
-/// An upper-skip instance on the 8192-token grid keeping at most
-/// `templates` templates (none at zero), lowering each reused one again
-/// when `verify`.
-fn create(host: &Rc<Host>, templates: usize, verify: bool) -> BundleInstanceV1 {
+/// An upper-skip instance on the 8192-token grid, lowering each reused
+/// template again when `verify`.
+fn create(host: &Rc<Host>, verify: bool) -> BundleInstanceV1 {
     super::prefill_skip::create_profile_with_options(
         host,
         8192,
         true,
-        &[
-            (PREFILL_PLAN_TEMPLATES, templates.into()),
-            (PREFILL_PLAN_CACHE_VERIFY, verify.into()),
-        ],
+        &[(PREFILL_PLAN_CACHE_VERIFY, verify.into())],
     )
 }
 
 fn counts(instance: &BundleInstanceV1) -> Counts {
-    counts_of(instance).expect("an instance keeping templates")
-}
-
-fn counts_of(instance: &BundleInstanceV1) -> Option<Counts> {
     plan_templates::counts(instance.handle())
 }
 
@@ -201,7 +191,7 @@ fn templates_patch_their_step_values_and_key_their_structure() {
     use Outcome::*;
     for dspark in [false, true] {
         let host = host(dspark);
-        let mut instance = create(&host, 64, true);
+        let mut instance = create(&host, true);
         let plain = |c: Chunk| batch(&[c], &[], false).0;
         let packed = |a: Chunk, b: Chunk| batch(&[a, b], &[], false).0;
         let base = chunk(1, 0, 200_000, 512);
@@ -370,22 +360,19 @@ fn templates_patch_their_step_values_and_key_their_structure() {
     }
 }
 
-/// Plans that keep anchors are never kept, and a default instance keeps
-/// up to 64 templates.
+/// Plans that keep anchors are never kept, and an instance keeps up to 64
+/// templates.
 #[test]
-fn anchored_plans_keep_no_templates_and_default_instances_keep_64() {
+fn anchored_plans_keep_no_templates_and_instances_keep_64() {
     let host = host(true);
     let instance = super::prefill_skip::create_profile_with_options(
         &host,
         8192,
         true,
-        &[
-            (PREFILL_PLAN_TEMPLATES, 4.into()),
-            (
-                model_deepseek41_contract::execution_options::PREFILL_ANCHOR_ITEMS,
-                2.into(),
-            ),
-        ],
+        &[(
+            model_deepseek41_contract::execution_options::PREFILL_ANCHOR_ITEMS,
+            2.into(),
+        )],
     );
     let anchored = |request, slot| {
         BatchRequestV1::new(
@@ -429,7 +416,7 @@ fn anchored_plans_keep_no_templates_and_default_instances_keep_64() {
 #[test]
 fn verify_refuses_a_template_whose_selections_were_not_patched() {
     let host = host(false);
-    let mut instance = create(&host, 4, true);
+    let mut instance = create(&host, true);
     let request = |prefix| batch(&[chunk(1, 0, prefix, 512)], &[], false).0;
     assert_eq!(outcome(&instance, &request(200_000)), Outcome::Kept);
     let refused = crate::instance::execute::skip::without_patches(|| {
@@ -453,7 +440,7 @@ fn verify_refuses_a_template_whose_selections_were_not_patched() {
 fn verify_refuses_a_reused_engram_plan_that_differs_from_a_fresh_one() {
     for verify in [false, true] {
         let host = host(true);
-        let mut instance = create(&host, 4, verify);
+        let mut instance = create(&host, verify);
         let request = |prefix| batch(&[chunk(1, 0, prefix, 512)], &[], false).0;
         assert_eq!(outcome(&instance, &request(200_000)), Outcome::Kept);
         let planned = crate::instance::execute::skip::with_stale_engram(|| {
@@ -488,10 +475,10 @@ enum Then {
 /// served 512-row prompt ends at 100K and 200K, alone and beside decode or
 /// DSpark verify items, grid chunks past the cached range and, without
 /// DSpark, a step that fails once planned and before its launches. Returns
-/// the device journal and the template counts, if any.
-fn lifecycle(dspark: bool, templates: usize, verify: bool) -> (Vec<String>, Option<Counts>) {
+/// the device journal and the template counts.
+fn lifecycle(dspark: bool, verify: bool) -> (Vec<String>, Counts) {
     let host = host(dspark);
-    let mut instance = create(&host, templates, verify);
+    let mut instance = create(&host, verify);
     let restore = |instance: &BundleInstanceV1, request: u64, slot: u64, tokens: u64| {
         let ids: Vec<_> = (0..tokens).map(|p| token(0, p)).collect();
         plan_timing::restore_without_snapshot(instance.handle(), request, slot as u32, &ids)
@@ -563,7 +550,7 @@ fn lifecycle(dspark: bool, templates: usize, verify: bool) -> (Vec<String>, Opti
         // a later step of the same structure reuses the template the failed
         // step patched. (A DSpark step uploads its drafter inputs first, and
         // a failed DSpark step is terminal, as `a_failed_launch_...` shows.)
-        let planned = counts_of(&instance);
+        let planned = counts(&instance);
         host.fail_upload.set(Some(0));
         assert!(
             instance
@@ -571,13 +558,11 @@ fn lifecycle(dspark: bool, templates: usize, verify: bool) -> (Vec<String>, Opti
                 .is_err()
         );
         host.fail_upload.set(None);
-        if let (Some(before), Some(after)) = (planned, counts_of(&instance)) {
-            assert_eq!(
-                after.hits,
-                before.hits + 1,
-                "the failed step reused its template"
-            );
-        }
+        assert_eq!(
+            counts(&instance).hits,
+            planned.hits + 1,
+            "the failed step reused its template"
+        );
         for request in [3, 4] {
             instance.retire_request(request).unwrap();
         }
@@ -604,106 +589,124 @@ fn lifecycle(dspark: bool, templates: usize, verify: bool) -> (Vec<String>, Opti
         );
     }
     instance.retire_request(5).unwrap();
-    let counts = counts_of(&instance);
+    let counts = counts(&instance);
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
     let journal = host.device.journal.borrow().clone();
     (journal, counts)
 }
 
-fn assert_same_journal(name: &str, actual: &[String], expected: &[String]) {
-    if let Some(at) = (0..actual.len().min(expected.len())).find(|&at| actual[at] != expected[at]) {
-        panic!(
-            "{name} journal line {at}: {} against {}",
-            actual[at], expected[at]
-        );
-    }
-    assert_eq!(actual.len(), expected.len(), "{name} journal length");
-}
-
+/// The long-context lifecycle issues, with templates and with each reused
+/// template lowered again, the journal pinned from fresh lowerings before
+/// templates were kept by default. The pins stand for that comparison, so
+/// they are digests compared here, not journals a capture dumps.
 #[test]
 fn long_context_templates_issue_the_fresh_lowerings_journal() {
+    let mut mismatches = Vec::new();
     for dspark in [false, true] {
-        let (fresh, none) = lifecycle(dspark, 0, false);
-        assert_eq!(none, None);
-        assert!(fresh.iter().filter(|l| l.starts_with("launch ")).count() > 20_000);
+        let (name, expected) = if dspark {
+            (
+                "flash-tp4-dspark-long-context-templates",
+                (193182, 0xf5e2b3a9adc105b5),
+            )
+        } else {
+            (
+                "flash-tp4-ar-long-context-templates",
+                (164541, 0x7fddd4fc8d9b9068),
+            )
+        };
         for verify in [false, true] {
-            let (kept, counts) = lifecycle(dspark, 16, verify);
-            let name = format!("dspark={dspark} verify={verify}");
-            assert_same_journal(&name, &kept, &fresh);
+            let (journal, counts) = lifecycle(dspark, verify);
+            assert!(journal.iter().filter(|l| l.starts_with("launch ")).count() > 20_000);
             // The 200K end (kept), its 128-token shift (reused), the 100K end
             // (refused: other index batches, so kept beside it), its shifts
             // by 128 (failed, without DSpark) and 256, and the grid chunks
             // (kept, then reused twice).
             assert_eq!(
                 counts,
-                Some(Counts {
+                Counts {
                     hits: 5,
                     misses: 2,
                     busy: 0,
                     refused: 1,
                     kept: 3,
                     evicted: 0,
-                }),
-                "{name}"
+                },
+                "dspark={dspark} verify={verify}"
             );
+            let observed = bundle_runtime::fake_host::journal_digest(&journal);
+            if observed != expected {
+                mismatches.push(format!(
+                    "{name} verify={verify}: ({}, {:#018x})",
+                    observed.0, observed.1
+                ));
+            }
         }
     }
+    assert!(mismatches.is_empty(), "{mismatches:#?}");
 }
 
 /// A launch failure inside a reused template poisons the instance exactly
-/// as it does in a full lowering.
+/// as it does in a full lowering: the journal is the one pinned from a
+/// fresh lowering before templates were kept by default (a digest, as in
+/// `long_context_templates_issue_the_fresh_lowerings_journal`).
 #[test]
 fn a_failed_launch_of_a_reused_template_poisons_the_instance() {
+    let mut mismatches = Vec::new();
     for dspark in [false, true] {
-        let mut journals = Vec::new();
-        for templates in [0, 4] {
-            let host = host(dspark);
-            let mut instance = create(&host, templates, false);
-            for (request, slot, prefix) in [(1, 0, 200_000), (2, 1, 200_128)] {
-                let ids: Vec<_> = (0..prefix).map(|p| token(0, p)).collect();
-                plan_timing::restore_without_snapshot(instance.handle(), request, slot, &ids)
-                    .unwrap();
-                let step = envelope(&[chunk(request, u64::from(slot), prefix, 512)], &[], false);
-                if request == 2 {
-                    // Partway through the second step's body.
-                    host.device.fail_launch.set(Some(1500));
-                    assert!(
-                        instance
-                            .execute_prefill(&step, &mut Sink::default())
-                            .is_err()
-                    );
-                    continue;
-                }
-                instance
-                    .execute_prefill(&step, &mut Sink::default())
-                    .unwrap();
-                instance.commit().unwrap();
+        let host = host(dspark);
+        let mut instance = create(&host, false);
+        for (request, slot, prefix) in [(1, 0, 200_000), (2, 1, 200_128)] {
+            let ids: Vec<_> = (0..prefix).map(|p| token(0, p)).collect();
+            plan_timing::restore_without_snapshot(instance.handle(), request, slot, &ids).unwrap();
+            let step = envelope(&[chunk(request, u64::from(slot), prefix, 512)], &[], false);
+            if request == 2 {
+                // Partway through the second step's body.
+                host.device.fail_launch.set(Some(1500));
+                assert!(
+                    instance
+                        .execute_prefill(&step, &mut Sink::default())
+                        .is_err()
+                );
+                continue;
             }
-            if templates > 0 {
-                // The failed step reused the first step's template.
-                assert_eq!(counts(&instance).hits, 1);
-            }
-            assert_eq!(
-                instance.execute_prefill(
-                    &envelope(&[chunk(3, 2, 0, 512)], &[], false),
-                    &mut Sink::default()
-                ),
-                Err(BundleAbiError::Status(BundleStatusV1::InvalidState))
-            );
-            assert_eq!(
-                instance.destroy(),
-                Err(BundleAbiError::Status(BundleStatusV1::InvalidState))
-            );
-            journals.push(host.device.journal.borrow().clone());
+            instance
+                .execute_prefill(&step, &mut Sink::default())
+                .unwrap();
+            instance.commit().unwrap();
         }
-        assert_same_journal(&format!("dspark={dspark}"), &journals[1], &journals[0]);
+        // The failed step reused the first step's template.
+        assert_eq!(counts(&instance).hits, 1);
+        assert_eq!(
+            instance.execute_prefill(
+                &envelope(&[chunk(3, 2, 0, 512)], &[], false),
+                &mut Sink::default()
+            ),
+            Err(BundleAbiError::Status(BundleStatusV1::InvalidState))
+        );
+        assert_eq!(
+            instance.destroy(),
+            Err(BundleAbiError::Status(BundleStatusV1::InvalidState))
+        );
+        let (name, expected) = if dspark {
+            (
+                "flash-tp4-dspark-failed-template",
+                (33197, 0x271a60d0c37d72d6),
+            )
+        } else {
+            ("flash-tp4-ar-failed-template", (31784, 0x0fea75874ec88215))
+        };
+        let observed = bundle_runtime::fake_host::journal_digest(&host.device.journal.borrow());
+        if observed != expected {
+            mismatches.push(format!("{name}: ({}, {:#018x})", observed.0, observed.1));
+        }
     }
+    assert!(mismatches.is_empty(), "{mismatches:#?}");
 }
 
-/// Host time of the planning scope at the served long-context shape, full
-/// and from a template, in a release build with
-/// `CHOPINFER_PLAN_TEMPLATE_BENCH=1`: `cargo test --release -p
+/// Host time of the planning scope at the served long-context shape from a
+/// template, and of the upper-skip lowering in full, in a release build
+/// with `CHOPINFER_PLAN_TEMPLATE_BENCH=1`: `cargo test --release -p
 /// bundle-deepseek41 --lib prefill_plan_templates::planning_time --
 /// --nocapture`. Other runs plan each shape once and check that the
 /// template serves the repeats.
@@ -711,40 +714,26 @@ fn a_failed_launch_of_a_reused_template_poisons_the_instance() {
 fn planning_time() {
     let timed = std::env::var("CHOPINFER_PLAN_TEMPLATE_BENCH").is_ok_and(|v| v == "1");
     let repeats = if timed { 41 } else { 1 };
+    let ms = |d: std::time::Duration| d.as_secs_f64() * 1e3;
     for dspark in [false, true] {
         for prefix in [100_032_u64, 200_000] {
             let request = batch(&[chunk(1, 0, prefix, 512)], &[], false).0;
-            let mut times = Vec::new();
-            for templates in [0, 16] {
-                let host = host(dspark);
-                let mut instance = create(&host, templates, false);
-                plan_timing::plan(instance.handle(), &request).unwrap();
-                times.push(plan_timing::time(instance.handle(), &request, repeats));
-                if templates > 0 {
-                    assert_eq!(counts(&instance).hits, 2 * repeats as u64);
-                }
-                instance.destroy().unwrap();
+            let host = host(dspark);
+            let mut instance = create(&host, false);
+            let launches = plan_timing::plan(instance.handle(), &request)
+                .unwrap()
+                .launches;
+            let (planned, lowered) = plan_timing::time(instance.handle(), &request, repeats);
+            assert_eq!(counts(&instance).hits, 2 * repeats as u64);
+            instance.destroy().unwrap();
+            if timed {
+                println!(
+                    "dspark={dspark} prefix={prefix} launches={launches:?}: upper-skip lowering \
+                     {:.3} ms in full, planning {:.3} ms from a template",
+                    ms(lowered),
+                    ms(planned),
+                );
             }
-            if !timed {
-                continue;
-            }
-            let ms = |d: std::time::Duration| d.as_secs_f64() * 1e3;
-            let launches = {
-                let host = host(dspark);
-                let mut instance = create(&host, 0, false);
-                let launches = plan_timing::plan(instance.handle(), &request)
-                    .unwrap()
-                    .launches;
-                instance.destroy().unwrap();
-                launches
-            };
-            println!(
-                "dspark={dspark} prefix={prefix} launches={launches:?}: planning {:.3} ms in \
-                 full (upper-skip lowering {:.3} ms), {:.3} ms from a template",
-                ms(times[0].0),
-                ms(times[0].1),
-                ms(times[1].0),
-            );
         }
     }
 }
@@ -767,20 +756,24 @@ fn allocated() -> i64 {
     (counts[4] + counts[7]) as i64
 }
 
-/// Host memory a full cache of 64 templates holds at the served
-/// long-context shapes, in a release build with
-/// `CHOPINFER_PLAN_TEMPLATE_BENCH=1`: `cargo test --release -p
-/// bundle-deepseek41 --lib prefill_plan_templates::template_memory --
-/// --nocapture`. A shape's first key is one chunk after the context; the
-/// others move rows to a second, short-context item, each boundary its own
-/// key. What the templates hold is the live bytes after planning every key
-/// less those of an instance keeping none. Other runs plan two keys of one
-/// shape and check that each kept its own template.
+/// Host memory a full cache of templates holds at the served long-context
+/// shapes, in a release build with `CHOPINFER_PLAN_TEMPLATE_BENCH=1`:
+/// `cargo test --release -p bundle-deepseek41 --lib
+/// prefill_plan_templates::template_memory -- --nocapture`. A shape's first
+/// key is one chunk after the context; the others move rows to a second,
+/// short-context item, each boundary its own key. The templates after the
+/// first hold the live bytes after planning every key less those after the
+/// first, whose lowering also makes the instance's lasting state. Other runs
+/// plan two keys of one shape and check that each kept its own template.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 #[test]
 fn template_memory() {
     let measured = std::env::var("CHOPINFER_PLAN_TEMPLATE_BENCH").is_ok_and(|v| v == "1");
-    let limit = if measured { 64 } else { 2 };
+    let keys: u64 = if measured {
+        plan_templates::LIMIT as u64
+    } else {
+        2
+    };
     let shapes: &[(bool, u64, u64)] = if measured {
         &[
             (false, 100_032, 512),
@@ -794,8 +787,8 @@ fn template_memory() {
         &[(false, 200_000, 512)]
     };
     for &(dspark, prefix, rows) in shapes {
-        let moved = rows / 64;
-        let requests: Vec<_> = (0..limit as u64)
+        let moved = rows / plan_templates::LIMIT as u64;
+        let requests: Vec<_> = (0..keys)
             .map(|at| {
                 let first = chunk(1, 0, prefix, rows - at * moved);
                 let chunks = if at == 0 {
@@ -806,44 +799,33 @@ fn template_memory() {
                 batch(&chunks, &[], false).0
             })
             .collect();
-        let plan = |instance: &BundleInstanceV1, request: &[u8]| {
+        let host = host(dspark);
+        let mut instance = create(&host, false);
+        let plan = |request: &[u8]| {
             plan_timing::plan(instance.handle(), request).unwrap_or_else(|e| panic!("{e}"));
         };
-        // State made at a first lowering stays outside the count.
-        {
-            let host = host(dspark);
-            let mut instance = create(&host, 0, false);
-            plan(&instance, &requests[0]);
-            instance.destroy().unwrap();
+        plan(&requests[0]);
+        let first = allocated();
+        for request in &requests[1..] {
+            plan(request);
         }
-        let mut held = Vec::new();
-        for templates in [0, limit] {
-            let host = host(dspark);
-            let mut instance = create(&host, templates, false);
-            let before = allocated();
-            plan(&instance, &requests[0]);
-            let first = allocated() - before;
-            for request in &requests[1..] {
-                plan(&instance, request);
-            }
-            held.push((first, allocated() - before));
-            if templates > 0 {
-                let counts = counts(&instance);
-                let limit = limit as u64;
-                assert_eq!(
-                    (counts.misses, counts.kept, counts.evicted),
-                    (limit, limit, 0)
-                );
-            }
-            instance.destroy().unwrap();
-        }
+        let held = allocated() - first;
+        let counts = counts(&instance);
+        assert_eq!(
+            (counts.misses, counts.kept, counts.evicted),
+            (keys, keys, 0)
+        );
+        instance.destroy().unwrap();
         if measured {
-            let mib = |bytes: i64| bytes as f64 / f64::from(1 << 20);
+            let mib = |bytes: f64| bytes / f64::from(1 << 20);
+            let each = held as f64 / (keys - 1) as f64;
             println!(
-                "dspark={dspark} prefix={prefix} rows={rows}: {limit} templates hold {:.1} MiB, \
-                 the first {:.1} MiB",
-                mib(held[1].1 - held[0].1),
-                mib(held[1].0 - held[0].0),
+                "dspark={dspark} prefix={prefix} rows={rows}: {} templates hold {:.1} MiB, \
+                 {:.1} MiB each, so {keys} hold about {:.1} MiB",
+                keys - 1,
+                mib(held as f64),
+                mib(each),
+                mib(each * keys as f64),
             );
         }
     }

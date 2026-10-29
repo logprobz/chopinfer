@@ -90,9 +90,7 @@ impl Startup for Templated {
         let result = self
             .served
             .execute_route_step(instance, items, prompt_ends, sink);
-        let hits = crate::instance::execute::plan_templates::counts(instance.handle())
-            .expect("a templated instance")
-            .hits;
+        let hits = crate::instance::execute::plan_templates::counts(instance.handle()).hits;
         *HITS
             .lock()
             .unwrap()

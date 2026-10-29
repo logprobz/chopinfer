@@ -1,5 +1,5 @@
-//! Upper-skip plans kept as templates by their structure, at most
-//! `prefill_plan_templates` at once (64 by default; 0 keeps none).
+//! Upper-skip plans kept as templates by their structure, at most `LIMIT`
+//! at once.
 //!
 //! `skip::Plan::lower` reads of its run the phase, the input layout, the
 //! scored rows, the cached-attention range and the layout `skip::Layout`
@@ -69,18 +69,21 @@ impl Key {
     }
 }
 
+/// The most templates kept at once. A template of a 512-row chunk after a
+/// 100K or 200K context holds about 23 MiB of host memory and one of an
+/// 8192-row chunk about 32 MiB, so a full cache holds 1.3 to 1.9 GiB
+/// (`fake_host_tests::prefill_plan_templates::template_memory`).
+pub(crate) const LIMIT: usize = 64;
+
 pub(super) struct Templates {
     kept: Kept<Key, skip::Plan>,
-    limit: usize,
 }
 
 impl Templates {
-    /// At most `limit` templates, or none at zero.
-    pub(super) fn new(limit: usize) -> Option<Self> {
-        (limit > 0).then(|| Self {
-            kept: Kept::new(limit),
-            limit,
-        })
+    pub(super) fn new() -> Self {
+        Self {
+            kept: Kept::new(LIMIT),
+        }
     }
 
     #[cfg(test)]
@@ -126,7 +129,7 @@ impl Templates {
              hits, {} misses, {} busy, {} refused, {} dropped",
             run.phase.rows(),
             self.kept.len(),
-            self.limit,
+            LIMIT,
             counts.hits,
             counts.misses,
             counts.busy,
@@ -137,10 +140,10 @@ impl Templates {
     }
 }
 
-/// What the templates of the instance `handle` did, none when it keeps
-/// none; read from a poisoned instance too.
+/// What the templates of the instance `handle` did; read from a poisoned
+/// instance too.
 #[cfg(test)]
-pub(crate) fn counts(handle: runtime_bundle_abi::BundleHandleV1) -> Option<Counts> {
+pub(crate) fn counts(handle: runtime_bundle_abi::BundleHandleV1) -> Counts {
     use bundle_runtime::entry::Bundle;
     Instance::instances().with(|table| {
         table

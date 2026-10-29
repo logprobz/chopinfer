@@ -200,27 +200,26 @@ cancelled prefill and ineligible prefills, on a DSpark target also beside a
 verify item with drafts, and with a full cache dropping and lowering plans
 again.
 
-Every other upper-skip plan without anchors, media rows or position axes
-is kept as a template (`bundle/src/instance/execute/plan_templates.rs`), at
-most 64 at once by default (`--model-option prefill_plan_templates=N` sets
-0 to 64; 0 lowers every such plan in full). Its key is everything its
-lowering reads but the positions: the phase, input layout, scored rows,
-cached-attention range, DMA and the items' layout. A later step of the
-same key lowers only its index selections again from its own positions; a
-selection that takes another launch count or other collectives refuses the
-template, and the step lowers in full and keeps one more. A DSpark template
-also keeps its prepared Engram plan. A template of a 512-row chunk after a
-100K or 200K context holds about 23 MiB of host memory, one of an
-8192-row chunk about 32 MiB, and a full cache drops its least recently
-used template. The verify option lowers every reused template and Engram
-plan again as well. On 2026-10-29 at TP4 (power limits of 275 W and 250 W
-recorded, not set), templates matched full lowering bitwise in output IDs,
-logprobs, full-vocabulary logits and prompt-end state after 33024-token AR
-and 100032-token DSpark prefixes. An ABBA of served DSpark steps after a
+Every other upper-skip plan without anchors, media rows or position axes is
+kept as a template (`bundle/src/instance/execute/plan_templates.rs`), at
+most 64 at once. Its key is everything its lowering reads but the
+positions: the phase, input layout, scored rows, cached-attention range,
+DMA and the items' layout. A later step of the same key lowers only its
+index selections again from its own positions; a selection that takes
+another launch count or other collectives refuses the template, and the
+step lowers in full and keeps one more. A DSpark template also keeps its
+prepared Engram plan. A template of a 512-row chunk after a 100K or 200K
+context holds about 23 MiB of host memory, one of an 8192-row chunk about
+32 MiB, and a full cache drops its least recently used template. The verify
+option lowers every reused template and Engram plan again as well. On
+2026-10-29 at TP4 (power limits of 275 W and 250 W recorded, not set),
+templates matched full lowering bitwise in output IDs, logprobs,
+full-vocabulary logits and prompt-end state after 33024-token AR and
+100032-token DSpark prefixes. An ABBA of served DSpark steps after a
 100032-token context beside 16 decoders at temperature 1 cut the 512-row
 mixed step from 254.8 and 256.8 ms to 237.7 and 237.0 ms (7.8% less, pair
-spread 1.2 points), with identical outputs; steps without a prefill did
-not change.
+spread 1.2 points), with identical outputs; steps without a prefill did not
+change.
 
 For the implemented 64-row outward alignment, the 32K equal-cost layer-row
 estimate is 20.07% at chunk size 2048 and 42.20% at 8192. These are CPU

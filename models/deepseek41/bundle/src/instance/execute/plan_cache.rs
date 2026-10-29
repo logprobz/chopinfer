@@ -67,9 +67,8 @@ pub(crate) struct Cache {
     hits: Cell<u64>,
     misses: Cell<u64>,
     evictions: Cell<u64>,
-    /// Templates of the plans this cache does not keep, none at a limit
-    /// of 0.
-    templates: Option<plan_templates::Templates>,
+    /// Templates of the plans this cache does not keep.
+    templates: plan_templates::Templates,
 }
 
 impl Cache {
@@ -88,7 +87,7 @@ impl Cache {
             hits: Cell::new(0),
             misses: Cell::new(0),
             evictions: Cell::new(0),
-            templates: plan_templates::Templates::new(options.prefill_plan_templates),
+            templates: plan_templates::Templates::new(),
         }
     }
 
@@ -97,12 +96,10 @@ impl Cache {
         self.mode == Mode::Verify
     }
 
-    /// What the templates did, none without templates.
+    /// What the templates did.
     #[cfg(test)]
-    pub(super) fn template_counts(&self) -> Option<bundle_runtime::template::Counts> {
-        self.templates
-            .as_ref()
-            .map(plan_templates::Templates::counts)
+    pub(super) fn template_counts(&self) -> bundle_runtime::template::Counts {
+        self.templates.counts()
     }
 
     /// Plans served from the cache and plans lowered for it.
@@ -135,10 +132,7 @@ impl Cache {
     pub(super) fn plan(&self, instance: &Instance, run: &Run) -> Result<Rc<skip::Plan>, String> {
         let key = key(run);
         let Some(key) = key else {
-            if let Some(templates) = &self.templates {
-                return templates.plan(instance, run, self.verifies());
-            }
-            return skip::Plan::prepare(instance, run).map(Rc::new);
+            return self.templates.plan(instance, run, self.verifies());
         };
         let at = key.rows as usize - 1;
         let kept = match &mut self.plans.borrow_mut()[at] {

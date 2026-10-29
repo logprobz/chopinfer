@@ -117,7 +117,7 @@ fn step_with_stride(
         .unwrap()
 }
 
-fn step(items: &[(u64, u64, u64, &[u32], Phase)], bundle_drafts: bool) -> Vec<u8> {
+pub(super) fn step(items: &[(u64, u64, u64, &[u32], Phase)], bundle_drafts: bool) -> Vec<u8> {
     step_with_stride(items, bundle_drafts, 8, None)
 }
 
@@ -457,11 +457,23 @@ impl conformance::Startup for Served {
         envelope.chunk_offsets = vec![8192, 16384, 32768, 40960];
         envelope.probes = vec![446, 789, 1803, 3658, 4542, 7754];
         if serving.profile == "tp4-dspark" {
-            envelope
-                .probes
-                .extend([64, 65, 127, 128, 129, 130, 510, 511, 512, 513]);
+            envelope.probes.extend([191, 192, 193, 255, 256, 257, 258]);
             envelope.probes.sort_unstable();
             envelope.probes.dedup();
+            // Probe retained inner rows directly, including packed upper bounds.
+            // Prompt length alone does not name the main projection width.
+            envelope
+                .cuts
+                .extend(
+                    super::dspark_main_compact::BOUNDARIES
+                        .iter()
+                        .map(|&(rows, lengths)| conformance::CutCase {
+                            mode: format!("main-inner-{rows}"),
+                            offset: 0,
+                            lengths: lengths.to_vec(),
+                            remaining: vec![0; lengths.len()],
+                        }),
+                );
         }
         if serving.draft_tokens > 0 {
             // Exercise direct 9-12-item drafts and balanced 9+8, 12+12 and

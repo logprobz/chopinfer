@@ -7,7 +7,7 @@ use kernel_core::mxfp8_gemm::{Mxfp8FoldGemmBuffers as Buffers, Mxfp8FoldGemmQuer
 use kernel_core::route::{RouteClass, RouteTag};
 use kernels_sm120::backend::Sm120;
 use kernels_sm120::gemm::mxfp8_prefill_compact::Entry;
-use model_deepseek41_contract::tuning::{Family, select};
+use model_deepseek41_contract::tuning::{Family, table};
 use std::ops::RangeInclusive;
 
 const SITE: &str = "dense_prefill.dspark_main.prefill";
@@ -17,20 +17,25 @@ fn recipe(
     shape: &crate::shape::Shape,
     query: Mxfp8FoldGemmQuery,
 ) -> Option<(RangeInclusive<u32>, u32)> {
-    let row = select(
-        shape.geometry,
-        Family::DensePrefill,
-        SITE,
-        "mxfp8",
-        &[
-            ("n", query.n),
-            ("k", query.k),
-            ("groups", query.groups),
-            ("ranks", shape.ranks()),
-        ],
-        query.m_capacity,
-        129,
-    )?;
+    let table = table(shape.geometry, Family::DensePrefill)?;
+    let key: std::collections::BTreeMap<String, u32> = [
+        ("n".into(), query.n),
+        ("k".into(), query.k),
+        ("groups".into(), query.groups),
+        ("ranks".into(), shape.ranks()),
+    ]
+    .into();
+    let mut rows = table.rows().iter().filter(|row| {
+        row.key.op == SITE
+            && row.key.weights == "mxfp8"
+            && row.key.shape == key
+            && row.key.bucket == query.m_capacity
+    });
+    let row = rows.next()?;
+    assert!(
+        rows.next().is_none(),
+        "main projection needs one contiguous range"
+    );
     let [first, last] = row.key.rows.expect("main projection range");
     assert_eq!(row.schedule, "prefill_tiles");
     assert_eq!(row.knobs["matrix_fetch"].flag(), Some(false));
@@ -71,18 +76,22 @@ pub(crate) fn prepare(
     enabled: bool,
 ) -> Result<Prepared<Buffers<View>>, Refused> {
     let fallback = backend.mxfp8_fold_gemm(&query, need)?;
+    if !enabled {
+        return Ok(fallback);
+    }
     let Some((rows, stages)) = recipe(shape, query) else {
         return Ok(fallback);
     };
     let mut info = fallback.info().clone();
-    let compact = if enabled {
+    let compact = {
         let backend = candidate(shape, query, rows.clone(), stages)?;
         let op = backend.mxfp8_prefill_gemm(&query, need)?;
         if op.info().bytes != info.bytes
             || op.info().weight_layouts != info.weight_layouts
             || op.info().workspace != info.workspace
+            || op.info().guarantees != info.guarantees
         {
-            return Err(Refusal("main compact changes operand layout or workspace").into());
+            return Err(Refusal("main compact changes layout, workspace or guarantees").into());
         }
         let symbols: std::collections::BTreeSet<_> = backend
             .route_tags()
@@ -101,9 +110,7 @@ pub(crate) fn prepare(
         info.symbols.dedup();
         info.implementation
             .push_str(&format!(";dspark-main-compact:{rows:?}:stages={stages}"));
-        Some(op)
-    } else {
-        None
+        op
     };
     need.check(&info)?;
     Ok(Box::new(Main {
@@ -116,7 +123,7 @@ pub(crate) fn prepare(
 
 struct Main {
     fallback: Prepared<Buffers<View>>,
-    compact: Option<Prepared<Buffers<View>>>,
+    compact: Prepared<Buffers<View>>,
     rows: RangeInclusive<u32>,
     info: OpInfo,
 }
@@ -132,34 +139,24 @@ impl PreparedOp<Buffers<View>> for Main {
         workspace: View,
         counts: Counts,
     ) -> Result<Vec<Launch>, Refusal> {
-        let op = self
-            .compact
-            .as_ref()
-            .filter(|_| self.rows.contains(&counts.rows))
-            .unwrap_or(&self.fallback);
+        let op = if self.rows.contains(&counts.rows) {
+            &self.compact
+        } else {
+            &self.fallback
+        };
         op.launches(buffers, workspace, counts)
     }
 
     fn route(&self, counts: Counts, launch: &Launch) -> Option<RouteTag> {
-        let compact = self.compact.is_some() && self.rows.contains(&counts.rows);
+        if !self.rows.contains(&counts.rows) {
+            return self.fallback.route(counts, launch);
+        }
         Some(kernel_core::route::branch(
             &launch.symbol,
-            if compact {
-                RouteClass::Fast
-            } else {
-                RouteClass::Baseline
-            },
+            RouteClass::Fast,
             FAMILY,
-            if compact {
-                "compact"
-            } else if counts.rows < *self.rows.start() {
-                "generic-below-range"
-            } else if counts.rows > *self.rows.end() {
-                "generic-above-range"
-            } else {
-                "candidate-off"
-            },
-            self.compact.iter().map(|_| self.rows.clone()),
+            "compact",
+            [self.rows.clone()],
         ))
     }
 }
@@ -167,22 +164,13 @@ impl PreparedOp<Buffers<View>> for Main {
 #[cfg(test)]
 pub(crate) fn route_tags(shape: &crate::shape::Shape, enabled: bool) -> Vec<RouteTag> {
     let mut tags = Vec::new();
+    if !enabled {
+        return tags;
+    }
     for base in super::mxfp8_fold::prefill_entries(shape.geometry, shape.ranks()).unwrap() {
         let Some((rows, stages)) = recipe(shape, base.query) else {
             continue;
         };
-        for wrapper in ["generic-below-range", "generic-above-range"]
-            .into_iter()
-            .chain((!enabled).then_some("candidate-off"))
-        {
-            tags.push(kernel_core::route::branch(
-                &kernels_sm120::gemm::mxfp8_fold_packed::symbol(&base.symbol),
-                RouteClass::Baseline,
-                FAMILY,
-                wrapper,
-                enabled.then_some(rows.clone()),
-            ));
-        }
         if enabled {
             let backend = candidate(shape, base.query, rows.clone(), stages).unwrap();
             tags.extend(
@@ -222,6 +210,10 @@ mod tests {
                 .find(|e| e.query.n == 5120 && e.query.k == 15360)
                 .unwrap();
             let q = base.query;
+            let previous = backend
+                .backend
+                .mxfp8_fold_gemm(&q, Need::rows(q.m_capacity))
+                .unwrap();
             let old = prepare(
                 backend.backend.as_ref(),
                 &shape,
@@ -258,6 +250,13 @@ mod tests {
                 let counts = Counts::rows(count);
                 let a = old.launches(&buffers, View::EMPTY, counts).unwrap();
                 let b = new.launches(&buffers, View::EMPTY, counts).unwrap();
+                for call in &a {
+                    assert_eq!(
+                        old.route(counts, call),
+                        previous.route(counts, call),
+                        "disabled route changed: rank={ranks:?} rows={count}"
+                    );
+                }
                 if ranks == Ranks::TP4 && (129..=511).contains(&count) {
                     assert_eq!(a.len(), 1);
                     assert_eq!(b.len(), 2);
@@ -278,22 +277,9 @@ mod tests {
                     }
                 } else {
                     assert_eq!(a, b, "rank={ranks:?} rows={count}");
-                    if ranks == Ranks::TP4 {
-                        let tag = new.route(counts, &b[0]).unwrap();
-                        assert_eq!(tag.class, RouteClass::Baseline);
-                        let wrapper = if count < 129 {
-                            "generic-below-range"
-                        } else {
-                            "generic-above-range"
-                        };
-                        assert_eq!(tag.wrappers, [wrapper]);
+                    for call in &b {
+                        assert_eq!(new.route(counts, call), previous.route(counts, call));
                     }
-                }
-                if ranks == Ranks::TP4 && (129..=511).contains(&count) {
-                    assert_eq!(
-                        old.route(counts, &a[0]).unwrap().wrappers,
-                        ["candidate-off"]
-                    );
                 }
             }
         }

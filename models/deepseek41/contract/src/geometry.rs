@@ -376,8 +376,8 @@ mod tests {
             let values = resolve(top_k, blocks).unwrap();
             assert_eq!(values.candidate_topk_blocks, blocks);
             let options = FLASH.model_options(values);
-            assert_eq!(options[9].name, "text_config.candidate_topk_blocks");
-            assert_eq!(options[9].default_is_qualified, blocks == 2048);
+            assert_eq!(options[10].name, "text_config.candidate_topk_blocks");
+            assert_eq!(options[10].default_is_qualified, blocks == 2048);
         }
         for (top_k, blocks) in [(2, 1), (10, 2), (256, 32), (512, 64)] {
             let error = resolve(top_k, blocks).unwrap_err();

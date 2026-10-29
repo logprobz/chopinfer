@@ -107,7 +107,7 @@ pub fn launch_config(plan: LaunchPlan) -> Result<LaunchConfigV1, DispatchError> 
 /// Every check `arguments` makes of a planned tensor map but its buffer
 /// binding: valid geometry, an innermost stride of one element and a rank
 /// the host ABI holds.
-pub(crate) fn check_tensor_map(map: &TensorMap) -> Result<(), DispatchError> {
+fn check_tensor_map(map: &TensorMap) -> Result<(), DispatchError> {
     map.validate()
         .map_err(|_| DispatchError::InvalidTensorMap)?;
     let element_bytes = match map.element {

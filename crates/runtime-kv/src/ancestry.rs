@@ -1,20 +1,35 @@
 //! Content radix index. Ownership remains entirely in the pool's page refs.
 //!
-//! Full-block digests shortcut radix traversal. Edges retain shared block
-//! material so a later partial anchor can split them exactly, including media.
+//! Nodes exist only at roots, anchor boundaries and branch points, and as
+//! junctions where merging two insertions' edges would have copied more than
+//! [`MERGE_COPY_TOKENS`]. An edge is a range of an immutable segment shared by
+//! every node split from one insertion, so a split copies nothing. A segment
+//! keeps the chain digest of each full block that ends inside it, so a
+//! descent compares one digest and less than a block of token and media
+//! atoms per node, and a divergence is found by binary search over digests.
+//! Every comparison stops at the requested boundary.
+//!
 //! Fractional nominations flow toward the root until a cached ancestor at or
-//! below their target absorbs them. Fork nominations stop at the first anchor.
-//! Updates propagate nomination deltas, never scan all resident anchors.
+//! below their target absorbs them; one walk carries every target of a
+//! change. Fork nominations stop at the first anchor. Updates propagate
+//! nomination deltas, never scan all resident anchors.
 //!
 //! Each anchor also carries three flags for its lifetime. Extended: a
 //! successful public restore found no resident descendant below it, so the
 //! request continued from it. Consumed: an anchor below it was extended, so a
 //! conversation has moved past it. Shared: it was a fork, or a successful
 //! restore used it while it had a resident descendant. Only consumed,
-//! unshared ancestors rank below recency.
+//! unshared ancestors rank below recency. Each node counts the children whose
+//! subtree holds an extended or consumed anchor, so a new anchor learns
+//! whether it is consumed without a search.
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
-use crate::{PrefixCacheKeyV1, PrefixChainV1, prefix::PrefixAtom};
+use crate::{PrefixCacheKeyV1, PrefixChainV1, PrefixMediaSpanV1, prefix::PrefixAtom};
+
+/// The most tokens a merge of two insertions' edges copies. Longer
+/// neighbours keep a junction node instead.
+const MERGE_COPY_TOKENS: usize = 8192;
 
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub enum PrefixAnchorClassV1 {
@@ -48,41 +63,126 @@ pub enum PrefixEvictionTierV1 {
     Live,
 }
 
-type NodeId = u64;
-
-// Store ordinary tokens densely. An optional media record per token would
-// otherwise multiply the index's memory even for text-only content.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct Edge {
-    tokens: Vec<u32>,
-    media: BTreeMap<usize, crate::PrefixMediaSpanV1>,
+/// Work the ancestry index and its pool did, to bound the cost of each
+/// operation. Observability only: it is never part of pool equality.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PrefixAncestryWorkV1 {
+    /// Radix nodes visited by descents, splits, merges, propagation and walks.
+    pub nodes: u64,
+    /// Block digests compared.
+    pub digests_compared: u64,
+    /// Token and media atoms compared one at a time.
+    pub atoms_compared: u64,
+    /// Tokens copied into new or merged edges.
+    pub tokens_copied: u64,
+    /// Nomination target entries updated.
+    pub target_updates: u64,
+    /// Page references the pool took or released for anchors.
+    pub page_references: u64,
 }
 
-impl Edge {
-    fn new(atoms: impl IntoIterator<Item = PrefixAtom>) -> Self {
-        let mut edge = Self::default();
-        for atom in atoms {
-            if let Some(media) = atom.media {
-                edge.media.insert(edge.tokens.len(), media);
-            }
-            edge.tokens.push(atom.token);
+impl PrefixAncestryWorkV1 {
+    /// The work done since `earlier`.
+    #[must_use]
+    pub const fn since(self, earlier: Self) -> Self {
+        Self {
+            nodes: self.nodes - earlier.nodes,
+            digests_compared: self.digests_compared - earlier.digests_compared,
+            atoms_compared: self.atoms_compared - earlier.atoms_compared,
+            tokens_copied: self.tokens_copied - earlier.tokens_copied,
+            target_updates: self.target_updates - earlier.target_updates,
+            page_references: self.page_references - earlier.page_references,
         }
-        edge
+    }
+}
+
+type NodeId = u64;
+
+/// Immutable content of one insertion, shared by every node split from it.
+/// Ordinary tokens are stored densely; media is a separate sparse list.
+#[derive(Debug, Default, Eq, PartialEq)]
+struct Segment {
+    /// Absolute position of the first token.
+    start: usize,
+    tokens: Box<[u32]>,
+    /// Media spans starting inside the segment, by absolute start.
+    media: Box<[PrefixMediaSpanV1]>,
+    block_tokens: usize,
+    /// Chain digests of the full blocks ending inside the segment:
+    /// `digests[i]` names the first `start / block_tokens + 1 + i` blocks.
+    digests: Box<[PrefixCacheKeyV1]>,
+}
+
+impl Segment {
+    /// `start..end` of `chain`: its tokens, the media spans starting there
+    /// and the chain digest of every full block ending there.
+    fn from_chain(chain: &PrefixChainV1, start: usize, end: usize) -> Self {
+        let block_tokens = chain.block_tokens();
+        Self {
+            start,
+            tokens: chain.tokens()[start..end].into(),
+            media: chain.media_starting(start, end).into(),
+            block_tokens,
+            digests: (start / block_tokens + 1..=end / block_tokens)
+                .map(|blocks| chain.chain(blocks).expect("a full block of the chain"))
+                .collect(),
+        }
     }
 
-    fn len(&self) -> usize {
-        self.tokens.len()
+    /// `start..middle` of `upper` followed by `middle..end` of `lower`.
+    fn joined(upper: &Self, start: usize, middle: usize, lower: &Self, end: usize) -> Self {
+        let block_tokens = upper.block_tokens;
+        Self {
+            start,
+            tokens: upper.tokens[start - upper.start..middle - upper.start]
+                .iter()
+                .chain(&lower.tokens[middle - lower.start..end - lower.start])
+                .copied()
+                .collect(),
+            media: upper
+                .media
+                .iter()
+                .filter(|span| (start..middle).contains(&span.start))
+                .chain(
+                    lower
+                        .media
+                        .iter()
+                        .filter(|span| (middle..end).contains(&span.start)),
+                )
+                .copied()
+                .collect(),
+            block_tokens,
+            digests: (start / block_tokens + 1..=end / block_tokens)
+                .map(|blocks| {
+                    if blocks * block_tokens <= middle {
+                        upper.digest(blocks)
+                    } else {
+                        lower.digest(blocks)
+                    }
+                })
+                .collect(),
+        }
+    }
+
+    fn end(&self) -> usize {
+        self.start + self.tokens.len()
     }
 
     fn atom(&self, position: usize) -> PrefixAtom {
         PrefixAtom {
-            token: self.tokens[position],
-            media: self.media.get(&position).copied(),
+            token: self.tokens[position - self.start],
+            media: self
+                .media
+                .binary_search_by_key(&position, |span| span.start)
+                .ok()
+                .map(|index| self.media[index]),
         }
     }
 
-    fn iter(&self) -> impl Iterator<Item = PrefixAtom> + '_ {
-        (0..self.len()).map(|position| self.atom(position))
+    /// The chain digest of the first `blocks` full blocks, which must end
+    /// inside the segment.
+    fn digest(&self, blocks: usize) -> PrefixCacheKeyV1 {
+        self.digests[blocks - (self.start / self.block_tokens + 1)]
     }
 }
 
@@ -90,14 +190,17 @@ impl Edge {
 struct Node {
     parent: Option<NodeId>,
     root: Option<PrefixCacheKeyV1>,
-    edge: Edge,
+    /// The edge from the parent covers `start..depth` of this segment.
+    segment: Arc<Segment>,
+    start: usize,
     depth: usize,
-    digest: Option<PrefixCacheKeyV1>,
     children: BTreeMap<PrefixAtom, NodeId>,
     anchor: Option<PrefixCacheKeyV1>,
     // Unabsorbed nominations arriving from children, with multiplicity.
     targets: BTreeMap<usize, usize>,
     forks: usize,
+    /// Children whose subtree holds an extended or consumed anchor.
+    marked: usize,
     // Lifetime flags of the anchor at this node; false without an anchor.
     extended: bool,
     consumed: bool,
@@ -111,6 +214,15 @@ impl Node {
 
     fn fork(&self) -> bool {
         self.forks > 0 || self.children.len() >= 2
+    }
+
+    /// Whether this subtree holds an extended or consumed anchor.
+    fn marks(&self) -> bool {
+        self.marked > 0 || self.anchor.is_some() && (self.extended || self.consumed)
+    }
+
+    fn first_atom(&self) -> PrefixAtom {
+        self.segment.atom(self.start)
     }
 
     fn rank(&self) -> (PrefixAnchorClassV1, PrefixEvictionTierV1) {
@@ -147,17 +259,34 @@ impl Node {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct PrefixAncestry {
     roots: BTreeMap<PrefixCacheKeyV1, NodeId>,
-    full: BTreeMap<PrefixCacheKeyV1, NodeId>,
     anchors: BTreeMap<PrefixCacheKeyV1, NodeId>,
     nodes: BTreeMap<NodeId, Node>,
     next: NodeId,
     dirty: BTreeSet<NodeId>,
+    work: PrefixAncestryWorkV1,
 }
 
+// Work counters are observability, not index state.
+impl PartialEq for PrefixAncestry {
+    fn eq(&self, other: &Self) -> bool {
+        self.roots == other.roots
+            && self.anchors == other.anchors
+            && self.nodes == other.nodes
+            && self.next == other.next
+            && self.dirty == other.dirty
+    }
+}
+
+impl Eq for PrefixAncestry {}
+
 impl PrefixAncestry {
+    pub(crate) const fn work(&self) -> PrefixAncestryWorkV1 {
+        self.work
+    }
+
     fn allocate(&mut self, node: Node) -> NodeId {
         self.next += 1;
         let id = self.next;
@@ -165,21 +294,29 @@ impl PrefixAncestry {
         id
     }
 
-    fn target_delta(&mut self, mut id: NodeId, target: usize, count: usize, add: bool) {
-        loop {
+    /// Adds or removes counted nominations from `id` toward the root. Each
+    /// passes anchors deeper than its target and stops at the first anchor
+    /// at or below it; one walk carries them all.
+    fn targets_delta(&mut self, mut id: NodeId, mut targets: Vec<(usize, usize)>, add: bool) {
+        while !targets.is_empty() {
+            self.work.nodes += 1;
+            self.work.target_updates += targets.len() as u64;
             let node = self.nodes.get_mut(&id).expect("live radix node");
-            let value = node.targets.entry(target).or_default();
-            if add {
-                *value += count;
-            } else {
-                *value -= count;
-            }
-            if *value == 0 {
-                node.targets.remove(&target);
+            for (target, count) in &targets {
+                let value = node.targets.entry(*target).or_default();
+                if add {
+                    *value += count;
+                } else {
+                    *value -= count;
+                }
+                if *value == 0 {
+                    node.targets.remove(target);
+                }
             }
             self.dirty.insert(id);
-            if node.anchor.is_some() && target >= node.depth {
-                break;
+            if node.anchor.is_some() {
+                let depth = node.depth;
+                targets.retain(|(target, _)| *target < depth);
             }
             let Some(parent) = node.parent else {
                 break;
@@ -190,6 +327,7 @@ impl PrefixAncestry {
 
     fn fork_delta(&mut self, mut id: NodeId, count: usize, add: bool) {
         loop {
+            self.work.nodes += 1;
             let node = self.nodes.get_mut(&id).expect("live radix node");
             if add {
                 node.forks += count;
@@ -207,9 +345,29 @@ impl PrefixAncestry {
         }
     }
 
+    /// Counts a change of `id`'s marked subtree into its ancestors until one
+    /// already agrees.
+    fn mark_delta(&mut self, mut parent: Option<NodeId>, add: bool) {
+        while let Some(id) = parent {
+            self.work.nodes += 1;
+            let node = self.nodes.get_mut(&id).expect("live radix node");
+            let before = node.marks();
+            if add {
+                node.marked += 1;
+            } else {
+                node.marked -= 1;
+            }
+            if node.marks() == before {
+                break;
+            }
+            parent = node.parent;
+        }
+    }
+
     // Structural changes affect only this node's outgoing nominations. Ordinary
-    // propagation above changes one counted target at a time along its path.
+    // propagation above changes counted targets along its path.
     fn modify(&mut self, id: NodeId, change: impl FnOnce(&mut Node)) {
+        self.work.nodes += 1;
         let node = &self.nodes[&id];
         let old_maximal = node.maximal();
         let old_anchor = node.anchor.is_some();
@@ -232,7 +390,9 @@ impl PrefixAncestry {
         } else {
             node.forks + usize::from(node.children.len() >= 2)
         };
-        let changed: Vec<_> = if old_anchor != new_anchor {
+        // Targets at or below a new anchor are absorbed; a removed anchor
+        // passes them on.
+        let mut passed: Vec<_> = if old_anchor != new_anchor {
             node.targets
                 .range(depth..)
                 .map(|(target, count)| (*target, *count))
@@ -240,45 +400,100 @@ impl PrefixAncestry {
         } else {
             Vec::new()
         };
-        for (target, count) in changed {
-            self.target_delta(parent, target, count, !new_anchor);
-        }
+        let mut frontier = Vec::new();
         if old_maximal != new_maximal {
-            for divisor in [2, 4, 8] {
-                self.target_delta(parent, depth / divisor, 1, new_maximal);
-            }
+            frontier = [2, 4, 8].map(|divisor| (depth / divisor, 1)).to_vec();
+        }
+        // Passed targets are added when the anchor goes; the frontier's own
+        // targets are added when it becomes maximal. One walk serves both
+        // when they move the same way.
+        let (pass, nominate) = (!new_anchor, new_maximal);
+        if pass == nominate {
+            passed.append(&mut frontier);
+            self.targets_delta(parent, passed, pass);
+        } else {
+            self.targets_delta(parent, passed, pass);
+            self.targets_delta(parent, frontier, nominate);
         }
         if old_forks != new_forks {
             self.fork_delta(parent, old_forks.abs_diff(new_forks), new_forks > old_forks);
         }
     }
 
-    fn split(&mut self, child: NodeId, common: usize) -> NodeId {
+    /// Splits `child`'s edge at absolute position `at`, returning the new
+    /// node above it. Both halves keep the child's segment.
+    fn split(&mut self, child: NodeId, at: usize) -> NodeId {
+        self.work.nodes += 1;
         let old = &self.nodes[&child];
         let parent = old.parent.expect("a root has no edge");
-        let edge = Edge::new(old.edge.iter().take(common));
-        let depth = old.depth - old.edge.len() + common;
         let (targets, forks) = old.outgoing();
-        let first = old.edge.atom(common);
         let middle = self.allocate(Node {
             parent: Some(parent),
-            edge: edge.clone(),
-            depth,
+            segment: Arc::clone(&old.segment),
+            start: old.start,
+            depth: at,
             targets,
             forks,
-            children: BTreeMap::from([(first, child)]),
+            marked: usize::from(old.marks()),
+            children: BTreeMap::from([(old.segment.atom(at), child)]),
             ..Node::default()
         });
-        let node = self.nodes.get_mut(&child).unwrap();
-        node.parent = Some(middle);
-        node.edge = Edge::new(node.edge.iter().skip(common));
+        let first = {
+            let node = self.nodes.get_mut(&child).expect("live radix node");
+            let first = node.first_atom();
+            node.parent = Some(middle);
+            node.start = at;
+            first
+        };
         // The intermediate node forwards exactly the old child's summary.
         self.nodes
             .get_mut(&parent)
-            .unwrap()
+            .expect("live radix node")
             .children
-            .insert(edge.atom(0), middle);
+            .insert(first, middle);
         middle
+    }
+
+    /// The first position in `start..limit` where `chain` differs from
+    /// node `id`'s edge, or `limit`. Digests of the full blocks ending in
+    /// the range locate the divergence; atoms are compared within one block.
+    fn common(&mut self, id: NodeId, chain: &PrefixChainV1, start: usize, limit: usize) -> usize {
+        let segment = Arc::clone(&self.nodes[&id].segment);
+        let block_tokens = segment.block_tokens;
+        let first = start / block_tokens + 1;
+        let last = limit / block_tokens;
+        let mut matched = start;
+        let mut end = limit;
+        if first <= last {
+            let same = |work: &mut PrefixAncestryWorkV1, blocks: usize| {
+                work.digests_compared += 1;
+                Some(segment.digest(blocks)) == chain.chain(blocks)
+            };
+            if same(&mut self.work, last) {
+                matched = last * block_tokens;
+            } else {
+                // The chain digests are prefix-closed, so their agreement is
+                // monotone: find the last agreeing block.
+                let (mut good, mut bad) = (first - 1, last);
+                while bad - good > 1 {
+                    let middle = good.midpoint(bad);
+                    if same(&mut self.work, middle) {
+                        good = middle;
+                    } else {
+                        bad = middle;
+                    }
+                }
+                matched = matched.max(good * block_tokens);
+                end = bad * block_tokens;
+            }
+        }
+        for position in matched..end {
+            self.work.atoms_compared += 1;
+            if segment.atom(position) != chain.atom(position) {
+                return position;
+            }
+        }
+        end
     }
 
     pub(crate) fn insert(&mut self, chain: &PrefixChainV1, tokens: usize, key: PrefixCacheKeyV1) {
@@ -293,54 +508,37 @@ impl PrefixAncestry {
             self.roots.insert(root, id);
             id
         };
-        let block_tokens = chain.block_tokens();
-        let mut start = 0;
-        while start < tokens {
-            let end = (start + block_tokens).min(tokens);
-            let digest = end
-                .is_multiple_of(block_tokens)
-                .then(|| chain.chain(end / block_tokens).unwrap());
-            if let Some(id) = digest.and_then(|digest| self.full.get(&digest)) {
-                node = *id;
-                start = end;
-                continue;
+        loop {
+            self.work.nodes += 1;
+            let depth = self.nodes[&node].depth;
+            if depth == tokens {
+                break;
             }
-            let atoms = chain.ancestry_atoms(start, end);
-            let mut offset = 0;
-            while offset < atoms.len() {
-                let Some(child) = self.nodes[&node].children.get(&atoms[offset]).copied() else {
-                    let id = self.allocate(Node {
-                        parent: Some(node),
-                        edge: Edge::new(atoms[offset..].iter().copied()),
-                        depth: end,
-                        ..Node::default()
-                    });
-                    self.modify(node, |parent| {
-                        parent.children.insert(atoms[offset], id);
-                    });
-                    node = id;
-                    break;
-                };
-                let common = self.nodes[&child]
-                    .edge
-                    .iter()
-                    .zip(atoms[offset..].iter().copied())
-                    .take_while(|(a, b)| a == b)
-                    .count();
-                node = if common < self.nodes[&child].edge.len() {
-                    self.split(child, common)
-                } else {
-                    child
-                };
-                offset += common;
-            }
-            if let Some(digest) = digest {
-                self.nodes.get_mut(&node).unwrap().digest = Some(digest);
-                self.full.insert(digest, node);
-            }
-            start = end;
+            let atom = chain.atom(depth);
+            let Some(child) = self.nodes[&node].children.get(&atom).copied() else {
+                self.work.tokens_copied += (tokens - depth) as u64;
+                let id = self.allocate(Node {
+                    parent: Some(node),
+                    segment: Arc::new(Segment::from_chain(chain, depth, tokens)),
+                    start: depth,
+                    depth: tokens,
+                    ..Node::default()
+                });
+                self.modify(node, |parent| {
+                    parent.children.insert(atom, id);
+                });
+                node = id;
+                break;
+            };
+            let end = self.nodes[&child].depth;
+            let common = self.common(child, chain, depth, end.min(tokens));
+            node = if common == end {
+                child
+            } else {
+                self.split(child, common)
+            };
         }
-        let consumed = self.consumed_below(node);
+        let consumed = self.nodes[&node].marked > 0;
         self.modify(node, |node| {
             node.anchor = Some(key);
             node.extended = false;
@@ -348,24 +546,6 @@ impl PrefixAncestry {
             node.shared = false;
         });
         self.anchors.insert(key, node);
-    }
-
-    /// Whether an anchor below `id` was extended or moved past. Consumed is
-    /// closed upward over anchors, so the search stops at the nearest
-    /// anchors and returns at the first one that answers it.
-    fn consumed_below(&self, id: NodeId) -> bool {
-        let mut stack: Vec<NodeId> = self.nodes[&id].children.values().copied().collect();
-        while let Some(id) = stack.pop() {
-            let node = &self.nodes[&id];
-            if node.anchor.is_some() {
-                if node.extended || node.consumed {
-                    return true;
-                }
-            } else {
-                stack.extend(node.children.values().copied());
-            }
-        }
-        false
     }
 
     /// Records a successful public restore of `key`, which the pool
@@ -380,9 +560,18 @@ impl PrefixAncestry {
             self.dirty.insert(id);
             return;
         }
-        self.nodes.get_mut(&id).expect("live radix node").extended = true;
-        let mut parent = self.nodes[&id].parent;
+        let node = self.nodes.get_mut(&id).expect("live radix node");
+        let before = node.marks();
+        node.extended = true;
+        let parent = node.parent;
+        if !before {
+            self.mark_delta(parent, true);
+        }
+        // Every subtree above now holds the extended anchor, so marking
+        // ancestors consumed changes no count.
+        let mut parent = parent;
         while let Some(id) = parent {
+            self.work.nodes += 1;
             let node = self.nodes.get_mut(&id).expect("live radix node");
             if node.anchor.is_some() {
                 if node.consumed {
@@ -411,50 +600,89 @@ impl PrefixAncestry {
     }
 
     pub(crate) fn remove(&mut self, key: PrefixCacheKeyV1) {
-        let Some(mut id) = self.anchors.remove(&key) else {
+        let Some(id) = self.anchors.remove(&key) else {
             return;
         };
+        let before = self.nodes[&id].marks();
         self.modify(id, |node| {
             node.anchor = None;
             node.extended = false;
             node.consumed = false;
             node.shared = false;
         });
-        while self.nodes[&id].anchor.is_none() && self.nodes[&id].children.is_empty() {
-            let node = self.nodes.remove(&id).unwrap();
-            self.dirty.remove(&id);
-            if let Some(digest) = node.digest {
-                self.full.remove(&digest);
+        if before && !self.nodes[&id].marks() {
+            self.mark_delta(self.nodes[&id].parent, false);
+        }
+        let mut stop = Some(id);
+        while let Some(id) = stop {
+            let node = &self.nodes[&id];
+            if node.anchor.is_some() || !node.children.is_empty() {
+                break;
             }
+            self.work.nodes += 1;
+            let node = self.nodes.remove(&id).expect("live radix node");
+            self.dirty.remove(&id);
             let Some(parent) = node.parent else {
                 self.roots.remove(&node.root.expect("root identity"));
+                stop = None;
                 break;
             };
             self.modify(parent, |parent| {
-                parent.children.remove(&node.edge.atom(0));
+                parent.children.remove(&node.first_atom());
             });
-            id = parent;
+            stop = Some(parent);
         }
-        // Remove obsolete tail splits. Block boundaries remain digest shortcuts.
-        while let Some(parent) = self.nodes.get(&id).and_then(|node| node.parent) {
-            let node = &self.nodes[&id];
-            if node.anchor.is_none() && node.digest.is_none() && node.children.len() == 1 {
-                let child = *node.children.first_key_value().unwrap().1;
-                let edge = node.edge.clone();
-                let first = edge.atom(0);
-                let child_node = self.nodes.get_mut(&child).unwrap();
-                child_node.edge = Edge::new(edge.iter().chain(child_node.edge.iter()));
-                child_node.parent = Some(parent);
-                self.nodes
-                    .get_mut(&parent)
-                    .unwrap()
-                    .children
-                    .insert(first, child);
-                self.nodes.remove(&id);
-                self.dirty.remove(&id);
-            }
-            id = parent;
+        // Only the node pruning stopped at changed its children, and insert
+        // never leaves a mergeable node, so no other node needs a merge.
+        if let Some(id) = stop {
+            self.merge(id);
         }
+    }
+
+    /// Removes `id` when it is neither a root, an anchor nor a branch point,
+    /// giving its edge to its only child. A child whose segment already
+    /// covers the edge takes it for free; otherwise the edges are copied
+    /// into one segment up to [`MERGE_COPY_TOKENS`], and longer ones keep `id`
+    /// as a junction.
+    fn merge(&mut self, id: NodeId) {
+        let node = &self.nodes[&id];
+        let Some(parent) = node.parent else {
+            return;
+        };
+        if node.anchor.is_some() || node.children.len() != 1 {
+            return;
+        }
+        self.work.nodes += 1;
+        let child = *node.children.values().next().expect("one child");
+        let lower = &self.nodes[&child];
+        let segment = if lower.segment.start <= node.start {
+            None
+        } else if lower.depth - node.start <= MERGE_COPY_TOKENS {
+            self.work.tokens_copied += (lower.depth - node.start) as u64;
+            Some(Arc::new(Segment::joined(
+                &node.segment,
+                node.start,
+                node.depth,
+                &lower.segment,
+                lower.depth,
+            )))
+        } else {
+            return;
+        };
+        let node = self.nodes.remove(&id).expect("live radix node");
+        self.dirty.remove(&id);
+        let lower = self.nodes.get_mut(&child).expect("live radix node");
+        lower.parent = Some(parent);
+        lower.start = node.start;
+        if let Some(segment) = segment {
+            lower.segment = segment;
+        }
+        // The removed node forwarded exactly its child's summary and marks.
+        self.nodes
+            .get_mut(&parent)
+            .expect("live radix node")
+            .children
+            .insert(node.first_atom(), child);
     }
 
     /// Classes and tiers of the anchors changed since the last call. A fork
@@ -505,28 +733,46 @@ impl PrefixAncestry {
                 return false;
             }
             if let Some(parent) = node.parent {
-                if node.edge.len() == 0
+                if node.start >= node.depth
+                    || node.segment.start > node.start
+                    || node.segment.end() < node.depth
+                    || node.segment.digests.len()
+                        != node.segment.end() / node.segment.block_tokens
+                            - node.segment.start / node.segment.block_tokens
                     || self
                         .nodes
                         .get(&parent)
-                        .and_then(|parent| parent.children.get(&node.edge.atom(0)))
+                        .and_then(|parent| parent.children.get(&node.first_atom()))
                         != Some(id)
                 {
                     return false;
                 }
-            } else if node.root.and_then(|root| self.roots.get(&root)) != Some(id) {
+                // A remaining single-child node is a junction between two
+                // insertions' segments; one segment would have merged free.
+                if node.anchor.is_none()
+                    && node.children.len() == 1
+                    && self
+                        .nodes
+                        .get(node.children.values().next().expect("one child"))
+                        .is_none_or(|child| child.segment.start <= node.start)
+                {
+                    return false;
+                }
+            } else if node.depth != 0
+                || node.root.and_then(|root| self.roots.get(&root)) != Some(id)
+            {
                 return false;
             }
             let mut targets = BTreeMap::new();
             let mut forks = 0;
+            let mut marked = 0;
             for (atom, child) in &node.children {
                 let Some(child) = self.nodes.get(child) else {
                     return false;
                 };
                 if child.parent != Some(*id)
-                    || child.edge.len() == 0
-                    || child.edge.atom(0) != *atom
-                    || child.depth != node.depth + child.edge.len()
+                    || child.start != node.depth
+                    || child.first_atom() != *atom
                 {
                     return false;
                 }
@@ -535,8 +781,9 @@ impl PrefixAncestry {
                     *targets.entry(target).or_default() += count;
                 }
                 forks += outgoing.1;
+                marked += usize::from(child.marks());
             }
-            if targets != node.targets || forks != node.forks {
+            if targets != node.targets || forks != node.forks || marked != node.marked {
                 return false;
             }
             if node.anchor.is_none() && (node.extended || node.consumed || node.shared)
@@ -546,11 +793,6 @@ impl PrefixAncestry {
             }
             if let Some(key) = node.anchor
                 && self.anchors.get(&key) != Some(id)
-            {
-                return false;
-            }
-            if let Some(digest) = node.digest
-                && self.full.get(&digest) != Some(id)
             {
                 return false;
             }

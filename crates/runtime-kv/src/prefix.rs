@@ -163,24 +163,24 @@ impl PrefixChainV1 {
             .any(|span| span.start < boundary && boundary < span.end())
     }
 
-    pub(crate) fn ancestry_atoms(&self, start: usize, end: usize) -> Vec<PrefixAtom> {
-        let mut media = self.media.partition_point(|span| span.start < start);
-        (start..end)
-            .map(|position| {
-                let span = self
-                    .media
-                    .get(media)
-                    .filter(|span| span.start == position)
-                    .copied();
-                if span.is_some() {
-                    media += 1;
-                }
-                PrefixAtom {
-                    token: self.tokens[position],
-                    media: span,
-                }
-            })
-            .collect()
+    /// The token at `position` and the media span starting there, if any.
+    pub(crate) fn atom(&self, position: usize) -> PrefixAtom {
+        let index = self.media.partition_point(|span| span.start < position);
+        PrefixAtom {
+            token: self.tokens[position],
+            media: self
+                .media
+                .get(index)
+                .filter(|span| span.start == position)
+                .copied(),
+        }
+    }
+
+    /// The media spans starting in `start..end`, in order.
+    pub(crate) fn media_starting(&self, start: usize, end: usize) -> &[PrefixMediaSpanV1] {
+        let first = self.media.partition_point(|span| span.start < start);
+        let last = self.media.partition_point(|span| span.start < end);
+        &self.media[first..last]
     }
 
     fn hash_range(&self, sha: &mut Sha256, start: usize, end: usize) {

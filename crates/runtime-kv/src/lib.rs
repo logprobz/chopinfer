@@ -2,7 +2,7 @@
 
 mod ancestry;
 use ancestry::PrefixAncestry;
-pub use ancestry::{PrefixAnchorClassV1, PrefixEvictionTierV1};
+pub use ancestry::{PrefixAncestryWorkV1, PrefixAnchorClassV1, PrefixEvictionTierV1};
 mod context_parallel;
 mod declared_pages;
 mod offload;
@@ -457,6 +457,8 @@ pub struct KvPool {
     ancestry: Option<PrefixAncestry>,
     anchor_clock: u64,
     anchor_serial: u64,
+    /// Anchor page references taken and released; observability only.
+    anchor_page_work: u64,
     /// References each block holds on behalf of anchors.
     anchor_refs: Vec<u32>,
     registry: PrefixRegistryV1,
@@ -493,6 +495,7 @@ impl Clone for KvPool {
             ancestry: self.ancestry.clone(),
             anchor_clock: self.anchor_clock,
             anchor_serial: self.anchor_serial,
+            anchor_page_work: self.anchor_page_work,
             anchor_refs: self.anchor_refs.clone(),
             registry: self.registry.clone(),
             produced: self.produced.clone(),
@@ -611,6 +614,7 @@ impl KvPool {
             ancestry: None,
             anchor_clock: 0,
             anchor_serial: 0,
+            anchor_page_work: 0,
             anchor_refs,
             registry: PrefixRegistryV1::new(PREFIX_REGISTRY_DIGESTS_V1),
             produced: PrefixRegistryV1::new(PREFIX_REGISTRY_DIGESTS_V1),
@@ -646,6 +650,19 @@ impl KvPool {
     #[must_use]
     pub fn anchor_tier(&self, key: PrefixCacheKeyV1) -> Option<PrefixEvictionTierV1> {
         self.anchors.get(&key).map(|anchor| anchor.tier)
+    }
+
+    /// Work the ancestry index and anchor page references have done so far.
+    #[must_use]
+    pub fn prefix_ancestry_work(&self) -> PrefixAncestryWorkV1 {
+        PrefixAncestryWorkV1 {
+            page_references: self.anchor_page_work,
+            ..self
+                .ancestry
+                .as_ref()
+                .map(PrefixAncestry::work)
+                .unwrap_or_default()
+        }
     }
 
     /// Declares that an append may rewrite committed rows of the sequence's
@@ -1124,6 +1141,7 @@ impl KvPool {
             self.retain_block(*block);
             self.anchor_refs[block.index()] += 1;
         }
+        self.anchor_page_work += (blocks.len() + state.len()) as u64;
         self.anchor_chains.entry(chain).or_default().insert(key);
         self.anchor_clock += 1;
         self.anchor_serial += 1;
@@ -1262,6 +1280,7 @@ impl KvPool {
             self.anchor_refs[block.index()] -= 1;
             self.release_block(*block);
         }
+        self.anchor_page_work += (anchor.state.len() + anchor.blocks.len()) as u64;
         true
     }
 

@@ -1247,3 +1247,57 @@ fn random_capture_restore_remove_and_pressure_match_slow_content_model() {
         );
     }
 }
+
+/// Equal tokens with different media identity, span extent or media row
+/// branch exactly at the span start, including a span crossing a block
+/// boundary, and an interior capture from a longer prompt stops at its own
+/// boundary.
+#[test]
+fn media_only_divergence_splits_at_the_span_start() {
+    let mut pool = content_pool(256);
+    let mut model = Model::default();
+    let tokens = prompt(32);
+    let span = |identity: u8, rows: usize, media_row: u32| PrefixMediaSpanV1 {
+        identity: [identity; 32],
+        start: 9,
+        rows,
+        media_row,
+    };
+    let variants: Vec<PrefixChainV1> = [
+        vec![span(1, 6, 0)],
+        vec![span(2, 6, 0)],
+        vec![span(1, 5, 0)],
+        vec![span(1, 6, 1)],
+        vec![],
+    ]
+    .into_iter()
+    .map(|media| PrefixChainV1::new(4, tokens.clone().into(), media).unwrap())
+    .collect();
+    for variant in &variants {
+        detached_capture(&mut pool, &mut model, variant, 32, 1);
+    }
+    for (first, second) in [(0, 1), (0, 2), (0, 3), (0, 4)] {
+        assert_ne!(variants[first].key_at(32), variants[second].key_at(32));
+        assert_eq!(variants[first].key_at(9), variants[second].key_at(9));
+    }
+    // The boundary at the span start is shared by all five; past the span
+    // each variant has its own path.
+    detached_capture(&mut pool, &mut model, &variants[0], 9, 1);
+    assert_eq!(
+        pool.anchor_class(variants[0].key_at(9).unwrap()),
+        Some(PrefixAnchorClassV1::Retained)
+    );
+    detached_capture(&mut pool, &mut model, &variants[1], 16, 1);
+    detached_capture(&mut pool, &mut model, &variants[0], 20, 1);
+    detached_capture(&mut pool, &mut model, &variants[2], 8, 1);
+    for variant in &variants {
+        let hit = pool.lookup_anchor(variant, 31).unwrap();
+        assert!(hit.1 >= 9, "{hit:?}");
+    }
+    for (variant, depth) in [(0, 9), (1, 32), (0, 20), (2, 8), (3, 32)] {
+        let key = variants[variant].key_at(depth).unwrap();
+        pool.remove_anchor(key).unwrap();
+        model.remove(key);
+        model.check(&pool);
+    }
+}

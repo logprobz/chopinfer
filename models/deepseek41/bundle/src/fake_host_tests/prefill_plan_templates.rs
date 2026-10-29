@@ -21,22 +21,25 @@ const SLOT_PAGES: u64 = 4096;
 const UNSCORED_PROMPT: u64 = 81920;
 
 /// A prompt chunk of `rows` rows after `prefix` tokens of `request` in
-/// `slot`, scoring its last row when `scored`, with token IDs drawn from
-/// `salt`.
+/// `slot`, its pages numbered from `pages`, scoring its last row when
+/// `scored`, with token IDs drawn from `salt`.
 #[derive(Clone, Copy)]
 struct Chunk {
     request: u64,
     slot: u64,
+    pages: u64,
     prefix: u64,
     rows: u64,
     scored: bool,
     salt: u64,
 }
 
+/// A chunk on the pages of its slot.
 fn chunk(request: u64, slot: u64, prefix: u64, rows: u64) -> Chunk {
     Chunk {
         request,
         slot,
+        pages: slot * SLOT_PAGES,
         prefix,
         rows,
         scored: true,
@@ -72,9 +75,7 @@ fn batch(
             c.scored,
             tokens,
         ));
-        let pages = (0..end.div_ceil(64))
-            .map(|page| c.slot * SLOT_PAGES + page)
-            .collect();
+        let pages = (0..end.div_ceil(64)).map(|page| c.pages + page).collect();
         appends.push(BatchAppendV1::new(c.prefix, c.rows, end, pages, None));
         slots.push(c.slot);
         boundaries.push(Boundary {
@@ -187,13 +188,14 @@ fn outcome(instance: &BundleInstanceV1, request: &[u8]) -> Outcome {
 
 /// Every input of a long-context plan, changed one at a time: the step's
 /// own values (tokens, request, slot, pages, positions) patch the template
-/// of its key; every structural input (rows, scored rows, items, the
-/// cached-attention range, the DMA, and with DSpark the prefix modulo the
-/// ring that sets the retained feature rows) makes another key. Positions
-/// whose index selections take other batches refuse the patch and keep a
-/// second template of the key, which later steps of either context class
-/// reuse. The verify mode lowers every reused template again and compares
-/// the whole plan.
+/// of its key, for one item and for packed items whose prefixes shift
+/// apart; every structural input (rows, scored rows, the items and their
+/// boundaries at the same total rows, the cached-attention range, the DMA,
+/// and with DSpark the prefix modulo the ring that sets the retained
+/// feature rows) makes another key. Positions whose index selections take
+/// other batches refuse the patch and keep a second template of the key,
+/// which later steps of either context class reuse. The verify mode lowers
+/// every reused template again and compares the whole plan.
 #[test]
 fn templates_patch_their_step_values_and_key_their_structure() {
     use Outcome::*;
@@ -201,7 +203,21 @@ fn templates_patch_their_step_values_and_key_their_structure() {
         let host = host(dspark);
         let mut instance = create(&host, 64, true);
         let plain = |c: Chunk| batch(&[c], &[], false).0;
+        let packed = |a: Chunk, b: Chunk| batch(&[a, b], &[], false).0;
         let base = chunk(1, 0, 200_000, 512);
+        let second = chunk(2, 1, 8192, 64);
+        let by_ring = |c: Chunk| Chunk {
+            prefix: c.prefix + 128,
+            ..c
+        };
+        // The same total rows with the boundary between the items moved.
+        let (moved, moved_second) = (
+            Chunk { rows: 448, ..base },
+            Chunk {
+                rows: 128,
+                ..second
+            },
+        );
         // With DSpark, a prefix one past the base retains another feature
         // range; the cone of an AR plan does not follow the prefix.
         let shifted = if dspark { Kept } else { Reused };
@@ -209,11 +225,12 @@ fn templates_patch_their_step_values_and_key_their_structure() {
             ("base", plain(base), Kept),
             ("again", plain(base), Reused),
             ("tokens", plain(Chunk { salt: 3, ..base }), Reused),
+            ("request", plain(Chunk { request: 2, ..base }), Reused),
+            ("slot", plain(Chunk { slot: 1, ..base }), Reused),
             (
-                "request, slot and pages",
+                "pages",
                 plain(Chunk {
-                    request: 2,
-                    slot: 1,
+                    pages: 2 * SLOT_PAGES,
                     ..base
                 }),
                 Reused,
@@ -259,10 +276,45 @@ fn templates_patch_their_step_values_and_key_their_structure() {
                 }),
                 Kept,
             ),
+            ("two items", packed(base, second), Kept),
             (
-                "two items",
-                batch(&[base, chunk(2, 1, 0, 64)], &[], false).0,
+                "two items, the first shifted",
+                packed(by_ring(base), second),
+                Reused,
+            ),
+            (
+                "two items, the second shifted",
+                packed(base, by_ring(second)),
+                Reused,
+            ),
+            (
+                "two items, other requests, slots and pages",
+                packed(
+                    Chunk {
+                        request: 3,
+                        slot: 2,
+                        pages: 2 * SLOT_PAGES,
+                        ..base
+                    },
+                    Chunk {
+                        request: 4,
+                        slot: 0,
+                        pages: 0,
+                        salt: 5,
+                        ..second
+                    },
+                ),
+                Reused,
+            ),
+            (
+                "two items, the boundary moved",
+                packed(moved, moved_second),
                 Kept,
+            ),
+            (
+                "two items, the boundary moved, both shifted",
+                packed(by_ring(moved), by_ring(moved_second)),
+                Reused,
             ),
             ("cached attention", plain(chunk(1, 0, 8192, 8192)), Kept),
             (

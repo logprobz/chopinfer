@@ -26,6 +26,21 @@ locate work inside unannotated bundle planning and submission; missing
 samples leave that time unresolved. Per-kernel annotations add overhead,
 so a profile is attribution evidence, not served timing acceptance.
 
+OS-runtime tracing records intercepted calls above its threshold. A thread
+can have no qualifying call during a step even when collection is active.
+Validate collector, thread and time-window coverage separately from the
+step's call count. Preserve a zero count; do not require an invented wait.
+The model-owned host-profile analyzer checks this distinction and partitions
+GPU inactivity by the innermost host scope. Its route-diagnostic scope owns
+nested logger work so that logging cannot be counted twice.
+
+On 2026-10-29, a W7-enabled DSpark capture at 200K with 16 decoders and one
+512-row prefill had 286 OS-runtime calls during the mixed step, all on other
+threads. The submission thread had 12 calls elsewhere in the capture.
+The 299.448 ms step had 49.968 ms mean per-rank GPU inactivity, including
+20.130 ms in prefill planning. All four GPUs were idle for 40.819 ms.
+These are instrumented attribution results, not a served A/B verdict.
+
 This diagnostic does not admit any kernel route or change a model option.
 Keep the kernel locks unchanged and compare the annotated bundle's default
 journals against the unannotated bundle before profiling it.

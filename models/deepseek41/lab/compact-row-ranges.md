@@ -70,3 +70,19 @@ spread and clock/power observations, and finish within five minutes. A
 resolved lab gain is only a reason to continue qualification. Boundary
 pilots do not admit the intervening row range or replace the PDL, chunk,
 route-sweep, journal and served acceptance gates above.
+
+Reserve all GPUs exclusively for paired timing. Running a second pair lab
+on the other devices can disturb the host, PCIe traffic and power behavior;
+an A/A inside either lab does not make that overlap a clean comparison.
+Keep the idle check for every reserved device. A resident keeper without
+a compute context does not require an idle-check exception.
+
+On 2026-10-29, stage 2 of the TP4 N5120/K15360/G1 case passed every width
+128..416 on both test devices: 586 device-width cases, including duplicated
+shard neighbors, and 32,768 output/status comparisons. Those full-width
+jobs were bitwise-only. Earlier paired measurements at 128, 129, 130, 191,
+192, 193, 510, 511 and 512 resolved gains above their own A/A spread for
+both stage settings on both devices. At 192 rows, stage 2 saved
+2.750..2.763 ms per projection in the lab. Widths 417..509 and per-width
+interior timing remain qualification gaps. No served route is admitted by
+these results.

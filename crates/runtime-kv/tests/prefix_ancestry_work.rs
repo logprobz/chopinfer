@@ -4,7 +4,9 @@
 //! ownership work and are exact.
 use std::sync::Arc;
 
-use runtime_kv::{KvGeometry, KvPool, PrefixAncestryWorkV1, PrefixChainV1, SequenceHandle};
+use runtime_kv::{
+    KvGeometry, KvPool, PrefixAncestryWorkV1, PrefixChainV1, PrefixMediaSpanV1, SequenceHandle,
+};
 
 const BLOCK: usize = 64;
 const DEPTH: usize = 131_072;
@@ -222,6 +224,78 @@ fn long_edges_from_different_insertions_merge_or_keep_a_junction() {
         }
         assert_eq!(pool.anchor_count(), 0);
         assert_eq!(pool.stats().free_blocks(), 40_000);
+    }
+}
+
+/// One eight-row media span ten tokens into every block that starts in
+/// `start..end`, where the span also ends by `end`.
+fn media(start: usize, end: usize, identity: u8) -> Vec<PrefixMediaSpanV1> {
+    (start.div_ceil(BLOCK)..end.div_ceil(BLOCK))
+        .map(|block| PrefixMediaSpanV1 {
+            identity: [identity; 32],
+            start: block * BLOCK + 10,
+            rows: 8,
+            media_row: 0,
+        })
+        .filter(|span| span.start + 8 <= end)
+        .collect()
+}
+
+#[test]
+fn a_short_merge_copies_only_the_media_of_its_range() {
+    let mut pool = pool();
+    let tokens = session(9, DEPTH);
+    let long = PrefixChainV1::new(BLOCK, Arc::from(&tokens[..]), media(0, DEPTH, 1)).unwrap();
+    let source = pool.create_sequence(DEPTH).unwrap();
+    pool.append(source, DEPTH).unwrap();
+    for depth in [DEPTH, 4_000, 6_000] {
+        capture(&mut pool, &long, source, depth);
+    }
+    pool.release(source).unwrap();
+    // Anchors at 4,000 and 6,000 now share the long segment and its 2,048
+    // media spans; dropping the deepest anchor leaves 6,000 as a leaf.
+    assert!(pool.remove_anchor(long.key_at(DEPTH).unwrap()).unwrap());
+    let mut branch = tokens[..6_000].to_vec();
+    branch.extend(session(10, 1_000));
+    let mut spans = media(0, 6_000, 1);
+    spans.extend(media(6_000, 7_000, 2));
+    let branch = PrefixChainV1::new(BLOCK, Arc::from(branch), spans).unwrap();
+    let hit = pool.resume_prefix(&branch, 6_999, 7_000).unwrap().unwrap();
+    assert_eq!(hit.tokens(), 6_000);
+    pool.finish_restore(hit.handle()).unwrap();
+    pool.append(hit.handle(), 1_000).unwrap();
+    capture(&mut pool, &branch, hit.handle(), 7_000);
+    pool.release(hit.handle()).unwrap();
+    // Removing 6,000 joins 4,000..6,000 of the long segment with the
+    // branch's edge: only the spans starting in 4,000..7,000 are copied.
+    let work = measured(&mut pool, |pool| {
+        assert!(pool.remove_anchor(long.key_at(6_000).unwrap()).unwrap());
+    });
+    let expected = media(4_000, 6_000, 1).len() + media(6_000, 7_000, 2).len();
+    assert_eq!(expected, 47);
+    assert_eq!(work.media_copied, expected as u64);
+    assert_eq!(work.tokens_copied, 3_000);
+    assert_bounded(work, 3_000, "short merge of a media-heavy segment");
+    pool.audit().unwrap();
+    // The merged edge keeps its media: the same tokens over one other span
+    // at 5,002 must split there, which the audit checks against digests.
+    let mut other = media(0, 6_000, 1);
+    other.extend(media(6_000, 7_000, 2));
+    other[media(0, 5_000, 1).len()].identity = [3; 32];
+    assert_eq!(other[media(0, 5_000, 1).len()].start, 5_002);
+    let other = PrefixChainV1::new(BLOCK, Arc::from(branch.tokens()), other).unwrap();
+    let source = pool.create_sequence(7_000).unwrap();
+    pool.append(source, 7_000).unwrap();
+    let work = measured(&mut pool, |pool| capture(pool, &other, source, 7_000));
+    assert_bounded(work, 2_000, "media divergence inside a merged edge");
+    pool.release(source).unwrap();
+    pool.audit().unwrap();
+    assert_eq!(pool.anchor_count(), 3);
+    for chain in [&branch, &other] {
+        assert_eq!(
+            pool.lookup_anchor(chain, 7_000).map(|(_, tokens)| tokens),
+            Some(7_000)
+        );
     }
 }
 

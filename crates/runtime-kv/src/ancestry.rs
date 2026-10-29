@@ -75,6 +75,8 @@ pub struct PrefixAncestryWorkV1 {
     pub atoms_compared: u64,
     /// Tokens copied into new or merged edges.
     pub tokens_copied: u64,
+    /// Media spans copied into new or merged edges.
+    pub media_copied: u64,
     /// Nomination target entries updated.
     pub target_updates: u64,
     /// Page references the pool took or released for anchors.
@@ -90,6 +92,7 @@ impl PrefixAncestryWorkV1 {
             digests_compared: self.digests_compared - earlier.digests_compared,
             atoms_compared: self.atoms_compared - earlier.atoms_compared,
             tokens_copied: self.tokens_copied - earlier.tokens_copied,
+            media_copied: self.media_copied - earlier.media_copied,
             target_updates: self.target_updates - earlier.target_updates,
             page_references: self.page_references - earlier.page_references,
         }
@@ -140,15 +143,9 @@ impl Segment {
                 .copied()
                 .collect(),
             media: upper
-                .media
+                .media_in(start, middle)
                 .iter()
-                .filter(|span| (start..middle).contains(&span.start))
-                .chain(
-                    lower
-                        .media
-                        .iter()
-                        .filter(|span| (middle..end).contains(&span.start)),
-                )
+                .chain(lower.media_in(middle, end))
                 .copied()
                 .collect(),
             block_tokens,
@@ -166,6 +163,13 @@ impl Segment {
 
     fn end(&self) -> usize {
         self.start + self.tokens.len()
+    }
+
+    /// The media spans starting in `from..to`, by binary search.
+    fn media_in(&self, from: usize, to: usize) -> &[PrefixMediaSpanV1] {
+        let first = self.media.partition_point(|span| span.start < from);
+        let last = self.media.partition_point(|span| span.start < to);
+        &self.media[first..last]
     }
 
     fn atom(&self, position: usize) -> PrefixAtom {
@@ -517,9 +521,11 @@ impl PrefixAncestry {
             let atom = chain.atom(depth);
             let Some(child) = self.nodes[&node].children.get(&atom).copied() else {
                 self.work.tokens_copied += (tokens - depth) as u64;
+                let segment = Segment::from_chain(chain, depth, tokens);
+                self.work.media_copied += segment.media.len() as u64;
                 let id = self.allocate(Node {
                     parent: Some(node),
-                    segment: Arc::new(Segment::from_chain(chain, depth, tokens)),
+                    segment: Arc::new(segment),
                     start: depth,
                     depth: tokens,
                     ..Node::default()
@@ -659,13 +665,15 @@ impl PrefixAncestry {
             None
         } else if lower.depth - node.start <= MERGE_COPY_TOKENS {
             self.work.tokens_copied += (lower.depth - node.start) as u64;
-            Some(Arc::new(Segment::joined(
+            let segment = Segment::joined(
                 &node.segment,
                 node.start,
                 node.depth,
                 &lower.segment,
                 lower.depth,
-            )))
+            );
+            self.work.media_copied += segment.media.len() as u64;
+            Some(Arc::new(segment))
         } else {
             return;
         };

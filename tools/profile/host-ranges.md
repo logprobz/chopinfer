@@ -34,12 +34,14 @@ The model-owned host-profile analyzer checks this distinction and partitions
 GPU inactivity by the innermost host scope. Its route-diagnostic scope owns
 nested logger work so that logging cannot be counted twice.
 
-On 2026-10-29, a W7-enabled DSpark capture at 200K with 16 decoders and one
-512-row prefill had 286 OS-runtime calls during the mixed step, all on other
-threads. The submission thread had 12 calls elsewhere in the capture.
-The 299.448 ms step had 49.968 ms mean per-rank GPU inactivity, including
-20.130 ms in prefill planning. All four GPUs were idle for 40.819 ms.
-These are instrumented attribution results, not a served A/B verdict.
+On 2026-10-29, the successful W7-enabled DSpark repeat at 200K with
+16 decoders and one 512-row prefill took 299.753 ms. Mean per-rank GPU
+inactivity was 50.711 ms, including 20.739 ms in prefill planning. All four
+GPUs were idle for 41.008 ms. The cache check had zero major faults and the
+measured window had 163. Four decode controls and exact request/output
+replay passed. These results supersede the earlier capture that failed its
+OS-runtime validation. They are instrumented attribution, not a served A/B
+verdict; CPU sampling was unavailable.
 
 This diagnostic does not admit any kernel route or change a model option.
 Keep the kernel locks unchanged and compare the annotated bundle's default

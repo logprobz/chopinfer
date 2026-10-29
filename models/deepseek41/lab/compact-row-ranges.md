@@ -77,12 +77,16 @@ an A/A inside either lab does not make that overlap a clean comparison.
 Keep the idle check for every reserved device. A resident keeper without
 a compute context does not require an idle-check exception.
 
-On 2026-10-29, stage 2 of the TP4 N5120/K15360/G1 case passed every width
-128..416 on both test devices: 586 device-width cases, including duplicated
-shard neighbors, and 32,768 output/status comparisons. Those full-width
-jobs were bitwise-only. Earlier paired measurements at 128, 129, 130, 191,
-192, 193, 510, 511 and 512 resolved gains above their own A/A spread for
-both stage settings on both devices. At 192 rows, stage 2 saved
-2.750..2.763 ms per projection in the lab. Widths 417..509 and per-width
-interior timing remain qualification gaps. No served route is admitted by
-these results.
+On 2026-10-29, stage 2 of the TP4 N5120/K15360/G1 case passed all
+385 widths 128..512 on both test devices, including the two neighbors.
+The exclusive full-band jobs made 43,744 bitwise output/status comparisons
+and 782 timings, including shard overlaps. Every width beat its bracketed
+A/A spread. Recomputed gains were 86.81..94.07%, with A/A spread
+0.25..13.84%. At 192 rows, stage 2 saved 2.750..2.763 ms per projection.
+
+The default-off `dspark_main_compact` candidate admits retained inner rows
+129..511 through this existing stage-2 template. The tuning table owns the
+range. Disabled and out-of-range calls preserve the previous launches and
+route tags. Complete served boundary/final-state exactness and served
+step-time ABBA acceptance remain required before adoption. Pair timing is
+not a served speedup claim.

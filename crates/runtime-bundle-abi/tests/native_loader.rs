@@ -290,11 +290,6 @@ enum FixtureEntryV1 {
     NullPrefillCuts,
     ShortPrefillCuts,
     MissingPrefillCutsCallback,
-    /// The cuts tables and an anchor-item allowance of 2.
-    PrefillAnchors,
-    NullPrefillAnchors,
-    ShortPrefillAnchors,
-    MissingPrefillAnchorsCallback,
     /// The V1 table, and a chat frontend table under its optional export.
     Frontend,
     Null,
@@ -324,11 +319,7 @@ fn build_fixture_module(
         | FixtureEntryV1::PrefillCuts
         | FixtureEntryV1::NullPrefillCuts
         | FixtureEntryV1::ShortPrefillCuts
-        | FixtureEntryV1::MissingPrefillCutsCallback
-        | FixtureEntryV1::PrefillAnchors
-        | FixtureEntryV1::NullPrefillAnchors
-        | FixtureEntryV1::ShortPrefillAnchors
-        | FixtureEntryV1::MissingPrefillAnchorsCallback => "&raw const API",
+        | FixtureEntryV1::MissingPrefillCutsCallback => "&raw const API",
         FixtureEntryV1::Null => "core::ptr::null()",
         FixtureEntryV1::Retirement
         | FixtureEntryV1::IncompleteRetirement
@@ -454,23 +445,14 @@ pub extern "C" fn chop_bundle_get_api_v1() -> *const ApiV1 {{
             .expect("the fixture frontend source is writable");
     }
 
-    let anchors = matches!(
+    if matches!(
         entry,
-        FixtureEntryV1::PrefillAnchors
-            | FixtureEntryV1::NullPrefillAnchors
-            | FixtureEntryV1::ShortPrefillAnchors
-            | FixtureEntryV1::MissingPrefillAnchorsCallback
-    );
-    if anchors
-        || matches!(
-            entry,
-            FixtureEntryV1::Prefill
-                | FixtureEntryV1::PrefillCuts
-                | FixtureEntryV1::NullPrefillCuts
-                | FixtureEntryV1::ShortPrefillCuts
-                | FixtureEntryV1::MissingPrefillCutsCallback
-        )
-    {
+        FixtureEntryV1::Prefill
+            | FixtureEntryV1::PrefillCuts
+            | FixtureEntryV1::NullPrefillCuts
+            | FixtureEntryV1::ShortPrefillCuts
+            | FixtureEntryV1::MissingPrefillCutsCallback
+    ) {
         let source_text = PREFILL_FIXTURE_SOURCE
             .replace(
                 "CUTS_SIZE",
@@ -497,32 +479,6 @@ pub extern "C" fn chop_bundle_get_api_v1() -> *const ApiV1 {{
                 "&CUTS"
             };
             write!(file, "\n#[unsafe(no_mangle)]\npub extern \"C\" fn chop_bundle_prefill_cuts_api_v1() -> *const Prefill {{ {returned} }}\n").unwrap();
-        }
-        if anchors {
-            let source_text = ANCHORS_FIXTURE_SOURCE
-                .replace(
-                    "ANCHORS_SIZE",
-                    if matches!(entry, FixtureEntryV1::ShortPrefillAnchors) {
-                        "8"
-                    } else {
-                        "core::mem::size_of::<AnchorsTable>() as u32"
-                    },
-                )
-                .replace(
-                    "ANCHORS_DESCRIBE",
-                    if matches!(entry, FixtureEntryV1::MissingPrefillAnchorsCallback) {
-                        "None"
-                    } else {
-                        "Some(describe_anchors)"
-                    },
-                );
-            file.write_all(source_text.as_bytes()).unwrap();
-            let returned = if matches!(entry, FixtureEntryV1::NullPrefillAnchors) {
-                "core::ptr::null()"
-            } else {
-                "&ANCHORS"
-            };
-            write!(file, "\n#[unsafe(no_mangle)]\npub extern \"C\" fn chop_bundle_prefill_anchors_api_v1() -> *const AnchorsTable {{ {returned} }}\n").unwrap();
         }
     }
 
@@ -566,67 +522,6 @@ static CUTS: Prefill = Prefill {
 #[unsafe(no_mangle)]
 pub extern "C" fn chop_bundle_prefill_api_v1() -> *const Prefill { &GRID }
 "#;
-
-const ANCHORS_FIXTURE_SOURCE: &str = r#"
-#[repr(C)]
-pub struct Anchors { struct_size: u32, status: Status, anchor_items: u32, reserved: u32 }
-#[repr(C)]
-pub struct AnchorsTable {
-    struct_size: u32, abi_version: u32,
-    describe: Option<extern "C" fn(Handle) -> Anchors>,
-}
-extern "C" fn describe_anchors(_: Handle) -> Anchors {
-    Anchors { struct_size: 16, status: Status(0), anchor_items: 2, reserved: 0 }
-}
-static ANCHORS: AnchorsTable = AnchorsTable {
-    struct_size: ANCHORS_SIZE, abi_version: 1, describe: ANCHORS_DESCRIBE,
-};
-"#;
-
-/// The anchors export is optional: without it the manifest's anchor items
-/// apply (`None`). A null, short or incomplete table refuses the load.
-#[test]
-fn native_prefill_anchors_are_optional_and_validate_their_table() {
-    let fixture = TempDirectory::new("runtime-bundle-abi-native-prefill-anchors");
-    for (name, entry, anchors) in [
-        ("legacy", FixtureEntryV1::Table, None),
-        ("cuts", FixtureEntryV1::PrefillCuts, None),
-        ("anchors", FixtureEntryV1::PrefillAnchors, Some(2)),
-    ] {
-        let module = build_fixture_module(fixture.path(), name, BUNDLE_ABI_VERSION_V1, entry);
-        let library =
-            BundleLibraryV1::open_verified_image(&fs::read(module).unwrap(), name).unwrap();
-        let mut instance = library
-            .create(
-                HostServicesTableV1::new(Rc::new(UnsupportedHostServicesBackendV1)),
-                &[],
-            )
-            .unwrap();
-        assert_eq!(instance.prefill_anchor_items().unwrap(), anchors, "{name}");
-        instance.destroy().unwrap();
-    }
-    for (name, entry) in [
-        ("null_anchors", FixtureEntryV1::NullPrefillAnchors),
-        ("short_anchors", FixtureEntryV1::ShortPrefillAnchors),
-        (
-            "missing_anchors",
-            FixtureEntryV1::MissingPrefillAnchorsCallback,
-        ),
-    ] {
-        let module = build_fixture_module(fixture.path(), name, BUNDLE_ABI_VERSION_V1, entry);
-        let library =
-            BundleLibraryV1::open_verified_image(&fs::read(module).unwrap(), name).unwrap();
-        assert!(
-            library
-                .create(
-                    HostServicesTableV1::new(Rc::new(UnsupportedHostServicesBackendV1)),
-                    &[]
-                )
-                .is_err(),
-            "{name}"
-        );
-    }
-}
 
 #[test]
 fn native_prefill_cuts_are_optional_and_validate_their_table() {

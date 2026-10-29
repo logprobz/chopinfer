@@ -253,7 +253,6 @@ pub struct BundleLibraryV1 {
     mapped_device_results: Option<crate::device_results::BundleGetMappedDeviceResultsApiFnV1>,
     prefill: Option<crate::prefill::BundleGetPrefillApiFnV1>,
     prefill_cuts: Option<crate::prefill::BundleGetPrefillApiFnV1>,
-    prefill_anchors: Option<crate::prefill::BundleGetPrefillAnchorsApiFnV1>,
 }
 
 impl BundleLibraryV1 {
@@ -381,13 +380,6 @@ impl BundleLibraryV1 {
             optional(crate::prefill::PREFILL_CUTS_API_SYMBOL_V1).map(|symbol| unsafe {
                 std::mem::transmute::<*mut c_void, crate::prefill::BundleGetPrefillApiFnV1>(symbol)
             });
-        // SAFETY-REVIEWED: the optional anchors export has the V1 anchors getter signature.
-        let prefill_anchors =
-            optional(crate::prefill::PREFILL_ANCHORS_API_SYMBOL_V1).map(|symbol| unsafe {
-                std::mem::transmute::<*mut c_void, crate::prefill::BundleGetPrefillAnchorsApiFnV1>(
-                    symbol,
-                )
-            });
         Ok(Self {
             api,
             library,
@@ -399,7 +391,6 @@ impl BundleLibraryV1 {
             mapped_device_results,
             prefill,
             prefill_cuts,
-            prefill_anchors,
         })
     }
 
@@ -597,23 +588,6 @@ impl BundleLibraryV1 {
         if let Some(getter) = self.prefill_cuts {
             api = api.with_prefill_cuts_api(Self::read_prefill_api(getter)?)?;
         }
-        if let Some(getter) = self.prefill_anchors {
-            // SAFETY-REVIEWED: the loaded native module owns the returned immutable table.
-            let pointer = unsafe { getter() };
-            if pointer.is_null() {
-                return Err(BundleAbiError::InvalidHandle);
-            }
-            // SAFETY-REVIEWED: only the fixed table header is read before its size is checked.
-            let header = unsafe { pointer.cast::<BundleApiHeaderV1>().read() };
-            crate::validate_table_header(
-                "prefill anchors API",
-                header.struct_size,
-                std::mem::size_of::<crate::prefill::BundlePrefillAnchorsApiV1>() as u32,
-                header.abi_version,
-            )?;
-            // SAFETY-REVIEWED: the header covers the complete known table prefix.
-            api = api.with_prefill_anchors_api(unsafe { pointer.read() })?;
-        }
         Ok(api)
     }
 
@@ -650,16 +624,6 @@ pub struct LoadedBundleInstanceV1 {
 }
 
 impl LoadedBundleInstanceV1 {
-    pub fn prefill_anchor_policy(
-        &self,
-    ) -> Result<Option<crate::prefill::BundlePrefillAnchorsV1>, BundleAbiError> {
-        self.instance.prefill_anchor_policy()
-    }
-
-    pub fn prefill_anchor_items(&self) -> Result<Option<u32>, BundleAbiError> {
-        self.instance.prefill_anchor_items()
-    }
-
     pub fn prefill_cuts_policy(
         &self,
     ) -> Result<crate::prefill::BundlePrefillPolicyV1, BundleAbiError> {

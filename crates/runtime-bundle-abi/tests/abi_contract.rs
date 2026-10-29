@@ -172,30 +172,6 @@ fn c_header_and_rust_layouts_match() {
             offset_of!(abi::prefill::BundlePrefillApiV1, execute_prefill_v1),
         ],
     );
-    assert_layout(
-        &c_layouts,
-        "prefill-anchors",
-        size_of::<abi::prefill::BundlePrefillAnchorsV1>(),
-        &[
-            offset_of!(abi::prefill::BundlePrefillAnchorsV1, struct_size),
-            offset_of!(abi::prefill::BundlePrefillAnchorsV1, status),
-            offset_of!(abi::prefill::BundlePrefillAnchorsV1, anchor_items),
-            offset_of!(abi::prefill::BundlePrefillAnchorsV1, minimum_fused_rows),
-        ],
-    );
-    assert_layout(
-        &c_layouts,
-        "prefill-anchors-api",
-        size_of::<abi::prefill::BundlePrefillAnchorsApiV1>(),
-        &[
-            offset_of!(abi::prefill::BundlePrefillAnchorsApiV1, struct_size),
-            offset_of!(abi::prefill::BundlePrefillAnchorsApiV1, abi_version),
-            offset_of!(
-                abi::prefill::BundlePrefillAnchorsApiV1,
-                describe_prefill_anchors_v1
-            ),
-        ],
-    );
 
     assert_layout(
         &c_layouts,
@@ -2855,105 +2831,6 @@ fn optional_prefill_cuts_preserve_both_legacy_directions() {
     );
 }
 
-abi::export_prefill_anchors_api_v1!(FIXTURE_PREFILL_ANCHORS_API, |_| {
-    abi::prefill::BundlePrefillAnchorsV1::kept(
-        FIXTURE_ANCHOR_ITEMS.load(std::sync::atomic::Ordering::Relaxed),
-    )
-    .with_minimum_fused_rows(FIXTURE_ANCHOR_ROWS.load(std::sync::atomic::Ordering::Relaxed))
-},);
-
-static FIXTURE_ANCHOR_ITEMS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-static FIXTURE_ANCHOR_ROWS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-
-/// The anchors export is optional: absent, the manifest's anchor items
-/// apply. Present, it reports the instance's allowance, and a nonzero
-/// allowance without an enabled cuts policy is refused.
-#[test]
-fn optional_prefill_anchors_report_the_instance_allowance() {
-    let _guard = TEST_LOCK.lock().unwrap();
-    let cuts = || {
-        fixture_api()
-            .with_prefill_api(FIXTURE_PREFILL_API)
-            .unwrap()
-            .with_prefill_cuts_api(FIXTURE_PREFILL_CUTS_API)
-            .unwrap()
-    };
-    reset_calls();
-    let mut absent = cuts().create(fixture_table(), &[]).unwrap();
-    assert_eq!(absent.prefill_anchor_items(), Ok(None));
-    absent.destroy().unwrap();
-    for items in [0, 3] {
-        reset_calls();
-        FIXTURE_ANCHOR_ITEMS.store(items, std::sync::atomic::Ordering::Relaxed);
-        let mut instance = cuts()
-            .with_prefill_anchors_api(FIXTURE_PREFILL_ANCHORS_API)
-            .unwrap()
-            .create(fixture_table(), &[])
-            .unwrap();
-        assert_eq!(instance.prefill_anchor_items(), Ok(Some(items)));
-        instance.destroy().unwrap();
-        // Without cuts only a zero allowance is coherent.
-        reset_calls();
-        let mut grid = fixture_api()
-            .with_prefill_api(FIXTURE_PREFILL_API)
-            .unwrap()
-            .with_prefill_anchors_api(FIXTURE_PREFILL_ANCHORS_API)
-            .unwrap()
-            .create(fixture_table(), &[])
-            .unwrap();
-        assert_eq!(
-            grid.prefill_anchor_items(),
-            if items == 0 {
-                Ok(Some(0))
-            } else {
-                Err(BundleAbiError::InvalidRange("prefill anchors policy"))
-            }
-        );
-        grid.destroy().unwrap();
-    }
-    FIXTURE_ANCHOR_ITEMS.store(3, std::sync::atomic::Ordering::Relaxed);
-    for minimum in [357, 2049] {
-        FIXTURE_ANCHOR_ROWS.store(minimum, std::sync::atomic::Ordering::Relaxed);
-        let mut instance = cuts()
-            .with_prefill_anchors_api(FIXTURE_PREFILL_ANCHORS_API)
-            .unwrap()
-            .create(fixture_table(), &[])
-            .unwrap();
-        if minimum <= 2048 {
-            assert_eq!(
-                instance
-                    .prefill_anchor_policy()
-                    .unwrap()
-                    .unwrap()
-                    .minimum_fused_rows,
-                minimum
-            );
-        } else {
-            assert_eq!(
-                instance.prefill_anchor_policy(),
-                Err(BundleAbiError::InvalidRange("prefill anchors policy"))
-            );
-        }
-        instance.destroy().unwrap();
-    }
-    FIXTURE_ANCHOR_ROWS.store(0, std::sync::atomic::Ordering::Relaxed);
-    FIXTURE_ANCHOR_ITEMS.store(0, std::sync::atomic::Ordering::Relaxed);
-    assert!(
-        abi::prefill::BundlePrefillAnchorsApiV1 {
-            describe_prefill_anchors_v1: None,
-            ..FIXTURE_PREFILL_ANCHORS_API
-        }
-        .validate()
-        .is_err()
-    );
-    let header = include_str!("../../../include/chop_bundle_v1.h");
-    assert!(header.contains("chop_bundle_prefill_anchors_api_v1(void)"));
-    assert_eq!(
-        abi::prefill::PREFILL_ANCHORS_API_SYMBOL_V1,
-        b"chop_bundle_prefill_anchors_api_v1\0"
-    );
-}
-
 fn fixture_create(
     host_services: HostServicesV1,
     configuration: &[u8],
@@ -4180,8 +4057,6 @@ int main(void) {
   printf("api-prefix-state-slot %zu %zu %zu\n", sizeof(chop_bundle_api_with_prefix_state_slot_v1), P(chop_bundle_api_with_prefix_state_slot_v1, base), P(chop_bundle_api_with_prefix_state_slot_v1, restore_prefix_state_in_slot_v1));
   printf("prefill-policy %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_prefill_policy_v1), P(chop_bundle_prefill_policy_v1, struct_size), P(chop_bundle_prefill_policy_v1, status), P(chop_bundle_prefill_policy_v1, chunk_tokens), P(chop_bundle_prefill_policy_v1, reserved));
   printf("prefill-api %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_prefill_table_v1), P(chop_bundle_prefill_table_v1, struct_size), P(chop_bundle_prefill_table_v1, abi_version), P(chop_bundle_prefill_table_v1, describe_prefill_v1), P(chop_bundle_prefill_table_v1, execute_prefill_v1));
-  printf("prefill-anchors %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_prefill_anchors_v1), P(chop_bundle_prefill_anchors_v1, struct_size), P(chop_bundle_prefill_anchors_v1, status), P(chop_bundle_prefill_anchors_v1, anchor_items), P(chop_bundle_prefill_anchors_v1, minimum_fused_rows));
-  printf("prefill-anchors-api %zu %zu %zu %zu\n", sizeof(chop_bundle_prefill_anchors_table_v1), P(chop_bundle_prefill_anchors_table_v1, struct_size), P(chop_bundle_prefill_anchors_table_v1, abi_version), P(chop_bundle_prefill_anchors_table_v1, describe_prefill_anchors_v1));
   printf("weight-plan-sink %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_weight_plan_sink_v1), P(chop_bundle_weight_plan_sink_v1, struct_size), P(chop_bundle_weight_plan_sink_v1, layout), P(chop_bundle_weight_plan_sink_v1, context), P(chop_bundle_weight_plan_sink_v1, emit), P(chop_bundle_weight_plan_sink_v1, emit_error));
   printf("weight-transform-call %zu %zu %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_weight_transform_call_v1), P(chop_bundle_weight_transform_call_v1, struct_size), P(chop_bundle_weight_transform_call_v1, transform), P(chop_bundle_weight_transform_call_v1, params), P(chop_bundle_weight_transform_call_v1, sources), P(chop_bundle_weight_transform_call_v1, source_count), P(chop_bundle_weight_transform_call_v1, output_offset), P(chop_bundle_weight_transform_call_v1, output));
   printf("frontend-sink %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_frontend_sink_v1), P(chop_bundle_frontend_sink_v1, struct_size), P(chop_bundle_frontend_sink_v1, layout), P(chop_bundle_frontend_sink_v1, context), P(chop_bundle_frontend_sink_v1, emit), P(chop_bundle_frontend_sink_v1, emit_error));
@@ -5272,4 +5147,12 @@ fn mapped_only_sampling_is_not_a_recoverable_validation_refusal() {
     assert_eq!(sink.calls, 1);
     assert_eq!(instance.last_execute_refusal(), None);
     instance.destroy().unwrap();
+}
+
+#[test]
+fn public_header_has_no_retired_grid_anchor_exports() {
+    let header = include_str!("../../../include/chop_bundle_v1.h");
+    assert!(!header.contains("chop_bundle_prefill_anchors_api_v1"));
+    assert!(!header.contains("chop_bundle_prefill_anchors_api_v2"));
+    assert!(header.contains("chop_bundle_prefill_cuts_api_v1(void)"));
 }

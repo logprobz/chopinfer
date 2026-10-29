@@ -531,31 +531,28 @@ fn an_untrained_model_keeps_the_progress_floor() {
     assert_eq!(batch.prefill_cap(), Some(FLOOR));
 }
 
-/// Uncapped fusion is a different candidate from stopping at the anchor. A
-/// backlog that clears within the transient window runs uncapped, and an
-/// anchored item may then include its tail (653 rows, anchor at 640). Under
-/// a longer backlog the cadence cap is a timing cut, which stops at the
-/// anchor (640 rows), and the step keeps the target.
+/// Manifest requests use a step budget even for a transient backlog. A
+/// generous budget admits the fused tail; a 262 ms target under a longer
+/// backlog stops at the anchor instead. Without decoders no cap applies.
 #[test]
-fn adaptive_caps_price_the_uncapped_anchor_tail() {
-    for (anchors, decode, backlog, capped, rows, anchor) in [
-        (0, 1, false, false, 640, None),
-        (8, 1, false, false, 653, Some(640)),
-        (8, 0, false, false, 653, Some(640)),
-        (8, 1, true, true, 640, None),
+fn adaptive_caps_price_the_uncapped_manifest_anchor_tail() {
+    for (anchors, decode, backlog, target_ms, capped, rows, anchor) in [
+        (0, 1, false, TARGET_MS, true, 640, None),
+        (8, 1, false, TARGET_MS, true, 653, Some(640)),
+        (8, 0, false, TARGET_MS, false, 653, Some(640)),
+        (8, 1, true, 262, true, 640, None),
     ] {
         let config = SchedulerConfig::new(64, 256, GRID, GRID, 1)
             .unwrap()
             .with_prefill_granule(GRANULE)
             .unwrap()
-            .with_guaranteed_prefill_chunks(GRID)
-            .unwrap()
             .with_prefix_cache(1)
             .with_prefill_cuts(true)
-            .with_grid_anchor_items(anchors)
-            .with_grid_anchor_minimum_rows(357)
+            .with_anchor_items(anchors)
             .with_prefill_timing_cuts(true)
-            .with_prefill_budget(tbt())
+            .with_prefill_budget(PrefillBudget::Tbt(
+                MixedPolicy::new(target_ms, FLOOR, 0).unwrap(),
+            ))
             .with_adaptive_prefill_budget(true);
         let mut s = Scheduler::new(config, KvGeometry::new(GRANULE, 65536).unwrap()).unwrap();
         train(&mut s);
@@ -588,7 +585,7 @@ fn adaptive_caps_price_the_uncapped_anchor_tail() {
             "{anchors} {decode} {backlog}"
         );
         assert_eq!(item.anchor_tokens(), anchor, "{anchors} {decode} {backlog}");
-        assert!(cost(batch.shape()) * 105 <= u64::from(TARGET_MS) * 100_000);
+        assert!(cost(batch.shape()) * 105 <= u64::from(target_ms) * 100_000);
     }
 }
 
@@ -825,19 +822,18 @@ fn owed_steps_rollbacks_and_cancellations_leave_every_prompt_progressing() {
     }
 }
 
-/// A grid scheduler with prefix caching, anchors and optional forced
+/// A manifest-anchor scheduler with prefix caching and optional forced
 /// preemption, for the restore and preemption paths.
 fn prefix_scheduler(anchors: usize, owed: u32, preempt: bool) -> Scheduler {
     let mut config = SchedulerConfig::new(64, 256, GRID, GRID, 1)
         .unwrap()
         .with_prefill_granule(GRANULE)
         .unwrap()
-        .with_guaranteed_prefill_chunks(GRID)
+        .with_maximum_scored_rows(64)
         .unwrap()
         .with_prefix_cache(1)
         .with_prefill_cuts(true)
-        .with_grid_anchor_items(anchors)
-        .with_grid_anchor_minimum_rows(357)
+        .with_anchor_items(anchors)
         .with_prefill_timing_cuts(true)
         .with_prefill_budget(owing(owed))
         .with_adaptive_prefill_budget(true);
@@ -959,33 +955,21 @@ fn preempted_requests_do_not_freeze_backlog_aging() {
 
 #[test]
 fn the_fused_anchor_tail_changes_the_uncapped_cadence_price() {
-    // Under a backlog, a restored long prompt has 64 rows to its next grid
-    // boundary and a cold 4,927-row prompt has an anchor at 4,864 and a
-    // 63-row tail. Without anchors the uncapped 4,928-row step keeps the
-    // target. With anchors the uncapped item would fuse its tail (4,991
-    // rows) and cross it, so the cap stops at the anchor instead.
+    // A scored long prompt contributes a bounded 64-row chunk and keeps
+    // the backlog active. The manifest-anchored 4,927-row prompt has an
+    // anchor at 4,864 and a 63-row tail. Without fusion the 4,928-row
+    // uncapped step fits; with fusion, 4,991 rows cross the cadence target.
+    // Restore and preemption are covered by the preceding two tests.
     for anchors in [0, 8] {
         let mut s = prefix_scheduler(anchors, 0, false);
-        submit_prefix(&mut s, 50, (0..8129).map(|i| 20_000 + i).collect(), 1);
-        while prefilling(&s, 50) {
-            prefix_step(&mut s);
-        }
         decoders(&mut s, 1);
         submit_prefix(&mut s, 1, (0..4927).map(|i| 200_000 + i).collect(), 2);
-        let long = (0..8 * GRID as u32)
-            .map(|i| if i < 8128 { 20_000 + i } else { 900_000 + i })
-            .collect();
-        submit_prefix(&mut s, 2, long, 2);
-        s.admit().unwrap();
-        assert_eq!(s.cached_tokens(RequestId::new(2)).unwrap(), 8128);
-        let restores: Vec<_> = s
-            .pending_prefix_restores()
-            .iter()
-            .map(|restore| restore.request_id())
-            .collect();
-        for id in restores {
-            s.complete_prefix_restore(id).unwrap();
-        }
+        s.submit(
+            RequestSpec::new(RequestId::new(2), 8 * GRID, 2)
+                .unwrap()
+                .with_prompt_scoring(),
+        )
+        .unwrap();
         let batch = s.next_batch().unwrap().unwrap();
         assert_eq!(
             batch.prefill_cap().is_some(),

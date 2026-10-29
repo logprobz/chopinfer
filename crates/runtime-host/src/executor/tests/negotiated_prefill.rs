@@ -43,10 +43,10 @@ fn extra_endpoints_require_the_separate_bundle_declaration() {
     }
 }
 
-/// A prompt-ending item that keeps its anchor inside its rows reaches the
-/// bundle only in the cuts envelope, which the grid-only contract refuses.
+/// Manifest anchor batches pass through unchanged. Guaranteed grids refuse
+/// them even when they negotiate complete-state cuts.
 #[test]
-fn anchored_prompt_ends_need_the_cuts_envelope() {
+fn manifest_anchor_bytes_survive_but_grid_envelopes_refuse_anchors() {
     use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
     let original = BatchRequestV1::new(
         BatchWireVersionV1::V3,
@@ -71,15 +71,12 @@ fn anchored_prompt_ends_need_the_cuts_envelope() {
         instance.prefill_cuts = cuts;
         let encoded =
             crate::executor::negotiated_prefill_request(&instance, original.clone(), &items);
-        if cuts {
-            let bytes = encoded.unwrap();
-            let read = runtime_bundle_sdk::prefill::decode_with_cuts(&bytes).unwrap();
-            assert!(read.batch.items()[0].anchor());
-            assert_eq!(read.boundaries[0].chunk_end, 789);
-        } else {
-            assert!(encoded.is_err());
-        }
+        assert!(encoded.is_err());
     }
+    let instance = FakeExecutionV1::emitting(Vec::new());
+    let forwarded =
+        crate::executor::negotiated_prefill_request(&instance, original.clone(), &items).unwrap();
+    assert_eq!(forwarded, original);
 }
 
 struct CollectedSampler;

@@ -165,6 +165,20 @@ impl Segment {
         self.start + self.tokens.len()
     }
 
+    /// A copy of `start..end` alone, with its media and block digests.
+    fn slice(&self, start: usize, end: usize) -> Self {
+        let block_tokens = self.block_tokens;
+        Self {
+            start,
+            tokens: self.tokens[start - self.start..end - self.start].into(),
+            media: self.media_in(start, end).into(),
+            block_tokens,
+            digests: (start / block_tokens + 1..=end / block_tokens)
+                .map(|blocks| self.digest(blocks))
+                .collect(),
+        }
+    }
+
     /// The media spans starting in `from..to`, by binary search.
     fn media_in(&self, from: usize, to: usize) -> &[PrefixMediaSpanV1] {
         let first = self.media.partition_point(|span| span.start < from);
@@ -620,6 +634,7 @@ impl PrefixAncestry {
             self.mark_delta(self.nodes[&id].parent, false);
         }
         let mut stop = Some(id);
+        let mut pruned = None;
         while let Some(id) = stop {
             let node = &self.nodes[&id];
             if node.anchor.is_some() || !node.children.is_empty() {
@@ -627,6 +642,7 @@ impl PrefixAncestry {
             }
             self.work.nodes += 1;
             let node = self.nodes.remove(&id).expect("live radix node");
+            pruned = Some(Arc::clone(&node.segment));
             self.dirty.remove(&id);
             let Some(parent) = node.parent else {
                 self.roots.remove(&node.root.expect("root identity"));
@@ -638,10 +654,46 @@ impl PrefixAncestry {
             });
             stop = Some(parent);
         }
+        if let (Some(id), Some(segment)) = (stop, pruned) {
+            self.compact(id, &segment);
+        }
         // Only the node pruning stopped at changed its children, and insert
         // never leaves a mergeable node, so no other node needs a merge.
         if let Some(id) = stop {
             self.merge(id);
+        }
+    }
+
+    /// After a removal freed the deep end of `segment`, gives the nodes
+    /// still sharing it from `id` upward copies of their own ranges once
+    /// they use less than half of it. Nodes sharing one segment lie on one
+    /// path, so this walks only that path, and each copy is smaller than
+    /// the memory it frees.
+    fn compact(&mut self, id: NodeId, segment: &Arc<Segment>) {
+        let mut sharing = Vec::new();
+        let mut cursor = Some(id);
+        while let Some(id) = cursor {
+            let node = &self.nodes[&id];
+            if !Arc::ptr_eq(&node.segment, segment) {
+                break;
+            }
+            self.work.nodes += 1;
+            sharing.push(id);
+            cursor = node.parent;
+        }
+        let live: usize = sharing
+            .iter()
+            .map(|id| self.nodes[id].depth - self.nodes[id].start)
+            .sum();
+        if sharing.is_empty() || 2 * live >= segment.tokens.len() {
+            return;
+        }
+        for id in sharing {
+            let node = self.nodes.get_mut(&id).expect("live radix node");
+            let copy = segment.slice(node.start, node.depth);
+            self.work.tokens_copied += copy.tokens.len() as u64;
+            self.work.media_copied += copy.media.len() as u64;
+            node.segment = Arc::new(copy);
         }
     }
 
@@ -713,6 +765,17 @@ impl PrefixAncestry {
             changes.push((key, class, tier));
         }
         changes
+    }
+
+    /// Tokens held by distinct segments: the index's own memory.
+    #[cfg(test)]
+    fn retained_tokens(&self) -> usize {
+        let mut seen = BTreeSet::new();
+        self.nodes
+            .values()
+            .filter(|node| seen.insert(Arc::as_ptr(&node.segment)))
+            .map(|node| node.segment.tokens.len())
+            .sum()
     }
 
     pub(crate) fn rank(
@@ -851,6 +914,54 @@ mod audit_tests {
         pool.release(source).unwrap();
         let key = chain.key_at(4).unwrap();
         (pool, chain, key)
+    }
+
+    fn long_pool(depths: &[usize]) -> (KvPool, PrefixChainV1) {
+        let chain =
+            PrefixChainV1::new(64, (0..131_072).collect::<Vec<u32>>().into(), vec![]).unwrap();
+        let mut pool = KvPool::new(KvGeometry::new(64, 4_096).unwrap(), 2)
+            .unwrap()
+            .with_prefix_ancestry(true);
+        let source = pool.create_sequence(131_072).unwrap();
+        pool.append(source, 131_072).unwrap();
+        for &depth in depths {
+            pool.insert_content_anchor(&chain, source, depth, 1)
+                .unwrap()
+                .unwrap();
+        }
+        pool.release(source).unwrap();
+        (pool, chain)
+    }
+
+    #[test]
+    fn a_short_survivor_releases_the_long_segment_it_was_split_from() {
+        let (mut pool, chain) = long_pool(&[131_072, 4]);
+        let index = |pool: &KvPool| pool.ancestry.as_ref().unwrap().retained_tokens();
+        assert_eq!(index(&pool), 131_072);
+        let before = pool.prefix_ancestry_work();
+        assert!(pool.remove_anchor(chain.key_at(131_072).unwrap()).unwrap());
+        assert_eq!(index(&pool), 4);
+        assert_eq!(pool.prefix_ancestry_work().since(before).tokens_copied, 4);
+        pool.audit().unwrap();
+        assert_eq!(
+            pool.lookup_anchor(&chain, 100).map(|(_, tokens)| tokens),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn a_survivor_using_most_of_its_segment_keeps_it() {
+        let (mut pool, chain) = long_pool(&[131_072, 4, 100_000]);
+        let index = |pool: &KvPool| pool.ancestry.as_ref().unwrap().retained_tokens();
+        let before = pool.prefix_ancestry_work();
+        assert!(pool.remove_anchor(chain.key_at(131_072).unwrap()).unwrap());
+        assert_eq!(index(&pool), 131_072);
+        assert_eq!(pool.prefix_ancestry_work().since(before).tokens_copied, 0);
+        // Once the deeper survivor goes too, the four-token anchor is all
+        // that uses the segment, so it takes a copy of its own range.
+        assert!(pool.remove_anchor(chain.key_at(100_000).unwrap()).unwrap());
+        assert_eq!(index(&pool), 4);
+        pool.audit().unwrap();
     }
 
     #[test]

@@ -1406,6 +1406,81 @@ fn ancestry_candidate_reaches_captures_and_abandonment() {
     }
 }
 
+/// Serves one prompt to completion, capturing every anchor it makes due, and
+/// returns its restored tokens and captured boundaries.
+fn serve(scheduler: &mut Scheduler, id: u64, tokens: &[u32]) -> (usize, Vec<usize>) {
+    let id = RequestId::new(id);
+    let chain = PrefixChainV1::new(64, Arc::from(tokens), Vec::new()).unwrap();
+    scheduler
+        .submit_with_prefix(
+            RequestSpec::new(id, tokens.len(), 1).unwrap(),
+            Some(PrefixRequestV1::new(Arc::new(chain), true)),
+        )
+        .unwrap();
+    scheduler.admit().unwrap();
+    let cached = scheduler.cached_tokens(id).unwrap();
+    if cached > 0 {
+        scheduler.complete_prefix_restore(id).unwrap();
+    }
+    let mut captured = Vec::new();
+    while scheduler.request_state(id).unwrap() != RequestState::Finished {
+        let (_, captures) = step(scheduler, |_| true);
+        captured.extend(captures.iter().map(PrefixCaptureV1::tokens));
+        capture_new(scheduler, &captures);
+    }
+    scheduler.audit().unwrap();
+    (cached, captured)
+}
+
+/// The acceptance hot-ancestor chain at the served geometry: A=256 ends on
+/// the granule, Q=257 one token past it and D=384 below Q. Each repeat of Q
+/// restores A while A has a descendant, so A is shared and the candidate
+/// ranks it by recency, as LRU does, rather than first for eviction.
+#[test]
+fn a_hot_ancestor_restored_above_its_descendant_ranks_by_recency() {
+    let tokens = prompt(384, 0);
+    for enabled in [false, true] {
+        let mut scheduler = Scheduler::new(
+            SchedulerConfig::new(8, 64, 8192, 8192, 1)
+                .unwrap()
+                .with_guaranteed_prefill_chunks(8192)
+                .unwrap()
+                .with_lone_prefill_expansion(true)
+                .with_prefill_granule(64)
+                .unwrap()
+                .with_prefix_cache(STATE_PAGES)
+                .with_prefix_ancestry(enabled),
+            KvGeometry::new(64, 2048).unwrap(),
+        )
+        .unwrap();
+        let mut seen = Vec::new();
+        for (id, length) in (1..).zip([256, 257, 384, 257, 257]) {
+            let (cached, captured) = serve(&mut scheduler, id, &tokens[..length]);
+            let classes = scheduler.kv_metrics().snapshot().prefix_anchors_by_class;
+            seen.push((cached, captured, classes));
+        }
+        // Classes are [superseded, retained, maximal]. Extending Q from D
+        // consumes A; the first repeat of Q then shares it.
+        let ranks = if enabled {
+            [[0, 0, 1], [0, 1, 1], [1, 1, 1], [0, 2, 1], [0, 2, 1]]
+        } else {
+            [[0, 0, 1], [0, 0, 2], [0, 0, 3], [0, 0, 3], [0, 0, 3]]
+        };
+        let expected: Vec<_> = [
+            (0, vec![256]),
+            (256, vec![257]),
+            (257, vec![384]),
+            (256, vec![257]),
+            (256, vec![257]),
+        ]
+        .into_iter()
+        .zip(ranks)
+        .map(|((cached, captured), classes)| (cached, captured, classes))
+        .collect();
+        assert_eq!(seen, expected, "ancestry {enabled}");
+    }
+}
+
 #[test]
 fn manifest_anchor_allowances_keep_restored_warm_turns_fused() {
     for anchors in [2, 16] {

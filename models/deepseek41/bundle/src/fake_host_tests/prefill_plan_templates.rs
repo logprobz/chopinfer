@@ -370,10 +370,10 @@ fn templates_patch_their_step_values_and_key_their_structure() {
     }
 }
 
-/// Plans that keep anchors are never kept, and an instance without the
-/// candidate keeps no templates.
+/// Plans that keep anchors are never kept, and a default instance keeps
+/// up to 64 templates.
 #[test]
-fn anchored_plans_and_default_instances_keep_no_templates() {
+fn anchored_plans_keep_no_templates_and_default_instances_keep_64() {
     let host = host(true);
     let instance = super::prefill_skip::create_profile_with_options(
         &host,
@@ -412,7 +412,14 @@ fn anchored_plans_and_default_instances_keep_no_templates() {
     let mut instance = instance;
     instance.destroy().unwrap();
     let mut default = super::prefill_skip::create_profile(&host, 8192, true);
-    assert_eq!(plan_templates::counts(default.handle()), None);
+    let request = batch(&[chunk(1, 0, 200_000, 512)], &[], false).0;
+    assert_eq!(outcome(&default, &request), Outcome::Kept);
+    assert!(
+        host.logs
+            .borrow()
+            .iter()
+            .any(|l| l.contains("; 1 of 64 templates,"))
+    );
     default.destroy().unwrap();
 }
 

@@ -8,9 +8,9 @@ use std::collections::BTreeMap;
 pub const SHARED_OVERLAP_MAX_ROWS: &str = "shared_overlap_max_rows";
 pub const PREFILL_PLAN_CACHE_PLANS: &str = "prefill_plan_cache_plans";
 pub const PREFILL_PLAN_CACHE_VERIFY: &str = "prefill_plan_cache_verify";
-/// The candidate switch of upper-skip plan templates: the most templates
-/// kept at once, 0 (the default) lowering every plan the short-prompt cache
-/// does not keep in full.
+/// Upper-skip plan templates: the most templates kept at once, 64 by
+/// default; 0 lowers every plan the short-prompt cache does not keep in
+/// full.
 pub const PREFILL_PLAN_TEMPLATES: &str = "prefill_plan_templates";
 pub const DSPARK_GRAPH_HANDLES_PER_RANK: &str = "dspark_graph_handles_per_rank";
 pub const DIAGNOSTIC_STEP_LOGS: &str = "diagnostic_step_logs";
@@ -79,7 +79,7 @@ pub fn declarations() -> [ModelOptionV1; 7] {
         (
             PREFILL_PLAN_TEMPLATES,
             OptionDefinitionV1::Integer {
-                default: 0,
+                default: MAX_PREFILL_PLAN_TEMPLATES as i64,
                 minimum: 0,
                 maximum: MAX_PREFILL_PLAN_TEMPLATES as i64,
             },
@@ -170,7 +170,7 @@ mod tests {
             shared_overlap_max_rows: u32::MAX,
             prefill_plan_cache_plans: 16,
             prefill_plan_cache_verify: false,
-            prefill_plan_templates: 0,
+            prefill_plan_templates: 64,
             dspark_graph_handles_per_rank: 512,
             diagnostic_step_logs: false,
             prefill_anchor_items: 0,

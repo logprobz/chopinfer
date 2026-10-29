@@ -1,18 +1,15 @@
-//! Route coverage with upper-skip plan templates, the default-off
-//! `prefill_plan_templates` candidate, in its verify mode: both served
-//! profiles, their instances keeping sixteen templates and lowering every
-//! reused one again, refusing the step unless the fresh plan is the same.
-//! Each sweep must reuse templates, so the comparison runs: besides the
-//! served envelope, every worker runs one cut structure at least twice.
-//! The servings are the profiles' own; the options are the instance's
-//! overrides. While the candidate is off by default, only the quick tier
-//! sweeps it; the other tiers say so and stop.
+//! Route coverage of upper-skip plan templates in their verify mode: both
+//! served profiles, their instances lowering every reused template again
+//! and refusing the step unless the fresh plan is the same. Each sweep must
+//! reuse templates, so the comparison runs: besides the served envelope,
+//! every worker runs one cut structure at least twice. The servings are
+//! the profiles' own; the verify mode is the instance's override. Every
+//! tier of the default sweeps keeps templates; this comparison runs in the
+//! quick tier only, and the other tiers say so and stop.
 use super::*;
 use bundle_runtime::fake_host::conformance::route_guard;
 use conformance::Startup;
-use model_deepseek41_contract::execution_options::{
-    PREFILL_PLAN_CACHE_VERIFY, PREFILL_PLAN_TEMPLATES,
-};
+use model_deepseek41_contract::execution_options::PREFILL_PLAN_CACHE_VERIFY;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
@@ -68,12 +65,9 @@ impl Startup for Templated {
     }
     fn new(serving: &conformance::Serving) -> Self {
         let mut serving = serving.clone();
-        for (name, value) in [
-            (PREFILL_PLAN_TEMPLATES, "16"),
-            (PREFILL_PLAN_CACHE_VERIFY, "true"),
-        ] {
-            serving.model_options.insert(name.into(), value.into());
-        }
+        serving
+            .model_options
+            .insert(PREFILL_PLAN_CACHE_VERIFY.into(), "true".into());
         Self {
             served: Served::new(&serving),
             seen: Cell::new(0),

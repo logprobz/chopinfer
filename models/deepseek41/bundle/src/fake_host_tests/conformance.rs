@@ -528,11 +528,14 @@ impl conformance::Startup for Served {
             );
         }
     }
+    /// Each worker's instance keeps up to 64 upper-skip plan templates of
+    /// 21 to 31 MiB, so five workers keep the longer tiers within the 16 GiB
+    /// sweep budget.
     fn route_threads(tier: conformance::route_guard::Tier) -> usize {
         if tier == conformance::route_guard::Tier::Quick {
             4
         } else {
-            8
+            5
         }
     }
     fn route_device(&self) -> &bundle_runtime::fake_host::FakeDevice<Self::Observer> {

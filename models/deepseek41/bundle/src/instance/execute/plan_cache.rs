@@ -15,7 +15,7 @@
 //!
 //! A plan this cache does not keep may still be kept as a template by its
 //! structure, with its index selections lowered again each step
-//! (`plan_templates`, off by default).
+//! (`plan_templates`).
 //!
 //! `prefill_plan_cache_verify` lowers every hit, and every reused template,
 //! again and refuses the step if the fresh plan differs from the kept one.
@@ -67,7 +67,8 @@ pub(crate) struct Cache {
     hits: Cell<u64>,
     misses: Cell<u64>,
     evictions: Cell<u64>,
-    /// The candidate's templates of the plans this cache does not keep.
+    /// Templates of the plans this cache does not keep, none at a limit
+    /// of 0.
     templates: Option<plan_templates::Templates>,
 }
 

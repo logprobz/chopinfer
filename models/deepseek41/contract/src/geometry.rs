@@ -522,12 +522,12 @@ mod tests {
         assert_eq!(options[1].name, "dspark_coupled_drafts");
         assert_eq!(options[2].name, "dspark_draft_chunk_items");
         assert_eq!(options[4].name, "prefill_anchor_items");
-        // The default-off plan template candidate.
+        // Upper-skip plan templates, 64 by default.
         assert_eq!(options[8].name, "prefill_plan_templates");
         assert_eq!(
             options[8].definition,
             OptionDefinitionV1::Integer {
-                default: 0,
+                default: 64,
                 minimum: 0,
                 maximum: 64
             }

@@ -1,6 +1,5 @@
-//! Upper-skip plans kept as templates by their structure, behind the
-//! candidate switch `prefill_plan_templates` (the most templates kept; 0,
-//! the default, keeps none).
+//! Upper-skip plans kept as templates by their structure, at most
+//! `prefill_plan_templates` at once (64 by default; 0 keeps none).
 //!
 //! `skip::Plan::lower` reads of its run the phase, the input layout, the
 //! scored rows, the cached-attention range and the layout `skip::Layout`

@@ -19,13 +19,19 @@ fn with<T>(handle: BundleHandleV1, run: impl FnOnce(&mut Instance) -> T) -> T {
     result.expect("a live instance")
 }
 
+/// A prefill planned outside a step (`plan`).
+pub(crate) struct Planned {
+    pub elapsed: Duration,
+    /// Each rank's upper-skip launches.
+    pub launches: Vec<usize>,
+    /// Whether the step's Engram plan was a kept template's, none without
+    /// an Engram plan.
+    pub engram: Option<bool>,
+}
+
 /// Plans the prefill of the original batch `request` on the instance
-/// `handle` as an upper-skip step, as `plan_run` does in execute; returns
-/// its host time and each rank's upper-skip launches.
-pub(crate) fn plan(
-    handle: BundleHandleV1,
-    request: &[u8],
-) -> Result<(Duration, Vec<usize>), String> {
+/// `handle` as an upper-skip step, as `plan_run` does in execute.
+pub(crate) fn plan(handle: BundleHandleV1, request: &[u8]) -> Result<Planned, String> {
     with(handle, |instance| {
         instance.skip_prefill = true;
         let step = instance.pack(request).map_err(|e| format!("pack: {e:?}"))?;
@@ -33,6 +39,7 @@ pub(crate) fn plan(
             (Some(_), Some(engram)) => Some(engram.hash(&step.prefill)?),
             _ => None,
         };
+        let reuses = skip::engram_reuses();
         let started = Instant::now();
         let run = instance
             .plan_run(step.prefill, None, hashed)
@@ -43,7 +50,15 @@ pub(crate) fn plan(
             .skip()
             .ok_or("not an upper-skip plan")?
             .launches();
-        Ok((elapsed, launches))
+        let engram = run
+            .execution
+            .prefill_engram()
+            .map(|_| skip::engram_reuses() > reuses);
+        Ok(Planned {
+            elapsed,
+            launches,
+            engram,
+        })
     })
 }
 
@@ -57,7 +72,7 @@ pub(crate) fn time(handle: BundleHandleV1, request: &[u8], repeats: usize) -> (D
     let mut planned = Vec::new();
     let mut lowered = Vec::new();
     for _ in 0..repeats {
-        planned.push(plan(handle, request).unwrap().0);
+        planned.push(plan(handle, request).unwrap().elapsed);
         lowered.push(with(handle, |instance| {
             let step = instance.pack(request).unwrap();
             let hashed = match (&instance.dspark, &instance.engram) {

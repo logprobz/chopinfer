@@ -159,10 +159,11 @@ enum Outcome {
     Lowered,
 }
 
-/// Plans `request` outside a step and says what the templates did.
+/// Plans `request` outside a step and says what the templates did. A
+/// reused template reuses its Engram plan too, made at its first step.
 fn outcome(instance: &BundleInstanceV1, request: &[u8]) -> Outcome {
     let before = counts(instance);
-    plan_timing::plan(instance.handle(), request).unwrap_or_else(|e| panic!("{e}"));
+    let planned = plan_timing::plan(instance.handle(), request).unwrap_or_else(|e| panic!("{e}"));
     let after = counts(instance);
     let delta = (
         after.hits - before.hits,
@@ -171,13 +172,17 @@ fn outcome(instance: &BundleInstanceV1, request: &[u8]) -> Outcome {
         after.kept - before.kept,
         after.busy - before.busy,
     );
-    match delta {
+    let outcome = match delta {
         (1, 0, 0, 0, 0) => Outcome::Reused,
         (0, 1, 0, 1, 0) => Outcome::Kept,
         (0, 0, 1, 1, 0) => Outcome::Refused,
         (0, 0, 0, 0, 0) => Outcome::Lowered,
         other => panic!("unexpected template counts {other:?}"),
+    };
+    if let Some(reused) = planned.engram {
+        assert_eq!(reused, outcome == Outcome::Reused, "{outcome:?}");
     }
+    outcome
 }
 
 /// Every input of a long-context plan, changed one at a time: the step's
@@ -295,6 +300,13 @@ fn templates_patch_their_step_values_and_key_their_structure() {
                 "dspark={dspark} {name}"
             );
         }
+        // A DSpark prefill takes prepared Engram gathers (an AR one hashes
+        // its rows apart), so its reused templates reuse their Engram plans
+        // (`outcome`).
+        let engram = plan_timing::plan(instance.handle(), &plain(base))
+            .unwrap()
+            .engram;
+        assert_eq!(engram, dspark.then_some(true), "dspark={dspark}");
         // The DMA is part of the key: without it the base takes another
         // template, and with it the base reuses its own.
         let without =
@@ -364,7 +376,7 @@ fn verify_refuses_a_template_whose_selections_were_not_patched() {
     let refused = crate::instance::execute::skip::without_patches(|| {
         plan_timing::plan(instance.handle(), &request(200_128))
     });
-    assert!(refused.is_err(), "{refused:?}");
+    assert!(refused.is_err());
     assert!(
         host.logs
             .borrow()
@@ -630,7 +642,9 @@ fn planning_time() {
             let launches = {
                 let host = host(dspark);
                 let mut instance = create(&host, 0, false);
-                let launches = plan_timing::plan(instance.handle(), &request).unwrap().1;
+                let launches = plan_timing::plan(instance.handle(), &request)
+                    .unwrap()
+                    .launches;
                 instance.destroy().unwrap();
                 launches
             };

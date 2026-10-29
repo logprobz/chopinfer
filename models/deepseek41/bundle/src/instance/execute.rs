@@ -756,23 +756,20 @@ impl Instance {
                 .as_ref()
                 .filter(|_| run.phase.prefill() && run.sync_engram.is_none())
             {
-                let (programs, flags, stages) = if let Some(skip) = run.execution.skip() {
-                    let body = skip.body();
-                    (&body.0, &body.1, &body.2)
+                let plan = if let Some(skip) = run.execution.skip() {
+                    skip.engram(gathers, self.plans.verifies())
                 } else {
-                    (&run.programs, &run.collectives, &run.stages)
-                };
-                let mut plan = super::prefill_engram::Plan::new(gathers, programs, flags, stages)
-                    .map_err(|error| {
+                    super::prefill_engram::Plan::new(
+                        gathers,
+                        &run.programs,
+                        &run.collectives,
+                        &run.stages,
+                    )
+                }
+                .map_err(|error| {
                     self.log(&error);
                     BundleStatusV1::InternalError
                 })?;
-                if let Some(skip) = run.execution.skip() {
-                    skip.prepare_engram(&mut plan, gathers).map_err(|error| {
-                        self.log(&error);
-                        BundleStatusV1::InternalError
-                    })?;
-                }
                 match &mut run.execution {
                     Execution::Skip { engram, .. } => *engram = Some(plan),
                     _ => run.execution = Execution::PrefillEngram(plan),

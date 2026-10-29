@@ -7,14 +7,14 @@ use bundle_runtime::dispatch::DispatchError;
 use bundle_runtime::pipeline::{PreparedLaunch, check_collectives};
 use std::ops::Range;
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::instance) struct Plan {
     ranges: Vec<Vec<Range<usize>>>,
     pub(in crate::instance) dma: Vec<Vec<DmaPiece>>,
 }
 
 /// One original compute interval, split only at an Engram consumer.
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::instance) struct DmaPiece {
     pub spans: Vec<Range<usize>>,
     /// Join before this piece, on every target stream.
@@ -61,24 +61,98 @@ impl Plan {
             sections.push(start..program.len());
             ranges.push(sections);
         }
-        for piece in 0..=gathers.layers.len() {
+        let plan = Self {
+            ranges,
+            dma: Vec::new(),
+        };
+        plan.check_sections(programs, flags)?;
+        Ok(plan)
+    }
+
+    /// Each section's collectives match across the ranks.
+    fn check_sections(
+        &self,
+        programs: &[Vec<PreparedLaunch>],
+        flags: &[Vec<bool>],
+    ) -> Result<(), String> {
+        for piece in 0..self.ranges.first().map_or(0, Vec::len) {
             let ops: Vec<_> = programs
                 .iter()
                 .enumerate()
-                .map(|(rank, p)| &p[ranges[rank][piece].clone()])
+                .map(|(rank, p)| &p[self.ranges[rank][piece].clone()])
                 .collect();
             let waits: Vec<_> = flags
                 .iter()
                 .enumerate()
-                .map(|(rank, p)| &p[ranges[rank][piece].clone()])
+                .map(|(rank, p)| &p[self.ranges[rank][piece].clone()])
                 .collect();
             check_collectives(&ops, &waits)
                 .map_err(|e| format!("prefill Engram collective boundary: {e:?}"))?;
         }
-        Ok(Self {
-            ranges,
-            dma: Vec::new(),
-        })
+        Ok(())
+    }
+
+    /// This plan for `programs`, which issue the stages and flags of the
+    /// programs it was made for and differ from them only in each rank's
+    /// launches `changed`: `new`'s checks, with the pending-span audit of
+    /// the changed launches alone. `new` audits each launch on its own
+    /// (`audit`), so the unchanged launches pass as they passed before.
+    pub(in crate::instance) fn reuse(
+        &self,
+        gathers: &Gathers,
+        programs: &[Vec<PreparedLaunch>],
+        flags: &[Vec<bool>],
+        changed: impl IntoIterator<Item = (usize, Range<usize>)>,
+    ) -> Result<Self, String> {
+        let extent =
+            self.ranges.len() == programs.len()
+                && flags.len() == programs.len()
+                && programs.iter().zip(flags).zip(&self.ranges).all(
+                    |((program, flags), sections)| {
+                        flags.len() == program.len()
+                            && sections.len() == gathers.layers.len() + 1
+                            && sections.last().map(|last| last.end) == Some(program.len())
+                    },
+                );
+        if !gathers.idle() || !extent {
+            return Err("prefill Engram program extent or lifecycle".into());
+        }
+        for (rank, range) in changed {
+            let launches = programs
+                .get(rank)
+                .and_then(|program| program.get(range.clone()))
+                .ok_or("prefill Engram changed launches")?;
+            self.audit(gathers, rank, range.start, launches)?;
+        }
+        self.check_sections(programs, flags)?;
+        Ok(self.clone())
+    }
+
+    /// The audit `new` makes of rank `rank`'s launches from `at`: a launch
+    /// before a layer's consumer touches none of the spans that layer and
+    /// the later layers still have pending.
+    fn audit(
+        &self,
+        gathers: &Gathers,
+        rank: usize,
+        at: usize,
+        launches: &[PreparedLaunch],
+    ) -> Result<(), String> {
+        let sections = self.ranges.get(rank).ok_or("prefill Engram rank extent")?;
+        for (offset, launch) in launches.iter().enumerate() {
+            let index = at + offset;
+            let Some(first) = sections[..gathers.layers.len()]
+                .iter()
+                .position(|section| index < section.end)
+            else {
+                continue;
+            };
+            crate::shared_overlap::disjoint_copy_spans(
+                &gathers.pending_spans(first),
+                std::slice::from_ref(launch),
+            )?;
+        }
+        Ok(())
     }
 
     /// Build ordered joins inside the actual DMA compute intervals. A moved
@@ -273,6 +347,84 @@ mod tests {
         assert!(Plan::new(&g, &clean, &[vec![false; 3]], &stages).is_err());
         g.pending.set(true);
         assert!(Plan::new(&g, &clean, &flags, &stages).is_err());
+    }
+
+    /// A plan reused for a program that changes one launch refuses it
+    /// exactly when a fresh plan does, and equals the fresh plan otherwise.
+    #[test]
+    fn reused_plans_refuse_exactly_the_programs_fresh_plans_refuse() {
+        let g = gathers();
+        let stages = vec![vec![
+            Stage::Embedding,
+            Stage::EngramRows(1),
+            Stage::ExpandStreams,
+            Stage::EngramRows(14),
+            Stage::FinalNorm,
+        ]];
+        let flags = vec![vec![false; 5]];
+        let inputs = [9, 3, 9, 4, 1];
+        let program = |at: usize, input: u32| {
+            vec![
+                (0..5)
+                    .map(|index| op(span(if index == at { input } else { inputs[index] })))
+                    .collect::<Vec<_>>(),
+            ]
+        };
+        let plan = Plan::new(&g, &program(0, inputs[0]), &flags, &stages).unwrap();
+        let mut outcomes = [0; 2];
+        for at in 0..5 {
+            for input in [1, 2, 3, 4, 9] {
+                let changed = program(at, input);
+                let fresh = Plan::new(&g, &changed, &flags, &stages);
+                let reused = plan.reuse(&g, &changed, &flags, [(0, at..at + 1)]);
+                match (fresh, reused) {
+                    (Ok(fresh), Ok(reused)) => {
+                        assert_eq!(fresh, reused);
+                        outcomes[0] += 1;
+                    }
+                    (Err(fresh), Err(reused)) => {
+                        assert_eq!(fresh, reused);
+                        outcomes[1] += 1;
+                    }
+                    (fresh, reused) => panic!("launch {at} reads {input}: {fresh:?} {reused:?}"),
+                }
+            }
+        }
+        // The first launch may touch no pending span, the two before layer
+        // 14's consumer only layer 1's, the rest any.
+        assert_eq!(outcomes, [17, 8]);
+        let clean = program(0, inputs[0]);
+        assert!(plan.reuse(&g, &clean, &flags, [(1, 0..1)]).is_err());
+        assert!(plan.reuse(&g, &clean, &flags, [(0, 4..6)]).is_err());
+        assert!(plan.reuse(&g, &clean[..0], &flags, []).is_err());
+        assert!(plan.reuse(&g, &clean, &[vec![false; 4]], []).is_err());
+        g.pending.set(true);
+        assert!(plan.reuse(&g, &clean, &flags, []).is_err());
+    }
+
+    #[test]
+    fn reused_plans_check_every_section_collective_again() {
+        let g = gathers();
+        let stages = vec![
+            vec![
+                Stage::Embedding,
+                Stage::EngramRows(1),
+                Stage::EngramRows(14)
+            ];
+            2
+        ];
+        let programs = || {
+            (0..2)
+                .map(|_| vec![op(span(9)), op(span(5)), op(span(6))])
+                .collect::<Vec<_>>()
+        };
+        let flags = vec![vec![false, true, false]; 2];
+        let plan = Plan::new(&g, &programs(), &flags, &stages).unwrap();
+        assert_eq!(plan.reuse(&g, &programs(), &flags, []).unwrap(), plan);
+        let mut other = programs();
+        other[1][1].symbol = "other".into();
+        let fresh = Plan::new(&g, &other, &flags, &stages).unwrap_err();
+        assert_eq!(plan.reuse(&g, &other, &flags, []).unwrap_err(), fresh);
     }
 
     #[test]

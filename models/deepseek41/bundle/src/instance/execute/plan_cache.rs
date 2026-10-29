@@ -91,6 +91,11 @@ impl Cache {
         }
     }
 
+    /// Whether every reused plan is lowered again and compared.
+    pub(super) fn verifies(&self) -> bool {
+        self.mode == Mode::Verify
+    }
+
     /// What the templates did, none without templates.
     #[cfg(test)]
     pub(super) fn template_counts(&self) -> Option<bundle_runtime::template::Counts> {
@@ -130,7 +135,7 @@ impl Cache {
         let key = key(run);
         let Some(key) = key else {
             if let Some(templates) = &self.templates {
-                return templates.plan(instance, run, self.mode == Mode::Verify);
+                return templates.plan(instance, run, self.verifies());
             }
             return skip::Plan::prepare(instance, run).map(Rc::new);
         };

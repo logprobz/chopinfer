@@ -19,8 +19,13 @@
 //! set of index batches its contexts take. Plans that keep anchors, read
 //! media rows or take position axes are never kept.
 //!
+//! A template keeps the Engram plan of its first step with prepared
+//! gathers, and later steps audit only its index selections against the
+//! gathers again (`skip::Plan::engram`).
+//!
 //! `prefill_plan_cache_verify` lowers every reused template again and
-//! refuses the step if the fresh plan differs.
+//! makes every reused Engram plan again, and refuses the step if either
+//! fresh plan differs.
 
 use super::{PREFILL, Run, skip};
 use crate::instance::Instance;
@@ -103,10 +108,12 @@ impl Templates {
             }
             return Ok(plan);
         }
-        let plan = Rc::new(skip::Plan::lower(instance, run, &layout)?);
+        let mut plan = skip::Plan::lower(instance, run, &layout)?;
         if !plan.templatable() {
-            return Ok(plan);
+            return Ok(Rc::new(plan));
         }
+        plan.keep_engram();
+        let plan = Rc::new(plan);
         let dropped = self.kept.keep(key, Rc::clone(&plan));
         let counts = self.kept.counts();
         let refused = if counts.refused > refused {

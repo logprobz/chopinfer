@@ -3,6 +3,7 @@
 
 use super::{PREFILL, Programs, Run};
 use crate::buffers::row_range;
+use crate::instance::prefill_engram::{Gathers, Plan as Engram};
 use crate::instance::{Instance, dspark::PrefillFeatureRange};
 use crate::lower::Lowering;
 use crate::ops::Lowered;
@@ -13,6 +14,7 @@ use bundle_runtime::upload::DeviceInputs;
 use model_deepseek41_contract::prefill_cone::{self, Item};
 use model_deepseek41_contract::serving::PREFILL_TOKENS;
 use runtime_bundle_abi::{BundleAbiError, DeviceBufferSpanV1 as Span};
+use std::cell::OnceCell;
 use std::ops::Range;
 
 type Copy = (Span, Span);
@@ -38,6 +40,15 @@ pub(crate) fn without_patches<T>(run: impl FnOnce() -> T) -> T {
     run()
 }
 
+#[cfg(test)]
+thread_local! { static ENGRAM_REUSES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+
+/// The Engram plans kept templates reused on this thread (`Plan::engram`).
+#[cfg(test)]
+pub(crate) fn engram_reuses() -> u64 {
+    ENGRAM_REUSES.get()
+}
+
 pub(super) struct Plan {
     /// Each rank's copies before the step writes its slots: the anchor
     /// spares' seeds (`seeds`).
@@ -51,6 +62,9 @@ pub(super) struct Plan {
     copies: Vec<Vec<Copy>>,
     /// The (request, tokens) each anchor item keeps in its spare.
     kept: Vec<(u64, u64)>,
+    /// A kept template's Engram plan, made at its first step with prepared
+    /// gathers (`engram`); none for a plan not kept.
+    engram: Option<OnceCell<Engram>>,
 }
 
 /// An index selection of the body: its layer, and the packed rows of the
@@ -588,6 +602,7 @@ impl Plan {
                 .iter()
                 .map(|anchor| (anchor.request, u64::from(anchor.tokens)))
                 .collect(),
+            engram: None,
         })
     }
 
@@ -667,10 +682,6 @@ impl Plan {
         Ok(patched)
     }
 
-    pub(super) fn body(&self) -> &Programs {
-        &self.body
-    }
-
     /// Each rank's body and head launches.
     #[cfg(test)]
     pub(super) fn launches(&self) -> Vec<usize> {
@@ -691,11 +702,49 @@ impl Plan {
         dma::applies(instance, run)
     }
 
-    pub(super) fn prepare_engram(
-        &self,
-        plan: &mut crate::instance::prefill_engram::Plan,
-        gathers: &crate::instance::prefill_engram::Gathers,
-    ) -> Result<(), String> {
+    /// Keeps this template's first Engram plan for its later steps
+    /// (`engram`).
+    pub(super) fn keep_engram(&mut self) {
+        self.engram = Some(OnceCell::new());
+    }
+
+    /// The body's Engram plan with `gathers`. A kept template made it at its
+    /// first step with them and has since changed only its index
+    /// selections, so it audits only those launches again
+    /// (`prefill_engram::Plan::reuse`) and checks the collectives of its DMA
+    /// pieces again; its DMA's own launches and the gathers' spans are those
+    /// it planned with. `verify` makes the plan in full too and refuses a
+    /// differing one.
+    pub(super) fn engram(&self, gathers: &Gathers, verify: bool) -> Result<Engram, String> {
+        let fresh = || {
+            let mut plan = Engram::new(gathers, &self.body.0, &self.body.1, &self.body.2)?;
+            self.prepare_engram(&mut plan, gathers)?;
+            Ok::<_, String>(plan)
+        };
+        let Some(kept) = &self.engram else {
+            return fresh();
+        };
+        let Some(plan) = kept.get() else {
+            let plan = fresh()?;
+            return Ok(kept.get_or_init(|| plan).clone());
+        };
+        let sites = self
+            .sites
+            .iter()
+            .map(|site| (site.rank, site.at..site.at + site.len));
+        let plan = plan.reuse(gathers, &self.body.0, &self.body.1, sites)?;
+        if self.dma.is_some() {
+            plan.check_dma_collectives(&self.body.0, &self.body.1)?;
+        }
+        if verify && plan != fresh()? {
+            return Err("a reused prefill Engram plan differs from a fresh one".into());
+        }
+        #[cfg(test)]
+        ENGRAM_REUSES.set(ENGRAM_REUSES.get() + 1);
+        Ok(plan)
+    }
+
+    fn prepare_engram(&self, plan: &mut Engram, gathers: &Gathers) -> Result<(), String> {
         if let Some(dma) = &self.dma {
             dma.prepare_engram(plan, gathers)?;
             plan.check_dma_collectives(&self.body.0, &self.body.1)?;

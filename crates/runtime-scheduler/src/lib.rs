@@ -262,6 +262,11 @@ pub const DEFAULT_DECODE_TBT_TARGET_MS: u32 = 100;
 pub const DEFAULT_MIXED_MIN_PREFILL_TOKENS: usize = 512;
 /// The most decode-only steps `PrefillBudget::Tbt` may put between chunks.
 pub const MAXIMUM_MIXED_DECODE_STEPS: u32 = 8;
+/// Adaptive prefill sizing: a backlog whose remaining prefill uncapped
+/// chunks are predicted to clear within this many microseconds is served
+/// as without the switch. It costs each decoding request a few long gaps,
+/// while cutting it would cost its prompts a fixed step cost per cut.
+pub const TRANSIENT_BACKLOG_MICROS: u64 = 4_000_000;
 
 /// The decode stall bound of `PrefillBudget::Tbt`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -565,21 +570,25 @@ impl SchedulerConfig {
     }
 
     /// Candidate switch, off by default: with [`PrefillBudget::Tbt`], size the
-    /// prefill cap of a step beside decoding requests from demand instead of
-    /// the fixed target. Each step takes the cap that costs blocked
-    /// requests the least time per prefill token, priced over every legal
-    /// cap from the progress floor up and no cap; a decoding request's
-    /// time counts only past the 250 ms and 1 s stall lines. A grid
-    /// request with timing cuts is cut at that cap; other requests take it
-    /// as the step's prefill budget, as with the fixed target.
+    /// prefill cap of a step beside decoding requests from a decode cadence
+    /// instead of the fixed target. A decoding request's gap is the step it
+    /// shares, so the cap is the largest legal one (the progress floor, each
+    /// 128-token multiple up to what the waiting chunks can take, or no
+    /// cap) whose predicted step, with a margin from the step model's recent
+    /// errors, stays within the target; never a smaller one, since each
+    /// extra step adds its fixed cost to the prefill. A backlog that uncapped
+    /// chunks clear within `TRANSIENT_BACKLOG_MICROS` is served as without
+    /// the switch: whole grid chunks, or the fixed-target cap. A grid
+    /// request with timing cuts is cut at the cap; other requests take it as
+    /// the step's prefill budget.
     #[must_use]
     pub const fn with_adaptive_prefill_budget(mut self, enabled: bool) -> Self {
         self.adaptive_prefill_budget = enabled;
         self
     }
 
-    /// Whether the TBT cap is sized from demand: the candidate switch and
-    /// the TBT budget together.
+    /// Whether the TBT cap is sized from the decode cadence: the candidate
+    /// switch and the TBT budget together.
     #[must_use]
     pub const fn adaptive_prefill_budget(self) -> bool {
         self.adaptive_prefill_budget && matches!(self.prefill_budget, PrefillBudget::Tbt(_))
@@ -2243,6 +2252,12 @@ impl Scheduler {
         let trained = matches!(self.config.prefill_budget, PrefillBudget::Tbt(_))
             && self.step_model.trained();
         let owed_decode_step = trained && !decode.is_empty() && self.mixed_decode_steps > 0;
+        // Adaptive sizing: the predicted time uncapped chunks need to clear
+        // the waiting prefill, None until the model trains.
+        let backlog = (self.config.adaptive_prefill_budget() && !prefill.is_empty())
+            .then(|| self.prefill_backlog_micros(&prefill, decode.len()))
+            .flatten();
+        let backlogged = backlog.is_some_and(|micros| micros > TRANSIENT_BACKLOG_MICROS);
         let decode_room = self
             .config
             .scheduled_token_budget
@@ -2273,74 +2288,91 @@ impl Scheduler {
                 // bound, not a latency guarantee.
                 let floor = policy.min_prefill_tokens().min(decode_room);
                 if self.config.adaptive_prefill_budget && !prefill.is_empty() {
-                    // Sized from demand: what the waiting requests' next
-                    // uncapped chunks could take together. A grid chunk too
-                    // long to share the step runs alone when uncapped.
-                    let (mut tokens, mut mixed, mut longest, mut alone) =
-                        (0usize, 0usize, 0usize, 0usize);
-                    let mut grid_anchors = self.config.grid_anchor_items;
-                    let mut manifest_anchors = self.config.anchor_items;
-                    for &index in &prefill {
-                        let record = &self.requests[index];
-                        let chunk = Self::chunk_tokens(
-                            record,
-                            self.config.prefill_chunk_limit,
-                            None,
-                            self.config.maximum_scored_rows,
-                            self.config.prefill_granule,
-                            false,
-                        );
-                        let remaining = Self::prefill_target(record) - record.prefilled_tokens;
-                        let anchors = if record.grid_anchors {
-                            &mut grid_anchors
-                        } else {
-                            &mut manifest_anchors
-                        };
-                        let runs_alone =
-                            self.config.guaranteed_prefill_chunks.is_some() && chunk > decode_room;
-                        // A timing cap stops at the anchor, but an uncapped
-                        // item may include its tail. Price those separately;
-                        // a cap at the anchor is then a distinct candidate.
-                        let whole = if *anchors > 0
-                            && remaining <= self.config.scheduled_token_budget
-                            && (remaining <= decode_room || runs_alone)
-                            && Self::spannable_anchor(
-                                record,
-                                self.config.prefill_chunk_limit,
-                                self.config.maximum_scored_rows,
-                            )
-                            .is_some()
-                        {
-                            *anchors -= 1;
-                            remaining
-                        } else {
-                            chunk
-                        };
-                        tokens = tokens.saturating_add(chunk);
-                        mixed =
-                            mixed.saturating_add(if whole <= decode_room { whole } else { chunk });
-                        longest = longest.max(chunk);
-                        alone = alone.max(whole);
+                    match backlog {
+                        // Until the model trains, the progress floor.
+                        None => Some(floor),
+                        // A transient backlog is served as without the
+                        // switch: whole grid chunks, or the fixed target.
+                        Some(_) if !backlogged => {
+                            self.config.guaranteed_prefill_chunks.is_none().then(|| {
+                                self.step_model
+                                    .budget(decode.len(), context, decode_room, policy)
+                                    .unwrap_or(floor)
+                            })
+                        }
+                        Some(_) => {
+                            // What the waiting requests' next uncapped
+                            // chunks could take together. A grid chunk too
+                            // long to share the step runs alone when uncapped.
+                            let (mut tokens, mut mixed, mut longest, mut alone) =
+                                (0usize, 0usize, 0usize, 0usize);
+                            let mut grid_anchors = self.config.grid_anchor_items;
+                            let mut manifest_anchors = self.config.anchor_items;
+                            for &index in &prefill {
+                                let record = &self.requests[index];
+                                let chunk = Self::chunk_tokens(
+                                    record,
+                                    self.config.prefill_chunk_limit,
+                                    None,
+                                    self.config.maximum_scored_rows,
+                                    self.config.prefill_granule,
+                                    false,
+                                );
+                                let remaining =
+                                    Self::prefill_target(record) - record.prefilled_tokens;
+                                let anchors = if record.grid_anchors {
+                                    &mut grid_anchors
+                                } else {
+                                    &mut manifest_anchors
+                                };
+                                let runs_alone = self.config.guaranteed_prefill_chunks.is_some()
+                                    && chunk > decode_room;
+                                // A timing cap stops at the anchor, but an
+                                // uncapped item may include its tail. Price
+                                // those separately: the uncapped step with the
+                                // fused tail, the cuts up to the anchor.
+                                let whole = if *anchors > 0
+                                    && remaining <= self.config.scheduled_token_budget
+                                    && (remaining <= decode_room || runs_alone)
+                                    && Self::spannable_anchor(
+                                        record,
+                                        self.config.prefill_chunk_limit,
+                                        self.config.maximum_scored_rows,
+                                    )
+                                    .is_some()
+                                {
+                                    *anchors -= 1;
+                                    remaining
+                                } else {
+                                    chunk
+                                };
+                                tokens = tokens.saturating_add(chunk);
+                                mixed = mixed.saturating_add(if whole <= decode_room {
+                                    whole
+                                } else {
+                                    chunk
+                                });
+                                longest = longest.max(chunk);
+                                alone = alone.max(whole);
+                            }
+                            let whole = if self.config.guaranteed_prefill_chunks.is_some()
+                                && longest > decode_room
+                            {
+                                mixed_budget::Uncapped::Alone(alone)
+                            } else {
+                                mixed_budget::Uncapped::Mixed(mixed.min(decode_room))
+                            };
+                            self.step_model
+                                .cadence_budget(
+                                    decode.len(),
+                                    context,
+                                    tokens.min(decode_room),
+                                    whole,
+                                    policy,
+                                )
+                                .unwrap_or(Some(floor))
+                        }
                     }
-                    let whole = if self.config.guaranteed_prefill_chunks.is_some()
-                        && longest > decode_room
-                    {
-                        mixed_budget::Uncapped::Alone(alone)
-                    } else {
-                        mixed_budget::Uncapped::Mixed(mixed.min(decode_room))
-                    };
-                    self.step_model
-                        .adaptive_budget(
-                            mixed_budget::Demand {
-                                decode: decode.len(),
-                                waiting: prefill.len(),
-                                context,
-                            },
-                            tokens.min(decode_room),
-                            whole,
-                            policy,
-                        )
-                        .unwrap_or(Some(floor))
                 } else {
                     Some(
                         self.step_model
@@ -4187,6 +4219,38 @@ impl Scheduler {
         } else {
             0
         }
+    }
+
+    /// Adaptive sizing: the predicted time to prefill what the `prefill`
+    /// candidates have left in uncapped chunks (to each grid boundary, or of
+    /// the chunk limit), one step per chunk beside `decode` decoding
+    /// requests; None until the step model trains.
+    fn prefill_backlog_micros(&self, prefill: &[usize], decode: usize) -> Option<u64> {
+        let mut total = 0u64;
+        for &index in prefill {
+            let record = &self.requests[index];
+            let target = Self::prefill_target(record);
+            let chunk = record
+                .guaranteed_prefill_chunks
+                .unwrap_or(self.config.prefill_chunk_limit)
+                .max(1);
+            let grid = record.guaranteed_prefill_chunks.is_some();
+            let mut start = record.prefilled_tokens;
+            let chunks = std::iter::from_fn(|| {
+                (start < target).then(|| {
+                    let end = if grid {
+                        (start / chunk + 1).saturating_mul(chunk).min(target)
+                    } else {
+                        start.saturating_add(chunk).min(target)
+                    };
+                    let item = (end - start, start);
+                    start = end;
+                    item
+                })
+            });
+            total = total.saturating_add(self.step_model.drain_micros(chunks, decode)?);
+        }
+        Some(total)
     }
 
     /// How long a request has waited for prefill: since its last scheduled

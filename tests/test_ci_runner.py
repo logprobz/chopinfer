@@ -865,6 +865,22 @@ class RouteSweeps(unittest.TestCase):
                     patch("sys.stdout", new_callable=io.StringIO), patch("sys.stderr", new_callable=io.StringIO):
                 self.assertEqual(route_sweeps.run(binaries, "quick"), expected)
 
+    def test_quick_only_candidates_need_an_executed_profile(self):
+        only = "tp4-ar: route sweep covers the quick tier only\ntest result: ok. 1 passed; 0 failed; 0 ignored;"
+        cases = ('12 cases, 0.1s\npeak_rss_bytes=1024\n'
+                 '{"dense_rotation_period": 2, "boundary_rows": [1, 2], "dense_rows": [6]}\n'
+                 'test result: ok. 1 passed; 0 failed; 0 ignored;')
+        listing = "route_sweep::default: test\ncandidate::route_sweep::tp4_ar: test"
+        binaries = {"bundle": ("fixture", ".", {})}
+        for outputs, expected in [([cases, only], 0), ([only, only], 1)]:
+            with patch.object(route_sweeps.subprocess, "check_output", return_value=listing), \
+                    patch.object(route_sweeps.subprocess, "run", side_effect=[subprocess.CompletedProcess([], 0, s) for s in outputs]), \
+                    patch("sys.stdout", new_callable=io.StringIO), patch("sys.stderr", new_callable=io.StringIO):
+                self.assertEqual(route_sweeps.run(binaries, "cpu"), expected)
+        # In the quick tier the candidate must run its own cases.
+        with self.assertRaises(RuntimeError):
+            route_sweeps.check("candidate", only, 0, 1, "quick")
+
     def test_new_model_is_discovered_from_its_required_allowlist(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

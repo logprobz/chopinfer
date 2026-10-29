@@ -35,6 +35,10 @@ def check(name, output, code, elapsed, tier):
         # The shared envelope explicitly delegates equivalent quick profiles.
         # run() still requires real case/RSS evidence from this model.
         return int(count[1])
+    if tier != "quick" and re.search(r"^\S+: route sweep covers the quick tier only$", output, re.MULTILINE):
+        # A candidate's own sweep may stop at the quick tier. run() still
+        # requires real case/RSS evidence from another profile of the model.
+        return int(count[1])
     if "cases," not in output or "peak_rss_bytes=" not in output:
         raise RuntimeError(f"{name}: missing executed route cases or peak RSS evidence")
     if tier == "cpu" and any(field not in output for field in (

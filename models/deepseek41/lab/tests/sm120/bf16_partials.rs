@@ -1,8 +1,9 @@
 //! The bundle's shared BF16 transports on frozen real F32 rank partials.
 //! No timing claims: exact transport, graph replay, row and chunk invariance.
+//! The opt-in `timing` bench times them against decode's served reduction.
 use bundle_deepseek41::sm120::fold_cubin_for_symbol;
 use kernel_core::{
-    backend::{Backend, Counts, Need, Prepared, View},
+    backend::{Backend, Counts, Launch, Need, Prepared, View},
     codec::{bf16_to_f32, f32_to_bf16},
     collective::{AllReduceBuffers, RankViews},
     contract::{CommQuery, DType},
@@ -32,6 +33,15 @@ const SYMBOLS: [&str; 5] = [
     "chop_comm_allreduce_phased_oneshot_round_f32_v1",
 ];
 type Op = Prepared<AllReduceBuffers<View>>;
+/// Selects the calls of one launch from a rank's op.
+type Plan = fn(&Op, &AllReduceBuffers<View>, Counts) -> LabResult<Vec<Launch>>;
+
+// The bundle's all-reduce registration, which decode's served reduction uses.
+#[path = "../../../bundle/src/sm120/reduce.rs"]
+#[allow(dead_code)]
+mod reduce;
+#[path = "bf16_partials/timing.rs"]
+mod timing;
 
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -119,6 +129,8 @@ struct Rank {
 }
 struct Fixture {
     capacity: u32,
+    /// The only entries its launches may name.
+    symbols: Vec<String>,
     ranks: Vec<Rank>,
     ops: Vec<Op>,
     functions: Vec<BTreeMap<String, Function>>,
@@ -126,14 +138,25 @@ struct Fixture {
 }
 impl Fixture {
     fn new(sessions: &[Session], candidate: bool, capacity: u32) -> LabResult<Self> {
+        Self::with_ops(sessions, capacity, &SYMBOLS, |rank| {
+            op(rank, candidate, capacity)
+        })
+    }
+    /// The ranks' ops from `op`, launching only `symbols`.
+    fn with_ops(
+        sessions: &[Session],
+        capacity: u32,
+        symbols: &[&str],
+        op: impl Fn(usize) -> LabResult<Op>,
+    ) -> LabResult<Self> {
         let mut modules = Vec::new();
         let mut functions = Vec::new();
         let mut ranks = Vec::new();
         let mut ops = Vec::new();
         for (rank, s) in sessions.iter().enumerate() {
-            let prepared = op(rank, candidate, capacity)?;
+            let prepared = op(rank)?;
             let mut fns = BTreeMap::new();
-            for name in SYMBOLS {
+            for &name in symbols {
                 let (_, cubin) = fold_cubin_for_symbol(name)
                     .ok_or_else(|| format!("missing served symbol {name}"))?;
                 let module = s.load_cubin(cubin)?;
@@ -162,6 +185,7 @@ impl Fixture {
         synchronize(sessions)?;
         Ok(Self {
             capacity,
+            symbols: symbols.iter().map(|&s| s.into()).collect(),
             ranks,
             ops,
             functions,
@@ -190,6 +214,10 @@ impl Fixture {
         synchronize(sessions)
     }
     fn launch(&self, s: &Session, rank: usize, rows: u32) -> LabResult<()> {
+        self.launch_with(s, rank, rows, every)
+    }
+    /// Launches the calls `plan` selects from rank `rank`'s op.
+    fn launch_with(&self, s: &Session, rank: usize, rows: u32, plan: Plan) -> LabResult<()> {
         let r = &self.ranks[rank];
         let mut map = BTreeMap::from([(1, &r.input), (2, &r.output), (3, &r.live)]);
         for (peer, r) in self.ranks.iter().enumerate() {
@@ -198,29 +226,10 @@ impl Fixture {
                 map.insert(1000 + peer as u64 * 100 + i as u64, b);
             }
         }
-        let view = |id| View {
-            handle: id,
-            bytes: map[&id].byte_len() as u64,
-        };
-        let buffers = AllReduceBuffers {
-            input: view(1),
-            output: view(2),
-            live_rows: Some(view(3)),
-            ranks: (0..4)
-                .map(|peer| RankViews {
-                    output: view(100 + peer),
-                    state: (0..r.state.len())
-                        .map(|i| view(1000 + peer * 100 + i as u64))
-                        .collect(),
-                })
-                .collect(),
-        };
-        for call in self.ops[rank]
-            .launches(&buffers, View::EMPTY, Counts::rows(rows))
-            .map_err(err)?
-        {
-            if !SYMBOLS.contains(&call.symbol.as_str()) {
-                return Err("unexpected composed fallback".into());
+        let buffers = views(r.state.len(), |id| map[&id].byte_len() as u64);
+        for call in plan(&self.ops[rank], &buffers, Counts::rows(rows))? {
+            if !self.symbols.contains(&call.symbol) {
+                return Err(format!("unexpected entry {}", call.symbol));
             }
             launch::launch(
                 &s.context,
@@ -274,11 +283,59 @@ impl Fixture {
         Ok(())
     }
 }
+/// One rank's views by handle: its input, output and live count, then
+/// every rank's output and `states` state regions, of `bytes` each.
+fn views(states: usize, bytes: impl Fn(u64) -> u64) -> AllReduceBuffers<View> {
+    let view = |id| View {
+        handle: id,
+        bytes: bytes(id),
+    };
+    AllReduceBuffers {
+        input: view(1),
+        output: view(2),
+        live_rows: Some(view(3)),
+        ranks: (0..4)
+            .map(|peer| RankViews {
+                output: view(100 + peer),
+                state: (0..states)
+                    .map(|i| view(1000 + peer * 100 + i as u64))
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+/// Every call of a step.
+fn every(op: &Op, buffers: &AllReduceBuffers<View>, counts: Counts) -> LabResult<Vec<Launch>> {
+    op.launches(buffers, View::EMPTY, counts).map_err(err)
+}
 fn synchronize(sessions: &[Session]) -> LabResult<()> {
     for s in sessions {
         s.stream.synchronize().map_err(err)?;
     }
     Ok(())
+}
+
+/// Each rank's `rows` rows of a finite, deterministic pattern over nine
+/// binades, with cancelling 2^24 terms.
+fn synthetic(rows: usize) -> Vec<Vec<f32>> {
+    (0..4)
+        .map(|rank| {
+            (0..rows * WIDTH)
+                .map(|i| {
+                    let row = i / WIDTH;
+                    let base = ((i.wrapping_mul(1664525).wrapping_add(rank * 1013904223)) % 65536)
+                        as f32
+                        / 32768.0
+                        - 1.0;
+                    if i % 53 == 0 {
+                        [16777216.0, 1.0, 1.0, -16777216.0][rank]
+                    } else {
+                        base * 2.0_f32.powi((row % 9) as i32 - 4)
+                    }
+                })
+                .collect()
+        })
+        .collect()
 }
 
 fn f64_bounds(values: &[Vec<f32>]) -> LabResult<Value> {
@@ -380,12 +437,7 @@ fn real_partials_replays_and_chunks_on_gpu() {
         let wide = Fixture::new(sessions, true, CAPACITY)?;
         // One global row pattern is sliced at each boundary. Equality to its
         // one oracle proves row order and every tested chunk partition.
-        let values: Vec<Vec<f32>> = (0..4).map(|rank| (0..CAPACITY as usize * WIDTH).map(|i| {
-            let row = i / WIDTH;
-            let base = ((i.wrapping_mul(1664525).wrapping_add(rank * 1013904223)) % 65536) as f32 / 32768.0 - 1.0;
-            if i % 53 == 0 { [16777216.0, 1.0, 1.0, -16777216.0][rank] }
-            else { base * 2.0_f32.powi((row % 9) as i32 - 4) }
-        }).collect()).collect();
+        let values = synthetic(CAPACITY as usize);
         let expected = oracle::all_reduce_bf16_partials(&values).map_err(err)?;
         let mut chunks = 0;
         for (start, rows, live) in [(0,8192,8192), (0,8191,8191), (0,4096,4096), (4096,4096,4096),

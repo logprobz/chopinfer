@@ -40,12 +40,56 @@ pub static MODELS: &[&kernels_sm120::ModelCatalog] = models::CATALOGS;
 
 include!(concat!(env!("OUT_DIR"), "/cubins.rs"));
 
-/// The cubins this crate built, by spec name, with their entry symbols.
-pub const LAB_CUBINS: Cubins = Cubins::new(CUBINS, CUBIN_ENTRIES);
+/// The cubins this crate built, by spec name, with their entry symbols. A
+/// test reads each from the build's output directory when it first loads it
+/// ([`Cubins::files`]). It is a static rather than a const, so its tables are
+/// not copied into every crate and codegen unit that names it.
+pub static LAB_CUBINS: Cubins = Cubins::files(env!("OUT_DIR"), CUBIN_FILES, CUBIN_ENTRIES);
 
-/// The bytes of any cubin this crate built, by spec name.
+/// The bytes of any cubin this crate built, by spec name, read and checked
+/// against the SHA-256 its build recorded when first used.
 pub fn cubin(name: &str) -> LabResult<&'static [u8]> {
     LAB_CUBINS.bytes(name)
+}
+
+/// The names of every cubin this crate built.
+pub fn cubin_names() -> impl Iterator<Item = &'static str> {
+    CUBIN_FILES.iter().map(|file| file.name)
+}
+
+/// Copies the cubins `names` from the build's output directory into `dir`,
+/// which must not exist yet, under the same relative paths, each checked
+/// against the SHA-256 its build recorded. A copied binary then loads them
+/// with `CHOPINFER_KERNEL_CUBIN_DIR` naming `dir`. Returns the count copied.
+pub fn stage_cubins<'a>(
+    dir: &std::path::Path,
+    names: impl IntoIterator<Item = &'a str>,
+) -> LabResult<usize> {
+    use std::io::Write;
+    let built = std::path::Path::new(env!("OUT_DIR"));
+    std::fs::create_dir(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    let mut staged = 0;
+    for name in names {
+        let file = CUBIN_FILES
+            .iter()
+            .find(|file| file.name == name)
+            .ok_or_else(|| format!("unknown cubin {name}"))?;
+        // `read` refuses a path outside its directory, so the join stays in `dir`.
+        let bytes = file.read(built)?;
+        let path = dir.join(file.path);
+        let fail = |e: std::io::Error| format!("stage {}: {e}", path.display());
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(fail)?;
+        }
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .and_then(|mut out| out.write_all(&bytes))
+            .map_err(fail)?;
+        staged += 1;
+    }
+    Ok(staged)
 }
 
 /// The entry symbols of the cubin `name`.
@@ -183,6 +227,59 @@ mod family_tests {
             "kernels.lock.d: {}",
             problems.join("; ")
         );
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod cubin_file_tests {
+    use crate::{CUBIN_ENTRIES, CUBIN_FILES, Cubins};
+    use std::collections::BTreeSet;
+    use std::path::Path;
+
+    /// Every cubin the build wrote reads back from its output directory with
+    /// the SHA-256 it recorded, and the file and entry tables name the same
+    /// cubins. Off Linux the build compiles no cubin, so the file table is
+    /// empty there.
+    #[test]
+    fn every_built_cubin_reads_back_with_its_digest() {
+        let built = Path::new(env!("OUT_DIR"));
+        for file in CUBIN_FILES {
+            file.read(built).unwrap();
+        }
+        let files: BTreeSet<_> = CUBIN_FILES.iter().map(|file| file.name).collect();
+        let entries: BTreeSet<_> = CUBIN_ENTRIES.iter().map(|(name, _)| *name).collect();
+        assert_eq!(files.len(), CUBIN_FILES.len(), "duplicate cubin names");
+        assert_eq!(files, entries);
+    }
+
+    /// Staged cubins keep their relative paths and load from the staged
+    /// directory: a root, a hyper-connection and a family cubin.
+    #[test]
+    fn staged_cubins_load_from_the_staged_directory() {
+        let under = |prefix: &str| {
+            CUBIN_FILES
+                .iter()
+                .find(|file| match prefix {
+                    "" => !file.path.contains('/'),
+                    _ => file.path.starts_with(prefix),
+                })
+                .expect("a cubin in each output subdirectory")
+                .name
+        };
+        let names = [under(""), under("hc-prefill/"), under("families/")];
+        let dir = std::env::temp_dir().join(format!("kernel-lab-stage-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(crate::stage_cubins(&dir, names).unwrap(), 3);
+        assert!(
+            crate::stage_cubins(&dir, names).is_err(),
+            "existing directory"
+        );
+        let root: &'static str = Box::leak(dir.to_str().unwrap().into());
+        let staged = Cubins::files(root, CUBIN_FILES, CUBIN_ENTRIES);
+        for name in names {
+            assert_eq!(staged.bytes(name).unwrap(), crate::cubin(name).unwrap());
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
 

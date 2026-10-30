@@ -859,18 +859,32 @@ fn probe_pairs(sessions: &[Session]) -> LabResult<()> {
     Ok(())
 }
 
+const USAGE: &str = "usage: kernel-lab probe [p2p] | kernel-lab stage-cubins DIR";
+
 fn run() -> LabResult<()> {
     let mut args = std::env::args().skip(1);
-    if args.next().as_deref() != Some("probe") {
-        return Err("usage: kernel-lab probe [p2p]".into());
+    match args.next().as_deref() {
+        Some("probe") => {}
+        // Every built cubin, for a copied binary run with
+        // CHOPINFER_KERNEL_CUBIN_DIR naming DIR.
+        Some("stage-cubins") => {
+            let (Some(dir), None) = (args.next(), args.next()) else {
+                return Err(USAGE.into());
+            };
+            let staged =
+                kernel_lab::stage_cubins(std::path::Path::new(&dir), kernel_lab::cubin_names())?;
+            println!("staged {staged} cubins in {dir}");
+            return Ok(());
+        }
+        _ => return Err(USAGE.into()),
     }
     let p2p_only = match args.next().as_deref() {
         None => false,
         Some("p2p") => true,
-        _ => return Err("usage: kernel-lab probe [p2p]".into()),
+        _ => return Err(USAGE.into()),
     };
     if args.next().is_some() {
-        return Err("usage: kernel-lab probe [p2p]".into());
+        return Err(USAGE.into());
     }
     let Some(ordinals) = selected_ordinals()? else {
         eprintln!(

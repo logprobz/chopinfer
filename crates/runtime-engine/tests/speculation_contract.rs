@@ -181,6 +181,9 @@ struct Model {
     allocates: bool,
     /// Reports one verified draft too few on an allocated step.
     corrupt_allocation: bool,
+    /// Returns device results, so allocated steps run on the device, which
+    /// refuses a step whose sampling depends on history as a bundle does.
+    device_results: bool,
     /// (width, reserved drafts, verified drafts) of every allocated step.
     allocated_steps: Vec<(usize, Vec<usize>, Vec<usize>)>,
     /// Phases of steps dispatched through the unallocated entry point.
@@ -214,6 +217,7 @@ impl Model {
             confidence_caps: Vec::new(),
             allocates: false,
             corrupt_allocation: false,
+            device_results: false,
             allocated_steps: Vec::new(),
             plain_steps: Vec::new(),
         }
@@ -335,6 +339,10 @@ impl ModelExecutor for Model {
         self.allocates
     }
 
+    fn device_results_v1(&self) -> bool {
+        self.device_results
+    }
+
     fn execute_allocated<'a>(
         &'a mut self,
         items: &[ModelBatchItem],
@@ -347,6 +355,18 @@ impl ModelExecutor for Model {
                 .iter()
                 .any(|item| matches!(item.phase(), BatchPhase::Prefill { .. }))
         );
+        if self.device_results
+            && items.iter().any(|item| {
+                item.sampling()
+                    .is_some_and(|work| !work.history_independent())
+            })
+        {
+            return Err(ExecutorError::new(
+                "bundle execute failed: bundle ABI status 2 (unsupported): \
+                 an allocated step without mapped sampling",
+            )
+            .unwrap());
+        }
         let mut verified = self.allocate(items, allocation);
         let reserved = items
             .iter()
@@ -806,6 +826,19 @@ fn allocation_engine(
     confidence: bool,
     drafter: Drafter,
 ) -> Engine<Model> {
+    allocation_engine_with(count, capacity, depth, confidence, drafter, false)
+}
+
+/// [`allocation_engine`] over a model that returns device results when
+/// `device_results` is set.
+fn allocation_engine_with(
+    count: usize,
+    capacity: usize,
+    depth: usize,
+    confidence: bool,
+    drafter: Drafter,
+    device_results: bool,
+) -> Engine<Model> {
     let base = EngineConfig::new(
         SchedulerConfig::new(count, 128, 256, 4, 1).unwrap(),
         KvGeometry::new(4, count * 64).unwrap(),
@@ -826,6 +859,7 @@ fn allocation_engine(
     .with_verify_allocation(confidence.then(allocation));
     let mut model = Model::new(drafter, Rows::Logits);
     model.allocates = true;
+    model.device_results = device_results;
     Engine::new(base.with_speculation(policy), model).unwrap()
 }
 
@@ -915,6 +949,93 @@ fn confidence_reservations_respect_the_remaining_output_limit() {
     assert_eq!(steps[0].0, 32);
     assert_eq!(steps[0].1[0], 3);
     assert_eq!(&steps[0].1[1..], &[5; 7]);
+}
+
+/// An executor with device results verifies an allocated step on the
+/// device, which samples only history-independent rows. A step with a
+/// request whose presence, frequency or repetition penalty reads its
+/// history therefore keeps the plan it has without confidence and runs
+/// through the unallocated entry point, while history-independent requests
+/// on the same executor still allocate. Such a step used to reach the
+/// executor allocated; the device refused it and the engine step failed,
+/// which stops a server's generation worker.
+#[test]
+fn device_results_keep_steps_with_history_dependent_sampling_unallocated() {
+    let mut cases = 0;
+    for penalties in [
+        None,
+        Some((0.5, 0.0, 1.0)),
+        Some((0.0, -0.5, 1.0)),
+        Some((0.0, 0.0, 1.2)),
+    ] {
+        let mut plain = None;
+        for confidence in [false, true] {
+            let mut engine = allocation_engine_with(8, 48, 3, confidence, Drafter::Wrong, true);
+            for id in 1..=8 {
+                let mut request = allocation_request(id, 128);
+                if id == 3
+                    && let Some((presence, frequency, repetition)) = penalties
+                {
+                    request = EngineRequest::new(
+                        RequestId::new(id),
+                        vec![1, 2],
+                        128,
+                        SamplingParameters::new(0.0)
+                            .unwrap()
+                            .with_penalties(presence, frequency, repetition)
+                            .unwrap(),
+                        id,
+                        vec![],
+                        vocabulary(),
+                    )
+                    .unwrap();
+                }
+                engine.submit(request).unwrap();
+            }
+            engine.step().unwrap();
+            engine.step().unwrap();
+            let model = engine.executor();
+            if confidence && penalties.is_none() {
+                assert_eq!(model.allocated_steps.len(), 1);
+                assert_eq!(model.allocated_steps[0].1, vec![5; 8]);
+            } else {
+                assert!(model.allocated_steps.is_empty(), "{penalties:?}");
+                let step = model.plain_steps.last().unwrap();
+                assert!(step.iter().any(|p| matches!(p, BatchPhase::Verify { .. })));
+                if confidence {
+                    assert_eq!(Some(step), plain.as_ref(), "{penalties:?}");
+                } else {
+                    plain = Some(step.clone());
+                }
+            }
+            cases += 1;
+        }
+    }
+    assert_eq!(cases, 8);
+    // Mixed requests over device results emit exactly the reference output.
+    let requests = requests(20);
+    let depths = runtime_engine::DraftDepths::parse("1:2").unwrap();
+    for rows in [Rows::Logits, Rows::Sampled] {
+        let expected = reference(&requests, rows);
+        let mut model = Model::new(Drafter::Mostly, rows);
+        model.allocates = true;
+        model.device_results = true;
+        let mut engine = Engine::new(
+            config(Some(
+                speculation(
+                    5,
+                    64,
+                    SpeculationMode::Balanced(depths),
+                    DraftSource::Bundle,
+                )
+                .with_verify_allocation(Some(allocation())),
+            )),
+            model,
+        )
+        .unwrap();
+        assert_eq!(run(&mut engine, &requests), expected, "{rows:?}");
+        assert!(!engine.executor().allocated_steps.is_empty(), "{rows:?}");
+    }
 }
 
 /// Balanced plans with confidence reserve every item's drafts up to its

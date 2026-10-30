@@ -1455,23 +1455,42 @@ impl SpeculationPolicy {
         }
     }
 
-    /// Chooses a draft count for each candidate, in candidate order.
+    /// Chooses a draft count for each candidate of a step the executor can
+    /// allocate, in candidate order.
+    #[cfg(test)]
     pub(crate) fn plan(
         &mut self,
         candidates: &[PlanCandidate<'_>],
         budget: DraftBudget,
+    ) -> Vec<usize> {
+        self.plan_step(candidates, budget, true)
+    }
+
+    /// Chooses a draft count for each candidate, in candidate order. A step
+    /// the executor cannot allocate (`allocatable` false) keeps the plan's
+    /// drafts with confidence too, and leaves no allocation to take.
+    pub(crate) fn plan_step(
+        &mut self,
+        candidates: &[PlanCandidate<'_>],
+        budget: DraftBudget,
+        allocatable: bool,
     ) -> Vec<usize> {
         self.allocated_width = None;
         self.begin_diagnostics(
             candidates.len(),
             budget.spare_draft_tokens().min(budget.spare_rows()),
         );
-        let drafts = self.plan_inner(candidates, budget);
+        let drafts = self.plan_inner(candidates, budget, allocatable);
         self.finish_diagnostics(&drafts);
         drafts
     }
 
-    fn plan_inner(&mut self, candidates: &[PlanCandidate<'_>], budget: DraftBudget) -> Vec<usize> {
+    fn plan_inner(
+        &mut self,
+        candidates: &[PlanCandidate<'_>],
+        budget: DraftBudget,
+        allocatable: bool,
+    ) -> Vec<usize> {
         let eligible = candidates
             .iter()
             .filter(|c| c.maximum_draft_tokens > 0)
@@ -1495,7 +1514,7 @@ impl SpeculationPolicy {
                     }
                 }
             }
-            let planned = self.plan_unbounded(&rotated, budget);
+            let planned = self.plan_unbounded(&rotated, budget, allocatable);
             // The next step starts after the last item that drafted, so
             // every eligible item drafts in turn however few rows are spare.
             if let Some(last) = planned.iter().rposition(|&drafts| drafts > 0) {
@@ -1507,13 +1526,14 @@ impl SpeculationPolicy {
             }
             return drafts;
         }
-        self.plan_unbounded(candidates, budget)
+        self.plan_unbounded(candidates, budget, allocatable)
     }
 
     fn plan_unbounded(
         &mut self,
         candidates: &[PlanCandidate<'_>],
         budget: DraftBudget,
+        allocatable: bool,
     ) -> Vec<usize> {
         let mut drafts = vec![0; candidates.len()];
         let mut remaining = budget.spare_draft_tokens().min(budget.spare_rows());
@@ -1554,9 +1574,11 @@ impl SpeculationPolicy {
                 // every item reserves drafts up to its limits within the
                 // token capacity, never fewer than the plan gave it: the
                 // executor verifies the most confident within the width.
-                // A step whose verified drafts are decided in advance keeps
-                // the plan's drafts unallocated.
+                // A step whose verified drafts are decided in advance, or
+                // that the executor cannot allocate, keeps the plan's
+                // drafts unallocated.
                 if self.config.verify_allocation.is_some()
+                    && allocatable
                     && !budget.prefill()
                     && self.config.source == DraftSource::Bundle
                     && drafts.iter().any(|&d| d > 0)

@@ -38,7 +38,7 @@ pub(crate) struct Switches {
 /// of their own, and every row its chunk completes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Canonical {
-    /// Unset: catch-up rows join the drafting items' first run, and runs of
+    /// `0`: catch-up rows join the drafting items' first run, and runs of
     /// at most 32 rows replay a verify graph bucket of decode entries.
     Off,
     /// `1`: every such run in the prefill phase at every row count, through
@@ -48,8 +48,8 @@ pub(crate) enum Canonical {
     /// stages that write persistent drafter state
     /// (`program::drafter_persistent_stages`), queued whole on each rank.
     Persistent,
-    /// `3`: as `Off`, but such a run that is in the prefill phase anyway
-    /// (more than 32 rows, or every drafter run eager) runs only the
+    /// Unset or `3`: as `Off`, but such a run that is in the prefill phase
+    /// anyway (more than 32 rows, or every drafter run eager) runs only the
     /// persistent stages, as `Persistent` does. Not canonical: runs of at
     /// most 32 such rows still replay verify graph buckets.
     Trimmed,
@@ -97,10 +97,10 @@ impl Switches {
 /// completes) in the prefill phase at every row count, so a row's bits
 /// follow from its own inputs, not from where chunks started or what else
 /// the step held: `1` through the whole drafter program, `2` through its
-/// persistent stages only ([`Canonical`]). `3` is a separate candidate: it
-/// keeps where those rows run and only trims the runs of them that are in
-/// the prefill phase anyway to the persistent stages. Off by default until
-/// adopted.
+/// persistent stages only ([`Canonical`]). Unset (or `3`), those rows run
+/// where they always did, and only the runs of them that are in the prefill
+/// phase anyway are trimmed to the persistent stages; `0` keeps those runs
+/// whole until the next commit removes it.
 pub(crate) const CANONICAL_DRAFTER: &str = "CHOPINFER_QWEN38_CANONICAL_DRAFTER";
 
 #[cfg(test)]
@@ -116,10 +116,10 @@ fn canonical_drafter() -> Canonical {
         return forced;
     }
     match std::env::var(CANONICAL_DRAFTER).as_deref() {
+        Ok("0") => Canonical::Off,
         Ok("1") => Canonical::Full,
         Ok("2") => Canonical::Persistent,
-        Ok("3") => Canonical::Trimmed,
-        _ => Canonical::Off,
+        _ => Canonical::Trimmed,
     }
 }
 

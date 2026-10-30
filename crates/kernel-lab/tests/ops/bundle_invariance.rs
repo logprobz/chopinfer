@@ -1258,6 +1258,14 @@ fn gather_written(
     drafted: &[usize],
 ) -> Result<(), String> {
     mtp_written("mtp_gather x", x, rows, WIDE_BYTES)?;
+    // A launch whose rows all keep their tokens writes none.
+    if drafted.is_empty() {
+        return if tokens == before {
+            Ok(())
+        } else {
+            Err("mtp_gather tokens: a kept token changed".into())
+        };
+    }
     let map = WriteMap::of(DType::I32).rows(1, drafted.iter().copied())?;
     written_over("mtp_gather tokens", before, tokens, &map, Element::Raw(4))
 }
@@ -2782,6 +2790,11 @@ fn bundle_write_checks_reject_unwritten_outputs() {
     assert!(check(&x, &patched(&tokens, 8, &hole[..4])).is_err());
     assert!(check(&x, &patched(&tokens, 4, &u32s(&[18]))).is_err());
     assert!(check(&x, &patched(&tokens, 12, &u32s(&[7]))).is_err());
+    // No row drafted: every token keeps its image.
+    let kept = u32s(&[5, 17, 6, u32::MAX]);
+    let check = |tokens: &[u8]| gather_written(&x, &kept, tokens, 3, &[]);
+    assert!(check(&kept).is_ok());
+    assert!(check(&patched(&kept, 4, &u32s(&[18]))).is_err());
 
     // The PLE stage: two live items of four planned.
     let good = patched(&vec![POISON; 4 * ENTRY], 0, &vec![0; 2 * ENTRY]);

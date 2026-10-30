@@ -177,15 +177,33 @@ more (MiB per GPU):
 | Qwen `tp2-ar` | 14 | 14 | 320 | 303 |
 
 MiMo and Qwen graphs grew by at most 6 MiB after warmup. MiMo `tp4-mtp`,
-served from a `mimo26-package --drafter mtp` package, set its peak outside
-any graph: during the first warmup wave rank 0 held 463 MiB that no graph
-kept and released it, and its reserve covers that. The reserves move 192 to
+served from a `mimo26-package --drafter mtp` package, reserves 832 MiB for a
+transient outside any graph whose cause is not yet known: during the first
+warmup wave rank 0 holds 463 MiB that no graph keeps and then releases it,
+and without it the profile would need 384 MiB. The reserves move 192 to
 704 MiB per GPU into the KV pool. A configuration that raises its graph
 budget, or a build that changes GLM's prefill programs, must measure its
 reserve again. A capture that finds no memory fails the generation worker,
 so startup logs each rank's free memory after warmup and warns below
 256 MiB ([observability](operations-observability.md#chopinfer-metrics));
 raise the reserve or lower `--max-sequences` when a rank warns.
+
+### GLM encoder memory
+
+A GLM package that serves images holds its vision encoder on every rank
+before the pool. On 2026-10-30 a `tp4-mtp` server held 3,387 MiB per rank
+more on the image package than on the text package: the encoder's working
+memory (1,800 MiB), its media arena (512 MiB) and its weights (about
+1,076 MiB). The working memory is idle while the server serves only text.
+Lending it to the KV pool and taking it back when an image arrives was
+considered and rejected on 2026-10-30, because no design costs nothing at
+32 sequences with images in the load. Lent pages holding live sequences'
+KV need preemption or copies to empty them for the encoder. Lent pages
+holding only prefix-cache snapshots need neither, but every image request
+then evicts the anchors they hold, leaving fewer anchors than a pool
+without lending, and none when long shared prefixes fill the cache. A GLM
+deployment that serves no images gets the whole 3,387 MiB per rank back
+for its KV pool with the text package (`--modalities text`).
 
 ### Lossless weight encodings
 

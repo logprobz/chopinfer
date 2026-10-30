@@ -521,6 +521,14 @@ fn a_startup_log_binds_as_common_reads_it() {
             false,
         ),
         (
+            "warn-level",
+            format!(
+                "startup logging: level=warn\n{}\n",
+                json!({"status": "listening", "address": "127.0.0.1:8101"})
+            ),
+            false,
+        ),
+        (
             "unrelated-lines",
             format!("startup other: {{}}\nnoise\n{good}"),
             true,

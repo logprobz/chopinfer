@@ -4848,7 +4848,7 @@ fn overlap_evidence_captures_the_drafter_state() {
         serde_json::from_slice(&std::fs::read(drafted.join("rows.json")).unwrap()).unwrap();
     assert_eq!(rows["drafted"], true);
     assert_eq!(rows["ring_layers"], mtp + 1);
-    assert_eq!(rows["canonical_drafter"], true);
+    assert_eq!(rows["canonical_drafter"], "full");
     for rank in 0..RANKS {
         for name in ring("").into_iter().chain(ring("anchor-")) {
             assert!(size(&target, &name, rank).is_some(), "{name}");

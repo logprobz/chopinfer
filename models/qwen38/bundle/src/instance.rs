@@ -43,10 +43,10 @@ mod switches;
 #[cfg(test)]
 pub(crate) use hc::{with_hc_padded_mix, with_hc_precompute};
 #[cfg(test)]
-pub(crate) use speculation::{DRAFTER_LAUNCHES, DRAFTER_RUNS};
-pub(crate) use switches::Switches;
+pub(crate) use speculation::{DRAFTER_LAUNCHES, DRAFTER_RUNS, DrafterLaunch};
 #[cfg(test)]
 pub(crate) use switches::with_canonical_drafter;
+pub(crate) use switches::{Canonical, Switches};
 #[path = "prefix_state.rs"]
 mod prefix_state;
 mod speculation;
@@ -1559,7 +1559,7 @@ impl Instance {
             page_bytes: self.layout.kv.page_bytes,
             head_rows: plan.head_rows,
             drafted,
-            canonical_drafter: self.switches.canonical_drafter,
+            canonical_drafter: self.switches.canonical_drafter.name(),
         }
         .write(capture.dir())
         .map_err(|reason| {

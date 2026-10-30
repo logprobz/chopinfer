@@ -20,11 +20,46 @@ pub(crate) struct Switches {
     /// Every drafter run eager (`CHOPINFER_QWEN38_MTP_EAGER=1`).
     pub mtp_eager: bool,
     /// Candidate: every drafter row a prefilling item's step writes runs in
-    /// the prefill phase (`CANONICAL_DRAFTER`).
-    pub canonical_drafter: bool,
+    /// the prefill phase (`CANONICAL_DRAFTER`), through the whole drafter
+    /// program or only its persistent stages.
+    pub canonical_drafter: Canonical,
     /// Diagnostic-taps builds write each prefill's overlap split
     /// (`CHOPINFER_QWEN38_OVERLAP_EVIDENCE=1`).
     pub overlap_evidence: bool,
+}
+
+/// What the candidate (`CANONICAL_DRAFTER`) runs for the drafter rows a
+/// prefilling item's step writes: its chunk-start catch-up rows, as a run
+/// of their own, and every row its chunk completes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Canonical {
+    /// Unset: catch-up rows join the drafting items' first run, and runs of
+    /// at most 32 rows replay a verify graph bucket of decode entries.
+    Off,
+    /// `1`: every such run in the prefill phase at every row count, through
+    /// the whole drafter program, queued one stage at a time.
+    Full,
+    /// `2`: as `Full`, but such a run, which never drafts, runs only the
+    /// stages that write persistent drafter state
+    /// (`program::drafter_persistent_stages`), queued whole on each rank.
+    Persistent,
+}
+
+impl Canonical {
+    /// Whether rows a prefilling item's step writes run in the prefill
+    /// phase.
+    pub(crate) fn on(self) -> bool {
+        self != Canonical::Off
+    }
+
+    /// The name the overlap evidence records.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Canonical::Off => "off",
+            Canonical::Full => "full",
+            Canonical::Persistent => "persistent",
+        }
+    }
 }
 
 impl Switches {
@@ -48,28 +83,33 @@ impl Switches {
 /// step writes (its chunk-start catch-up rows and every row its chunk
 /// completes) in the prefill phase at every row count, so a row's bits
 /// follow from its own inputs, not from where chunks started or what else
-/// the step held. Off by default until adopted.
+/// the step held: `1` through the whole drafter program, `2` through its
+/// persistent stages only ([`Canonical`]). Off by default until adopted.
 pub(crate) const CANONICAL_DRAFTER: &str = "CHOPINFER_QWEN38_CANONICAL_DRAFTER";
 
 #[cfg(test)]
 thread_local! {
     /// Test-only candidate selection, independent of the process environment.
-    pub(crate) static FORCE_CANONICAL_DRAFTER: std::cell::Cell<Option<bool>> =
+    pub(crate) static FORCE_CANONICAL_DRAFTER: std::cell::Cell<Option<Canonical>> =
         const { std::cell::Cell::new(None) };
 }
 
-fn canonical_drafter() -> bool {
+fn canonical_drafter() -> Canonical {
     #[cfg(test)]
     if let Some(forced) = FORCE_CANONICAL_DRAFTER.with(std::cell::Cell::get) {
         return forced;
     }
-    std::env::var(CANONICAL_DRAFTER).as_deref() == Ok("1")
+    match std::env::var(CANONICAL_DRAFTER).as_deref() {
+        Ok("1") => Canonical::Full,
+        Ok("2") => Canonical::Persistent,
+        _ => Canonical::Off,
+    }
 }
 
-/// Runs `create` with the candidate on or off, whatever the environment.
+/// Runs `create` with the candidate `mode`, whatever the environment.
 #[cfg(test)]
-pub(crate) fn with_canonical_drafter<T>(enabled: bool, create: impl FnOnce() -> T) -> T {
-    let previous = FORCE_CANONICAL_DRAFTER.with(|forced| forced.replace(Some(enabled)));
+pub(crate) fn with_canonical_drafter<T>(mode: Canonical, create: impl FnOnce() -> T) -> T {
+    let previous = FORCE_CANONICAL_DRAFTER.with(|forced| forced.replace(Some(mode)));
     let result = create();
     FORCE_CANONICAL_DRAFTER.with(|forced| forced.set(previous));
     result

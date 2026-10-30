@@ -86,8 +86,9 @@ pub(super) struct DrafterRuntime {
     /// The candidate (`switches::CANONICAL_DRAFTER`): runs of the rows a
     /// prefilling item's step writes take the prefill phase at every row
     /// count, and continuing prefills' catch-up rows plan as a run of their
-    /// own, apart from the drafting items' rows.
-    canonical: bool,
+    /// own, apart from the drafting items' rows. `Persistent` runs only
+    /// their persistent stages.
+    canonical: super::Canonical,
 }
 
 impl DrafterRuntime {
@@ -120,7 +121,7 @@ impl DrafterRuntime {
         }
         Ok(Self {
             state: Drafter::new(items.get())
-                .with_separate_prefill_catch_up(switches.canonical_drafter),
+                .with_separate_prefill_catch_up(switches.canonical_drafter.on()),
             ranks,
             block_tables: BlockTableMirror::new(shape.model_limits(), items),
             graphs: std::array::from_fn(|_| GraphCache::catch_up_sharing(target_graphs)),
@@ -146,10 +147,25 @@ thread_local! {
     /// item's step writes, whether it ran in the prefill phase, and its rows.
     pub(crate) static DRAFTER_RUNS: std::cell::RefCell<Vec<(bool, bool, u32)>> =
         const { std::cell::RefCell::new(Vec::new()) };
-    /// Every launch drafter runs lower on this thread: whether its run is in
-    /// the prefill phase, its stage and its symbol.
-    pub(crate) static DRAFTER_LAUNCHES: std::cell::RefCell<Vec<(bool, program::Stage, String)>> =
+    /// Every launch drafter runs lower on this thread, in lowering order.
+    pub(crate) static DRAFTER_LAUNCHES: std::cell::RefCell<Vec<DrafterLaunch>> =
         const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// One launch a drafter run lowered.
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct DrafterLaunch {
+    /// Whether its run is in the prefill phase.
+    pub prefill: bool,
+    /// Its run's index in `DRAFTER_RUNS`.
+    pub run: usize,
+    pub rank: usize,
+    pub stage: program::Stage,
+    pub symbol: String,
+    pub plan: kernel_core::contract::LaunchPlan,
+    /// Its arguments as the host receives them.
+    pub arguments: Vec<runtime_bundle_abi::KernelArgumentV1>,
 }
 
 /// How one drafter run is prepared: a graph bucket, or eagerly at its live
@@ -417,7 +433,8 @@ impl Instance {
     /// Runs one drafter run on every rank: eagerly, stage by stage across
     /// the ranks, or as graphs of its bucket. `prefill` marks a run of rows
     /// a prefilling item's step writes (its catch-up rows, or the rows its
-    /// chunk completes), which the candidate runs in the prefill phase.
+    /// chunk completes), which the candidate runs in the prefill phase and,
+    /// as `Persistent`, through its persistent stages only.
     pub(super) fn run_drafter(
         &mut self,
         run: &Run,
@@ -438,7 +455,14 @@ impl Instance {
         prefill: bool,
     ) -> Result<(), BundleStatusV1> {
         let inputs = run.inputs();
-        let eager = runtime.eager || (prefill && runtime.canonical);
+        let eager = runtime.eager || (prefill && runtime.canonical.on());
+        // A run of rows a prefilling item's step writes drafts nothing (the
+        // planner gives drafts only to drafting items' runs). With the
+        // `Persistent` candidate it runs only the stages whose writes a later
+        // run reads; the predicate is the run's purpose, not its phase, so
+        // eager drafting and wide runs keep the whole program.
+        let persistent_only =
+            prefill && runtime.canonical == super::Canonical::Persistent && run.drafts.is_empty();
         let prepared = Prepared::new(self.shape, run, &inputs, eager, self.items)?;
         #[cfg(test)]
         DRAFTER_RUNS.with(|runs| {
@@ -565,7 +589,11 @@ impl Instance {
                 target: self.target.as_ref(),
             }
         };
-        let stages = program::drafter_stages_for(self.shape, !run.drafts.is_empty());
+        let stages = if persistent_only {
+            program::drafter_persistent_stages(self.shape)
+        } else {
+            program::drafter_stages_for(self.shape, !run.drafts.is_empty())
+        };
         let lower = |rank: usize, stage: program::Stage| {
             stage_launches(&self.services, &bound(rank), rank, stage)
         };
@@ -580,6 +608,25 @@ impl Instance {
             }
             Ok(crate::ops::program(lowered))
         };
+        if persistent_only {
+            // Always eager (above), so never a graph bucket, whose cached
+            // graphs hold whole programs. A few short stages, queued whole
+            // on each rank, collective by collective (`pipeline::run_ranks`).
+            if prepared.graph().is_some() {
+                return Err(BundleStatusV1::InternalError);
+            }
+            return crate::pipeline::run_ranks(
+                &self.services,
+                &self.streams,
+                &self.symbols,
+                None,
+                &mut runtime.graphs[0],
+                &self.collectives,
+                |rank| program(rank, &stages),
+                |_| {},
+            )
+            .map_err(crate::dispatch::status);
+        }
         let Some((cache, key)) = prepared.graph() else {
             // Eagerly the drafter queues one stage at a time, each whole on
             // every rank (`Program::stage`).
@@ -775,15 +822,28 @@ fn stage_launches(
             BundleStatusV1::Unsupported
         })?;
     #[cfg(test)]
-    DRAFTER_LAUNCHES.with(|launches| {
-        launches.borrow_mut().extend(lowered.iter().map(|lowered| {
-            (
-                matches!(bound.phase, Phase::Prefill),
-                stage,
-                lowered.launch.symbol.clone(),
-            )
-        }))
-    });
+    {
+        let run = DRAFTER_RUNS
+            .with(|runs| runs.borrow().len())
+            .saturating_sub(1);
+        DRAFTER_LAUNCHES.with(|launches| {
+            launches.borrow_mut().extend(lowered.iter().map(|lowered| {
+                DrafterLaunch {
+                    prefill: matches!(bound.phase, Phase::Prefill),
+                    run,
+                    rank,
+                    stage,
+                    symbol: lowered.launch.symbol.clone(),
+                    plan: lowered.launch.plan,
+                    arguments: crate::dispatch::arguments(
+                        &lowered.launch.arguments,
+                        &lowered.launch.bindings,
+                    )
+                    .expect("lowered arguments resolve"),
+                }
+            }))
+        });
+    }
     Ok(lowered)
 }
 

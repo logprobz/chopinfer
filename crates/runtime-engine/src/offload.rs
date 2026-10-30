@@ -273,7 +273,7 @@ impl<E: ModelExecutor> Engine<E> {
             if age >= transfer.stall_after_micros {
                 overdue += 1;
                 if !transfer.warned {
-                    eprintln!(
+                    runtime_log::warn!(
                         "KV transfer {id:?} ({:?}, request {:?}) is overdue after {} ms; retaining leases and continuing polls",
                         transfer.direction,
                         transfer.request,

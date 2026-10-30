@@ -34,7 +34,7 @@ pub(super) fn upload(
         PINNED_RANK_UPLOAD_CHUNK_BYTES,
     );
     if let Some(timing) = timing {
-        eprintln!(
+        runtime_log::info!(
             "startup weight_pipeline: {}",
             serde_json::json!({
                 "ranks": timing, "status": if result.is_ok() { "complete" } else { "failed" },

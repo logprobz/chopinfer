@@ -366,6 +366,7 @@ fn active(
     let (sender, receiver) = tokio::sync::mpsc::channel(128);
     (
         ActiveGeneration {
+            request_id: String::new(),
             events: Outbox::new(EventSender::new(sender), CancellationSignal::new(), false),
             cancellation: CancellationSignal::new(),
             decoder,

@@ -311,7 +311,7 @@ impl OffloadQueue {
         }
         if !self.poisoned && self.progress(device).is_err() {
             self.poisoned = true;
-            eprintln!("KV offload disabled after copy failure; later victims recompute");
+            runtime_log::error!("KV offload disabled after copy failure; later victims recompute");
             // Fence every rank even when an earlier rank fails. No references
             // can be returned unless every stream confirms completion.
             let mut idle = true;

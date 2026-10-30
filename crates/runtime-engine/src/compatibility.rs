@@ -139,6 +139,41 @@ impl Histogram {
         )
         .unwrap();
     }
+
+    fn latency(&self) -> LatencyHistogram {
+        LatencyHistogram {
+            bounds: self.bounds.clone(),
+            cumulative: self.buckets.clone(),
+            count: self.count,
+        }
+    }
+}
+
+/// One latency histogram's cumulative counts, in microseconds.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct LatencyHistogram {
+    /// Upper bounds of the finite buckets.
+    pub bounds: Vec<u64>,
+    /// Observations at or below each bound.
+    pub cumulative: Vec<u64>,
+    /// Every observation, including those above the last bound.
+    pub count: u64,
+}
+
+/// The request latency histograms, the preemption total and the running and
+/// waiting requests, as the metrics endpoint publishes them, for a caller
+/// that summarizes an interval.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RequestSummary {
+    /// Admission to first generated token.
+    pub ttft: LatencyHistogram,
+    /// Interval between generated outputs, once per decode step.
+    pub itl: LatencyHistogram,
+    pub preemptions: u64,
+    /// Live sequences that have been scheduled.
+    pub running: u64,
+    /// Live sequences not yet scheduled, or preempted.
+    pub waiting: u64,
 }
 
 #[derive(Debug)]
@@ -278,6 +313,31 @@ impl Default for CompatibilityMetrics {
 }
 
 impl CompatibilityMetrics {
+    pub(crate) fn request_summary(&self) -> RequestSummary {
+        let (running, waiting) = self.running_and_waiting();
+        RequestSummary {
+            ttft: self.ttft.latency(),
+            itl: self.itl.latency(),
+            preemptions: self.preemptions_total,
+            running: running as u64,
+            waiting: waiting as u64,
+        }
+    }
+
+    fn running_and_waiting(&self) -> (usize, usize) {
+        let running = self
+            .live
+            .values()
+            .filter(|request| request.started.is_some() && !request.preempted && !request.terminal)
+            .count();
+        let waiting = self
+            .live
+            .values()
+            .filter(|request| (request.started.is_none() || request.preempted) && !request.terminal)
+            .count();
+        (running, waiting)
+    }
+
     /// Records one committed step: its execution time, its prefill tokens and
     /// the decode-aware cap selected for it, if any.
     pub(crate) fn step(
@@ -698,16 +758,7 @@ impl CompatibilityMetrics {
             )
             .unwrap();
         }
-        let running = self
-            .live
-            .values()
-            .filter(|request| request.started.is_some() && !request.preempted && !request.terminal)
-            .count();
-        let waiting = self
-            .live
-            .values()
-            .filter(|request| (request.started.is_none() || request.preempted) && !request.terminal)
-            .count();
+        let (running, waiting) = self.running_and_waiting();
         for (name, value) in [
             ("vllm:num_requests_running", running),
             ("vllm:num_requests_waiting", waiting),
@@ -1087,6 +1138,26 @@ pub(crate) fn counter(output: &mut String, name: &str, labels: &str, value: u64)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_summary_copies_the_published_cumulative_buckets() {
+        let mut metrics = CompatibilityMetrics::default();
+        for micros in [500, 7_000, 3_000_000_000] {
+            metrics.ttft.observe(micros);
+        }
+        metrics.itl.observe(30_000);
+        metrics.preempted(RequestId::new(1));
+        let snapshot = metrics.request_summary();
+        assert_eq!(snapshot.ttft.bounds, TTFT);
+        assert_eq!(snapshot.ttft.cumulative[..3], [1, 1, 2]);
+        assert_eq!(*snapshot.ttft.cumulative.last().unwrap(), 2);
+        assert_eq!(snapshot.ttft.count, 3);
+        assert_eq!(snapshot.itl.bounds, ITL);
+        assert_eq!(snapshot.itl.cumulative[..3], [0, 0, 1]);
+        assert_eq!(snapshot.itl.count, 1);
+        assert_eq!(snapshot.preemptions, 1);
+        assert_eq!((snapshot.running, snapshot.waiting), (0, 0));
+    }
 
     #[test]
     fn request_trace_json_preserves_identity_and_has_no_prompt_text() {

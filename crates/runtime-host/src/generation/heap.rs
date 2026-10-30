@@ -56,7 +56,7 @@ fn trim() {
     // synchronizes with concurrent allocations. It does not move live data.
     #[allow(unsafe_code)]
     let released = unsafe { libc::malloc_trim(0) };
-    eprintln!(
+    runtime_log::info!(
         "generation worker heap trim: released={released} free_bytes={free} elapsed_us={}",
         started.elapsed().as_micros()
     );

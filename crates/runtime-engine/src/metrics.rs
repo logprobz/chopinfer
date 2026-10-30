@@ -431,6 +431,13 @@ impl EngineMetrics {
         )
     }
 
+    /// The latency histograms, preemption total and running and waiting
+    /// requests `/metrics` publishes.
+    #[must_use]
+    pub fn request_summary(&self) -> crate::compatibility::RequestSummary {
+        self.compatibility(|metrics| metrics.request_summary())
+    }
+
     /// Requests the reference metric set still keeps a record of: every
     /// submitted request until it finishes, fails or its frontend finishes
     /// it. Zero once every request has left.
@@ -877,7 +884,7 @@ impl EngineMetrics {
         if let Some(index) = OFFLOAD_REASONS.iter().position(|r| *r == reason) {
             let mut metrics = self.inner.offload.lock().unwrap_or_else(|e| e.into_inner());
             if metrics.fallbacks[index] == 0 {
-                eprintln!("KV offload fallback: {reason}");
+                runtime_log::info!("KV offload fallback: {reason}");
             }
             metrics.fallbacks[index] += 1;
         }

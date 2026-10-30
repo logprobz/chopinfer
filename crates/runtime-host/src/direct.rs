@@ -841,7 +841,7 @@ fn prewarm_v1(mappings: &[Arc<MappedRowsV1>]) -> Result<PrewarmV1, String> {
     if let Some(available) = available_bytes
         && available < bytes.saturating_add(margin_bytes)
     {
-        eprintln!(
+        runtime_log::warn!(
             "startup prewarm: warning host-ram-short: {available} bytes available, below the \
              {bytes} prewarmed bytes plus a {margin_bytes}-byte margin; gathers read evicted \
              rows from the file"
@@ -934,7 +934,7 @@ impl Drop for PlannedImageV1 {
                     let _ = thread.join();
                 }
             }
-            Ok(()) | Err(RecvTimeoutError::Timeout) => eprintln!(
+            Ok(()) | Err(RecvTimeoutError::Timeout) => runtime_log::warn!(
                 "direct load: a read-ahead thread is still advising after {READ_AHEAD_STOP_WAIT:?}; leaving it to finish that call"
             ),
         }
@@ -1613,7 +1613,7 @@ fn read_source_storage_v1(
                     direct.refused.fetch_add(1, Ordering::Relaxed);
                 }
                 if !direct.is_some_and(|direct| direct.off.swap(true, Ordering::Relaxed)) {
-                    eprintln!(
+                    runtime_log::warn!(
                         "direct load: {} refused a direct read ({error}); reading it through the page cache",
                         shard.name
                     );
@@ -2649,7 +2649,7 @@ pub fn plan_image_v1(
         return Ok(None);
     };
     let planned_seconds = started.elapsed().as_secs_f64() - validation_seconds;
-    eprintln!(
+    runtime_log::info!(
         "startup weight_plan: {}",
         serde_json::json!({
             "image_role": image_role,
@@ -2708,7 +2708,7 @@ fn census_v1(
         }
     }
     let (answer, unique, bytes_read) = census_counts_v1(checkpoint, &documents)?;
-    eprintln!(
+    runtime_log::info!(
         "startup weight_census: {}",
         serde_json::json!({
             "image_role": image_role,

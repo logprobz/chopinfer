@@ -52,6 +52,7 @@ runtime-kernel-contract.workspace = true
 # names a model: both read the components the selected bundle shipped.
 runtime-frontend.workspace = true
 runtime-kv.workspace = true
+runtime-log.workspace = true
 # Container demuxing and frame rules for video parts; decoding itself is the
 # CUDA backend's.
 runtime-media.workspace = true

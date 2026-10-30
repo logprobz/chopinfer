@@ -160,6 +160,7 @@ fn run(concurrency: usize, prompt: usize, draft: usize, overlap: bool) -> [f64; 
         active.insert(
             id,
             ActiveGeneration {
+                request_id: String::new(),
                 events: Outbox::new(EventSender::new(sender), cancellation.clone(), overlap),
                 cancellation,
                 decoder,

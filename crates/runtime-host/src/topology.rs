@@ -92,7 +92,7 @@ pub(crate) fn serving_devices(
             let uuid = driver
                 .device_uuid(ordinal)
                 .map_err(|error| error.to_string())?;
-            eprintln!(
+            runtime_log::info!(
                 "startup device rank={rank} visible_ordinal={ordinal} pci_bus_id={pci_bus_id} uuid={uuid}"
             );
         }

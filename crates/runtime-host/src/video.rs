@@ -585,7 +585,7 @@ impl VideoDecodeServiceV1 {
             if remaining.is_zero() {
                 state.cancelled.store(true, Ordering::Release);
                 let overdue = self.shared.overdue(Instant::now());
-                eprintln!(
+                runtime_log::warn!(
                     "video decode: a job passed its {:?} deadline; {overdue} of {workers} \
                      workers are overdue",
                     self.config.deadline

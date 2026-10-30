@@ -182,11 +182,11 @@ pub(crate) async fn warmup(
     steps: Option<&StartupStepLog>,
 ) -> Result<(), String> {
     if skip_warmup {
-        eprintln!(
+        runtime_log::warn!(
             "WARNING: CHOPINFER_DEV_SKIP_WARMUP=1: development startup skips generation validation \
              and warmup; first requests may capture graphs"
         );
-        eprintln!("startup generation warmup: skipped (development)");
+        runtime_log::info!("startup generation warmup: skipped (development)");
         return Ok(());
     }
     let mut deadline = WarmupDeadline::new(WARMUP_TIMEOUT);
@@ -211,7 +211,7 @@ async fn finish_warmup(
 ) -> Result<(), String> {
     backend.startup_warmup(false).await?;
     if let Err(error) = result {
-        eprintln!(
+        runtime_log::warn!(
             "WARNING: startup warmup incomplete: {error}; remaining keys were not warmed; continuing to listen"
         );
     }
@@ -278,7 +278,7 @@ async fn warmup_inner(
     };
     let mut result = Ok(());
     for wave in waves(sequences) {
-        eprintln!("startup warmup wave: {wave} sequences begin");
+        runtime_log::debug!("startup warmup wave: {wave} sequences begin");
         let wave_started = std::time::Instant::now();
         let output_tokens = if wave == 1 {
             single_output
@@ -298,12 +298,12 @@ async fn warmup_inner(
             None,
         )
         .await;
-        eprintln!(
+        runtime_log::debug!(
             "startup warmup wave: {wave} sequences end, {:.3}s",
             wave_started.elapsed().as_secs_f64()
         );
         if let Err(error) = &result {
-            eprintln!("WARNING: startup warmup: {error}");
+            runtime_log::warn!("WARNING: startup warmup: {error}");
             if !matches!(backend.readiness(), runtime_server::BackendReadiness::Ready) {
                 return result;
             }
@@ -325,7 +325,7 @@ async fn warmup_inner(
             _ => usize::MAX,
         };
         if admitted < verify_output(&verify) {
-            eprintln!("startup verify warmup: skipped, the request profile admits too few tokens");
+            runtime_log::info!("startup verify warmup: skipped, the request profile admits too few tokens");
         } else {
             result = verify_waves(
                 backend, &model, &tokens, limit, sequences, &verify, steps, deadline,
@@ -333,7 +333,7 @@ async fn warmup_inner(
             .await;
         }
     }
-    eprintln!(
+    runtime_log::info!(
         "startup generation warmup: {:.3}s",
         started.elapsed().as_secs_f64()
     );
@@ -369,11 +369,11 @@ async fn verify_waves(
     let shapes = verify_shapes(sequences, verify);
     let output = verify_output(verify);
     if tokens.len() + output > limit {
-        eprintln!("startup verify warmup: skipped, the context is too short");
+        runtime_log::info!("startup verify warmup: skipped, the context is too short");
         return Ok(());
     }
     for shape in &shapes {
-        eprintln!(
+        runtime_log::debug!(
             "startup verify warmup: rows {} items {} begin",
             shape.row_bucket, shape.item_bucket
         );
@@ -386,14 +386,14 @@ async fn verify_waves(
         let label = format!("verify-{}-{}", shape.row_bucket, shape.item_bucket);
         let stop = steps.map(|steps| (steps, WaveProgress::new(&shape.drafts)));
         let result = run_wave(backend, model, &label, &requests, output, deadline, stop).await;
-        eprintln!(
+        runtime_log::debug!(
             "startup verify warmup: rows {} items {} end, {:.3}s",
             shape.row_bucket,
             shape.item_bucket,
             shape_started.elapsed().as_secs_f64()
         );
         if let Err(error) = result {
-            eprintln!(
+            runtime_log::warn!(
                 "WARNING: startup verify warmup: rows {} items {} not warmed: {error}",
                 shape.row_bucket, shape.item_bucket
             );
@@ -414,19 +414,19 @@ async fn verify_waves(
         .collect();
     for shape in &allocated {
         let (items, width, reserved) = (shape.items, shape.width, shape.reserved_rows);
-        eprintln!(
+        runtime_log::debug!(
             "startup verify warmup: allocated {width} of {reserved} rows, items {items} begin"
         );
         let shape_started = std::time::Instant::now();
         let requests = vec![(tokens.to_vec(), None); items];
         let label = format!("allocated-{width}-{reserved}-{items}");
         let result = run_wave(backend, model, &label, &requests, output, deadline, None).await;
-        eprintln!(
+        runtime_log::debug!(
             "startup verify warmup: allocated {width} of {reserved} rows, items {items} end, {:.3}s",
             shape_started.elapsed().as_secs_f64()
         );
         if let Err(error) = result {
-            eprintln!(
+            runtime_log::warn!(
                 "WARNING: startup verify warmup: allocated {width} of {reserved} rows, items {items} not warmed: {error}"
             );
             if !matches!(backend.readiness(), runtime_server::BackendReadiness::Ready) {
@@ -444,7 +444,7 @@ async fn verify_waves(
     if let Some(pin) = pin {
         let first = tokens.first().copied().unwrap_or(0);
         for &prompt in &ladder {
-            eprintln!("startup verify warmup: context {prompt} begin");
+            runtime_log::debug!("startup verify warmup: context {prompt} begin");
             let context_started = std::time::Instant::now();
             let request = (vec![first; prompt], Some(pin));
             let result = run_wave(
@@ -457,19 +457,19 @@ async fn verify_waves(
                 None,
             )
             .await;
-            eprintln!(
+            runtime_log::debug!(
                 "startup verify warmup: context {prompt} end, {:.3}s",
                 context_started.elapsed().as_secs_f64()
             );
             if let Err(error) = result {
-                eprintln!("WARNING: startup verify warmup: context {prompt} not warmed: {error}");
+                runtime_log::warn!("WARNING: startup verify warmup: context {prompt} not warmed: {error}");
                 if !matches!(backend.readiness(), runtime_server::BackendReadiness::Ready) {
                     return Err(error);
                 }
             }
         }
     }
-    eprintln!(
+    runtime_log::info!(
         "startup verify warmup: {} verify shapes considered, {} allocated, {} context lengths, {:.3}s",
         shapes.len(),
         allocated.len(),
@@ -510,7 +510,7 @@ async fn run_wave(
         .unwrap_or(1);
     let capacity = backend.startup_wave_capacity(reservation);
     if wave > capacity {
-        eprintln!(
+        runtime_log::warn!(
             "WARNING: startup warmup key {label} not warmed: {wave} sequences need more KV pages than capacity {capacity}"
         );
         return Ok(());
@@ -633,7 +633,7 @@ async fn finished_or_done(
                     }
                 }
             }
-            eprintln!(
+            runtime_log::debug!(
                 "startup verify warmup: {label} ended early ({})",
                 progress.steps()
             );

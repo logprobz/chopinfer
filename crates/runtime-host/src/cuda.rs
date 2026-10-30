@@ -881,7 +881,7 @@ fn tensor_map_descriptor(map: &DeviceTensorMapV1) -> HostDeviceResultV1<TensorMa
 /// The host does not forward a driver code across the boundary, because a
 /// bundle cannot act on one. It reports that the host's device work failed.
 fn driver_status(error: CudaError) -> BundleStatusV1 {
-    eprintln!("CUDA driver operation failed: {error}");
+    runtime_log::error!("CUDA driver operation failed: {error}");
     match error {
         CudaError::InvalidOrdinal(_)
         | CudaError::InvalidKernelName
@@ -2137,18 +2137,8 @@ impl HostDeviceBackendV1 for CudaHostDeviceV1 {
     }
 
     fn log(&mut self, message: &[u8]) -> HostDeviceResultV1<()> {
-        let _phase = runtime_engine::profile::PhaseTimer::traced(
-            runtime_engine::profile::StepPhase::BundleLog,
-        );
-        runtime_engine::logging::record_route(message);
+        // The host services print and level the message (`services.rs`).
         record_diagnostic_v1(&mut self.logs, message);
-        // The log ABI has no severity. Only recognized routine trace schemas
-        // may be lost; an unclassified message can be the sole failure detail.
-        if runtime_engine::logging::is_routine_bundle_trace(message) {
-            runtime_engine::diagnostic!("bundle: {}", String::from_utf8_lossy(message));
-        } else {
-            eprintln!("bundle: {}", String::from_utf8_lossy(message));
-        }
         Ok(())
     }
 }

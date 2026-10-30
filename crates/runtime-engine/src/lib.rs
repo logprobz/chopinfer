@@ -20,6 +20,7 @@ pub use media::{
     MediaInjectV1, MediaInputV1, MediaPayloadSourceV1, MediaPayloadV1, MediaRequestError,
     MediaSpanV1,
 };
+pub use compatibility::{LatencyHistogram, RequestSummary};
 pub use metrics::{
     EngineMetrics, EngineMetricsSnapshot, ExecutionObservations, MonotonicClock,
     SystemMonotonicClock,

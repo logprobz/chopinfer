@@ -206,7 +206,7 @@ pub fn verify_selected_bundle_v1(
     let started = std::time::Instant::now();
     let BundleSelectionV1::Directory(path) = selection;
     let result = BundlePackageV1::verify_directory(path, host);
-    eprintln!(
+    runtime_log::info!(
         "startup verify: {:.6}s, image_bytes_read=0, component_bytes_hashed={}, status={}",
         started.elapsed().as_secs_f64(),
         result
@@ -1045,7 +1045,7 @@ pub(crate) fn open_native_module_v1(
         .ok_or(HostLoadErrorV1::NoNativeModule)?;
     let started = std::time::Instant::now();
     let library = BundleLibraryV1::open_verified_image(module.bytes(), module.display())?;
-    eprintln!(
+    runtime_log::info!(
         "startup module load: {:.3}s",
         started.elapsed().as_secs_f64()
     );

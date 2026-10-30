@@ -10,11 +10,13 @@ license.workspace = true
 runtime-bundle-sdk.workspace = true
 runtime-grammar.workspace = true
 runtime-kv.workspace = true
+runtime-log.workspace = true
 runtime-model-api.workspace = true
 runtime-sampling.workspace = true
 runtime-scheduler.workspace = true
 sha2.workspace = true
 
+serde.workspace = true
 serde_json.workspace = true
 
 [lints]

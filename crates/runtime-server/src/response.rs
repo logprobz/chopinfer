@@ -268,14 +268,14 @@ impl Drop for StreamOutcome {
         if failure.is_none() && (reason == STREAM_OPEN || self.merged) {
             return;
         }
-        record.set_request_id(&self.request_id);
+        let id = &self.request_id;
         match (failure, reason) {
-            (Some(detail), _) => record.report(detail),
+            (Some(detail), _) => record.report(detail, id),
             (None, STREAM_TIMED_OUT) => {
-                record.report(crate::request_log::client_write_timeout_detail());
+                record.report(crate::request_log::client_write_timeout_detail(), id);
             }
-            (None, STREAM_DRAINED) => record.report(crate::request_log::shutdown_detail()),
-            (None, _) => record.stream_abandoned(),
+            (None, STREAM_DRAINED) => record.report(crate::request_log::shutdown_detail(), id),
+            (None, _) => record.stream_abandoned(id),
         }
     }
 }

@@ -515,20 +515,21 @@ impl RequestRecord {
         self.defer();
     }
 
-    /// Reports a stream's failure: written, or stored for the adapter.
-    pub(crate) fn report(&self, detail: FailureDetail) {
+    /// Reports the failure of the stream of choice `request_id`: written
+    /// under that ID, or stored for the adapter.
+    pub(crate) fn report(&self, detail: FailureDetail, request_id: &str) {
         if self.adapter.load(Ordering::Acquire) {
             self.store_failure(detail);
         } else {
-            self.fail(detail);
+            self.fail_as(detail, Some(request_id));
         }
     }
 
-    /// Reports a stream whose reader left: the adapter, when it owns the
-    /// outcome, decides what that means.
-    pub(crate) fn stream_abandoned(&self) {
+    /// Reports a stream of choice `request_id` whose reader left: the
+    /// adapter, when it owns the outcome, decides what that means.
+    pub(crate) fn stream_abandoned(&self, request_id: &str) {
         if !self.adapter.load(Ordering::Acquire) {
-            self.abandon();
+            self.abandon_as(Some(request_id));
         }
     }
 
@@ -537,13 +538,27 @@ impl RequestRecord {
         self.emitted.store(true, Ordering::Release);
     }
 
-    fn claim(&self) -> bool {
-        !self.emitted.swap(true, Ordering::AcqRel)
+    /// Claims the request's one line, naming it `request_id` when given.
+    /// Only the winning claim names it, so when several choices end at once
+    /// the line carries the ID of the choice whose outcome it reports.
+    fn claim(&self, request_id: Option<&str>) -> bool {
+        if self.emitted.swap(true, Ordering::AcqRel) {
+            return false;
+        }
+        if let Some(id) = request_id {
+            self.set_request_id(id);
+        }
+        true
     }
 
     /// Writes the request's failure line, unless it already has a line.
     pub(crate) fn fail(&self, detail: FailureDetail) {
-        if !self.claim() {
+        self.fail_as(detail, None);
+    }
+
+    /// [`Self::fail`], naming the request `request_id` if this line wins.
+    fn fail_as(&self, detail: FailureDetail, request_id: Option<&str>) {
+        if !self.claim(request_id) {
             return;
         }
         let level = detail.level();
@@ -577,7 +592,11 @@ impl RequestRecord {
     /// Writes the request's cancellation line at `info`, unless it already
     /// has a line. A cancellation is not a failure.
     pub(crate) fn cancel(&self, reason: &'static str) {
-        if !self.claim() {
+        self.cancel_as(reason, None);
+    }
+
+    fn cancel_as(&self, reason: &'static str, request_id: Option<&str>) {
+        if !self.claim(request_id) {
             return;
         }
         let mut line = self.common(CANCEL_SCHEMA, Level::Info);
@@ -589,10 +608,14 @@ impl RequestRecord {
     /// a shutdown failure when the server was stopping, otherwise the
     /// client's cancellation.
     pub(crate) fn abandon(&self) {
+        self.abandon_as(None);
+    }
+
+    fn abandon_as(&self, request_id: Option<&str>) {
         if self.ended_by_shutdown() {
-            self.fail(shutdown_detail());
+            self.fail_as(shutdown_detail(), request_id);
         } else {
-            self.cancel("client_disconnected");
+            self.cancel_as("client_disconnected", request_id);
         }
     }
 

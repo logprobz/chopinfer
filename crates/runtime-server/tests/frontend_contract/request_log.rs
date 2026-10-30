@@ -615,6 +615,46 @@ async fn a_failing_choice_of_a_stream_is_the_line_not_its_siblings() {
     }
 }
 
+/// When several streamed choices fail at once, the request's one line pairs
+/// a choice's failure with that choice's ID.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_choice_failures_keep_each_failure_with_its_choice() {
+    const REQUESTS: usize = 100;
+    let backend = HoldingBackend::new();
+    let server = LoggedServer::start(backend.clone(), ServerConfig::default()).await;
+    for request in 0..REQUESTS {
+        // Choices that failed are not cancelled, so the backend still holds
+        // the previous request's.
+        backend.held.lock().unwrap().clear();
+        let reading = server
+            .open(completion(json!({
+                "model": MODEL, "prompt": "x", "max_tokens": 4, "stream": true, "n": 2,
+            })))
+            .await;
+        backend.wait_admitted(2 * (request + 1)).await;
+        let failed = |choice: usize| GenerationEvent::Failed {
+            message: "device fault".to_owned(),
+            code: Some(format!("fault_{choice}")),
+        };
+        let (first, second) = (backend.emit_to(0, failed(0)), backend.emit_to(1, failed(1)));
+        tokio::join!(first, second);
+        let _ = reading.await.unwrap();
+    }
+
+    let lines = server.lines(REQUESTS).await;
+
+    for line in &lines {
+        assert_failure(line, 500, "error");
+        let choice = line["request_id"]
+            .as_str()
+            .unwrap()
+            .rsplit('_')
+            .next()
+            .unwrap();
+        assert_eq!(line["code"], format!("fault_{choice}"), "{line:#}");
+    }
+}
+
 /// A client that leaves, whether waiting for a whole answer, reading a
 /// stream or still sending its body, ends its request with a cancel line,
 /// not a failure. A body whose framing is wrong is a failure.

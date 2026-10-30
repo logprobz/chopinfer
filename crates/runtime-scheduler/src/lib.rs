@@ -263,14 +263,15 @@ pub const DEFAULT_MIXED_MIN_PREFILL_TOKENS: usize = 512;
 /// The most decode-only steps `PrefillBudget::Tbt` may put between chunks.
 pub const MAXIMUM_MIXED_DECODE_STEPS: u32 = 8;
 /// Adaptive prefill sizing: a backlog whose remaining prefill uncapped
-/// chunks are predicted to clear within this many microseconds is served
-/// as without the switch. It costs each decoding request a few long gaps,
-/// while cutting it would cost its prompts a fixed step cost per cut.
+/// chunks are predicted to clear within this many microseconds is
+/// transient. It lasts a few steps, so its steps beside decoding requests
+/// may run to four thirds of the target with the margin; a longer,
+/// sustained backlog keeps each step within the target and is reordered.
 pub const TRANSIENT_BACKLOG_MICROS: u64 = 4_000_000;
 /// Adaptive prefill sizing: under a backlog, a prompt queued this long, in
 /// observed step time, goes first on every second backlog step that takes
-/// prefill, so neither shortest remaining first nor owed decode-only steps
-/// can starve it.
+/// prefill, so neither the fewest-chunks-first order nor owed decode-only
+/// steps can starve it.
 pub const PREFILL_AGE_MICROS: u64 = 30_000_000;
 
 /// The decode stall bound of `PrefillBudget::Tbt`.
@@ -575,17 +576,20 @@ impl SchedulerConfig {
     /// instead of the fixed target. A decoding request's gap is the step it
     /// shares, so the cap is the largest legal one (the progress floor, each
     /// 128-token multiple up to what the waiting chunks can take, or no
-    /// cap) whose predicted step, with a margin from the step model's recent
-    /// errors, stays within the target, or the progress floor when none
-    /// does; never a smaller one, since each extra step adds its fixed cost
-    /// to the prefill. A backlog that uncapped
-    /// chunks clear within `TRANSIENT_BACKLOG_MICROS` is served as without
-    /// the switch: whole grid chunks, or the fixed-target cap. A longer
-    /// backlog also prefills the shortest remaining prompt first, and a
-    /// prompt queued for `PREFILL_AGE_MICROS` first on every second backlog
-    /// step that takes prefill, whatever decode-only steps fall between. A
-    /// grid request with timing cuts is cut at the cap; other requests take
-    /// it as the step's prefill budget.
+    /// cap) whose predicted step stays within its bound, or the progress
+    /// floor when none does; never a smaller one, since each extra step adds
+    /// its fixed cost to the prefill. Under a backlog that uncapped chunks
+    /// clear in more than `TRANSIENT_BACKLOG_MICROS` the bound is the
+    /// target, as the fixed policy sizes it; under a shorter one it is four
+    /// thirds of the target with a margin from the step model's recent
+    /// errors. No cap only when the uncapped step keeps the bound and its
+    /// chunks share the step: a grid chunk too long to share it is cut. A
+    /// sustained backlog also prefills the prompt with the fewest uncapped
+    /// chunks left first, the earliest arrival among equals, and a prompt
+    /// queued for `PREFILL_AGE_MICROS` first on every second backlog step
+    /// that takes prefill, whatever decode-only steps fall between. A grid
+    /// request with timing cuts is cut at the cap; other requests take it
+    /// as the step's prefill budget.
     #[must_use]
     pub const fn with_adaptive_prefill_budget(mut self, enabled: bool) -> Self {
         self.adaptive_prefill_budget = enabled;
@@ -2275,16 +2279,15 @@ impl Scheduler {
                     match backlog {
                         // Until the model trains, the progress floor.
                         None => Some(floor),
-                        // A transient backlog is served as without the
-                        // switch: whole grid chunks, or the fixed target.
-                        Some(_) if !backlogged => {
-                            self.config.guaranteed_prefill_chunks.is_none().then(|| {
-                                self.step_model
-                                    .budget(decode.len(), context, decode_room, policy)
-                                    .unwrap_or(floor)
-                            })
-                        }
                         Some(_) => {
+                            // A sustained backlog keeps each step within the
+                            // target; a transient one, a few steps long, within
+                            // the ceiling with the margin.
+                            let bound = if backlogged {
+                                mixed_budget::CadenceBound::Target
+                            } else {
+                                mixed_budget::CadenceBound::Ceiling
+                            };
                             // What the waiting requests' next uncapped
                             // chunks could take together. A grid chunk too
                             // long to share the step runs alone when uncapped.
@@ -2346,6 +2349,7 @@ impl Scheduler {
                                     context,
                                     tokens.min(decode_room),
                                     whole,
+                                    bound,
                                     policy,
                                 )
                                 .unwrap_or(Some(floor))
@@ -4208,17 +4212,35 @@ impl Scheduler {
         Some(total)
     }
 
-    /// Adaptive sizing under a backlog: the shortest remaining prefill first;
-    /// on every second backlog step that takes prefill (`backlog_steps`),
-    /// the earliest request queued for at least `PREFILL_AGE_MICROS` of
-    /// observed step time goes first instead.
+    /// The uncapped chunks `record` has left to prefill, as
+    /// `prefill_backlog_micros` counts them: to each absolute grid
+    /// boundary, or of the chunk limit.
+    fn remaining_chunks(&self, record: &RequestRecord) -> usize {
+        let target = Self::prefill_target(record);
+        let start = record.prefilled_tokens;
+        if start >= target {
+            return 0;
+        }
+        match record.guaranteed_prefill_chunks {
+            Some(chunk) => {
+                let chunk = chunk.max(1);
+                let first = (start / chunk + 1).saturating_mul(chunk);
+                1 + target.saturating_sub(first).div_ceil(chunk)
+            }
+            None => (target - start).div_ceil(self.config.prefill_chunk_limit.max(1)),
+        }
+    }
+
+    /// Adaptive sizing under a backlog: the fewest remaining uncapped chunks
+    /// first (`remaining_chunks`), the earliest arrival among equals, so a
+    /// prompt that finishes in one chunk goes ahead of a longer one but long
+    /// prompts keep their order; on every second backlog step that takes
+    /// prefill (`backlog_steps`), the earliest request queued for at least
+    /// `PREFILL_AGE_MICROS` of observed step time goes first instead.
     fn order_backlog(&self, prefill: &mut [usize]) {
         prefill.sort_by_key(|&index| {
             let record = &self.requests[index];
-            (
-                Self::prefill_target(record).saturating_sub(record.prefilled_tokens),
-                record.arrival,
-            )
+            (self.remaining_chunks(record), record.arrival)
         });
         if self.backlog_steps.is_multiple_of(2)
             && let Some(position) = prefill

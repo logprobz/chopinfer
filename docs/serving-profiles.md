@@ -386,23 +386,35 @@ scored and media requests keep their chunks.
 
 `adaptive` is a candidate under qualification. It needs `--prefill-budget
 tbt` and takes `--decode-tbt-target-ms` as a decode cadence target: a
-decoding request's gap is the step it shares, so while a prefill backlog
-lasts, each step beside decoding requests takes the largest legal cap (the
-progress floor, each 128-token multiple up to what the waiting requests'
-next chunks can take, or no cap) whose predicted time, with a margin, stays
-within the target. The margin is the 90th percentile of the step model's
-last 128 relative prediction errors, at least 5%, so a prediction close to
-the target counts as crossing it. When no cap keeps the target, as at a
-long context where even the floor's step is predicted past it, the step
-takes the progress floor and exceeds the target, so the target is not a
-latency bound. No smaller cap is taken, since each extra step adds its
-fixed cost to the prefill. Uncapped, an item may also run past an anchor
-to its prompt end, and that longer step is what is priced. A backlog that uncut chunks are
-predicted to clear within 4 s is served as `off` serves it (whole grid
-chunks, or the fixed-target cap without a grid); a longer one also prefills
-the shortest remaining prompt first, and a prompt queued for 30 s of step
-time first on every second step that takes prefill (owed decode-only
-steps do not count). Without decoders the step is not capped,
+decoding request's gap is the step it shares, so each step beside decoding
+requests takes the largest legal cap (the progress floor, each 128-token
+multiple up to what the waiting requests' next chunks can take, or no cap)
+whose predicted time stays within a bound that depends on the prefill
+backlog. A backlog that uncut chunks are predicted to clear in more than
+4 s is sustained, and its steps are sized as `fixed` sizes them: the
+predicted step within the target. A shorter, transient backlog lasts a few
+steps, so its steps may run past the target: the predicted step with a
+margin within four thirds of the target (1 s at 750 ms). The margin is the
+90th percentile of the step model's last 128 relative prediction errors, at
+least 5%, so a prediction close to the ceiling counts as crossing it. No
+cap is taken only when the uncut step keeps the bound and its chunks share
+the step with the decoding requests; a grid chunk too long to share the step
+is always cut rather than run alone. Both bounds are estimates: a larger
+prediction error, a progress floor or granule boundary that forces a
+longer chunk, too little decode room for any cut to share the step, and
+scored or media prefills, which keep their own chunks, can all run past
+them. When no cap keeps the bound, as at a long context where even the
+floor's step is predicted past it, the step takes the progress floor, so
+the target is not a latency bound. No smaller cap is taken, since each extra
+step adds its fixed cost to the prefill. Uncapped, an item may also run past
+an anchor to its prompt end, and that longer step is what is priced. A
+sustained backlog also prefills the prompt with the fewest uncut chunks
+left first (chunks end at absolute grid boundaries, or are chunk-limit
+sized), the earliest arrival among equals, so a prompt that finishes in one
+chunk goes ahead of a longer one while long prompts keep their order; a
+prompt queued for 30 s of step time goes first on every second step that
+takes prefill (owed decode-only steps do not count). A transient backlog
+keeps the served order. Without decoders the step is not capped,
 and until the step model trains the cap is the progress floor. Its useful
 targets are about 500 ms to 1 s; the 100 ms default cuts nearly as hard as
 `fixed`. It applies to every model: a bundle with a prefill grid needs

@@ -1,11 +1,14 @@
 //! Adaptive TBT caps (`SchedulerConfig::with_adaptive_prefill_budget`):
-//! under a prefill backlog, a step beside decoding requests takes the
-//! largest legal cap whose predicted time, with the step model's margin,
-//! keeps the target, and the backlog prefills the shortest remaining prompt
-//! first, an aged prompt first on every second prefill step. A backlog that uncut
-//! chunks clear within `TRANSIENT_BACKLOG_MICROS` is served as without the
-//! switch. Grid requests with cuts take the cap as a timing cut; other
-//! requests take it as the step's prefill budget.
+//! a step beside decoding requests takes the largest legal cap whose
+//! predicted time keeps its bound: the target under a sustained backlog
+//! (as the fixed policy sizes it), four thirds of the target with the step
+//! model's margin under a backlog that uncut chunks clear within
+//! `TRANSIENT_BACKLOG_MICROS`. A chunk too long to share the step with the
+//! decoding requests is always cut. A sustained backlog prefills the prompt
+//! with the fewest uncut chunks left first, the earliest arrival among
+//! equals, an aged prompt first on every second prefill step. Grid requests
+//! with cuts take the cap as a timing cut; other requests take it as the
+//! step's prefill budget.
 
 use runtime_kv::{KvGeometry, PrefixChainV1};
 use runtime_scheduler::{
@@ -229,9 +232,9 @@ fn remaining(steps: &[Step], id: u64, prompt: usize) -> usize {
     prompt - chunks(steps, id).iter().map(|chunk| chunk.1).sum::<usize>()
 }
 
-/// A step's time against the target with the least margin.
+/// A step's time against the target, the sustained bound.
 fn keeps_target(step: &Step) -> bool {
-    step.micros * 105 <= u64::from(TARGET_MS) * 100_000
+    step.micros <= u64::from(TARGET_MS) * 1000
 }
 
 #[test]
@@ -256,8 +259,8 @@ fn the_switch_needs_the_tbt_budget() {
 fn a_backlog_keeps_every_decoder_gap_within_the_target() {
     // Two decoders beside three prompts of four grid chunks each: about
     // 13 s of uncut prefill. Every step beside the decoders keeps the
-    // target until the backlog left could clear within the transient
-    // window, and serves both decoders.
+    // target, without the margin, until the backlog left could clear
+    // within the transient window, and serves both decoders.
     let prompt = 4 * GRID;
     let mut s = scheduler(grid(true));
     decoders(&mut s, 2);
@@ -278,6 +281,8 @@ fn a_backlog_keeps_every_decoder_gap_within_the_target() {
             );
             assert!(step.cap.is_some(), "{step:?}");
         }
+        // Through the transition to a transient backlog, the ceiling.
+        assert!(step.decodes.is_empty() || keeps_ceiling(&step), "{step:?}");
         steps.push(step);
     }
     for id in 1..=3 {
@@ -294,9 +299,11 @@ fn a_backlog_keeps_every_decoder_gap_within_the_target() {
 }
 
 #[test]
-fn a_backlog_that_clears_within_the_transient_window_runs_whole_chunks() {
-    // Twelve decoders beside one prompt of two grid chunks (about 2.2 s):
-    // the chunks run whole, as without the switch.
+fn a_transient_backlog_cuts_whole_chunks_to_share_the_step() {
+    // Twelve decoders beside one prompt of two grid chunks (about 2.2 s
+    // uncut): a whole chunk leaves no room for the decoders and crosses the
+    // ceiling, so each is cut to the ceiling and every step that prefills
+    // serves all twelve.
     let pairs = |start: usize| (GRID * start + GRID * (GRID + 1) / 2) as u64;
     let uncut: u64 = [0, GRID]
         .iter()
@@ -307,39 +314,74 @@ fn a_backlog_that_clears_within_the_transient_window_runs_whole_chunks() {
     decoders(&mut s, 12);
     submit(&mut s, 1, 2 * GRID, 4);
     let steps = prefill(&mut s, 1, 20);
-    assert_eq!(chunks(&steps, 1), [(0, GRID), (GRID, GRID)]);
+    for step in steps.iter().filter(|step| !step.prefills.is_empty()) {
+        assert!(keeps_ceiling(step), "{step:?}");
+        assert!((100..112).all(|id| step.decodes.contains(&id)), "{step:?}");
+    }
+    assert!(chunks(&steps, 1).len() > 2, "{steps:#?}");
+    assert_legal(&chunks(&steps, 1), 2 * GRID);
 }
 
 #[test]
-fn light_load_serves_as_without_the_switch() {
-    // Short turns beside decoders never build a backlog beyond the
-    // transient window: every batch matches the scheduler without the
-    // switch (grid: uncut chunks; plain: the fixed-target cap).
-    for (adaptive, served) in [(grid(true), grid(false)), (plain(true), plain(false))] {
-        let mut a = scheduler(adaptive);
-        let mut b = scheduler(served);
-        decoders(&mut a, 6);
-        decoders(&mut b, 6);
-        let mut next = 1;
-        for round in 0..40_usize {
-            if round % 4 == 0 {
-                let prompt = [300, 5000, 9000, 2000][round / 4 % 4];
-                submit(&mut a, next, prompt, 3);
-                submit(&mut b, next, prompt, 3);
-                next += 1;
-            }
-            let (x, y) = (step(&mut a).unwrap(), step(&mut b).unwrap());
-            assert_eq!(
-                (&x.prefills, &x.decodes),
-                (&y.prefills, &y.decodes),
-                "{adaptive:?} round {round}"
-            );
+fn light_load_within_the_ceiling_serves_as_without_the_switch() {
+    // Short turns beside decoders whose uncut chunks share the step within
+    // the ceiling: every batch matches the grid scheduler without the
+    // switch (uncut chunks, the served order).
+    let (mut a, mut b) = (scheduler(grid(true)), scheduler(grid(false)));
+    decoders(&mut a, 6);
+    decoders(&mut b, 6);
+    let mut next = 1;
+    for round in 0..40_usize {
+        if round % 4 == 0 {
+            let prompt = [300, 5000, 2000, 4000][round / 4 % 4];
+            submit(&mut a, next, prompt, 3);
+            submit(&mut b, next, prompt, 3);
+            next += 1;
         }
+        let (x, y) = (step(&mut a).unwrap(), step(&mut b).unwrap());
+        assert_eq!(
+            (&x.prefills, &x.decodes),
+            (&y.prefills, &y.decodes),
+            "round {round}"
+        );
+        assert!(x.decodes.is_empty() || keeps_ceiling(&x), "{x:?}");
     }
 }
 
 #[test]
-fn shortest_remaining_prefill_goes_first_under_a_backlog() {
+fn plain_requests_take_the_ceiling_as_a_transient_step_budget() {
+    // Two decoders beside four 2,500-token prompts, about 2.5 s uncut: a
+    // transient backlog. The step's prefill budget is the largest multiple
+    // of 128 whose step, with the least margin, stays within four thirds
+    // of the target: more than the target alone allows.
+    let mut s = scheduler(plain(true));
+    decoders(&mut s, 2);
+    for id in 1..=4 {
+        submit(&mut s, id, 2500, 4);
+    }
+    let first = step(&mut s).unwrap();
+    let ceiling = (1..=GRID / 128)
+        .map(|n| n * 128)
+        .filter(|&tokens| {
+            let shape = StepShape::new(tokens, (tokens * (tokens + 1) / 2) as u64, 2);
+            cost(shape) * 105 * 3 <= u64::from(TARGET_MS) * 4 * 100_000
+        })
+        .max()
+        .unwrap();
+    let cap = first.cap.expect("capped beside decoders");
+    assert!(cap.abs_diff(ceiling) <= 128, "{cap} {ceiling}");
+    let target = (1..=GRID / 128)
+        .map(|n| n * 128)
+        .filter(|&tokens| cost(StepShape::new(tokens, 0, 2)) <= u64::from(TARGET_MS) * 1000)
+        .max()
+        .unwrap();
+    assert!(cap > target, "{cap} {target}");
+    assert!(keeps_ceiling(&first), "{first:?}");
+    assert_eq!(first.decodes.len(), 2, "{first:?}");
+}
+
+#[test]
+fn fewest_remaining_chunks_go_first_under_a_backlog() {
     // A long prompt queued first and a short one after it: the short one
     // prefills before the long one takes any chunk.
     let mut s = scheduler(grid(true));
@@ -536,11 +578,17 @@ fn an_untrained_model_keeps_the_progress_floor() {
 /// backlog stops at the anchor instead. Without decoders no cap applies.
 #[test]
 fn adaptive_caps_price_the_uncapped_manifest_anchor_tail() {
+    // A 703-token prompt with a manifest anchor at 640 and a 63-row tail.
+    // Beside one decoder a transient backlog takes no cap: the uncut step
+    // keeps the ceiling, with or without the fused tail. Under a sustained
+    // backlog at a 252 ms target, the unfused 640 rows (249.0 ms) would fit
+    // but the fused 703 (255.7 ms) do not, so the step is capped and stops
+    // at the anchor.
     for (anchors, decode, backlog, target_ms, capped, rows, anchor) in [
-        (0, 1, false, TARGET_MS, true, 640, None),
-        (8, 1, false, TARGET_MS, true, 653, Some(640)),
-        (8, 0, false, TARGET_MS, false, 653, Some(640)),
-        (8, 1, true, 262, true, 640, None),
+        (0, 1, false, TARGET_MS, false, 640, None),
+        (8, 1, false, TARGET_MS, false, 703, Some(640)),
+        (8, 0, false, TARGET_MS, false, 703, Some(640)),
+        (8, 1, true, 252, true, 640, None),
     ] {
         let config = SchedulerConfig::new(64, 256, GRID, GRID, 1)
             .unwrap()
@@ -557,10 +605,10 @@ fn adaptive_caps_price_the_uncapped_manifest_anchor_tail() {
         let mut s = Scheduler::new(config, KvGeometry::new(GRANULE, 65536).unwrap()).unwrap();
         train(&mut s);
         decoders(&mut s, decode);
-        let tokens = Arc::from((0..653).map(|n| 10_000 + n).collect::<Vec<u32>>());
+        let tokens = Arc::from((0..703).map(|n| 10_000 + n).collect::<Vec<u32>>());
         let chain = PrefixChainV1::new(GRANULE, tokens, Vec::new()).unwrap();
         s.submit_with_prefix(
-            RequestSpec::new(RequestId::new(1), 653, 4).unwrap(),
+            RequestSpec::new(RequestId::new(1), 703, 4).unwrap(),
             Some(PrefixRequestV1::new(Arc::new(chain), true)),
         )
         .unwrap();
@@ -585,7 +633,11 @@ fn adaptive_caps_price_the_uncapped_manifest_anchor_tail() {
             "{anchors} {decode} {backlog}"
         );
         assert_eq!(item.anchor_tokens(), anchor, "{anchors} {decode} {backlog}");
-        assert!(cost(batch.shape()) * 105 <= u64::from(target_ms) * 100_000);
+        if backlog {
+            assert!(cost(batch.shape()) <= u64::from(target_ms) * 1000);
+        } else if decode > 0 {
+            assert!(cost(batch.shape()) * 105 * 3 <= u64::from(target_ms) * 4 * 100_000);
+        }
     }
 }
 
@@ -825,6 +877,10 @@ fn owed_steps_rollbacks_and_cancellations_leave_every_prompt_progressing() {
 /// A manifest-anchor scheduler with prefix caching and optional forced
 /// preemption, for the restore and preemption paths.
 fn prefix_scheduler(anchors: usize, owed: u32, preempt: bool) -> Scheduler {
+    prefix_scheduler_at(anchors, owed, preempt, TARGET_MS)
+}
+
+fn prefix_scheduler_at(anchors: usize, owed: u32, preempt: bool, target_ms: u32) -> Scheduler {
     let mut config = SchedulerConfig::new(64, 256, GRID, GRID, 1)
         .unwrap()
         .with_prefill_granule(GRANULE)
@@ -835,7 +891,9 @@ fn prefix_scheduler(anchors: usize, owed: u32, preempt: bool) -> Scheduler {
         .with_prefill_cuts(true)
         .with_anchor_items(anchors)
         .with_prefill_timing_cuts(true)
-        .with_prefill_budget(owing(owed))
+        .with_prefill_budget(PrefillBudget::Tbt(
+            MixedPolicy::new(target_ms, FLOOR, owed).unwrap(),
+        ))
         .with_adaptive_prefill_budget(true);
     if preempt {
         config = config.with_admission(AdmissionPolicy::Optimistic(
@@ -956,12 +1014,13 @@ fn preempted_requests_do_not_freeze_backlog_aging() {
 #[test]
 fn the_fused_anchor_tail_changes_the_uncapped_cadence_price() {
     // A scored long prompt contributes a bounded 64-row chunk and keeps
-    // the backlog active. The manifest-anchored 4,927-row prompt has an
-    // anchor at 4,864 and a 63-row tail. Without fusion the 4,928-row
-    // uncapped step fits; with fusion, 4,991 rows cross the cadence target.
-    // Restore and preemption are covered by the preceding two tests.
+    // a sustained backlog. The manifest-anchored 4,927-row prompt has an
+    // anchor at 4,864 and a 63-row tail. At a 712 ms target, without fusion
+    // the 4,928-row uncapped step fits (709.0 ms); with fusion, 4,991 rows
+    // (715.8 ms) cross it. Restore and preemption are covered by the
+    // preceding two tests.
     for anchors in [0, 8] {
-        let mut s = prefix_scheduler(anchors, 0, false);
+        let mut s = prefix_scheduler_at(anchors, 0, false, 712);
         decoders(&mut s, 1);
         submit_prefix(&mut s, 1, (0..4927).map(|i| 200_000 + i).collect(), 2);
         s.submit(
@@ -986,4 +1045,182 @@ fn the_fused_anchor_tail_changes_the_uncapped_cadence_price() {
             assert!(matches!(item.phase(), BatchPhase::Prefill { tokens } if tokens <= 4864));
         }
     }
+}
+
+/// A step's time against the transient ceiling, four thirds of the target,
+/// with the least margin.
+fn keeps_ceiling(step: &Step) -> bool {
+    step.micros * 105 * 3 <= u64::from(TARGET_MS) * 4 * 100_000
+}
+
+#[test]
+fn a_transient_backlog_keeps_every_decoder_gap_within_the_ceiling() {
+    // Two decoders beside one 8,000-token prompt: about 1.04 s uncut, well
+    // inside the transient window, and the chunk fits beside them. Every
+    // step beside the decoders stays within four thirds of the target.
+    let uncut = cost(StepShape::new(8000, (8000 * 8001 / 2) as u64, 2));
+    assert!(uncut < TRANSIENT_BACKLOG_MICROS, "{uncut}");
+    assert!(uncut * 3 > u64::from(TARGET_MS) * 4 * 1000, "{uncut}");
+    let mut s = scheduler(grid(true));
+    decoders(&mut s, 2);
+    submit(&mut s, 1, 8000, 4);
+    let steps = prefill(&mut s, 1, 20);
+    for step in steps.iter().filter(|step| !step.decodes.is_empty()) {
+        assert!(keeps_ceiling(step), "{step:?}");
+    }
+    assert!(chunks(&steps, 1).len() >= 2, "{steps:#?}");
+    assert_legal(&chunks(&steps, 1), 8000);
+}
+
+#[test]
+fn no_prefill_runs_alone_while_requests_decode() {
+    // Two decoders beside a prompt of two whole grid chunks, a transient
+    // backlog: a whole chunk leaves no room for the decoders, so it is
+    // cut to share the step instead of running alone.
+    let mut s = scheduler(grid(true));
+    decoders(&mut s, 2);
+    submit(&mut s, 1, 2 * GRID, 4);
+    let steps = prefill(&mut s, 1, 30);
+    for step in steps.iter().filter(|step| !step.prefills.is_empty()) {
+        assert!(
+            step.decodes.contains(&100) && step.decodes.contains(&101),
+            "{step:?}"
+        );
+    }
+    assert_legal(&chunks(&steps, 1), 2 * GRID);
+}
+
+#[test]
+fn a_backlog_keeps_arrival_order_among_prompts_of_equal_chunk_counts() {
+    // Under a backlog, a later prompt with fewer tokens but as many grid
+    // chunks left does not overtake an earlier one; a prompt of one chunk
+    // still goes first.
+    let mut s = scheduler(grid(true));
+    decoders(&mut s, 1);
+    submit(&mut s, 1, 2 * GRID + 7000, 4);
+    submit(&mut s, 2, 2 * GRID + 1000, 4);
+    submit(&mut s, 3, 4000, 4);
+    let mut steps = Vec::new();
+    while (1..=3).any(|id| prefilling(&s, id)) {
+        assert!(steps.len() < 100, "{steps:#?}");
+        steps.push(step(&mut s).unwrap());
+    }
+    let first = |id: u64| {
+        steps
+            .iter()
+            .position(|step| step.prefills.iter().any(|item| item.0 == id))
+            .unwrap()
+    };
+    assert!(first(3) <= first(1), "{steps:#?}");
+    assert!(first(1) < first(2), "{steps:#?}");
+    let done = |id: u64, prompt: usize| {
+        (0..steps.len())
+            .find(|&n| remaining(&steps[..=n], id, prompt) == 0)
+            .unwrap()
+    };
+    assert!(
+        done(1, 2 * GRID + 7000) < done(2, 2 * GRID + 1000),
+        "{steps:#?}"
+    );
+}
+
+#[test]
+fn a_sustained_backlog_caps_as_fixed_does() {
+    // Under a sustained backlog the adaptive cap sizes a step to the
+    // target as the fixed policy does, without the margin.
+    let fixed = Setup {
+        grid: true,
+        adaptive: false,
+        cuts: true,
+        budget: tbt(),
+    };
+    let caps = [grid(true), fixed].map(|setup| {
+        let mut s = scheduler(setup);
+        decoders(&mut s, 4);
+        for id in 1..=3 {
+            submit(&mut s, id, 4 * GRID, 4);
+        }
+        loop {
+            let step = step(&mut s).unwrap();
+            if !step.prefills.is_empty() && !step.decodes.is_empty() {
+                break step.cap;
+            }
+        }
+    });
+    assert!(caps[0].is_some(), "{caps:?}");
+    assert_eq!(caps[0], caps[1]);
+}
+
+#[test]
+fn chunks_left_count_absolute_grid_boundaries_after_a_restored_prefix() {
+    // A prompt restored from the prefix cache just short of a grid boundary
+    // has fewer than 8,192 tokens left but two chunks, so a later prompt of
+    // one chunk goes first; a six-chunk prompt keeps the backlog sustained.
+    let config = SchedulerConfig::new(64, 256, GRID, GRID, 1)
+        .unwrap()
+        .with_prefill_granule(GRANULE)
+        .unwrap()
+        .with_guaranteed_prefill_chunks(GRID)
+        .unwrap()
+        .with_prefill_cuts(true)
+        .with_prefix_cache(1)
+        .with_prefill_timing_cuts(true)
+        .with_prefill_budget(tbt())
+        .with_adaptive_prefill_budget(true);
+    let mut s = Scheduler::new(config, KvGeometry::new(GRANULE, 262_144).unwrap()).unwrap();
+    train(&mut s);
+    let tokens = |n: usize, base: u32| (0..n).map(|i| base + i as u32).collect::<Vec<u32>>();
+    submit_prefix(&mut s, 50, tokens(2 * GRID - 1200, 20_000), 1);
+    while prefilling(&s, 50) {
+        prefix_step(&mut s);
+    }
+    decoders(&mut s, 1);
+    submit(&mut s, 3, 6 * GRID, 4);
+    submit_prefix(&mut s, 1, tokens(2 * GRID + 1000, 20_000), 4);
+    s.admit().unwrap();
+    let cached = s.cached_tokens(RequestId::new(1)).unwrap();
+    assert!(
+        cached > GRID && 2 * GRID + 1000 - cached <= GRID,
+        "{cached}"
+    );
+    submit(&mut s, 2, 8000, 4);
+    let mut steps = Vec::new();
+    let left =
+        |steps: &[Step]| remaining(steps, 1, 2 * GRID + 1000 - cached) + remaining(steps, 2, 8000);
+    while left(&steps) > 0 {
+        assert!(steps.len() < 100, "{steps:#?}");
+        steps.push(prefix_step(&mut s));
+    }
+    let first = |id: u64| {
+        steps
+            .iter()
+            .position(|step| step.prefills.iter().any(|item| item.0 == id))
+            .unwrap()
+    };
+    assert!(first(2) < first(1), "{steps:#?}");
+    // The six-chunk prompt waits behind both.
+    assert!(chunks(&steps[..=first(1)], 3).is_empty(), "{steps:#?}");
+}
+
+#[test]
+fn without_a_cut_that_keeps_the_bound_the_step_takes_the_floor_beside_every_decoder() {
+    // At a 170 ms target even the progress floor beside twelve decoders
+    // runs about 240 ms, past the ceiling with the margin: each step takes
+    // the floor and still serves all twelve decoders, under a sustained and
+    // then a transient backlog.
+    let policy = PrefillBudget::Tbt(MixedPolicy::new(170, FLOOR, 0).unwrap());
+    let floor_step = cost(StepShape::new(FLOOR, (FLOOR * (FLOOR + 1) / 2) as u64, 12));
+    assert!(floor_step * 105 * 3 > 170 * 4 * 100_000, "{floor_step}");
+    let mut s = scheduler(Setup {
+        budget: policy,
+        ..grid(true)
+    });
+    decoders(&mut s, 12);
+    submit(&mut s, 1, 3 * GRID, 4);
+    let steps = prefill(&mut s, 1, 200);
+    for step in steps.iter().filter(|step| !step.prefills.is_empty()) {
+        assert_eq!(step.cap, Some(FLOOR), "{step:?}");
+        assert!((100..112).all(|id| step.decodes.contains(&id)), "{step:?}");
+    }
+    assert_legal(&chunks(&steps, 1), 3 * GRID);
 }

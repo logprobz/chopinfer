@@ -46,6 +46,23 @@ pub(crate) const MIN_MARGIN_PERMILLE: u64 = 50;
 /// mille: predictions that ran long in one step out of ten.
 const MARGIN_QUANTILE_PERMILLE: usize = 900;
 
+/// What a cadence cap's predicted step must stay within
+/// (`StepModel::cadence_budget`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CadenceBound {
+    /// A sustained backlog: the predicted step within the target, as the
+    /// fixed policy sizes it.
+    Target,
+    /// A transient backlog: the predicted step with the margin
+    /// (`StepModel::margin_permille`) within `CEILING_THIRDS` thirds of the
+    /// target.
+    Ceiling,
+}
+
+/// The transient ceiling in thirds of the target: four thirds, 1 s at a
+/// 750 ms target.
+pub(crate) const CEILING_THIRDS: u128 = 4;
+
 /// What an uncapped step prefills.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Uncapped {
@@ -534,39 +551,42 @@ impl StepModel {
     /// no cap, `Some(Some(tokens))` for a cap, None until trained.
     ///
     /// A decoding request's gap is the step it shares, so the cap is the
-    /// largest legal one whose predicted step, with the margin
-    /// (`margin_permille`), stays within the target: no cap when the
-    /// uncapped step does (`whole`: a chunk that leaves no room for
-    /// decoding runs alone, and the decoders then wait for it and their
-    /// own step), else the largest multiple of `GRANULE` above the progress
-    /// floor up to `maximum`, else the floor. No smaller cap is taken, since
-    /// each extra step adds its fixed cost to the prefill.
+    /// largest legal one whose predicted step stays within `bound`: no cap
+    /// when the uncapped step does and its chunks share the step
+    /// (`whole` is `Uncapped::Mixed`; a chunk that leaves no room for
+    /// decoding, `Uncapped::Alone`, is always cut), else the largest
+    /// multiple of `GRANULE` above the progress floor up to `maximum`, else
+    /// the floor. No smaller cap is taken, since each extra step adds its
+    /// fixed cost to the prefill.
     pub(super) fn cadence_budget(
         &self,
         decode: usize,
         context: usize,
         maximum: usize,
         whole: Uncapped,
+        bound: CadenceBound,
         policy: MixedPolicy,
     ) -> Option<Option<usize>> {
         self.fit?;
         let target = u128::from(policy.target_millis()) * 1000;
-        let margin = u128::from(self.margin_permille());
-        let keeps = |micros: u64| u128::from(micros) * (1000 + margin) <= target * 1000;
+        let (margin, thirds) = match bound {
+            CadenceBound::Target => (0, 3),
+            CadenceBound::Ceiling => (u128::from(self.margin_permille()), CEILING_THIRDS),
+        };
+        let keeps =
+            |micros: u64| u128::from(micros) * (1000 + margin) * 3 <= target * 1000 * thirds;
         let predict = |tokens: usize, decode: usize| {
             self.predicted_micros(StepShape::new(tokens, chunk_pairs(context, tokens), decode))
         };
-        let (tokens, micros, below) = match whole {
-            Uncapped::Alone(tokens) => (
-                tokens,
-                predict(tokens, 0)?.saturating_add(self.decode_micros(decode).unwrap_or(0)),
-                usize::MAX,
-            ),
-            Uncapped::Mixed(tokens) => (tokens, predict(tokens, decode)?, tokens),
+        let below = match whole {
+            Uncapped::Alone(_) => usize::MAX,
+            Uncapped::Mixed(tokens) => {
+                if tokens > 0 && keeps(predict(tokens, decode)?) {
+                    return Some(None);
+                }
+                tokens
+            }
         };
-        if tokens > 0 && keeps(micros) {
-            return Some(None);
-        }
         let floor = policy.min_prefill_tokens().min(maximum);
         let largest = (floor / GRANULE + 1..=maximum / GRANULE)
             .rev()
@@ -1086,35 +1106,36 @@ mod tests {
         }
     }
 
-    /// The cadence cap by brute force: the largest legal choice (no cap,
-    /// then each 128 multiple above the floor up to `maximum`, then the
-    /// floor) whose predicted step with the margin keeps the target.
+    /// The cadence cap by brute force: the largest legal choice (no cap
+    /// when the chunks share the step, then each 128 multiple above the
+    /// floor up to `maximum`, then the floor) whose predicted step keeps
+    /// the bound: the target, or with the margin four thirds of it.
     fn largest_keeping(
         model: &StepModel,
         decode: usize,
         context: usize,
         maximum: usize,
         whole: Uncapped,
+        bound: CadenceBound,
         policy: MixedPolicy,
     ) -> Option<usize> {
-        let margin = u128::from(model.margin_permille());
-        let target = u128::from(policy.target_millis()) * 1000;
-        let keeps = |micros: u64| u128::from(micros) * (1000 + margin) <= target * 1000;
+        let target = f64::from(policy.target_millis()) * 1000.0;
+        let limit = match bound {
+            CadenceBound::Target => target,
+            CadenceBound::Ceiling => {
+                target * 4.0 / 3.0 / (1.0 + model.margin_permille() as f64 / 1000.0)
+            }
+        };
+        let keeps = |micros: u64| micros as f64 <= limit + 1e-6;
         let predict = |tokens: usize, decode: usize| {
             model
                 .predicted_micros(StepShape::new(tokens, chunk_pairs(context, tokens), decode))
                 .unwrap()
         };
-        let uncapped = match whole {
-            Uncapped::Alone(tokens) => {
-                predict(tokens, 0) + model.decode_micros(decode).unwrap_or(0)
-            }
-            Uncapped::Mixed(tokens) => predict(tokens, decode),
-        };
-        let tokens = match whole {
-            Uncapped::Alone(tokens) | Uncapped::Mixed(tokens) => tokens,
-        };
-        if tokens > 0 && keeps(uncapped) {
+        if let Uncapped::Mixed(tokens) = whole
+            && tokens > 0
+            && keeps(predict(tokens, decode))
+        {
             return None;
         }
         let floor = policy.min_prefill_tokens().min(maximum);
@@ -1164,17 +1185,26 @@ mod tests {
                     for decode in [1, 4, 16] {
                         for context in [0, 50_000, 250_000] {
                             for maximum in [300, 1024, 4096, 8192] {
-                                for whole in [Uncapped::Mixed(maximum), Uncapped::Alone(8192)] {
+                                for (whole, bound) in
+                                    [Uncapped::Mixed(maximum), Uncapped::Alone(8192)]
+                                        .into_iter()
+                                        .flat_map(|whole| {
+                                            [CadenceBound::Target, CadenceBound::Ceiling]
+                                                .map(|bound| (whole, bound))
+                                        })
+                                {
                                     let choice = model
-                                        .cadence_budget(decode, context, maximum, whole, policy)
+                                        .cadence_budget(
+                                            decode, context, maximum, whole, bound, policy,
+                                        )
                                         .unwrap();
                                     assert_eq!(
                                         choice,
                                         largest_keeping(
-                                            model, decode, context, maximum, whole, policy
+                                            model, decode, context, maximum, whole, bound, policy
                                         ),
                                         "target {target} floor {floor} decode {decode} context {context} \
-                                         maximum {maximum} {whole:?}"
+                                         maximum {maximum} {whole:?} {bound:?}"
                                     );
                                     checked += 1;
                                 }
@@ -1184,32 +1214,72 @@ mod tests {
                 }
             }
         }
-        assert_eq!(checked, 6 * 4 * 2 * 3 * 3 * 4 * 2);
+        assert_eq!(checked, 6 * 4 * 2 * 3 * 3 * 4 * 2 * 2);
     }
 
     #[test]
-    fn a_prediction_within_the_margin_of_the_target_counts_as_crossing_it() {
-        // An uncut 8192-token chunk predicted at 969 ms against a 1 s target:
-        // within the least margin, so the step is cut, to the largest
-        // multiple of 128 whose prediction leaves the margin.
+    fn a_prediction_within_the_margin_of_the_ceiling_counts_as_crossing_it() {
+        // An uncut 8192-token chunk predicted at 969 ms against the 1 s
+        // ceiling of a 750 ms target: within the least margin, so the step
+        // is cut, to the largest multiple of 128 whose prediction leaves the
+        // margin.
         let model = fitted([150_000_000_000; 2], 100_000_000, 0, 0);
-        let policy = MixedPolicy::new(1000, 512, 0).unwrap();
+        let policy = MixedPolicy::new(750, 512, 0).unwrap();
         assert_eq!(
             model.predicted_micros(StepShape::new(8192, 0, 0)),
             Some(969_200)
         );
         let cap = model
-            .cadence_budget(0, 0, 8192, Uncapped::Mixed(8192), policy)
+            .cadence_budget(
+                0,
+                0,
+                8192,
+                Uncapped::Mixed(8192),
+                CadenceBound::Ceiling,
+                policy,
+            )
             .unwrap()
             .unwrap();
         // 1000 ms / 1.05 = 952.4 ms: 150 ms + 0.1 ms per token fits 8023
         // tokens, so 62 granules.
         assert_eq!(cap, 7936);
-        // A 1.1 s target keeps the whole chunk.
-        let wide = MixedPolicy::new(1100, 512, 0).unwrap();
+        // An 825 ms target (a 1.1 s ceiling) keeps the whole chunk.
+        let wide = MixedPolicy::new(825, 512, 0).unwrap();
         assert_eq!(
-            model.cadence_budget(0, 0, 8192, Uncapped::Mixed(8192), wide),
+            model.cadence_budget(
+                0,
+                0,
+                8192,
+                Uncapped::Mixed(8192),
+                CadenceBound::Ceiling,
+                wide
+            ),
             Some(None)
+        );
+        // The target bound takes no margin: a 970 ms target keeps it too.
+        let target = MixedPolicy::new(970, 512, 0).unwrap();
+        assert_eq!(
+            model.cadence_budget(
+                0,
+                0,
+                8192,
+                Uncapped::Mixed(8192),
+                CadenceBound::Target,
+                target
+            ),
+            Some(None)
+        );
+        // A chunk too long to share the step is cut even when it would fit.
+        assert_eq!(
+            model.cadence_budget(
+                0,
+                0,
+                8000,
+                Uncapped::Alone(8192),
+                CadenceBound::Target,
+                target
+            ),
+            Some(Some(7936))
         );
     }
 
@@ -1233,14 +1303,16 @@ mod tests {
         // A wider margin takes a smaller cap at the same target.
         let accurate = trained(&[0]);
         let policy = MixedPolicy::new(400, 512, 0).unwrap();
-        let narrow = accurate
-            .cadence_budget(32, 0, 8192, Uncapped::Mixed(8192), policy)
-            .unwrap()
-            .unwrap();
-        let wide = model
-            .cadence_budget(32, 0, 8192, Uncapped::Mixed(8192), policy)
-            .unwrap()
-            .unwrap();
+        let cap = |model: &StepModel, bound| {
+            model
+                .cadence_budget(32, 0, 8192, Uncapped::Mixed(8192), bound, policy)
+                .unwrap()
+                .unwrap()
+        };
+        let (narrow, wide) = (
+            cap(&accurate, CadenceBound::Ceiling),
+            cap(&model, CadenceBound::Ceiling),
+        );
         assert!(wide < narrow, "{wide} {narrow}");
     }
 

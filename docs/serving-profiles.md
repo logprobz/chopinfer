@@ -384,9 +384,9 @@ progress floor, the chunk ends at the first multiple at or past the floor
 if it fits beside the decoders. Timing cuts capture no prefix anchor;
 scored and media requests keep their chunks.
 
-`adaptive` is a candidate under qualification. It needs `--prefill-budget
-tbt` and takes `--decode-tbt-target-ms` as a decode cadence target: a
-decoding request's gap is the step it shares, so each step beside decoding
+`adaptive` needs `--prefill-budget tbt` and takes `--decode-tbt-target-ms`
+as a decode cadence target: a decoding request's gap is the step it
+shares, so each step beside decoding
 requests takes the largest legal cap (the progress floor, each 128-token
 multiple up to what the waiting requests' next chunks can take, or no cap)
 whose predicted time stays within a bound that depends on the prefill

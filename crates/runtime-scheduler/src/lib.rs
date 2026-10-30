@@ -571,7 +571,8 @@ impl SchedulerConfig {
             && matches!(self.prefill_budget, PrefillBudget::Tbt(_))
     }
 
-    /// Candidate switch, off by default: with [`PrefillBudget::Tbt`], size the
+    /// The `adaptive` timing-cut policy, off by default (a serving profile
+    /// can make it its default): with [`PrefillBudget::Tbt`], size the
     /// prefill cap of a step beside decoding requests from a decode cadence
     /// instead of the fixed target. A decoding request's gap is the step it
     /// shares, so the cap is the largest legal one (the progress floor, each
@@ -596,8 +597,8 @@ impl SchedulerConfig {
         self
     }
 
-    /// Whether the TBT cap is sized from the decode cadence: the candidate
-    /// switch and the TBT budget together.
+    /// Whether the TBT cap is sized from the decode cadence: the policy and
+    /// the TBT budget together.
     #[must_use]
     pub const fn adaptive_prefill_budget(self) -> bool {
         self.adaptive_prefill_budget && matches!(self.prefill_budget, PrefillBudget::Tbt(_))

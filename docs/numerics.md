@@ -603,8 +603,11 @@ than 32 rows got up to 2.1% faster. It stays off by default.
 
 By default, a drafter run of prefilling rows that is in the prefill phase
 anyway (more than 32 rows) runs only those persistent stages. Such a run
-never drafts, and its other stages write only scratch that no later run
-reads, so persistent drafter state, drafts and outputs keep their bits. On
+never drafts, and no later run reads the arithmetic outputs of its other
+stages. Its two skipped collectives also advance protocol state (epochs and
+flags) that later calls read, but every rank skips the same complete calls,
+so that state stays consistent across ranks. Persistent drafter state,
+drafts and outputs keep their bits. On
 2026-10-30 the trimmed runs equalled the whole runs bit for bit under the
 same fixed-batch schedule (drafts, acceptance, logits and samples), in the
 drafter state and anchors of C1 hit, cut, chain and cold consumers, in the

@@ -14,12 +14,12 @@ of at most 32 rows keep their graph buckets.
 The prefill step prefills cold prompts of 5 and 40 tokens; its
 post-target drafter run of 43 rows ran in the prefill phase already. On
 each of the fixture's four ranks the head:
-- drops that run's 35 launches of the 18 stages after the QSA key write
-  (the index query, selection, sparse attention, gate and output, the
-  attention `Reduce`, the MLP sublayer's hyper-connection stages, the MoE
-  and shared experts and the MLP `Reduce`) and of the inject projection of
-  the attention sublayer's `HcIn`, whose only reader is the dropped
-  `Reduce`;
+- drops that run's 35 launches of 18 stages, the index query before the
+  QSA key write and 17 stages after it (selection, sparse attention, gate
+  and output, the attention `Reduce`, the MLP sublayer's hyper-connection
+  stages, the MoE and shared experts and the MLP `Reduce`) and of the
+  inject projection of the attention sublayer's `HcIn`, whose only reader
+  is the dropped `Reduce`;
 - keeps the launches of the 13 persistent stages with their plans and
   arguments, issued rank by rank (the whole program on one rank, then the
   next) instead of stage by stage across the ranks.
@@ -27,9 +27,9 @@ each of the fixture's four ranks the head:
 No allocation, module, resolve or graph changes. `tools/journal_proof/
 specs/operation_edits.py` generated the exact operation edits from the
 captures of the candidate's commit (off by default) and of the flip: per
-fixture 140 removals and 42 additions. They were reviewed against the
-list above: every removal is a launch of a dropped stage or an inject (35
-per rank), or one of the 42 persistent-stage launches the reorder moves;
+fixture 182 removals and 42 additions, 140 launches fewer in all. They
+were reviewed against the list above: every removal is a launch of a
+dropped stage or an inject (35 per rank), or one of the 42 persistent-stage launches the reorder moves;
 every addition is one of those 42 at its new position, byte for byte the
 removed text. The two prefill pins moved from (7234, 0x19D66D0D930AF5BC)
 and (7234, 0x44F77C4B70AE5F46) to (7094, 0xCE90782AF36DEA78) and (7094,

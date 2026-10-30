@@ -5,36 +5,52 @@
 1bae0e10 (`frontend_cases.py` pins it), and it must pass the coverage and
 divergence gate with `models/deepseek41/frontend-divergences.json`. Needs
 transformers and the pinned encoder and tokenizer files, from
-`CHOPINFER_DEEPSEEK_CHECKPOINT`; skipped without them.
+`CHOPINFER_DEEPSEEK_TOKENIZER_DIR` or `CHOPINFER_DEEPSEEK_CHECKPOINT`; skipped
+without them. The recipe oracle's own helpers (`recipe_reference.py`) are
+checked without the recipe package.
 
     CUDA_VISIBLE_DEVICES= $CHOPINFER_REFRUN_PYTHON -B -m unittest models/deepseek41/test_frontend_corpus.py
 """
 
 from pathlib import Path
+import base64
 import hashlib
+import importlib.metadata
 import json
 import os
 import runpy
 import sys
+import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from tools.refrun.frontend_corpus import corpus_test_case  # noqa: E402
+from tools.refrun.frontend_corpus import Model, corpus_test_case, reference_variables  # noqa: E402
+from models.deepseek41 import recipe_reference  # noqa: E402
 
 FrontendCorpus = corpus_test_case("deepseek41", ROOT)
 
 
+def reference_directory(test):
+    """The directory of the pinned encoder and tokenizer files, or a skip."""
+    model = Model("deepseek41", root=ROOT)
+    variables = reference_variables(model.pin)
+    if not any(os.environ.get(name) for name in variables):
+        test.skipTest(f"{' and '.join(variables)} are unset")
+    return model, model.checkpoint()
+
+
 class ChatRenders(unittest.TestCase):
     def test_chat_fixture_uses_served_requests(self):
-        from tools.refrun.frontend_corpus import Model, model_reference, template_source
+        from tools.refrun.frontend_corpus import model_reference, template_source
 
+        model, _ = reference_directory(self)
         sys.path.insert(0, str(ROOT / "tools/qual"))
         from tools.qual.frontend_goldens import capture_bodies
 
-        model = Model("deepseek41", root=ROOT)
         reference = model_reference(model, template_source(model)[0])
         rows = json.loads((ROOT / "fixtures/deepseek41/frontend/chat-renders.json").read_bytes())
         with patch.dict(os.environ, {"CHOPINFER_QUAL_CONFIG": str(model.directory / "qual.json")}):
@@ -51,10 +67,8 @@ class ToolImageOrder(unittest.TestCase):
     def test_vendor_collects_tool_images_after_sorting(self):
         from models.deepseek41.frontend_cases import PIN, tool_image_cases
 
-        checkpoint = os.environ.get(PIN["checkpoint_env"])
-        if not checkpoint:
-            self.skipTest(f"{PIN['checkpoint_env']} is unset")
-        source = Path(checkpoint) / PIN["source"]
+        _, checkpoint = reference_directory(self)
+        source = checkpoint / PIN["source"]
         self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), PIN["source_sha256"])
         encoder = runpy.run_path(str(source))
         for name, request, order in tool_image_cases():
@@ -63,6 +77,64 @@ class ToolImageOrder(unittest.TestCase):
                     request["messages"], thinking_mode="chat", return_multi_modal_data=True)
                 self.assertEqual([image["url"] for image in media["images"]], order)
                 self.assertEqual(prompt.count("<｜deepseek_image｜>"), len(order))
+
+
+class RecipeOracleHelpers(unittest.TestCase):
+    """recipe_reference.py's own logic, with stand-ins for the recipe package."""
+
+    def test_the_installed_digest_covers_the_recorded_files_and_refuses_a_changed_one(self):
+        directory = Path(tempfile.mkdtemp())
+        (directory / "pkg").mkdir()
+        (directory / "pkg/__init__.py").write_bytes(b"x = 1\n")
+        info = directory / "pkg-1.0.dist-info"
+        info.mkdir()
+        (info / "METADATA").write_text("Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n")
+
+        def line(path, data):
+            digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
+            return f"{path},sha256={digest},{len(data)}"
+
+        (info / "RECORD").write_text("\n".join([
+            line("pkg/__init__.py", b"x = 1\n"), line("pkg-1.0.dist-info/METADATA", b"other"),
+            "pkg/__pycache__/__init__.cpython-312.pyc,,", "pkg-1.0.dist-info/RECORD,,"]) + "\n")
+        distribution = importlib.metadata.PathDistribution(info)
+        expected = hashlib.sha256((line("pkg/__init__.py", b"x = 1\n").rsplit(",", 1)[0] + "\n").encode())
+        self.assertEqual(recipe_reference.installed_sha256(distribution), expected.hexdigest())
+        (directory / "pkg/__init__.py").write_bytes(b"x = 2\n")
+        with self.assertRaisesRegex(SystemExit, "pkg/__init__.py no longer has the hash its RECORD lists"):
+            recipe_reference.installed_sha256(distribution)
+
+    def test_the_parser_reads_the_completion_without_its_stop_token(self):
+        self.assertEqual(recipe_reference.completion_ids([5, 6, 1], [1]), [5, 6])
+        self.assertEqual(recipe_reference.completion_ids([5, 6], [1]), [5, 6])
+        self.assertEqual(recipe_reference.completion_ids([1, 5], [1]), [1, 5])
+
+    def test_a_choice_reads_as_a_turn(self):
+        choice = {"finish_reason": "tool_calls", "message": {
+            "role": "assistant", "content": None, "reasoning_content": "r",
+            "tool_calls": [{"id": "c", "type": "function", "function": {"name": "f", "arguments": "{}"}}]}}
+        self.assertEqual(recipe_reference.turn(choice), {
+            "reasoning": "r", "content": "", "tool_calls": [{"name": "f", "arguments": "{}"}],
+            "finish_reason": "tool_calls"})
+
+    def test_conversion_refusals_carry_their_status_and_message(self):
+        class ConversionError(Exception):
+            def __init__(self, status_code, body):
+                self.status_code, self.body = status_code, body
+
+        def request(body):
+            if body["messages"] == "unreadable":
+                raise ValueError("invalid request body: unknown variant `developer`")
+            assert body["model"] == recipe_reference.MODEL
+            return SimpleNamespace(convert=lambda options: (_ for _ in ()).throw(ConversionError(
+                400, json.dumps({"error": {"message": "Prompt must contain the word 'json'"}}))))
+
+        recipe = SimpleNamespace(ChatCompletionRequest=request, ConversionError=ConversionError)
+        self.assertEqual(recipe_reference.convert(recipe, None, {"messages": "unreadable"}),
+                         (None, {"status": 400, "message": "invalid request body: unknown variant `developer`"}))
+        self.assertEqual(recipe_reference.convert(recipe, None, {"messages": []}),
+                         (None, {"status": 400, "message": "Prompt must contain the word 'json'"}))
+
 
 if __name__ == "__main__":
     unittest.main()

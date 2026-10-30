@@ -224,6 +224,37 @@ and each floating stage within twice that stage's F32/F64 reference spread
 `media_preprocessing_reference` input with `tools.qual.refs adopt` before it
 gates; a `--reference` override is reported unbound and cannot pass.
 
+### Frontend corpus recipe oracle
+
+A model's frontend cases module may pin a published recipe package as a
+second authority for its request mapping and output parser (`RECIPE`;
+[frontend_corpus.py](frontend_corpus.py)). `frontend_corpus generate` then
+runs the model's oracle script under the interpreter the pin names, on every
+case and round trip, and writes `corpus-recipe.json` beside the corpus: the
+recipe it ran and where its render or parse differs from the corpus.
+`minimize` refuses a difference that matches no divergence entry or several,
+and keeps a case of each entry. `check` verifies the record against the
+committed corpus offline and requires each difference to match exactly one
+entry by its `recipe_when` tags; the recipe never runs in `check` or CI.
+
+DeepSeek V4.1's oracle, `models/deepseek41/recipe_reference.py`, runs
+deepseek-recipe 0.2.0. Install it into its own CPU environment, never the GPU
+runner's, whose package set is part of every reference key:
+
+```sh
+python3.12 -m venv "$CHOPINFER_DATA/refrun/venv-deepseek-recipe"
+"$CHOPINFER_DATA/refrun/venv-deepseek-recipe/bin/pip" install -r tools/refrun/requirements-deepseek-recipe.txt
+export CHOPINFER_DEEPSEEK_RECIPE_PYTHON="$CHOPINFER_DATA/refrun/venv-deepseek-recipe/bin/python"
+```
+
+[requirements-deepseek-recipe.txt](requirements-deepseek-recipe.txt) pins
+every 0.2.0 wheel and the sdist by SHA-256. The corpus pins the
+manylinux_2_28 x86_64 wheel: `generate` refuses an environment whose
+installed recipe files differ from that wheel's RECORD (`installed_sha256`),
+such as another platform's wheel or a source build. The sdist's 83 Rust
+sources match commit 93b0fd229c of the recipe repository; nothing shows that
+the published wheels were built from them.
+
 ## Add an adapter
 
 Start from [adapter.py](adapter.py), the two model adapters

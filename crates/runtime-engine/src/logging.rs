@@ -161,7 +161,12 @@ const ROUTE_SCHEMA: &str = "chopinfer.route.v1";
 /// Graph-cache events an operator reads at `info`: the cache's capacity, a
 /// failed capture, the start of eviction and a full release. Captures and
 /// eager fallbacks, and any event this host does not know, are routine.
-const GRAPH_CACHE_EVENTS: [&str; 4] = ["capacity", "capture-failed", "eviction-begin", "release-all"];
+const GRAPH_CACHE_EVENTS: [&str; 4] = [
+    "capacity",
+    "capture-failed",
+    "eviction-begin",
+    "release-all",
+];
 
 /// The level of one bundle log message, without depending on a model or
 /// bundle, or `None` for a message this host cannot classify. The log ABI has
@@ -413,19 +418,50 @@ mod tests {
             );
         }
         for (message, level) in [
-            (r#"{"schema":"chopinfer.route.v1","fallback_launches":0}"#, Debug),
+            (
+                r#"{"schema":"chopinfer.route.v1","fallback_launches":0}"#,
+                Debug,
+            ),
             (r#"{"schema":"chopinfer.graph-cache.v1"}"#, Debug),
             // Field order does not matter, and a routine record names its kind once.
-            (r#"{"family":"verify","event":"capture","schema":"chopinfer.graph-cache.v1"}"#, Debug),
-            (r#"{"schema":"chopinfer.graph-cache.v1","event":"eager"}"#, Debug),
-            (r#"{"schema":"chopinfer.graph-cache.v1","event":"target-eager"}"#, Debug),
-            (r#"{"schema":"chopinfer.graph-cache.v1","event":"some-new-event"}"#, Debug),
-            (r#"{"schema":"chopinfer.graph-cache.v1","event":"capacity","capacity":64}"#, Info),
-            (r#"{"schema":"chopinfer.graph-cache.v1","event":"capture-failed"}"#, Info),
-            (r#"{"event":"eviction-begin","schema":"chopinfer.graph-cache.v1"}"#, Info),
-            (r#"{"schema":"chopinfer.graph-cache.v1","event":"release-all"}"#, Info),
+            (
+                r#"{"family":"verify","event":"capture","schema":"chopinfer.graph-cache.v1"}"#,
+                Debug,
+            ),
+            (
+                r#"{"schema":"chopinfer.graph-cache.v1","event":"eager"}"#,
+                Debug,
+            ),
+            (
+                r#"{"schema":"chopinfer.graph-cache.v1","event":"target-eager"}"#,
+                Debug,
+            ),
+            (
+                r#"{"schema":"chopinfer.graph-cache.v1","event":"some-new-event"}"#,
+                Debug,
+            ),
+            (
+                r#"{"schema":"chopinfer.graph-cache.v1","event":"capacity","capacity":64}"#,
+                Info,
+            ),
+            (
+                r#"{"schema":"chopinfer.graph-cache.v1","event":"capture-failed"}"#,
+                Info,
+            ),
+            (
+                r#"{"event":"eviction-begin","schema":"chopinfer.graph-cache.v1"}"#,
+                Info,
+            ),
+            (
+                r#"{"schema":"chopinfer.graph-cache.v1","event":"release-all"}"#,
+                Info,
+            ),
         ] {
-            assert_eq!(bundle_trace_level(message.as_bytes()), Some(level), "{message}");
+            assert_eq!(
+                bundle_trace_level(message.as_bytes()),
+                Some(level),
+                "{message}"
+            );
         }
         for message in [
             "host component read failed: authenticated digest differs",
@@ -458,14 +494,22 @@ mod tests {
             br#"{"message":"chopinfer.example.step-shape.v1 without quotes around it}"#,
             br#"{"schema":"chopinfer.unterminated"#,
         ] {
-            assert!(!names_known_schema(message), "{}", String::from_utf8_lossy(message));
+            assert!(
+                !names_known_schema(message),
+                "{}",
+                String::from_utf8_lossy(message)
+            );
         }
         for message in [
             br#"{"schema":"chopinfer.graph-cache.v1"}"#.as_slice(),
             br#"{"a":"chopinfer.x","schema":"chopinfer.route.v1"}"#,
             br#"{"schema":"chopinfer.example.drafter-confidence.v1"}"#,
         ] {
-            assert!(names_known_schema(message), "{}", String::from_utf8_lossy(message));
+            assert!(
+                names_known_schema(message),
+                "{}",
+                String::from_utf8_lossy(message)
+            );
         }
     }
 

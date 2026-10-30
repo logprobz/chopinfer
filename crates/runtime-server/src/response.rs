@@ -220,12 +220,9 @@ impl StreamEnd {
     }
 
     fn stop(&self, reason: u8) {
-        let _ = self.reason.compare_exchange(
-            STREAM_OPEN,
-            reason,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
+        let _ =
+            self.reason
+                .compare_exchange(STREAM_OPEN, reason, Ordering::AcqRel, Ordering::Acquire);
     }
 }
 
@@ -1112,10 +1109,11 @@ fn prepare_request(
 }
 
 fn capacity_error(state: &ServerState) -> ApiError {
-    let message: std::borrow::Cow<'static, str> = state.acceptance_profile.profile_name().map_or_else(
-        || "server request capacity is exhausted".into(),
-        |profile| format!("server profile {profile} request capacity is exhausted").into(),
-    );
+    let message: std::borrow::Cow<'static, str> =
+        state.acceptance_profile.profile_name().map_or_else(
+            || "server request capacity is exhausted".into(),
+            |profile| format!("server profile {profile} request capacity is exhausted").into(),
+        );
     ApiError::capacity(message)
 }
 
@@ -1417,7 +1415,10 @@ fn multiple_streaming_response(
         }
         while tasks.join_next().await.is_some() {}
         if finished != count {
-            let _ = send_error(&body_tx, &invalid_backend_event("choice stream ended early"))
+            let _ = send_error(
+                &body_tx,
+                &invalid_backend_event("choice stream ended early"),
+            )
             .await;
         } else if metadata.include_usage {
             let completion_tokens = generated.iter().sum();
@@ -1890,7 +1891,10 @@ fn streaming_response(
                         || ids.is_empty()
                         || token_ids.observe(ids.len()).is_err()
                     {
-                        let _ = send_error(&body_tx, &invalid_backend_event("invalid generated token IDs"))
+                        let _ = send_error(
+                            &body_tx,
+                            &invalid_backend_event("invalid generated token IDs"),
+                        )
                         .await;
                         let _ = send_done(&body_tx).await;
                         return;
@@ -2196,7 +2200,10 @@ fn streaming_response(
                     if metadata.logprobs.return_token_ids
                         && token_ids.observed as u64 != usage.completion_tokens
                     {
-                        let _ = send_error(&body_tx, &invalid_backend_event("generated token IDs differ from usage"))
+                        let _ = send_error(
+                            &body_tx,
+                            &invalid_backend_event("generated token IDs differ from usage"),
+                        )
                         .await;
                         let _ = send_done(&body_tx).await;
                         return;

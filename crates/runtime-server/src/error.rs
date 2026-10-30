@@ -55,10 +55,7 @@ impl ErrorLog {
 }
 
 impl ApiError {
-    pub(crate) fn invalid(
-        message: impl Into<Cow<'static, str>>,
-        parameter: Option<&str>,
-    ) -> Self {
+    pub(crate) fn invalid(message: impl Into<Cow<'static, str>>, parameter: Option<&str>) -> Self {
         Self::invalid_owned(message, parameter.map(str::to_owned))
     }
 
@@ -267,15 +264,19 @@ mod tests {
         assert_eq!(backend.failure_detail().message, "backend failure");
         assert!(!backend.failure_detail().routine);
         assert!(
-            ApiError::backend("server drain deadline expired", Some("shutdown_timeout".into()))
-                .failure_detail()
-                .routine
+            ApiError::backend(
+                "server drain deadline expired",
+                Some("shutdown_timeout".into())
+            )
+            .failure_detail()
+            .routine
         );
     }
 
     #[test]
     fn json_refusals_log_where_parsing_stopped_not_what_it_read() {
-        let error = serde_json::from_str::<serde_json::Value>("{\"prompt\": \"canary-7f3a").unwrap_err();
+        let error =
+            serde_json::from_str::<serde_json::Value>("{\"prompt\": \"canary-7f3a").unwrap_err();
         let refusal = ApiError::invalid_json(&error, None);
         let detail = refusal.failure_detail();
         assert_eq!(detail.message, "invalid JSON request");

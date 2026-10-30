@@ -375,7 +375,9 @@ async fn client_controlled_fields_are_bounded_or_replaced() {
     let request = request.replace("{}", &body.len().to_string()) + &body;
     assert_eq!(server.request(&request).await.status, 404);
     let refused = server
-        .request(&completion(json!({"model": MODEL, "prompt": "x", "logit_bias": {"987654321": 1}})))
+        .request(&completion(
+            json!({"model": MODEL, "prompt": "x", "logit_bias": {"987654321": 1}}),
+        ))
         .await;
     assert_eq!(refused.status, 400, "{}", refused.body);
 
@@ -413,14 +415,21 @@ async fn deadline_capacity_and_authentication_refusals_are_warnings() {
                 .to_owned(),
         )
         .await;
-    let stalled = timeout(Duration::from_secs(5), stalled).await.unwrap().unwrap();
+    let stalled = timeout(Duration::from_secs(5), stalled)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(String::from_utf8_lossy(&stalled).starts_with("HTTP/1.1 408"));
     let held = server
-        .open(completion(json!({"model": MODEL, "prompt": "x", "max_tokens": 4})))
+        .open(completion(
+            json!({"model": MODEL, "prompt": "x", "max_tokens": 4}),
+        ))
         .await;
     backend.wait_admitted(1).await;
     let refused = server
-        .request(&completion(json!({"model": MODEL, "prompt": "x", "max_tokens": 4})))
+        .request(&completion(
+            json!({"model": MODEL, "prompt": "x", "max_tokens": 4}),
+        ))
         .await;
     assert_eq!(refused.status, 429, "{}", refused.body);
     backend.emit(content("hi")).await;
@@ -471,7 +480,9 @@ async fn a_failure_after_admission_is_one_error_line() {
     )
     .await;
     let plain = server
-        .request(&completion(json!({"model": MODEL, "prompt": CANARY, "max_tokens": 4})))
+        .request(&completion(
+            json!({"model": MODEL, "prompt": CANARY, "max_tokens": 4}),
+        ))
         .await;
     assert_eq!(plain.status, 500, "{}", plain.body);
     let streamed = server
@@ -513,7 +524,10 @@ async fn a_client_that_leaves_is_a_cancel_and_bad_framing_a_failure() {
     let waiting = TcpStream::connect(server.server.address).await.unwrap();
     let request = completion(json!({"model": MODEL, "prompt": "x", "max_tokens": 4}));
     waiting.writable().await.unwrap();
-    assert_eq!(waiting.try_write(request.as_bytes()).unwrap(), request.len());
+    assert_eq!(
+        waiting.try_write(request.as_bytes()).unwrap(),
+        request.len()
+    );
     backend.wait_admitted(1).await;
     tokio::time::sleep(Duration::from_millis(25)).await;
     drop(waiting);
@@ -521,9 +535,13 @@ async fn a_client_that_leaves_is_a_cancel_and_bad_framing_a_failure() {
     assert_cancel(&lines[0], "client_disconnected");
 
     let reading = TcpStream::connect(server.server.address).await.unwrap();
-    let request = completion(json!({"model": MODEL, "prompt": "x", "max_tokens": 4, "stream": true}));
+    let request =
+        completion(json!({"model": MODEL, "prompt": "x", "max_tokens": 4, "stream": true}));
     reading.writable().await.unwrap();
-    assert_eq!(reading.try_write(request.as_bytes()).unwrap(), request.len());
+    assert_eq!(
+        reading.try_write(request.as_bytes()).unwrap(),
+        request.len()
+    );
     backend.wait_admitted(2).await;
     reading.readable().await.unwrap();
     drop(reading);
@@ -581,7 +599,9 @@ async fn requests_the_drain_ends_are_warnings() {
         ))
         .await;
     let whole = server
-        .open(completion(json!({"model": MODEL, "prompt": "x", "max_tokens": 4})))
+        .open(completion(
+            json!({"model": MODEL, "prompt": "x", "max_tokens": 4}),
+        ))
         .await;
     let response = server
         .open(post(
@@ -617,7 +637,10 @@ async fn requests_the_drain_ends_are_warnings() {
     }
     let paths: Vec<_> = lines[1..].iter().map(|line| line["path"].clone()).collect();
     assert_eq!(
-        paths.iter().filter(|path| **path == "/v1/responses").count(),
+        paths
+            .iter()
+            .filter(|path| **path == "/v1/responses")
+            .count(),
         2,
         "{lines:#?}"
     );
@@ -640,7 +663,9 @@ async fn a_worker_failure_writes_an_error_line_for_each_open_request() {
         ))
         .await;
     let _whole = server
-        .open(completion(json!({"model": MODEL, "prompt": "x", "max_tokens": 4})))
+        .open(completion(
+            json!({"model": MODEL, "prompt": "x", "max_tokens": 4}),
+        ))
         .await;
     backend.wait_admitted(2).await;
     *backend.readiness.lock().unwrap() = BackendReadiness::Terminated("device lost".to_owned());
@@ -721,7 +746,10 @@ async fn each_responses_outcome_writes_one_line_of_its_kind() {
         &json!({"input": "x", "stream": true}).to_string(),
     );
     reading.writable().await.unwrap();
-    assert_eq!(reading.try_write(request.as_bytes()).unwrap(), request.len());
+    assert_eq!(
+        reading.try_write(request.as_bytes()).unwrap(),
+        request.len()
+    );
     backend.wait_admitted(2).await;
     reading.readable().await.unwrap();
     drop(reading);
@@ -749,7 +777,10 @@ async fn each_responses_outcome_writes_one_line_of_its_kind() {
         &json!({"input": "x", "stream": true, "max_output_tokens": 60}).to_string(),
     );
     stalled.writable().await.unwrap();
-    assert_eq!(stalled.try_write(request.as_bytes()).unwrap(), request.len());
+    assert_eq!(
+        stalled.try_write(request.as_bytes()).unwrap(),
+        request.len()
+    );
     let lines = server.lines(1).await;
     assert_failure(&lines[0], 408, "warn");
     assert_eq!(lines[0]["error_type"], "client_write_timeout");
@@ -826,7 +857,9 @@ async fn summaries_report_deltas_and_current_gauges() {
     .await;
     for model in [MODEL, MODEL, "missing.model"] {
         server
-            .request(&completion(json!({"model": model, "prompt": "x", "max_tokens": 4})))
+            .request(&completion(
+                json!({"model": model, "prompt": "x", "max_tokens": 4}),
+            ))
             .await;
     }
     let summaries = || {

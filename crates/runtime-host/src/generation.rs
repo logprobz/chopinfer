@@ -1826,13 +1826,12 @@ impl MetricsSnapshotProvider for NativeRuntimeMetricsV1 {
         let engine = self.engine.snapshot();
         let requests = self.engine.request_summary();
         let kv = self.kv.snapshot();
-        let histogram = |latency: runtime_engine::LatencyHistogram| {
-            runtime_server::LatencyHistogramV1 {
+        let histogram =
+            |latency: runtime_engine::LatencyHistogram| runtime_server::LatencyHistogramV1 {
                 bounds_micros: latency.bounds,
                 cumulative: latency.cumulative,
                 count: latency.count,
-            }
-        };
+            };
         Some(runtime_server::EngineSummaryV1 {
             requests_submitted: engine.requests_submitted,
             requests_completed: engine.requests_completed,

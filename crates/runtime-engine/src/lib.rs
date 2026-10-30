@@ -15,12 +15,12 @@ mod speculation;
 mod step_rows;
 pub mod warmup;
 
+pub use compatibility::{LatencyHistogram, RequestSummary};
 pub use media::{
     MAX_MEDIA_ENCODERS, MediaArenaV1, MediaConfigError, MediaConfigV1, MediaEncodeV1,
     MediaInjectV1, MediaInputV1, MediaPayloadSourceV1, MediaPayloadV1, MediaRequestError,
     MediaSpanV1,
 };
-pub use compatibility::{LatencyHistogram, RequestSummary};
 pub use metrics::{
     EngineMetrics, EngineMetricsSnapshot, ExecutionObservations, MonotonicClock,
     SystemMonotonicClock,

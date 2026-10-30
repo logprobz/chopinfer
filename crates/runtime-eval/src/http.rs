@@ -292,9 +292,11 @@ fn startup_level_hint(text: &str) -> String {
         Some(level) => format!(
             "; the server logged at level={level}, and startup lines need --log-level info or debug"
         ),
-        None => "; the log has no 'startup logging: level=' line, so the server ran at --log-level \
+        None => {
+            "; the log has no 'startup logging: level=' line, so the server ran at --log-level \
                  warn or error, or predates log levels"
-            .to_owned(),
+                .to_owned()
+        }
     }
 }
 

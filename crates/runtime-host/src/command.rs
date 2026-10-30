@@ -1397,9 +1397,8 @@ fn environment_log_level_v1() -> Result<runtime_log::Level, HostCommandErrorV1> 
 
 fn log_level_from_v1(value: Option<&str>) -> Result<runtime_log::Level, HostCommandErrorV1> {
     value.map_or(Ok(runtime_log::Level::Info), |value| {
-        runtime_log::Level::parse(value).ok_or_else(|| {
-            usage_error("CHOPINFER_LOG_LEVEL must be error, warn, info or debug")
-        })
+        runtime_log::Level::parse(value)
+            .ok_or_else(|| usage_error("CHOPINFER_LOG_LEVEL must be error, warn, info or debug"))
     })
 }
 
@@ -1740,7 +1739,9 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
         std::env::var("VLLM_API_KEY").ok(),
     );
     http_options.summary_interval = summary_interval_from_v1(
-        std::env::var("CHOPINFER_LOG_SUMMARY_SECONDS").ok().as_deref(),
+        std::env::var("CHOPINFER_LOG_SUMMARY_SECONDS")
+            .ok()
+            .as_deref(),
     )?;
     http_options.validate().map_err(usage_error)?;
     if !profile_pending
@@ -6963,8 +6964,14 @@ mod tests {
         assert_eq!(super::log_level_from_v1(None).unwrap(), Level::Info);
         assert!(super::log_level_from_v1(Some("verbose")).is_err());
         assert!(
-            parse_host_command_v1(&arguments(&["serve", "--bundle", "a", "--log-level", "trace"]))
-                .is_err()
+            parse_host_command_v1(&arguments(&[
+                "serve",
+                "--bundle",
+                "a",
+                "--log-level",
+                "trace"
+            ]))
+            .is_err()
         );
         assert_eq!(super::summary_interval_from_v1(None).unwrap(), None);
         assert_eq!(

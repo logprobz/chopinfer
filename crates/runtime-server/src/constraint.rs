@@ -66,7 +66,10 @@ pub(crate) fn grammar_error(error: &GrammarError, parameter: &str) -> ApiError {
     ApiError::invalid_owned(format!("{parameter}: {error}"), Some(parameter.to_owned()))
 }
 
-fn invalid(message: impl Into<std::borrow::Cow<'static, str>>, parameter: &'static str) -> ApiError {
+fn invalid(
+    message: impl Into<std::borrow::Cow<'static, str>>,
+    parameter: &'static str,
+) -> ApiError {
     ApiError::invalid(message, Some(parameter))
 }
 

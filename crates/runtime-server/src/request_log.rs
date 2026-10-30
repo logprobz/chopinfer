@@ -207,7 +207,10 @@ pub(crate) struct RequestLog {
 }
 
 enum Message {
-    Line { level: Level, text: String },
+    Line {
+        level: Level,
+        text: String,
+    },
     /// A summary or dropped-count line, written whatever the rate limits.
     Plain(String),
     Flush(SyncSender<()>),
@@ -259,7 +262,11 @@ impl RequestLog {
     /// Writes the failure line of a request that never reached the router:
     /// a head that did not parse or arrive, or a connection refused at the
     /// connection limit.
-    pub(crate) fn transport_failure(self: &Arc<Self>, peer: Option<SocketAddr>, detail: FailureDetail) {
+    pub(crate) fn transport_failure(
+        self: &Arc<Self>,
+        peer: Option<SocketAddr>,
+        detail: FailureDetail,
+    ) {
         self.open_record(None, peer, None).fail(detail);
     }
 
@@ -782,7 +789,11 @@ pub(crate) async fn middleware(
 
 /// The writer: applies each level's rate limit and reports drops once a
 /// second and at every flush.
-fn write_loop(receiver: &Receiver<Message>, sink: &RequestLogSinkV1, queue_dropped: &[AtomicU64; 3]) {
+fn write_loop(
+    receiver: &Receiver<Message>,
+    sink: &RequestLogSinkV1,
+    queue_dropped: &[AtomicU64; 3],
+) {
     let mut buckets = [
         Bucket::new(200.0, 50.0),
         Bucket::new(100.0, 20.0),
@@ -855,8 +866,7 @@ impl Bucket {
 
     fn take(&mut self) -> bool {
         let now = Instant::now();
-        self.tokens = (self.tokens
-            + now.duration_since(self.refilled).as_secs_f64() * self.rate)
+        self.tokens = (self.tokens + now.duration_since(self.refilled).as_secs_f64() * self.rate)
             .min(self.burst);
         self.refilled = now;
         if self.tokens >= 1.0 {
@@ -931,9 +941,8 @@ pub(crate) fn summary_line(
             ((*reason).to_owned(), json!(total.saturating_sub(before)))
         })
         .collect::<Map<_, _>>();
-    let failures = |index: usize| {
-        requests.failures[index].saturating_sub(base.requests.failures[index])
-    };
+    let failures =
+        |index: usize| requests.failures[index].saturating_sub(base.requests.failures[index]);
     let mut line = Map::new();
     line.insert("schema".to_owned(), json!(SUMMARY_SCHEMA));
     line.insert("time".to_owned(), json!(runtime_log::utc_timestamp()));
@@ -1134,8 +1143,14 @@ mod tests {
             &base,
         );
         assert_eq!(second["http_requests"], 2);
-        assert_eq!(second["failures"], json!({"error": 0, "warn": 2, "cancelled": 1}));
-        assert_eq!(second["refusals"], json!({"invalid_request": 2, "capacity": 0}));
+        assert_eq!(
+            second["failures"],
+            json!({"error": 0, "warn": 2, "cancelled": 1})
+        );
+        assert_eq!(
+            second["refusals"],
+            json!({"invalid_request": 2, "capacity": 0})
+        );
         assert_eq!(second["requests"]["submitted"], 2);
         assert_eq!(second["tokens"]["drafted"], 8);
         assert_eq!(second["acceptance"], 0.75);
@@ -1217,10 +1232,12 @@ mod tests {
             .filter(|line| line["schema"] == DROPPED_SCHEMA)
             .map(|line| line["dropped"]["warn"].as_u64().unwrap())
             .sum::<u64>();
-        let written = lines.len() as u64 - 1 - lines
-            .iter()
-            .filter(|line| line.contains(DROPPED_SCHEMA))
-            .count() as u64;
+        let written = lines.len() as u64
+            - 1
+            - lines
+                .iter()
+                .filter(|line| line.contains(DROPPED_SCHEMA))
+                .count() as u64;
         assert!(dropped > 0);
         assert_eq!(written + dropped, 500);
         assert_eq!(log.totals().failures, [1, 500, 0]);

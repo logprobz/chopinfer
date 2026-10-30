@@ -962,7 +962,13 @@ fn configured_router(
         CancellationSignal::new(),
         &options,
     )
-    .map(|(router, state)| (logged(options.layer(router), &state), state, summary_interval))
+    .map(|(router, state)| {
+        (
+            logged(options.layer(router), &state),
+            state,
+            summary_interval,
+        )
+    })
 }
 
 /// How often the server writes a summary line.
@@ -1040,7 +1046,11 @@ fn router_with_lifecycle(
         .map(|identity| identity::health_member(identity, frontend.models()));
     let request_log = request_log::RequestLog::new(
         options.request_log_sink.clone(),
-        frontend.models().iter().map(|model| model.id.clone()).collect(),
+        frontend
+            .models()
+            .iter()
+            .map(|model| model.id.clone())
+            .collect(),
     );
     let transport = transport::Budget::new(config.transport_budget_bytes);
     let state = Arc::new(ServerState {

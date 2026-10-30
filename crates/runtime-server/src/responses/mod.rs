@@ -248,7 +248,12 @@ pub(crate) async fn adapt(
 /// chat stream sent, a shutdown, an explicit cancel, a client that left or
 /// stopped reading, or the adapter's own error. A response that completed
 /// writes none.
-fn report(state: &ServerState, record: &RecordHandle, response_id: &str, stopped: Option<&Stopped>) {
+fn report(
+    state: &ServerState,
+    record: &RecordHandle,
+    response_id: &str,
+    stopped: Option<&Stopped>,
+) {
     let Some(record) = record.record() else {
         return;
     };

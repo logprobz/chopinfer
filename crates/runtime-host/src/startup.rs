@@ -325,7 +325,9 @@ async fn warmup_inner(
             _ => usize::MAX,
         };
         if admitted < verify_output(&verify) {
-            runtime_log::info!("startup verify warmup: skipped, the request profile admits too few tokens");
+            runtime_log::info!(
+                "startup verify warmup: skipped, the request profile admits too few tokens"
+            );
         } else {
             result = verify_waves(
                 backend, &model, &tokens, limit, sequences, &verify, steps, deadline,
@@ -375,7 +377,8 @@ async fn verify_waves(
     for shape in &shapes {
         runtime_log::debug!(
             "startup verify warmup: rows {} items {} begin",
-            shape.row_bucket, shape.item_bucket
+            shape.row_bucket,
+            shape.item_bucket
         );
         let shape_started = std::time::Instant::now();
         let requests = shape
@@ -395,7 +398,8 @@ async fn verify_waves(
         if let Err(error) = result {
             runtime_log::warn!(
                 "WARNING: startup verify warmup: rows {} items {} not warmed: {error}",
-                shape.row_bucket, shape.item_bucket
+                shape.row_bucket,
+                shape.item_bucket
             );
             if !matches!(backend.readiness(), runtime_server::BackendReadiness::Ready) {
                 return Err(error);
@@ -462,7 +466,9 @@ async fn verify_waves(
                 context_started.elapsed().as_secs_f64()
             );
             if let Err(error) = result {
-                runtime_log::warn!("WARNING: startup verify warmup: context {prompt} not warmed: {error}");
+                runtime_log::warn!(
+                    "WARNING: startup verify warmup: context {prompt} not warmed: {error}"
+                );
                 if !matches!(backend.readiness(), runtime_server::BackendReadiness::Ready) {
                     return Err(error);
                 }

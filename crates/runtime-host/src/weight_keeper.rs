@@ -823,7 +823,8 @@ impl SharedV1 {
             OperationV1::Release | OperationV1::Stop => {
                 runtime_log::info!(
                     "weight keeper: {:?} requested by process {}",
-                    request.op, peer.pid
+                    request.op,
+                    peer.pid
                 );
                 let state = self.state();
                 if request.op == OperationV1::Release && state.leases > 0 {

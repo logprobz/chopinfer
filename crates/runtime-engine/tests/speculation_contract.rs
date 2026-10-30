@@ -18,7 +18,9 @@ use runtime_engine::{
 };
 use runtime_kv::{KvGeometry, PreparedAppendBatch};
 use runtime_model_api::ModelVocabulary;
-use runtime_sampling::{LogitBias, SamplingParameters, sample_for_vocabulary};
+use runtime_sampling::{
+    LogitBias, SampleContext, SamplingParameters, SamplingState, sample, sample_for_vocabulary,
+};
 use runtime_scheduler::{BatchPhase, RequestId, SchedulerConfig};
 
 const VOCABULARY: usize = 24;
@@ -81,6 +83,46 @@ enum Drafter {
     Stop,
     /// The argmax chain with every third draft wrong.
     Mostly,
+    /// A bundle drafter coupled to the target sampler's noise
+    /// (`kernel_core::draft_noise`): see [`coupled_drafts`]. Without an
+    /// item's sampling inputs it drafts the argmax chain, as a greedy
+    /// record does.
+    Coupled,
+}
+
+/// A coupled drafter's `count` proposals after `context` for a verify item
+/// with sampling inputs `work`: at draft position `j`, the argmax of the
+/// model's logits over the temperature plus the Gumbel noise of the
+/// request's seed at generated index `n + j`, where `n` indexes the item's
+/// first verify row (the V6 record's seed, index and temperature). That is
+/// the host sampler's own draw at temperature only
+/// (`runtime-sampling/tests/draft_coupling.rs` proves it equal to
+/// `kernel_core::draft_noise::proposal`), so a proposal equals the target's
+/// sample unless the request's penalties, bias, masks or filters change it.
+fn coupled_drafts(
+    context: &[u32],
+    count: usize,
+    work: &runtime_engine::SamplingWork,
+    logits: impl Fn(&[u32]) -> Vec<f32>,
+) -> Vec<u32> {
+    let parameters = SamplingParameters::new(work.parameters.temperature()).unwrap();
+    let mut context = context.to_vec();
+    (0..count as u64)
+        .map(|position| {
+            let mut state =
+                SamplingState::new(work.state.seed()).after(work.state.generated() + position);
+            let token = sample(
+                &parameters,
+                &logits(&context),
+                SampleContext::new(&[], 0, &[]),
+                &mut state,
+            )
+            .unwrap()
+            .token_id();
+            context.push(token);
+            token
+        })
+        .collect()
 }
 
 impl Drafter {
@@ -90,7 +132,7 @@ impl Drafter {
         for index in 0..count {
             let best = argmax(&logits_for(&context));
             let token = match self {
-                Self::Greedy => best,
+                Self::Greedy | Self::Coupled => best,
                 Self::Wrong => (best + 1) % VOCABULARY as u32,
                 Self::Noise => {
                     (mix(context.len() as u64 ^ u64::from(best)) % VOCABULARY as u64) as u32
@@ -333,6 +375,14 @@ impl ModelExecutor for Model {
 }
 
 impl Model {
+    /// The model's logits for the token after `prefix`.
+    fn logits(&self, prefix: &[u32]) -> Vec<f32> {
+        match self.copy_period {
+            Some(period) => copying_logits_for(prefix, period),
+            None => logits_for(prefix),
+        }
+    }
+
     /// One step; with `verified`, each decode or verify item in order
     /// verifies that many of its reserved drafts and reports them, and its
     /// rows past them repeat its last verified row.
@@ -395,7 +445,14 @@ impl Model {
                         assert_eq!(inputs.len(), 1);
                         let mut context = committed.clone();
                         context.push(inputs[0]);
-                        drafts = self.drafter.propose(&context, draft.tokens());
+                        drafts = match (self.drafter, item.sampling()) {
+                            (Drafter::Coupled, Some(work)) => {
+                                coupled_drafts(&context, draft.tokens(), work, |prefix| {
+                                    self.logits(prefix)
+                                })
+                            }
+                            _ => self.drafter.propose(&context, draft.tokens()),
+                        };
                         inputs.extend_from_slice(&drafts);
                         let mut reported = drafts.clone();
                         if let Some(count) = item_verified {
@@ -446,10 +503,7 @@ impl Model {
                     // The row's sampling history is exactly the tokens the
                     // model conditions on.
                     assert_eq!(prefix, row_work.history.to_vec());
-                    let logits = match self.copy_period {
-                        Some(period) => copying_logits_for(&prefix, period),
-                        None => logits_for(&prefix),
-                    };
+                    let logits = self.logits(&prefix);
                     match self.rows {
                         Rows::Logits => {
                             logits_rows.push(LogitsRow::new(item.request_id(), logits).unwrap());
@@ -1309,6 +1363,83 @@ fn greedy_requests_accept_every_argmax_draft_and_no_wrong_one() {
     // checked and never accepted.
     assert_eq!(wrong.spec_drafted_positions[0], wrong.spec_verify_items);
     assert_eq!(wrong.spec_accepted_positions[0], 0);
+}
+
+/// Coupled sampled drafts change which tokens are proposed, never which
+/// are emitted: greedy, filtered and processed requests (top-k, top-p,
+/// min-p, penalties, bias, a minimum length, stop tokens) emit exactly the
+/// reference's events and logprob bits under every speculation mode, on
+/// both row paths.
+#[test]
+fn coupled_sampled_drafts_emit_exactly_the_reference_output() {
+    let requests = requests(20);
+    for rows in [Rows::Logits, Rows::Sampled] {
+        let expected = reference(&requests, rows);
+        for mode in [
+            SpeculationMode::Fixed,
+            SpeculationMode::Balanced(Default::default()),
+            SpeculationMode::Adaptive,
+        ] {
+            for (drafts, verify_rows) in [(1, 64), (3, 64), (7, 12), (16, 64)] {
+                let (actual, metrics) = speculative(
+                    &requests,
+                    Drafter::Coupled,
+                    rows,
+                    speculation(drafts, verify_rows, mode, DraftSource::Bundle),
+                );
+                let label = format!("{rows:?} {mode:?} K={drafts} rows={verify_rows}");
+                assert_eq!(actual, expected, "{label}");
+                assert_eq!(logprob_bits(&actual), logprob_bits(&expected), "{label}");
+                assert!(metrics.spec_accepted_tokens > 0, "{label}");
+            }
+        }
+    }
+}
+
+/// When the drafter's logits are the target's and nothing but the
+/// temperature processes them, every coupled draft is the target's own
+/// sample and is accepted, at any temperature and seed, while the greedy
+/// drafter's drafts of the same requests are mostly rejected; both emit the
+/// reference.
+#[test]
+fn coupled_drafts_of_the_targets_logits_are_its_samples() {
+    for temperature in [0.7, 1.0, 1.6] {
+        let requests: Vec<_> = (0..6)
+            .map(|index| {
+                EngineRequest::new(
+                    RequestId::new(index + 1),
+                    vec![2, 9, 4 + index as u32],
+                    33,
+                    SamplingParameters::new(temperature).unwrap(),
+                    mix(index ^ temperature.to_bits()),
+                    Vec::new(),
+                    vocabulary(),
+                )
+                .unwrap()
+            })
+            .collect();
+        for rows in [Rows::Logits, Rows::Sampled] {
+            let expected = reference(&requests, rows);
+            let fixed = speculation(4, 64, SpeculationMode::Fixed, DraftSource::Bundle);
+            let (coupled, accepted) = speculative(&requests, Drafter::Coupled, rows, fixed);
+            assert_eq!(coupled, expected, "{temperature} {rows:?}");
+            assert_eq!(logprob_bits(&coupled), logprob_bits(&expected));
+            assert!(accepted.spec_draft_tokens > 0);
+            assert_eq!(accepted.spec_accepted_tokens, accepted.spec_draft_tokens);
+            assert_eq!(
+                accepted.spec_emitted_tokens,
+                accepted.spec_draft_tokens + accepted.spec_verify_items
+            );
+            let (greedy, rejected) = speculative(&requests, Drafter::Greedy, rows, fixed);
+            assert_eq!(greedy, expected, "{temperature} {rows:?}");
+            assert!(
+                2 * rejected.spec_accepted_tokens < rejected.spec_draft_tokens,
+                "{temperature} {rows:?}: greedy drafts accepted {} of {}",
+                rejected.spec_accepted_tokens,
+                rejected.spec_draft_tokens
+            );
+        }
+    }
 }
 
 #[test]

@@ -313,10 +313,9 @@ async fn each_refused_request_writes_one_line_without_request_text() {
             404,
         ),
         (
-            format!(
-                "POST /v1/completions HTTP/1.1\r\nHost: localhost\r\nContent-Type: text/plain\r\n\
-                 Content-Length: 2\r\nConnection: close\r\n\r\n{{}}"
-            ),
+            "POST /v1/completions HTTP/1.1\r\nHost: localhost\r\nContent-Type: text/plain\r\n\
+             Content-Length: 2\r\nConnection: close\r\n\r\n{}"
+                .to_owned(),
             400,
         ),
         (get("/v1/nothing"), 404),

@@ -433,16 +433,17 @@ impl Instance {
             }
         };
         // An allocated step's verified drafts stay on the device, so only
-        // the device results path takes it.
+        // the device results path takes it. These refusals precede any
+        // device work, so the host may fail just this batch and go on.
         let allocated =
             BatchCodecV1::decode(request).is_ok_and(|batch| batch.verify_allocation().is_some());
         if allocated && !sink.mapped_sampling_enabled() {
             self.log("compact allocation requires mapped sampling");
-            return BundleStatusV1::Unsupported;
+            return BundleStatusV1::InvalidArgument;
         }
         if allocated && !sink.device_results_enabled() {
             self.log("DSpark allocated verify steps need device results");
-            return BundleStatusV1::Unsupported;
+            return BundleStatusV1::InvalidArgument;
         }
         if let Err(error) = self.consume_dspark_prefetch(&inputs, allocated) {
             if let Some(runtime) = self

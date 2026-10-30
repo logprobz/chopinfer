@@ -265,3 +265,68 @@ fn drafts_restore_the_text_bias_only_while_image_flags_may_be_set() {
         );
     }
 }
+
+/// An allocated step that arrives without mapped sampling is refused as an
+/// invalid argument before any device work, with a successor prefetched for
+/// it: the ABI classifies the refusal as pre-work (no host service but the
+/// log, no emission), the refused execute journals no device line, and the
+/// run's whole journal equals the run without it, so the host may fail
+/// just that batch and keep serving.
+#[test]
+fn a_refused_allocated_step_leaves_the_device_untouched() {
+    use runtime_bundle_sdk::{SamplingKindV1, VerifyAllocationV1, VerifyCalibrationV1};
+    let run = |refuse: bool| {
+        let (host, mut instance) =
+            create_with_limits(Shape::new(&FLASH, Ranks::TP4).unwrap(), 1, 32);
+        execute(
+            &mut instance,
+            &host,
+            &super::super::prompt(1, 0, 0, 3, true),
+        );
+        instance.commit().unwrap();
+        execute(&mut instance, &host, &verify(1, 0, 3, 5));
+        dspark_prefetch_for_test(instance.handle(), feedback(1, 3, 2), true);
+        instance.commit_accepted(&[kept(1, 3)]).unwrap();
+        if refuse {
+            let (start, rows) = (6_u64, 6_u64);
+            let request = BatchRequestV1::new(
+                BatchWireVersionV1::V3,
+                vec![BatchItemV1::verify(1, rows as u32, true, vec![7])],
+                vec![BatchAppendV1::new(
+                    start,
+                    rows,
+                    start + rows,
+                    (0..(start + rows).div_ceil(64)).collect(),
+                    None,
+                )],
+            )
+            .with_state_slots(vec![0])
+            .with_verify_allocation(VerifyAllocationV1::new(
+                3,
+                1,
+                VerifyCalibrationV1::new(&[(1.0, 0.0); 5], &[(1.0, 0.0); 5]).unwrap(),
+                vec![SamplingKindV1::Greedy],
+            ))
+            .encode()
+            .unwrap();
+            let begin = host.journal.borrow().len();
+            assert_eq!(
+                instance.execute(&request, &mut Sink::default()).err(),
+                Some(BundleAbiError::Status(BundleStatusV1::InvalidArgument))
+            );
+            assert_eq!(
+                instance.last_execute_refusal(),
+                Some("DeepSeek V4.1: compact allocation requires mapped sampling")
+            );
+            let refused = host.journal.borrow()[begin..].to_vec();
+            assert!(refused.is_empty(), "{refused:?}");
+        }
+        execute(&mut instance, &host, &verify(1, 0, 6, 2));
+        instance.commit_accepted(&[kept(1, 1)]).unwrap();
+        instance.retire_request(1).unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+        host.journal.take()
+    };
+    assert_eq!(run(false), run(true));
+}

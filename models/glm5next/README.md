@@ -33,9 +33,8 @@ record the scope, bitwise checks and 8K/32K TTFT results.
 
 ### Coupled sampled drafts
 
-The model option `runtime.mtp_coupled_drafts` (default `false`) makes the
-MTP drafter propose each sampled item's drafts from the target sampler's
-own noise ([coupled sampled drafts](../../docs/numerics.md#coupled-sampled-drafts)).
+The MTP drafter proposes each sampled item's drafts from the target
+sampler's own noise ([coupled sampled drafts](../../docs/numerics.md#coupled-sampled-drafts)).
 Draft position `j` of a verify item proposes the argmax of the drafter's
 logits divided by the item's temperature plus the Gumbel noise of the
 generated index the target samples that position at. Each drafter run
@@ -48,11 +47,24 @@ GLM's verify rows are not bitwise AR rows, so other drafts (and with them
 other verify shapes) can change a sample at a near tie, as any change of
 drafts can.
 
-Only an instance that runs the drafter and sets the option loads the draft
-noise cubin (the shared entry, byte-identical to DeepSeek's) and allocates
-its records; with the option off an instance issues exactly what it issued
-before the option existed. The option stays off until served timings at
-temperature 1.0 resolve a gain.
+Only an instance that runs the drafter loads the draft noise cubin (the
+shared entry, byte-identical to DeepSeek's) and allocates its records.
+
+On 2026-10-30 coupling was adopted after an ABBA comparison with the greedy
+drafter on `tp4-mtp` (adaptive speculation, K3, prefix cache, FP8 KV),
+temperature 1.0, 256 tokens per request, coding and chat prompts, 15 s
+closed-loop windows, matched seeds and a fresh process per visit. Request
+tok/s rose at every concurrency (mean of the two pairs, spread in
+parentheses): C1 +10.7% (0.1%), C2 +11.4% (6.5%), C4 +7.9% (3.3%), C8
++8.8% (3.1%) and the C16 control +11.3% (0.4%). The share of drafts
+accepted rose in every cell, at C1 from 0.58 and 0.56 to 0.64 and 0.62.
+Accepted drafts per verify item rose at C1 from 1.28 and 1.29 to 1.73 in
+both pairs; at higher concurrency adaptive speculation drafts fewer tokens
+per verify item when coupled, so that figure is not comparable there (C8:
+1.32 and 1.72 greedy, 1.44 and 0.92 coupled). Every matched request
+emitted the same tokens in both arms. Fixed-seed GPU checks found sampled
+outputs at C1, C8 and C32 (temperature 1.0) and C8 (0.7) token-equal to
+AR, and greedy outputs bitwise equal with and without coupling.
 
 ### Layer reference
 

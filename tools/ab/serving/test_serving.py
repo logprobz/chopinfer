@@ -87,6 +87,26 @@ class Stopped(test_serving.Base):
 unittest.main(argv=sys.argv[:1])
 '''
 
+# A one-test module, run in a child interpreter by
+# test_an_interrupted_teardown_still_stops_what_the_module_started (argv:
+# this directory). Its test leaves a process running, and its tearDownModule
+# sweep is interrupted as a SIGTERM during that sweep would interrupt it.
+INTERRUPTED_TEARDOWN = '''
+import subprocess, sys, unittest
+sys.path.insert(0, sys.argv[1])
+import test_serving
+from test_serving import setUpModule, tearDownModule
+sweep = test_serving.kill_started
+def interrupted(*args, **kwargs):
+    test_serving.kill_started = sweep
+    raise KeyboardInterrupt('signal 15')
+class Leaves(unittest.TestCase):
+    def test_leaves(self):
+        subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)'], start_new_session=True)
+        test_serving.kill_started = interrupted
+unittest.main(argv=sys.argv[:1])
+'''
+
 
 def setUpModule():
     global ROOT, _directory, _marker, _inherited, _previous_sigterm
@@ -103,16 +123,16 @@ def setUpModule():
 
 
 def tearDownModule():
-    try:
-        left = kill_started(_marker)
-    finally:
-        atexit.unregister(stop_at_exit)
-        signal.signal(signal.SIGTERM, _previous_sigterm)
-        if _inherited is None:
-            os.environ.pop(MARKER, None)
-        else:
-            os.environ[MARKER] = _inherited
-        _directory.cleanup()
+    # stop_at_exit stays registered until this sweep completes: a signal
+    # that interrupts the sweep ends the interpreter, which then retries it.
+    left = kill_started(_marker)
+    atexit.unregister(stop_at_exit)
+    signal.signal(signal.SIGTERM, _previous_sigterm)
+    if _inherited is None:
+        os.environ.pop(MARKER, None)
+    else:
+        os.environ[MARKER] = _inherited
+    _directory.cleanup()
     if left:
         raise AssertionError('processes this module started outlived it: ' + describe(left))
 
@@ -717,6 +737,15 @@ class DriverTests(Base):
                 left = kill_started(_marker)
                 if left:
                     self.fail('the stopped test left: ' + describe(left) + '\n' + log.read_text())
+    def test_an_interrupted_teardown_still_stops_what_the_module_started(self):
+        log = self.root / 'teardown.log'
+        with log.open('wb') as output:
+            subprocess.run([sys.executable, '-B', '-c', INTERRUPTED_TEARDOWN, str(HERE)], stdout=output,
+                           stderr=subprocess.STDOUT, timeout=120, env=dict(os.environ, TMPDIR=str(self.root)))
+        self.assertIn('KeyboardInterrupt: signal 15', log.read_text())
+        left = kill_started(_marker)
+        if left:
+            self.fail('the interrupted teardown left: ' + describe(left) + '\n' + log.read_text())
     def test_slow_drip_health_is_bounded(self):
         c = self.config(); c['env']['STUB_SERVER'] = 'slow-health'; c['timeouts']['http'] = .3
         # The stub drips one byte a second (hundreds of seconds for /health):

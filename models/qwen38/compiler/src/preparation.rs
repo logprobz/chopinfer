@@ -778,6 +778,8 @@ mod tests {
         pub prefill_timing_cuts: Option<String>,
         pub queue_depth: Option<usize>,
         pub gpu_memory_utilization: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub graph_memory_reserve_mib: Option<u64>,
         pub status: ProfileStatus,
         pub evidence: Vec<String>,
     }

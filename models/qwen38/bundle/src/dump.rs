@@ -583,8 +583,8 @@ pub struct OverlapEvidence<'a> {
     pub page_bytes: u64,
     pub head_rows: u32,
     pub drafted: bool,
-    /// The canonical drafter candidate the instance runs: `off`, `full`,
-    /// `persistent` or `trimmed`.
+    /// The canonical drafter candidate the instance runs: `off`, `full` or
+    /// `persistent`.
     pub canonical_drafter: &'static str,
 }
 

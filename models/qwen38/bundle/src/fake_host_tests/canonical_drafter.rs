@@ -7,9 +7,8 @@
 //! state depends on where chunks started. `Full` (`1`) runs the whole
 //! drafter program; `Persistent` (`2`) runs only the stages whose writes a
 //! later run reads, and must launch exactly `Full`'s launches of those
-//! stages. `Trimmed` (`3`) is a separate candidate: it keeps the default's
-//! runs and trims only those of prefilling rows already in the prefill phase
-//! to the default's launches of the persistent stages. These steps run with
+//! stages. Without the candidate, runs of prefilling rows already in the
+//! prefill phase run only the persistent stages too. These steps run with
 //! the process's default execution: no test forces eager runs unless it says
 //! so.
 
@@ -565,9 +564,9 @@ fn by_run_and_rank(
     grouped
 }
 
-/// Which runs a candidate trims, by `(prefilling rows, prefill phase,
-/// rows)`: `Persistent` every run of prefilling rows, `Trimmed` those of
-/// them in the prefill phase.
+/// Which runs are trimmed, by `(prefilling rows, prefill phase, rows)`:
+/// with `Persistent` every run of prefilling rows, by default those of them
+/// in the prefill phase.
 type Trims = fn(&(bool, bool, u32)) -> bool;
 
 /// `Persistent` against `Full`.
@@ -575,7 +574,7 @@ fn every_prefilling_run(run: &(bool, bool, u32)) -> bool {
     run.0
 }
 
-/// `Trimmed` against the default.
+/// The default.
 fn prefill_phase_prefilling_runs(run: &(bool, bool, u32)) -> bool {
     run.0 && run.1
 }
@@ -691,39 +690,6 @@ fn persistent_runs_lower_the_full_programs_persistent_launches() {
     }
 }
 
-/// In every flow `Trimmed` runs the default's runs, phases, replays and
-/// drafts, and lowers exactly the default's launches but for its runs of
-/// prefilling rows in the prefill phase, which keep only their launches of
-/// the persistent stages (the down projection of `HcIn` alone). So it writes
-/// the default's persistent drafter state and drafts the same, and its graph
-/// buckets are the default's.
-#[test]
-fn trimmed_runs_lower_the_default_programs_persistent_launches() {
-    for shape in [Shape::TP2, Shape::TP4] {
-        let default = flows(shape, Canonical::Off);
-        let trimmed = flows(shape, Canonical::Trimmed);
-        let mut injects = 0;
-        let mut whole = 0;
-        for ((case, default), (_, steps)) in default.iter().zip(&trimmed) {
-            injects += assert_persistent_launches(
-                default,
-                steps,
-                prefill_phase_prefilling_runs,
-                &format!("{shape:?} {case}"),
-            );
-            whole += default
-                .iter()
-                .flat_map(|drafted| &drafted.runs)
-                .filter(|run| run.0 && !run.1)
-                .count();
-        }
-        // Some runs were trimmed, and some runs of prefilling rows replayed
-        // whole graph buckets.
-        assert!(injects > 0, "{shape:?}");
-        assert!(whole > 0, "{shape:?}");
-    }
-}
-
 /// Context-parallel size 2 at TP4: a continuing prefill's runs lower
 /// `Full`'s persistent launches, owner-routed key writes included, and a
 /// verify step after it lowers every launch, queued whole on each rank
@@ -734,20 +700,6 @@ fn context_parallel_persistent_runs_lower_the_full_programs_persistent_launches(
     let persistent = context_parallel_steps(Canonical::Persistent);
     assert_eq!(full[1].prefill_runs(), [1, 64]);
     assert!(assert_persistent_launches(&full, &persistent, every_prefilling_run, "dcp2") > 0);
-}
-
-/// [`context_parallel_persistent_runs_lower_the_full_programs_persistent_launches`]
-/// for `Trimmed` against the default: the 63- and 64-row post-target runs
-/// are trimmed, the catch-up row stays in the drafting graph bucket.
-#[test]
-fn context_parallel_trimmed_runs_lower_the_default_programs_persistent_launches() {
-    let default = context_parallel_steps(Canonical::Off);
-    let trimmed = context_parallel_steps(Canonical::Trimmed);
-    assert_eq!(default[0].prefill_runs(), [63]);
-    assert_eq!(default[1].prefill_runs(), [64]);
-    assert!(
-        assert_persistent_launches(&default, &trimmed, prefill_phase_prefilling_runs, "dcp2") > 0
-    );
 }
 
 /// Two chunks of a prompt at context-parallel size 2, then a verify step.
@@ -968,15 +920,15 @@ fn check_trims(shape: Shape, case: &str, steps: &[Drafted], trims: Trims) -> (us
     (trimmed, whole)
 }
 
-/// `Trimmed` trims by purpose and phase: a run of prefilling rows in the
-/// prefill phase (a post-target run of more than 32 rows, or any such run
-/// with every drafter run forced eager) lowers exactly the persistent
-/// stages; a run of prefilling rows in a graph bucket (a chunk of 33
-/// tokens), a wide decode catch-up or drafting run of 40 rows in the prefill
-/// phase, and every drafting run lower their whole programs.
+/// By default runs are trimmed by purpose and phase: a run of prefilling
+/// rows in the prefill phase (a post-target run of more than 32 rows, or any
+/// such run with every drafter run forced eager) lowers exactly the
+/// persistent stages; a run of prefilling rows in a graph bucket (a chunk of
+/// 33 tokens), a wide decode catch-up or drafting run of 40 rows in the
+/// prefill phase, and every drafting run lower their whole programs.
 #[test]
 fn only_prefill_phase_runs_of_prefilling_rows_are_trimmed() {
-    let mode = Canonical::Trimmed;
+    let mode = Canonical::Off;
     for shape in [Shape::TP2, Shape::TP4] {
         let check = |case: &str, steps: &[Drafted]| {
             check_trims(shape, case, steps, prefill_phase_prefilling_runs)

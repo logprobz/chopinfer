@@ -87,8 +87,7 @@ pub(super) struct DrafterRuntime {
     /// prefilling item's step writes take the prefill phase at every row
     /// count, and continuing prefills' catch-up rows plan as a run of their
     /// own, apart from the drafting items' rows. `Persistent` runs only
-    /// their persistent stages; `Trimmed` keeps the default runs and trims
-    /// those already in the prefill phase.
+    /// their persistent stages, as `Off` does those in the prefill phase.
     canonical: super::Canonical,
 }
 
@@ -459,18 +458,18 @@ impl Instance {
         let eager = runtime.eager || (prefill && runtime.canonical.on());
         let prepared = Prepared::new(self.shape, run, &inputs, eager, self.items)?;
         // A run of rows a prefilling item's step writes drafts nothing (the
-        // planner gives drafts only to drafting items' runs). With the
-        // `Persistent` candidate it runs only the stages whose writes a later
-        // run reads; with `Trimmed` only when it is in the prefill phase, so
-        // its graph buckets keep their whole programs. The predicate is the
+        // planner gives drafts only to drafting items' runs). It runs only
+        // the stages whose writes a later run reads: by default when it is in
+        // the prefill phase, so its graph buckets keep their whole programs,
+        // and always with the `Persistent` candidate. The predicate is the
         // run's purpose, so eager drafting and wide runs keep the whole
         // program.
         let persistent_only = prefill
             && run.drafts.is_empty()
             && match runtime.canonical {
                 super::Canonical::Persistent => true,
-                super::Canonical::Trimmed => matches!(prepared.phase, Phase::Prefill),
-                super::Canonical::Off | super::Canonical::Full => false,
+                super::Canonical::Off => matches!(prepared.phase, Phase::Prefill),
+                super::Canonical::Full => false,
             };
         #[cfg(test)]
         DRAFTER_RUNS.with(|runs| {

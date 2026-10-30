@@ -77,6 +77,9 @@ pub struct PrefixAncestryWorkV1 {
     pub tokens_copied: u64,
     /// Media spans copied into new or merged edges.
     pub media_copied: u64,
+    /// Media spans the binary searches of merges and compactions examined
+    /// to find the spans they copy.
+    pub media_inspected: u64,
     /// Nomination target entries updated.
     pub target_updates: u64,
     /// Page references the pool took or released for anchors.
@@ -93,6 +96,7 @@ impl PrefixAncestryWorkV1 {
             atoms_compared: self.atoms_compared - earlier.atoms_compared,
             tokens_copied: self.tokens_copied - earlier.tokens_copied,
             media_copied: self.media_copied - earlier.media_copied,
+            media_inspected: self.media_inspected - earlier.media_inspected,
             target_updates: self.target_updates - earlier.target_updates,
             page_references: self.page_references - earlier.page_references,
         }
@@ -132,8 +136,16 @@ impl Segment {
         }
     }
 
-    /// `start..middle` of `upper` followed by `middle..end` of `lower`.
-    fn joined(upper: &Self, start: usize, middle: usize, lower: &Self, end: usize) -> Self {
+    /// `start..middle` of `upper` followed by `middle..end` of `lower`;
+    /// `inspected` counts the media spans its searches examined.
+    fn joined(
+        upper: &Self,
+        start: usize,
+        middle: usize,
+        lower: &Self,
+        end: usize,
+        inspected: &mut u64,
+    ) -> Self {
         let block_tokens = upper.block_tokens;
         Self {
             start,
@@ -143,9 +155,9 @@ impl Segment {
                 .copied()
                 .collect(),
             media: upper
-                .media_in(start, middle)
+                .media_in(start, middle, inspected)
                 .iter()
-                .chain(lower.media_in(middle, end))
+                .chain(lower.media_in(middle, end, inspected))
                 .copied()
                 .collect(),
             block_tokens,
@@ -165,13 +177,14 @@ impl Segment {
         self.start + self.tokens.len()
     }
 
-    /// A copy of `start..end` alone, with its media and block digests.
-    fn slice(&self, start: usize, end: usize) -> Self {
+    /// A copy of `start..end` alone, with its media and block digests;
+    /// `inspected` counts the media spans its search examined.
+    fn slice(&self, start: usize, end: usize, inspected: &mut u64) -> Self {
         let block_tokens = self.block_tokens;
         Self {
             start,
             tokens: self.tokens[start - self.start..end - self.start].into(),
-            media: self.media_in(start, end).into(),
+            media: self.media_in(start, end, inspected).into(),
             block_tokens,
             digests: (start / block_tokens + 1..=end / block_tokens)
                 .map(|blocks| self.digest(blocks))
@@ -179,10 +192,17 @@ impl Segment {
         }
     }
 
-    /// The media spans starting in `from..to`, by binary search.
-    fn media_in(&self, from: usize, to: usize) -> &[PrefixMediaSpanV1] {
-        let first = self.media.partition_point(|span| span.start < from);
-        let last = self.media.partition_point(|span| span.start < to);
+    /// The media spans starting in `from..to`, by binary search; adds the
+    /// spans it examined to `inspected`.
+    fn media_in(&self, from: usize, to: usize, inspected: &mut u64) -> &[PrefixMediaSpanV1] {
+        let mut bound = |position: usize| {
+            self.media.partition_point(|span| {
+                *inspected += 1;
+                span.start < position
+            })
+        };
+        let first = bound(from);
+        let last = bound(to);
         &self.media[first..last]
     }
 
@@ -690,7 +710,7 @@ impl PrefixAncestry {
         }
         for id in sharing {
             let node = self.nodes.get_mut(&id).expect("live radix node");
-            let copy = segment.slice(node.start, node.depth);
+            let copy = segment.slice(node.start, node.depth, &mut self.work.media_inspected);
             self.work.tokens_copied += copy.tokens.len() as u64;
             self.work.media_copied += copy.media.len() as u64;
             node.segment = Arc::new(copy);
@@ -723,6 +743,7 @@ impl PrefixAncestry {
                 node.depth,
                 &lower.segment,
                 lower.depth,
+                &mut self.work.media_inspected,
             );
             self.work.media_copied += segment.media.len() as u64;
             Some(Arc::new(segment))

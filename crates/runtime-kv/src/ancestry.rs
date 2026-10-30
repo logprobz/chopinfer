@@ -684,11 +684,11 @@ impl PrefixAncestry {
         }
     }
 
-    /// After a removal freed the deep end of `segment`, gives the nodes
-    /// still sharing it from `id` upward copies of their own ranges once
-    /// they use less than half of it. Nodes sharing one segment lie on one
-    /// path, so this walks only that path, and each copy is smaller than
-    /// the memory it frees.
+    /// After a node stopped using `segment`, gives the nodes still sharing
+    /// it from `id` upward copies of their own ranges once they use less
+    /// than half of it; `id` must be the deepest node still sharing it.
+    /// Nodes sharing one segment lie on one path, so this walks only that
+    /// path, and each copy is smaller than the memory it frees.
     fn compact(&mut self, id: NodeId, segment: &Arc<Segment>) {
         let mut sharing = Vec::new();
         let mut cursor = Some(id);
@@ -755,15 +755,44 @@ impl PrefixAncestry {
         let lower = self.nodes.get_mut(&child).expect("live radix node");
         lower.parent = Some(parent);
         lower.start = node.start;
-        if let Some(segment) = segment {
-            lower.segment = segment;
-        }
+        let replaced = segment.map(|segment| std::mem::replace(&mut lower.segment, segment));
         // The removed node forwarded exactly its child's summary and marks.
         self.nodes
             .get_mut(&parent)
             .expect("live radix node")
             .children
             .insert(node.first_atom(), child);
+        // A copy leaves both old segments to their other sharers: the
+        // removed node's to the nodes above it, the child's to the nodes
+        // below, which may now use too little of them.
+        if let Some(old) = replaced {
+            self.compact(parent, &node.segment);
+            if let Some(deepest) = self.deepest_sharer(child, &old) {
+                self.compact(deepest, &old);
+            }
+        }
+    }
+
+    /// The deepest node below `id` that shares `segment`. A sharer continues
+    /// the segment from its parent's depth, so each step looks up one child.
+    fn deepest_sharer(&mut self, id: NodeId, segment: &Arc<Segment>) -> Option<NodeId> {
+        let mut deepest = None;
+        let mut depth = self.nodes[&id].depth;
+        let mut cursor = id;
+        while depth < segment.end() {
+            let Some(&next) = self.nodes[&cursor].children.get(&segment.atom(depth)) else {
+                break;
+            };
+            let node = &self.nodes[&next];
+            if !Arc::ptr_eq(&node.segment, segment) {
+                break;
+            }
+            self.work.nodes += 1;
+            deepest = Some(next);
+            depth = node.depth;
+            cursor = next;
+        }
+        deepest
     }
 
     /// Classes and tiers of the anchors changed since the last call. A fork
@@ -983,6 +1012,56 @@ mod audit_tests {
         assert!(pool.remove_anchor(chain.key_at(100_000).unwrap()).unwrap());
         assert_eq!(index(&pool), 4);
         pool.audit().unwrap();
+    }
+
+    #[test]
+    fn a_copying_merge_releases_the_segment_left_to_an_ancestor() {
+        // The four-token anchor is split from the 8,000-token capture.
+        // Dropping 8,000 joins its edge with 8,004's by copying, which
+        // leaves the four-token anchor the only user of the old segment.
+        let (mut pool, chain) = long_pool(&[8_000, 4, 8_004]);
+        let index = |pool: &KvPool| pool.ancestry.as_ref().unwrap().retained_tokens();
+        assert_eq!(index(&pool), 8_004);
+        let before = pool.prefix_ancestry_work();
+        assert!(pool.remove_anchor(chain.key_at(8_000).unwrap()).unwrap());
+        assert_eq!(index(&pool), 8_004);
+        // The merge copies 4..8,004 and the survivor its own four tokens.
+        assert_eq!(
+            pool.prefix_ancestry_work().since(before).tokens_copied,
+            8_004
+        );
+        assert!(pool.remove_anchor(chain.key_at(8_004).unwrap()).unwrap());
+        assert_eq!(index(&pool), 4);
+        pool.audit().unwrap();
+        assert_eq!(
+            pool.lookup_anchor(&chain, 100).map(|(_, tokens)| tokens),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn a_copying_merge_releases_the_segment_left_to_a_descendant() {
+        // 5,900 is split from the 6,000-token capture, so the anchor at
+        // 6,000 shares that segment below it. Dropping 4,000 joins 4..5,900
+        // into one copy; 6,000 then uses only 100 of its segment's 2,000
+        // tokens and takes a copy of them, as does the four-token anchor.
+        let (mut pool, chain) = long_pool(&[4_000, 4, 6_000, 5_900]);
+        let index = |pool: &KvPool| pool.ancestry.as_ref().unwrap().retained_tokens();
+        assert_eq!(index(&pool), 6_000);
+        let before = pool.prefix_ancestry_work();
+        assert!(pool.remove_anchor(chain.key_at(4_000).unwrap()).unwrap());
+        assert_eq!(index(&pool), 6_000);
+        assert_eq!(
+            pool.prefix_ancestry_work().since(before).tokens_copied,
+            5_896 + 4 + 100
+        );
+        pool.audit().unwrap();
+        for (probe, depth) in [(5_000, 4), (5_950, 5_900), (6_500, 6_000)] {
+            assert_eq!(
+                pool.lookup_anchor(&chain, probe).map(|(_, tokens)| tokens),
+                Some(depth)
+            );
+        }
     }
 
     #[test]

@@ -52,10 +52,14 @@ impl HoldingBackend {
         }
     }
 
+    /// The events of the held request admitted `index`th of those held.
+    fn sender(&self, index: usize) -> EventSender {
+        self.held.lock().unwrap()[index].0.clone()
+    }
+
     /// Sends `event` to the held request admitted `index`th of those held.
     async fn emit_to(&self, index: usize, event: GenerationEvent) {
-        let events = self.held.lock().unwrap()[index].0.clone();
-        let _ = events.emit(event).await;
+        let _ = self.sender(index).emit(event).await;
     }
 }
 
@@ -636,8 +640,10 @@ async fn concurrent_choice_failures_keep_each_failure_with_its_choice() {
             message: "device fault".to_owned(),
             code: Some(format!("fault_{choice}")),
         };
-        let (first, second) = (backend.emit_to(0, failed(0)), backend.emit_to(1, failed(1)));
-        tokio::join!(first, second);
+        // Both senders are taken before either failure can end the request
+        // and release its choices.
+        let (first, second) = (backend.sender(0), backend.sender(1));
+        let _ = tokio::join!(first.emit(failed(0)), second.emit(failed(1)));
         let _ = reading.await.unwrap();
     }
 

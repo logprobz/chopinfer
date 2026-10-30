@@ -53,7 +53,8 @@ pub struct HttpOptions {
     pub serving_identity: Option<crate::ServingIdentity>,
     /// Where request-failure and summary lines go. Without it, stderr.
     pub request_log_sink: Option<crate::RequestLogSinkV1>,
-    /// How often a summary line is written. Without it, every minute.
+    /// How often a summary line is written, from 10 ms to a day. Without
+    /// it, every minute.
     pub summary_interval: Option<std::time::Duration>,
 }
 

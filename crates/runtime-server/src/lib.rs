@@ -971,12 +971,15 @@ fn configured_router(
     })
 }
 
-/// How often the server writes a summary line.
+/// How often the server writes a summary line, from 10 ms to a day.
 pub(crate) fn summary_interval(options: &HttpOptions) -> std::time::Duration {
     options
         .summary_interval
         .unwrap_or(std::time::Duration::from_secs(60))
-        .max(std::time::Duration::from_millis(10))
+        .clamp(
+            std::time::Duration::from_millis(10),
+            std::time::Duration::from_secs(86_400),
+        )
 }
 
 /// Adds the request log as the outermost layer, so it sees every answer,
@@ -1207,4 +1210,29 @@ pub async fn serve(
         Arc::new(metrics::EmptyMetricsSnapshotProvider),
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    #[test]
+    fn a_summary_interval_is_bounded_so_its_timer_cannot_overflow() {
+        let options = |interval| crate::HttpOptions {
+            summary_interval: interval,
+            ..Default::default()
+        };
+        assert_eq!(
+            super::summary_interval(&options(None)),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            super::summary_interval(&options(Some(Duration::MAX))),
+            Duration::from_secs(86_400)
+        );
+        assert_eq!(
+            super::summary_interval(&options(Some(Duration::ZERO))),
+            Duration::from_millis(10)
+        );
+    }
 }

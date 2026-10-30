@@ -501,7 +501,7 @@ Once a second, and when serving stops, a
 
 ### Summary line
 
-Every 60 seconds (`CHOPINFER_LOG_SUMMARY_SECONDS` sets another interval) the
+Every 60 seconds (`CHOPINFER_LOG_SUMMARY_SECONDS` sets another, 1 to 86400) the
 server writes `schema="chopinfer.summary.v1"` at `info`. Counters are deltas
 since the previous line; `running`, `waiting`, `kv` and `worker_state` are
 current values:

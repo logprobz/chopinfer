@@ -169,7 +169,7 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]
   [--allowed-origins JSON] [--allowed-methods JSON] [--allowed-headers JSON]
   [--allow-credentials] [--api-key KEY] [--enable-request-id-headers]
   [--log-level error|warn|info|debug] (default info, or CHOPINFER_LOG_LEVEL;
-  CHOPINFER_LOG_SUMMARY_SECONDS sets the summary line interval, default 60)
+  CHOPINFER_LOG_SUMMARY_SECONDS sets the summary line interval, 1 to 86400, default 60)
   [--fake-host-services]
 weights keep --keeper-dir DIR [--read-write] SERVE-OPTIONS (loads what serve would, and lends it)
 weights identity [--content] [--output FILE] SERVE-OPTIONS (CPU-only rank fingerprints)
@@ -1403,7 +1403,7 @@ fn log_level_from_v1(value: Option<&str>) -> Result<runtime_log::Level, HostComm
 }
 
 /// `CHOPINFER_LOG_SUMMARY_SECONDS`: how often serve writes its summary line,
-/// or `None` for the server's default.
+/// from a second to a day, or `None` for the server's default.
 fn summary_interval_from_v1(
     value: Option<&str>,
 ) -> Result<Option<std::time::Duration>, HostCommandErrorV1> {
@@ -1412,10 +1412,12 @@ fn summary_interval_from_v1(
             value
                 .parse::<u64>()
                 .ok()
-                .filter(|seconds| *seconds > 0)
+                .filter(|seconds| (1..=86_400).contains(seconds))
                 .map(std::time::Duration::from_secs)
                 .ok_or_else(|| {
-                    usage_error("CHOPINFER_LOG_SUMMARY_SECONDS must be a whole number of seconds, at least 1")
+                    usage_error(
+                        "CHOPINFER_LOG_SUMMARY_SECONDS must be a whole number of seconds from 1 to 86400",
+                    )
                 })
         })
         .transpose()
@@ -6978,7 +6980,11 @@ mod tests {
             super::summary_interval_from_v1(Some("5")).unwrap(),
             Some(std::time::Duration::from_secs(5))
         );
-        for refused in ["0", "-1", "1.5", "soon"] {
+        assert_eq!(
+            super::summary_interval_from_v1(Some("86400")).unwrap(),
+            Some(std::time::Duration::from_secs(86_400))
+        );
+        for refused in ["0", "-1", "1.5", "soon", "86401", "18446744073709551615"] {
             assert!(super::summary_interval_from_v1(Some(refused)).is_err());
         }
     }

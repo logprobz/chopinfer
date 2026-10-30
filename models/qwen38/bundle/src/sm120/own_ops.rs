@@ -1275,7 +1275,21 @@ mod tests {
                         .unwrap()
                         .info()
                         .guarantees,
-                    Invariance::NONE,
+                    Invariance::COPY,
+                ),
+                (
+                    own.mtp_norms(&MtpNorms::of(shape), need)
+                        .unwrap()
+                        .info()
+                        .guarantees,
+                    Invariance::any_rows(PREFILL_TOKENS),
+                ),
+                (
+                    own.mtp_combine(&MtpCombine::of(shape), need)
+                        .unwrap()
+                        .info()
+                        .guarantees,
+                    Invariance::any_rows(PREFILL_TOKENS),
                 ),
             ];
             for (index, (got, expected)) in guarantees.into_iter().enumerate() {
@@ -1307,9 +1321,9 @@ mod tests {
                 let symbol = &prepared.info().symbols[0].0;
                 assert_eq!(prepared.info().guarantees, declared(symbol));
             }
-            // An unmet need is refused: the gather declares nothing.
+            // An unmet need is refused: the draft argmax declares nothing.
             assert!(matches!(
-                own.mtp_gather(&MtpGather::of(shape), exact),
+                own.draft_argmax_partial(&DraftArgmaxPartial::of(shape, 0), exact),
                 Err(Refused::Inexact { .. })
             ));
             // The hash entries serve what serving asks of them: the verify

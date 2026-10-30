@@ -47,6 +47,9 @@ pub enum OwnedKernel {
     PleAnchor,
     PleConvVerify,
     NgramVerify,
+    MtpGather,
+    MtpNorms,
+    MtpCombine,
 }
 
 /// A member of a registered input fusion: a dense role, or a

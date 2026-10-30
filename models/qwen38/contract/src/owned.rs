@@ -15,7 +15,12 @@ use kernel_core::properties::{Anchors, Chunk, Invariance};
 ///   TP2 launches its own n-gram verify rows (at its own symbol tag), whose
 ///   hash heads differ, with the same declaration;
 /// - the registered n-gram hash entries ([`hash_declared`]) of the
-///   topologies that publish the packed n-gram lookup.
+///   topologies that publish the packed n-gram lookup;
+/// - the MTP drafter's gather copies each row's target X and next token
+///   from the row's own sources; its norms (one block per row, a fixed
+///   reduction order) and its combine (each stream plus the token row,
+///   rounded once) are row-local. Prefill-phase drafter runs, which start
+///   at any row, rely on these.
 pub fn declared() -> Vec<<Selected as Kernels>::Declared> {
     crate::geometry::GEOMETRIES
         .iter()
@@ -56,6 +61,9 @@ pub fn declared_for(geometry: crate::geometry::Geometry) -> Vec<<Selected as Ker
             },
         ),
         (OwnedKernel::PleConvVerify, verify),
+        (OwnedKernel::MtpGather, Invariance::COPY),
+        (OwnedKernel::MtpNorms, rows),
+        (OwnedKernel::MtpCombine, rows),
     ]
     .into_iter()
     .map(|(kernel, invariance)| (entry(kernel, &tp4), invariance))

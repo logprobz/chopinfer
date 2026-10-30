@@ -30,6 +30,9 @@ pub fn entry(kernel: OwnedKernel) -> &'static str {
         OwnedKernel::PleAnchor => PLE_ANCHOR,
         OwnedKernel::PleConvVerify => PLE_CONV_VERIFY,
         OwnedKernel::NgramVerify => NGRAM_VERIFY,
+        OwnedKernel::MtpGather => MTP_GATHER,
+        OwnedKernel::MtpNorms => MTP_NORMS,
+        OwnedKernel::MtpCombine => MTP_COMBINE,
     }
 }
 

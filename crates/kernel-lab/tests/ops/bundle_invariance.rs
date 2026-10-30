@@ -8,8 +8,9 @@
 //!   topology) from the bundle's embedded `{tag}_ring` and `{tag}_ring_slots`
 //!   cubins (`bundle_mimo26::embedded_cubin`): the bundle's entries
 //!   themselves, each over a ring of its own slots.
-//! - Qwen's PLE residual, PLE stage, PLE checkpoints,
-//!   verify PLE convolution and TP4 verify n-gram from kernel-lab's
+//! - Qwen's PLE residual, PLE stage, PLE checkpoints, MTP gather, norms
+//!   and combine, verify PLE convolution and TP4 verify n-gram from
+//!   kernel-lab's
 //!   `probe_sm120` cubin, and the TP2 verify n-gram from
 //!   `probe_qwen38_tp2`. kernel-lab's build compiles
 //!   the bundle's headers (`qwen38_bundle.cuh`, `qwen38_speculation.cuh`)
@@ -47,6 +48,10 @@
 //!   case backs up a 128-row prompt that wraps the ring, one launch per
 //!   chunk at the prefill span; each row is its entries.
 //! - PLE residual: rows.
+//! - MTP gather, norms and combine: rows, each its outputs (the gather's
+//!   target X and token). Their chunk cases run a prompt's rows in launches
+//!   that start at any row, as drafter runs do (a continuing item's
+//!   catch-up rows start at its frontier).
 //! - PLE stage: items, each its staged entry. Its chunk case prefills a
 //!   prompt as the bundle runs a PLE prefill item: each chunk stages its
 //!   slot's committed entry (fresh at row 0), runs the PLE convolution and
@@ -990,6 +995,173 @@ impl<'s> Qwen<'s> {
         Ok(())
     }
 
+    /// An MTP drafter entry launched over rows seeded by `seeds`, planned over
+    /// their power-of-two bucket: each row's outputs. The gather copies each
+    /// row's seeded target X from the last rows or, in reverse order, the
+    /// retained ones, and gives two rows in three a seeded draft as their
+    /// token; the other rows keep the token they held.
+    fn mtp_rows(&self, mtp: Mtp, seeds: &[u64]) -> LabResult<Units> {
+        let session = self.session;
+        let rows = seeds.len();
+        let planned = rows.next_power_of_two();
+        let live = upload(session, &u32s(&[rows as u32]))?;
+        let seeded = |width: usize, salt: u64| -> Vec<u8> {
+            seeds
+                .iter()
+                .flat_map(|&seed| bf16_bytes(width, mix(seed, salt)))
+                .collect()
+        };
+        let rows_of = |bytes: &[u8], width: usize| -> Units {
+            bytes[..rows * width]
+                .chunks(width)
+                .map(<[u8]>::to_vec)
+                .collect()
+        };
+        let joined = |a: Units, b: Units| -> Units {
+            a.into_iter()
+                .zip(b)
+                .map(|(mut a, b)| {
+                    a.extend(b);
+                    a
+                })
+                .collect()
+        };
+        match mtp {
+            Mtp::Gather => {
+                let last = upload(session, &seeded(WIDE, 90))?;
+                let retained = seeds
+                    .iter()
+                    .rev()
+                    .flat_map(|&seed| bf16_bytes(WIDE, mix(seed, 91)))
+                    .collect::<Vec<_>>();
+                let retained = upload(session, &retained)?;
+                // Last row `row`, or retained entry `rows - 1 - row`.
+                let sources = (0..rows)
+                    .map(|row| match mix(seeds[row], 92) % 2 {
+                        0 => row as i32,
+                        _ => row as i32 - rows as i32,
+                    })
+                    .collect::<Vec<_>>();
+                let drafted = gather_drafted(seeds);
+                let token_sources = (0..rows)
+                    .map(|row| {
+                        if drafted.contains(&row) {
+                            row as i32
+                        } else {
+                            -1
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let drafts = seeds
+                    .iter()
+                    .map(|&seed| token(mix(seed, 93)) as i32)
+                    .collect::<Vec<_>>();
+                // Kept rows hold their own token; drafted and planned rows the
+                // poison.
+                let before = (0..planned)
+                    .flat_map(|row| match seeds.get(row) {
+                        Some(&seed) if !drafted.contains(&row) => {
+                            token(mix(seed, 94)).to_ne_bytes()
+                        }
+                        _ => [POISON; 4],
+                    })
+                    .collect::<Vec<_>>();
+                let (x, token_ids) = (
+                    poisoned(session, planned * WIDE_BYTES)?,
+                    upload(session, &before)?,
+                );
+                let (sources, token_sources, drafts) = (
+                    upload(session, &i32s(&sources))?,
+                    upload(session, &i32s(&token_sources))?,
+                    upload(session, &i32s(&drafts))?,
+                );
+                self.launch_owned(
+                    owned::MTP_GATHER,
+                    (planned as u32, 1, 1),
+                    &[
+                        Arg::Buf(&last),
+                        Arg::Buf(&retained),
+                        Arg::Buf(&sources),
+                        Arg::Buf(&token_sources),
+                        Arg::Buf(&drafts),
+                        Arg::Buf(&x),
+                        Arg::Buf(&token_ids),
+                        Arg::Buf(&live),
+                    ],
+                )?;
+                let x = read(session, &x)?;
+                let tokens = read(session, &token_ids)?[..before.len()].to_vec();
+                gather_written(&x, &before, &tokens, rows, &drafted)?;
+                Ok(joined(rows_of(&x, WIDE_BYTES), rows_of(&tokens, 4)))
+            }
+            Mtp::Norms => {
+                let (x, embed) = (
+                    upload(session, &seeded(WIDE, 95))?,
+                    upload(session, &seeded(HIDDEN, 96))?,
+                );
+                let embed_weight = upload(session, &bf16_bytes(HIDDEN, 0x9302))?;
+                let (x_normed, embed_normed) = (
+                    poisoned(session, planned * WIDE_BYTES)?,
+                    poisoned(session, planned * HIDDEN * 2)?,
+                );
+                self.launch_owned(
+                    owned::MTP_NORMS,
+                    (planned as u32, 1, 1),
+                    &[
+                        Arg::Buf(&x),
+                        Arg::Buf(&self.weight),
+                        Arg::Buf(&embed),
+                        Arg::Buf(&embed_weight),
+                        Arg::Buf(&x_normed),
+                        Arg::Buf(&embed_normed),
+                        Arg::Buf(&live),
+                    ],
+                )?;
+                let (x_normed, embed_normed) =
+                    (read(session, &x_normed)?, read(session, &embed_normed)?);
+                mtp_written("mtp_norms hidden", &x_normed, rows, WIDE_BYTES)?;
+                mtp_written("mtp_norms embedding", &embed_normed, rows, HIDDEN * 2)?;
+                Ok(joined(
+                    rows_of(&x_normed, WIDE_BYTES),
+                    rows_of(&embed_normed, HIDDEN * 2),
+                ))
+            }
+            Mtp::Combine => {
+                let (hidden, token) = (
+                    upload(session, &seeded(WIDE, 97))?,
+                    upload(session, &seeded(HIDDEN, 98))?,
+                );
+                let x = poisoned(session, planned * WIDE_BYTES)?;
+                self.launch_owned(
+                    owned::MTP_COMBINE,
+                    (planned as u32, STREAMS as u32, 1),
+                    &[
+                        Arg::Buf(&hidden),
+                        Arg::Buf(&token),
+                        Arg::Buf(&x),
+                        Arg::Buf(&live),
+                    ],
+                )?;
+                let x = read(session, &x)?;
+                mtp_written("mtp_combine", &x, rows, WIDE_BYTES)?;
+                Ok(rows_of(&x, WIDE_BYTES))
+            }
+        }
+    }
+
+    /// Each prompt row r (seed r) of an MTP drafter entry's runs ending at
+    /// `ends`: a drafter run starts at any row (a continuing item's frontier).
+    fn mtp_chunks(&self, mtp: Mtp, ends: &[u32]) -> LabResult<Units> {
+        let mut units = Vec::new();
+        let mut start = 0;
+        for &end in ends {
+            let seeds = (start..end).map(u64::from).collect::<Vec<_>>();
+            units.extend(self.mtp_rows(mtp, &seeds)?);
+            start = end;
+        }
+        Ok(units)
+    }
+
     fn ngram_entry(&self, name: &str) -> LabResult<RowEntry> {
         row_entry(&format!("chop_row_{}_{name}_v1", self.ngram.profile.tag()))
     }
@@ -1050,6 +1222,44 @@ fn local_chunks(q: &Qwen<'_>, symbol: &str, ends: &[u32]) -> LabResult<Units> {
         start = end;
     }
     Ok(units)
+}
+
+/// One of the MTP drafter's row-local entries (the bundle's speculation
+/// header).
+#[derive(Clone, Copy)]
+enum Mtp {
+    Gather,
+    Norms,
+    Combine,
+}
+
+/// The rows of `seeds` whose gather token is a draft: two in three.
+fn gather_drafted(seeds: &[u64]) -> Vec<usize> {
+    (0..seeds.len())
+        .filter(|&row| mix(seeds[row], 99) % 3 != 0)
+        .collect()
+}
+
+/// The rows of `row_bytes` an MTP drafter entry writes: each row below the
+/// live count, as finite values; the planned rows past it stay poisoned.
+fn mtp_written(label: &str, out: &[u8], rows: usize, row_bytes: usize) -> Result<(), String> {
+    let map = WriteMap::of(DType::Bf16).byte_prefix(rows * row_bytes)?;
+    written(label, out, &map, Element::Bf16)
+}
+
+/// What the gather writes (`mtp_gather` in the bundle's speculation header): each
+/// live row's target X, and the token of each row of `drafted`, which
+/// `before` held as the poison; every other token keeps its image.
+fn gather_written(
+    x: &[u8],
+    before: &[u8],
+    tokens: &[u8],
+    rows: usize,
+    drafted: &[usize],
+) -> Result<(), String> {
+    mtp_written("mtp_gather x", x, rows, WIDE_BYTES)?;
+    let map = WriteMap::of(DType::I32).rows(1, drafted.iter().copied())?;
+    written_over("mtp_gather tokens", before, tokens, &map, Element::Raw(4))
 }
 
 /// PLE staging of an item per seed (its slot and prefix length from the
@@ -2329,6 +2539,7 @@ fn ring_slots(unsuffixed: &str, symbol: &str) -> Option<u64> {
 enum Kind {
     Ring(Ring),
     Local,
+    Mtp(Mtp),
     Stage,
     Verify(Verify, Profile),
     Anchor,
@@ -2352,6 +2563,9 @@ fn kind(symbol: &str) -> LabResult<Kind> {
     let tp4 = model_qwen38_contract::sm120::config::PROFILE;
     Ok(match symbol {
         owned::PLE_RESIDUAL => Kind::Local,
+        owned::MTP_GATHER => Kind::Mtp(Mtp::Gather),
+        owned::MTP_NORMS => Kind::Mtp(Mtp::Norms),
+        owned::MTP_COMBINE => Kind::Mtp(Mtp::Combine),
         owned::PLE_STAGE => Kind::Stage,
         owned::PLE_CHECKPOINTS | owned::PLE_CHECKPOINTS_INDEXED => {
             Kind::Verify(Verify::Checkpoints, tp4)
@@ -2397,23 +2611,13 @@ impl Adapter for Bundle {
     ) -> LabResult<Units> {
         let session = &sessions[0];
         let symbol = &entry.symbol;
+        let tp4 = || Qwen::new(session, model_qwen38_contract::sm120::config::PROFILE);
         match kind(symbol)? {
             Kind::Ring(ring) => ring_chunks(session, ring, symbol, rows, ends),
-            Kind::Local => local_chunks(
-                &Qwen::new(session, model_qwen38_contract::sm120::config::PROFILE)?,
-                symbol,
-                ends,
-            ),
-            Kind::Stage => stage_chunks(
-                &Qwen::new(session, model_qwen38_contract::sm120::config::PROFILE)?,
-                rows,
-                ends,
-            ),
-            Kind::Anchor => anchor_chunks(
-                &Qwen::new(session, model_qwen38_contract::sm120::config::PROFILE)?,
-                rows,
-                ends,
-            ),
+            Kind::Local => local_chunks(&tp4()?, symbol, ends),
+            Kind::Mtp(mtp) => tp4()?.mtp_chunks(mtp, ends),
+            Kind::Stage => stage_chunks(&tp4()?, rows, ends),
+            Kind::Anchor => anchor_chunks(&tp4()?, rows, ends),
             Kind::Verify(Verify::Checkpoints, profile) => {
                 checkpoint_chunks(&Qwen::new(session, profile)?, symbol, rows, ends)
             }
@@ -2429,17 +2633,12 @@ impl Adapter for Bundle {
     fn units(&mut self, sessions: &[Session], entry: &Declared, seeds: &[u64]) -> LabResult<Units> {
         let session = &sessions[0];
         let symbol = &entry.symbol;
+        let tp4 = || Qwen::new(session, model_qwen38_contract::sm120::config::PROFILE);
         match kind(symbol)? {
             Kind::Ring(ring) => ring_launches(session, ring, symbol, seeds, false, false),
-            Kind::Local => local_rows(
-                &Qwen::new(session, model_qwen38_contract::sm120::config::PROFILE)?,
-                symbol,
-                seeds,
-            ),
-            Kind::Stage => stage_units(
-                &Qwen::new(session, model_qwen38_contract::sm120::config::PROFILE)?,
-                seeds,
-            ),
+            Kind::Local => local_rows(&tp4()?, symbol, seeds),
+            Kind::Mtp(mtp) => tp4()?.mtp_rows(mtp, seeds),
+            Kind::Stage => stage_units(&tp4()?, seeds),
             Kind::Verify(verify, profile) => {
                 verify_units(&Qwen::new(session, profile)?, verify, symbol, seeds)
             }
@@ -2558,6 +2757,31 @@ fn bundle_write_checks_reject_unwritten_outputs() {
     assert!(check(&patched(&good, WIDE_BYTES + 6, &hole[..2])).is_err());
     assert!(check(&patched(&good, rows * WIDE_BYTES, &one)).is_err());
     assert!(check(&patched(&good, 4, &nan)).is_err());
+
+    // MTP rows: three live rows of four planned, of the norms' embedding
+    // width.
+    let width = HIDDEN * 2;
+    let good = patched(&vec![POISON; 4 * width], 0, &one.repeat(3 * HIDDEN));
+    let check = |out: &[u8]| mtp_written("mtp", out, 3, width);
+    assert!(check(&good).is_ok());
+    assert!(check(&vec![POISON; good.len()]).is_err());
+    assert!(check(&patched(&good, width + 6, &hole[..2])).is_err());
+    assert!(check(&patched(&good, 3 * width, &one)).is_err());
+    assert!(check(&patched(&good, 2 * width, &nan)).is_err());
+
+    // The gather: three live rows of four planned, rows 0 and 2 drafted;
+    // row 1 keeps its token.
+    let x = patched(&vec![POISON; 4 * WIDE_BYTES], 0, &one.repeat(3 * WIDE));
+    let before = u32s(&[u32::MAX, 17, u32::MAX, u32::MAX]);
+    let tokens = u32s(&[5, 17, 6, u32::MAX]);
+    let check = |x: &[u8], tokens: &[u8]| gather_written(x, &before, tokens, 3, &[0, 2]);
+    assert!(check(&x, &tokens).is_ok());
+    assert!(check(&vec![POISON; x.len()], &tokens).is_err());
+    assert!(check(&patched(&x, 3 * WIDE_BYTES, &one), &tokens).is_err());
+    assert!(check(&x, &before).is_err());
+    assert!(check(&x, &patched(&tokens, 8, &hole[..4])).is_err());
+    assert!(check(&x, &patched(&tokens, 4, &u32s(&[18]))).is_err());
+    assert!(check(&x, &patched(&tokens, 12, &u32s(&[7]))).is_err());
 
     // The PLE stage: two live items of four planned.
     let good = patched(&vec![POISON; 4 * ENTRY], 0, &vec![0; 2 * ENTRY]);

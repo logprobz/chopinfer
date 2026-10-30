@@ -88,7 +88,7 @@
   "crates/kernel-lab/tests/ops/attention_live.rs": {"matches": {"mimo": 16, "qwen": 6, "qwen38": 71}, "reason": "Model comparison and qualification harness; retain only the counted current model references."},
   "crates/kernel-lab/tests/ops/attention_verify_drift.rs": {"matches": {"mimo": 6}, "reason": "Model comparison and qualification harness; retain only the counted current model references."},
   "crates/kernel-lab/tests/ops/attention_verify_precision.rs": {"matches": {"mimo": 5}, "reason": "Model comparison and qualification harness; retain only the counted current model references."},
-  "crates/kernel-lab/tests/ops/bundle_invariance.rs": {"matches": {"mimo": 9, "mimo26": 5, "qwen": 30, "qwen38": 40}, "reason": "Model comparison and qualification harness; retain only the counted current model references."},
+  "crates/kernel-lab/tests/ops/bundle_invariance.rs": {"matches": {"mimo": 9, "mimo26": 5, "qwen": 27, "qwen38": 37}, "reason": "Model comparison and qualification harness; retain only the counted current model references."},
   "crates/kernel-lab/tests/ops/gemm.rs": {"matches": {"mimo": 79, "mimo26": 11, "qwen": 14, "qwen38": 45}, "reason": "Model comparison and qualification harness; retain only the counted current model references."},
   "crates/kernel-lab/tests/ops/gemm_accumulation.rs": {"matches": {"mimo": 20, "mimo26": 1, "qwen": 13, "qwen38": 5}, "reason": "Model comparison and qualification harness; retain only the counted current model references."},
   "crates/kernel-lab/tests/ops/gemm_chunks.rs": {"matches": {"mimo": 1, "mimo26": 1, "qwen": 7, "qwen38": 3}, "reason": "Model comparison and qualification harness; retain only the counted current model references."},

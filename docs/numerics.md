@@ -559,11 +559,25 @@ prompt-end or grid anchor and prefills the response history. Private
 preemption snapshots are different: they belong to the same request and
 resume its committed decode state without claiming cold-prefill equivalence.
 
-Qwen's drafter rows at prefill chunk starts can carry chunk-dependent
-arithmetic into a hit, affecting drafts and acceptance. Inside Qwen's declared
-exact scope (K3 at C1), target bits are unaffected. Outside it, changed
-acceptance and verify shapes can change served bits. This is under
-investigation; it does not relax the strict prefix-equality gate.
+Qwen's persistent drafter state depends on where the producer's prefill
+chunks started. A continuing prefill's catch-up row (row A - 1 after a hit
+at A) and the rows of a chunk of at most 33 tokens run in a verify graph
+bucket of decode entries, whose F32 reduction order differs from the
+prefill entries'. On 2026-10-30, a producer prefilled in 46 chunks of 64
+tokens left 9 of its 45 one-row catch-ups (and the QSA block keys of 5 of
+their blocks) different from a one-chunk producer's rows, by up to 64 BF16
+steps, while every target row stayed equal. A hit carries those rows into
+its drafts and acceptance. Inside Qwen's declared exact scope (K3 at C1),
+target bits are unaffected; outside it, changed acceptance and verify shapes
+can change served bits. The candidate `CHOPINFER_QWEN38_CANONICAL_DRAFTER=1`
+runs every drafter row a prefilling item's step writes (its catch-up rows,
+in a run of their own, and the rows its chunk completes) in the prefill
+phase at every row count, where each entry up to the QSA key write declares
+and is tested to keep a row's bits at any cut. Drafting items' runs in the
+same step keep their verify graphs, and rows that decode and verify steps
+write are unchanged. The candidate is off by default until GPU equality
+evidence and served step-time acceptance; it does not relax the strict
+prefix-equality gate.
 
 Physical snapshot buffers are not canonical byte representations of live
 state. They also copy unread ring cells, spare retained rows, unused tail

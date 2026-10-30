@@ -30,6 +30,7 @@
       "prefill_timing_cuts": "off",
       "queue_depth": null,
       "gpu_memory_utilization": 1.0,
+      "graph_memory_reserve_mib": 320,
       "status": "qualified",
       "evidence": [
         "docs/serving-profiles.md#tp4-concurrency-qualification-2026-10-04",
@@ -64,6 +65,7 @@
       "prefill_timing_cuts": "off",
       "queue_depth": null,
       "gpu_memory_utilization": 1.0,
+      "graph_memory_reserve_mib": 832,
       "status": "experimental",
       "evidence": [
         "docs/serving-profiles.md#mimo-evidence",
@@ -100,6 +102,7 @@
       "prefill_timing_cuts": "off",
       "queue_depth": null,
       "gpu_memory_utilization": 1.0,
+      "graph_memory_reserve_mib": 384,
       "status": "qualified",
       "evidence": [
         "docs/serving-profiles.md#row-local-decode-requalification-2026-10-05",
@@ -136,6 +139,7 @@
       "prefill_timing_cuts": "off",
       "queue_depth": null,
       "gpu_memory_utilization": 1.0,
+      "graph_memory_reserve_mib": 320,
       "status": "experimental",
       "evidence": [
         "docs/serving-profiles.md#mimo-evidence",

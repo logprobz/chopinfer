@@ -125,24 +125,67 @@ it exists, at startup warmup and for batch shapes warmup did not reach. The
 host keeps a reserve per rank out of the pool for them:
 `--graph-memory-reserve-mib N` (profile field `graph_memory_reserve_mib`),
 1 GiB when neither names one. Graph memory is model specific, so the reserve
-is per profile. Server logs from 2026-10-05 to 2026-10-22 measured about
-8 MiB per GPU for MiMo TP4 AR, 56 MiB for Qwen TP4 MTP, 68 MiB for MiMo
-DFlash, and at most 140 MiB live over a GLM soak; those profiles keep the
-default until the post-warmup line below measures them. On 2026-10-23
-DeepSeek TP4 DSpark at 32 sequences captured 384 graphs per GPU holding
-902 MiB, which left 137 MiB of a 1 GiB reserve, so the DeepSeek profiles
-reserved 1280 MiB. The 2026-10-24 build holds far less after warmup at 32
+is per profile. On 2026-10-23 DeepSeek TP4 DSpark at 32 sequences captured
+384 graphs per GPU holding 902 MiB, which left 137 MiB of a 1 GiB reserve,
+so the DeepSeek profiles reserved 1280 MiB. The 2026-10-24 build holds far less after warmup at 32
 sequences: 30 to 32 MiB per GPU for TP4 AR (18 graphs) and 280 MiB for TP4
 DSpark with verify graphs up to 32 rows (152 graphs), and serving captured
 no further memory. A reserve is the graphs, the 256 MiB warning headroom
 and about 10 % for growth: `tp4-ar` reserves 320 MiB and `tp4-dspark`
 640 MiB, and the rest goes to the KV pool. These are the two shipped
-DeepSeek profiles. A configuration that raises its graph budget must
-measure its reserve again. A capture that finds no
-memory fails the generation worker, so
-startup logs each rank's free memory after warmup and warns below 256 MiB
-([observability](operations-observability.md#chopinfer-metrics)); raise the
-reserve or lower `--max-sequences` when a rank warns.
+DeepSeek profiles.
+
+The GLM, MiMo and Qwen profiles were measured the same way on 2026-10-30,
+on that day's build at 32 sequences and utilization 1.0. Each server warmed
+up and then ran a mixed load:
+
+- a 7,000-token prompt;
+- waves of 8 and 32 requests with prompts up to 4,000 tokens and staggered
+  output lengths, three of them with an image on packages that serve
+  images;
+- single requests;
+- a soak of cold prompts at every last-chunk length, each length twice,
+  then each prompt again for a prefix hit.
+
+The soak reaches all 64 of GLM's pinned last-chunk prefill programs and the
+repeated shapes it keeps, which hold most of GLM's graph memory. Under
+context parallelism its lengths follow the stripe; a soak that did not
+pinned only 34 of the 64 programs at DCP4 and understated that profile's
+peak by 172 MiB. The peak is the most memory any rank had taken since
+sizing, by the `chop_device_memory_free_low_bytes` gauge or by nvidia-smi.
+Each reserve is the peak, the 256 MiB warning headroom and about 10 %,
+rounded up to 64 MiB. A second server at that reserve, under the same load,
+logged no warning and kept every rank at the lowest free memory below or
+more (MiB per GPU):
+
+| Profile | After warmup | Peak | Reserve | Lowest free at the reserve |
+|---|---|---|---|---|
+| GLM `tp4-mtp` | 116 | 454 | 832 | 387 |
+| GLM `tp4-mtp-k5` (text package) | 116 | 462 | 832 | 391 |
+| GLM `tp4-ar` | 24 | 376 | 704 | 305 |
+| GLM `tp4-mtp-dcp2` | 124 | 460 | 832 | 349 |
+| GLM `tp4-mtp-dcp4` | 134 | 480 | 832 | 331 |
+| MiMo `tp4-dflash` | 54 | 54 | 384 | 321 |
+| MiMo `tp4-mtp` | 38 | 463 | 832 | 368 |
+| MiMo `tp4-ar` | 6 | 6 | 320 | 337 |
+| MiMo `tp2-ar` | 6 | 6 | 320 | 333 |
+| Qwen `tp4-mtp` | 52 | 58 | 384 | 327 |
+| Qwen `tp4-mtp-dcp2` | 56 | 62 | 384 | 321 |
+| Qwen `tp4-ar` | 14 | 14 | 320 | 307 |
+| Qwen `tp4-ar-dcp2` | 16 | 16 | 320 | 303 |
+| Qwen `tp2-mtp` | 52 | 58 | 384 | 323 |
+| Qwen `tp2-ar` | 14 | 14 | 320 | 303 |
+
+MiMo and Qwen graphs grew by at most 6 MiB after warmup. MiMo `tp4-mtp`,
+served from a `mimo26-package --drafter mtp` package, set its peak outside
+any graph: during the first warmup wave rank 0 held 463 MiB that no graph
+kept and released it, and its reserve covers that. The reserves move 192 to
+704 MiB per GPU into the KV pool. A configuration that raises its graph
+budget, or a build that changes GLM's prefill programs, must measure its
+reserve again. A capture that finds no memory fails the generation worker,
+so startup logs each rank's free memory after warmup and warns below
+256 MiB ([observability](operations-observability.md#chopinfer-metrics));
+raise the reserve or lower `--max-sequences` when a rank warns.
 
 ### Lossless weight encodings
 

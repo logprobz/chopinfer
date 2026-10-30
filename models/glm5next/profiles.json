@@ -30,6 +30,7 @@
       "prefill_timing_cuts": "off",
       "queue_depth": null,
       "gpu_memory_utilization": 1.0,
+      "graph_memory_reserve_mib": 832,
       "status": "qualified",
       "evidence": [
         "docs/serving-profiles.md#final-gate-2026-10-11",
@@ -64,6 +65,7 @@
       "prefill_timing_cuts": "off",
       "queue_depth": null,
       "gpu_memory_utilization": 1.0,
+      "graph_memory_reserve_mib": 832,
       "status": "experimental",
       "evidence": [
         "docs/serving-profiles.md#final-gate-2026-10-11",
@@ -98,6 +100,7 @@
       "prefill_timing_cuts": "off",
       "queue_depth": null,
       "gpu_memory_utilization": 1.0,
+      "graph_memory_reserve_mib": 704,
       "status": "qualified",
       "evidence": [
         "docs/serving-profiles.md#final-gate-2026-10-11",
@@ -133,6 +136,7 @@
       "queue_depth": null,
       "context_parallel_size": 2,
       "gpu_memory_utilization": 1.0,
+      "graph_memory_reserve_mib": 832,
       "status": "qualified",
       "evidence": [
         "docs/serving-profiles.md#final-gate-2026-10-11",
@@ -168,6 +172,7 @@
       "queue_depth": null,
       "context_parallel_size": 4,
       "gpu_memory_utilization": 1.0,
+      "graph_memory_reserve_mib": 832,
       "status": "qualified",
       "evidence": [
         "docs/serving-profiles.md#final-gate-2026-10-11",

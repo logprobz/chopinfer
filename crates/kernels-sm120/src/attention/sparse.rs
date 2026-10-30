@@ -744,13 +744,17 @@ fn blocks(g: Geometry) -> Invariance {
     }
 }
 
-/// The key write's claims: block keys pooled in position order keep a
-/// row's bits over splits at whole blocks, and the spare anchor ring is
-/// copied from the launch's rows alone (`sparse_indexer.cuh`, positions
+/// The key write's claims (`sparse_indexer.cuh`): a block key sums the
+/// block's raw keys in F64 in position order, from the launch's rows or,
+/// for a block that began before the launch, from the ring's BF16 copies
+/// of the same keys, and the ring keeps a sequence's last `ring` positions
+/// whichever launches wrote them; so a row's bits, its block keys and the
+/// ring hold over splits at any row, inside a block too. The spare anchor
+/// ring is copied from the launch's rows alone (positions
 /// `[end - ring, end)`), so it is complete only for an anchor at least a
 /// ring after the launch's first row.
 fn key_write(g: Geometry) -> Invariance {
-    blocks(g).with_anchors(Anchors::SpareAfter { rows: g.ring })
+    Invariance::PREFILL.with_anchors(Anchors::SpareAfter { rows: g.ring })
 }
 
 /// `invariance` with one-row bits for the rows of a model's exact verify

@@ -115,11 +115,11 @@ fn indexer_refuses_unsupported_rotary_widths_and_sections() {
     }
 }
 
-/// The key write keeps its chunk claim at whole blocks and claims its spare
+/// The key write keeps its chunk claim at any row and claims its spare
 /// anchor ring past a ring of rows: needs whose anchors lie a ring or more
-/// after their launch's start (a 64-row prefill granule) are provided,
-/// needs of anchors at any span, with or without a chunk or rows claim,
-/// are refused.
+/// after their launch's start (a 64-row prefill granule, or a drafter run
+/// starting at any row) are provided, needs of anchors at any span, with
+/// or without a chunk or rows claim, are refused.
 #[test]
 fn key_write_anchors_are_claimed_past_the_ring() {
     use kernel_core::properties::{Anchors, Chunk, Invariance, Rows};
@@ -128,7 +128,7 @@ fn key_write_anchors_are_claimed_past_the_ring() {
         .into_iter()
         .find(|entry| entry.kind == Kind::KeyWrite)
         .unwrap();
-    assert_eq!(entry.invariance.chunk, Chunk::Granule(g.block));
+    assert_eq!(entry.invariance.chunk, Chunk::Any);
     assert_eq!(
         entry.invariance.anchors,
         Anchors::SpareAfter { rows: g.ring }
@@ -151,11 +151,21 @@ fn key_write_anchors_are_claimed_past_the_ring() {
             .provides(need(Chunk::None, Rows::None, after(g.ring)))
     );
     assert!(
+        entry
+            .invariance
+            .provides(need(Chunk::Any, Rows::None, after(g.ring)))
+    );
+    assert!(
         !entry
             .invariance
             .provides(need(Chunk::None, Rows::None, after(g.block)))
     );
-    for chunk in [Chunk::None, Chunk::Granule(4), Chunk::Granule(64)] {
+    for chunk in [
+        Chunk::None,
+        Chunk::Any,
+        Chunk::Granule(4),
+        Chunk::Granule(64),
+    ] {
         for rows in [Rows::None, Rows::OneRow { max: 2 }] {
             assert!(!entry.invariance.provides(need(chunk, rows, Anchors::Spare)));
         }

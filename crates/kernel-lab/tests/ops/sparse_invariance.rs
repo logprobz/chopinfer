@@ -1059,12 +1059,16 @@ impl Adapter for Sparse {
             .collect())
     }
 
-    /// Sequences starting on a multiple of `ANCHOR_GRANULE` with unaligned
-    /// ends, all but the last anchored: four at their last whole granule,
-    /// as the bundle plans anchors, and two at the nearest anchor the claim
-    /// covers (past its span, or `NEAR_ANCHOR` rows in for a plain spare
-    /// claim), one inside a longer prompt and one ending there, whose spare
-    /// rings reach back into their cached prefixes. Each spare entry must hold the ring a prefill
+    /// Sequences with unaligned ends, all but the last anchored: four
+    /// starting on a multiple of `ANCHOR_GRANULE` anchored at their last
+    /// whole granule, as the bundle plans target anchors; two anchored at
+    /// the nearest anchor the claim covers (past its span, or `NEAR_ANCHOR`
+    /// rows in for a plain spare claim), one inside a longer prompt and one
+    /// ending there, whose spare rings reach back into their cached
+    /// prefixes; and three as the MTP drafter's runs keep a ring at an
+    /// anchor A's frontier `A - 1`, inside a block: one starting at a
+    /// granule, one at a lagging frontier inside a block, and one inside a
+    /// block anchored exactly its span in. Each spare entry must hold the ring a prefill
     /// ending at the anchor leaves; the outputs and every slot's ring and
     /// block keys must equal those of the prefill without anchors, and the
     /// spare entry no sequence names must keep its poison. Every launch
@@ -1094,6 +1098,9 @@ impl Adapter for Sparse {
             (0, 200, last(200)),
             (5120, 40, Some(span)),
             (5632, span, Some(span)),
+            (2112, 100, Some(ANCHOR_GRANULE - 1)),
+            (4093, 75, Some(4160 - 1 - 4093)),
+            (1027, 50, Some(span)),
             (3072, 100, None),
         ];
         let items = |truncated: bool| {

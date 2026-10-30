@@ -911,7 +911,7 @@ impl EngineMetrics {
         if let Some(index) = OFFLOAD_REASONS.iter().position(|r| *r == reason) {
             let mut metrics = self.inner.offload.lock().unwrap_or_else(|e| e.into_inner());
             if metrics.fallbacks[index] == 0 {
-                runtime_log::info!("KV offload fallback: {reason}");
+                runtime_log::warn!("KV offload fallback: {reason}");
             }
             metrics.fallbacks[index] += 1;
         }

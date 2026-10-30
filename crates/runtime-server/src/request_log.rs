@@ -458,6 +458,10 @@ impl RequestRecord {
         self.progress().model = Some(bounded_log_text(model, NAME_BYTES));
     }
 
+    pub(crate) fn set_client_request_id(&self, id: &str) {
+        self.progress().client_request_id = Some(bounded_log_text(id, NAME_BYTES));
+    }
+
     pub(crate) fn set_prompt_tokens(&self, tokens: u64) {
         self.progress().prompt_tokens = Some(tokens);
     }
@@ -708,6 +712,12 @@ impl RecordHandle {
     pub(crate) fn set_model(&self, model: &str) {
         if let Some(record) = &self.0 {
             record.set_model(model);
+        }
+    }
+
+    pub(crate) fn set_client_request_id(&self, id: &str) {
+        if let Some(record) = &self.0 {
+            record.set_client_request_id(id);
         }
     }
 

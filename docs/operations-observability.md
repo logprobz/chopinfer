@@ -450,11 +450,14 @@ Every request that fails writes exactly one line,
   `warn` for 4xx refusals, drain refusals (`server is draining`), requests the
   drain deadline ended (`code="shutdown_timeout"`) and connections closed at
   the connection limit.
-- `request_id` is the response's `x-request-id`, with the choice suffix
+- `request_id` is the server's ID for the request, with the choice suffix
   (`_0`, `_1`, ...) once the request is admitted: the ID that
   `chopinfer.request.v1` and `generation request failed: request_id=` lines
-  carry. `client_request_id` is the client's `X-Client-Request-Id` or
-  `X-Request-Id`.
+  carry, and the response's `x-request-id`. `client_request_id` is the
+  client's `X-Client-Request-Id` or `X-Request-Id`. With
+  `--enable-request-id-headers` the response's `x-request-id` is instead the
+  client's `X-Request-Id`, or an ID the server generated when the client sent
+  none or an unusable one, and `client_request_id` carries that ID.
 - `message` is a fixed text. A refusal whose client message is built from the
   request, such as a JSON error that quotes the body, an out-of-vocabulary
   token ID or the model name, logs its kind instead: `invalid request`,

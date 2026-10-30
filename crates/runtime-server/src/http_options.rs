@@ -153,6 +153,8 @@ async fn http_policy(
             })
     });
     if let Some(value) = id.as_ref().and_then(|value| value.to_str().ok()) {
+        // The request's line carries the ID its response does.
+        crate::request_log::RecordHandle::of(&request).set_client_request_id(value);
         request
             .extensions_mut()
             .insert(HttpRequestId(value.to_owned()));

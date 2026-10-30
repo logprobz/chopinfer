@@ -794,6 +794,46 @@ async fn requests_the_drain_ends_are_warnings() {
         .unwrap();
 }
 
+/// With request ID headers on, a line names its request by the ID its
+/// response carries: the client's, or one the server generated.
+#[tokio::test]
+async fn request_id_headers_put_the_response_id_on_the_line() {
+    let server = LoggedServer::start_with(
+        HoldingBackend::new(),
+        ServerConfig::default(),
+        runtime_server::HttpOptions {
+            enable_request_id_headers: true,
+            ..Default::default()
+        },
+        Duration::from_secs(1),
+        runtime_server::metrics_snapshot_provider(|_| String::new()),
+    )
+    .await;
+    let body = json!({"model": "missing.model", "prompt": "x"}).to_string();
+    let named = format!(
+        "POST /v1/completions HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n\
+         X-Request-Id: client-7\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let mut ids = Vec::new();
+    for request in [named, post("/v1/completions", &body)] {
+        let answer = String::from_utf8(server.open(request).await.await.unwrap()).unwrap();
+        assert!(answer.starts_with("HTTP/1.1 404"), "{answer}");
+        let id = answer
+            .lines()
+            .find_map(|line| line.strip_prefix("x-request-id: "))
+            .expect("the response carries an ID");
+        ids.push(id.to_owned());
+    }
+
+    let lines = server.lines(2).await;
+
+    assert_eq!(ids[0], "client-7");
+    for (line, id) in lines.iter().zip(&ids) {
+        assert_eq!(line["client_request_id"], id.as_str(), "{line:#}");
+    }
+}
+
 /// A tokenize body that does not parse is logged as every JSON refusal is,
 /// with where it stopped and without its text.
 #[tokio::test]

@@ -46,6 +46,7 @@ PORTABLE_CRATES = (
     "runtime-grammar",
     "runtime-kernel-contract",
     "runtime-kv",
+    "runtime-log",
     "runtime-media",
     "runtime-model-api",
     "runtime-sampling",

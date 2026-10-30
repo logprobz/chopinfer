@@ -29,6 +29,7 @@ use kernel_core::properties::{Anchors, Batch, Chunk, Invariance, Rows, Scope, Ti
 use model_glm5next_contract::contract::{
     ANCHOR_ITEMS, Glm, PAGE_TOKENS, PREFILL_GRANULE, latent_format,
 };
+use model_glm5next_contract::draft_argmax::Proposals;
 use model_glm5next_contract::quantization::{
     FP8_BLOCK128, Layout, representative_layouts, test_support::config_of,
 };
@@ -94,7 +95,7 @@ fn ask_line(asked: &Asked) -> String {
 }
 
 /// Every serving configuration's plan: each representative layout at each
-/// group size.
+/// group size, its draft argmax coupled as a drafting instance's.
 fn plans() -> Vec<Plan> {
     let shape = Shape::TP4;
     representative_layouts()
@@ -105,7 +106,7 @@ fn plans() -> Vec<Plan> {
                 layout,
                 index_topk: shape.profile.index_topk_max,
                 context_parallel: size,
-                proposals: Default::default(),
+                proposals: Proposals::Coupled,
             })
         })
         .collect()

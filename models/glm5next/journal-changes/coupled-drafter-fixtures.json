@@ -1,0 +1,268 @@
+{
+ "schema": "chopinfer.journal-proof.layout.v1",
+ "description": "Pin the coupled drafter route in the lowering journals: the shared test helpers prepare the draft argmax and allocate the scratch as a drafting instance does. Each rank of the drafter's Extend and Step journals allocates its 1024-byte noise records last in its scratch, and launches the draft noise before its argmax partial; every retained operation is compared under the ordered handle map.",
+ "handles": {
+  "journal_tests::drafter_journals_are_pinned_per_pass#tests/journal_tests.drafter_journals_are_pinned_per_pass/device-1.jsonl": {
+   "added": [
+    {
+     "name": "coupled-drafter-fixtures.added.allocation.0",
+     "kind": "allocation",
+     "at": 196,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       null,
+       1024,
+       256,
+       4294970296
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafter-fixtures.added.allocation.1",
+     "kind": "allocation",
+     "at": 490,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       null,
+       1024,
+       256,
+       4294970297
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafter-fixtures.added.allocation.2",
+     "kind": "allocation",
+     "at": 784,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       null,
+       1024,
+       256,
+       4294970298
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafter-fixtures.added.allocation.3",
+     "kind": "allocation",
+     "at": 1078,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       null,
+       1024,
+       256,
+       4294970299
+      ]
+     ]
+    }
+   ]
+  },
+  "journal_tests::drafter_journals_are_pinned_per_pass#tests/journal_tests.drafter_journals_are_pinned_per_pass/device-2.jsonl": {
+   "added": [
+    {
+     "name": "coupled-drafter-fixtures.added.allocation.0",
+     "kind": "allocation",
+     "at": 196,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       null,
+       1024,
+       256,
+       4294970296
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafter-fixtures.added.allocation.1",
+     "kind": "allocation",
+     "at": 490,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       null,
+       1024,
+       256,
+       4294970297
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafter-fixtures.added.allocation.2",
+     "kind": "allocation",
+     "at": 784,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       null,
+       1024,
+       256,
+       4294970298
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafter-fixtures.added.allocation.3",
+     "kind": "allocation",
+     "at": 1078,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       null,
+       1024,
+       256,
+       4294970299
+      ]
+     ]
+    }
+   ]
+  }
+ },
+ "operations": {
+  "journal_tests::drafter_journals_are_pinned_per_pass#tests/journal_tests.drafter_journals_are_pinned_per_pass/device-1.jsonl": [
+   {
+    "add": {
+     "text": "launch r0 DraftArgmax chop_row_draft_noise_f32_v1 rows 8 LaunchConfigV1 { flags: 1, grid_x: 8, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967348 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967362 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967354 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967391 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(0), ScalarU32(0)]",
+     "lines": [
+      436
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch r1 DraftArgmax chop_row_draft_noise_f32_v1 rows 8 LaunchConfigV1 { flags: 1, grid_x: 8, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967446 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967460 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967452 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967489 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(38720), ScalarU32(0)]",
+     "lines": [
+      484
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch r2 DraftArgmax chop_row_draft_noise_f32_v1 rows 8 LaunchConfigV1 { flags: 1, grid_x: 8, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967544 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967558 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967550 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967587 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(77440), ScalarU32(0)]",
+     "lines": [
+      532
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch r3 DraftArgmax chop_row_draft_noise_f32_v1 rows 8 LaunchConfigV1 { flags: 1, grid_x: 8, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967642 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967656 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967648 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967685 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(116160), ScalarU32(0)]",
+     "lines": [
+      580
+     ]
+    }
+   }
+  ],
+  "journal_tests::drafter_journals_are_pinned_per_pass#tests/journal_tests.drafter_journals_are_pinned_per_pass/device-2.jsonl": [
+   {
+    "add": {
+     "text": "launch r0 DraftArgmax chop_row_draft_noise_f32_v1 rows 8 LaunchConfigV1 { flags: 1, grid_x: 8, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967348 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967362 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967354 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967391 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(0), ScalarU32(0)]",
+     "lines": [
+      430
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch r1 DraftArgmax chop_row_draft_noise_f32_v1 rows 8 LaunchConfigV1 { flags: 1, grid_x: 8, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967446 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967460 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967452 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967489 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(38720), ScalarU32(0)]",
+     "lines": [
+      472
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch r2 DraftArgmax chop_row_draft_noise_f32_v1 rows 8 LaunchConfigV1 { flags: 1, grid_x: 8, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967544 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967558 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967550 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967587 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(77440), ScalarU32(0)]",
+     "lines": [
+      514
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch r3 DraftArgmax chop_row_draft_noise_f32_v1 rows 8 LaunchConfigV1 { flags: 1, grid_x: 8, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967642 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967656 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967648 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967685 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(116160), ScalarU32(0)]",
+     "lines": [
+      556
+     ]
+    }
+   }
+  ]
+ }
+}

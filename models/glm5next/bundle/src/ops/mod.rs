@@ -172,7 +172,8 @@ impl Ops {
 
     /// The ops of `shape` with the compiled top-k in groups of
     /// `context_parallel` ranks on the SM120 backend of the block-FP8
-    /// export, for tests that lower stages without an instance.
+    /// export, its draft argmax coupled as a drafting instance's, for tests
+    /// that lower stages without an instance.
     #[cfg(test)]
     pub(crate) fn for_tests(shape: Shape, context_parallel: u32) -> Ops {
         let plan = Plan {
@@ -180,7 +181,7 @@ impl Ops {
             layout: &model_glm5next_contract::quantization::FP8_BLOCK128,
             index_topk: shape.profile.index_topk_max,
             context_parallel,
-            proposals: Proposals::Greedy,
+            proposals: Proposals::Coupled,
         };
         Ops::for_plan(plan)
     }

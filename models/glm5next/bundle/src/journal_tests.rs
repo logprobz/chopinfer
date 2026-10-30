@@ -73,7 +73,7 @@ pub(crate) fn draft_regions() -> [u64; 2] {
         &model_glm5next_contract::quantization::FP8_BLOCK128,
     )
     .unwrap();
-    let proposals = Proposals::Greedy;
+    let proposals = Proposals::Coupled;
     crate::ops::draft::DraftOps::prepare(
         backend.as_ref(),
         Shape::TP4,
@@ -138,8 +138,9 @@ pub(crate) fn rank_buffers_within(
             bytes,
         ))
     };
-    // The drafter's buffers with the KV formats that hold its layer.
-    let drafter = has_mtp_layer(format).then_some(Proposals::Greedy);
+    // The drafter's buffers, its coupled drafts' noise records last, with
+    // the KV formats that hold its layer.
+    let drafter = has_mtp_layer(format).then_some(Proposals::Coupled);
     let scratch = allocate_scratch(shape, drafter, &mut allocate)
         .unwrap()
         .unwrap();
@@ -490,9 +491,9 @@ fn only_drafting_formats_allocate_the_drafter_scratch() {
             .iter()
             .filter(|buffer| buffers.scratch.contains_key(buffer) && buffer.drafter())
             .count();
-        assert_eq!(drafter, if has_mtp_layer(&format) { 10 } else { 0 });
-        // Four rows of the prefill capacity, then its inputs, argmax pairs
-        // and shared key lists.
+        assert_eq!(drafter, if has_mtp_layer(&format) { 11 } else { 0 });
+        // Four rows of the prefill capacity, then its inputs, argmax pairs,
+        // shared key lists and coupled drafts' noise records.
         let bytes: u64 = crate::buffers::Buffer::ALL
             .iter()
             .filter(|buffer| buffer.drafter())
@@ -708,7 +709,11 @@ fn journals_are_pinned_per_kv_format_and_phase() {
 /// own partial, candidate all-reduce and final became the shared F32
 /// partial, the all-gathers of the pairs' scores and ids and the shared
 /// final scattered into the drafts and verify tokens (those launches, the
-/// pairs' scratch and the gathers' comm state).
+/// pairs' scratch and the gathers' comm state). Re-pinned when the drafter
+/// coupled its drafts to the target sampler's noise
+/// (`model_glm5next_contract::draft_argmax::Proposals::Coupled`): each
+/// rank's draft noise launches before its argmax partial, and its noise
+/// records join the scratch last (one more allocation per rank).
 #[test]
 fn drafter_journals_are_pinned_per_pass() {
     let kv = FORMATS[0];
@@ -717,12 +722,12 @@ fn drafter_journals_are_pinned_per_pass() {
         (
             DraftPass::Extend,
             Phase::Verify { rows: 32, items: 8 },
-            (576, 0x9802_679a_ef79_e889),
+            (584, 0x294f_6aca_5fbd_2b3c),
         ),
         (
             DraftPass::Step,
             Phase::Decode(8),
-            (552, 0x15bf_ea25_4338_a5a2),
+            (560, 0xa94b_ade5_382d_0795),
         ),
     ] {
         let lines = journal_of(kv, phase, Some(pass));
@@ -740,9 +745,10 @@ fn drafter_journals_are_pinned_per_pass() {
             .count();
         assert!(records > 0);
         // Its row inputs and head rows lower in both passes, and its argmax
-        // on the shared entries: each rank's partial, the gathers of the
-        // pairs' scores and ids, and its final; a draft step compacts the
-        // extend pass's key lists instead of running the indexer.
+        // on the shared entries: each rank's draft noise and partial, the
+        // gathers of the pairs' scores and ids, and its final; a draft step
+        // compacts the extend pass's key lists instead of running the
+        // indexer.
         let launches = |symbol: &str| {
             lines
                 .iter()
@@ -760,6 +766,10 @@ fn drafter_journals_are_pinned_per_pass() {
         }
         let ranks = Shape::TP4.ranks() as usize;
         assert!(!launched("chop_row_glm5next_draft_argmax"), "{pass:?}");
+        assert_eq!(
+            launches(&format!(" DraftArgmax {} ", selected::DRAFT_NOISE_SYMBOL)),
+            ranks
+        );
         assert_eq!(
             launches(" DraftArgmax chop_row_argmax_partial_f32_v1 "),
             ranks

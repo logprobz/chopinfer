@@ -898,7 +898,7 @@ mod tests {
             ))
         };
         let mtp = has_mtp_layer(format);
-        let scratch = allocate_scratch(SHAPE, mtp.then_some(Proposals::Greedy), &mut allocate)
+        let scratch = allocate_scratch(SHAPE, mtp.then_some(Proposals::Coupled), &mut allocate)
             .unwrap()
             .unwrap();
         let reduced = scratch[&Buffer::Reduced];
@@ -1200,8 +1200,9 @@ mod tests {
         };
         let launch = lowered(lowering, phase, Stage::DraftHeadRows).remove(0);
         assert_eq!(bound.one(&head_rows, &buffers_of, drafts), launch, "{at}");
-        // The argmax runs on the shared entries: the partial, the pairs'
-        // two gathers and the final (`model_glm5next_contract::draft_argmax`).
+        // The argmax runs on the shared entries: the coupled drafts' noise,
+        // the partial, the pairs' two gathers and the final
+        // (`model_glm5next_contract::draft_argmax`).
         let argmax = lowered(lowering, phase, Stage::DraftArgmax);
         assert_eq!(
             argmax
@@ -1209,6 +1210,7 @@ mod tests {
                 .map(|launch| launch.symbol.as_str())
                 .collect::<Vec<_>>(),
             [
+                model_glm5next_contract::sm120::engines::DRAFT_NOISE_SYMBOL,
                 kernels_sm120::row::argmax::PARTIAL_F32_SYMBOL,
                 model_glm5next_contract::sm120::context_parallel::ALLGATHER_SYMBOL,
                 model_glm5next_contract::sm120::context_parallel::ALLGATHER_SYMBOL,

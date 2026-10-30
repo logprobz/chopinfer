@@ -584,7 +584,9 @@ async fn a_failing_choice_of_a_stream_is_the_line_not_its_siblings() {
             })))
             .await;
         backend.wait_admitted(2 * (request + 1)).await;
-        backend.emit_to(1, content("hi")).await;
+        // Choice 1 stays open. Choice 0 counts its token before it fails, as
+        // a token another choice generated may not be counted yet.
+        backend.emit_to(0, content("hi")).await;
         backend
             .emit_to(
                 0,

@@ -26,6 +26,9 @@ pub(crate) struct Switches {
     /// Diagnostic-taps builds write each prefill's overlap split
     /// (`CHOPINFER_QWEN38_OVERLAP_EVIDENCE=1`).
     pub overlap_evidence: bool,
+    /// Diagnostic-taps builds log every drafting item's drafts
+    /// (`CHOPINFER_QWEN38_DRAFT_LOG=1`).
+    pub draft_log: bool,
 }
 
 /// What the candidate (`CANONICAL_DRAFTER`) runs for the drafter rows a
@@ -75,6 +78,8 @@ impl Switches {
             canonical_drafter: canonical_drafter(),
             overlap_evidence: cfg!(feature = "diagnostic-taps")
                 && std::env::var("CHOPINFER_QWEN38_OVERLAP_EVIDENCE").as_deref() == Ok("1"),
+            draft_log: cfg!(feature = "diagnostic-taps")
+                && std::env::var("CHOPINFER_QWEN38_DRAFT_LOG").as_deref() == Ok("1"),
         }
     }
 }

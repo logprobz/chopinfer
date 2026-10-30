@@ -705,6 +705,18 @@ impl Instance {
             pending
                 .set_tokens(request, &rows)
                 .map_err(|_| BundleStatusV1::InternalError)?;
+            if self.switches.draft_log {
+                // Diagnostic-taps builds: the drafts of the item whose
+                // committed length is `length`, for exact comparisons.
+                let line = serde_json::json!({
+                    "request": request,
+                    "length": decode.prefix_len[item],
+                    "drafts": &rows[1..],
+                });
+                let _ = self
+                    .services
+                    .log(format!("qwen38 drafts {line}").as_bytes());
+            }
             sink.emit_draft_tokens(request, &rows[1..])
                 .map_err(status)?;
         }

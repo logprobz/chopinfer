@@ -3342,3 +3342,59 @@ fn indexed_commits_cancel_capture_restore_and_reuse_every_accept_count() {
         }
     }
 }
+
+/// Diagnostic-taps builds with `CHOPINFER_QWEN38_DRAFT_LOG=1` log each
+/// drafting item's drafts with its committed length, for exact cross-run
+/// comparisons of drafts; without the switch they log none.
+#[cfg(feature = "diagnostic-taps")]
+#[test]
+fn the_draft_log_records_each_drafting_items_drafts() {
+    const CHILD: &str = "CHOPINFER_TEST_DRAFT_LOG_CHILD";
+    const NAME: &str =
+        "fake_host_tests::speculation::the_draft_log_records_each_drafting_items_drafts";
+    let logged = || {
+        let host = drafter_host(3);
+        let mut instance = create_drafter(&host);
+        execute(
+            &host,
+            &mut instance,
+            &batch(vec![plain(10, 1, 0, &truths(0..70))]),
+        );
+        instance.commit().unwrap();
+        let sink = execute(
+            &host,
+            &mut instance,
+            &batch(vec![drafted(10, 1, 70, truth(70), 3)]),
+        );
+        assert_eq!(sink.draft_tokens(), [(10, truths(71..74))]);
+        instance.commit_accepted(&kept(&[(10, 4)])).unwrap();
+        instance.destroy().unwrap();
+        host.logs
+            .borrow()
+            .iter()
+            .filter_map(|line| line.strip_prefix("qwen38 drafts "))
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>()
+    };
+    if std::env::var(CHILD).is_ok() {
+        assert_eq!(
+            logged(),
+            [serde_json::json!({"request": 10, "length": 70, "drafts": truths(71..74)})]
+        );
+        return;
+    }
+    assert!(logged().is_empty());
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([NAME, "--exact", "--test-threads=1"])
+        .env(CHILD, "1")
+        .env("CHOPINFER_QWEN38_DRAFT_LOG", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+}

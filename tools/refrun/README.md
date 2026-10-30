@@ -231,11 +231,18 @@ second authority for its request mapping and output parser (`RECIPE`;
 [frontend_corpus.py](frontend_corpus.py)). `frontend_corpus generate` then
 runs the model's oracle script under the interpreter the pin names, on every
 case and round trip, and writes `corpus-recipe.json` beside the corpus: the
-recipe it ran and where its render or parse differs from the corpus.
-`minimize` refuses a difference that matches no divergence entry or several,
-and keeps a case of each entry. `check` verifies the record against the
-committed corpus offline and requires each difference to match exactly one
-entry by its `recipe_when` tags; the recipe never runs in `check` or CI.
+recipe it ran and where its render or parse differs from the corpus. A
+refusal must carry a client error's 4xx status; any other failure of the
+recipe stops generation. `minimize` refuses a difference that matches no
+divergence entry or several, and keeps a case of each entry. `check`
+verifies the record against the committed corpus offline: each row must have
+been computed from its case's request, or its round trip's request and token
+IDs, which the row fingerprints. It requires each difference to match exactly
+one entry by its `recipe_when` tags, among inputs, mapping and parser entries
+whose ids are distinct. A mapping entry that follows the recipe needs every
+case it names to agree with it; one that follows the pinned reference goes
+stale only when every case it names agrees, so it may name a boundary case
+that both render alike. The recipe never runs in `check` or CI.
 
 DeepSeek V4.1's oracle, `models/deepseek41/recipe_reference.py`, runs
 deepseek-recipe 0.2.0. Install it into its own CPU environment, never the GPU

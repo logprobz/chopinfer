@@ -135,6 +135,21 @@ class RecipeOracleHelpers(unittest.TestCase):
         self.assertEqual(recipe_reference.convert(recipe, None, {"messages": []}),
                          (None, {"status": 400, "message": "Prompt must contain the word 'json'"}))
 
+    def test_an_internal_conversion_error_stops_the_oracle(self):
+        class ConversionError(Exception):
+            def __init__(self, status_code, body):
+                self.status_code, self.body = status_code, body
+
+        for status in (500, 503, 302):
+            def request(body, status=status):
+                return SimpleNamespace(convert=lambda options: (_ for _ in ()).throw(ConversionError(
+                    status, json.dumps({"error": {"message": "internal"}}))))
+
+            recipe = SimpleNamespace(ChatCompletionRequest=request, ConversionError=ConversionError)
+            with self.subTest(status=status), self.assertRaisesRegex(
+                    SystemExit, f"deepseek-recipe failed with status {status}"):
+                recipe_reference.convert(recipe, None, {"messages": []})
+
 
 if __name__ == "__main__":
     unittest.main()

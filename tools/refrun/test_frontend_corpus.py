@@ -791,7 +791,10 @@ class RecipeOracleTests(Harness):
                                             "python": "3.12.0"})
         rows = [*record["cases"].values(), *record["rounds"].values()]
         self.assertTrue(rows and all(row["agrees"] for row in rows), rows)
-        self.assertEqual(record["cases"]["critic"], {"agrees": True, "refusal": {"status": 400, "message": "refused"}})
+        self.assertEqual(record["cases"]["critic"], {
+            "request_sha256": hashlib.sha256(json.dumps(
+                next(case["request"] for case in CASES if case["id"] == "critic")).encode()).hexdigest(),
+            "agrees": True, "refusal": {"status": 400, "message": "refused"}})
         self.assertEqual(set(record["rounds"]), {"answer-round-end", "called-round-end"})
         self.assertEqual(self.check(model, committed, table), [])
         (committed / corpus.RECIPE_FILE).unlink()
@@ -927,6 +930,21 @@ class RecipeOracleTests(Harness):
         self.assertEqual(same("not json"), ["text", "not json"])
         self.assertNotEqual(same('"x"'), same("x"))
 
+    def test_canonical_numbers_keep_every_digit(self):
+        same = corpus.canonical_arguments
+        # Beyond 28 digits, where the default decimal context rounds.
+        self.assertNotEqual(same('{"n": 123456789012345678901234567890}'),
+                            same('{"n": 123456789012345678901234567891}'))
+        self.assertNotEqual(same('{"n": 0.12345678901234567890123456789012}'),
+                            same('{"n": 0.12345678901234567890123456789013}'))
+        self.assertNotEqual(same('{"n": 1234567890123456789012345678901234567890e-10}'),
+                            same('{"n": 123456789012345678901234567890.1234567891}'))
+        self.assertEqual(same('{"n": 123456789012345678901234567890.000}'),
+                         same('{"n": 1234567890123456789012345678900e-1}'))
+        self.assertEqual(same('{"n": 1.5e400}'), same('{"n": 15E399}'))
+        self.assertEqual(same('{"n": 0.0e-7}'), same('{"n": -0}'))
+        self.assertNotEqual(same('{"n": -1e2}'), same('{"n": 1e2}'))
+
     def test_minimization_keeps_one_case_per_entry_and_the_rows_of_kept_cases(self):
         model = self.model(cases=WITHOUT_LEGACY + [REDUNDANT])
         oracle = FakeOracle(model, renders={"low": toy_render("<sys>low!<user>hi<asst>"),
@@ -954,7 +972,7 @@ class RecipeOracleTests(Harness):
         committed = self.corpus_of(model, table, FakeOracle(model, renders={"low": toy_render("<sys>low!")}))
         record = self.record(committed)
         changed = json.loads(json.dumps(record))
-        changed["cases"]["high"] = {"agrees": True, "sha256": "0" * 64}
+        changed["cases"]["high"]["sha256"] = "0" * 64
         changed["cases"]["low"]["recipe"] = toy_render("<sys>low<user>hi<asst>")
         changed["rounds"]["answer-round-end"]["sha256"] = "0" * 64
         del changed["cases"]["int"]
@@ -982,6 +1000,64 @@ class RecipeOracleTests(Harness):
             corpus.read_divergences(self.tables(inputs=[dict(UNDECLARED, recipe_when="recipe:accepts")]))
         with self.assertRaisesRegex(corpus.CorpusError, "toy: RECIPE lacks oracle"):
             self.model(recipe={key: value for key, value in TOY_RECIPE.items() if key != "oracle"})
+
+    def test_rows_bind_the_requests_and_token_ids_they_were_computed_from(self):
+        model = self.model()
+        table = self.tables([mapping_entry("high-rule", "chat_template.jinja", ["high"],
+                                           ["effort:high", "recipe:render"])])
+        oracle = FakeOracle(model, renders={"high": toy_render("<sys>max")})
+        stale = self.record(self.corpus_of(model, table, oracle))
+        # A strict tool the template never reads renders as before; the
+        # recipe may read it, so an old row says nothing of the new request.
+        strict = {"type": "function", "function": {**TOOL["function"], "strict": True}}
+        model.cases_list = copy.deepcopy(model.cases_list)
+        for case in model.cases_list:
+            if case["id"] in ("low", "high", "called"):
+                case["request"]["tools"] = [strict]
+        committed = self.corpus_of(model, table, oracle)
+        self.assertEqual(self.check(model, committed, table), [])
+        corpus.write_json(committed / corpus.RECIPE_FILE, stale)
+        self.assertEqual(self.check(model, committed, table), [
+            "case low: corpus-recipe.json was computed from another request than the corpus's",
+            "case high: corpus-recipe.json was computed from another request than the corpus's",
+            "case called: corpus-recipe.json was computed from another request than the corpus's",
+            "round trip called-round-end: corpus-recipe.json was computed from another request or other token ids "
+            "than the round trip's"])
+        # Other completion ids alone unbind a round trip's row too.
+        vector = json.loads((committed / "corpus-rounds.json").read_text())[0]
+        row = self.record(committed)["rounds"][vector["id"]]
+        self.assertIsNone(corpus.round_row_problem(vector, row))
+        self.assertIn("another request or other token ids",
+                      corpus.round_row_problem({**vector, "token_ids": vector["token_ids"][:-1]}, row))
+
+    def test_an_internal_recipe_failure_is_no_refusal(self):
+        model = self.model()
+        table = self.tables()
+        for oracle in (FakeOracle(model, renders={"low": {"refusal": {"status": 500, "message": "panic"}}}),
+                       FakeOracle(model, renders={"low": {"refusal": {"message": "no status"}}}),
+                       FakeOracle(model, parses={"called-round-end": {"refusal": {"status": 503, "message": "x"}}})):
+            with self.subTest(oracle=oracle.renders or oracle.parses), self.assertRaisesRegex(
+                    corpus.CorpusError, "the recipe fails internally, not with a client error, on "
+                                        "(case low|round trip called-round-end)"):
+                self.generate(model, table, "failed", oracle)
+        # A record that holds one as a refusal fails the gate.
+        committed = self.corpus_of(model, table, FakeOracle(model))
+        record = self.record(committed)
+        record["cases"]["critic"]["refusal"]["status"] = 500
+        corpus.write_json(committed / corpus.RECIPE_FILE, record)
+        self.assertEqual(self.check(model, committed, table), [
+            "case critic: corpus-recipe.json records an internal recipe failure as its refusal"])
+
+    def test_entries_of_the_recipe_sections_need_distinct_ids(self):
+        parser = {"id": "shared", "recipe_when": ["recipe:parse"], "reason": "-"}
+        rule = mapping_entry("shared", "chat_template.jinja", ["high"], ["effort:high", "recipe:render"])
+        with self.assertRaisesRegex(corpus.CorpusError, "inputs, mapping and parser entries share the id shared"):
+            corpus.read_divergences(self.tables([rule], [parser]))
+        with self.assertRaisesRegex(corpus.CorpusError, "share the id undeclared-effort"):
+            corpus.read_divergences(self.tables([mapping_entry("undeclared-effort", "s", ["low"])]))
+        # Within one section too.
+        with self.assertRaisesRegex(corpus.CorpusError, "share the id shared"):
+            corpus.read_divergences(self.tables(parser=[parser, dict(parser, recipe_when=["parse:content"])]))
 
     def test_a_model_without_a_pin_leaves_no_record_to_minimize(self):
         model = self.model()

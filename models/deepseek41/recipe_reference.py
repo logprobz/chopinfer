@@ -13,7 +13,8 @@ tools/refrun/frontend_corpus.py):
   `ChatCompletionRequest.convert`, rendered by
   `DeepseekV41Encoding.render_conversation` and encoded with the checkpoint's
   tokenizer, or the refusal conversion raises, with its HTTP status and
-  message;
+  message; a conversion error with any status but a client error's 4xx
+  stops the oracle, so generation fails instead of recording a refusal;
 - each round trip's request converted the same way, and its completion's
   token IDs parsed by `StreamProcessor` with the conversion's parsing options
   and the checkpoint's tokenizer, then finished as a stop. A final
@@ -72,7 +73,8 @@ def convert(recipe, options, request):
     refusal it raises: the HTTP status and the error body's message. A body
     the request type does not read raises ValueError, which the recipe's
     server answers with status 400 and the error's text (server-py/main.py
-    `prepare_request`)."""
+    `prepare_request`). A conversion error without a client error's 4xx
+    status is the recipe failing, not refusing, and stops the oracle."""
     try:
         body = recipe.ChatCompletionRequest({**request, "model": MODEL})
     except ValueError as error:
@@ -80,6 +82,8 @@ def convert(recipe, options, request):
     try:
         return body.convert(options), None
     except recipe.ConversionError as error:
+        if not 400 <= error.status_code < 500:
+            raise SystemExit(f"{PACKAGE} failed with status {error.status_code}: {error.body}") from error
         try:
             message = json.loads(error.body)["error"]["message"]
         except (ValueError, KeyError, TypeError):

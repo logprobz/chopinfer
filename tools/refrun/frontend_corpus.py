@@ -239,6 +239,12 @@ def read_divergences(path):
                                          and all(isinstance(tag, str) and tag for tag in tags)):
                 raise CorpusError(f"{path}: {section} entry {entry.get('id')} has a recipe_when that is not "
                                   "a list of tags")
+    # A difference names the entry that explains it by id, so the ids of
+    # every section a difference can match must be distinct.
+    ids = [entry.get("id") for section in RECIPE_SECTIONS for entry in table.get(section, [])]
+    shared = sorted({str(identifier) for identifier in ids if ids.count(identifier) > 1})
+    if shared:
+        raise CorpusError(f"{path}: inputs, mapping and parser entries share the id {', '.join(shared)}")
     table.setdefault("lines", [])
     table.setdefault("inputs", [])
     table.setdefault("mapping", [])
@@ -977,7 +983,8 @@ class SubprocessOracle:
     case's outcome (`rendered_text` and `token_ids`, or a `refusal`) and each
     round trip's parse (`reasoning`, `content`, `tool_calls` and
     `finish_reason`, or a `refusal` of its request, or the parser's
-    `error`)."""
+    `error`). A refusal is a client error: its `status` is 4xx, with its
+    `message` (`internal_failure`)."""
 
     def __init__(self, model):
         self.model = model
@@ -1015,6 +1022,11 @@ def recipe_record(model, oracle, vectors, rounds):
     missing += [vector["id"] for vector in rounds if vector["id"] not in result["rounds"]]
     if missing:
         raise CorpusError("the recipe oracle gives no outcome for " + ", ".join(missing))
+    failed = [f"{kind} {key} ({outcome['refusal']})" for kind, outcomes in (("case", result["cases"]),
+                                                                          ("round trip", result["rounds"]))
+              for key, outcome in outcomes.items() if internal_failure(outcome)]
+    if failed:
+        raise CorpusError("the recipe fails internally, not with a client error, on " + "; ".join(failed))
     return {"schema": RECIPE_SCHEMA, "model": model.name,
             "recipe": {**{key: pin[key] for key in RECIPE_RECORDED}, "python": environment["python"]},
             "cases": {vector["id"]: case_row(vector, result["cases"][vector["id"]]) for vector in vectors},
@@ -1036,35 +1048,72 @@ def render_difference(vector, outcome):
     return "tokens" if outcome["token_ids"] != vector["token_ids"] else None
 
 
+def internal_failure(outcome):
+    """Whether an oracle outcome is a refusal without a client error's 4xx
+    status: the recipe failing, which compares with nothing, rather than
+    refusing the request."""
+    if "refusal" not in outcome:
+        return False
+    status = outcome["refusal"].get("status") if isinstance(outcome["refusal"], dict) else None
+    return not (isinstance(status, int) and 400 <= status < 500)
+
+
 def render_digest(outcome):
     return hashlib.sha256(json.dumps([outcome["rendered_text"], outcome["token_ids"]],
                                      ensure_ascii=False).encode()).hexdigest()
 
 
+def request_digest(vector):
+    """The fingerprint of the request a case row was computed from, as the
+    oracle received it: its JSON text, key order kept. A request field the
+    reference never reads changes it, so an old row cannot stand for it."""
+    return hashlib.sha256(json.dumps(request_of(vector), ensure_ascii=False).encode()).hexdigest()
+
+
+def round_input_digest(vector):
+    """The fingerprint of a round trip's request and completion token ids."""
+    return hashlib.sha256(json.dumps([vector["request"], vector["token_ids"]],
+                                     ensure_ascii=False).encode()).hexdigest()
+
+
 def case_row(vector, outcome):
-    """A case's row: agreement, with the recipe's refusal or the digest of
-    the render both give, or the difference and the recipe's whole
-    outcome."""
+    """A case's row: the fingerprint of its request, then agreement, with the
+    recipe's refusal or the digest of the render both give, or the difference
+    and the recipe's whole outcome."""
+    row = {"request_sha256": request_digest(vector)}
     difference = render_difference(vector, outcome)
     if difference is not None:
-        return {"difference": difference, "recipe": outcome}
+        return {**row, "difference": difference, "recipe": outcome}
     if "refusal" in outcome:
-        return {"agrees": True, "refusal": outcome["refusal"]}
-    return {"agrees": True, "sha256": render_digest(outcome)}
+        return {**row, "agrees": True, "refusal": outcome["refusal"]}
+    return {**row, "agrees": True, "sha256": render_digest(outcome)}
 
 
 def canonical_json(value):
     """`value`, a decoded JSON value, as text that equal JSON values share:
-    object keys sorted and numbers compared by value (1, 1.0 and 1e0 alike),
-    while true stays distinct from 1."""
+    object keys sorted and numbers compared by exact value (1, 1.0 and 1e0
+    alike; `canonical_number`), while true stays distinct from 1."""
     if isinstance(value, dict):
         return "{" + ",".join(json.dumps(key, ensure_ascii=False) + ":" + canonical_json(value[key])
                               for key in sorted(value)) + "}"
     if isinstance(value, list):
         return "[" + ",".join(canonical_json(item) for item in value) + "]"
     if isinstance(value, Decimal):
-        return "0" if value == 0 else str(value.normalize())
+        return canonical_number(value)
     return json.dumps(value, ensure_ascii=False)
+
+
+def canonical_number(value):
+    """A finite JSON number, read exactly as a Decimal, as its sign, its
+    significant digits and their exponent, with no trailing zero. It reads
+    the digits themselves, not a decimal context that rounds them, so every
+    digit of a long literal counts, and every zero is 0."""
+    sign, digits, exponent = value.as_tuple()
+    text = "".join(map(str, digits))
+    significant = text.rstrip("0")
+    if not significant:
+        return "0"
+    return f"{'-' if sign else ''}{significant}e{exponent + len(text) - len(significant)}"
 
 
 def canonical_arguments(text):
@@ -1102,12 +1151,14 @@ def parse_differences(expect, parse):
 
 
 def round_row(vector, parse):
-    """A round trip's row: agreement with the digest of the turn both read, or
-    the fields that differ and the recipe's whole parse."""
+    """A round trip's row: the fingerprint of its request and token ids, then
+    agreement with the digest of the turn both read, or the fields that
+    differ and the recipe's whole parse."""
+    row = {"input_sha256": round_input_digest(vector)}
     differences = parse_differences(vector["expect"], parse)
     if differences:
-        return {"differences": differences, "recipe": parse}
-    return {"agrees": True, "sha256": turn_digest(vector["expect"])}
+        return {**row, "differences": differences, "recipe": parse}
+    return {**row, "agrees": True, "sha256": turn_digest(vector["expect"])}
 
 
 def read_recipe(directory):
@@ -1723,8 +1774,10 @@ def check_recipe(model, fixtures, vectors, rounds, coverage, table):
 
     corpus-recipe.json records the pinned recipe and a row for every
     committed case and round trip, and each row still holds against the
-    committed vector: a recorded difference recomputes from the recipe's
-    outcome, and an agreement's digest is the vector's. Each difference
+    committed vector: it was computed from the vector's request (and a round
+    trip's token ids), it holds no internal recipe failure as a refusal, a
+    recorded difference recomputes from the recipe's outcome, and an
+    agreement's digest is the vector's. Each difference
     matches exactly one entry by its recipe_when tags (`recipe_differences`),
     and an entry whose tags match none is stale. A mapping entry that
     follows the recipe needs every case it names to agree with it; one that
@@ -1769,6 +1822,10 @@ def check_recipe(model, fixtures, vectors, rounds, coverage, table):
     errors += [f"{section} entry {entry['id']} is stale: no committed difference from the recipe matches its "
                "recipe_when" for section, entry in tagged if entry["id"] not in matched]
     reference = Path(model.pin.get("source", "chat_template.jinja")).name
+    # An entry that follows the recipe needs every case it names to agree.
+    # One that follows the pinned reference goes stale only when every case
+    # it names agrees, as an inputs entry does when all its cases match the
+    # reference: it may name a case at its boundary that both render alike.
     for entry in table["mapping"]:
         held = [case for case in entry["cases"] if case in agrees]
         if entry["follows"] == "recipe":
@@ -1781,7 +1838,13 @@ def check_recipe(model, fixtures, vectors, rounds, coverage, table):
 
 
 def case_row_problem(vector, row):
-    """Why a case's recipe row does not hold against its vector, or None."""
+    """Why a case's recipe row does not hold against its vector, or None:
+    first whether the row was computed from the vector's request at all."""
+    if row.get("request_sha256") != request_digest(vector):
+        return "was computed from another request than the corpus's"
+    refusal = row["recipe"] if "difference" in row else row
+    if internal_failure(refusal):
+        return "records an internal recipe failure as its refusal"
     if "difference" in row:
         found = render_difference(vector, row["recipe"])
         if found != row["difference"]:
@@ -1798,7 +1861,13 @@ def case_row_problem(vector, row):
 
 
 def round_row_problem(vector, row):
-    """Why a round trip's recipe row does not hold against its vector, or None."""
+    """Why a round trip's recipe row does not hold against its vector, or
+    None: first whether the row was computed from the vector's request and
+    token ids at all."""
+    if row.get("input_sha256") != round_input_digest(vector):
+        return "was computed from another request or other token ids than the round trip's"
+    if "differences" in row and internal_failure(row["recipe"]):
+        return "records an internal recipe failure as its refusal"
     if "differences" in row:
         found = parse_differences(vector["expect"], row["recipe"])
         if not found or found != row["differences"]:

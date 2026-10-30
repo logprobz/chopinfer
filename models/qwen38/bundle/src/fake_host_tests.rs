@@ -4811,6 +4811,7 @@ fn overlap_evidence_captures_the_drafter_state() {
         .env(CHILD, "1")
         .env("CHOPINFER_TAPS_DIR", &dir)
         .env("CHOPINFER_TAPS_SITES", "embed.out")
+        .env("CHOPINFER_QWEN38_CANONICAL_DRAFTER", "1")
         .env("CHOPINFER_QWEN38_OVERLAP_EVIDENCE", "1")
         .output()
         .unwrap();
@@ -4847,6 +4848,7 @@ fn overlap_evidence_captures_the_drafter_state() {
         serde_json::from_slice(&std::fs::read(drafted.join("rows.json")).unwrap()).unwrap();
     assert_eq!(rows["drafted"], true);
     assert_eq!(rows["ring_layers"], mtp + 1);
+    assert_eq!(rows["canonical_drafter"], true);
     for rank in 0..RANKS {
         for name in ring("").into_iter().chain(ring("anchor-")) {
             assert!(size(&target, &name, rank).is_some(), "{name}");

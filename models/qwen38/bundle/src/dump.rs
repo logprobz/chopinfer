@@ -583,6 +583,8 @@ pub struct OverlapEvidence<'a> {
     pub page_bytes: u64,
     pub head_rows: u32,
     pub drafted: bool,
+    /// Whether the instance runs the canonical drafter candidate.
+    pub canonical_drafter: bool,
 }
 
 impl OverlapEvidence<'_> {
@@ -611,6 +613,7 @@ impl OverlapEvidence<'_> {
             "ring_key_bytes": self.shape.ring_slot_key_bytes(),
             "ring_position_bytes": self.shape.ring_slot_position_bytes(),
             "ring_layers": self.ring.layers, "drafted": self.drafted,
+            "canonical_drafter": self.canonical_drafter,
             "x_row_bytes": crate::scratch::wide_row_bytes(self.shape),
             }),
         )

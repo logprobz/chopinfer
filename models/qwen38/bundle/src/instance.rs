@@ -1559,6 +1559,7 @@ impl Instance {
             page_bytes: self.layout.kv.page_bytes,
             head_rows: plan.head_rows,
             drafted,
+            canonical_drafter: self.switches.canonical_drafter,
         }
         .write(capture.dir())
         .map_err(|reason| {

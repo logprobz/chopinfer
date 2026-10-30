@@ -1052,6 +1052,27 @@ async fn requests_the_router_never_saw_are_logged_at_the_transport() {
     assert_eq!(lines[2]["status"], 408);
     assert_eq!(lines[2]["message"], "request head did not arrive in time");
 
+    // A refusal that never read its body leaves hyper to drain the rest of
+    // it, past its first read, after the answer. The drained bytes are not a
+    // head, so the idle connection the deadline then closes writes no line.
+    let unread = TcpStream::connect(server.server.address).await.unwrap();
+    let body = "x".repeat(9_000);
+    let request = format!(
+        "POST /v1/nothing HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    let answer = timeout(
+        Duration::from_secs(2),
+        exchange(&unread, request.as_bytes()),
+    )
+    .await
+    .unwrap();
+    assert!(String::from_utf8_lossy(&answer).starts_with("HTTP/1.1 404"));
+
+    let lines = server.lines(4).await;
+
+    assert_eq!(lines[3]["status"], 404, "{:#}", lines[3]);
+
     let limited = LoggedServer::start(
         ScriptedBackendV1::new(vec![]),
         ServerConfig::default().with_max_connections(1),

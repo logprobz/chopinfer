@@ -4,7 +4,7 @@ use std::{
     io,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
@@ -55,14 +55,19 @@ pub(crate) async fn serve(
                     None => None,
                 };
                 let service = TowerToHyperService::new(router.clone().layer(axum::Extension(peer)));
-                // Bytes this connection read, and how many of them its
-                // finished exchanges read, to tell a head that never arrived
-                // from an idle keep-alive connection.
+                // Bytes this connection read, how many of them its finished
+                // exchanges read, and whether the last request left its body
+                // unread, to tell a head that never arrived from an idle
+                // keep-alive connection.
                 let read = Arc::new(AtomicU64::new(0));
                 let settled = Arc::new(AtomicU64::new(0));
-                let exchange = (Arc::clone(&read), Arc::clone(&settled));
-                let service = hyper::service::service_fn(move |request| {
+                let unread = Arc::new(AtomicBool::new(false));
+                let exchange = (Arc::clone(&read), Arc::clone(&settled), Arc::clone(&unread));
+                let service = hyper::service::service_fn(move |request: axum::http::Request<hyper::body::Incoming>| {
                     let (read, settled) = (Arc::clone(&exchange.0), Arc::clone(&exchange.1));
+                    exchange.2.store(false, Ordering::Relaxed);
+                    let unread = Arc::clone(&exchange.2);
+                    let request = request.map(|body| RequestBody { body, ended: false, unread });
                     let response = service.call(request);
                     async move {
                         response
@@ -94,7 +99,8 @@ pub(crate) async fn serve(
                             connection.await
                         }
                     };
-                    let partial = read.load(Ordering::Relaxed) > settled.load(Ordering::Relaxed);
+                    let partial = read.load(Ordering::Relaxed) > settled.load(Ordering::Relaxed)
+                        && !unread.load(Ordering::Relaxed);
                     if let Err(error) = result
                         && let Some(detail) = head_failure(&error, partial)
                     {
@@ -220,6 +226,49 @@ impl tokio::io::AsyncRead for MeteredSocket {
         self.budget.read.fetch_add(read, Ordering::Relaxed);
         self.read.fetch_add(read, Ordering::Relaxed);
         result
+    }
+}
+
+/// A request body that notes, when the handler drops it, whether the
+/// handler left part of it unread. Hyper then drains what it can of the rest
+/// after the answer, and those bytes are not a head, so a header timeout
+/// that follows is not counted. A partial head after such a request
+/// therefore writes no line either.
+struct RequestBody {
+    body: hyper::body::Incoming,
+    ended: bool,
+    unread: Arc<AtomicBool>,
+}
+
+impl hyper::body::Body for RequestBody {
+    type Data = axum::body::Bytes;
+    type Error = hyper::Error;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        let frame = std::pin::Pin::new(&mut self.body).poll_frame(cx);
+        if matches!(frame, std::task::Poll::Ready(None)) {
+            self.ended = true;
+        }
+        frame
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.body.is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        self.body.size_hint()
+    }
+}
+
+impl Drop for RequestBody {
+    fn drop(&mut self) {
+        if !self.ended && !hyper::body::Body::is_end_stream(&self.body) {
+            self.unread.store(true, Ordering::Relaxed);
+        }
     }
 }
 

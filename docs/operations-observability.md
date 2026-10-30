@@ -467,6 +467,9 @@ Every request that fails writes exactly one line,
   route, a missing API key), `intake`, `preparation`, `admission` or
   `generation`. Fields that are not known yet are null; method and path are
   null for a head that did not parse or arrive and for a closed connection.
+  `generated_tokens` counts what every choice of the request generated
+  before it ended; with several choices, `request_id` names the one that
+  failed.
 - No line carries prompt text, generated text or token IDs. Fields the client
   controls are cut to a byte limit (method 16, path 256, model and request
   IDs 128, `param` 64), so a line stays under 4 KiB.

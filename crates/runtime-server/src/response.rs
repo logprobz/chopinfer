@@ -232,7 +232,6 @@ impl StreamEnd {
 struct StreamOutcome {
     record: crate::request_log::RecordHandle,
     request_id: String,
-    generated: u64,
     end: Arc<StreamEnd>,
 }
 
@@ -242,7 +241,6 @@ impl StreamOutcome {
         Self {
             record: metadata.record.clone(),
             request_id,
-            generated: 0,
             end: Arc::clone(end),
         }
     }
@@ -264,7 +262,6 @@ impl Drop for StreamOutcome {
             return;
         }
         record.set_request_id(&self.request_id);
-        record.set_generated_tokens(self.generated);
         match (failure, reason) {
             (Some(detail), _) => record.report(detail),
             (None, STREAM_TIMED_OUT) => {
@@ -1276,17 +1273,22 @@ async fn multiple_nonstreaming_response(
 ) -> Response {
     let mut tasks = tokio::task::JoinSet::new();
     for (metadata, events, active) in choices {
-        tasks.spawn(nonstreaming_response(metadata, events, active));
+        let index = metadata.choice_index;
+        tasks.spawn(async move { (index, nonstreaming_response(metadata, events, active).await) });
     }
     let mut result = Value::Null;
     let mut outputs = Vec::new();
     let mut completion_tokens = 0;
     let mut cached = 0;
     while let Some(response) = tasks.join_next().await {
-        let Ok(response) = response else {
+        let Ok((index, response)) = response else {
             return invalid_backend_event("choice task failed").into_response(&metadata.request_id);
         };
         if !response.status().is_success() {
+            // The failure line names the choice that failed.
+            metadata
+                .record
+                .set_request_id(&format!("{}_{index}", metadata.request_id));
             return response;
         }
         let Ok(body) = to_bytes(response.into_body(), usize::MAX).await else {
@@ -1485,6 +1487,11 @@ async fn nonstreaming_response(
         Err(error) => return error.into_response(&metadata.request_id),
     };
     while let Some(event) = active.next_event(&mut events).await {
+        // A failure line, or a sweep at a worker failure, reports what the
+        // request generated before it ended.
+        metadata
+            .record
+            .add_generated_tokens(generated_token_count(&event));
         match event {
             GenerationEvent::AdmissionFailed(error) => {
                 return admission_error(error).into_response(&metadata.request_id);
@@ -1817,9 +1824,8 @@ fn streaming_response(
         &body_tx.end,
     );
     tokio::spawn(async move {
-        // The task owns the whole guard, which reports when the task ends; a
-        // closure that only assigned its field would capture that field.
-        let mut outcome = outcome;
+        // The task owns the guard, which reports when the task ends.
+        let _outcome = outcome;
         let mut token_ids = GeneratedTokenBudget::new(metadata.max_new_tokens);
         let mut chat_started = false;
         let mut reasoning_tokens = 0_u64;
@@ -1867,19 +1873,9 @@ fn streaming_response(
                 let _ = send_done(&body_tx).await;
                 return;
             };
-            metadata.completion_tokens = metadata.completion_tokens.saturating_add(match &event {
-                GenerationEvent::Content(event) => event.generated_token_count as u64,
-                GenerationEvent::Reasoning(event) => event.generated_token_count as u64,
-                GenerationEvent::ToolCalls {
-                    generated_token_count,
-                    ..
-                }
-                | GenerationEvent::TokenUsageDelta {
-                    generated_token_count,
-                } => *generated_token_count as u64,
-                _ => 0,
-            });
-            outcome.generated = metadata.completion_tokens;
+            let generated = generated_token_count(&event);
+            metadata.completion_tokens = metadata.completion_tokens.saturating_add(generated);
+            metadata.record.add_generated_tokens(generated);
             match event {
                 GenerationEvent::AdmissionFailed(error) => {
                     let _ = send_error(&body_tx, &admission_error(error)).await;
@@ -2727,6 +2723,22 @@ fn validate_failure_event(
 
 fn invalid_backend_event(message: impl Into<std::borrow::Cow<'static, str>>) -> ApiError {
     ApiError::backend(message, Some("invalid_backend_event".to_owned()))
+}
+
+/// The generated tokens one backend event reports.
+fn generated_token_count(event: &GenerationEvent) -> u64 {
+    match event {
+        GenerationEvent::Content(event) => event.generated_token_count as u64,
+        GenerationEvent::Reasoning(event) => event.generated_token_count as u64,
+        GenerationEvent::ToolCalls {
+            generated_token_count,
+            ..
+        }
+        | GenerationEvent::TokenUsageDelta {
+            generated_token_count,
+        } => *generated_token_count as u64,
+        _ => 0,
+    }
 }
 
 /// Whether generated-token logprobs are returned. vLLM hides them together

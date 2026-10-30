@@ -456,8 +456,15 @@ impl RequestRecord {
         self.progress().prompt_tokens = Some(tokens);
     }
 
-    pub(crate) fn set_generated_tokens(&self, tokens: u64) {
-        self.progress().generated_tokens = Some(tokens);
+    /// Counts `tokens` more generated for the request, across its choices.
+    pub(crate) fn add_generated_tokens(&self, tokens: u64) {
+        let mut progress = self.progress();
+        progress.generated_tokens = Some(
+            progress
+                .generated_tokens
+                .unwrap_or(0)
+                .saturating_add(tokens),
+        );
     }
 
     /// Whether the drain deadline had expired: a request that ends from
@@ -701,6 +708,14 @@ impl RecordHandle {
     pub(crate) fn set_prompt_tokens(&self, tokens: u64) {
         if let Some(record) = &self.0 {
             record.set_prompt_tokens(tokens);
+        }
+    }
+
+    pub(crate) fn add_generated_tokens(&self, tokens: u64) {
+        if tokens > 0
+            && let Some(record) = &self.0
+        {
+            record.add_generated_tokens(tokens);
         }
     }
 

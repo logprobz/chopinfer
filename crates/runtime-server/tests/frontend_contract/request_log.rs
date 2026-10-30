@@ -498,8 +498,14 @@ async fn a_failure_after_admission_is_one_error_line() {
         ))
         .await;
     assert_eq!(choices.status, 200);
+    let whole_choices = server
+        .request(&completion(
+            json!({"model": MODEL, "prompt": CANARY, "max_tokens": 4, "n": 2}),
+        ))
+        .await;
+    assert_eq!(whole_choices.status, 500, "{}", whole_choices.body);
 
-    let lines = server.lines(3).await;
+    let lines = server.lines(4).await;
 
     for line in &lines {
         assert_failure(line, 500, "error");
@@ -509,8 +515,16 @@ async fn a_failure_after_admission_is_one_error_line() {
         assert_eq!(line["prompt_tokens"], 4);
     }
     assert!(lines[0]["request_id"].as_str().unwrap().ends_with("_0"));
+    assert_eq!(lines[0]["generated_tokens"], 1);
     assert!(lines[1]["request_id"].as_str().unwrap().ends_with("_0"));
     assert_eq!(lines[1]["generated_tokens"], 1);
+    // With several choices the line names the one that failed, and counts
+    // what every choice generated.
+    for line in &lines[2..] {
+        let id = line["request_id"].as_str().unwrap();
+        assert!(id.ends_with("_0") || id.ends_with("_1"), "{line:#}");
+        assert!(line["generated_tokens"].as_u64().unwrap() >= 1, "{line:#}");
+    }
     assert!(!server.raw().contains(CANARY), "{}", server.raw());
 }
 
@@ -668,6 +682,9 @@ async fn a_worker_failure_writes_an_error_line_for_each_open_request() {
         ))
         .await;
     backend.wait_admitted(2).await;
+    backend.emit(content("hi")).await;
+    // The handlers count the token before the worker fails.
+    tokio::time::sleep(Duration::from_millis(200)).await;
     *backend.readiness.lock().unwrap() = BackendReadiness::Terminated("device lost".to_owned());
 
     let error = timeout(Duration::from_secs(5), &mut server.task)
@@ -682,6 +699,11 @@ async fn a_worker_failure_writes_an_error_line_for_each_open_request() {
         assert_failure(line, 503, "error");
         assert_eq!(line["message"], "generation worker terminated");
         assert_eq!(line["code"], "worker_unavailable");
+        assert_eq!(line["generated_tokens"], 1, "{line:#}");
+        assert!(
+            line["request_id"].as_str().unwrap().ends_with("_0"),
+            "{line:#}"
+        );
     }
 }
 

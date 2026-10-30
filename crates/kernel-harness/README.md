@@ -6,8 +6,13 @@ builds no cubin: a consumer passes what it tests as data.
 - `gpu_test`, `gpu_test_multi` and `Session`: GPU selection
   (`CHOPINFER_KERNEL_GPU`, `CHOPINFER_KERNEL_GPUS`), sessions, uploads,
   graph capture, receipts and timing. `gpu_test_with` opens sessions that
-  load a consumer's embedded cubins by name (`Cubins`); `Session::load_cubin`
-  loads any bytes, such as a model's built cubins.
+  load a consumer's cubins by name (`Cubins`); `Session::load_cubin` loads
+  any bytes, such as a model's built cubins. `Cubins::new` takes embedded
+  bytes. `Cubins::files` takes the files a build script wrote, as paths
+  under its output directory with their SHA-256: a test reads each cubin
+  when it first loads it, refusing a symlink or a digest mismatch, so the
+  binary carries no cubin bytes. `CHOPINFER_KERNEL_CUBIN_DIR` replaces that
+  directory with a staged copy of the same layout.
 - `launch`: kernel-core launch plans and arguments over bound buffers.
 - `poison`: poisoned relaunch, graph replay and PDL checks with write maps.
 - `conformance`: the checks every entry owes, declared per buffer.

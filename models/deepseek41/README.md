@@ -67,7 +67,17 @@ prompts cost an additional 39.8 ms for AR (941 to 981 ms) and 29.3 ms for
 DSpark (966 to 996 ms). The separate full-prefill and 2048-token profiles
 were removed after this comparison. `prefill_upper_skip` and
 `prefill_chunk_tokens` remain declared options for diagnostic configurations.
-TBT-selected cuts are not enabled.
+
+`tp4-dspark` serves `--prefill-budget tbt` at a 750 ms decode cadence
+target with adaptive timing cuts; `tp4-ar` keeps the fixed budget and whole
+grid chunks. In the 2026-10-30 stateful replay A/B, adaptive resolved
+gains against `off` in collapse share and gaps over 1 s in a C16
+prefill-saturated cell and a cold burst of five 250K and five 30K prompts,
+and held the C8 long-append TTFT p95 increase to 1.9% with a 1.6% output
+cost. Its costs are lower output rates (9.9% at C16 and 24.6% in the
+burst) and a later first token for the burst's last 250K prompt. Outputs
+matched `off` bit for bit. See the
+[adoption](../../docs/serving-profiles.md#adaptive-timing-cut-adoption).
 
 AR decode, eligible AR prefill and DSpark target execution use prepared
 per-layer Engram gathers. Their shared layer-gather lifecycle enqueues

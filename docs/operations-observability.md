@@ -558,7 +558,7 @@ activity fall inside the window before reading timings.
 
 `--prefill-timing-cuts off|fixed|adaptive` resolves from the profile field
 `prefill_timing_cuts`, with an explicit flag taking precedence. Every profile
-keeps `off`. `profiles show` reports the resolved value; the `resolved serve`
+keeps `off` except DeepSeek's `tp4-dspark`, which selects `adaptive`. `profiles show` reports the resolved value; the `resolved serve`
 startup settings line includes `prefill_timing_cuts: Off|Fixed|Adaptive`. Retain this
 line with replay receipts, together with the TBT target and
 `--mixed-min-prefill-tokens` progress floor. `fixed` requires the TBT budget and
@@ -576,6 +576,6 @@ TTFT p95 rose from 1.764 to 3.061 s (+73.6%) and from 1.911 to 3.046 s
 (+59.4%). Energy per output token rose from 3.353 to 3.764 J (+12.3%) and
 from 3.440 to 3.746 J (+8.9%). Output tok/s fell 4.0% and 3.0%, averaging
 3.5%. These are changes in the measured quantities within each pair.
-The option remains off by default. See the
+`fixed` remains off by default. See the
 [fixed timing-cut tradeoff](serving-profiles.md#fixed-timing-cut-tradeoff)
 for the measurement envelope and policy choice.

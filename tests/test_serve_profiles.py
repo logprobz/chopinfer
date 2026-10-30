@@ -308,7 +308,10 @@ print(json.dumps({'result': 'prepared-direct', 'bundle': str(bundle)}))
                 with self.subTest(path=path, name=name):
                     self.assertEqual(profile['kv_cache_dtype'], 'auto')
                     self.assertIsNone(profile['queue_depth'])
-                    self.assertEqual(profile['prefill_timing_cuts'], 'off')
+                    # DeepSeek DSpark serves adaptive timing cuts at a 750 ms
+                    # cadence target; every other profile keeps whole grid chunks.
+                    dspark = (data['model'], name) == ('deepseek41', 'tp4-dspark')
+                    self.assertEqual(profile['prefill_timing_cuts'], 'adaptive' if dspark else 'off')
                     at_64 = self.qualified_at_64(path, name) or (data['model'], name) == ('mimo26', 'tp4-dflash')
                     self.check_cap(profile, at_64)
                     if (data['model'], name) == ('mimo26', 'tp4-dflash'):
@@ -330,6 +333,9 @@ print(json.dumps({'result': 'prepared-direct', 'bundle': str(bundle)}))
                     if data['model'] == 'mimo26' and name in ('tp4-mtp', 'tp4-dflash'):
                         self.assertEqual(profile['prefill_budget'], 'tbt')
                         self.assertEqual(profile['decode_tbt_target_ms'], 150)
+                    elif dspark:
+                        self.assertEqual(profile['prefill_budget'], 'tbt')
+                        self.assertEqual(profile['decode_tbt_target_ms'], 750)
                     else:
                         self.assertEqual(profile.get('prefill_budget', 'fixed'), 'fixed')
                         self.assertNotIn('decode_tbt_target_ms', profile)

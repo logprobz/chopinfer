@@ -18,8 +18,9 @@ scheduler retains the absolute grid after an extra cut, so a cut at 4032 is
 followed by 8192 unless another selected anchor or the prompt end comes
 first. This mechanism does not enable timing-budget cuts. TBT-selected
 timing cuts are a separate serving option
-(`--prefill-timing-cuts fixed` with `--prefill-budget tbt`), off by default
-and described below.
+(`--prefill-timing-cuts fixed|adaptive` with `--prefill-budget tbt`),
+described below. `tp4-dspark` selects `adaptive` by default and `tp4-ar`
+keeps `off`.
 
 On default `tp4-ar` and `tp4-dspark`, every eligible prompt with a complete
 64-token block and a trailing 1-63 tokens is cut at `prompt / 64 * 64`,
@@ -59,8 +60,9 @@ starts with up to 2624 rows at layer 20 and tapers to 192 at layer 39.
 Compressed and index-key producers still cover every row. A restore uses the
 ordinary complete-state snapshot; no repair pass or approximate state is used.
 
-With the [fixed timing-cut policy](../../docs/serving-profiles.md#fixed-timing-cut-tradeoff),
-a grid chunk that runs while requests decode
+With the [fixed](../../docs/serving-profiles.md#fixed-timing-cut-tradeoff)
+or [adaptive](../../docs/serving-profiles.md#adaptive-timing-cut-adoption)
+timing-cut policy, a grid chunk that runs while requests decode
 ends at the last 64-token multiple the TBT cap reaches, or at the first
 multiple at or past the progress floor when the cap's falls short and it
 fits beside the decodes, unless the next grid boundary, a capture point or

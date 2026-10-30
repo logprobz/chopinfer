@@ -369,8 +369,11 @@ concurrency and precision. Neither a scheduling flag nor spare capacity
 establishes accuracy or performance qualification.
 
 `--prefill-timing-cuts off|fixed|adaptive` (`prefill_timing_cuts` in a
-profile) defaults to `off`, including every DeepSeek, Qwen, MiMo and GLM
-profile. An explicit flag overrides the profile. `profiles show` reports the
+profile) defaults to `off`. Every Qwen, MiMo and GLM profile and DeepSeek's
+`tp4-ar` keep `off`; DeepSeek's `tp4-dspark` selects `adaptive` with
+`--prefill-budget tbt` at a 750 ms `--decode-tbt-target-ms`
+([adoption](#adaptive-timing-cut-adoption)). An explicit flag overrides
+the profile. `profiles show` reports the
 resolved value and the `resolved serve` startup settings record the resolved
 enum (`Off`, `Fixed` or `Adaptive`).
 
@@ -424,6 +427,71 @@ bundle without a grid takes the cap as its ordinary tbt prefill budget and
 takes no timing cut (`prefill timing cuts on (adaptive): the TBT cap ...`).
 A grid bundle without cuts refuses `adaptive`.
 
+### Adaptive timing-cut adoption
+
+DeepSeek's `tp4-dspark` serves `adaptive` by default after a stateful
+replay A/B on 2026-10-30 against `off` and `fixed`. Every arm ran TP4
+DSpark on the deepseek-ai checkpoint with native KV, prefix caching,
+`--prefill-budget tbt` at a 750 ms target, the 512-token progress floor,
+32 sequences and temperature 1. Each cell ran two seed pairs in ABBA order;
+every measured visit followed its own arm's exact-seed warm-up and a cache
+check in fresh processes, within 1,000 major faults. A comparison
+resolves a gain when both pairs improve and their mean exceeds their
+spread. Before any timing, off and adaptive produced bit-identical output
+tokens and logprobs on a cold burst and at one stream, and the
+fixed-batch replay, prefix-cache exactness suite and determinism screens
+passed. In every timed cell, each matched turn of the two arms had equal
+prompt and output token IDs, answers and logprobs.
+
+- **Sixteen prefill-saturated sessions, three turns each** (24 short and
+  24 long appends). Against `off`, collapse share fell from 14.4% and
+  12.7% to 1.4% and 2.0%, gaps over 1 s from 28.7 and 24.3 to 0.1 and 0.0
+  per 1,000 gaps, and short-append TTFT p50 from 3.09 and 2.86 s to 2.11
+  and 2.39 s: three resolved gains. Long-append TTFT p95 rose from 14.8
+  and 14.6 s to 18.4 and 18.1 s, output tokens per second fell 9.9% (just
+  under the 10% bound beyond which the outcome would have gone to the
+  operator), and energy per output token rose from 3.78 and 3.79 J to 4.13
+  and 4.04 J. Against `fixed`, short-append TTFT p50 fell from 3.27 and
+  3.02 s to 2.11 and 2.39 s, while collapse share rose from 0.7% and 1.4%
+  to 1.4% and 2.0%; output rate was within 0.6%.
+- **Eight steady sessions, 120 turns** (every third append 8,192-12,288
+  tokens, 40 long appends per visit, think times up to 30 s). Against
+  `off`, gaps over 1 s fell from 1.85 and 1.40 to 0 per 1,000 gaps (a
+  resolved gain); collapse share and short-append TTFT were unresolved.
+  Long-append TTFT p95 moved from 3.68 and 4.80 s to 4.17 and 4.36 s, a
+  mean increase of 1.9% against an accepted tolerance of 23.7%, and output
+  tokens per second fell 1.6% against a 3% bound. Stalls over 250 ms rose
+  from 10.8 and 12.6 to 17.6 and 17.9 per 1,000 gaps, the tenth-percentile
+  stream rate fell, and energy per output token rose from 3.38 and 3.36 J
+  to 3.50 and 3.43 J.
+- **A burst after a cache loss** (five 250K and five 30K prompts arriving
+  together, no priming). Against `off`, collapse share fell from 22.9% and
+  20.9% to 2.0% and 2.8%, gaps over 1 s from 70.3 and 70.7 to 0 per 1,000
+  gaps, short-prompt TTFT p50 from 25.5 s to 12.9 s in both pairs, and the
+  last 30K prompt's first token from 26.4 and 26.3 s to 18.6 and 18.5 s.
+  The last 250K prompt's first token moved from 156.8 s to 217.9 and
+  217.6 s, output tokens per second fell 24.6% and energy per output token
+  rose from 19.6 J to 24.7 J; the burst rule reports these but does not
+  gate them.
+  Against `fixed`, short-prompt TTFT p50 halved and the last 30K prompt's
+  first token came 34% sooner; the last 250K prompt waited about 3% longer
+  and output rate was 2.3% lower.
+
+The sixteen-session cell ran in one window on 2026-10-30, and the
+eight-session and burst cells in a second window the same day. Before the
+second window, an amendment declared that a measured window is judged by
+outside idle: host idle plus the job's own process-tree CPU at least 95%,
+with CPU and I/O stall shares at most 0.1. In the burst's `off` visits the
+server's own prefill CPU, about 5 cores, left host idle near 0.89 by
+itself. Host clock steps also no longer refuse a visit, since no judged
+metric reads server wall-clock time. The A/B measured the adaptive change
+on an earlier integration base. Later integration changes, including
+prefix-cache segment reclamation, drafter planning and sparse-attention
+updates, were not part of the measured build. `off` and `fixed` remain
+serving options: `fixed` keeps the lowest collapse share in the
+sixteen-session cell, and `off` the highest output rate in all three
+cells.
+
 ### Fixed timing-cut tradeoff
 
 On 2026-10-28, DeepSeek TP4 DSpark stateful replay at C8 (eight sessions,
@@ -441,4 +509,5 @@ These percentages compare the measured quantities within each pair. The
 100 and 250 ms became more frequent. Select `fixed` when smoother concurrent
 streaming matters more than first-token latency, throughput and energy.
 This evidence covers that cell and configuration; it does not support a
-default change in any profile.
+default change in any profile. The `tp4-dspark` default comes from the
+[adaptive adoption](#adaptive-timing-cut-adoption) A/B.

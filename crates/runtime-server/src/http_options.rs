@@ -51,6 +51,10 @@ pub struct HttpOptions {
     /// What `/health` reports this deployment serves. Without it, health
     /// reports readiness alone.
     pub serving_identity: Option<crate::ServingIdentity>,
+    /// Where request-failure and summary lines go. Without it, stderr.
+    pub request_log_sink: Option<crate::RequestLogSinkV1>,
+    /// How often a summary line is written. Without it, every minute.
+    pub summary_interval: Option<std::time::Duration>,
 }
 
 impl Default for HttpOptions {
@@ -65,6 +69,8 @@ impl Default for HttpOptions {
             allowed_headers: vec!["*".into()],
             allow_credentials: false,
             serving_identity: None,
+            request_log_sink: None,
+            summary_interval: None,
         }
     }
 }

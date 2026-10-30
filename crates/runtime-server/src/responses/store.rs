@@ -176,6 +176,14 @@ impl Store {
             self.available.notify_waiters();
         }
     }
+    /// Whether a client cancelled the stored response `id`.
+    pub fn cancelled(&self, id: &str) -> bool {
+        self.entries
+            .lock()
+            .expect("response store")
+            .iter()
+            .any(|entry| entry.id == id && entry.response["status"] == "cancelled")
+    }
     pub fn cancel(&self, id: &str) -> Result<Value, ApiError> {
         let mut entries = self.entries.lock().expect("response store");
         let entry = entries
@@ -205,10 +213,14 @@ fn json_bytes(value: &impl serde::Serialize) -> usize {
 fn not_found(id: &str) -> ApiError {
     ApiError {
         status: axum::http::StatusCode::NOT_FOUND,
-        message: format!("Response with id '{id}' not found."),
+        message: format!("Response with id '{id}' not found.").into(),
         kind: "invalid_request_error",
         code: None,
         parameter: Some("response_id".to_owned()),
+        log: crate::error::ErrorLog {
+            summary: "response not found",
+            ..crate::error::ErrorLog::default()
+        },
     }
 }
 

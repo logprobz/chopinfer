@@ -1,8 +1,16 @@
 //! HTTP/1 connections with explicit header deadlines and bounded task ownership.
-use std::{future::Future, io, sync::Arc};
+use std::{
+    future::Future,
+    io,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use axum::Router;
-use hyper::server::conn::http1;
+use axum::http::StatusCode;
+use hyper::{server::conn::http1, service::Service as _};
 use hyper_util::{
     rt::{TokioIo, TokioTimer},
     service::TowerToHyperService,
@@ -13,13 +21,14 @@ use tokio::{
     task::JoinSet,
 };
 
-use crate::ServerConfig;
+use crate::{ServerConfig, request_log::RequestLog};
 
 pub(crate) async fn serve(
     listener: TcpListener,
     router: Router,
     config: ServerConfig,
     budget: Arc<Budget>,
+    log: Arc<RequestLog>,
     shutdown: impl Future<Output = ()>,
 ) -> io::Result<()> {
     let capacity = config
@@ -37,13 +46,27 @@ pub(crate) async fn serve(
                 let permit = match &capacity {
                     Some(capacity) => match Arc::clone(capacity).try_acquire_owned() {
                         Ok(permit) => Some(permit),
-                        Err(_) => { drop(socket); continue; }
+                        Err(_) => {
+                            drop(socket);
+                            log.transport_failure(Some(peer), crate::request_log::connection_limit_detail());
+                            continue;
+                        }
                     },
                     None => None,
                 };
                 let service = TowerToHyperService::new(router.clone().layer(axum::Extension(peer)));
+                // Requests whose head parsed on this connection, and bytes it
+                // read, to tell a head that never arrived from an idle one.
+                let heads = Arc::new(AtomicU64::new(0));
+                let read = Arc::new(AtomicU64::new(0));
+                let counted = Arc::clone(&heads);
+                let service = hyper::service::service_fn(move |request| {
+                    counted.fetch_add(1, Ordering::Relaxed);
+                    service.call(request)
+                });
                 let mut stopped = stopped.clone();
                 let budget = Arc::clone(&budget);
+                let log = Arc::clone(&log);
                 connections.spawn(async move {
                     let _permit = permit;
                     let waiting = budget.waiting.enter(crate::waiting::Stage::Transport);
@@ -55,14 +78,21 @@ pub(crate) async fn serve(
                     drop(waiting);
                     let mut builder = http1::Builder::new();
                     builder.timer(TokioTimer::new()).header_read_timeout(config.header_read_timeout).max_buf_size(READ_BUFFER);
-                    let connection = builder.serve_connection(TokioIo::new(MeteredSocket { socket, budget }), service);
+                    let socket = MeteredSocket { socket, budget, read: Arc::clone(&read) };
+                    let connection = builder.serve_connection(TokioIo::new(socket), service);
                     tokio::pin!(connection);
-                    tokio::select! {
-                        _ = &mut connection => {},
+                    let result = tokio::select! {
+                        result = &mut connection => result,
                         _ = stopped.changed() => {
                             connection.as_mut().graceful_shutdown();
-                            let _ = connection.await;
+                            connection.await
                         }
+                    };
+                    let first = heads.load(Ordering::Relaxed) == 0 && read.load(Ordering::Relaxed) > 0;
+                    if let Err(error) = result
+                        && let Some(detail) = head_failure(&error, first)
+                    {
+                        log.transport_failure(Some(peer), detail);
                     }
                 });
             }
@@ -71,6 +101,31 @@ pub(crate) async fn serve(
     let _ = stop.send(true);
     while connections.join_next().await.is_some() {}
     Ok(())
+}
+
+/// The failure line of a request whose head hyper refused: one that did not
+/// parse, which hyper answered, or the connection's first head that did not
+/// arrive within the header deadline. A later head's deadline also expires on
+/// an idle keep-alive connection, so only the first counts.
+fn head_failure(error: &hyper::Error, first: bool) -> Option<crate::request_log::FailureDetail> {
+    if error.is_parse_too_large() {
+        Some(crate::request_log::transport_detail(
+            StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
+            "request head exceeds the size limit",
+        ))
+    } else if error.is_parse() {
+        Some(crate::request_log::transport_detail(
+            StatusCode::BAD_REQUEST,
+            "request head did not parse",
+        ))
+    } else if error.is_timeout() && first {
+        Some(crate::request_log::transport_detail(
+            StatusCode::REQUEST_TIMEOUT,
+            "request head did not arrive in time",
+        ))
+    } else {
+        None
+    }
 }
 
 // Poll read closure without requesting ordinary readability: queued body
@@ -142,6 +197,8 @@ impl Budget {
 struct MeteredSocket {
     socket: tokio::net::TcpStream,
     budget: Arc<Budget>,
+    /// This connection's bytes read.
+    read: Arc<AtomicU64>,
 }
 
 impl tokio::io::AsyncRead for MeteredSocket {
@@ -152,10 +209,9 @@ impl tokio::io::AsyncRead for MeteredSocket {
     ) -> std::task::Poll<io::Result<()>> {
         let before = buf.filled().len();
         let result = std::pin::Pin::new(&mut self.socket).poll_read(cx, buf);
-        self.budget.read.fetch_add(
-            (buf.filled().len() - before) as u64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
+        let read = (buf.filled().len() - before) as u64;
+        self.budget.read.fetch_add(read, Ordering::Relaxed);
+        self.read.fetch_add(read, Ordering::Relaxed);
         result
     }
 }
@@ -236,7 +292,7 @@ mod tests {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = listener.local_addr().unwrap();
             let (stop, stopped) = tokio::sync::oneshot::channel();
-            let server = tokio::spawn(serve(listener, router, ServerConfig::default(), Arc::clone(&budget), async { let _ = stopped.await; }));
+            let server = tokio::spawn(serve(listener, router, ServerConfig::default(), Arc::clone(&budget), RequestLog::new(None, Vec::new()), async { let _ = stopped.await; }));
             let wire = format!("POST / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 32768\r\n\r\n{}", "x".repeat(32768));
             let mut clients = Vec::new();
             for _ in 0..2 {

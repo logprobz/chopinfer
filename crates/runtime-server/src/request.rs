@@ -757,19 +757,14 @@ fn validate_single_turn_plain_chat(request: &ChatRequest) -> Result<(), ApiError
 }
 
 fn decode<'a, T: Deserialize<'a>>(body: &'a [u8]) -> Result<T, ApiError> {
-    crate::json_limits::validate(body)
-        .map_err(|error| ApiError::invalid(format!("invalid JSON request: {error}"), None))?;
+    crate::json_limits::validate(body).map_err(|error| ApiError::invalid_json(&error, None))?;
     let mut deserializer = serde_json::Deserializer::from_slice(body);
     let value = T::deserialize(&mut deserializer).map_err(|error| {
-        let message = error.to_string();
-        ApiError::invalid(
-            format!("invalid JSON request: {message}"),
-            json_error_parameter(&message),
-        )
+        ApiError::invalid_json(&error, json_error_parameter(&error.to_string()))
     })?;
     deserializer
         .end()
-        .map_err(|error| ApiError::invalid(format!("invalid JSON request: {error}"), None))?;
+        .map_err(|error| ApiError::invalid_json(&error, None))?;
     Ok(value)
 }
 

@@ -2267,6 +2267,9 @@ mod responses;
 #[path = "frontend_contract/lifecycle.rs"]
 mod lifecycle;
 
+#[path = "frontend_contract/request_log.rs"]
+mod request_log;
+
 #[tokio::test]
 async fn disconnect_after_nonstreaming_admission_cancels_generation() {
     let backend = Arc::new(BatchFailureBackend {

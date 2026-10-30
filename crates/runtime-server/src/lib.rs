@@ -37,6 +37,8 @@ mod metrics;
 pub use lifecycle::{serve_with_shutdown, serve_with_shutdown_and_http_options};
 pub use runtime_sampling::SamplingDefaults;
 mod request;
+mod request_log;
+pub use request_log::{EngineSummaryV1, LatencyHistogramV1, RequestLogSinkV1};
 mod response;
 pub use response::ChatEventFoldV1;
 mod responses;
@@ -893,6 +895,7 @@ struct ServerState {
     /// The `serving` member of every health response, when the host named
     /// what it serves.
     serving: Option<serde_json::Value>,
+    request_log: Arc<request_log::RequestLog>,
 }
 
 pub fn router(
@@ -937,7 +940,7 @@ pub fn router_with_options(
     options: HttpOptions,
 ) -> Result<Router, ServerBuildError> {
     configured_router(backend, frontend, config, clock, metrics_provider, options)
-        .map(|(router, _)| router)
+        .map(|(router, _, _)| router)
 }
 
 fn configured_router(
@@ -947,7 +950,8 @@ fn configured_router(
     clock: Arc<dyn MonotonicClock>,
     metrics_provider: Arc<dyn MetricsSnapshotProvider>,
     options: HttpOptions,
-) -> Result<(Router, Arc<transport::Budget>), ServerBuildError> {
+) -> Result<(Router, Arc<ServerState>, std::time::Duration), ServerBuildError> {
+    let summary_interval = summary_interval(&options);
     router_with_lifecycle(
         backend,
         aliases::wrap(frontend, &options.served_model_names),
@@ -956,9 +960,47 @@ fn configured_router(
         metrics_provider,
         Arc::new(Semaphore::new(config.max_in_flight)),
         CancellationSignal::new(),
-        options.serving_identity.as_ref(),
+        &options,
     )
-    .map(|(router, transport)| (options.layer(router), transport))
+    .map(|(router, state)| (logged(options.layer(router), &state), state, summary_interval))
+}
+
+/// How often the server writes a summary line.
+pub(crate) fn summary_interval(options: &HttpOptions) -> std::time::Duration {
+    options
+        .summary_interval
+        .unwrap_or(std::time::Duration::from_secs(60))
+        .max(std::time::Duration::from_millis(10))
+}
+
+/// Adds the request log as the outermost layer, so it sees every answer,
+/// including the deployment policy's refusals.
+pub(crate) fn logged(router: Router, state: &ServerState) -> Router {
+    router.layer(axum::middleware::from_fn_with_state(
+        Arc::clone(&state.request_log),
+        request_log::middleware,
+    ))
+}
+
+/// Writes a summary line every `interval` until dropped.
+pub(crate) async fn summarize(state: Arc<ServerState>, interval: std::time::Duration) {
+    let mut base = request_log::SummaryBase::default();
+    let mut last = tokio::time::Instant::now();
+    let mut ticks = tokio::time::interval_at(last + interval, interval);
+    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        let now = ticks.tick().await;
+        let (line, next) = request_log::summary_line(
+            now - last,
+            state.request_log.totals(),
+            &state.admission_metrics.totals(),
+            state.metrics.summary(),
+            &base,
+        );
+        state.request_log.write_summary(line);
+        base = next;
+        last = now;
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -970,8 +1012,8 @@ fn router_with_lifecycle(
     metrics_provider: Arc<dyn MetricsSnapshotProvider>,
     in_flight: Arc<Semaphore>,
     drain_expired: CancellationSignal,
-    serving: Option<&ServingIdentity>,
-) -> Result<(Router, Arc<transport::Budget>), ServerBuildError> {
+    options: &HttpOptions,
+) -> Result<(Router, Arc<ServerState>), ServerBuildError> {
     let backend_limit = backend.maximum_sequence_tokens();
     if backend_limit == 0 {
         return Err(ServerBuildError::ZeroBackendSequenceLimit);
@@ -992,8 +1034,14 @@ fn router_with_lifecycle(
             backend: backend_limit,
         });
     }
-    error::initialize_refusal_logger();
-    let serving = serving.map(|identity| identity::health_member(identity, frontend.models()));
+    let serving = options
+        .serving_identity
+        .as_ref()
+        .map(|identity| identity::health_member(identity, frontend.models()));
+    let request_log = request_log::RequestLog::new(
+        options.request_log_sink.clone(),
+        frontend.models().iter().map(|model| model.id.clone()).collect(),
+    );
     let transport = transport::Budget::new(config.transport_budget_bytes);
     let state = Arc::new(ServerState {
         waiting: Arc::clone(&transport.waiting),
@@ -1023,6 +1071,7 @@ fn router_with_lifecycle(
             config.responses_store_bytes,
         ),
         serving,
+        request_log,
     });
     let router = Router::new()
         .route("/health", get(response::health))
@@ -1043,10 +1092,10 @@ fn router_with_lifecycle(
         )
         .with_state(Arc::clone(&state))
         .layer(axum::middleware::from_fn_with_state(
-            state,
+            Arc::clone(&state),
             lifecycle::admission,
         ));
-    Ok((router, transport))
+    Ok((router, state))
 }
 
 async fn step_profile(State(state): State<Arc<ServerState>>) -> impl IntoResponse {
@@ -1107,7 +1156,7 @@ pub async fn serve_with_metrics(
     clock: Arc<dyn MonotonicClock>,
     metrics_provider: Arc<dyn MetricsSnapshotProvider>,
 ) -> io::Result<()> {
-    let (router, transport) = configured_router(
+    let (router, state, interval) = configured_router(
         backend,
         frontend,
         config,
@@ -1116,8 +1165,21 @@ pub async fn serve_with_metrics(
         HttpOptions::default(),
     )
     .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
-    let _refusal_log_flush = error::RefusalLogFlushGuard;
-    transport::serve(listener, router, config, transport, std::future::pending()).await
+    let summaries = summarize(Arc::clone(&state), interval);
+    let served = transport::serve(
+        listener,
+        router,
+        config,
+        Arc::clone(&state.transport),
+        Arc::clone(&state.request_log),
+        std::future::pending(),
+    );
+    let result = tokio::select! {
+        result = served => result,
+        () = summaries => unreachable!("summaries run until dropped"),
+    };
+    state.request_log.flush();
+    result
 }
 
 pub async fn serve(

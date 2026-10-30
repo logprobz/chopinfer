@@ -107,8 +107,12 @@ impl Intake {
             let chunk = match timeout_at(deadline, stream.next()).await {
                 Err(_) => return Err(body_timeout()),
                 Ok(None) => break,
-                Ok(Some(Err(_))) => {
-                    return Err(ApiError::invalid("request body could not be read", None));
+                Ok(Some(Err(error))) => {
+                    let mut refusal = ApiError::invalid("request body could not be read", None);
+                    if client_left(&error) {
+                        refusal.log.detail_mut().disconnected = true;
+                    }
+                    return Err(refusal);
                 }
                 Ok(Some(Ok(chunk))) => chunk,
             };
@@ -166,13 +170,40 @@ fn declared_length(headers: &axum::http::HeaderMap) -> Option<usize> {
         .ok()
 }
 
+/// Whether a body read failed because the client left: hyper reports an
+/// incomplete message or a closed connection, or the socket was reset.
+fn client_left(error: &axum::Error) -> bool {
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(error) = source {
+        if let Some(error) = error.downcast_ref::<hyper::Error>()
+            && (error.is_incomplete_message() || error.is_closed() || error.is_canceled())
+        {
+            return true;
+        }
+        if let Some(error) = error.downcast_ref::<std::io::Error>()
+            && matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::UnexpectedEof
+            )
+        {
+            return true;
+        }
+        source = error.source();
+    }
+    false
+}
+
 fn body_timeout() -> ApiError {
     ApiError {
         status: StatusCode::REQUEST_TIMEOUT,
-        message: "request body did not arrive in time".to_owned(),
+        message: "request body did not arrive in time".into(),
         kind: "RequestTimeoutError",
         code: None,
         parameter: None,
+        log: crate::error::ErrorLog::default(),
     }
 }
 

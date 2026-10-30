@@ -34,12 +34,15 @@ pub(crate) async fn detokenize(
 async fn handle(state: Arc<ServerState>, request: Request<Body>, decode: bool) -> Response {
     let mut waiting = state.waiting.enter(crate::waiting::Stage::Intake);
     let id = next_request_id();
-    let peer = request.extensions().get::<std::net::SocketAddr>().copied();
+    let record = crate::request_log::RecordHandle::of(&request);
+    record.set_request_id(&id);
+    record.set_stage(crate::request_log::Stage::Intake);
     let result = read(&state, request, decode).await;
     // Tokenizing a large body is synchronous work, kept off the async workers.
     let result = match result {
         Ok((body, intake)) => {
             waiting.move_to(crate::waiting::Stage::Preparation);
+            record.set_stage(crate::request_log::Stage::Preparation);
             let (state, request_id) = (Arc::clone(&state), id.clone());
             let cancellation = CancellationSignal::new();
             let leaving = CancelOnDrop(Some(cancellation.clone()));
@@ -60,10 +63,7 @@ async fn handle(state: Arc<ServerState>, request: Request<Body>, decode: bool) -
             insert_request_id(&mut response, &id);
             response
         }
-        Err(error) => {
-            error.log_model_refusal(peer, state.frontend.models());
-            error.into_response(&id)
-        }
+        Err(error) => error.into_response(&id),
     }
 }
 
@@ -252,7 +252,7 @@ pub fn prepare_chat_request_v1(
         &CancellationSignal::new(),
     )
     .map_err(|error| FrontendErrorV1 {
-        message: error.message,
+        message: error.message.into_owned(),
         parameter: error.parameter,
     })
 }

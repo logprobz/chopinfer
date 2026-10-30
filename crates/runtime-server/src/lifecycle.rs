@@ -26,7 +26,7 @@ pub(crate) async fn admission(
         state
             .admission_metrics
             .response(axum::http::StatusCode::SERVICE_UNAVAILABLE);
-        let mut response = draining_response("shutdown");
+        let mut response = draining_response(&crate::response::next_request_id());
         if readiness_probe(&request) {
             response
                 .extensions_mut()

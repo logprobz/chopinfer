@@ -734,9 +734,10 @@ async fn requests_the_drain_ends_are_warnings() {
     let _ = server.shutdown.take().unwrap().send(());
     tokio::time::sleep(Duration::from_millis(50)).await;
     let refused = server
-        .request(&completion(json!({"model": MODEL, "prompt": "x"})))
+        .open(completion(json!({"model": MODEL, "prompt": "x"})))
         .await;
-    assert_eq!(refused.status, 503);
+    let refused = String::from_utf8(refused.await.unwrap()).unwrap();
+    assert!(refused.starts_with("HTTP/1.1 503"), "{refused}");
     // A draining server's readiness answer is the answer a probe asked for.
     let probed = server.request(&get("/health")).await;
     assert_eq!(probed.status, 503, "{}", probed.body);
@@ -758,6 +759,13 @@ async fn requests_the_drain_ends_are_warnings() {
 
     assert_failure(&lines[0], 503, "warn");
     assert_eq!(lines[0]["message"], "server is draining");
+    // Each refusal has its own ID, the one its response carries.
+    let id = lines[0]["request_id"].as_str().unwrap();
+    assert!(id.starts_with("req_"), "{:#}", lines[0]);
+    assert!(
+        refused.contains(&format!("x-request-id: {id}\r\n")),
+        "{refused}"
+    );
     for line in &lines[1..] {
         assert_failure(line, 503, "warn");
         assert_eq!(line["code"], "shutdown_timeout", "{line:#}");

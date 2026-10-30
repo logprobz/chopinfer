@@ -1031,25 +1031,31 @@ cannot be deduplicated by device allocation identity: an anchor's shared
 tail can change without that identity changing. Reusable host prefix caching
 (`--kv-offload-prefix on`) remains refused.
 
-A 2026-10-30 study of DeepSeek V4.1 Flash TP4 DSpark found no case for a RAM
-prefix tier. Its native KV pool holds 318,100 pages of 64 tokens per rank,
-about 20M tokens. A RAM tier is process memory, so a restart, worker restart
-or deploy clears it with the GPU cache. It cannot shorten the cold prefill
+A reusable RAM prefix tier is deferred, not rejected: no model has one
+today. MiMo, Qwen and GLM already qualify request offload
+(`chop.kv-offload.v1`) and do not read Engram images through the page cache,
+so they are the natural first consumers when the work resumes. A 2026-10-30
+study of DeepSeek V4.1 Flash TP4 DSpark found little benefit for that model
+today. Its native KV pool holds 318,100 pages of 64 tokens per rank, about
+20M tokens. A RAM tier is process memory, so a restart, worker restart or
+deploy clears it with the GPU cache. It cannot shorten the cold prefill
 after a restart: about 31 s for a 250K-token prompt, about 168 s for five
 250K and five 30K sessions. GPU capacity is not the limit either: those ten
 frontiers use 7.3% of the pool, or 13.8% right after cold prefill while its
-grid anchors remain. The observed losses came from eviction order: under LRU,
-superseded snapshots filled the pool and idle sessions lost their newest
-anchor. In a simulation at this geometry, ancestry eviction raised the share
-of idle-return prompt tokens served from cache from 79.7% to 98.4%. Adding a
-64 GiB RAM tier raised it to 98.9%. Transfer is not the obstacle: a 250K
-anchor is 229.7 MB per rank, milliseconds of PCIe against 31 s of prefill.
-Pinned RAM is the obstacle. DeepSeek reads its two Engram images (203 GB)
-through the page cache, and a 65 GiB page-cache loss once cut their
-residency from about 15% to 5%. It raised major faults per measured window
-from about 14 to 358-1,172. Offload preflight checks MemAvailable, which
-counts that cache. DeepSeek also does not declare `chop.kv-offload.v1`.
-Reconsider a RAM tier only if both of these hold, with ancestry eviction on:
+grid anchors remain. The observed losses came from eviction order: under
+LRU, superseded snapshots filled the pool and idle sessions lost their
+newest anchor. In a simulation at this geometry, ancestry eviction raised
+the share of idle-return prompt tokens served from cache from 79.7% to
+98.4%. Adding a 64 GiB RAM tier raised it to 98.9%. Transfer is not the
+obstacle: a 250K anchor is 229.7 MB per rank, milliseconds of PCIe against
+31 s of prefill. Pinned RAM is the obstacle. DeepSeek reads its two Engram
+images (203 GB) through the page cache, and a 65 GiB page-cache loss once
+cut their residency from about 15% to 5%. It raised major faults per
+measured window from about 14 to 358-1,172. Offload preflight checks
+MemAvailable, which counts that cache. DeepSeek also does not declare
+`chop.kv-offload.v1`.
+For DeepSeek it becomes worthwhile only if both of these hold, with ancestry
+eviction on:
 - maximal evictions of frontiers that are later requested again cost more
   than about 5% of computed prefill (watch
   `chop_prefix_cache_evictions_total{class="maximal"}` and

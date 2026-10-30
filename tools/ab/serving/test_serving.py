@@ -2,6 +2,7 @@
 """The serving runner on CPU fixtures: stub GPU queries, a loopback stub
 server and client, and dummy processes. Never invokes a GPU tool or a real
 server."""
+import atexit
 import copy
 from dataclasses import replace
 import hashlib
@@ -68,9 +69,25 @@ sys.argv = sys.argv[2:]
 runpy.run_path(sys.argv[0], run_name='__main__')
 '''
 
+# A one-test module that test_a_stopped_test_leaves_no_process runs in a
+# child interpreter (argv: this directory and the stub server's start
+# record). Its run's server never becomes ready, so the run keeps its target
+# and server live until the child is stopped.
+STOPPED_TEST = '''
+import sys, unittest
+sys.path.insert(0, sys.argv[1])
+import test_serving
+from test_serving import setUpModule, tearDownModule
+class Stopped(test_serving.Base):
+    def test_stopped(self):
+        c = self.config(); c['env'].update(STUB_SERVER='hang', STUB_STARTS=sys.argv[2])
+        self.execute(c)
+unittest.main(argv=sys.argv[:1])
+'''
+
 
 def setUpModule():
-    global ROOT, _directory, _marker, _inherited
+    global ROOT, _directory, _marker, _inherited, _previous_sigterm
     # Installs refuse group- and other-writable files, as the runner's own
     # main() ensures.
     os.umask(0o022)
@@ -79,12 +96,16 @@ def setUpModule():
     _inherited = os.environ.get(MARKER)
     _marker = (_inherited + '/' if _inherited else '') + uuid.uuid4().hex
     os.environ[MARKER] = _marker
+    _previous_sigterm = signal.signal(signal.SIGTERM, terminated)
+    atexit.register(stop_at_exit)
 
 
 def tearDownModule():
     try:
         left = kill_started(_marker)
     finally:
+        atexit.unregister(stop_at_exit)
+        signal.signal(signal.SIGTERM, _previous_sigterm)
         if _inherited is None:
             os.environ.pop(MARKER, None)
         else:
@@ -92,6 +113,21 @@ def tearDownModule():
         _directory.cleanup()
     if left:
         raise AssertionError('processes this module started outlived it: ' + describe(left))
+
+
+def terminated(signum, frame):
+    # ci/runner.py stops a step with SIGTERM. End the run as Ctrl-C does:
+    # unittest lets KeyboardInterrupt through, skipping cleanups and
+    # tearDownModule, and stop_at_exit then stops what the run started. A
+    # second SIGTERM cannot cut that stop short.
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    raise KeyboardInterrupt(f'signal {signum}')
+
+
+def stop_at_exit():
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    kill_started(_marker)
 
 
 def live_started(marker):
@@ -228,8 +264,13 @@ class Base(unittest.TestCase):
         path = self.root / 'run.json'; write(path, c)
         argv = [sys.executable, '-B', *(['-c', driver, str(HERE)] if driver else []), str(HERE / 'run.py'), str(path)]
         argv += ['--dry-run'] if dry else ['--out', str(self.root / 'output')]
+        # On SIGTERM or Ctrl-C, subprocess.run kills run.py and stop_at_exit
+        # the rest. Its own session matters only when this test's process
+        # group is SIGKILLed with no SIGTERM first: run.py then survives
+        # until its next status line meets the closed pipe, and runs its own
+        # owned cleanup instead of abandoning its targets.
         result = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=1800,
-                                env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+                                env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'), start_new_session=True)
         (self.root / 'driver.log').write_bytes(result.stdout)
         return result
     def assert_dead(self, pid):
@@ -619,8 +660,9 @@ class DriverTests(Base):
         c = self.config(); c['env']['STUB_SERVER'] = 'hang'
         path = self.root / 'run.json'; write(path, c)
         with (self.root / 'driver.log').open('wb') as log:
+            # Its own session, as in Base.execute.
             process = subprocess.Popen([sys.executable, '-B', str(HERE/'run.py'), str(path), '--out', str(self.root/'output')],
-                                       stdout=log, stderr=log)
+                                       stdout=log, stderr=log, start_new_session=True)
             try:
                 deadline = time.monotonic() + 120
                 while not Path(c['env']['STUB_STARTS']).exists():
@@ -632,6 +674,47 @@ class DriverTests(Base):
                     process.kill(); process.wait()
         self.assert_no_children(c)
         self.assertEqual(len(Path(c['env']['STUB_STARTS']).read_text().splitlines()), 1)
+    def test_a_stopped_test_leaves_no_process(self):
+        # ci/runner.py stops a step with SIGTERM to its process group, then
+        # SIGKILL to the group once the leader exits; a terminal sends
+        # SIGINT. The stopped test's target and hang server ignore both.
+        def runner(pid):
+            os.killpg(pid, signal.SIGTERM)
+            deadline = time.monotonic() + 10  # ci/runner.py's default grace
+            while time.monotonic() < deadline and os.waitid(
+                    os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
+                time.sleep(.05)
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        def terminal(pid):
+            os.killpg(pid, signal.SIGINT)
+        for stop in [runner, terminal]:
+            with self.subTest(stop=stop.__name__):
+                starts, log = self.root / (stop.__name__ + '.starts'), self.root / (stop.__name__ + '.log')
+                # The child's directory lives in this test's, so a stop of this
+                # run, which kills the child before it can clean up, removes it.
+                with log.open('wb') as output:
+                    child = subprocess.Popen([sys.executable, '-B', '-c', STOPPED_TEST, str(HERE), str(starts)],
+                                             stdout=output, stderr=subprocess.STDOUT, start_new_session=True,
+                                             env=dict(os.environ, TMPDIR=str(self.root)))
+                try:
+                    deadline = time.monotonic() + 120
+                    while not (starts.exists() and starts.read_text().endswith('\n')):
+                        self.assertLess(time.monotonic(), deadline, log.read_text())
+                        self.assertIsNone(child.poll(), log.read_text()); time.sleep(.02)
+                    server = int(starts.read_text())
+                    # This run's own exit sweep would reach the child's run.
+                    self.assertLessEqual({child.pid, server}, {p.pid for p in live_started(_marker)})
+                    stop(child.pid)
+                    child.wait(timeout=120)
+                finally:
+                    if child.poll() is None:
+                        child.kill(); child.wait()
+                left = kill_started(_marker)
+                if left:
+                    self.fail('the stopped test left: ' + describe(left) + '\n' + log.read_text())
     def test_slow_drip_health_is_bounded(self):
         c = self.config(); c['env']['STUB_SERVER'] = 'slow-health'; c['timeouts']['http'] = .3
         # The stub drips one byte a second (hundreds of seconds for /health):

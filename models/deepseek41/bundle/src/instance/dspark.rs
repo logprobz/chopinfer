@@ -433,8 +433,11 @@ impl Instance {
             }
         };
         // An allocated step's verified drafts stay on the device, so only
-        // the device results path takes it. These refusals precede any
-        // device work, so the host may fail just this batch and go on.
+        // the device results path takes it. These refusals precede prefetch
+        // consumption and drafting. Graph maintenance under pressure may
+        // already have called host services; the ABI sees those calls and
+        // keeps such a refusal fatal, so the host fails just this batch
+        // only when nothing ran before it.
         let allocated =
             BatchCodecV1::decode(request).is_ok_and(|batch| batch.verify_allocation().is_some());
         if allocated && !sink.mapped_sampling_enabled() {

@@ -28,7 +28,9 @@ SPEC.loader.exec_module(LAUNCHER)
 SI_KERNEL = 0x80
 
 # A heavy command stand-in: records that it started, then holds its slot
-# until the test writes its release file.
+# until the test writes its release file. It also stops once the test's
+# directory is gone: a stand-in no process waits for (a detached grandchild)
+# can miss a release file that tearDown removes with the directory.
 HOLD = """
 import json, os, pathlib, sys, time
 name, directory = sys.argv[1], pathlib.Path(sys.argv[2])
@@ -36,7 +38,7 @@ facts = {"pid": os.getpid(), "nice": os.nice(0), "cpus": sorted(os.sched_getaffi
          "env": {k: v for k, v in os.environ.items() if k.startswith(("CARGO", "CHOPINFER", "RUST", "NEXTEST", "OMP"))}}
 (directory / (name + ".partial")).write_text(json.dumps(facts))
 (directory / (name + ".partial")).rename(directory / (name + ".started"))
-while not (directory / (name + ".release")).exists():
+while not (directory / (name + ".release")).exists() and directory.exists():
     time.sleep(0.02)
 """
 
@@ -179,6 +181,15 @@ class Queue(unittest.TestCase):
     def release(self, name):
         (self.dir / (name + ".release")).write_text("")
         return self.processes[name].wait(timeout=20)
+
+    def exits(self, pid):
+        """Fails, after killing it, if process `pid` is still running 5 seconds on."""
+        deadline = time.monotonic() + 5
+        while not gone(pid) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if not gone(pid):
+            os.kill(pid, signal.SIGKILL)
+            self.fail(f"process {pid} outlived its test")
 
     def tickets(self):
         return sorted((self.dir / "state/queue").glob("*.json"))
@@ -393,10 +404,14 @@ class Queue(unittest.TestCase):
         grand = ["bash", "-c", '"$0" -c "$1" grand "$2" &', sys.executable, HOLD, str(self.dir)]
         self.releases.append(self.dir / "grand.release")
         self.assertEqual(self.start("a", command=grand).wait(timeout=20), 0)
-        self.assertIsNotNone(self.started("grand"))
+        facts = self.started("grand")
+        self.assertIsNotNone(facts)
+        # Cleanups run after tearDown has removed the directory; no launcher waits for
+        # the grandchild, so it must stop by itself.
+        self.addCleanup(self.exits, facts["pid"])
         self.assertTrue(LAUNCHER.held(self.dir / "state/slot.1.lock"))
         record = json.loads((self.dir / "state/slot.1.json").read_text())
-        self.assertEqual((record["label"], record["cpus"]), ("a", self.started("grand")["cpus"]))
+        self.assertEqual((record["label"], record["cpus"]), ("a", facts["cpus"]))
 
     def test_a_nested_call_inherits_the_admission_and_a_forged_marker_queues(self):
         env = {"CHOPINFER_HEAVY_SLOTS": "1"}

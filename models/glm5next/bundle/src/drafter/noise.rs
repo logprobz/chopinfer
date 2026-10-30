@@ -1,4 +1,4 @@
-//! Coupled sampled drafts (`model_glm5next_contract::options::COUPLED_DRAFTS_OPTION`):
+//! Coupled sampled drafts (`model_glm5next_contract::draft_argmax::Proposals::Coupled`):
 //! each drafting request's noise from a batch's draft sampling records, and
 //! each drafter run's noise records by draft row.
 //!

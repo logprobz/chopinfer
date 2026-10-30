@@ -35,14 +35,10 @@ pub struct Uses {
     pub context_parallel: bool,
     /// The Sinkhorn mHC comm epilogue (`options::COMM_EPILOGUE_OPTION`).
     pub comm_epilogue: bool,
-    /// The MTP drafter, whose argmax gathers its pairs through the
-    /// context-parallel group all-gather
+    /// The MTP drafter, whose argmax adds the draft noise first and gathers
+    /// its pairs through the context-parallel group all-gather
     /// (`model_glm5next_contract::draft_argmax`).
     pub drafter: bool,
-    /// A drafter that couples its sampled drafts to the target sampler's
-    /// noise (`options::COUPLED_DRAFTS_OPTION`), whose argmax adds the
-    /// draft noise first (`model_glm5next_contract::draft_argmax`).
-    pub coupled_drafts: bool,
     /// Candidate prefill transport, loaded only when explicitly selected.
     pub prefill_dma: bool,
 }

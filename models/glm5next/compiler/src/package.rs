@@ -170,9 +170,8 @@ pub fn draft(
     if media {
         capabilities.push(id(model_glm5next_contract::encoder::MEDIA_CAPABILITY)?);
     }
-    // The MTP drafter reads each item's sampling inputs, so it may draft
-    // sampled items from the target sampler's noise
-    // (`options::COUPLED_DRAFTS_OPTION`).
+    // The MTP drafter reads each item's sampling inputs and drafts sampled
+    // items from the target sampler's noise (`draft_argmax::Proposals`).
     if mtp {
         capabilities.push(id(runtime_bundle_abi::DRAFT_SAMPLING_CAPABILITY_V1)?);
     }
@@ -241,8 +240,8 @@ pub fn draft(
 }
 
 /// The package's model options in name order: the layout (one allowed
-/// value), the Sinkhorn mHC comm epilogue and MTP coupled drafts switches
-/// (off by default) and the overridable runtime fields.
+/// value), the Sinkhorn mHC comm epilogue switch (off by default) and the
+/// overridable runtime fields.
 fn options(
     shape: Shape,
     quantization: &Layout,
@@ -251,7 +250,6 @@ fn options(
     let mut options = vec![
         quantization.model_option(),
         model_glm5next_contract::options::comm_epilogue_option(),
-        model_glm5next_contract::options::coupled_drafts_option(),
     ];
     options.extend(shape.geometry.model_options(runtime));
     options.sort_by(|a, b| a.name.cmp(&b.name));
@@ -436,7 +434,6 @@ mod tests {
             names,
             [
                 LAYOUT_OPTION,
-                model_glm5next_contract::options::COUPLED_DRAFTS_OPTION,
                 model_glm5next_contract::options::COMM_EPILOGUE_OPTION,
                 "text_config.index_topk"
             ]

@@ -56,9 +56,8 @@ pub struct Plan {
     pub layout: &'static Layout,
     pub index_topk: u32,
     pub context_parallel: u32,
-    /// Greedy, unless the instance runs the drafter and couples its drafts
-    /// (`options::COUPLED_DRAFTS_OPTION`): its argmax then prepares the
-    /// draft noise too.
+    /// Coupled when the instance runs the drafter, whose argmax then
+    /// prepares the draft noise too; greedy otherwise.
     pub proposals: Proposals,
 }
 

@@ -1,10 +1,9 @@
-//! Coupled sampled drafts (`runtime.mtp_coupled_drafts`, on by default) on
-//! an instance that runs the MTP drafter: create loads the draft noise's
-//! cubin and allocates each rank's noise records; each drafter run uploads
-//! its draft rows' records, its request's seed and temperature at the
-//! generated index of the run's draft position, and its argmax adds the
-//! noise first on every rank. With the option off the drafter proposes its
-//! argmax alone, and without a drafter the option issues nothing.
+//! Coupled sampled drafts on an instance that runs the MTP drafter: create
+//! loads the draft noise's cubin and allocates each rank's noise records;
+//! each drafter run uploads its draft rows' records, its request's seed and
+//! temperature at the generated index of the run's draft position, and its
+//! argmax adds the noise first on every rank. An instance without the
+//! drafter loads and allocates none of it.
 
 use runtime_bundle_sdk::DraftSamplingV1;
 
@@ -12,7 +11,7 @@ use super::*;
 use crate::buffers::Buffer;
 use kernel_core::draft_noise::{NOISE_BYTES, NoiseRecord};
 use model_glm5next_contract::contract::DRAFT_ITEMS;
-use model_glm5next_contract::sm120::engines::DRAFT_NOISE_SYMBOL;
+use model_glm5next_contract::sm120::engines::{DRAFT_NOISE_CUBIN, DRAFT_NOISE_SYMBOL};
 
 const PARTIAL: &str = "chop_row_argmax_partial_f32_v1";
 
@@ -22,17 +21,12 @@ fn sampled(previous: u64, rows: u32, bonus: u32, record: Option<DraftSamplingV1>
     drafted_sampling(7, previous, rows, bonus, 0, record)
 }
 
-/// A drafting instance on the MTP KV format, its model options naming the
-/// coupled drafts option as `coupled` (a JSON value), or not at all.
-fn create_drafting(host: &Rc<Host>, coupled: Option<&str>) -> BundleInstanceV1 {
-    let options = match coupled {
-        Some(value) => crate::config::tests::options_coupled_drafts(2048, value),
-        None => options(2048),
-    };
+/// A drafting instance on `host`'s KV format.
+fn create_drafting(host: &Rc<Host>) -> BundleInstanceV1 {
     api()
         .create(
             HostServicesTableV1::new(Rc::clone(host)),
-            &crate::config::tests::record_with(DECODE_BATCH, &options, host.format),
+            &crate::config::tests::record_with(DECODE_BATCH, &options(2048), host.format),
         )
         .unwrap_or_else(|error| panic!("fake-host create: {error:?} {:?}", host.logs.borrow()))
 }
@@ -88,13 +82,7 @@ fn symbol(line: &str) -> &str {
 #[test]
 fn sampled_items_draft_from_the_noise_of_each_position() {
     let host = mtp_host();
-    let mut instance = create_drafting(&host, Some("true"));
-    assert!(
-        host.logs
-            .borrow()
-            .iter()
-            .any(|line| line.contains("runtime.mtp_coupled_drafts=true: the MTP drafter"))
-    );
+    let mut instance = create_drafting(&host);
     let resolved = host
         .device
         .journal
@@ -173,103 +161,24 @@ fn count_launches(host: &FakeHost, from: usize, wanted: &str) -> usize {
         .count()
 }
 
-/// The journal of a drafting instance with the coupled drafts option as
-/// `coupled`, through a prompt chunk and two drafted steps of request 7
-/// with `record`, and the launches by stream of each step.
-fn drafted_journal(
-    coupled: Option<&str>,
-    record: Option<DraftSamplingV1>,
-) -> (Vec<String>, Vec<BTreeMap<u32, Vec<String>>>) {
-    let host = mtp_host();
-    let mut instance = create_drafting(&host, coupled);
+/// An instance on a KV format without the drafter's layer runs no drafter:
+/// it neither loads nor resolves the draft noise, and no step launches it
+/// (`buffers::tests` shows its records are allocated only with coupled
+/// drafts).
+#[test]
+fn an_instance_without_a_drafter_loads_no_draft_noise() {
+    let host = FakeHost::new((3, 32));
+    assert!(!has_mtp_layer(&host.format));
+    let mut instance = create_drafting(&host);
     crate::instance::run_lowered_stages_alone(instance.handle());
-    let mut steps = Vec::new();
-    let start = host.device.journal.borrow().len();
     instance
-        .execute(&prompt_chunk(7, 0, 10, true), &mut DraftSink::default())
+        .execute(&prompt_chunk(7, 0, 10, true), &mut NoRows::default())
         .unwrap();
     instance.commit().unwrap();
-    steps.push(launches_by_stream(&host, start));
-    for previous in [10, 12] {
-        let start = host.device.journal.borrow().len();
-        instance
-            .execute(&sampled(previous, 4, 21, record), &mut DraftSink::default())
-            .unwrap();
-        instance.commit_accepted(&[kept(7, 2)]).unwrap();
-        steps.push(launches_by_stream(&host, start));
-    }
-    instance.retire_request(7).unwrap();
     instance.destroy().unwrap();
-    assert_eq!(host.acquired.get(), host.released.get());
-    let journal = host.device.journal.borrow().clone();
-    (journal, steps)
-}
-
-/// With coupled drafts (the default) every stream launches what the
-/// greedy drafter (the option off) launches, under one consistent renaming
-/// of buffer handles (create's added module and records shift the handles
-/// after them), with each noise launch before an argmax partial added: a
-/// sampled record changes what the noise draws, never which launches run.
-#[test]
-fn coupled_drafters_add_only_the_noise_before_each_argmax() {
-    let (_, greedy) = drafted_journal(Some("false"), None);
-    for (coupled, record) in [
-        (None, None),
-        (Some("true"), None),
-        (None, Some(record(5, 41, 1.0))),
-    ] {
-        let (_, coupled) = drafted_journal(coupled, record);
-        assert_eq!(greedy.len(), coupled.len());
-        for (step, (greedy, coupled)) in greedy.iter().zip(&coupled).enumerate() {
-            assert_eq!(
-                greedy.keys().collect::<Vec<_>>(),
-                coupled.keys().collect::<Vec<_>>(),
-                "step {step}"
-            );
-            let mut noise = 0;
-            for (stream, lines) in coupled {
-                let kept = lines
-                    .iter()
-                    .filter(|line| symbol(line) != DRAFT_NOISE_SYMBOL)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                noise += lines.len() - kept.len();
-                assert_eq!(
-                    super::comm_epilogue::relabel(&kept),
-                    super::comm_epilogue::relabel(&greedy[stream]),
-                    "step {step}, stream {stream}"
-                );
-            }
-            // The prompt's extend pass launches once per rank; the first
-            // drafted step captures its extend pass (one row, a decode
-            // bucket) and its first draft step, the second replays the
-            // draft steps and captures its extend pass's verify bucket.
-            assert_eq!(noise, [4, 8, 4][step], "step {step}");
-        }
-    }
-}
-
-/// A record without the option creates, prefills, drafts, commits and
-/// retires exactly as an explicit true option, and on an instance that runs
-/// no drafter the option issues nothing either way.
-#[test]
-fn the_option_is_on_by_default_and_needs_a_drafter() {
-    let sampled = Some(record(5, 41, 1.0));
-    let (on, _) = drafted_journal(Some("true"), sampled);
-    let (absent, _) = drafted_journal(None, sampled);
-    assert_eq!(on, absent);
-    let journal = |coupled: Option<&str>| {
-        let host = FakeHost::new((3, 32));
-        assert!(!has_mtp_layer(&host.format));
-        let mut instance = create_drafting(&host, coupled);
-        crate::instance::run_lowered_stages_alone(instance.handle());
-        instance
-            .execute(&prompt_chunk(7, 0, 10, true), &mut NoRows::default())
-            .unwrap();
-        instance.commit().unwrap();
-        instance.destroy().unwrap();
-        host.device.journal.borrow().clone()
-    };
-    assert_eq!(journal(Some("true")), journal(None));
-    assert_eq!(journal(Some("false")), journal(None));
+    assert!(
+        host.device.journal.borrow().iter().all(|line| {
+            !line.contains(DRAFT_NOISE_SYMBOL) && !line.contains(DRAFT_NOISE_CUBIN)
+        })
+    );
 }

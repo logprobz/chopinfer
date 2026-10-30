@@ -5,12 +5,11 @@
 //! launch each chained projection and lowered projection in the layout's
 //! format. On the MTP KV format, a prompt chunk and a drafted step launch
 //! the MTP drafter's experts in the layout's MTP format (MXFP8, BF16 or
-//! block FP8), coupled to the target sampler's noise
-//! (`runtime.mtp_coupled_drafts`, on by default); the block-FP8 one drafts
-//! a sampled item. Every journal is pinned per layout.
+//! block FP8), coupled to the target sampler's noise; the block-FP8 one
+//! drafts a sampled item. Every journal is pinned per layout.
 
 use super::*;
-use crate::config::tests::{options_of, options_of_coupled_drafts};
+use crate::config::tests::options_of;
 use model_glm5next_contract::quantization::{
     Encoding, FP8_NVFP4_ROUTED, Layout, NVFP4_DENSE_ROUTED, NVFP4_ROUTED,
     test_support::{config_of, extra_checkpoints},
@@ -38,9 +37,8 @@ pub(super) struct Mix {
     /// rows.
     prefill: (usize, u64),
     drafted: (usize, u64),
-    /// Whether the drafted fixture samples its item ([`SAMPLED`]) under an
-    /// explicit `runtime.mtp_coupled_drafts`; the others couple by default
-    /// and draft their items greedily.
+    /// Whether the drafted fixture samples its item ([`SAMPLED`]); the
+    /// others draft their items greedily.
     sampled_drafts: bool,
 }
 
@@ -73,11 +71,10 @@ const SAMPLED: (u64, u64, f64) = (0x5eed_0c0f_fee0_0001, 1, 1.0);
 /// Create re-pinned when the KDA state pools moved before the serving KV
 /// pool: the one `serving kv` line follows their allocations and zeroes,
 /// every other line and handle as before. The prefill and drafted steps
-/// re-pinned when coupled drafts became the default
-/// (`runtime.mtp_coupled_drafts`): each drafter run uploads its noise
-/// records, greedy here, and the draft noise launches before each argmax
-/// partial; create's added module, resolves and records shift the handles
-/// after them.
+/// re-pinned when the drafter began coupling its drafts to the target
+/// sampler's noise: each drafter run uploads its noise records, greedy
+/// here, and the draft noise launches before each argmax partial; create's
+/// added module, resolves and records shift the handles after them.
 pub(super) const ROUTED: Mix = Mix {
     layout: &NVFP4_ROUTED,
     config: || config_of(&NVFP4_ROUTED),
@@ -262,13 +259,7 @@ impl Mix {
 
     /// [`Self::drafts`] on `host`.
     fn drafts_on(&self, host: &Rc<Host>) {
-        let mut instance = match self.sampled_drafts {
-            true => self.create_with(
-                host,
-                &options_of_coupled_drafts(self.layout.id, 2048, "true"),
-            ),
-            false => self.create(host),
-        };
+        let mut instance = self.create(host);
         let handle = instance.handle();
         crate::instance::run_lowered_stages_alone(handle);
         // The prompt chunk's journal holds its eager launches.

@@ -452,10 +452,10 @@ fn served_groups_run_full_target_steps() {
 /// and its final per rank, and their bindings).
 /// Re-pinned when GLM's own draft argmax kernels left its row cubin (two
 /// fewer resolves per rank at create; the ids issued after them renumber).
-/// Re-pinned when coupled drafts became the default
-/// (`runtime.mtp_coupled_drafts`): each drafter run uploads its noise
-/// records and launches the draft noise before each argmax partial, and
-/// create's added module, resolve and records shift the handles after them.
+/// Re-pinned when the drafter began coupling its drafts to the target
+/// sampler's noise: each drafter run uploads its noise records and launches
+/// the draft noise before each argmax partial, and create's added module,
+/// resolve and records shift the handles after them.
 #[test]
 fn served_groups_run_the_drafters_passes() {
     let single = run(1, true);

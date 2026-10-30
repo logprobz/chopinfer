@@ -15,9 +15,7 @@ use model_glm5next_contract::contract::{
 };
 use model_glm5next_contract::direct::{RANK_IMAGE_ROLE, index_role};
 use model_glm5next_contract::geometry::RuntimeValues;
-use model_glm5next_contract::options::{
-    COMM_EPILOGUE_OPTION, COUPLED_DRAFTS_OPTION, comm_epilogue_value, coupled_drafts_value,
-};
+use model_glm5next_contract::options::{COMM_EPILOGUE_OPTION, comm_epilogue_value};
 use model_glm5next_contract::quantization::{LAYOUT_OPTION, Layout};
 use runtime_bundle_abi::{BundleStatusV1, MODEL_OPTIONS_TAG_V1};
 use runtime_bundle_sdk::BatchReaderV1;
@@ -41,12 +39,6 @@ pub struct Configuration {
     /// sublayer boundary runs the Sinkhorn mHC comm epilogue
     /// (`crate::lower`), and create loads its cubin.
     pub comm_epilogue: bool,
-    /// The resolved `runtime.mtp_coupled_drafts` model option (on unless the
-    /// record turns it off): an instance that runs the MTP drafter proposes
-    /// each sampled item's drafts from the target sampler's noise
-    /// (`model_glm5next_contract::draft_argmax::Proposals::Coupled`), and
-    /// create loads the draft noise's cubin and allocates its records.
-    pub coupled_drafts: bool,
 }
 
 fn invalid<T>(_: T) -> BundleStatusV1 {
@@ -108,11 +100,6 @@ pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleS
             BundleStatusV1::InvalidArgument
         })?;
     let comm_epilogue = comm_epilogue_value(options.remove(COMM_EPILOGUE_OPTION).as_ref())
-        .map_err(|error| {
-            log(&error);
-            BundleStatusV1::InvalidArgument
-        })?;
-    let coupled_drafts = coupled_drafts_value(options.remove(COUPLED_DRAFTS_OPTION).as_ref())
         .map_err(|error| {
             log(&error);
             BundleStatusV1::InvalidArgument
@@ -184,7 +171,6 @@ pub fn decode(bytes: &[u8], log: impl Fn(&str)) -> Result<Configuration, BundleS
         layout,
         media,
         comm_epilogue,
-        coupled_drafts,
     })
 }
 
@@ -273,21 +259,6 @@ pub(crate) mod tests {
         ))
     }
 
-    /// The block-FP8 options with the coupled drafts option set to `value`
-    /// (a JSON value).
-    pub(crate) fn options_coupled_drafts(top_k: u32, value: &str) -> Vec<u8> {
-        options_of_coupled_drafts(FP8_BLOCK128.id, top_k, value)
-    }
-
-    /// [`options_of`] with the coupled drafts option set to `value` (a JSON
-    /// value).
-    pub(crate) fn options_of_coupled_drafts(layout: &str, top_k: u32, value: &str) -> Vec<u8> {
-        encoded(&format!(
-            "{{\"{LAYOUT_OPTION}\":\"{layout}\",\"{COUPLED_DRAFTS_OPTION}\":{value},\
-             \"text_config.index_topk\":{top_k}}}"
-        ))
-    }
-
     fn encoded(json: &str) -> Vec<u8> {
         let mut bytes = MODEL_OPTIONS_TAG_V1.to_vec();
         bytes.extend_from_slice(&(json.len() as u32).to_le_bytes());
@@ -312,29 +283,6 @@ pub(crate) mod tests {
         for value in ["1", "\"true\"", "null"] {
             assert_eq!(
                 read(&options_comm_epilogue(2048, value)).unwrap_err(),
-                BundleStatusV1::InvalidArgument,
-                "{value}"
-            );
-        }
-    }
-
-    /// The coupled drafts option reads as a Boolean, on when the record
-    /// omits it; any other value is refused.
-    #[test]
-    fn records_read_the_coupled_drafts_option() {
-        let read = |options: &[u8]| decode(&record(8, options), |_| {});
-        assert!(read(&options(2048)).unwrap().coupled_drafts);
-        assert!(
-            !read(&options_coupled_drafts(2048, "false"))
-                .unwrap()
-                .coupled_drafts
-        );
-        let on = read(&options_coupled_drafts(1024, "true")).unwrap();
-        assert!(on.coupled_drafts && !on.comm_epilogue);
-        assert_eq!(on.runtime.index_topk, 1024);
-        for value in ["1", "\"true\"", "null"] {
-            assert_eq!(
-                read(&options_coupled_drafts(2048, value)).unwrap_err(),
                 BundleStatusV1::InvalidArgument,
                 "{value}"
             );

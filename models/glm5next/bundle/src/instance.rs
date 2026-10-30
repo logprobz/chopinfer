@@ -418,7 +418,6 @@ impl Instance {
             context_parallel: cp_size > 1,
             comm_epilogue: self.config.comm_epilogue,
             drafter: self.drafter.is_some(),
-            coupled_drafts: self.ops.plan.proposals == Proposals::Coupled,
             prefill_dma: self.prefill_dma,
         };
         for &(context, _, _) in &ranks {
@@ -797,9 +796,9 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         log(&error);
         BundleStatusV1::InternalError
     })?;
-    // The ops, prepared once per process on the target's backend. Only a
-    // drafter couples its drafts.
-    let proposals = match verify.bundle_drafter && config.coupled_drafts {
+    // The ops, prepared once per process on the target's backend. The MTP
+    // drafter couples its sampled drafts to the target sampler's noise.
+    let proposals = match verify.bundle_drafter {
         true => Proposals::Coupled,
         false => Proposals::Greedy,
     };
@@ -892,16 +891,6 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         instance.log(&format!(
             "{}=true: the sublayer all-reduces run the Sinkhorn mHC comm epilogue",
             model_glm5next_contract::options::COMM_EPILOGUE_OPTION
-        ));
-    }
-    if instance.config.coupled_drafts {
-        let effect = match proposals {
-            Proposals::Coupled => "the MTP drafter proposes sampled drafts from the target noise",
-            Proposals::Greedy => "no MTP drafter runs, so nothing is coupled",
-        };
-        instance.log(&format!(
-            "{}=true: {effect}",
-            model_glm5next_contract::options::COUPLED_DRAFTS_OPTION
         ));
     }
     if instance.shared_overlap.on() {

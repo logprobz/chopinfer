@@ -184,8 +184,8 @@ pub enum Buffer {
     /// (`kernel_core::draft_noise::NoiseRecord`), one per draft row: the
     /// noise its argmax adds to the logits first
     /// (`model_glm5next_contract::draft_argmax::Proposals::Coupled`).
-    /// Last, and only with coupled drafts, so an instance without them
-    /// allocates what it did before.
+    /// Last, and only with coupled drafts, so an instance that drafts
+    /// nothing allocates none.
     DraftNoise,
 }
 

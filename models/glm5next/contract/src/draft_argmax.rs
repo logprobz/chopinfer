@@ -73,8 +73,9 @@ pub fn noise_query(shape: Shape) -> DraftNoise {
 }
 
 /// How a draft argmax proposes: the argmax of the drafter's logits, or of
-/// its logits coupled to the target sampler's noise
-/// (`crate::options::COUPLED_DRAFTS_OPTION`).
+/// its logits coupled to the target sampler's noise. An instance that runs
+/// the MTP drafter couples its drafts; the plain argmax serves instances
+/// that draft nothing and the kernel tests of the argmax alone.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Proposals {
     #[default]

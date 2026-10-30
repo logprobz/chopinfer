@@ -69,7 +69,8 @@ start_and_time() {
     local model=$1 label=$2 binary=$3 log pid started deadline healthy_ms
     log=$state/logs/$model-$label-$run_id.log
     started=$(now_ms)
-    nohup "$binary" "${arguments[@]}" >"$log" 2>&1 </dev/null &
+    # The timing reads startup lines, which serve writes at info.
+    CHOPINFER_LOG_LEVEL=info nohup "$binary" "${arguments[@]}" >"$log" 2>&1 </dev/null &
     pid=$!
     deadline=$(( $(date +%s) + ready_timeout ))
     until grep -Fq '"status":"listening"' "$log" && \

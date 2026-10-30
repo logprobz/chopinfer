@@ -1913,6 +1913,19 @@ class Calibration(unittest.TestCase):
             log.write_text(json.dumps(served) + '\n')
             self.assertEqual(len(calibrate.records(log)[0]), 1)
 
+    def test_logs_without_records_name_the_level_they_served_at(self):
+        with tempfile.TemporaryDirectory() as directory:
+            info = Path(directory) / 'info.log'
+            info.write_text('startup logging: level=info\nstartup readiness: 1.0s\n')
+            silent = Path(directory) / 'silent.log'
+            silent.write_text('startup readiness: 1.0s\n')
+            with self.assertRaises(SystemExit) as refused:
+                calibrate.calibrate([info, silent], None, 1)
+            message = str(refused.exception)
+            self.assertIn(f'{info} served at level=info', message)
+            self.assertIn(f'{silent} has no "startup logging: level=" line', message)
+            self.assertIn('--log-level debug', message)
+
     def test_allocating_server_logs_are_refused_before_labelling(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / 'server.log'

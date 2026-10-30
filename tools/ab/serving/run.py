@@ -398,7 +398,10 @@ class Runner:
             self.install_snapshots[name] = snapshot_install(receipt['path'], self.output / 'installs' / name, receipt,
                                                             preflight['model'])
             self.check()
-        self.env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', CUDA_VISIBLE_DEVICES=','.join(c['gpus']), **c['env'])
+        # The harness reads startup lines, written at info; the config, an
+        # install or a variant may still name another level.
+        self.env = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'CHOPINFER_LOG_LEVEL': 'info',
+                    'CUDA_VISIBLE_DEVICES': ','.join(c['gpus']), **c['env']}
         self.gpu = GPU(c, self.commands, self.env)
         self.tools = self.output / 'tools'
         self.tools.mkdir()

@@ -1835,7 +1835,7 @@ impl MetricsSnapshotProvider for NativeRuntimeMetricsV1 {
         Some(runtime_server::EngineSummaryV1 {
             requests_submitted: engine.requests_submitted,
             requests_completed: engine.requests_completed,
-            requests_failed: engine.errors,
+            requests_failed: engine.requests_failed(),
             requests_cancelled: engine.cancellations,
             prompt_tokens: engine.prompt_tokens,
             generation_tokens: engine.generation_tokens,

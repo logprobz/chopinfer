@@ -585,6 +585,16 @@ impl EngineMetrics {
 }
 
 impl EngineMetricsSnapshot {
+    /// Requests that ended failed: every terminal request that neither
+    /// completed nor was cancelled. Unlike `errors`, which counts error
+    /// events, a refused batch counts each request it held.
+    #[must_use]
+    pub const fn requests_failed(&self) -> u64 {
+        self.requests_terminal
+            .saturating_sub(self.requests_completed)
+            .saturating_sub(self.cancellations)
+    }
+
     #[must_use]
     pub fn prometheus(&self) -> String {
         let mut output = String::new();
@@ -823,6 +833,23 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::EngineMetrics;
+
+    #[test]
+    fn a_refused_batch_fails_each_request_it_held() {
+        let metrics = EngineMetrics::default();
+        for _ in 0..6 {
+            metrics.request_submitted(4);
+        }
+        metrics.request_succeeded(1);
+        metrics.cancellation();
+        // One refused batch of four requests is one error event.
+        metrics.batch_refused(4);
+        metrics.error();
+        metrics.request_failed(4);
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.errors, 1);
+        assert_eq!(snapshot.requests_failed(), 4);
+    }
 
     #[test]
     fn concurrent_snapshots_keep_request_lifecycle_counts_together() {

@@ -6,7 +6,7 @@
 pub(super) use kernels_sm120::gemm::fused::{
     HC_PADDED_MIX, HC_PRECOMPUTE_CUBIN, HC_PRECOMPUTED_MIX,
 };
-pub(super) use kernels_sm120::invariance::{Declared, Launched, OpKind, Program};
+pub(super) use kernels_sm120::invariance::{Declared, Launched, OpKind, Program, declaration};
 pub(super) use kernels_sm120::moe::parallel::PARALLEL_ROUTE_TICKET_BYTES;
 
 /// The full symbol of the encoder entry whose symbol reads `stem`.

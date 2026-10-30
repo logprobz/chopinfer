@@ -120,11 +120,16 @@ fn step(host: &FakeHost, instance: &mut BundleInstanceV1, request: &BatchRequest
 /// Prefills request 10 in slot 1 in `chunks` and returns the last chunk's
 /// drafter work; every drafter row read the right target row and token.
 fn prefill(shape: Shape, canonical: bool, chunks: &[u64]) -> Drafted {
+    prefill_steps(shape, canonical, chunks).pop().unwrap()
+}
+
+/// [`prefill`], returning every chunk's drafter work.
+fn prefill_steps(shape: Shape, canonical: bool, chunks: &[u64]) -> Vec<Drafted> {
     let (host, mut instance) = instance(shape, canonical);
     let mut start = 0;
-    let mut last = None;
+    let mut steps = Vec::new();
     for &rows in chunks {
-        last = Some(step(
+        steps.push(step(
             &host,
             &mut instance,
             &batch(vec![prompt(10, 1, start, &truths(start..start + rows))]),
@@ -140,7 +145,7 @@ fn prefill(shape: Shape, canonical: bool, chunks: &[u64]) -> Drafted {
     );
     instance.retire_request(10).unwrap();
     instance.destroy().unwrap();
-    last.unwrap()
+    steps
 }
 
 /// A continuing prefill's catch-up row runs in the prefill phase and, at
@@ -360,4 +365,98 @@ fn a_cancelled_continuing_prefill_runs_again_as_before() {
         );
         instance.destroy().unwrap();
     }
+}
+
+/// Every entry the candidate's prefill-phase runs launch for a stage that
+/// writes persistent drafter state declares what those runs rely on:
+/// - rows keep their bits at any cut (`Chunk::Any`), since a run starts at
+///   a continuing item's frontier (row `A - 1` after a hit at `A`, a lagging
+///   restore's) or at its chunk's start, and holds from one row to a full
+///   chunk;
+/// - rows keep their bits whatever other items share the launch
+///   (`Batch::Independent`);
+/// - per-slot state is kept at an anchor frontier at least `QSA_RING` rows
+///   past the item's first row in the run, the only anchors the drafter
+///   asks a run to keep (`run_drafter_with`).
+///
+/// Chunk lists cover runs of 1 to 128 rows, both sides of the largest graph
+/// bucket, a lagging catch-up of three rows and a full chunk; one prompt
+/// keeps an anchor. A mixed component recording the MTP layer launches the
+/// fixed program's entries (`mixed_mtp`), so this covers it too.
+#[test]
+fn prefill_rows_launch_entries_that_keep_rows_at_any_cut() {
+    use kernel_core::properties::{Batch, Chunk};
+    let owned = model_qwen38_contract::owned::declared();
+    let catalogs = model_qwen38_contract::sm120::catalogs();
+    let mut violations = BTreeSet::new();
+    for shape in [Shape::TP2, Shape::TP4] {
+        let mut launched = BTreeMap::<String, BTreeSet<String>>::new();
+        let mut record = |drafted: &Drafted| {
+            for (stage, symbols) in &drafted.persistent {
+                launched
+                    .entry(stage.clone())
+                    .or_default()
+                    .extend(symbols.iter().cloned());
+            }
+        };
+        for chunks in [
+            &[129][..],
+            &[64, 65],
+            &[64, 1],
+            &[64, 2],
+            &[64, 32],
+            &[64, 33],
+            &[64, 34],
+            &[3, 66],
+            &[64, u64::from(PREFILL_TOKENS)],
+        ] {
+            for drafted in prefill_steps(shape, true, chunks) {
+                assert!(drafted.all_in_prefill(), "{shape:?} {chunks:?}");
+                record(&drafted);
+            }
+        }
+        let (host, mut instance) = instance(shape, true);
+        let (item, append, slot) = prompt(13, 3, 0, &truths(0..150));
+        let anchored = step(
+            &host,
+            &mut instance,
+            &batch(vec![(item.with_anchor(true), append, slot)]),
+        );
+        assert!(anchored.all_in_prefill(), "{shape:?}");
+        record(&anchored);
+        instance.commit().unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(launched.len(), 13, "{shape:?}");
+        for (stage, symbols) in &launched {
+            for symbol in symbols {
+                let declared = owned
+                    .iter()
+                    .find(|declared| declared.symbol == *symbol)
+                    .cloned()
+                    .or_else(|| super::sm120::declaration(catalogs, symbol));
+                let Some(declared) = declared else {
+                    violations.insert(format!("{stage} {symbol}: undeclared"));
+                    continue;
+                };
+                let invariance = declared.invariance;
+                if invariance.chunk != Chunk::Any {
+                    violations.insert(format!("{stage} {symbol}: chunks {:?}", invariance.chunk));
+                }
+                if invariance.batch != Batch::Independent {
+                    violations.insert(format!("{stage} {symbol}: batch {:?}", invariance.batch));
+                }
+                if !invariance.anchors.supported_after(QSA_RING) {
+                    violations.insert(format!(
+                        "{stage} {symbol}: anchors {:?}",
+                        invariance.anchors
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "{}",
+        violations.into_iter().collect::<Vec<_>>().join("\n")
+    );
 }

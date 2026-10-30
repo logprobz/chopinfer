@@ -796,7 +796,8 @@ pub(crate) async fn middleware(
             record.set_request_id(id);
         }
         if detail.disconnected {
-            record.cancel("client_disconnected");
+            // After the drain deadline the stop, not the client, ended it.
+            record.abandon();
         } else {
             record.fail(detail);
         }

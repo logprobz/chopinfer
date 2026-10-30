@@ -716,6 +716,21 @@ async fn requests_the_drain_ends_are_warnings() {
         .await;
     assert_eq!(background.status, 200, "{}", background.body);
     backend.wait_admitted(4).await;
+    let uploading = TcpStream::connect(server.server.address).await.unwrap();
+    uploading.writable().await.unwrap();
+    uploading
+        .try_write(
+            b"POST /v1/completions HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n\
+              Content-Length: 1000\r\nConnection: close\r\n\r\n{\"model\"",
+        )
+        .unwrap();
+    timeout(Duration::from_secs(5), async {
+        while server.request(&get("/health")).await.json()["waiting"]["intake"] != 1 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the upload reaches intake");
     let _ = server.shutdown.take().unwrap().send(());
     tokio::time::sleep(Duration::from_millis(50)).await;
     let refused = server
@@ -725,11 +740,21 @@ async fn requests_the_drain_ends_are_warnings() {
     // A draining server's readiness answer is the answer a probe asked for.
     let probed = server.request(&get("/health")).await;
     assert_eq!(probed.status, 503, "{}", probed.body);
+    // An upload whose client leaves after the drain deadline was cut off by
+    // the stop, not cancelled by its client.
+    timeout(Duration::from_secs(5), async {
+        while !server.raw().contains("shutdown_timeout") {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the drain deadline passes");
+    drop(uploading);
     for open in [streamed, whole, response] {
         let _ = timeout(Duration::from_secs(5), open).await.unwrap();
     }
 
-    let lines = server.lines(5).await;
+    let lines = server.lines(6).await;
 
     assert_failure(&lines[0], 503, "warn");
     assert_eq!(lines[0]["message"], "server is draining");
@@ -744,6 +769,14 @@ async fn requests_the_drain_ends_are_warnings() {
             .filter(|path| **path == "/v1/responses")
             .count(),
         2,
+        "{lines:#?}"
+    );
+    assert_eq!(
+        lines[1..]
+            .iter()
+            .filter(|line| line["stage"] == "intake")
+            .count(),
+        1,
         "{lines:#?}"
     );
     timeout(Duration::from_secs(5), &mut server.task)

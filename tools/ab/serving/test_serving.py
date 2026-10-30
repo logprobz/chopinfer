@@ -17,6 +17,7 @@ import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+import uuid
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -30,6 +31,12 @@ import run  # noqa: E402
 import stubs  # noqa: E402
 
 ROOT = None
+
+# Every process this module starts inherits MARKER from os.environ, the
+# serving runner's targets and servers included, which run in sessions of
+# their own. A run of this module started by another extends the outer run's
+# value (outer/inner), so the outer run's sweep reaches it too.
+MARKER = 'CHOPINFER_AB_SERVING_TEST'
 
 # Commands.run ends a command at its deadline in one of two ways: it sees the
 # deadline pass while the command still runs ("command timed out"), or the
@@ -63,16 +70,74 @@ runpy.run_path(sys.argv[0], run_name='__main__')
 
 
 def setUpModule():
-    global ROOT, _directory
+    global ROOT, _directory, _marker, _inherited
     # Installs refuse group- and other-writable files, as the runner's own
     # main() ensures.
     os.umask(0o022)
     _directory = tempfile.TemporaryDirectory(prefix='ab-serving-test-')
     ROOT = Path(_directory.name)
+    _inherited = os.environ.get(MARKER)
+    _marker = (_inherited + '/' if _inherited else '') + uuid.uuid4().hex
+    os.environ[MARKER] = _marker
 
 
 def tearDownModule():
-    _directory.cleanup()
+    try:
+        left = kill_started(_marker)
+    finally:
+        if _inherited is None:
+            os.environ.pop(MARKER, None)
+        else:
+            os.environ[MARKER] = _inherited
+        _directory.cleanup()
+    if left:
+        raise AssertionError('processes this module started outlived it: ' + describe(left))
+
+
+def live_started(marker):
+    """This user's live processes, other than this one, started under
+    `marker` or a marker nested in it, with their argv."""
+    entry = f'{MARKER}={marker}'.encode()
+    found = {}
+    for process in Proc().scan():
+        if process.pid == os.getpid() or not process.live:
+            continue
+        root = Path('/proc') / str(process.pid)
+        try:
+            environ = (root / 'environ').read_bytes().split(b'\0')
+            argv = (root / 'cmdline').read_bytes().replace(b'\0', b' ').decode(errors='replace').strip()
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            continue
+        if any(item == entry or item.startswith(entry + b'/') for item in environ):
+            found[process] = argv
+    return found
+
+
+def kill_started(marker, seconds=30):
+    """SIGKILLs the processes started under `marker` until none is live,
+    then reaps this process's dead children. Returns those found live first."""
+    found = live = live_started(marker)
+    deadline = time.monotonic() + seconds
+    while live:
+        if time.monotonic() > deadline:
+            raise AssertionError('started processes survived SIGKILL: ' + describe(live))
+        for process in live:
+            Proc().send(process, signal.SIGKILL)
+        time.sleep(.02)
+        live = live_started(marker)
+    # A zombie's environment is gone, so no marker identifies it, but a
+    # zombie child's PID stays this process's until it is reaped.
+    for process in Proc().scan():
+        if process.parent == os.getpid() and not process.live:
+            try:
+                os.waitpid(process.pid, os.WNOHANG)
+            except ChildProcessError:
+                pass
+    return found
+
+
+def describe(processes):
+    return '; '.join(f'{process.pid}: {argv}' for process, argv in processes.items())
 
 
 def free_port():
@@ -146,8 +211,14 @@ def fixture(root, phases=None):
 
 class Base(unittest.TestCase):
     def setUp(self):
+        # Registered first, so it runs after every other cleanup.
+        self.addCleanup(self.assert_started_stopped)
         self.root = ROOT / self.id().split('.')[-1]
         self.root.mkdir()
+    def assert_started_stopped(self):
+        left = kill_started(_marker)
+        if left:
+            self.fail('processes this test started outlived it: ' + describe(left))
     def config(self, phases=None):
         return fixture(self.root / 'fixture', phases)
     def load(self, c):

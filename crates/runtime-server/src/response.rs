@@ -672,7 +672,11 @@ pub(crate) async fn health(State(state): State<Arc<ServerState>>) -> Response {
     if let Some(serving) = &state.serving {
         body["serving"] = serving.clone();
     }
-    json_response(status, body, &request_id)
+    let mut response = json_response(status, body, &request_id);
+    response
+        .extensions_mut()
+        .insert(crate::request_log::ReadinessAnswer);
+    response
 }
 
 pub(crate) async fn version() -> Json<Value> {

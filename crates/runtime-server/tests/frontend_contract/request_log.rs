@@ -722,6 +722,9 @@ async fn requests_the_drain_ends_are_warnings() {
         .request(&completion(json!({"model": MODEL, "prompt": "x"})))
         .await;
     assert_eq!(refused.status, 503);
+    // A draining server's readiness answer is the answer a probe asked for.
+    let probed = server.request(&get("/health")).await;
+    assert_eq!(probed.status, 503, "{}", probed.body);
     for open in [streamed, whole, response] {
         let _ = timeout(Duration::from_secs(5), open).await.unwrap();
     }
@@ -748,6 +751,46 @@ async fn requests_the_drain_ends_are_warnings() {
         .unwrap()
         .unwrap()
         .unwrap();
+}
+
+/// A readiness probe that hears "not ready" writes no line, but a refused
+/// method or a refused CORS preflight on the same paths does.
+#[tokio::test]
+async fn only_a_readiness_answer_on_its_paths_is_not_a_failure() {
+    let backend = HoldingBackend::new();
+    *backend.readiness.lock().unwrap() = BackendReadiness::NotReady("loading".to_owned());
+    let server = LoggedServer::start_with(
+        backend.clone(),
+        ServerConfig::default(),
+        runtime_server::HttpOptions {
+            enable_cors: true,
+            allowed_origins: vec!["https://allowed.example".to_owned()],
+            ..Default::default()
+        },
+        Duration::from_secs(1),
+        runtime_server::metrics_snapshot_provider(|_| String::new()),
+    )
+    .await;
+    for probe in [get("/health"), get("/ping"), post("/ping", "")] {
+        let answered = server.request(&probe).await;
+        assert_eq!(answered.status, 503, "{probe}: {}", answered.body);
+    }
+    let wrong_method = server.request(&post("/health", "")).await;
+    assert_eq!(wrong_method.status, 405);
+    let preflight = server
+        .request(
+            "OPTIONS /ping HTTP/1.1\r\nHost: localhost\r\nOrigin: https://other.example\r\n\
+             Access-Control-Request-Method: GET\r\nConnection: close\r\n\r\n",
+        )
+        .await;
+    assert_eq!(preflight.status, 400, "{}", preflight.body);
+
+    let lines = server.lines(2).await;
+
+    assert_failure(&lines[0], 405, "warn");
+    assert_eq!(lines[0]["path"], "/health");
+    assert_failure(&lines[1], 400, "warn");
+    assert_eq!(lines[1]["path"], "/ping");
 }
 
 /// A worker that stops ends every open request with an error line, though no

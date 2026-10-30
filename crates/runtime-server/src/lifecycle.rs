@@ -26,9 +26,27 @@ pub(crate) async fn admission(
         state
             .admission_metrics
             .response(axum::http::StatusCode::SERVICE_UNAVAILABLE);
-        return draining_response("shutdown");
+        let mut response = draining_response("shutdown");
+        if readiness_probe(&request) {
+            response
+                .extensions_mut()
+                .insert(crate::request_log::ReadinessAnswer);
+        }
+        return response;
     }
     next.run(request).await
+}
+
+/// A request the router answers with readiness: `/health` and `/ping` with
+/// the methods their routes take.
+fn readiness_probe(request: &Request) -> bool {
+    use axum::http::Method;
+    let method = request.method();
+    match request.uri().path() {
+        "/health" => method == Method::GET || method == Method::HEAD,
+        "/ping" => method == Method::GET || method == Method::HEAD || method == Method::POST,
+        _ => false,
+    }
 }
 
 pub(crate) fn draining_response(request_id: &str) -> Response {

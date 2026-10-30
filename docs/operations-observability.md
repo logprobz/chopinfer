@@ -476,6 +476,11 @@ Every request that fails writes exactly one line,
   controls are cut to a byte limit (method 16, path 256, model and request
   IDs 128, `param` 64), so a line stays under 4 KiB.
 
+A readiness probe (`GET` or `HEAD` on `/health` or `/ping`, or `POST
+/ping`) that hears 503 while the server starts or drains writes no line.
+Any other refusal on those paths, such as a wrong method or a refused CORS
+preflight, does.
+
 A client that leaves, by closing its connection, dropping a stream or
 abandoning a body upload, writes `schema="chopinfer.request-cancel.v1"` at
 `info` with `reason="client_disconnected"` and no outcome fields. Cancelling a

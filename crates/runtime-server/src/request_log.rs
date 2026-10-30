@@ -116,6 +116,12 @@ impl JsonErrorPosition {
     }
 }
 
+/// Marks a readiness probe's answer from `/health` or `/ping`. Its 503
+/// while the server starts or drains is the answer the probe asked for, not
+/// a failure; any other refusal on those paths is one.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ReadinessAnswer;
+
 /// What a failed response says about itself, without request content. An
 /// [`crate::error::ApiError`] attaches one to its response.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -745,14 +751,12 @@ impl Drop for AbandonGuard {
 }
 
 /// The outermost layer: opens each request's record and writes the line of
-/// an HTTP error response. `/health` and `/ping` answer readiness, so their
-/// 503 while starting or draining is not a failure.
+/// an HTTP error response, unless it is a [`ReadinessAnswer`].
 pub(crate) async fn middleware(
     State(log): State<Arc<RequestLog>>,
     mut request: Request,
     next: Next,
 ) -> Response {
-    let path = request.uri().path().to_owned();
     // The ID the client named its request by, in either header the server
     // reads one from.
     let client_request_id = ["x-client-request-id", "x-request-id"]
@@ -767,7 +771,7 @@ pub(crate) async fn middleware(
         .map(str::to_owned);
     let record = log.open(
         request.method().as_str(),
-        &path,
+        request.uri().path(),
         request.extensions().get::<SocketAddr>().copied(),
         client_request_id.as_deref(),
     );
@@ -776,7 +780,7 @@ pub(crate) async fn middleware(
     let response = next.run(request).await;
     abandoned.0 = None;
     let status = response.status();
-    let readiness = matches!(path.as_str(), "/health" | "/ping");
+    let readiness = response.extensions().get::<ReadinessAnswer>().is_some();
     if (status.is_client_error() || status.is_server_error()) && !readiness {
         let detail = response
             .extensions()

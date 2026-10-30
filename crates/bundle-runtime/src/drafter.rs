@@ -19,6 +19,11 @@
 //!   (reading retained rows and ending with the chunk's first token) before
 //!   the target, then every row its chunk completes after the target, and
 //!   retains its last hidden row. So no run exceeds a prefill chunk's rows.
+//!   By default those first rows join the drafting items' first run; a
+//!   drafter built [`Drafter::with_separate_prefill_catch_up`] gives them a
+//!   run of their own ([`Plan::prefill_catch_up`]), so a bundle can run
+//!   every row a prefill writes with the same arithmetic whatever the
+//!   step's other items.
 //! - a decode item runs nothing until its retained rows would overflow,
 //!   then catches up before the target runs.
 //!
@@ -218,6 +223,10 @@ impl<P: Params> Run<P> {
 /// A step's drafter work.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Plan<P> {
+    /// With [`Drafter::with_separate_prefill_catch_up`], the rows continuing
+    /// prefill items' earlier steps left (otherwise in `before`'s first
+    /// run): one run before the target, which reads no other run's rows.
+    pub prefill_catch_up: Option<Run<P>>,
     /// Runs before the target: catch-up and the first draft, then one run
     /// per further draft.
     pub before: Vec<Run<P>>,
@@ -231,7 +240,7 @@ pub struct Plan<P> {
 
 impl<P: Params> Plan<P> {
     pub fn is_empty(&self) -> bool {
-        self.before.is_empty() && self.prefill.is_none()
+        self.prefill_catch_up.is_none() && self.before.is_empty() && self.prefill.is_none()
     }
 
     /// What commit makes of the step, which the open step keeps.
@@ -294,6 +303,9 @@ pub struct Retain {
 #[derive(Clone, Debug)]
 pub struct Drafter<P> {
     slots: Vec<Slot>,
+    /// Whether continuing prefill items' catch-up rows plan as their own
+    /// run ([`Plan::prefill_catch_up`]).
+    separate_prefill_catch_up: bool,
     params: PhantomData<P>,
 }
 
@@ -317,8 +329,18 @@ impl<P: Params> Drafter<P> {
         const { assert!(P::RETAINED_ROWS >= P::MAX_VERIFY_ROWS) };
         Self {
             slots: vec![Slot::new(Self::HISTORY); slots as usize],
+            separate_prefill_catch_up: false,
             params: PhantomData,
         }
+    }
+
+    /// The drafter planning, with `separate`, continuing prefill items'
+    /// catch-up rows as a run of their own ([`Plan::prefill_catch_up`])
+    /// instead of in the drafting items' first run. Rows, sources, tokens
+    /// and commits are the same either way.
+    pub fn with_separate_prefill_catch_up(mut self, separate: bool) -> Self {
+        self.separate_prefill_catch_up = separate;
+        self
     }
 
     /// The state of a slot whose request continues at `length` tokens, which
@@ -427,6 +449,7 @@ impl<P: Params> Drafter<P> {
         // left, before the target: they read retained rows and end with the
         // chunk's first token. After the target, the drafter runs every row
         // the chunk itself completes, at most the chunk's rows minus one.
+        let mut catch_up = Run::default();
         let mut run = Run::default();
         for index in 0..prefill.request_ids.len() {
             let slot = prefill.slot_ids[index] as u32;
@@ -456,13 +479,18 @@ impl<P: Params> Drafter<P> {
                     })
                     .collect::<Vec<_>>();
                 if !rows.is_empty() {
-                    first.items.push(RunItem {
+                    let item = RunItem {
                         request,
                         slot,
                         first: state.frontier,
                         rows,
                         pages: prefill.block_tables[index].clone(),
-                    });
+                    };
+                    if self.separate_prefill_catch_up {
+                        catch_up.items.push(item);
+                    } else {
+                        first.items.push(item);
+                    }
                 }
             }
             let rows = (length..end)
@@ -492,6 +520,9 @@ impl<P: Params> Drafter<P> {
                 staged: (0, index as u32),
                 every_row: false,
             });
+        }
+        if !catch_up.items.is_empty() {
+            plan.prefill_catch_up = Some(catch_up);
         }
         if !first.items.is_empty() {
             plan.before.push(first);
@@ -535,8 +566,9 @@ impl<P: Params> Drafter<P> {
         // Every run fits the drafter's buffers, or the step is refused
         // before the target runs.
         if plan
-            .before
+            .prefill_catch_up
             .iter()
+            .chain(&plan.before)
             .chain(&plan.prefill)
             .any(|run| u64::from(run.rows()) > P::DRAFTER_ROWS)
         {
@@ -919,6 +951,227 @@ mod tests {
         assert_eq!(drafter.frontier(2), 2);
         let decode = phase(true, &[(9, 2, 4, &[5])], &[]);
         assert!(drafter.plan(&empty(), &decode, &[0]).unwrap().is_empty());
+    }
+
+    /// The same plan with continuing prefill items' catch-up rows in their
+    /// own run: `separate` moves the rows a default drafter puts at the end
+    /// of `before`'s first run (after every drafting item's rows, so the
+    /// first run's row numbers, draft rows and chained sources stay) into
+    /// `prefill_catch_up`.
+    fn separated(plan: &Plan<Test>, prefill: &PhaseInputs) -> Plan<Test> {
+        let mut plan = plan.clone();
+        let continuing = |item: &RunItem| {
+            prefill
+                .request_ids
+                .iter()
+                .zip(&prefill.prefix_len)
+                .any(|(&request, &length)| request == item.request && length > 0)
+        };
+        if let Some(first) = plan.before.first_mut() {
+            let items = std::mem::take(&mut first.items);
+            let (catch_up, kept): (Vec<_>, Vec<_>) = items.into_iter().partition(continuing);
+            first.items = kept;
+            if !catch_up.is_empty() {
+                plan.prefill_catch_up = Some(Run {
+                    items: catch_up,
+                    ..Run::default()
+                });
+            }
+            if plan.before[0].items.is_empty() {
+                plan.before.remove(0);
+            }
+        }
+        plan
+    }
+
+    /// Plans and commits `steps` with both drafters: each separate plan is
+    /// the default one with its catch-up rows moved, and both commit the
+    /// same copies, frontiers and tokens.
+    fn both(steps: &[(PhaseInputs, PhaseInputs, Vec<u32>, Option<u32>)]) -> Vec<Plan<Test>> {
+        let mut default = Drafter::default();
+        let mut separate = Drafter::default().with_separate_prefill_catch_up(true);
+        let mut plans = Vec::new();
+        for (prefill, decode, drafts, kept) in steps {
+            let plan = default.plan(prefill, decode, drafts).unwrap();
+            let own = separate.plan(prefill, decode, drafts).unwrap();
+            assert_eq!(own, separated(&plan, prefill));
+            assert_eq!(own.pending(), plan.pending());
+            assert_eq!(own.is_empty(), plan.is_empty());
+            let kept = |_| *kept;
+            assert_eq!(
+                separate.commit(&own.pending(), kept),
+                default.commit(&plan.pending(), kept)
+            );
+            for slot in 0..Test::SLOTS {
+                assert_eq!(separate.frontier(slot), default.frontier(slot));
+            }
+            assert_eq!(separate.slots, default.slots);
+            plans.push(own);
+        }
+        plans
+    }
+
+    #[test]
+    fn a_separate_catch_up_run_holds_exactly_the_continuing_prefill_rows() {
+        let steps = [
+            (
+                phase(false, &[(7, 3, 0, &[10, 11, 12, 13])], &[]),
+                empty(),
+                vec![],
+                None,
+            ),
+            (
+                phase(false, &[(7, 3, 4, &[14, 15])], &[]),
+                empty(),
+                vec![],
+                None,
+            ),
+            // One token: the catch-up row alone, no post-target run.
+            (
+                phase(false, &[(7, 3, 6, &[16])], &[]),
+                empty(),
+                vec![],
+                None,
+            ),
+        ];
+        let plans = both(&steps);
+        assert_eq!(plans[0].prefill_catch_up, None);
+        let catch_up = plans[1].prefill_catch_up.as_ref().unwrap();
+        assert_eq!(
+            catch_up.items[0].rows,
+            [(Source::Retained(3 * RETAINED_ROWS + 3), Token::Known(14))]
+        );
+        assert_eq!(catch_up.items[0].first, 3);
+        assert!(catch_up.drafts.is_empty());
+        assert!(plans[1].before.is_empty());
+        assert_eq!(
+            plans[1].prefill.as_ref().unwrap().items[0].rows,
+            [(Source::Last(0), Token::Known(15))]
+        );
+        assert!(plans[2].before.is_empty() && plans[2].prefill.is_none());
+        assert!(!plans[2].is_empty());
+        assert_eq!(
+            plans[2].prefill_catch_up.as_ref().unwrap().items[0].rows,
+            [(Source::Retained(3 * RETAINED_ROWS + 5), Token::Known(16))]
+        );
+    }
+
+    /// A step with a drafting verify item and a continuing prefill: the
+    /// verify item's first run, draft rows and chained runs are those of a
+    /// default drafter, and the prefill item's catch-up row runs alone.
+    #[test]
+    fn a_mixed_step_keeps_the_drafting_runs_and_separates_the_catch_up() {
+        let steps = [
+            (
+                phase(
+                    false,
+                    &[(7, 1, 0, &[10, 11, 12]), (8, 2, 0, &[20, 21, 22, 23])],
+                    &[],
+                ),
+                empty(),
+                vec![],
+                None,
+            ),
+            (
+                phase(false, &[(8, 2, 4, &[24, 25])], &[]),
+                phase(true, &[(7, 1, 3, &[13, 0, 0, 0])], &[true]),
+                vec![3],
+                Some(2),
+            ),
+        ];
+        let plans = both(&steps);
+        let mixed = &plans[1];
+        assert_eq!(mixed.before.len(), 3);
+        assert_eq!(mixed.before[0].items.len(), 1);
+        assert_eq!(mixed.before[0].items[0].request, 7);
+        assert_eq!(mixed.before[0].drafts[0].row, 0);
+        assert_eq!(
+            mixed.before[2].items[0].rows,
+            vec![(Source::Last(0), Token::Draft(0))]
+        );
+        let catch_up = mixed.prefill_catch_up.as_ref().unwrap();
+        assert_eq!(catch_up.items.len(), 1);
+        assert_eq!(catch_up.items[0].request, 8);
+        assert_eq!(
+            catch_up.items[0].rows,
+            [(Source::Retained(2 * RETAINED_ROWS + 3), Token::Known(24))]
+        );
+    }
+
+    /// A private restore whose frontier lags by the retained rows, then a
+    /// full chunk: the catch-up run takes every outstanding row and the
+    /// post-target run the chunk's rows minus one, each within the
+    /// drafter's rows.
+    #[test]
+    fn a_lagging_restore_catches_up_alone_and_a_full_chunk_still_fits() {
+        let mut drafter = Drafter::default().with_separate_prefill_catch_up(true);
+        let tokens = (100..120).collect::<Vec<u32>>();
+        let frontier = 20 - u64::from(RETAINED_ROWS);
+        drafter.restore(0, &tokens, frontier).unwrap();
+        let chunk = vec![5; CHUNK as usize];
+        let prefill = phase(false, &[(7, 0, 20, &chunk)], &[]);
+        let plan = drafter.plan(&prefill, &empty(), &[]).unwrap();
+        let catch_up = plan.prefill_catch_up.as_ref().unwrap();
+        assert_eq!(catch_up.rows(), RETAINED_ROWS);
+        assert_eq!(catch_up.items[0].first, frontier);
+        let expected = (frontier..20)
+            .map(|position| {
+                let next = if position + 1 < 20 {
+                    100 + position as u32 + 1
+                } else {
+                    5
+                };
+                (
+                    Source::Retained(retained::<Test>(0, position)),
+                    Token::Known(next),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(catch_up.items[0].rows, expected);
+        assert!(plan.before.is_empty());
+        assert_eq!(plan.prefill.as_ref().unwrap().rows(), CHUNK - 1);
+        // Catch-up rows of many items share one run, which must fit too.
+        let items = (0..11).map(|slot| (slot, slot as u32)).collect::<Vec<_>>();
+        let mut drafter = Drafter::default().with_separate_prefill_catch_up(true);
+        for &(_, slot) in &items {
+            drafter.restore(slot, &tokens, frontier).unwrap();
+        }
+        let one = [5];
+        let wide = items
+            .iter()
+            .map(|&(request, slot)| (request, slot, 20, &one[..]))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            drafter.plan(&phase(false, &wide, &[]), &empty(), &[]),
+            Err(DraftError::Step)
+        );
+        let fits = &wide[..(Test::DRAFTER_ROWS / u64::from(RETAINED_ROWS)) as usize];
+        let plan = drafter
+            .plan(&phase(false, fits, &[]), &empty(), &[])
+            .unwrap();
+        assert_eq!(
+            u64::from(plan.prefill_catch_up.as_ref().unwrap().rows()),
+            fits.len() as u64 * u64::from(RETAINED_ROWS)
+        );
+    }
+
+    /// Cancelling a separate drafter's step changes nothing: the step plans
+    /// again as before.
+    #[test]
+    fn a_cancelled_separate_step_plans_again_as_before() {
+        let mut drafter = Drafter::default().with_separate_prefill_catch_up(true);
+        let plan = drafter
+            .plan(
+                &phase(false, &[(7, 3, 0, &[10, 11, 12, 13])], &[]),
+                &empty(),
+                &[],
+            )
+            .unwrap();
+        drafter.commit(&plan.pending(), |_| None).unwrap();
+        let chunk = phase(false, &[(7, 3, 4, &[14, 15])], &[]);
+        let plan = drafter.plan(&chunk, &empty(), &[]).unwrap();
+        assert_eq!(drafter.plan(&chunk, &empty(), &[]).unwrap(), plan);
+        assert_eq!(drafter.frontier(3), 3);
     }
 
     /// A restore keeps the last `2 * RETAINED_ROWS` tokens: the catch-up

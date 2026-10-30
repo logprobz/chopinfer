@@ -212,8 +212,9 @@ one warning naming each set retired DeepSeek or DSpark switch as ignored,
 including opt-outs removed during adoption. An old value such as
 `CHOPINFER_DEEPSEEK41_SHARED_OVERLAP=0` cannot select serial execution.
 
-Per-step JSON is off by default. Enable `diagnostic_step_logs=true` for
-timing and confidence captures; this changes diagnostic output only.
+Per-step JSON is off by default. Enable `diagnostic_step_logs=true`, and serve
+with `--log-level debug`, for timing and confidence captures; this changes
+diagnostic output only.
 `CHOPINFER_STEP_TRACE` still controls the shared host's tracing, but no
 longer selects the bundle's step or commit records. Existing diagnostic
 capture directories, AR Engram tracing and the shared

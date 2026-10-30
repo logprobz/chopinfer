@@ -66,7 +66,7 @@ count lookups; the vLLM ones count tokens.
 
 | Series | Meaning |
 |---|---|
-| `chop_admission_refusals_total{reason}` | Generation and stored-response HTTP errors by status class: `invalid_request`, `unknown_model`, `not_found`, `intake_timeout`, `capacity`, `unavailable`, `internal`, `other`. `unknown_model` counts generation 404s; `not_found` counts missing stored response IDs on read and cancel. Dashboards that treated all 404s as `unknown_model` should include `not_found`. Actual model-name refusals emit bounded `INFO unknown_model refusal` lines with the requested name, socket peer and served names. Drain middleware refusals also count. Errors after SSE headers are outside this counter. |
+| `chop_admission_refusals_total{reason}` | Generation and stored-response HTTP errors by status class: `invalid_request`, `unknown_model`, `not_found`, `intake_timeout`, `capacity`, `unavailable`, `internal`, `other`. `unknown_model` counts generation 404s; `not_found` counts missing stored response IDs on read and cancel. Dashboards that treated all 404s as `unknown_model` should include `not_found`. Each refusal also writes one [request-failure line](#logs-and-log-levels); an unknown-model line names the requested model, the socket peer and the served names. Drain middleware refusals also count. Errors after SSE headers are outside this counter. |
 | `chop_intake_budget_bytes` | Configured listener budget for request bodies |
 | `chop_intake_used_bytes` | Currently charged bytes, including the 16 KiB minimum per request |
 | `chop_instance_poisoned{model_name,engine}` | Sticky 1 after model commit/rollback, retirement or prefix-state failure makes reuse unsafe |
@@ -414,6 +414,114 @@ rate(vllm:prefix_cache_queries_total[5m])`. Speculative acceptance rate is
 rate(vllm:spec_decode_num_draft_tokens_total[5m])`. Both are undefined without
 traffic; do not alert on that.
 
+## Logs and log levels
+
+`chopinfer serve` writes its log to stderr, except the
+`{"status":"listening",...}` line and a few startup lines about the KV cache,
+which go to stdout. `--log-level error|warn|info|debug`, or
+`CHOPINFER_LOG_LEVEL` when the flag is absent, sets how much it writes on
+both; the default is `info`, and the listening line is always written. At `info` and `debug` the log
+says which level wrote it: `startup logging: level=info`.
+
+| Level | Adds |
+|---|---|
+| `error` | Server faults and requests that fail after admission: 5xx lines, `generation request failed`, worker and rank failures and fatal exits. Every bundle message the host does not recognize is written at every level, because the bundle log has no severity and such a message can be a failure's only detail. |
+| `warn` | Client refusals (4xx), drain refusals, requests cut off at the drain deadline, connections closed at `--max-connections`, and degraded paths such as fallbacks and warmup warnings. |
+| `info` | Startup and shutdown summaries, client cancellations, the graph-cache capacity, capture failure, eviction and release events, and the summary line. |
+| `debug` | Routine traces: bundle step and commit shapes, drafter catch-up and confidence records, route records, per-capture graph-cache events, mapped-row samples and warmup progress. With these, the output is what serve wrote before it had levels, plus the request and summary lines. |
+
+Host traces that an environment variable turns on, such as
+`CHOPINFER_STEP_TRACE` and `CHOPINFER_REQUEST_TRACE`, print at every level.
+Bundle records are leveled by their schema whatever enabled them, so a
+model's diagnostic step-log option (for example `--model-option
+diagnostic_step_logs=true`) shows its records only at `debug`. `tools/tune`
+serves at `debug`; launchers that read startup lines set `info`.
+
+### Request failure lines
+
+Every request that fails writes exactly one line,
+`schema="chopinfer.request-failure.v1"`:
+
+```json
+{"schema":"chopinfer.request-failure.v1","time":"2026-10-25T14:03:11.482Z","level":"warn","request_id":"req_18e3fd2a0c1b4e00_000000000000002a","client_request_id":null,"method":"POST","path":"/v1/chat/completions","model":"missing-model","status":404,"error_type":"NotFoundError","code":null,"param":"model","message":"model is not available","served":["example-model"],"stage":"preparation","prompt_tokens":null,"generated_tokens":null,"elapsed_seconds":0.000412,"peer":"127.0.0.1:51234"}
+```
+
+- `level` is `error` for 5xx responses and failures after admission, and
+  `warn` for 4xx refusals, drain refusals (`server is draining`), requests the
+  drain deadline ended (`code="shutdown_timeout"`) and connections closed at
+  the connection limit.
+- `request_id` is the response's `x-request-id`, with the choice suffix
+  (`_0`, `_1`, ...) once the request is admitted: the ID that
+  `chopinfer.request.v1` and `generation request failed: request_id=` lines
+  carry. `client_request_id` is the client's `X-Client-Request-Id` or
+  `X-Request-Id`.
+- `message` is a fixed text. A refusal whose client message is built from the
+  request, such as a JSON error that quotes the body, an out-of-vocabulary
+  token ID or the model name, logs its kind instead: `invalid request`,
+  `invalid JSON request`, `backend failure` and the like. A body that did not
+  parse adds `json_error` with serde's `category` (`syntax`, `data`, `eof` or
+  `io`), `line` and `column`. An unknown model adds `served`, the first eight
+  served names.
+- `stage` is how far the request got: `transport` (refused before a handler:
+  a head that did not parse or arrive, the connection limit, an unknown
+  route, a missing API key), `intake`, `preparation`, `admission` or
+  `generation`. Fields that are not known yet are null; method and path are
+  null for a head that did not parse or arrive and for a closed connection.
+- No line carries prompt text, generated text or token IDs. Fields the client
+  controls are cut to a byte limit (method 16, path 256, model and request
+  IDs 128, `param` 64), so a line stays under 4 KiB.
+
+A client that leaves, by closing its connection, dropping a stream or
+abandoning a body upload, writes `schema="chopinfer.request-cancel.v1"` at
+`info` with `reason="client_disconnected"` and no outcome fields. Cancelling a
+background Responses request writes `reason="cancelled"`. If the drain
+deadline has passed, the request instead writes a `shutdown_timeout` failure
+line.
+
+One thread writes these lines from a 1,024-line queue, so a handler never
+waits on stderr. Each level has its own budget: bursts of 200 then 50 a
+second for `error`, 100 then 20 for `warn`, and 50 then 10 for `info`. A line
+over its budget, or one that finds the queue full, is dropped and counted.
+Once a second, and when serving stops, a
+`schema="chopinfer.request-failure-dropped.v1"` line reports the counts:
+
+```json
+{"schema":"chopinfer.request-failure-dropped.v1","time":"2026-10-25T14:03:12.001Z","dropped":{"error":0,"warn":312,"info":0}}
+```
+
+### Summary line
+
+Every 60 seconds (`CHOPINFER_LOG_SUMMARY_SECONDS` sets another interval) the
+server writes `schema="chopinfer.summary.v1"` at `info`. Counters are deltas
+since the previous line; `running`, `waiting`, `kv` and `worker_state` are
+current values:
+
+```json
+{"schema":"chopinfer.summary.v1","time":"2026-10-25T14:04:00.000Z","interval_seconds":60.0,"http_requests":1830,"failures":{"error":0,"warn":3,"cancelled":2},"refusals":{"invalid_request":2,"unknown_model":1,"not_found":0,"intake_timeout":0,"capacity":0,"unavailable":0,"internal":0,"other":0},"requests":{"submitted":1825,"completed":1823,"failed":0,"cancelled":2},"tokens":{"prompt":2310442,"generated":402118,"drafted":288320,"accepted":205427},"acceptance":0.7125,"preemptions":0,"ttft_seconds":{"count":1825,"p50":0.041,"p95":0.118},"itl_seconds":{"count":398470,"p50":0.0182,"p95":0.0265},"running":12,"waiting":0,"kv":{"used_tokens":431104,"capacity_tokens":1069952,"usage":0.4029},"worker_state":"ready"}
+```
+
+`acceptance` is accepted over drafted tokens in the interval, null when
+nothing was drafted. TTFT and ITL percentiles come from the interval's
+histogram bucket counts, interpolated linearly within a bucket as Prometheus
+`histogram_quantile` does, and are null when the interval observed nothing.
+
+### Volume, retention and loss
+
+Output stays on stderr, so capping and retention belong to the supervisor:
+journald (`SystemMaxUse=`, and `LogRateLimitIntervalSec=` with
+`LogRateLimitBurst=` per unit) or Docker (`--log-driver local`, or
+`json-file` with `--log-opt max-size=` and `--log-opt max-file=`). As an
+estimate from the traffic of 2026-10-25, not a bound, a plain `2>> file` at
+`info` grows by tens of MB over two days. Sustained failures, cancellations
+or unrecognized bundle output can write much more.
+
+Lines can be lost: request lines over their budget or a full queue (counted
+in the dropped-count line), and routine traces when their queue is full
+(counted in `diagnostic writer: dropped` lines). When serving stops, the
+server waits at most half a second for queued request lines. A second
+signal, and a stalled worker's watchdog exit, end the process without that
+wait.
+
 ## Trace a slow request
 
 Set `CHOPINFER_REQUEST_TRACE=1` before starting the server. Each terminal
@@ -428,8 +536,9 @@ Search for the response's `x-request-id` with its choice suffix (`_0`, `_1`,
 ...). Records contain no prompt text, generated text or token IDs; token
 counts include hidden tokens. TTFT is null when no token was emitted, and
 error records have `finish_reason="error"`. A request refused before engine
-admission has no trace. Logging is synchronous, so enable it only when its
-per-request cost is acceptable.
+admission has no trace; its [request-failure line](#logs-and-log-levels)
+carries the same request ID with the stage, status and error type. Logging
+is synchronous, so enable it only when its per-request cost is acceptable.
 
 ## Measure target row usage
 
@@ -451,7 +560,9 @@ Set `CHOPINFER_STEP_TRACE=1` before starting `chopinfer serve` to write one JSON
 line per committed step to stderr, schema `chopinfer.step.v1`. It is meant for
 short tuning runs. Trace lines go through a bounded queue (4,096 lines): when
 it is full, new lines are dropped and counted, never waited on, so a trace
-with drops is incomplete. Startup, error and fatal messages are never dropped.
+with drops is incomplete. Routine bundle records, written at `--log-level
+debug`, share this queue. Startup, error and fatal messages are never
+dropped; request-failure lines have their own queue and rate limits.
 Step and request logs are not replay inputs; they omit token contents.
 
 ```json

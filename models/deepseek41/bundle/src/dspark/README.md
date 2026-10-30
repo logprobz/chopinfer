@@ -50,7 +50,8 @@ proposals remain distinct. Unknown outcomes must be excluded from confidence
 calibration until independent verifier evidence resolves them.
 
 With `--model-option diagnostic_step_logs=true`, `calibration::record`
-encodes these diagnostics for the coordinator's host log callback. This
+encodes these diagnostics for the coordinator's host log callback; the host
+prints them at `--log-level debug`. This
 option defaults to false and also controls the step and commit JSON logs.
 The records preserve raw score bits and record the numerical contract
 and acceptance evidence. The [confidence record format](../../../dspark-confidence.md)

@@ -72,6 +72,10 @@ pub enum Stage {
     /// Hyper-connection input: down and inject projections, the rank-320
     /// bottleneck, the up projection and the stream mix.
     HcIn(u32, Sublayer),
+    /// `HcIn` without the inject projection, whose only reader is the
+    /// sublayer's `Reduce`: for a program that stops before it
+    /// (`drafter_persistent_stages`).
+    HcDown(u32, Sublayer),
     HcBottleneck(u32, Sublayer),
     HcUp(u32, Sublayer),
     HcMix(u32, Sublayer),
@@ -134,6 +138,7 @@ impl Stage {
     pub const fn layer_for(self, shape: crate::contract::Shape) -> Option<u32> {
         match self {
             Self::HcIn(layer, _)
+            | Self::HcDown(layer, _)
             | Self::HcBottleneck(layer, _)
             | Self::HcUp(layer, _)
             | Self::HcMix(layer, _)
@@ -307,6 +312,32 @@ pub fn drafter_stages_for(shape: crate::contract::Shape, drafts: bool) -> Vec<St
         ]);
     }
     result
+}
+
+/// The stages of a drafter run that drafts nothing and whose rows' only
+/// later readers are later rows: the input, the attention sublayer's
+/// hyper-connection input without its inject, and the projections and
+/// writes of the K, V and QSA block keys and ring, which are all the state
+/// a later run reads. Selection, attention, the reductions and the MLP
+/// sublayer feed only the run's own drafts and chained rows, so a run
+/// without drafts leaves their outputs unread.
+pub fn drafter_persistent_stages(shape: crate::contract::Shape) -> Vec<Stage> {
+    let layer = shape.mtp_layer();
+    vec![
+        Stage::MtpGather,
+        Stage::Embedding,
+        Stage::MtpNorms,
+        Stage::MtpFc,
+        Stage::MtpCombine,
+        Stage::FirstNorm,
+        Stage::HcDown(layer, Sublayer::Attention),
+        Stage::HcBottleneck(layer, Sublayer::Attention),
+        Stage::HcUp(layer, Sublayer::Attention),
+        Stage::HcMix(layer, Sublayer::Attention),
+        Stage::AttnInProj(layer),
+        Stage::AttnQkNormRopeKv(layer),
+        Stage::IndexKeyWrite(layer),
+    ]
 }
 
 #[cfg(test)]
@@ -720,5 +751,65 @@ mod tests {
             catch_up.last(),
             Some(&Stage::Reduce(MTP_LAYER, Sublayer::Mlp))
         );
+    }
+
+    /// The persistent drafter program is the no-draft program up to its
+    /// QSA key write, without the index query (which feeds only selection)
+    /// and with the attention input's down projection in place of `HcIn`.
+    #[test]
+    fn the_persistent_drafter_program_stops_at_the_key_write() {
+        let full = drafter_stages(false);
+        let persistent = drafter_persistent_stages(crate::contract::Shape::TP4);
+        let end = full
+            .iter()
+            .position(|&stage| stage == Stage::IndexKeyWrite(MTP_LAYER))
+            .unwrap();
+        let expected = full[..=end]
+            .iter()
+            .filter(|&&stage| stage != Stage::IndexQuery(MTP_LAYER))
+            .map(|&stage| match stage {
+                Stage::HcIn(layer, sublayer) => Stage::HcDown(layer, sublayer),
+                stage => stage,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(persistent, expected);
+        assert_eq!(persistent.len(), 13);
+        assert!(!persistent.iter().any(|stage| matches!(
+            stage,
+            Stage::Reduce(..) | Stage::HcIn(..) | Stage::IndexQuery(_)
+        )));
+    }
+
+    /// `HcIn`'s inject output is read only by its sublayer's `Reduce`
+    /// (`RankStage::reduce`), so a program may drop the inject only if
+    /// it runs no `Reduce`: in every program each `Reduce` follows its own
+    /// sublayer's `HcIn`, never an `HcDown`, with no other `HcIn` between.
+    #[test]
+    fn every_reduce_reads_the_inject_of_its_own_hc_input() {
+        let mut programs = vec![
+            drafter_stages(true),
+            drafter_stages(false),
+            drafter_persistent_stages(crate::contract::Shape::TP4),
+        ];
+        for phase in [
+            Phase::Prefill,
+            Phase::Decode(4),
+            Phase::Verify { rows: 8, items: 2 },
+        ] {
+            programs.push(stages(phase));
+        }
+        for program in programs {
+            let mut open = None;
+            for stage in program {
+                match stage {
+                    Stage::HcIn(layer, sublayer) => open = Some((layer, sublayer)),
+                    Stage::HcDown(..) | Stage::MixerIn => open = None,
+                    Stage::Reduce(layer, sublayer) => {
+                        assert_eq!(open.take(), Some((layer, sublayer)));
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 }

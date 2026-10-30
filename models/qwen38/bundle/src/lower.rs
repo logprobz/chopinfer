@@ -832,6 +832,9 @@ impl RankStage<'_> {
             }
             Stage::PleNorm => self.norm(s.x[1 - PLE_RESIDUAL_INDEX], NormSite::Ple, s.xn),
             Stage::HcIn(layer, sublayer) => self.hc_in(&hc_stem(self.shape, layer, sublayer), true),
+            Stage::HcDown(layer, sublayer) => {
+                self.hc_in(&hc_stem(self.shape, layer, sublayer), false)
+            }
             Stage::MixerIn => self.hc_in(&self.mixer_stem(), false),
             // Decode buckets run the bottleneck and the up projection inside
             // the fused mix; wider ones run the three stages as prefill does.

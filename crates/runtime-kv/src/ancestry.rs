@@ -756,20 +756,25 @@ impl PrefixAncestry {
         lower.parent = Some(parent);
         lower.start = node.start;
         let replaced = segment.map(|segment| std::mem::replace(&mut lower.segment, segment));
+        let abandoned = !Arc::ptr_eq(&lower.segment, &node.segment);
         // The removed node forwarded exactly its child's summary and marks.
         self.nodes
             .get_mut(&parent)
             .expect("live radix node")
             .children
             .insert(node.first_atom(), child);
-        // A copy leaves both old segments to their other sharers: the
-        // removed node's to the nodes above it, the child's to the nodes
-        // below, which may now use too little of them.
-        if let Some(old) = replaced {
+        // Unless the child continues the removed node's segment, the merge
+        // leaves that segment to the nodes above, which may now use too
+        // little of it; this holds whether the child took a copy or its own
+        // segment already covered the edge. A copy also leaves the child's
+        // old segment to the nodes below.
+        if abandoned {
             self.compact(parent, &node.segment);
-            if let Some(deepest) = self.deepest_sharer(child, &old) {
-                self.compact(deepest, &old);
-            }
+        }
+        if let Some(old) = replaced
+            && let Some(deepest) = self.deepest_sharer(child, &old)
+        {
+            self.compact(deepest, &old);
         }
     }
 
@@ -1062,6 +1067,37 @@ mod audit_tests {
                 Some(depth)
             );
         }
+    }
+
+    #[test]
+    fn a_merge_without_copying_releases_the_segment_left_to_an_ancestor() {
+        // Dropping 4 joins 0..8,000 into one copy while 20,000 keeps its
+        // 4..20,000 capture; the anchor at 8 is then split from the copy.
+        // Dropping 8,000 gives 20,000 its edge from its own segment without
+        // copying, which leaves the eight-token anchor the only user of the
+        // copied 0..8,000.
+        let (mut pool, chain) = long_pool(&[4, 20_000, 8_000]);
+        let index = |pool: &KvPool| pool.ancestry.as_ref().unwrap().retained_tokens();
+        assert!(pool.remove_anchor(chain.key_at(4).unwrap()).unwrap());
+        assert_eq!(index(&pool), 8_000 + 19_996);
+        let source = pool.create_sequence(8).unwrap();
+        pool.append(source, 8).unwrap();
+        pool.insert_content_anchor(&chain, source, 8, 1)
+            .unwrap()
+            .unwrap();
+        pool.release(source).unwrap();
+        let before = pool.prefix_ancestry_work();
+        assert!(pool.remove_anchor(chain.key_at(8_000).unwrap()).unwrap());
+        // The merge copies nothing; the survivor copies its own eight tokens.
+        assert_eq!(pool.prefix_ancestry_work().since(before).tokens_copied, 8);
+        assert_eq!(index(&pool), 8 + 19_996);
+        assert!(pool.remove_anchor(chain.key_at(20_000).unwrap()).unwrap());
+        assert_eq!(index(&pool), 8);
+        pool.audit().unwrap();
+        assert_eq!(
+            pool.lookup_anchor(&chain, 100).map(|(_, tokens)| tokens),
+            Some(8)
+        );
     }
 
     #[test]

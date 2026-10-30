@@ -452,12 +452,16 @@ fn served_groups_run_full_target_steps() {
 /// and its final per rank, and their bindings).
 /// Re-pinned when GLM's own draft argmax kernels left its row cubin (two
 /// fewer resolves per rank at create; the ids issued after them renumber).
+/// Re-pinned when coupled drafts became the default
+/// (`runtime.mtp_coupled_drafts`): each drafter run uploads its noise
+/// records and launches the draft noise before each argmax partial, and
+/// create's added module, resolve and records shift the handles after them.
 #[test]
 fn served_groups_run_the_drafters_passes() {
     let single = run(1, true);
     let pinned = [
-        (2, (11712, 0x0012_db09_4403_46b7)),
-        (4, (12000, 0xe564_a818_07b2_33f1)),
+        (2, (11724, 0x7115_5e7e_4b9f_f938)),
+        (4, (12012, 0x490c_a184_897e_06c6)),
     ];
     let mut failures = Vec::new();
     for (size, expected) in pinned {

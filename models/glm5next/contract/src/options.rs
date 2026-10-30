@@ -18,42 +18,47 @@ pub const COMM_EPILOGUE_OPTION: &str = "runtime.sinkhorn_comm_epilogue";
 /// samples that position at (`crate::draft_argmax`). Greedy items draft the
 /// same tokens either way, and every emitted token stays the target's
 /// sample: a draft is kept only when it equals the target's sample at its
-/// row. Boolean and off by default, so the serving identity reports a
-/// server with it on as unqualified, until served timings resolve a gain.
+/// row. Boolean and on by default since served timings at temperature 1.0
+/// resolved a gain, so the serving identity reports a server with it off
+/// as unqualified.
 pub const COUPLED_DRAFTS_OPTION: &str = "runtime.mtp_coupled_drafts";
 
 /// The [`COMM_EPILOGUE_OPTION`] a package declares.
 pub fn comm_epilogue_option() -> runtime_bundle::model_options::ModelOptionV1 {
-    switch(COMM_EPILOGUE_OPTION)
+    switch(COMM_EPILOGUE_OPTION, false)
 }
 
 /// The [`COUPLED_DRAFTS_OPTION`] a package declares.
 pub fn coupled_drafts_option() -> runtime_bundle::model_options::ModelOptionV1 {
-    switch(COUPLED_DRAFTS_OPTION)
+    switch(COUPLED_DRAFTS_OPTION, true)
 }
 
-/// A Boolean switch `name`, off and qualified by default.
-fn switch(name: &str) -> runtime_bundle::model_options::ModelOptionV1 {
+/// A Boolean switch `name`, qualified at its `default`.
+fn switch(name: &str, default: bool) -> runtime_bundle::model_options::ModelOptionV1 {
     runtime_bundle::model_options::ModelOptionV1 {
         name: name.into(),
-        definition: runtime_bundle::model_options::OptionDefinitionV1::Boolean { default: false },
+        definition: runtime_bundle::model_options::OptionDefinitionV1::Boolean { default },
         default_is_qualified: true,
     }
 }
 
 /// A resolved [`COMM_EPILOGUE_OPTION`] value: a Boolean, off when absent.
 pub fn comm_epilogue_value(value: Option<&serde_json::Value>) -> Result<bool, String> {
-    switch_value(COMM_EPILOGUE_OPTION, value)
+    switch_value(COMM_EPILOGUE_OPTION, false, value)
 }
 
-/// A resolved [`COUPLED_DRAFTS_OPTION`] value: a Boolean, off when absent.
+/// A resolved [`COUPLED_DRAFTS_OPTION`] value: a Boolean, on when absent.
 pub fn coupled_drafts_value(value: Option<&serde_json::Value>) -> Result<bool, String> {
-    switch_value(COUPLED_DRAFTS_OPTION, value)
+    switch_value(COUPLED_DRAFTS_OPTION, true, value)
 }
 
-fn switch_value(name: &str, value: Option<&serde_json::Value>) -> Result<bool, String> {
+fn switch_value(
+    name: &str,
+    default: bool,
+    value: Option<&serde_json::Value>,
+) -> Result<bool, String> {
     match value {
-        None => Ok(false),
+        None => Ok(default),
         Some(serde_json::Value::Bool(on)) => Ok(*on),
         Some(other) => Err(format!("unsupported {name} {other}")),
     }
@@ -77,14 +82,14 @@ mod tests {
         );
     }
 
-    /// The coupled drafts switch is a Boolean, off and qualified by default.
+    /// The coupled drafts switch is a Boolean, on and qualified by default.
     #[test]
-    fn the_coupled_drafts_option_is_a_switch_off_by_default() {
+    fn the_coupled_drafts_option_is_a_switch_on_by_default() {
         let option = coupled_drafts_option();
         assert_eq!(option.name, COUPLED_DRAFTS_OPTION);
-        assert_eq!(option.definition.default_value(), false);
+        assert_eq!(option.definition.default_value(), true);
         assert!(option.default_is_qualified);
-        assert_eq!(coupled_drafts_value(None), Ok(false));
+        assert_eq!(coupled_drafts_value(None), Ok(true));
         assert_eq!(coupled_drafts_value(Some(&false.into())), Ok(false));
         assert_eq!(coupled_drafts_value(Some(&true.into())), Ok(true));
         assert_eq!(

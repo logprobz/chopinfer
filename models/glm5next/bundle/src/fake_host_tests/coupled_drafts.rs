@@ -1,10 +1,10 @@
-//! Coupled sampled drafts (`runtime.mtp_coupled_drafts`) on an instance
-//! that runs the MTP drafter: create loads the draft noise's cubin and
-//! allocates each rank's noise records with the option alone; each drafter
-//! run uploads its draft rows' records, its request's seed and temperature
-//! at the generated index of the run's draft position, and its argmax adds
-//! the noise first on every rank. With the option off, or without a
-//! drafter, the instance issues what a record without the option issues.
+//! Coupled sampled drafts (`runtime.mtp_coupled_drafts`, on by default) on
+//! an instance that runs the MTP drafter: create loads the draft noise's
+//! cubin and allocates each rank's noise records; each drafter run uploads
+//! its draft rows' records, its request's seed and temperature at the
+//! generated index of the run's draft position, and its argmax adds the
+//! noise first on every rank. With the option off the drafter proposes its
+//! argmax alone, and without a drafter the option issues nothing.
 
 use runtime_bundle_sdk::DraftSamplingV1;
 
@@ -205,16 +205,20 @@ fn drafted_journal(
     (journal, steps)
 }
 
-/// With coupled drafts every stream launches what the greedy drafter
-/// launches, under one consistent renaming of buffer handles (create's
-/// added module and records shift the handles after them), with each
-/// noise launch before an argmax partial added: a sampled record changes
-/// what the noise draws, never which launches run.
+/// With coupled drafts (the default) every stream launches what the
+/// greedy drafter (the option off) launches, under one consistent renaming
+/// of buffer handles (create's added module and records shift the handles
+/// after them), with each noise launch before an argmax partial added: a
+/// sampled record changes what the noise draws, never which launches run.
 #[test]
 fn coupled_drafters_add_only_the_noise_before_each_argmax() {
-    let (_, greedy) = drafted_journal(None, None);
-    for record in [None, Some(record(5, 41, 1.0))] {
-        let (_, coupled) = drafted_journal(Some("true"), record);
+    let (_, greedy) = drafted_journal(Some("false"), None);
+    for (coupled, record) in [
+        (None, None),
+        (Some("true"), None),
+        (None, Some(record(5, 41, 1.0))),
+    ] {
+        let (_, coupled) = drafted_journal(coupled, record);
         assert_eq!(greedy.len(), coupled.len());
         for (step, (greedy, coupled)) in greedy.iter().zip(&coupled).enumerate() {
             assert_eq!(
@@ -245,16 +249,15 @@ fn coupled_drafters_add_only_the_noise_before_each_argmax() {
     }
 }
 
-/// An explicit false option creates, prefills, drafts, commits and
-/// retires exactly as a record without the option (the journals before the
-/// option existed), and so does a true option on an instance that runs no
-/// drafter.
+/// A record without the option creates, prefills, drafts, commits and
+/// retires exactly as an explicit true option, and on an instance that runs
+/// no drafter the option issues nothing either way.
 #[test]
-fn the_option_off_or_without_a_drafter_issues_what_no_option_issues() {
+fn the_option_is_on_by_default_and_needs_a_drafter() {
     let sampled = Some(record(5, 41, 1.0));
-    let (off, _) = drafted_journal(Some("false"), sampled);
+    let (on, _) = drafted_journal(Some("true"), sampled);
     let (absent, _) = drafted_journal(None, sampled);
-    assert_eq!(off, absent);
+    assert_eq!(on, absent);
     let journal = |coupled: Option<&str>| {
         let host = FakeHost::new((3, 32));
         assert!(!has_mtp_layer(&host.format));
@@ -268,4 +271,5 @@ fn the_option_off_or_without_a_drafter_issues_what_no_option_issues() {
         host.device.journal.borrow().clone()
     };
     assert_eq!(journal(Some("true")), journal(None));
+    assert_eq!(journal(Some("false")), journal(None));
 }

@@ -5,9 +5,9 @@
 //! launch each chained projection and lowered projection in the layout's
 //! format. On the MTP KV format, a prompt chunk and a drafted step launch
 //! the MTP drafter's experts in the layout's MTP format (MXFP8, BF16 or
-//! block FP8); the block-FP8 one drafts a sampled item from the target
-//! sampler's noise (`runtime.mtp_coupled_drafts`). Every journal is pinned
-//! per layout.
+//! block FP8), coupled to the target sampler's noise
+//! (`runtime.mtp_coupled_drafts`, on by default); the block-FP8 one drafts
+//! a sampled item. Every journal is pinned per layout.
 
 use super::*;
 use crate::config::tests::{options_of, options_of_coupled_drafts};
@@ -38,10 +38,10 @@ pub(super) struct Mix {
     /// rows.
     prefill: (usize, u64),
     drafted: (usize, u64),
-    /// Whether the drafted fixture couples its drafts: its instance sets
-    /// `runtime.mtp_coupled_drafts` and its drafted step samples its item
-    /// ([`SAMPLED`]).
-    coupled_drafts: bool,
+    /// Whether the drafted fixture samples its item ([`SAMPLED`]) under an
+    /// explicit `runtime.mtp_coupled_drafts`; the others couple by default
+    /// and draft their items greedily.
+    sampled_drafts: bool,
 }
 
 /// The draft sampling record of a coupled fixture's drafted item: its first
@@ -72,7 +72,12 @@ const SAMPLED: (u64, u64, f64) = (0x5eed_0c0f_fee0_0001, 1, 1.0);
 /// ids issued after them renumber).
 /// Create re-pinned when the KDA state pools moved before the serving KV
 /// pool: the one `serving kv` line follows their allocations and zeroes,
-/// every other line and handle as before.
+/// every other line and handle as before. The prefill and drafted steps
+/// re-pinned when coupled drafts became the default
+/// (`runtime.mtp_coupled_drafts`): each drafter run uploads its noise
+/// records, greedy here, and the draft noise launches before each argmax
+/// partial; create's added module, resolves and records shift the handles
+/// after them.
 pub(super) const ROUTED: Mix = Mix {
     layout: &NVFP4_ROUTED,
     config: || config_of(&NVFP4_ROUTED),
@@ -89,9 +94,9 @@ pub(super) const ROUTED: Mix = Mix {
     create: (2938, 0xcde7_e59f_164e_ebe2),
     decode: (4296, 0xc700_ff51_1444_12ca),
     verify: (4296, 0x26af_6f1a_cd65_8e92),
-    prefill: (6192, 0x0d09_4c3a_bdbc_49cc),
-    drafted: (4720, 0x6911_5ce0_cc56_da43),
-    coupled_drafts: false,
+    prefill: (6200, 0x0557_c1f7_14c8_1ff5),
+    drafted: (4740, 0x5dfb_684c_6072_68ec),
+    sampled_drafts: false,
 };
 
 pub(super) const DENSE_ROUTED: Mix = Mix {
@@ -111,9 +116,9 @@ pub(super) const DENSE_ROUTED: Mix = Mix {
     create: (2978, 0xaaeb_9b6d_e283_0a96),
     decode: (4296, 0x08eb_cfa7_0d39_73b8),
     verify: (4296, 0x8781_dce1_7fde_5f5a),
-    prefill: (6192, 0xe91f_6fb6_bc28_3952),
-    drafted: (4720, 0x0c36_7f7e_a707_525f),
-    coupled_drafts: false,
+    prefill: (6200, 0x3fa9_2142_3574_7b3f),
+    drafted: (4740, 0x8a9f_4462_0f7e_4e04),
+    sampled_drafts: false,
 };
 
 /// Block FP8 everywhere but the main layers' routed experts, which are
@@ -141,7 +146,7 @@ pub(super) const FP8_ROUTED: Mix = Mix {
     verify: (4296, 0x21f7_08ff_0b8c_4408),
     prefill: (6200, 0x3fe5_9803_33ff_54dd),
     drafted: (4740, 0x4d20_4f41_6bb8_09ee),
-    coupled_drafts: true,
+    sampled_drafts: true,
 };
 
 impl Mix {
@@ -242,8 +247,8 @@ impl Mix {
     /// On the MTP KV format: a prompt chunk (the target's prefill, then the
     /// drafter's extend over the prompt) and a drafted verify step (the
     /// target's verify, the drafter's extend and its draft steps), each
-    /// launching the drafter's experts in the layout's MTP format. A
-    /// coupled fixture's draft argmax adds the draft noise in both.
+    /// launching the drafter's experts in the layout's MTP format; the
+    /// draft argmax adds the draft noise in both.
     fn drafts(&self) {
         self.drafts_on(&self.mtp_host());
     }
@@ -257,7 +262,7 @@ impl Mix {
 
     /// [`Self::drafts`] on `host`.
     fn drafts_on(&self, host: &Rc<Host>) {
-        let mut instance = match self.coupled_drafts {
+        let mut instance = match self.sampled_drafts {
             true => self.create_with(
                 host,
                 &options_of_coupled_drafts(self.layout.id, 2048, "true"),
@@ -278,11 +283,10 @@ impl Mix {
                     self.layout.id
                 );
             }
-            assert_eq!(
+            assert!(
                 lines
                     .iter()
                     .any(|line| line.starts_with("launch ") && line.contains(DRAFT_NOISE_SYMBOL)),
-                self.coupled_drafts,
                 "{}",
                 self.layout.id
             );
@@ -299,7 +303,7 @@ impl Mix {
         let start = host.device.journal.borrow().len();
         let mut sink = DraftSink::default();
         let (seed, generated, temperature) = SAMPLED;
-        let record = self.coupled_drafts.then(|| {
+        let record = self.sampled_drafts.then(|| {
             runtime_bundle_sdk::DraftSamplingV1::new(seed, generated, temperature, 1.0, 0.0, 0, 0)
                 .unwrap()
         });

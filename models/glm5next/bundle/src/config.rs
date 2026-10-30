@@ -41,9 +41,9 @@ pub struct Configuration {
     /// sublayer boundary runs the Sinkhorn mHC comm epilogue
     /// (`crate::lower`), and create loads its cubin.
     pub comm_epilogue: bool,
-    /// The resolved `runtime.mtp_coupled_drafts` model option: an instance
-    /// that runs the MTP drafter proposes each sampled item's drafts from
-    /// the target sampler's noise
+    /// The resolved `runtime.mtp_coupled_drafts` model option (on unless the
+    /// record turns it off): an instance that runs the MTP drafter proposes
+    /// each sampled item's drafts from the target sampler's noise
     /// (`model_glm5next_contract::draft_argmax::Proposals::Coupled`), and
     /// create loads the draft noise's cubin and allocates its records.
     pub coupled_drafts: bool,
@@ -318,12 +318,12 @@ pub(crate) mod tests {
         }
     }
 
-    /// The coupled drafts option reads as a Boolean, off when the record
+    /// The coupled drafts option reads as a Boolean, on when the record
     /// omits it; any other value is refused.
     #[test]
     fn records_read_the_coupled_drafts_option() {
         let read = |options: &[u8]| decode(&record(8, options), |_| {});
-        assert!(!read(&options(2048)).unwrap().coupled_drafts);
+        assert!(read(&options(2048)).unwrap().coupled_drafts);
         assert!(
             !read(&options_coupled_drafts(2048, "false"))
                 .unwrap()

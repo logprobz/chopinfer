@@ -1,0 +1,3342 @@
+{
+ "schema": "chopinfer.journal-proof.layout.v1",
+ "description": "Make coupled MTP drafts the default (runtime.mtp_coupled_drafts on unless a record turns it off). Every drafting fixture that did not set the option now couples: each rank loads the unchanged locked draft noise module, resolves its one entry and allocates its noise records; the drafter graphs each capture one more node, the draft noise launch, so their creators are declared removed and added. Exact operation edits add each drafter run's record uploads and the draft noise launch before each argmax partial; every retained operation is compared under the ordered handle map.",
+ "handles": {
+  "context_parallel_served_tests::served_groups_run_the_drafters_passes#tests/context_parallel_served_tests.served_groups_run_the_drafters_passes/device-2.jsonl": {
+   "added": [
+    {
+     "name": "coupled-drafts-default.added.allocation.0",
+     "kind": "allocation",
+     "at": 268,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       1024,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.allocation.1",
+     "kind": "allocation",
+     "at": 975,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       1024,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.allocation.2",
+     "kind": "allocation",
+     "at": 1682,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       1024,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.allocation.3",
+     "kind": "allocation",
+     "at": 2389,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       1024,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.module.4",
+     "kind": "module",
+     "at": 3085,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "draft_noise_glm5next_sm120",
+       "fedc4861b99f9d91",
+       19200,
+       "fd53fa33573f0faa3172a33c205e1d26951096295e41f04d4714459e1d105aae"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.resolve.5",
+     "kind": "resolve",
+     "at": 3087,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_row_draft_noise_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       912,
+       "chop_row_draft_noise_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.module.6",
+     "kind": "module",
+     "at": 4073,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "draft_noise_glm5next_sm120",
+       "fedc4861b99f9d91",
+       19200,
+       "fd53fa33573f0faa3172a33c205e1d26951096295e41f04d4714459e1d105aae"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.resolve.7",
+     "kind": "resolve",
+     "at": 4075,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_row_draft_noise_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       1221,
+       "chop_row_draft_noise_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.module.8",
+     "kind": "module",
+     "at": 5061,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "draft_noise_glm5next_sm120",
+       "fedc4861b99f9d91",
+       19200,
+       "fd53fa33573f0faa3172a33c205e1d26951096295e41f04d4714459e1d105aae"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.resolve.9",
+     "kind": "resolve",
+     "at": 5063,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_row_draft_noise_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       1530,
+       "chop_row_draft_noise_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.module.10",
+     "kind": "module",
+     "at": 6049,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "draft_noise_glm5next_sm120",
+       "fedc4861b99f9d91",
+       19200,
+       "fd53fa33573f0faa3172a33c205e1d26951096295e41f04d4714459e1d105aae"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.resolve.11",
+     "kind": "resolve",
+     "at": 6051,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_row_draft_noise_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       1839,
+       "chop_row_draft_noise_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.12",
+     "kind": "graph",
+     "at": 14672,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 2 @id 50"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.13",
+     "kind": "graph",
+     "at": 14743,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 3 @id 50"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.14",
+     "kind": "graph",
+     "at": 14814,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 4 @id 50"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.15",
+     "kind": "graph",
+     "at": 14885,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 5 @id 50"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.16",
+     "kind": "graph",
+     "at": 14983,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 2 @id 42"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.17",
+     "kind": "graph",
+     "at": 15045,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 3 @id 42"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.18",
+     "kind": "graph",
+     "at": 15107,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 4 @id 42"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.19",
+     "kind": "graph",
+     "at": 15169,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 5 @id 42"
+      ]
+     ]
+    }
+   ],
+   "removed": [
+    {
+     "name": "coupled-drafts-default.removed.graph.0",
+     "kind": "graph",
+     "at": 14627,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 2 @id 49"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.1",
+     "kind": "graph",
+     "at": 14697,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 3 @id 49"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.2",
+     "kind": "graph",
+     "at": 14767,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 4 @id 49"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.3",
+     "kind": "graph",
+     "at": 14837,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 5 @id 49"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.4",
+     "kind": "graph",
+     "at": 14930,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 2 @id 41"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.5",
+     "kind": "graph",
+     "at": 14991,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 3 @id 41"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.6",
+     "kind": "graph",
+     "at": 15052,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 4 @id 41"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.7",
+     "kind": "graph",
+     "at": 15113,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 5 @id 41"
+      ]
+     ]
+    }
+   ]
+  },
+  "context_parallel_served_tests::served_groups_run_the_drafters_passes#tests/context_parallel_served_tests.served_groups_run_the_drafters_passes/device-3.jsonl": {
+   "added": [
+    {
+     "name": "coupled-drafts-default.added.allocation.0",
+     "kind": "allocation",
+     "at": 268,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       1024,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.allocation.1",
+     "kind": "allocation",
+     "at": 975,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       1024,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.allocation.2",
+     "kind": "allocation",
+     "at": 1682,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       1024,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.allocation.3",
+     "kind": "allocation",
+     "at": 2389,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       1024,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.module.4",
+     "kind": "module",
+     "at": 3085,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "draft_noise_glm5next_sm120",
+       "fedc4861b99f9d91",
+       19200,
+       "fd53fa33573f0faa3172a33c205e1d26951096295e41f04d4714459e1d105aae"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.resolve.5",
+     "kind": "resolve",
+     "at": 3087,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_row_draft_noise_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       912,
+       "chop_row_draft_noise_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.module.6",
+     "kind": "module",
+     "at": 4073,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "draft_noise_glm5next_sm120",
+       "fedc4861b99f9d91",
+       19200,
+       "fd53fa33573f0faa3172a33c205e1d26951096295e41f04d4714459e1d105aae"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.resolve.7",
+     "kind": "resolve",
+     "at": 4075,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_row_draft_noise_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       1221,
+       "chop_row_draft_noise_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.module.8",
+     "kind": "module",
+     "at": 5061,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "draft_noise_glm5next_sm120",
+       "fedc4861b99f9d91",
+       19200,
+       "fd53fa33573f0faa3172a33c205e1d26951096295e41f04d4714459e1d105aae"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.resolve.9",
+     "kind": "resolve",
+     "at": 5063,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_row_draft_noise_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       1530,
+       "chop_row_draft_noise_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.module.10",
+     "kind": "module",
+     "at": 6049,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "draft_noise_glm5next_sm120",
+       "fedc4861b99f9d91",
+       19200,
+       "fd53fa33573f0faa3172a33c205e1d26951096295e41f04d4714459e1d105aae"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.resolve.11",
+     "kind": "resolve",
+     "at": 6051,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_row_draft_noise_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       1839,
+       "chop_row_draft_noise_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.12",
+     "kind": "graph",
+     "at": 14712,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 2 @id 8"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.13",
+     "kind": "graph",
+     "at": 14785,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 3 @id 8"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.14",
+     "kind": "graph",
+     "at": 14858,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 4 @id 8"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.15",
+     "kind": "graph",
+     "at": 14931,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 5 @id 8"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.16",
+     "kind": "graph",
+     "at": 15089,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 2 @id 44"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.17",
+     "kind": "graph",
+     "at": 15153,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 3 @id 44"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.18",
+     "kind": "graph",
+     "at": 15217,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 4 @id 44"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.19",
+     "kind": "graph",
+     "at": 15281,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 5 @id 44"
+      ]
+     ]
+    }
+   ],
+   "removed": [
+    {
+     "name": "coupled-drafts-default.removed.graph.0",
+     "kind": "graph",
+     "at": 14667,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 2 @id 7"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.1",
+     "kind": "graph",
+     "at": 14739,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 3 @id 7"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.2",
+     "kind": "graph",
+     "at": 14811,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 4 @id 7"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.3",
+     "kind": "graph",
+     "at": 14883,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 5 @id 7"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.4",
+     "kind": "graph",
+     "at": 15036,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 2 @id 43"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.5",
+     "kind": "graph",
+     "at": 15099,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 3 @id 43"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.6",
+     "kind": "graph",
+     "at": 15162,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 4 @id 43"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.7",
+     "kind": "graph",
+     "at": 15225,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 5 @id 43"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::nvfp4::the_nvfp4_dense_routed_drafter_runs_its_bf16_experts#tests/fake_host_tests.nvfp4.the_nvfp4_dense_routed_drafter_runs_its_bf16_experts/device-1.jsonl": {
+   "added": [
+    {
+     "name": "coupled-drafts-default.added.allocation.0",
+     "kind": "allocation",
+     "at": 268,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       1024,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.allocation.1",
+     "kind": "allocation",
+     "at": 618,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       1024,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.allocation.2",
+     "kind": "allocation",
+     "at": 968,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       1024,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.allocation.3",
+     "kind": "allocation",
+     "at": 1318,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       1024,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.module.4",
+     "kind": "module",
+     "at": 1714,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "draft_noise_glm5next_sm120",
+       "fedc4861b99f9d91",
+       19200,
+       "fd53fa33573f0faa3172a33c205e1d26951096295e41f04d4714459e1d105aae"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.resolve.5",
+     "kind": "resolve",
+     "at": 1716,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_row_draft_noise_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       557,
+       "chop_row_draft_noise_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.module.6",
+     "kind": "module",
+     "at": 2904,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "draft_noise_glm5next_sm120",
+       "fedc4861b99f9d91",
+       19200,
+       "fd53fa33573f0faa3172a33c205e1d26951096295e41f04d4714459e1d105aae"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.resolve.7",
+     "kind": "resolve",
+     "at": 2906,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_row_draft_noise_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       930,
+       "chop_row_draft_noise_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.module.8",
+     "kind": "module",
+     "at": 4094,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "draft_noise_glm5next_sm120",
+       "fedc4861b99f9d91",
+       19200,
+       "fd53fa33573f0faa3172a33c205e1d26951096295e41f04d4714459e1d105aae"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.resolve.9",
+     "kind": "resolve",
+     "at": 4096,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_row_draft_noise_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       1303,
+       "chop_row_draft_noise_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.module.10",
+     "kind": "module",
+     "at": 5284,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "draft_noise_glm5next_sm120",
+       "fedc4861b99f9d91",
+       19200,
+       "fd53fa33573f0faa3172a33c205e1d26951096295e41f04d4714459e1d105aae"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.resolve.11",
+     "kind": "resolve",
+     "at": 5286,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_row_draft_noise_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       1676,
+       "chop_row_draft_noise_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.12",
+     "kind": "graph",
+     "at": 13432,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 2 @id 43"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.13",
+     "kind": "graph",
+     "at": 13495,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 3 @id 43"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.14",
+     "kind": "graph",
+     "at": 13558,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 4 @id 43"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.15",
+     "kind": "graph",
+     "at": 13621,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 5 @id 43"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.16",
+     "kind": "graph",
+     "at": 13713,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 2 @id 37"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.17",
+     "kind": "graph",
+     "at": 13769,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 3 @id 37"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.18",
+     "kind": "graph",
+     "at": 13825,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 4 @id 37"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.19",
+     "kind": "graph",
+     "at": 13881,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 5 @id 37"
+      ]
+     ]
+    }
+   ],
+   "removed": [
+    {
+     "name": "coupled-drafts-default.removed.graph.0",
+     "kind": "graph",
+     "at": 13387,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 2 @id 42"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.1",
+     "kind": "graph",
+     "at": 13449,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 3 @id 42"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.2",
+     "kind": "graph",
+     "at": 13511,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 4 @id 42"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.3",
+     "kind": "graph",
+     "at": 13573,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 5 @id 42"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.4",
+     "kind": "graph",
+     "at": 13660,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 2 @id 36"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.5",
+     "kind": "graph",
+     "at": 13715,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 3 @id 36"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.6",
+     "kind": "graph",
+     "at": 13770,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 4 @id 36"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.7",
+     "kind": "graph",
+     "at": 13825,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 5 @id 36"
+      ]
+     ]
+    }
+   ]
+  },
+  "fake_host_tests::nvfp4::the_nvfp4_routed_drafter_runs_its_mxfp8_experts#tests/fake_host_tests.nvfp4.the_nvfp4_routed_drafter_runs_its_mxfp8_experts/device-1.jsonl": {
+   "added": [
+    {
+     "name": "coupled-drafts-default.added.allocation.0",
+     "kind": "allocation",
+     "at": 268,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       0,
+       1024,
+       256,
+       4294967298
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.allocation.1",
+     "kind": "allocation",
+     "at": 618,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       1,
+       1024,
+       256,
+       4294967299
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.allocation.2",
+     "kind": "allocation",
+     "at": 968,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       2,
+       1024,
+       256,
+       4294967300
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.allocation.3",
+     "kind": "allocation",
+     "at": 1318,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "allocate 1024 256"
+      ],
+      [
+       "allocation",
+       "@raw",
+       3,
+       1024,
+       256,
+       4294967301
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.module.4",
+     "kind": "module",
+     "at": 1714,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "draft_noise_glm5next_sm120",
+       "fedc4861b99f9d91",
+       19200,
+       "fd53fa33573f0faa3172a33c205e1d26951096295e41f04d4714459e1d105aae"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.resolve.5",
+     "kind": "resolve",
+     "at": 1716,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_row_draft_noise_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       557,
+       "chop_row_draft_noise_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.module.6",
+     "kind": "module",
+     "at": 2904,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "draft_noise_glm5next_sm120",
+       "fedc4861b99f9d91",
+       19200,
+       "fd53fa33573f0faa3172a33c205e1d26951096295e41f04d4714459e1d105aae"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.resolve.7",
+     "kind": "resolve",
+     "at": 2906,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_row_draft_noise_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       930,
+       "chop_row_draft_noise_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.module.8",
+     "kind": "module",
+     "at": 4094,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "draft_noise_glm5next_sm120",
+       "fedc4861b99f9d91",
+       19200,
+       "fd53fa33573f0faa3172a33c205e1d26951096295e41f04d4714459e1d105aae"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.resolve.9",
+     "kind": "resolve",
+     "at": 4096,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_row_draft_noise_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       1303,
+       "chop_row_draft_noise_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.module.10",
+     "kind": "module",
+     "at": 5284,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "module",
+       "@id",
+       "draft_noise_glm5next_sm120",
+       "fedc4861b99f9d91",
+       19200,
+       "fd53fa33573f0faa3172a33c205e1d26951096295e41f04d4714459e1d105aae"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.resolve.11",
+     "kind": "resolve",
+     "at": 5286,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "resolve @id chop_row_draft_noise_f32_v1"
+      ],
+      [
+       "resolve",
+       "@id",
+       1676,
+       "chop_row_draft_noise_f32_v1"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.12",
+     "kind": "graph",
+     "at": 13392,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 2 @id 43"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.13",
+     "kind": "graph",
+     "at": 13455,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 3 @id 43"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.14",
+     "kind": "graph",
+     "at": 13518,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 4 @id 43"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.15",
+     "kind": "graph",
+     "at": 13581,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 5 @id 43"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.16",
+     "kind": "graph",
+     "at": 13673,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 2 @id 37"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.17",
+     "kind": "graph",
+     "at": 13729,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 3 @id 37"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.18",
+     "kind": "graph",
+     "at": 13785,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 4 @id 37"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.added.graph.19",
+     "kind": "graph",
+     "at": 13841,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 5 @id 37"
+      ]
+     ]
+    }
+   ],
+   "removed": [
+    {
+     "name": "coupled-drafts-default.removed.graph.0",
+     "kind": "graph",
+     "at": 13347,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 2 @id 42"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.1",
+     "kind": "graph",
+     "at": 13409,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 3 @id 42"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.2",
+     "kind": "graph",
+     "at": 13471,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 4 @id 42"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.3",
+     "kind": "graph",
+     "at": 13533,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 5 @id 42"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.4",
+     "kind": "graph",
+     "at": 13620,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 2 @id 36"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.5",
+     "kind": "graph",
+     "at": 13675,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 3 @id 36"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.6",
+     "kind": "graph",
+     "at": 13730,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 4 @id 36"
+      ]
+     ]
+    },
+    {
+     "name": "coupled-drafts-default.removed.graph.7",
+     "kind": "graph",
+     "at": 13785,
+     "records": [
+      [
+       "id",
+       "@id"
+      ],
+      [
+       "note",
+       "captured 5 @id 36"
+      ]
+     ]
+    }
+   ]
+  }
+ },
+ "module_activations": {
+  "context_parallel_served_tests::served_groups_run_the_drafters_passes#tests/context_parallel_served_tests.served_groups_run_the_drafters_passes/device-2.jsonl": {
+   "added": [
+    "draft_noise_glm5next_sm120"
+   ]
+  },
+  "context_parallel_served_tests::served_groups_run_the_drafters_passes#tests/context_parallel_served_tests.served_groups_run_the_drafters_passes/device-3.jsonl": {
+   "added": [
+    "draft_noise_glm5next_sm120"
+   ]
+  },
+  "fake_host_tests::nvfp4::the_nvfp4_dense_routed_drafter_runs_its_bf16_experts#tests/fake_host_tests.nvfp4.the_nvfp4_dense_routed_drafter_runs_its_bf16_experts/device-1.jsonl": {
+   "added": [
+    "draft_noise_glm5next_sm120"
+   ]
+  },
+  "fake_host_tests::nvfp4::the_nvfp4_routed_drafter_runs_its_mxfp8_experts#tests/fake_host_tests.nvfp4.the_nvfp4_routed_drafter_runs_its_mxfp8_experts/device-1.jsonl": {
+   "added": [
+    "draft_noise_glm5next_sm120"
+   ]
+  }
+ },
+ "operations": {
+  "context_parallel_served_tests::served_groups_run_the_drafters_passes#tests/context_parallel_served_tests.served_groups_run_the_drafters_passes/device-2.jsonl": [
+   {
+    "add": {
+     "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967396 }, offset: 0, length: 1024 } 51d88627df287325",
+     "lines": [
+      10072,
+      10357,
+      10665,
+      10937
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967599 }, offset: 0, length: 1024 } 51d88627df287325",
+     "lines": [
+      10078,
+      10363,
+      10671,
+      10943
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967802 }, offset: 0, length: 1024 } 51d88627df287325",
+     "lines": [
+      10084,
+      10369,
+      10677,
+      10949
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968005 }, offset: 0, length: 1024 } 51d88627df287325",
+     "lines": [
+      10090,
+      10375,
+      10683,
+      10955
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 2 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 32, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967382 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967396 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967388 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967400 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(0), ScalarU32(0)]",
+     "lines": [
+      10291
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 3 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 32, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967585 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967599 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967591 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967603 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(38720), ScalarU32(0)]",
+     "lines": [
+      10298
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 4 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 32, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967788 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967802 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967794 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967806 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(77440), ScalarU32(0)]",
+     "lines": [
+      10305
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 5 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 32, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967991 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968005 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967997 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968009 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(116160), ScalarU32(0)]",
+     "lines": [
+      10312
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 2 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 1, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967382 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967396 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967388 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967400 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(0), ScalarU32(0)]",
+     "lines": [
+      10438,
+      10737
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 3 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 1, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967585 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967599 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967591 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967603 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(38720), ScalarU32(0)]",
+     "lines": [
+      10506,
+      10796
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 4 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 1, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967788 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967802 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967794 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967806 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(77440), ScalarU32(0)]",
+     "lines": [
+      10574,
+      10855
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 5 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 1, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967991 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968005 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967997 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968009 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(116160), ScalarU32(0)]",
+     "lines": [
+      10642,
+      10914
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 2 2117",
+     "lines": [
+      10632
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 3 2120",
+     "lines": [
+      10633
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 4 2123",
+     "lines": [
+      10634
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 5 2126",
+     "lines": [
+      10635
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 2 2129",
+     "lines": [
+      10656
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 3 2132",
+     "lines": [
+      10657
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 4 2135",
+     "lines": [
+      10658
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 5 2138",
+     "lines": [
+      10659
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 2 2129",
+     "lines": [
+      10896,
+      10928
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 3 2132",
+     "lines": [
+      10897,
+      10929
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 4 2135",
+     "lines": [
+      10898,
+      10930
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 5 2138",
+     "lines": [
+      10899,
+      10931
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 2 2141",
+     "lines": [
+      10928,
+      10964
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 3 2144",
+     "lines": [
+      10929,
+      10965
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 4 2147",
+     "lines": [
+      10930,
+      10966
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 5 2150",
+     "lines": [
+      10931,
+      10967
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "release graph 2138",
+     "lines": [
+      16385
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release graph 2150",
+     "lines": [
+      16421
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "release graph 2135",
+     "lines": [
+      16388
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release graph 2147",
+     "lines": [
+      16424
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "release graph 2132",
+     "lines": [
+      16391
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release graph 2144",
+     "lines": [
+      16427
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "release graph 2129",
+     "lines": [
+      16394
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release graph 2141",
+     "lines": [
+      16430
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "release graph 2126",
+     "lines": [
+      16397
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release graph 2138",
+     "lines": [
+      16433
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "release graph 2123",
+     "lines": [
+      16400
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release graph 2135",
+     "lines": [
+      16436
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "release graph 2120",
+     "lines": [
+      16403
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release graph 2132",
+     "lines": [
+      16439
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "release graph 2117",
+     "lines": [
+      16406
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release graph 2129",
+     "lines": [
+      16442
+     ]
+    }
+   }
+  ],
+  "context_parallel_served_tests::served_groups_run_the_drafters_passes#tests/context_parallel_served_tests.served_groups_run_the_drafters_passes/device-3.jsonl": [
+   {
+    "add": {
+     "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967396 }, offset: 0, length: 1024 } 51d88627df287325",
+     "lines": [
+      10160,
+      10453,
+      10769,
+      11049
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967599 }, offset: 0, length: 1024 } 51d88627df287325",
+     "lines": [
+      10166,
+      10459,
+      10775,
+      11055
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967802 }, offset: 0, length: 1024 } 51d88627df287325",
+     "lines": [
+      10172,
+      10465,
+      10781,
+      11061
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968005 }, offset: 0, length: 1024 } 51d88627df287325",
+     "lines": [
+      10178,
+      10471,
+      10787,
+      11067
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 2 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 32, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967382 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967396 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967388 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967400 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(0), ScalarU32(0)]",
+     "lines": [
+      10387
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 3 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 32, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967585 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967599 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967591 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967603 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(38720), ScalarU32(0)]",
+     "lines": [
+      10394
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 4 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 32, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967788 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967802 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967794 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967806 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(77440), ScalarU32(0)]",
+     "lines": [
+      10401
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 5 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 32, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967991 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968005 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967997 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968009 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(116160), ScalarU32(0)]",
+     "lines": [
+      10408
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 2 chop_proj_bf16_dense_n4096_k8192_189e39837602fce1_v1 LaunchConfigV1 { flags: 1, grid_x: 188, grid_y: 1, grid_z: 1, block_x: 384, block_y: 1, block_z: 1, shared_memory_bytes: 36992, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [TensorMap(TensorMapV1 { buffer: DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4295967296 }, offset: 80331161600, length: 67108864 }, rank: 2, element_type: Bf16, swizzle: Bytes128, interleave: 0, l2_promotion: 2, oob_fill: 0, global_dims: [8192, 4096, 0, 0, 0], global_strides_bytes: [16384, 0, 0, 0], box_dims: [64, 64, 0, 0, 0], element_strides: [1, 1, 0, 0, 0] }), TensorMap(TensorMapV1 { buffer: DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967384 }, offset: 0, length: 134217728 }, rank: 2, element_type: Bf16, swizzle: Bytes128, interleave: 0, l2_promotion: 2, oob_fill: 0, global_dims: [8192, 1, 0, 0, 0], global_strides_bytes: [16384, 0, 0, 0], box_dims: [64, 8, 0, 0, 0], element_strides: [1, 1, 0, 0, 0] }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967383 }, offset: 0, length: 67108864 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294969371 }, offset: 0, length: 6291840 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294969372 }, offset: 0, length: 512 }), ScalarU32(1), ScalarU32(4096), ScalarU32(8192), ScalarU32(1), ScalarU32(0), NullDevicePointer, NullDevicePointer, NullDevicePointer, NullDevicePointer, NullDevicePointer]",
+     "lines": [
+      10483
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "launch 2 chop_proj_bf16_dense_n4096_k8192_189e39837602fce1_v1 LaunchConfigV1 { flags: 1, grid_x: 188, grid_y: 1, grid_z: 1, block_x: 384, block_y: 1, block_z: 1, shared_memory_bytes: 36992, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [TensorMap(TensorMapV1 { buffer: DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4295967296 }, offset: 80331161600, length: 67108864 }, rank: 2, element_type: Bf16, swizzle: Bytes128, interleave: 0, l2_promotion: 2, oob_fill: 0, global_dims: [8192, 4096, 0, 0, 0], global_strides_bytes: [16384, 0, 0, 0], box_dims: [64, 64, 0, 0, 0], element_strides: [1, 1, 0, 0, 0] }), TensorMap(TensorMapV1 { buffer: DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967384 }, offset: 0, length: 134217728 }, rank: 2, element_type: Bf16, swizzle: Bytes128, interleave: 0, l2_promotion: 2, oob_fill: 0, global_dims: [8192, 1, 0, 0, 0], global_strides_bytes: [16384, 0, 0, 0], box_dims: [64, 8, 0, 0, 0], element_strides: [1, 1, 0, 0, 0] }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967383 }, offset: 0, length: 67108864 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294969359 }, offset: 0, length: 6291840 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294969360 }, offset: 0, length: 512 }), ScalarU32(1), ScalarU32(4096), ScalarU32(8192), ScalarU32(1), ScalarU32(0), NullDevicePointer, NullDevicePointer, NullDevicePointer, NullDevicePointer, NullDevicePointer]",
+     "lines": [
+      10465
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 2 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 1, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967382 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967396 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967388 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967400 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(0), ScalarU32(0)]",
+     "lines": [
+      10536,
+      10843
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 3 chop_proj_bf16_dense_n4096_k8192_189e39837602fce1_v1 LaunchConfigV1 { flags: 1, grid_x: 188, grid_y: 1, grid_z: 1, block_x: 384, block_y: 1, block_z: 1, shared_memory_bytes: 36992, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [TensorMap(TensorMapV1 { buffer: DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4295967297 }, offset: 80331161600, length: 67108864 }, rank: 2, element_type: Bf16, swizzle: Bytes128, interleave: 0, l2_promotion: 2, oob_fill: 0, global_dims: [8192, 4096, 0, 0, 0], global_strides_bytes: [16384, 0, 0, 0], box_dims: [64, 64, 0, 0, 0], element_strides: [1, 1, 0, 0, 0] }), TensorMap(TensorMapV1 { buffer: DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967587 }, offset: 0, length: 134217728 }, rank: 2, element_type: Bf16, swizzle: Bytes128, interleave: 0, l2_promotion: 2, oob_fill: 0, global_dims: [8192, 1, 0, 0, 0], global_strides_bytes: [16384, 0, 0, 0], box_dims: [64, 8, 0, 0, 0], element_strides: [1, 1, 0, 0, 0] }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967586 }, offset: 0, length: 67108864 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294969379 }, offset: 0, length: 6291840 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294969380 }, offset: 0, length: 512 }), ScalarU32(1), ScalarU32(4096), ScalarU32(8192), ScalarU32(1), ScalarU32(0), NullDevicePointer, NullDevicePointer, NullDevicePointer, NullDevicePointer, NullDevicePointer]",
+     "lines": [
+      10553
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "launch 3 chop_proj_bf16_dense_n4096_k8192_189e39837602fce1_v1 LaunchConfigV1 { flags: 1, grid_x: 188, grid_y: 1, grid_z: 1, block_x: 384, block_y: 1, block_z: 1, shared_memory_bytes: 36992, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [TensorMap(TensorMapV1 { buffer: DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4295967297 }, offset: 80331161600, length: 67108864 }, rank: 2, element_type: Bf16, swizzle: Bytes128, interleave: 0, l2_promotion: 2, oob_fill: 0, global_dims: [8192, 4096, 0, 0, 0], global_strides_bytes: [16384, 0, 0, 0], box_dims: [64, 64, 0, 0, 0], element_strides: [1, 1, 0, 0, 0] }), TensorMap(TensorMapV1 { buffer: DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967586 }, offset: 0, length: 134217728 }, rank: 2, element_type: Bf16, swizzle: Bytes128, interleave: 0, l2_promotion: 2, oob_fill: 0, global_dims: [8192, 1, 0, 0, 0], global_strides_bytes: [16384, 0, 0, 0], box_dims: [64, 8, 0, 0, 0], element_strides: [1, 1, 0, 0, 0] }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967585 }, offset: 0, length: 67108864 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294969367 }, offset: 0, length: 6291840 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294969368 }, offset: 0, length: 512 }), ScalarU32(1), ScalarU32(4096), ScalarU32(8192), ScalarU32(1), ScalarU32(0), NullDevicePointer, NullDevicePointer, NullDevicePointer, NullDevicePointer, NullDevicePointer]",
+     "lines": [
+      10534
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 3 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 1, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967585 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967599 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967591 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967603 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(38720), ScalarU32(0)]",
+     "lines": [
+      10606,
+      10904
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 4 chop_proj_bf16_dense_n4096_k8192_189e39837602fce1_v1 LaunchConfigV1 { flags: 1, grid_x: 188, grid_y: 1, grid_z: 1, block_x: 384, block_y: 1, block_z: 1, shared_memory_bytes: 36992, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [TensorMap(TensorMapV1 { buffer: DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4295967298 }, offset: 80331161600, length: 67108864 }, rank: 2, element_type: Bf16, swizzle: Bytes128, interleave: 0, l2_promotion: 2, oob_fill: 0, global_dims: [8192, 4096, 0, 0, 0], global_strides_bytes: [16384, 0, 0, 0], box_dims: [64, 64, 0, 0, 0], element_strides: [1, 1, 0, 0, 0] }), TensorMap(TensorMapV1 { buffer: DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967790 }, offset: 0, length: 134217728 }, rank: 2, element_type: Bf16, swizzle: Bytes128, interleave: 0, l2_promotion: 2, oob_fill: 0, global_dims: [8192, 1, 0, 0, 0], global_strides_bytes: [16384, 0, 0, 0], box_dims: [64, 8, 0, 0, 0], element_strides: [1, 1, 0, 0, 0] }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967789 }, offset: 0, length: 67108864 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294969387 }, offset: 0, length: 6291840 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294969388 }, offset: 0, length: 512 }), ScalarU32(1), ScalarU32(4096), ScalarU32(8192), ScalarU32(1), ScalarU32(0), NullDevicePointer, NullDevicePointer, NullDevicePointer, NullDevicePointer, NullDevicePointer]",
+     "lines": [
+      10623
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "launch 4 chop_proj_bf16_dense_n4096_k8192_189e39837602fce1_v1 LaunchConfigV1 { flags: 1, grid_x: 188, grid_y: 1, grid_z: 1, block_x: 384, block_y: 1, block_z: 1, shared_memory_bytes: 36992, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [TensorMap(TensorMapV1 { buffer: DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4295967298 }, offset: 80331161600, length: 67108864 }, rank: 2, element_type: Bf16, swizzle: Bytes128, interleave: 0, l2_promotion: 2, oob_fill: 0, global_dims: [8192, 4096, 0, 0, 0], global_strides_bytes: [16384, 0, 0, 0], box_dims: [64, 64, 0, 0, 0], element_strides: [1, 1, 0, 0, 0] }), TensorMap(TensorMapV1 { buffer: DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967788 }, offset: 0, length: 134217728 }, rank: 2, element_type: Bf16, swizzle: Bytes128, interleave: 0, l2_promotion: 2, oob_fill: 0, global_dims: [8192, 1, 0, 0, 0], global_strides_bytes: [16384, 0, 0, 0], box_dims: [64, 8, 0, 0, 0], element_strides: [1, 1, 0, 0, 0] }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967787 }, offset: 0, length: 67108864 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294969375 }, offset: 0, length: 6291840 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294969376 }, offset: 0, length: 512 }), ScalarU32(1), ScalarU32(4096), ScalarU32(8192), ScalarU32(1), ScalarU32(0), NullDevicePointer, NullDevicePointer, NullDevicePointer, NullDevicePointer, NullDevicePointer]",
+     "lines": [
+      10603
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 4 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 1, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967788 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967802 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967794 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967806 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(77440), ScalarU32(0)]",
+     "lines": [
+      10676,
+      10965
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 5 chop_proj_bf16_dense_n4096_k8192_189e39837602fce1_v1 LaunchConfigV1 { flags: 1, grid_x: 188, grid_y: 1, grid_z: 1, block_x: 384, block_y: 1, block_z: 1, shared_memory_bytes: 36992, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [TensorMap(TensorMapV1 { buffer: DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4295967299 }, offset: 80331161600, length: 67108864 }, rank: 2, element_type: Bf16, swizzle: Bytes128, interleave: 0, l2_promotion: 2, oob_fill: 0, global_dims: [8192, 4096, 0, 0, 0], global_strides_bytes: [16384, 0, 0, 0], box_dims: [64, 64, 0, 0, 0], element_strides: [1, 1, 0, 0, 0] }), TensorMap(TensorMapV1 { buffer: DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967993 }, offset: 0, length: 134217728 }, rank: 2, element_type: Bf16, swizzle: Bytes128, interleave: 0, l2_promotion: 2, oob_fill: 0, global_dims: [8192, 1, 0, 0, 0], global_strides_bytes: [16384, 0, 0, 0], box_dims: [64, 8, 0, 0, 0], element_strides: [1, 1, 0, 0, 0] }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967992 }, offset: 0, length: 67108864 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294969395 }, offset: 0, length: 6291840 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294969396 }, offset: 0, length: 512 }), ScalarU32(1), ScalarU32(4096), ScalarU32(8192), ScalarU32(1), ScalarU32(0), NullDevicePointer, NullDevicePointer, NullDevicePointer, NullDevicePointer, NullDevicePointer]",
+     "lines": [
+      10693
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "launch 5 chop_proj_bf16_dense_n4096_k8192_189e39837602fce1_v1 LaunchConfigV1 { flags: 1, grid_x: 188, grid_y: 1, grid_z: 1, block_x: 384, block_y: 1, block_z: 1, shared_memory_bytes: 36992, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [TensorMap(TensorMapV1 { buffer: DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4295967299 }, offset: 80331161600, length: 67108864 }, rank: 2, element_type: Bf16, swizzle: Bytes128, interleave: 0, l2_promotion: 2, oob_fill: 0, global_dims: [8192, 4096, 0, 0, 0], global_strides_bytes: [16384, 0, 0, 0], box_dims: [64, 64, 0, 0, 0], element_strides: [1, 1, 0, 0, 0] }), TensorMap(TensorMapV1 { buffer: DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967990 }, offset: 0, length: 134217728 }, rank: 2, element_type: Bf16, swizzle: Bytes128, interleave: 0, l2_promotion: 2, oob_fill: 0, global_dims: [8192, 1, 0, 0, 0], global_strides_bytes: [16384, 0, 0, 0], box_dims: [64, 8, 0, 0, 0], element_strides: [1, 1, 0, 0, 0] }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967989 }, offset: 0, length: 67108864 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294969383 }, offset: 0, length: 6291840 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294969384 }, offset: 0, length: 512 }), ScalarU32(1), ScalarU32(4096), ScalarU32(8192), ScalarU32(1), ScalarU32(0), NullDevicePointer, NullDevicePointer, NullDevicePointer, NullDevicePointer, NullDevicePointer]",
+     "lines": [
+      10672
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 5 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 1, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967991 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968005 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967997 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968009 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(116160), ScalarU32(0)]",
+     "lines": [
+      10746,
+      11026
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 2 2116",
+     "lines": [
+      10732
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 3 2119",
+     "lines": [
+      10733
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 4 2122",
+     "lines": [
+      10734
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 5 2125",
+     "lines": [
+      10735
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 2 2128",
+     "lines": [
+      10756
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 3 2131",
+     "lines": [
+      10757
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 4 2134",
+     "lines": [
+      10758
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 5 2137",
+     "lines": [
+      10759
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 2 2129",
+     "lines": [
+      11008,
+      11040
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 3 2132",
+     "lines": [
+      11009,
+      11041
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 4 2135",
+     "lines": [
+      11010,
+      11042
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 5 2138",
+     "lines": [
+      11011,
+      11043
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 2 2141",
+     "lines": [
+      11040,
+      11076
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 3 2144",
+     "lines": [
+      11041,
+      11077
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 4 2147",
+     "lines": [
+      11042,
+      11078
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 5 2150",
+     "lines": [
+      11043,
+      11079
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "release graph 2138",
+     "lines": [
+      16673
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release graph 2150",
+     "lines": [
+      16709
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "release graph 2135",
+     "lines": [
+      16676
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release graph 2147",
+     "lines": [
+      16712
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "release graph 2132",
+     "lines": [
+      16679
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release graph 2144",
+     "lines": [
+      16715
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "release graph 2129",
+     "lines": [
+      16682
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release graph 2141",
+     "lines": [
+      16718
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "release graph 2125",
+     "lines": [
+      16686
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release graph 2137",
+     "lines": [
+      16722
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "release graph 2122",
+     "lines": [
+      16689
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release graph 2134",
+     "lines": [
+      16725
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "release graph 2119",
+     "lines": [
+      16692
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release graph 2131",
+     "lines": [
+      16728
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "release graph 2116",
+     "lines": [
+      16695
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "release graph 2128",
+     "lines": [
+      16731
+     ]
+    }
+   }
+  ],
+  "fake_host_tests::nvfp4::the_nvfp4_dense_routed_drafter_runs_its_bf16_experts#tests/fake_host_tests.nvfp4.the_nvfp4_dense_routed_drafter_runs_its_bf16_experts/device-1.jsonl": [
+   {
+    "add": {
+     "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967396 }, offset: 0, length: 1024 } 51d88627df287325",
+     "lines": [
+      9112,
+      9365,
+      9641,
+      9889
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967505 }, offset: 0, length: 1024 } 51d88627df287325",
+     "lines": [
+      9118,
+      9371,
+      9647,
+      9895
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967614 }, offset: 0, length: 1024 } 51d88627df287325",
+     "lines": [
+      9124,
+      9377,
+      9653,
+      9901
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967723 }, offset: 0, length: 1024 } 51d88627df287325",
+     "lines": [
+      9130,
+      9383,
+      9659,
+      9907
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 2 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 32, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967382 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967396 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967388 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967400 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(0), ScalarU32(0)]",
+     "lines": [
+      9299
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 3 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 32, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967491 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967505 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967497 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967509 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(38720), ScalarU32(0)]",
+     "lines": [
+      9306
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 4 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 32, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967600 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967614 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967606 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967618 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(77440), ScalarU32(0)]",
+     "lines": [
+      9313
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 5 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 32, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967709 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967723 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967715 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967727 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(116160), ScalarU32(0)]",
+     "lines": [
+      9320
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 2 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 1, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967382 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967396 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967388 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967400 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(0), ScalarU32(0)]",
+     "lines": [
+      9438,
+      9707
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 3 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 1, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967491 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967505 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967497 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967509 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(38720), ScalarU32(0)]",
+     "lines": [
+      9498,
+      9760
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 4 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 1, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967600 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967614 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967606 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967618 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(77440), ScalarU32(0)]",
+     "lines": [
+      9558,
+      9813
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 5 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 1, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967709 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967723 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967715 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967727 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(116160), ScalarU32(0)]",
+     "lines": [
+      9618,
+      9866
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 2 1997",
+     "lines": [
+      9608
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 3 2000",
+     "lines": [
+      9609
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 4 2003",
+     "lines": [
+      9610
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 5 2006",
+     "lines": [
+      9611
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 2 2009",
+     "lines": [
+      9632
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 3 2012",
+     "lines": [
+      9633
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 4 2015",
+     "lines": [
+      9634
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 5 2018",
+     "lines": [
+      9635
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 2 2009",
+     "lines": [
+      9848,
+      9880
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 3 2012",
+     "lines": [
+      9849,
+      9881
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 4 2015",
+     "lines": [
+      9850,
+      9882
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 5 2018",
+     "lines": [
+      9851,
+      9883
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 2 2021",
+     "lines": [
+      9880,
+      9916
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 3 2024",
+     "lines": [
+      9881,
+      9917
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 4 2027",
+     "lines": [
+      9882,
+      9918
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 5 2030",
+     "lines": [
+      9883,
+      9919
+     ]
+    }
+   }
+  ],
+  "fake_host_tests::nvfp4::the_nvfp4_routed_drafter_runs_its_mxfp8_experts#tests/fake_host_tests.nvfp4.the_nvfp4_routed_drafter_runs_its_mxfp8_experts/device-1.jsonl": [
+   {
+    "add": {
+     "text": "upload 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967396 }, offset: 0, length: 1024 } 51d88627df287325",
+     "lines": [
+      9072,
+      9325,
+      9601,
+      9849
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967505 }, offset: 0, length: 1024 } 51d88627df287325",
+     "lines": [
+      9078,
+      9331,
+      9607,
+      9855
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967614 }, offset: 0, length: 1024 } 51d88627df287325",
+     "lines": [
+      9084,
+      9337,
+      9613,
+      9861
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "upload 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967723 }, offset: 0, length: 1024 } 51d88627df287325",
+     "lines": [
+      9090,
+      9343,
+      9619,
+      9867
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 2 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 32, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967382 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967396 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967388 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967400 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(0), ScalarU32(0)]",
+     "lines": [
+      9259
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 3 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 32, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967491 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967505 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967497 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967509 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(38720), ScalarU32(0)]",
+     "lines": [
+      9266
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 4 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 32, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967600 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967614 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967606 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967618 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(77440), ScalarU32(0)]",
+     "lines": [
+      9273
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 5 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 32, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967709 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967723 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967715 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967727 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(116160), ScalarU32(0)]",
+     "lines": [
+      9280
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 2 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 1, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967382 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967396 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967388 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967400 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(0), ScalarU32(0)]",
+     "lines": [
+      9398,
+      9667
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 3 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 1, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967491 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967505 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967497 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967509 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(38720), ScalarU32(0)]",
+     "lines": [
+      9458,
+      9720
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 4 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 1, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967600 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967614 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967606 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967618 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(77440), ScalarU32(0)]",
+     "lines": [
+      9518,
+      9773
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "launch 5 chop_row_draft_noise_f32_v1 LaunchConfigV1 { flags: 1, grid_x: 1, grid_y: 19, grid_z: 1, block_x: 256, block_y: 1, block_z: 1, shared_memory_bytes: 0, cluster: LaunchClusterV1 { x: 1, y: 1, z: 1 } } [DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967709 }, offset: 0, length: 9912320 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967723 }, offset: 0, length: 1024 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967715 }, offset: 0, length: 4 }), DeviceBuffer(DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967727 }, offset: 0, length: 4 }), ScalarU32(38720), ScalarU32(116160), ScalarU32(0)]",
+     "lines": [
+      9578,
+      9826
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 2 1997",
+     "lines": [
+      9568
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 3 2000",
+     "lines": [
+      9569
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 4 2003",
+     "lines": [
+      9570
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 5 2006",
+     "lines": [
+      9571
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 2 2009",
+     "lines": [
+      9592
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 3 2012",
+     "lines": [
+      9593
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 4 2015",
+     "lines": [
+      9594
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 5 2018",
+     "lines": [
+      9595
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 2 2009",
+     "lines": [
+      9808,
+      9840
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 3 2012",
+     "lines": [
+      9809,
+      9841
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 4 2015",
+     "lines": [
+      9810,
+      9842
+     ]
+    }
+   },
+   {
+    "remove": {
+     "text": "replay 5 2018",
+     "lines": [
+      9811,
+      9843
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 2 2021",
+     "lines": [
+      9840,
+      9876
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 3 2024",
+     "lines": [
+      9841,
+      9877
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 4 2027",
+     "lines": [
+      9842,
+      9878
+     ]
+    }
+   },
+   {
+    "add": {
+     "text": "replay 5 2030",
+     "lines": [
+      9843,
+      9879
+     ]
+    }
+   }
+  ]
+ }
+}

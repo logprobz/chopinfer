@@ -939,8 +939,14 @@ pub struct EngineSummaryV1 {
     /// Gauges.
     pub running: u64,
     pub waiting: u64,
+    /// Tokens the live sequences hold, a prefix several of them share
+    /// counted for each, and the tokens the pool can hold.
     pub kv_tokens_used: u64,
     pub kv_tokens_capacity: u64,
+    /// Occupied KV pages and all pages. Their ratio is the line's `usage`,
+    /// as `vllm:kv_cache_usage_perc` reports it.
+    pub kv_blocks_used: u64,
+    pub kv_block_capacity: u64,
     /// `starting`, `ready`, `failed` or `stopped`.
     pub worker_state: &'static str,
 }
@@ -1039,10 +1045,12 @@ pub(crate) fn summary_line(
             json!({
                 "used_tokens": engine.kv_tokens_used,
                 "capacity_tokens": engine.kv_tokens_capacity,
-                "usage": if engine.kv_tokens_capacity == 0 {
+                "blocks_used": engine.kv_blocks_used,
+                "block_capacity": engine.kv_block_capacity,
+                "usage": if engine.kv_block_capacity == 0 {
                     Value::Null
                 } else {
-                    json!(((engine.kv_tokens_used as f64 / engine.kv_tokens_capacity as f64) * 1e4).round() / 1e4)
+                    json!(((engine.kv_blocks_used as f64 / engine.kv_block_capacity as f64) * 1e4).round() / 1e4)
                 },
             }),
         );
@@ -1136,12 +1144,16 @@ mod tests {
 
     #[test]
     fn summary_reports_counter_deltas_and_current_gauges() {
+        // Shared prefixes count once for each sequence that holds them, so
+        // the tokens can exceed the capacity while pages remain.
         let engine = |submitted: u64, used: u64| EngineSummaryV1 {
             requests_submitted: submitted,
             draft_tokens: submitted * 4,
             accepted_tokens: submitted * 3,
             kv_tokens_used: used,
             kv_tokens_capacity: 1_000,
+            kv_blocks_used: 25,
+            kv_block_capacity: 100,
             running: 2,
             worker_state: "ready",
             ..EngineSummaryV1::default()
@@ -1155,12 +1167,12 @@ mod tests {
             Duration::from_secs(60),
             requests,
             &refusals,
-            Some(engine(5, 400)),
+            Some(engine(5, 1_200)),
             &SummaryBase::default(),
         );
         assert_eq!(first["requests"]["submitted"], 5);
         assert_eq!(first["refusals"]["invalid_request"], 3);
-        assert_eq!(first["kv"]["usage"], 0.4);
+        assert_eq!(first["kv"]["usage"], 0.25);
         let later = RequestTotals {
             requests: 12,
             failures: [1, 6, 1],

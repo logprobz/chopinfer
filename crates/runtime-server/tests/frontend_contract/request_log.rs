@@ -154,6 +154,8 @@ impl runtime_server::MetricsSnapshotProvider for GrowingMetrics {
             waiting: 2,
             kv_tokens_used: 256,
             kv_tokens_capacity: 1024,
+            kv_blocks_used: 16,
+            kv_block_capacity: 64,
             worker_state: "ready",
             ..runtime_server::EngineSummaryV1::default()
         })

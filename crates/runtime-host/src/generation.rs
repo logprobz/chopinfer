@@ -1848,6 +1848,8 @@ impl MetricsSnapshotProvider for NativeRuntimeMetricsV1 {
             waiting: requests.waiting,
             kv_tokens_used: kv.tokens,
             kv_tokens_capacity: kv.capacity_tokens,
+            kv_blocks_used: kv.blocks_used,
+            kv_block_capacity: kv.block_capacity,
             worker_state: match self.state.load(Ordering::Acquire) {
                 STARTING => "starting",
                 READY => "ready",
@@ -4799,6 +4801,54 @@ fn video_geometry_v1(
 
 #[cfg(test)]
 mod tests {
+    /// The summary's KV usage is occupied pages over pages, as the metrics
+    /// endpoint reports it. A prefix several sequences share holds its pages
+    /// once but counts its tokens for each sequence, so tokens can exceed the
+    /// capacity while pages remain.
+    #[test]
+    fn the_summary_reports_kv_usage_by_pages_as_the_metrics_endpoint_does() {
+        use runtime_server::MetricsSnapshotProvider;
+        let kv = runtime_kv::KvMetrics::new(runtime_kv::KvCachePrecision::Other);
+        let mut pool = runtime_kv::KvPool::new_with_metrics(
+            runtime_kv::KvGeometry::new(4, 4).unwrap(),
+            4,
+            kv.clone(),
+        )
+        .unwrap();
+        let prompt = pool.create_sequence(16).unwrap();
+        pool.append(prompt, 12).unwrap();
+        let _first = pool.fork(prompt, 16).unwrap();
+        let _second = pool.fork(prompt, 16).unwrap();
+        kv.observe_occupancy(pool.stats());
+        let metrics = super::NativeRuntimeMetricsV1 {
+            model_name: "fixture".to_owned(),
+            engine: super::EngineMetrics::default(),
+            kv,
+            state: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(super::READY)),
+            media: None,
+            device_memory: None,
+        };
+
+        let summary = metrics.summary().unwrap();
+
+        assert_eq!(
+            (summary.kv_tokens_used, summary.kv_tokens_capacity),
+            (36, 16)
+        );
+        assert_eq!((summary.kv_blocks_used, summary.kv_block_capacity), (3, 4));
+        let endpoint = metrics.prometheus(0);
+        let reported = endpoint
+            .lines()
+            .find(|line| line.starts_with("vllm:kv_cache_usage_perc{"))
+            .and_then(|line| line.rsplit(' ').next())
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap();
+        assert_eq!(
+            reported,
+            summary.kv_blocks_used as f64 / summary.kv_block_capacity as f64
+        );
+    }
+
     /// A chat whose render left reasoning open waits for a declared
     /// reasoning end token before its constraint applies; a chat prompt, a
     /// thinking prompt that continues a final assistant turn which already

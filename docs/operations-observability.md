@@ -510,11 +510,14 @@ since the previous line; `running`, `waiting`, `kv` and `worker_state` are
 current values:
 
 ```json
-{"schema":"chopinfer.summary.v1","time":"2026-10-25T14:04:00.000Z","interval_seconds":60.0,"http_requests":1830,"failures":{"error":0,"warn":3,"cancelled":2},"refusals":{"invalid_request":2,"unknown_model":1,"not_found":0,"intake_timeout":0,"capacity":0,"unavailable":0,"internal":0,"other":0},"requests":{"submitted":1825,"completed":1823,"failed":0,"cancelled":2},"tokens":{"prompt":2310442,"generated":402118,"drafted":288320,"accepted":205427},"acceptance":0.7125,"preemptions":0,"ttft_seconds":{"count":1825,"p50":0.041,"p95":0.118},"itl_seconds":{"count":398470,"p50":0.0182,"p95":0.0265},"running":12,"waiting":0,"kv":{"used_tokens":431104,"capacity_tokens":1069952,"usage":0.4029},"worker_state":"ready"}
+{"schema":"chopinfer.summary.v1","time":"2026-10-25T14:04:00.000Z","interval_seconds":60.0,"http_requests":1830,"failures":{"error":0,"warn":3,"cancelled":2},"refusals":{"invalid_request":2,"unknown_model":1,"not_found":0,"intake_timeout":0,"capacity":0,"unavailable":0,"internal":0,"other":0},"requests":{"submitted":1825,"completed":1823,"failed":0,"cancelled":2},"tokens":{"prompt":2310442,"generated":402118,"drafted":288320,"accepted":205427},"acceptance":0.7125,"preemptions":0,"ttft_seconds":{"count":1825,"p50":0.041,"p95":0.118},"itl_seconds":{"count":398470,"p50":0.0182,"p95":0.0265},"running":12,"waiting":0,"kv":{"used_tokens":431104,"capacity_tokens":1069952,"blocks_used":26944,"block_capacity":66872,"usage":0.4029},"worker_state":"ready"}
 ```
 
 `acceptance` is accepted over drafted tokens in the interval, null when
-nothing was drafted. TTFT and ITL percentiles come from the interval's
+nothing was drafted. `kv.usage` is occupied pages over pages, as
+`vllm:kv_cache_usage_perc` reports it. `kv.used_tokens` counts the tokens of
+every live sequence, so a prefix several sequences share counts once for
+each and can exceed `kv.capacity_tokens` while pages remain. TTFT and ITL percentiles come from the interval's
 histogram bucket counts, interpolated linearly within a bucket as Prometheus
 `histogram_quantile` does, and are null when the interval observed nothing.
 

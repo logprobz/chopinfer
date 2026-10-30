@@ -208,13 +208,7 @@ fn host_table_matches(
     let start = tables.offsets[RANK * 4];
     let table_rows = tables.offsets[RANK * 4 + 4] - start;
     let table_bytes = table_rows as usize * 160;
-    let module = session
-        .context
-        .load_module(include_bytes!(concat!(
-            env!("OUT_DIR"),
-            "/row_qwen38.cubin"
-        )))
-        .map_err(|e| e.to_string())?;
+    let module = session.module("row_qwen38")?;
     let mut host_table = DeviceBuffer::allocate_mapped_host(&session.stream, table_bytes)
         .map_err(|e| e.to_string())?;
     let bytes = host_table

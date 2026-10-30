@@ -177,13 +177,7 @@ fn wide_q_len(count: usize) -> Vec<u32> {
 /// the n-gram ranks checked.
 fn items_match(session: &Session, q_len: &[u32], replay: bool) -> LabResult<Vec<usize>> {
     use kernel_core::ngram_oracle as ng;
-    let module = session
-        .context
-        .load_module(include_bytes!(concat!(
-            env!("OUT_DIR"),
-            "/row_qwen38.cubin"
-        )))
-        .map_err(|e| e.to_string())?;
+    let module = session.module("row_qwen38")?;
     let items = q_len.len();
     let q_len_bytes = raw(q_len, |v| v.to_ne_bytes().to_vec());
     let one = 1_u32.to_ne_bytes();

@@ -49,8 +49,6 @@ use model_qwen38_contract::sm120::moe as qwen;
 use runtime_cuda::{DeviceBuffer, Event, Function, Module, Stream};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::fs;
-use std::path::PathBuf;
 use std::rc::Rc;
 
 use kernel_lab::poison as replay;
@@ -86,9 +84,7 @@ fn sample(seed: u64) -> f32 {
 }
 
 fn load_cubin(session: &Session, name: &str) -> LabResult<Module> {
-    let path = PathBuf::from(env!("OUT_DIR")).join(format!("{name}.cubin"));
-    let bytes = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    session.context.load_module(&bytes).map_err(err)
+    session.module(name)
 }
 
 fn stream_bytes(seed: u64, len: usize) -> Vec<u8> {

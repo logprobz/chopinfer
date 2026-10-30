@@ -114,14 +114,7 @@ fn run_cases(benchmark: bool, large_prefill: bool) {
                 b.insert(117, bytes(s, &vec![0; size.flags_bytes as usize])?);
                 b.insert(118, bytes(s, &vec![0; size.epoch_bytes as usize])?);
                 fixtures.push(b);
-                modules.push(
-                    s.context
-                        .load_module(include_bytes!(concat!(
-                            env!("OUT_DIR"),
-                            "/hc-prefill/comm_qwen38.cubin"
-                        )))
-                        .map_err(|e| e.to_string())?,
-                );
+                modules.push(s.module("comm_qwen38")?);
             }
             let function = |rank: usize, symbol: &str| {
                 modules[rank].function(symbol).map_err(|e| e.to_string())

@@ -36,7 +36,7 @@ const QKV: u64 = 16;
 const POSITIONS: u64 = 17;
 const TOKEN_BATCH: u64 = 18;
 
-const ROW_CUBIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/row_engine.cubin"));
+const ROW_CUBIN: &str = "row_engine";
 
 #[path = "attention_chunks.rs"]
 mod chunks;
@@ -738,35 +738,19 @@ fn fp8_exact(case: Case, fixture: &Fixture, rounded: &Rounded) -> (Vec<f64>, Vec
 }
 
 fn module(session: &Session, profile: Profile) -> LabResult<Module> {
-    let bytes: &[u8] = match profile {
-        model_qwen38_contract::sm120::config::PROFILE => {
-            include_bytes!(concat!(env!("OUT_DIR"), "/attention_qwen38_sm120.cubin"))
-        }
-        model_mimo26_contract::sm120::config::PROFILE => {
-            include_bytes!(concat!(env!("OUT_DIR"), "/attention_mimo_sm120.cubin"))
-        }
-        p if p == model_mimo26_contract::sm120::config::MODEL.at(2) => {
-            include_bytes!(concat!(env!("OUT_DIR"), "/attention_mimo_tp2_sm120.cubin"))
-        }
-        Profile::StdDenseMoe => {
-            include_bytes!(concat!(env!("OUT_DIR"), "/attention_std_sm120.cubin"))
-        }
+    let name = match profile {
+        model_qwen38_contract::sm120::config::PROFILE => "attention_qwen38_sm120",
+        model_mimo26_contract::sm120::config::PROFILE => "attention_mimo_sm120",
+        p if p == model_mimo26_contract::sm120::config::MODEL.at(2) => "attention_mimo_tp2_sm120",
+        Profile::StdDenseMoe => "attention_std_sm120",
         // Qwen's TP2 cubin holds only its gated rows.
-        p if p == model_qwen38_contract::sm120::config::MODEL.at(2) => {
-            include_bytes!(concat!(
-                env!("OUT_DIR"),
-                "/attention_qwen38_tp2_sm120.cubin"
-            ))
-        }
+        p if p == model_qwen38_contract::sm120::config::MODEL.at(2) => "attention_qwen38_tp2_sm120",
         p if kernel_lab::lab_shapes::PROFILES.contains(&p) => {
             return session.module(&format!("attention_{}_sm120", p.tag()));
         }
         p => return Err(format!("no attention cubin for {}", p.as_str())),
     };
-    session
-        .context
-        .load_module(bytes)
-        .map_err(|e| e.to_string())
+    session.module(name)
 }
 
 fn functions(
@@ -1812,10 +1796,7 @@ fn fold_checks(
 /// entries, from the same caches: the output and both caches bit for bit,
 /// then deterministic replay, graph replay and a PDL launch.
 fn run_fold(session: &Session, cases: &[Case]) -> LabResult<()> {
-    let rows = session
-        .context
-        .load_module(ROW_CUBIN)
-        .map_err(|e| e.to_string())?;
+    let rows = session.module(ROW_CUBIN)?;
     for &case in cases {
         let fold = prepare_fold(session, case)?;
         let functions = fold.functions(session, &rows)?;
@@ -1849,10 +1830,7 @@ fn run_fold(session: &Session, cases: &[Case]) -> LabResult<()> {
 /// three alternating kernels do not. Layers cycle through distinct KV caches
 /// totalling at least 512 MiB, as in `decode_roofline_benchmark`.
 fn rope_fold_benchmark(session: &Session, cases: &[Case]) -> LabResult<()> {
-    let rows = session
-        .context
-        .load_module(ROW_CUBIN)
-        .map_err(|e| e.to_string())?;
+    let rows = session.module(ROW_CUBIN)?;
     for &case in cases {
         let fold = prepare_fold(session, case)?;
         let functions = fold.functions(session, &rows)?;
@@ -2517,10 +2495,7 @@ fn attention_high_ids_match_low_ids() {
 #[test]
 fn attention_high_ids_rope_fold_matches_low_ids() {
     gpu_test(pool_offsets::need_bytes(22 << 30), |session| {
-        let rows = session
-            .context
-            .load_module(ROW_CUBIN)
-            .map_err(|e| e.to_string())?;
+        let rows = session.module(ROW_CUBIN)?;
         for (name, prefix) in [
             ("mimo_ga_bf16_decode", 4095),
             ("mimo_ga_fp8_decode", 4095),
@@ -3074,10 +3049,7 @@ fn attention_matches_base_bit_for_bit() {
                 compared += 1;
             }
         }
-        let rows = session
-            .context
-            .load_module(ROW_CUBIN)
-            .map_err(|e| e.to_string())?;
+        let rows = session.module(ROW_CUBIN)?;
         for variant in folded_variants() {
             let (tip, old) = (module(session, variant.profile)?, base(variant.profile)?);
             for (batch, prefix, mixed) in shapes {

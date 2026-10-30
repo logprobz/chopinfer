@@ -30,12 +30,13 @@ pub(super) fn baseline(
         return Err(format!("{name}: baseline cubin {hash} != {expected}"));
     }
     // The loader may read an external frozen directory. Require those bytes
-    // to equal this executable's embedded production artifact.
+    // to equal this executable's production artifact, the lab cubin checked
+    // against the digest its lock-gated build recorded.
     let candidate_root = PathBuf::from(std::env::var("CHOPINFER_MOE_CUBIN_DIR").map_err(err)?);
     let candidate = fs::read(candidate_root.join(format!("{name}.cubin"))).map_err(err)?;
     if candidate != kernel_lab::cubin(&name)? {
         return Err(format!(
-            "{name}: external candidate differs from embedded cubin"
+            "{name}: external candidate differs from the lab cubin"
         ));
     }
     let function = session

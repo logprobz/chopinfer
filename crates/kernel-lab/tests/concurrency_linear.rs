@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 
 use kernel_lab::poison::{Replay, WriteMap};
 
-const CUBIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/linear_qwen38_flash_sm120.cubin"));
+const CUBIN: &str = "linear_qwen38_flash_sm120";
 const HISTORY: usize = 3;
 const HEAD: usize = (DIM * DIM) as usize;
 const GATE_STRIDE: usize = 16;
@@ -79,10 +79,7 @@ pub fn find(symbol: &str) -> Entry {
 }
 
 pub fn module(session: &Session) -> LabResult<Module> {
-    session
-        .context
-        .load_module(CUBIN)
-        .map_err(|e| e.to_string())
+    session.module(CUBIN)
 }
 
 /// Named device operands of one case, bound by parameter name.

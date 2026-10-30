@@ -684,7 +684,7 @@ fn pipeline_case(
         .map(|_| f32_to_bf16(((random_word(&mut state) % 2001) as f32 - 1000.0) / 250.0))
         .collect();
     let cubin = module(session, v.profile)?;
-    let rows = session.load_cubin(ROW_CUBIN)?;
+    let rows = session.module(ROW_CUBIN)?;
     let slot = 0_usize;
     let k_row = kh * qk * element;
     let v_row = kh * vd * element;

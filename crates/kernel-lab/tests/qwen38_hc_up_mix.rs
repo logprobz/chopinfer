@@ -82,9 +82,8 @@ fn function(session: &Session, cubin: &[u8], symbol: &str, shared: u32) -> LabRe
 #[test]
 fn qwen38_hc_up_mix_matches_the_unfused_chain() {
     gpu_test(256 << 20, |session| {
-        let rows_cubin: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/row_qwen38.cubin"));
-        let gemm_cubin: &[u8] =
-            include_bytes!(concat!(env!("OUT_DIR"), "/gemm_qwen38_own_sm120.cubin"));
+        let rows_cubin = kernel_lab::cubin("row_qwen38")?;
+        let gemm_cubin = kernel_lab::cubin("gemm_qwen38_own_sm120")?;
         let row_entry = |name: &str| {
             row::hyper_connection_rows()
                 .into_iter()

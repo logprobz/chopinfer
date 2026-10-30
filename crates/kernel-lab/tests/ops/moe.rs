@@ -364,9 +364,9 @@ fn load_cubin(session: &Session, name: &str) -> LabResult<Module> {
     }
     // A frozen artifact set lets one executable compare original and candidate
     // kernels within the same assigned GPU window.
-    let root = std::env::var_os("CHOPINFER_MOE_CUBIN_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("OUT_DIR")));
+    let Some(root) = std::env::var_os("CHOPINFER_MOE_CUBIN_DIR").map(PathBuf::from) else {
+        return session.module(name);
+    };
     let path = root.join(format!("{name}.cubin"));
     let bytes = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     session.context.load_module(&bytes).map_err(err)

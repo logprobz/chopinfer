@@ -20,7 +20,7 @@ const QK_NORM: RmsNorm = RmsNorm {
     output: Some(DType::Bf16),
 };
 
-const CUBIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/row_engine.cubin"));
+const CUBIN: &str = "row_engine";
 
 fn upload(session: &Session, bytes: &[u8]) -> LabResult<DeviceBuffer> {
     let buffer = session.allocate(bytes.len().max(1))?;
@@ -135,10 +135,7 @@ fn entry<'a>(entries: &'a [RowInstantiation], name: &str) -> &'a RowInstantiatio
 #[test]
 fn dflash_norm_rope_and_tp4_argmax_gpu() {
     gpu_test(64 * 1024 * 1024, |session| {
-        let module = session
-            .context
-            .load_module(CUBIN)
-            .map_err(|error| error.to_string())?;
+        let module = session.module(CUBIN)?;
         let entries = catalog();
         let values = (0..2 * 16 * 128)
             .map(|index| f32_to_bf16((index % 17 + 1) as f32 / 16.0))
@@ -353,10 +350,7 @@ fn dflash_norm_rope_and_tp4_argmax_gpu() {
 #[test]
 fn dflash_argmax_at_tp2_gpu() {
     gpu_test(64 * 1024 * 1024, |session| {
-        let module = session
-            .context
-            .load_module(CUBIN)
-            .map_err(|error| error.to_string())?;
+        let module = session.module(CUBIN)?;
         let entries = catalog();
         let low = f32_to_bf16(-1.0);
         let high = f32_to_bf16(9.0);

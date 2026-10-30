@@ -644,11 +644,7 @@ impl Fixture {
 }
 
 fn function(session: &Session, dtype: DType) -> LabResult<(runtime_cuda::Module, Function)> {
-    let cubin = include_bytes!(concat!(env!("OUT_DIR"), "/sampling_sm120.cubin"));
-    let module = session
-        .context
-        .load_module(cubin)
-        .map_err(|error| error.to_string())?;
+    let module = session.module("sampling_sm120")?;
     let symbol = if dtype == DType::Bf16 {
         "chop_sampling_bf16_v1"
     } else {

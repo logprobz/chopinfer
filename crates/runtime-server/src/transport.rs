@@ -55,14 +55,20 @@ pub(crate) async fn serve(
                     None => None,
                 };
                 let service = TowerToHyperService::new(router.clone().layer(axum::Extension(peer)));
-                // Requests whose head parsed on this connection, and bytes it
-                // read, to tell a head that never arrived from an idle one.
-                let heads = Arc::new(AtomicU64::new(0));
+                // Bytes this connection read, and how many of them its
+                // finished exchanges read, to tell a head that never arrived
+                // from an idle keep-alive connection.
                 let read = Arc::new(AtomicU64::new(0));
-                let counted = Arc::clone(&heads);
+                let settled = Arc::new(AtomicU64::new(0));
+                let exchange = (Arc::clone(&read), Arc::clone(&settled));
                 let service = hyper::service::service_fn(move |request| {
-                    counted.fetch_add(1, Ordering::Relaxed);
-                    service.call(request)
+                    let (read, settled) = (Arc::clone(&exchange.0), Arc::clone(&exchange.1));
+                    let response = service.call(request);
+                    async move {
+                        response
+                            .await
+                            .map(|response| response.map(|body| Exchanged { body, read, settled }))
+                    }
                 });
                 let mut stopped = stopped.clone();
                 let budget = Arc::clone(&budget);
@@ -88,9 +94,9 @@ pub(crate) async fn serve(
                             connection.await
                         }
                     };
-                    let first = heads.load(Ordering::Relaxed) == 0 && read.load(Ordering::Relaxed) > 0;
+                    let partial = read.load(Ordering::Relaxed) > settled.load(Ordering::Relaxed);
                     if let Err(error) = result
-                        && let Some(detail) = head_failure(&error, first)
+                        && let Some(detail) = head_failure(&error, partial)
                     {
                         log.transport_failure(Some(peer), detail);
                     }
@@ -104,10 +110,11 @@ pub(crate) async fn serve(
 }
 
 /// The failure line of a request whose head hyper refused: one that did not
-/// parse, which hyper answered, or the connection's first head that did not
-/// arrive within the header deadline. A later head's deadline also expires on
-/// an idle keep-alive connection, so only the first counts.
-fn head_failure(error: &hyper::Error, first: bool) -> Option<crate::request_log::FailureDetail> {
+/// parse, which hyper answered, or a head that did not arrive within the
+/// header deadline. The deadline also expires on an idle keep-alive
+/// connection, so a timeout counts only when the connection read part of a
+/// head: bytes after its last exchange ended.
+fn head_failure(error: &hyper::Error, partial: bool) -> Option<crate::request_log::FailureDetail> {
     if error.is_parse_too_large() {
         Some(crate::request_log::transport_detail(
             StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
@@ -118,7 +125,7 @@ fn head_failure(error: &hyper::Error, first: bool) -> Option<crate::request_log:
             StatusCode::BAD_REQUEST,
             "request head did not parse",
         ))
-    } else if error.is_timeout() && first {
+    } else if error.is_timeout() && partial {
         Some(crate::request_log::transport_detail(
             StatusCode::REQUEST_TIMEOUT,
             "request head did not arrive in time",
@@ -213,6 +220,45 @@ impl tokio::io::AsyncRead for MeteredSocket {
         self.budget.read.fetch_add(read, Ordering::Relaxed);
         self.read.fetch_add(read, Ordering::Relaxed);
         result
+    }
+}
+
+/// A response body that, when hyper drops it, marks every byte its
+/// connection has read as part of a finished exchange. Hyper drops it after
+/// taking the response's last frame, and reads the next head only after
+/// that, having drained or closed the request's unread body. Bytes of a pipelined head
+/// read before then count as settled, so a partial pipelined head that times
+/// out writes no line.
+struct Exchanged {
+    body: axum::body::Body,
+    read: Arc<AtomicU64>,
+    settled: Arc<AtomicU64>,
+}
+
+impl hyper::body::Body for Exchanged {
+    type Data = axum::body::Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        std::pin::Pin::new(&mut self.body).poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.body.is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        self.body.size_hint()
+    }
+}
+
+impl Drop for Exchanged {
+    fn drop(&mut self) {
+        self.settled
+            .store(self.read.load(Ordering::Relaxed), Ordering::Relaxed);
     }
 }
 

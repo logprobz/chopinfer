@@ -465,7 +465,9 @@ Every request that fails writes exactly one line,
 - `stage` is how far the request got: `transport` (refused before a handler:
   a head that did not parse or arrive, the connection limit, an unknown
   route, a missing API key), `intake`, `preparation`, `admission` or
-  `generation`. Fields that are not known yet are null; method and path are
+  `generation`. A head that did not arrive is one a connection started and
+  did not finish within the header deadline; a kept-alive connection that
+  the deadline closes while idle writes no line. Fields that are not known yet are null; method and path are
   null for a head that did not parse or arrive and for a closed connection.
   `generated_tokens` counts what every choice of the request generated
   before it ended; with several choices, `request_id` names the one that

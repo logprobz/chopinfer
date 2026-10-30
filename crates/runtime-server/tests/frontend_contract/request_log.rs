@@ -265,6 +265,34 @@ impl LoggedServer {
     }
 }
 
+/// Writes `request` and reads its whole answer, leaving the connection open.
+async fn answer_kept_alive(stream: &TcpStream, request: &[u8]) {
+    stream.writable().await.unwrap();
+    assert_eq!(stream.try_write(request).unwrap(), request.len());
+    let mut response = Vec::new();
+    loop {
+        stream.readable().await.unwrap();
+        let mut chunk = [0_u8; 4096];
+        match stream.try_read(&mut chunk) {
+            Ok(0) => panic!("closed: {}", String::from_utf8_lossy(&response)),
+            Ok(read) => response.extend_from_slice(&chunk[..read]),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => continue,
+            Err(error) => panic!("the socket read failed: {error}"),
+        }
+        let text = String::from_utf8_lossy(&response);
+        if let Some((head, body)) = text.split_once("\r\n\r\n") {
+            let length = head.lines().find_map(|line| {
+                let line = line.to_ascii_lowercase();
+                let length = line.strip_prefix("content-length:")?;
+                Some(length.trim().parse::<usize>().unwrap())
+            });
+            if length.is_some_and(|length| body.len() >= length) {
+                return;
+            }
+        }
+    }
+}
+
 fn completion(body: Value) -> String {
     post("/v1/completions", &body.to_string())
 }
@@ -900,6 +928,29 @@ async fn requests_the_router_never_saw_are_logged_at_the_transport() {
     assert_eq!(lines[0]["message"], "request head did not parse");
     assert_eq!(lines[1]["status"], 408);
     assert_eq!(lines[1]["message"], "request head did not arrive in time");
+
+    // The deadline runs again after each answer on a kept-alive connection:
+    // one that stays idle writes no line, one that starts another head and
+    // stalls writes one.
+    let reused_idle = TcpStream::connect(server.server.address).await.unwrap();
+    let reused_partial = TcpStream::connect(server.server.address).await.unwrap();
+    for socket in [&reused_idle, &reused_partial] {
+        answer_kept_alive(socket, b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n").await;
+    }
+    reused_partial
+        .try_write(b"GET /health HTTP/1.1\r\nHost: localhost\r\nX-Stall: ")
+        .unwrap();
+    for socket in [&reused_partial, &reused_idle] {
+        let _ = timeout(Duration::from_secs(2), exchange(socket, b""))
+            .await
+            .unwrap();
+    }
+
+    let lines = server.lines(3).await;
+
+    assert_eq!(lines[2]["stage"], "transport", "{:#}", lines[2]);
+    assert_eq!(lines[2]["status"], 408);
+    assert_eq!(lines[2]["message"], "request head did not arrive in time");
 
     let limited = LoggedServer::start(
         ScriptedBackendV1::new(vec![]),

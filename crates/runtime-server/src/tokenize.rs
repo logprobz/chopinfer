@@ -96,7 +96,7 @@ fn prepare(
     cancellation: &CancellationSignal,
 ) -> Result<Value, ApiError> {
     let mut value: Value =
-        serde_json::from_slice(body).map_err(|error| ApiError::invalid(error.to_string(), None))?;
+        serde_json::from_slice(body).map_err(|error| ApiError::invalid_json(&error, None))?;
     let object = value
         .as_object_mut()
         .ok_or_else(|| ApiError::invalid("request body must be an object", None))?;

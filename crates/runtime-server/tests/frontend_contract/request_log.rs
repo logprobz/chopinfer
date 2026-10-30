@@ -786,6 +786,27 @@ async fn requests_the_drain_ends_are_warnings() {
         .unwrap();
 }
 
+/// A tokenize body that does not parse is logged as every JSON refusal is,
+/// with where it stopped and without its text.
+#[tokio::test]
+async fn a_tokenize_body_that_does_not_parse_reports_where_it_stopped() {
+    let server = LoggedServer::start(HoldingBackend::new(), ServerConfig::default()).await;
+    let refused = server
+        .request(&post(
+            "/tokenize",
+            &format!(r#"{{"model":"{MODEL}","prompt":"{CANARY}"#),
+        ))
+        .await;
+    assert_eq!(refused.status, 400, "{}", refused.body);
+
+    let lines = server.lines(1).await;
+
+    assert_failure(&lines[0], 400, "warn");
+    assert_eq!(lines[0]["message"], "invalid JSON request");
+    assert_eq!(lines[0]["json_error"]["category"], "eof", "{:#}", lines[0]);
+    assert!(!server.raw().contains(CANARY), "{}", server.raw());
+}
+
 /// A refusal during preparation still names the model and the prompt's
 /// length once preparation knows them.
 #[tokio::test]

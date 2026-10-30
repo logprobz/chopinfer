@@ -119,6 +119,9 @@ struct ResponseMetadata {
     stream_write_timeout: std::time::Duration,
     /// The request's record, for a failure after the response began.
     record: crate::request_log::RecordHandle,
+    /// A choice that another stream merges: it reports only the failure it
+    /// sent, and the merging stream reports how the stream ended.
+    merged: bool,
 }
 
 /// The sending half of one event stream body.
@@ -233,6 +236,9 @@ struct StreamOutcome {
     record: crate::request_log::RecordHandle,
     request_id: String,
     end: Arc<StreamEnd>,
+    /// A merged choice ends when its merge or a sibling stops it, which is
+    /// not its request's outcome, so it reports only a failure it sent.
+    merged: bool,
 }
 
 impl StreamOutcome {
@@ -242,6 +248,7 @@ impl StreamOutcome {
             record: metadata.record.clone(),
             request_id,
             end: Arc::clone(end),
+            merged: metadata.merged,
         }
     }
 }
@@ -258,7 +265,7 @@ impl Drop for StreamOutcome {
             .ok()
             .and_then(|mut failure| failure.take());
         let reason = self.end.reason.load(Ordering::Acquire);
-        if failure.is_none() && reason == STREAM_OPEN {
+        if failure.is_none() && (reason == STREAM_OPEN || self.merged) {
             return;
         }
         record.set_request_id(&self.request_id);
@@ -920,6 +927,7 @@ async fn generate_inner(
         max_output_bytes: state.max_output_bytes,
         stream_write_timeout: state.stream_write_timeout,
         record: record.clone(),
+        merged: false,
     };
     if let Some(context) = &mut responses_context {
         waiting.move_to(crate::waiting::Stage::Storage);
@@ -1335,8 +1343,10 @@ fn multiple_streaming_response(
         &metadata.record,
     );
     let request_id = metadata.request_id.clone();
-    // Each choice's stream reports its own outcome; this one reports what
-    // only the merged stream sees.
+    // Each choice's stream reports only the failure it sent; this one
+    // reports how the merged stream ended. A choice that fails ends the
+    // merge, which stops its siblings, and they must not claim the request
+    // as a client that left.
     let outcome = StreamOutcome::new(&metadata, metadata.request_id.clone(), &body_tx.end);
     tokio::spawn(async move {
         let _outcome = outcome;
@@ -1347,6 +1357,7 @@ fn multiple_streaming_response(
             let tx = tx.clone();
             choice_metadata.include_usage = true;
             choice_metadata.continuous_usage_stats = true;
+            choice_metadata.merged = true;
             let index = choice_metadata.choice_index;
             let response = streaming_response(choice_metadata, events, active);
             tasks.spawn(async move {

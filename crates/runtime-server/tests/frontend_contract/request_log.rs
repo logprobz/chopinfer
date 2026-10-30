@@ -51,6 +51,12 @@ impl HoldingBackend {
             let _ = events.emit(event.clone()).await;
         }
     }
+
+    /// Sends `event` to the held request admitted `index`th of those held.
+    async fn emit_to(&self, index: usize, event: GenerationEvent) {
+        let events = self.held.lock().unwrap()[index].0.clone();
+        let _ = events.emit(event).await;
+    }
 }
 
 impl GenerationBackend for HoldingBackend {
@@ -526,6 +532,55 @@ async fn a_failure_after_admission_is_one_error_line() {
         assert!(line["generated_tokens"].as_u64().unwrap() >= 1, "{line:#}");
     }
     assert!(!server.raw().contains(CANARY), "{}", server.raw());
+}
+
+/// When one of several streamed choices fails, the request's line is that
+/// choice's failure, not the cancellation of the choices still running. The
+/// choices end on several threads, so the race is run many times.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_failing_choice_of_a_stream_is_the_line_not_its_siblings() {
+    const REQUESTS: usize = 40;
+    let backend = HoldingBackend::new();
+    let server = LoggedServer::start(backend.clone(), ServerConfig::default()).await;
+    for request in 0..REQUESTS {
+        timeout(Duration::from_secs(5), async {
+            while !backend.held.lock().unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("the previous request's choices are released");
+        let reading = server
+            .open(completion(json!({
+                "model": MODEL, "prompt": "x", "max_tokens": 4, "stream": true, "n": 2,
+            })))
+            .await;
+        backend.wait_admitted(2 * (request + 1)).await;
+        backend.emit_to(1, content("hi")).await;
+        backend
+            .emit_to(
+                0,
+                GenerationEvent::Failed {
+                    message: "device fault".to_owned(),
+                    code: Some("device_fault".to_owned()),
+                },
+            )
+            .await;
+        let body = String::from_utf8_lossy(&reading.await.unwrap()).into_owned();
+        assert!(body.contains("device_fault"), "{body}");
+    }
+
+    let lines = server.lines(REQUESTS).await;
+
+    for line in &lines {
+        assert_failure(line, 500, "error");
+        assert_eq!(line["code"], "device_fault");
+        assert!(
+            line["request_id"].as_str().unwrap().ends_with("_0"),
+            "{line:#}"
+        );
+        assert_eq!(line["generated_tokens"], 1);
+    }
 }
 
 /// A client that leaves, whether waiting for a whole answer, reading a

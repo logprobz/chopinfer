@@ -575,9 +575,15 @@ in a run of their own, and the rows its chunk completes) in the prefill
 phase at every row count, where each entry up to the QSA key write declares
 and is tested to keep a row's bits at any cut. Drafting items' runs in the
 same step keep their verify graphs, and rows that decode and verify steps
-write are unchanged. The candidate is off by default until GPU equality
-evidence and served step-time acceptance; it does not relax the strict
-prefix-equality gate.
+write are unchanged. On 2026-10-30, with the candidate, the restored and
+newly written drafter state (K, V, QSA block keys, the raw-key ring and the
+retained X rows) of cut, chained and one-chunk consumers equalled a cold
+prefill's bit for bit, before and after their post-target drafter runs,
+where the base still differed in the chained rows and in a short suffix's
+rows; C1 K3 greedy and sampled 256-token outputs were equal hit against
+cold and candidate against base. The candidate is off by default until
+served step-time acceptance; it does not relax the strict prefix-equality
+gate.
 
 Physical snapshot buffers are not canonical byte representations of live
 state. They also copy unread ring cells, spare retained rows, unused tail

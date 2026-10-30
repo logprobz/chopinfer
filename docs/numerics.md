@@ -581,9 +581,15 @@ retained X rows) of cut, chained and one-chunk consumers equalled a cold
 prefill's bit for bit, before and after their post-target drafter runs,
 where the base still differed in the chained rows and in a short suffix's
 rows; C1 K3 greedy and sampled 256-token outputs were equal hit against
-cold and candidate against base. The candidate is off by default until
-served step-time acceptance; it does not relax the strict prefix-equality
-gate.
+cold and candidate against base. On 2026-10-30, served step-time acceptance
+refused it. The run was ABBA at C1 with temperature 1.0, in the tp4-mtp
+profile, with 24 to 32 paired samples per cell. Every hit's prefill step
+took 0.6 to 1.2 ms longer than the base's (0.9% to 4.1%, each beyond its
+spread), with TTFT up by the same amount. The hits were suffixes of 1, 2, 32,
+33, 34 and 1024 tokens after a 2048-token anchor, alone and beside three
+decoding streams. The candidate stays off by default, so hits keep the chunk
+dependence above, until a cheaper canonical drafter run is measured. It does
+not relax the strict prefix-equality gate.
 
 Physical snapshot buffers are not canonical byte representations of live
 state. They also copy unread ring cells, spare retained rows, unused tail

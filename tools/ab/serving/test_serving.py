@@ -72,9 +72,11 @@ runpy.run_path(sys.argv[0], run_name='__main__')
 # A one-test module that test_a_stopped_test_leaves_no_process runs in a
 # child interpreter (argv: this directory and the stub server's start
 # record). Its run's server never becomes ready, so the run keeps its target
-# and server live until the child is stopped.
+# and server live until the child is stopped. A suite started as a background
+# job inherits SIGINT ignored; the child takes it as a terminal's would.
 STOPPED_TEST = '''
-import sys, unittest
+import signal, sys, unittest
+signal.signal(signal.SIGINT, signal.default_int_handler)
 sys.path.insert(0, sys.argv[1])
 import test_serving
 from test_serving import setUpModule, tearDownModule

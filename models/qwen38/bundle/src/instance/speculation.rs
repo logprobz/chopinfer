@@ -83,6 +83,11 @@ pub(super) struct DrafterRuntime {
     graphs: [GraphCache; 2],
     /// `CHOPINFER_QWEN38_MTP_EAGER=1` runs every drafter run eagerly.
     eager: bool,
+    /// The candidate (`switches::CANONICAL_DRAFTER`): runs of the rows a
+    /// prefilling item's step writes take the prefill phase at every row
+    /// count, and continuing prefills' catch-up rows plan as a run of their
+    /// own, apart from the drafting items' rows.
+    canonical: bool,
 }
 
 impl DrafterRuntime {
@@ -95,7 +100,7 @@ impl DrafterRuntime {
         )],
         target_graphs: &GraphCache,
         items: Items,
-        mtp_eager: bool,
+        switches: super::Switches,
         held: &mut Vec<Held>,
     ) -> Result<Self, BundleAbiError> {
         let mut ranks = Vec::new();
@@ -114,11 +119,13 @@ impl DrafterRuntime {
             });
         }
         Ok(Self {
-            state: Drafter::new(items.get()),
+            state: Drafter::new(items.get())
+                .with_separate_prefill_catch_up(switches.canonical_drafter),
             ranks,
             block_tables: BlockTableMirror::new(shape.model_limits(), items),
             graphs: std::array::from_fn(|_| GraphCache::catch_up_sharing(target_graphs)),
-            eager: super::eager() || mtp_eager,
+            eager: super::eager() || switches.mtp_eager,
+            canonical: switches.canonical_drafter,
         })
     }
 
@@ -131,6 +138,18 @@ impl DrafterRuntime {
         }
         Ok(())
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Every drafter run on this thread: whether it holds rows a prefilling
+    /// item's step writes, whether it ran in the prefill phase, and its rows.
+    pub(crate) static DRAFTER_RUNS: std::cell::RefCell<Vec<(bool, bool, u32)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    /// Every launch drafter runs lower on this thread: whether its run is in
+    /// the prefill phase, its stage and its symbol.
+    pub(crate) static DRAFTER_LAUNCHES: std::cell::RefCell<Vec<(bool, program::Stage, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// How one drafter run is prepared: a graph bucket, or eagerly at its live
@@ -396,14 +415,17 @@ impl Instance {
     }
 
     /// Runs one drafter run on every rank: eagerly, stage by stage across
-    /// the ranks, or as graphs of its bucket.
+    /// the ranks, or as graphs of its bucket. `prefill` marks a run of rows
+    /// a prefilling item's step writes (its catch-up rows, or the rows its
+    /// chunk completes), which the candidate runs in the prefill phase.
     pub(super) fn run_drafter(
         &mut self,
         run: &Run,
         verify_tokens: Option<&[PhaseDevice]>,
+        prefill: bool,
     ) -> Result<(), BundleStatusV1> {
         let mut runtime = self.drafter.take().ok_or(BundleStatusV1::InternalError)?;
-        let result = self.run_drafter_with(&mut runtime, run, verify_tokens);
+        let result = self.run_drafter_with(&mut runtime, run, verify_tokens, prefill);
         self.drafter = Some(runtime);
         result
     }
@@ -413,9 +435,19 @@ impl Instance {
         runtime: &mut DrafterRuntime,
         run: &Run,
         verify_tokens: Option<&[PhaseDevice]>,
+        prefill: bool,
     ) -> Result<(), BundleStatusV1> {
         let inputs = run.inputs();
-        let prepared = Prepared::new(self.shape, run, &inputs, runtime.eager, self.items)?;
+        let eager = runtime.eager || (prefill && runtime.canonical);
+        let prepared = Prepared::new(self.shape, run, &inputs, eager, self.items)?;
+        #[cfg(test)]
+        DRAFTER_RUNS.with(|runs| {
+            runs.borrow_mut().push((
+                prefill,
+                matches!(prepared.phase, Phase::Prefill),
+                run.rows(),
+            ))
+        });
         let heads = run.drafts.iter().map(|draft| draft.row).collect::<Vec<_>>();
         let arena_bytes = prepared
             .layout
@@ -730,16 +762,29 @@ fn stage_launches(
     rank: usize,
     stage: program::Stage,
 ) -> Result<Vec<crate::ops::Lowered>, BundleStatusV1> {
-    bound.lower_with_facts(stage, 0).map_err(|Refusal(reason)| {
-        let _ = services.log(
-            format!(
-                "Qwen3.8 drafter rank {rank} {:?} stage {stage:?}: {reason}",
-                bound.phase
+    let lowered = bound
+        .lower_with_facts(stage, 0)
+        .map_err(|Refusal(reason)| {
+            let _ = services.log(
+                format!(
+                    "Qwen3.8 drafter rank {rank} {:?} stage {stage:?}: {reason}",
+                    bound.phase
+                )
+                .as_bytes(),
+            );
+            BundleStatusV1::Unsupported
+        })?;
+    #[cfg(test)]
+    DRAFTER_LAUNCHES.with(|launches| {
+        launches.borrow_mut().extend(lowered.iter().map(|lowered| {
+            (
+                matches!(bound.phase, Phase::Prefill),
+                stage,
+                lowered.launch.symbol.clone(),
             )
-            .as_bytes(),
-        );
-        BundleStatusV1::Unsupported
-    })
+        }))
+    });
+    Ok(lowered)
 }
 
 pub(super) fn drafted(plan: Option<&Plan>) -> bool {

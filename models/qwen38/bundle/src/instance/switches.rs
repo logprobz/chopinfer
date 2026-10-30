@@ -19,6 +19,9 @@ pub(crate) struct Switches {
     pub hc_padded_mix: bool,
     /// Every drafter run eager (`CHOPINFER_QWEN38_MTP_EAGER=1`).
     pub mtp_eager: bool,
+    /// Candidate: every drafter row a prefilling item's step writes runs in
+    /// the prefill phase (`CANONICAL_DRAFTER`).
+    pub canonical_drafter: bool,
     /// Diagnostic-taps builds write each prefill's overlap split
     /// (`CHOPINFER_QWEN38_OVERLAP_EVIDENCE=1`).
     pub overlap_evidence: bool,
@@ -34,8 +37,40 @@ impl Switches {
             hc_padded_mix: hc_available(shape) && hc::padded_enabled(),
             mtp_eager: std::env::var_os("CHOPINFER_QWEN38_MTP_EAGER")
                 .is_some_and(|value| value == "1"),
+            canonical_drafter: canonical_drafter(),
             overlap_evidence: cfg!(feature = "diagnostic-taps")
                 && std::env::var("CHOPINFER_QWEN38_OVERLAP_EVIDENCE").as_deref() == Ok("1"),
         }
     }
+}
+
+/// The candidate switch that runs every drafter row a prefilling item's
+/// step writes (its chunk-start catch-up rows and every row its chunk
+/// completes) in the prefill phase at every row count, so a row's bits
+/// follow from its own inputs, not from where chunks started or what else
+/// the step held. Off by default until adopted.
+pub(crate) const CANONICAL_DRAFTER: &str = "CHOPINFER_QWEN38_CANONICAL_DRAFTER";
+
+#[cfg(test)]
+thread_local! {
+    /// Test-only candidate selection, independent of the process environment.
+    pub(crate) static FORCE_CANONICAL_DRAFTER: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+}
+
+fn canonical_drafter() -> bool {
+    #[cfg(test)]
+    if let Some(forced) = FORCE_CANONICAL_DRAFTER.with(std::cell::Cell::get) {
+        return forced;
+    }
+    std::env::var(CANONICAL_DRAFTER).as_deref() == Ok("1")
+}
+
+/// Runs `create` with the candidate on or off, whatever the environment.
+#[cfg(test)]
+pub(crate) fn with_canonical_drafter<T>(enabled: bool, create: impl FnOnce() -> T) -> T {
+    let previous = FORCE_CANONICAL_DRAFTER.with(|forced| forced.replace(Some(enabled)));
+    let result = create();
+    FORCE_CANONICAL_DRAFTER.with(|forced| forced.set(previous));
+    result
 }

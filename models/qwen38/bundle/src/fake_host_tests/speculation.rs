@@ -874,7 +874,7 @@ pub(super) fn drafter_host_at(drafts: u32, shape: Shape) -> Rc<FakeHost> {
     host
 }
 
-fn create_drafter(host: &Rc<FakeHost>) -> BundleInstanceV1 {
+pub(super) fn create_drafter(host: &Rc<FakeHost>) -> BundleInstanceV1 {
     let instance = api()
         .create(
             HostServicesTableV1::new(Rc::clone(host)),

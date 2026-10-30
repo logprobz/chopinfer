@@ -23,6 +23,7 @@ use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVe
 use crate::contract::*;
 use model_qwen38_contract::package::ngram_in_host_memory;
 
+mod canonical_drafter;
 mod context_parallel;
 mod diagnostics;
 mod hc;

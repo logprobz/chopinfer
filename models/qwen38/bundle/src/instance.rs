@@ -42,7 +42,11 @@ mod logits;
 mod switches;
 #[cfg(test)]
 pub(crate) use hc::{with_hc_padded_mix, with_hc_precompute};
+#[cfg(test)]
+pub(crate) use speculation::{DRAFTER_LAUNCHES, DRAFTER_RUNS};
 pub(crate) use switches::Switches;
+#[cfg(test)]
+pub(crate) use switches::with_canonical_drafter;
 #[path = "prefix_state.rs"]
 mod prefix_state;
 mod speculation;
@@ -1446,10 +1450,15 @@ impl Instance {
                 .map(|((&slot, &rows), &request)| (slot as u32, rows as u32, request))
                 .collect(),
         });
-        // The drafter catches up and drafts before the target verifies.
+        // The drafter catches up and drafts before the target verifies:
+        // first the rows continuing prefills left (a run of their own with
+        // the candidate), then the drafting items' runs.
         if let Some(plan) = drafter {
+            if let Some(run) = &plan.prefill_catch_up {
+                self.run_drafter(run, None, true)?;
+            }
             for run in &plan.before {
-                self.run_drafter(run, devices[DECODE].as_deref())?;
+                self.run_drafter(run, devices[DECODE].as_deref(), false)?;
             }
         }
         if let (Some(plan), Some(devices)) = (&plans[PREFILL], &devices[PREFILL]) {
@@ -1506,7 +1515,7 @@ impl Instance {
             if let Some(drafter) = drafter {
                 self.stage_target_rows(PREFILL, &step.prefill)?;
                 if let Some(run) = &drafter.prefill {
-                    self.run_drafter(run, None)?;
+                    self.run_drafter(run, None, true)?;
                 }
             }
         }
@@ -2007,7 +2016,7 @@ fn acquire(
             &pools,
             target_graphs,
             items,
-            config.switches.mtp_eager,
+            config.switches,
             held,
         )?);
     }

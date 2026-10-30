@@ -7,8 +7,11 @@
 //! state depends on where chunks started. `Full` (`1`) runs the whole
 //! drafter program; `Persistent` (`2`) runs only the stages whose writes a
 //! later run reads, and must launch exactly `Full`'s launches of those
-//! stages. These steps run with the process's default execution: no test
-//! forces eager runs unless it says so.
+//! stages. `Trimmed` (`3`) is a separate candidate: it keeps the default's
+//! runs and trims only those of prefilling rows already in the prefill phase
+//! to the default's launches of the persistent stages. These steps run with
+//! the process's default execution: no test forces eager runs unless it says
+//! so.
 
 use super::speculation::{
     assert_drafter_rows, batch, committed_state, create_drafter, drafted, drafter_host_at, execute,
@@ -253,8 +256,13 @@ fn mixed_steps(shape: Shape, mode: Canonical) -> Vec<Drafted> {
             plain(11, 2, 64, &truths(64..129)),
         ]),
     );
-    assert!(mixed.prefill_rows_in_prefill(), "{shape:?} {mode:?}");
-    assert_eq!(mixed.prefill_runs(), [1, 64], "{shape:?} {mode:?}");
+    if mode.on() {
+        assert!(mixed.prefill_rows_in_prefill(), "{shape:?} {mode:?}");
+        assert_eq!(mixed.prefill_runs(), [1, 64], "{shape:?} {mode:?}");
+    } else {
+        // The catch-up row joins the verify item's first run.
+        assert_eq!(mixed.prefill_runs(), [64], "{shape:?} {mode:?}");
+    }
     // The verify item's first run and its two chained runs.
     let drafting = mixed.runs.iter().filter(|run| !run.0).collect::<Vec<_>>();
     assert_eq!(drafting.len(), 3, "{shape:?} {mode:?}");
@@ -312,8 +320,12 @@ fn lagging_steps(mode: Canonical) -> Vec<Drafted> {
     }
     let chunk = truths(10..10 + u64::from(PREFILL_TOKENS));
     let full = step(&host, &mut instance, &batch(vec![plain(10, 0, 10, &chunk)]));
-    assert_eq!(full.prefill_runs(), [8, PREFILL_TOKENS - 1], "{mode:?}");
-    assert!(full.all_in_prefill(), "{mode:?}");
+    if mode.on() {
+        assert_eq!(full.prefill_runs(), [8, PREFILL_TOKENS - 1], "{mode:?}");
+        assert!(full.all_in_prefill(), "{mode:?}");
+    } else {
+        assert_eq!(full.prefill_runs(), [PREFILL_TOKENS - 1], "{mode:?}");
+    }
     instance.commit().unwrap();
     let length = 10 + u64::from(PREFILL_TOKENS);
     assert!(
@@ -374,9 +386,13 @@ fn restored_steps(shape: Shape, mode: Canonical) -> Vec<Drafted> {
         &mut instance,
         &batch(vec![plain(11, 1, 73, &truths(73..140))]),
     );
-    assert_eq!(resumed.prefill_runs(), [3, 66], "{shape:?} {mode:?}");
-    assert!(resumed.all_in_prefill(), "{shape:?} {mode:?}");
-    assert_eq!(resumed.replays, 0, "{shape:?} {mode:?}");
+    if mode.on() {
+        assert_eq!(resumed.prefill_runs(), [3, 66], "{shape:?} {mode:?}");
+        assert!(resumed.all_in_prefill(), "{shape:?} {mode:?}");
+        assert_eq!(resumed.replays, 0, "{shape:?} {mode:?}");
+    } else {
+        assert_eq!(resumed.prefill_runs(), [66], "{shape:?} {mode:?}");
+    }
     instance.commit().unwrap();
     assert_drafter_rows(&host, &BTreeMap::from([(1, truths(0..141))]));
     assert!(
@@ -413,7 +429,7 @@ fn cancelled_steps(shape: Shape, mode: Canonical) -> Vec<Drafted> {
     instance.commit().unwrap();
     let again = step(&host, &mut instance, &continuing);
     assert_eq!(cancelled.runs, again.runs, "{shape:?} {mode:?}");
-    assert!(again.all_in_prefill(), "{shape:?} {mode:?}");
+    assert!(!mode.on() || again.all_in_prefill(), "{shape:?} {mode:?}");
     instance.commit().unwrap();
     assert_drafter_rows(&host, &BTreeMap::from([(1, truths(0..91))]));
     assert!(
@@ -549,18 +565,37 @@ fn by_run_and_rank(
     grouped
 }
 
-/// The launches `Persistent` must lower for a step that `Full` lowered as
-/// `full`: a run of rows a prefilling item's step writes keeps only its
-/// launches of the persistent stages, without the inject and with `HcIn`'s
-/// as `HcDown`'s; every other run keeps every launch.
-fn persistent_launches(full: &Drafted) -> BTreeMap<(usize, usize), Vec<DrafterLaunch>> {
+/// Which runs a candidate trims, by `(prefilling rows, prefill phase,
+/// rows)`: `Persistent` every run of prefilling rows, `Trimmed` those of
+/// them in the prefill phase.
+type Trims = fn(&(bool, bool, u32)) -> bool;
+
+/// `Persistent` against `Full`.
+fn every_prefilling_run(run: &(bool, bool, u32)) -> bool {
+    run.0
+}
+
+/// `Trimmed` against the default.
+fn prefill_phase_prefilling_runs(run: &(bool, bool, u32)) -> bool {
+    run.0 && run.1
+}
+
+/// The launches a trimming candidate must lower for a step that the program
+/// it trims lowered as `full`: a run it trims keeps only its launches of the
+/// persistent stages, without the inject and with `HcIn`'s as `HcDown`'s;
+/// every other run keeps every launch.
+fn persistent_launches(
+    full: &Drafted,
+    trims: Trims,
+) -> BTreeMap<(usize, usize), Vec<DrafterLaunch>> {
+    let trimmed = |launch: &DrafterLaunch| trims(&full.runs[launch.run]);
     let kept = full
         .launches
         .iter()
-        .filter(|launch| !full.runs[launch.run].0 || (persistent(launch.stage) && !inject(launch)))
+        .filter(|launch| !trimmed(launch) || (persistent(launch.stage) && !inject(launch)))
         .cloned()
         .map(|mut launch| {
-            if full.runs[launch.run].0
+            if trimmed(&launch)
                 && let Stage::HcIn(layer, sublayer) = launch.stage
             {
                 launch.stage = Stage::HcDown(layer, sublayer);
@@ -570,19 +605,24 @@ fn persistent_launches(full: &Drafted) -> BTreeMap<(usize, usize), Vec<DrafterLa
     by_run_and_rank(kept)
 }
 
-/// `Persistent` ran each step of `steps` as `Full` ran `full`'s: the same
-/// runs, phases and replays, and per run and rank the same launches (kind,
-/// plan and arguments as the host receives them), but for the stages and
-/// the inject a run of prefilling rows leaves out. Returns how many inject
-/// launches it left out.
-fn assert_persistent_launches(full: &[Drafted], steps: &[Drafted], case: &str) -> usize {
+/// The trimming candidate ran each step of `steps` as the program it trims
+/// ran `full`'s: the same runs, phases and replays, and per run and rank the
+/// same launches (kind, plan and arguments as the host receives them), but
+/// for the stages and the inject a run it trims leaves out. Returns how many
+/// inject launches it left out.
+fn assert_persistent_launches(
+    full: &[Drafted],
+    steps: &[Drafted],
+    trims: Trims,
+    case: &str,
+) -> usize {
     assert_eq!(full.len(), steps.len(), "{case}");
     let mut injects = 0;
     for (index, (full, persistent)) in full.iter().zip(steps).enumerate() {
         assert_eq!(full.runs, persistent.runs, "{case} step {index}");
         assert_eq!(full.replays, persistent.replays, "{case} step {index}");
         assert_eq!(full.drafts, persistent.drafts, "{case} step {index}");
-        let expected = persistent_launches(full);
+        let expected = persistent_launches(full, trims);
         let launched = by_run_and_rank(persistent.launches.iter().cloned());
         assert_eq!(
             expected.keys().collect::<Vec<_>>(),
@@ -599,7 +639,7 @@ fn assert_persistent_launches(full: &[Drafted], steps: &[Drafted], case: &str) -
         injects += full
             .launches
             .iter()
-            .filter(|launch| full.runs[launch.run].0 && inject(launch))
+            .filter(|launch| trims(&full.runs[launch.run]) && inject(launch))
             .count();
     }
     injects
@@ -640,9 +680,47 @@ fn persistent_runs_lower_the_full_programs_persistent_launches() {
         let persistent = flows(shape, Canonical::Persistent);
         let mut injects = 0;
         for ((case, full), (_, steps)) in full.iter().zip(&persistent) {
-            injects += assert_persistent_launches(full, steps, &format!("{shape:?} {case}"));
+            injects += assert_persistent_launches(
+                full,
+                steps,
+                every_prefilling_run,
+                &format!("{shape:?} {case}"),
+            );
         }
         assert!(injects > 0, "{shape:?}");
+    }
+}
+
+/// In every flow `Trimmed` runs the default's runs, phases, replays and
+/// drafts, and lowers exactly the default's launches but for its runs of
+/// prefilling rows in the prefill phase, which keep only their launches of
+/// the persistent stages (the down projection of `HcIn` alone). So it writes
+/// the default's persistent drafter state and drafts the same, and its graph
+/// buckets are the default's.
+#[test]
+fn trimmed_runs_lower_the_default_programs_persistent_launches() {
+    for shape in [Shape::TP2, Shape::TP4] {
+        let default = flows(shape, Canonical::Off);
+        let trimmed = flows(shape, Canonical::Trimmed);
+        let mut injects = 0;
+        let mut whole = 0;
+        for ((case, default), (_, steps)) in default.iter().zip(&trimmed) {
+            injects += assert_persistent_launches(
+                default,
+                steps,
+                prefill_phase_prefilling_runs,
+                &format!("{shape:?} {case}"),
+            );
+            whole += default
+                .iter()
+                .flat_map(|drafted| &drafted.runs)
+                .filter(|run| run.0 && !run.1)
+                .count();
+        }
+        // Some runs were trimmed, and some runs of prefilling rows replayed
+        // whole graph buckets.
+        assert!(injects > 0, "{shape:?}");
+        assert!(whole > 0, "{shape:?}");
     }
 }
 
@@ -652,10 +730,32 @@ fn persistent_runs_lower_the_full_programs_persistent_launches() {
 /// without refusing the ranks' collectives.
 #[test]
 fn context_parallel_persistent_runs_lower_the_full_programs_persistent_launches() {
+    let full = context_parallel_steps(Canonical::Full);
+    let persistent = context_parallel_steps(Canonical::Persistent);
+    assert_eq!(full[1].prefill_runs(), [1, 64]);
+    assert!(assert_persistent_launches(&full, &persistent, every_prefilling_run, "dcp2") > 0);
+}
+
+/// [`context_parallel_persistent_runs_lower_the_full_programs_persistent_launches`]
+/// for `Trimmed` against the default: the 63- and 64-row post-target runs
+/// are trimmed, the catch-up row stays in the drafting graph bucket.
+#[test]
+fn context_parallel_trimmed_runs_lower_the_default_programs_persistent_launches() {
+    let default = context_parallel_steps(Canonical::Off);
+    let trimmed = context_parallel_steps(Canonical::Trimmed);
+    assert_eq!(default[0].prefill_runs(), [63]);
+    assert_eq!(default[1].prefill_runs(), [64]);
+    assert!(
+        assert_persistent_launches(&default, &trimmed, prefill_phase_prefilling_runs, "dcp2") > 0
+    );
+}
+
+/// Two chunks of a prompt at context-parallel size 2, then a verify step.
+fn context_parallel_steps(mode: Canonical) -> Vec<Drafted> {
     use super::context_parallel::{create_at, item, pages};
     crate::context_parallel::serve_in_tests(true);
     let _one_lane = legacy_overlap_off();
-    let steps = |mode: Canonical| {
+    {
         let host = drafter_host_at(3, Shape::TP4);
         let mut instance = crate::instance::with_canonical_drafter(mode, || create_at(&host, 2));
         let mut steps = Vec::new();
@@ -678,11 +778,7 @@ fn context_parallel_persistent_runs_lower_the_full_programs_persistent_launches(
         instance.retire_request(10).unwrap();
         instance.destroy().unwrap();
         steps
-    };
-    let full = steps(Canonical::Full);
-    let persistent = steps(Canonical::Persistent);
-    assert_eq!(full[1].prefill_runs(), [1, 64]);
-    assert!(assert_persistent_launches(&full, &persistent, "dcp2") > 0);
+    }
 }
 
 /// Five requests in reordered high slots, prefilled with three tokens each
@@ -807,29 +903,7 @@ fn within(stages: &[Stage], program: &[Stage]) -> bool {
 #[test]
 fn only_runs_of_prefilling_rows_stop_at_the_key_write() {
     let check = |shape: Shape, case: &str, steps: &[Drafted]| {
-        let mut whole = 0;
-        for (index, drafted) in steps.iter().enumerate() {
-            for ((run, rank), stages) in stages(drafted) {
-                let at = format!("{shape:?} {case} step {index} run {run} rank {rank}");
-                if drafted.runs[run].0 {
-                    assert_eq!(
-                        stages,
-                        crate::program::drafter_persistent_stages(shape),
-                        "{at}"
-                    );
-                    continue;
-                }
-                let drafting = drafted
-                    .launches
-                    .iter()
-                    .any(|launch| launch.run == run && launch.stage == Stage::DraftFinal);
-                let program = crate::program::drafter_stages_for(shape, drafting);
-                assert!(within(&stages, &program), "{at}: {stages:?}");
-                assert_eq!(stages.last(), program.last(), "{at}");
-                whole += 1;
-            }
-        }
-        whole
+        check_trims(shape, case, steps, every_prefilling_run).1
     };
     for shape in [Shape::TP2, Shape::TP4] {
         let mode = Canonical::Persistent;
@@ -861,6 +935,79 @@ fn only_runs_of_prefilling_rows_stop_at_the_key_write() {
         assert!(eager.all_in_prefill(), "{shape:?}");
         assert!(eager.runs.iter().any(|run| !run.0), "{shape:?}");
         assert!(check(shape, "eager mixed", &[eager]) > 0, "{shape:?}");
+    }
+}
+
+/// Checks that in `steps` each run `trims` picks lowered exactly the
+/// persistent stages and every other run its whole program through its last
+/// stage. Returns how many runs of each kind it checked.
+fn check_trims(shape: Shape, case: &str, steps: &[Drafted], trims: Trims) -> (usize, usize) {
+    let (mut trimmed, mut whole) = (0, 0);
+    for (index, drafted) in steps.iter().enumerate() {
+        for ((run, rank), stages) in stages(drafted) {
+            let at = format!("{shape:?} {case} step {index} run {run} rank {rank}");
+            if trims(&drafted.runs[run]) {
+                assert_eq!(
+                    stages,
+                    crate::program::drafter_persistent_stages(shape),
+                    "{at}"
+                );
+                trimmed += 1;
+                continue;
+            }
+            let drafting = drafted
+                .launches
+                .iter()
+                .any(|launch| launch.run == run && launch.stage == Stage::DraftFinal);
+            let program = crate::program::drafter_stages_for(shape, drafting);
+            assert!(within(&stages, &program), "{at}: {stages:?}");
+            assert_eq!(stages.last(), program.last(), "{at}");
+            whole += 1;
+        }
+    }
+    (trimmed, whole)
+}
+
+/// `Trimmed` trims by purpose and phase: a run of prefilling rows in the
+/// prefill phase (a post-target run of more than 32 rows, or any such run
+/// with every drafter run forced eager) lowers exactly the persistent
+/// stages; a run of prefilling rows in a graph bucket (a chunk of 33
+/// tokens), a wide decode catch-up or drafting run of 40 rows in the prefill
+/// phase, and every drafting run lower their whole programs.
+#[test]
+fn only_prefill_phase_runs_of_prefilling_rows_are_trimmed() {
+    let mode = Canonical::Trimmed;
+    for shape in [Shape::TP2, Shape::TP4] {
+        let check = |case: &str, steps: &[Drafted]| {
+            check_trims(shape, case, steps, prefill_phase_prefilling_runs)
+        };
+        let mixed = mixed_steps(shape, mode);
+        assert_eq!(mixed[0].runs.iter().filter(|run| run.0).count(), 1);
+        let (trimmed, whole) = check("mixed", &mixed);
+        assert!(trimmed > 0 && whole > 0, "{shape:?} mixed");
+        // The second chunk's 32 rows replay a whole graph bucket.
+        let chunks = prefill_steps(shape, mode, &[64, 33]);
+        assert_eq!(
+            chunks[1]
+                .runs
+                .iter()
+                .filter(|run| run.0)
+                .collect::<Vec<_>>(),
+            [&(true, false, 32)]
+        );
+        let (trimmed, whole) = check("chunks [64, 33]", &chunks);
+        assert!(trimmed > 0 && whole > 0, "{shape:?} chunks");
+        for drafts in [0, 1] {
+            let wide = wide_steps(shape, mode, drafts);
+            let (trimmed, whole) = check("wide", &wide);
+            assert!(trimmed == 0 && whole > 0, "{shape:?} wide {drafts}");
+        }
+        crate::instance::FORCE_EAGER.with(|eager| eager.set(Some(true)));
+        let eager = eager_mixed_step(shape, mode);
+        crate::instance::FORCE_EAGER.with(|eager| eager.set(None));
+        assert!(eager.all_in_prefill(), "{shape:?}");
+        let (trimmed, whole) = check("eager mixed", &[eager]);
+        assert!(trimmed > 0 && whole > 0, "{shape:?} eager mixed");
     }
 }
 

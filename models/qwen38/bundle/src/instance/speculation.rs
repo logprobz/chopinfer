@@ -87,7 +87,8 @@ pub(super) struct DrafterRuntime {
     /// prefilling item's step writes take the prefill phase at every row
     /// count, and continuing prefills' catch-up rows plan as a run of their
     /// own, apart from the drafting items' rows. `Persistent` runs only
-    /// their persistent stages.
+    /// their persistent stages; `Trimmed` keeps the default runs and trims
+    /// those already in the prefill phase.
     canonical: super::Canonical,
 }
 
@@ -456,14 +457,21 @@ impl Instance {
     ) -> Result<(), BundleStatusV1> {
         let inputs = run.inputs();
         let eager = runtime.eager || (prefill && runtime.canonical.on());
+        let prepared = Prepared::new(self.shape, run, &inputs, eager, self.items)?;
         // A run of rows a prefilling item's step writes drafts nothing (the
         // planner gives drafts only to drafting items' runs). With the
         // `Persistent` candidate it runs only the stages whose writes a later
-        // run reads; the predicate is the run's purpose, not its phase, so
-        // eager drafting and wide runs keep the whole program.
-        let persistent_only =
-            prefill && runtime.canonical == super::Canonical::Persistent && run.drafts.is_empty();
-        let prepared = Prepared::new(self.shape, run, &inputs, eager, self.items)?;
+        // run reads; with `Trimmed` only when it is in the prefill phase, so
+        // its graph buckets keep their whole programs. The predicate is the
+        // run's purpose, so eager drafting and wide runs keep the whole
+        // program.
+        let persistent_only = prefill
+            && run.drafts.is_empty()
+            && match runtime.canonical {
+                super::Canonical::Persistent => true,
+                super::Canonical::Trimmed => matches!(prepared.phase, Phase::Prefill),
+                super::Canonical::Off | super::Canonical::Full => false,
+            };
         #[cfg(test)]
         DRAFTER_RUNS.with(|runs| {
             runs.borrow_mut().push((
@@ -609,8 +617,8 @@ impl Instance {
             Ok(crate::ops::program(lowered))
         };
         if persistent_only {
-            // Always eager (above), so never a graph bucket, whose cached
-            // graphs hold whole programs. A few short stages, queued whole
+            // Always in the prefill phase (above), so never a graph bucket,
+            // whose cached graphs hold whole programs. A few short stages, queued whole
             // on each rank, collective by collective (`pipeline::run_ranks`).
             if prepared.graph().is_some() {
                 return Err(BundleStatusV1::InternalError);

@@ -21,7 +21,9 @@ pub(crate) struct Switches {
     pub mtp_eager: bool,
     /// Candidate: every drafter row a prefilling item's step writes runs in
     /// the prefill phase (`CANONICAL_DRAFTER`), through the whole drafter
-    /// program or only its persistent stages.
+    /// program or only its persistent stages; or those rows run as without
+    /// it, but the runs of them already in the prefill phase run only the
+    /// persistent stages.
     pub canonical_drafter: Canonical,
     /// Diagnostic-taps builds write each prefill's overlap split
     /// (`CHOPINFER_QWEN38_OVERLAP_EVIDENCE=1`).
@@ -46,13 +48,18 @@ pub(crate) enum Canonical {
     /// stages that write persistent drafter state
     /// (`program::drafter_persistent_stages`), queued whole on each rank.
     Persistent,
+    /// `3`: as `Off`, but such a run that is in the prefill phase anyway
+    /// (more than 32 rows, or every drafter run eager) runs only the
+    /// persistent stages, as `Persistent` does. Not canonical: runs of at
+    /// most 32 such rows still replay verify graph buckets.
+    Trimmed,
 }
 
 impl Canonical {
     /// Whether rows a prefilling item's step writes run in the prefill
     /// phase.
     pub(crate) fn on(self) -> bool {
-        self != Canonical::Off
+        matches!(self, Canonical::Full | Canonical::Persistent)
     }
 
     /// The name the overlap evidence records.
@@ -61,6 +68,7 @@ impl Canonical {
             Canonical::Off => "off",
             Canonical::Full => "full",
             Canonical::Persistent => "persistent",
+            Canonical::Trimmed => "trimmed",
         }
     }
 }
@@ -89,7 +97,10 @@ impl Switches {
 /// completes) in the prefill phase at every row count, so a row's bits
 /// follow from its own inputs, not from where chunks started or what else
 /// the step held: `1` through the whole drafter program, `2` through its
-/// persistent stages only ([`Canonical`]). Off by default until adopted.
+/// persistent stages only ([`Canonical`]). `3` is a separate candidate: it
+/// keeps where those rows run and only trims the runs of them that are in
+/// the prefill phase anyway to the persistent stages. Off by default until
+/// adopted.
 pub(crate) const CANONICAL_DRAFTER: &str = "CHOPINFER_QWEN38_CANONICAL_DRAFTER";
 
 #[cfg(test)]
@@ -107,6 +118,7 @@ fn canonical_drafter() -> Canonical {
     match std::env::var(CANONICAL_DRAFTER).as_deref() {
         Ok("1") => Canonical::Full,
         Ok("2") => Canonical::Persistent,
+        Ok("3") => Canonical::Trimmed,
         _ => Canonical::Off,
     }
 }

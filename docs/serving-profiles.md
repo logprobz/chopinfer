@@ -155,7 +155,7 @@ peak by 172 MiB. The peak is the most memory any rank had taken since
 sizing, by the `chop_device_memory_free_low_bytes` gauge or by nvidia-smi.
 Each reserve is the peak, the 256 MiB warning headroom and about 10 %,
 rounded up to 64 MiB. A second server at that reserve, under the same load,
-logged no warning and kept every rank at the lowest free memory below or
+logged no post-warmup headroom warning and kept every rank at the lowest free memory below or
 more (MiB per GPU):
 
 | Profile | After warmup | Peak | Reserve | Lowest free at the reserve |
@@ -202,8 +202,11 @@ KV need preemption or copies to empty them for the encoder. Lent pages
 holding only prefix-cache snapshots need neither, but every image request
 then evicts the anchors they hold, leaving fewer anchors than a pool
 without lending, and none when long shared prefixes fill the cache. A GLM
-deployment that serves no images gets the whole 3,387 MiB per rank back
-for its KV pool with the text package (`--modalities text`).
+deployment that serves no images gets this memory back for its KV pool with
+the text package (`--modalities text`): all 3,387 MiB per rank when it runs
+alone, but 2,304 MiB (the encoder buffers) while a weight keeper that loaded
+the image package still holds the encoder weights; the measured pool grew
+from 5,961 to 8,265 MiB in that case.
 
 ### Lossless weight encodings
 

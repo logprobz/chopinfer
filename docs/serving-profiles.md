@@ -453,7 +453,7 @@ prompt and output token IDs, answers and logprobs.
   operator), and energy per output token rose from 3.78 and 3.79 J to 4.13
   and 4.04 J. Against `fixed`, short-append TTFT p50 fell from 3.27 and
   3.02 s to 2.11 and 2.39 s, while collapse share rose from 0.7% and 1.4%
-  to 1.4% and 2.0%; output rate was within 0.6%.
+  to 1.4% and 2.0%; mean output rate was 0.6% higher, unresolved.
 - **Eight steady sessions, 120 turns** (every third append 8,192-12,288
   tokens, 40 long appends per visit, think times up to 30 s). Against
   `off`, gaps over 1 s fell from 1.85 and 1.40 to 0 per 1,000 gaps (a
@@ -466,7 +466,7 @@ prompt and output token IDs, answers and logprobs.
   to 3.50 and 3.43 J.
 - **A burst after a cache loss** (five 250K and five 30K prompts arriving
   together, no priming). Against `off`, collapse share fell from 22.9% and
-  20.9% to 2.0% and 2.8%, gaps over 1 s from 70.3 and 70.7 to 0 per 1,000
+  20.9% to 1.9% and 2.8%, gaps over 1 s from 70.3 and 70.7 to 0 per 1,000
   gaps, short-prompt TTFT p50 from 25.5 s to 12.9 s in both pairs, and the
   last 30K prompt's first token from 26.4 and 26.3 s to 18.6 and 18.5 s.
   The last 250K prompt's first token moved from 156.8 s to 217.9 and

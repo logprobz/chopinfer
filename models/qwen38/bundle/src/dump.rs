@@ -562,6 +562,13 @@ fn specs() -> Vec<TapSpec> {
 /// for on a diagnostic instance. New KV pages are zeroed by the host, so
 /// page padding has defined bytes; recurrent captures include only live items.
 /// PLE includes its convolution rows and two history words, excluding padding.
+/// Rings cover every layer the ring holds, the MTP layer's too with the
+/// drafter. With the drafter, the capture after the target prefill
+/// (`overlap-evidence`) adds the retained X row the step's catch-up read
+/// (position `prefix - 1`), and the capture after the post-target drafter
+/// run (`drafted`, `overlap-evidence-drafted`) holds only what the drafter
+/// writes: the KV pages, the rings, the X row each item's commit retains
+/// and an anchor's retained X row.
 pub struct OverlapEvidence<'a> {
     pub services: &'a HostServicesV1,
     pub streams: &'a [BundleStreamHandleV1],
@@ -575,12 +582,17 @@ pub struct OverlapEvidence<'a> {
     pub pool_entries: u64,
     pub page_bytes: u64,
     pub head_rows: u32,
+    pub drafted: bool,
 }
 
 impl OverlapEvidence<'_> {
     pub fn write(&self, root: &std::path::Path) -> Result<(), String> {
         use std::io::Write;
-        let dir = root.join("overlap-evidence");
+        let dir = root.join(if self.drafted {
+            "overlap-evidence-drafted"
+        } else {
+            "overlap-evidence"
+        });
         std::fs::create_dir(&dir).map_err(|error| error.to_string())?;
         runtime_bundle_sdk::diagnostic::write_new(
             &dir.join("rows.json"),
@@ -598,6 +610,8 @@ impl OverlapEvidence<'_> {
             "delta_bytes": self.shape.delta_entry_bytes,
             "ring_key_bytes": self.shape.ring_slot_key_bytes(),
             "ring_position_bytes": self.shape.ring_slot_position_bytes(),
+            "ring_layers": self.ring.layers, "drafted": self.drafted,
+            "x_row_bytes": crate::scratch::wide_row_bytes(self.shape),
             }),
         )
         .map_err(|error| error.to_string())?;
@@ -641,14 +655,19 @@ impl OverlapEvidence<'_> {
                 Ok(())
             };
             let scratch = &self.scratch[rank];
-            write(
-                "logits".into(),
-                span(
-                    scratch.local_scored,
-                    0,
-                    u64::from(self.head_rows) * u64::from(self.shape.vocab_per_rank) * 4,
-                )?,
-            )?;
+            let target = !self.drafted;
+            if target {
+                write(
+                    "logits".into(),
+                    span(
+                        scratch.local_scored,
+                        0,
+                        u64::from(self.head_rows) * u64::from(self.shape.vocab_per_rank) * 4,
+                    )?,
+                )?;
+            }
+            let x_row = crate::scratch::wide_row_bytes(self.shape);
+            let retained = u64::from(crate::scratch::RETAINED_ROWS);
             for (item, entry) in self.entries.iter().enumerate() {
                 for (page, &id) in self.inputs.block_tables[item].iter().enumerate() {
                     let offset =
@@ -658,29 +677,47 @@ impl OverlapEvidence<'_> {
                         span(self.kv[rank], offset, self.page_bytes)?,
                     )?;
                 }
-                write(
-                    format!("ple.i{item}"),
-                    span(
-                        scratch.ple_staging[0].output,
-                        item as u64 * self.shape.ple_entry_bytes(),
-                        self.shape.ple_conv_bytes() + 8,
-                    )?,
-                )?;
+                if target {
+                    write(
+                        format!("ple.i{item}"),
+                        span(
+                            scratch.ple_staging[0].output,
+                            item as u64 * self.shape.ple_entry_bytes(),
+                            self.shape.ple_conv_bytes() + 8,
+                        )?,
+                    )?;
+                }
                 if let Some(anchor) = entry.anchor {
                     let anchor_slot =
                         u64::try_from(anchor.slot).map_err(|_| "negative anchor slot")?;
                     let anchor_entry =
                         u64::try_from(anchor.entry).map_err(|_| "negative anchor entry")?;
-                    write(
-                        format!("anchor-ple.i{item}"),
-                        span(
-                            scratch.anchor_ple,
-                            anchor_slot * self.shape.ple_entry_bytes(),
-                            self.shape.ple_conv_bytes() + 8,
-                        )?,
-                    )?;
+                    if target {
+                        write(
+                            format!("anchor-ple.i{item}"),
+                            span(
+                                scratch.anchor_ple,
+                                anchor_slot * self.shape.ple_entry_bytes(),
+                                self.shape.ple_conv_bytes() + 8,
+                            )?,
+                        )?;
+                    }
+                    // The X of the row before the anchor, which a restore
+                    // at the anchor retains for its catch-up row.
+                    if let (true, Some(drafter)) = (self.drafted, scratch.drafter) {
+                        let position = u64::try_from(anchor.end - 1)
+                            .map_err(|_| "anchor before the first row")?;
+                        write(
+                            format!("anchor-retained.i{item}"),
+                            span(
+                                drafter.anchor_retained,
+                                (anchor_slot * retained + position % retained) * x_row,
+                                x_row,
+                            )?,
+                        )?;
+                    }
                     let ring = crate::scratch::anchor_ring(self.shape);
-                    for layer in 0..self.shape.full_layers() {
+                    for layer in 0..self.ring.layers {
                         let base = layer * ring.layer_bytes();
                         write(
                             format!("anchor-ring-key.l{layer}.i{item}"),
@@ -700,7 +737,7 @@ impl OverlapEvidence<'_> {
                             )?,
                         )?;
                     }
-                    for layer in 0..self.shape.linear_layers() {
+                    for layer in (0..self.shape.linear_layers()).filter(|_| target) {
                         for (name, pool, bytes) in [
                             ("conv", scratch.conv_pool, self.shape.conv_entry_bytes),
                             ("delta", scratch.delta_pool, self.shape.delta_entry_bytes),
@@ -718,7 +755,7 @@ impl OverlapEvidence<'_> {
                 }
                 let slot =
                     u64::try_from(self.inputs.slot_ids[item]).map_err(|_| "negative state slot")?;
-                for layer in 0..self.shape.full_layers() {
+                for layer in 0..self.ring.layers {
                     let base = layer * self.ring.layer_bytes();
                     write(
                         format!("ring-key.l{layer}.i{item}"),
@@ -737,6 +774,30 @@ impl OverlapEvidence<'_> {
                             self.shape.ring_slot_position_bytes(),
                         )?,
                     )?;
+                }
+                if let Some(drafter) = scratch.drafter {
+                    if self.drafted {
+                        // The item's last row, which its commit retains.
+                        write(
+                            format!("staged.i{item}"),
+                            span(drafter.staged[0], item as u64 * x_row, x_row)?,
+                        )?;
+                    } else if self.inputs.prefix_len[item] > 0 {
+                        // The row the step's catch-up run read.
+                        let position = u64::try_from(self.inputs.prefix_len[item] - 1)
+                            .map_err(|_| "negative prefix")?;
+                        write(
+                            format!("retained.i{item}"),
+                            span(
+                                drafter.retained,
+                                (slot * retained + position % retained) * x_row,
+                                x_row,
+                            )?,
+                        )?;
+                    }
+                }
+                if !target {
+                    continue;
                 }
                 let working = u64::try_from(entry.working).map_err(|_| "negative working entry")?;
                 for layer in 0..self.shape.linear_layers() {

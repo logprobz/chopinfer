@@ -1490,32 +1490,15 @@ impl Instance {
                     &serde_json::json!({"rows": plan.rows, "split": used_split}),
                 )
                 .map_err(|_| BundleStatusV1::InternalError)?;
-                crate::dump::OverlapEvidence {
-                    services: &self.services,
-                    streams: &self.streams,
-                    shape: self.shape,
-                    inputs: &step.prefill,
-                    entries: &entries[PREFILL],
-                    scratch: &self.scratch,
-                    kv: &self.kv_views,
-                    rings: &self.rings,
-                    ring: self.ring(),
-                    pool_entries: self.speculation.pool_entries(self.served.slots),
-                    page_bytes: self.layout.kv.page_bytes,
-                    head_rows: plan.head_rows,
-                }
-                .write(capture.dir())
-                .map_err(|reason| {
-                    let _ = self
-                        .services
-                        .log(format!("Qwen3.8 overlap evidence: {reason}").as_bytes());
-                    BundleStatusV1::InternalError
-                })?;
+                self.write_overlap_evidence(plan, step, &entries[PREFILL], false)?;
             }
             if let Some(drafter) = drafter {
                 self.stage_target_rows(PREFILL, &step.prefill)?;
                 if let Some(run) = &drafter.prefill {
                     self.run_drafter(run, None, true)?;
+                }
+                if self.switches.overlap_evidence {
+                    self.write_overlap_evidence(plan, step, &entries[PREFILL], true)?;
                 }
             }
         }
@@ -1546,6 +1529,44 @@ impl Instance {
             sink.emit_device_view(view).map_err(status)?;
         }
         Ok(())
+    }
+
+    /// Writes the overlap evidence of the step's prefill phase into its
+    /// pending tap capture: after the target prefill, or (`drafted`) after
+    /// the post-target drafter run (`crate::dump::OverlapEvidence`).
+    fn write_overlap_evidence(
+        &self,
+        plan: &PhasePlan,
+        step: &PackedStep,
+        entries: &[ItemEntries],
+        drafted: bool,
+    ) -> Result<(), BundleStatusV1> {
+        let capture = self
+            .pending_taps
+            .last()
+            .ok_or(BundleStatusV1::InvalidArgument)?;
+        crate::dump::OverlapEvidence {
+            services: &self.services,
+            streams: &self.streams,
+            shape: self.shape,
+            inputs: &step.prefill,
+            entries,
+            scratch: &self.scratch,
+            kv: &self.kv_views,
+            rings: &self.rings,
+            ring: self.ring(),
+            pool_entries: self.speculation.pool_entries(self.served.slots),
+            page_bytes: self.layout.kv.page_bytes,
+            head_rows: plan.head_rows,
+            drafted,
+        }
+        .write(capture.dir())
+        .map_err(|reason| {
+            let _ = self
+                .services
+                .log(format!("Qwen3.8 overlap evidence: {reason}").as_bytes());
+            BundleStatusV1::InternalError
+        })
     }
 
     /// Publishes committed captures and removes cancelled captures.

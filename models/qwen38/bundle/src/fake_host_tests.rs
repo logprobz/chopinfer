@@ -4768,6 +4768,110 @@ fn overlap_taps_capture_parts_and_live_state_bytes() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// With the drafter, the overlap evidence adds the MTP layer's ring and
+/// anchor ring, the retained X row a continuing chunk's catch-up read, and
+/// a capture after the post-target drafter run holding only what the
+/// drafter writes: the KV pages, the rings, the X row the commit retains
+/// and the anchor's retained X row.
+#[cfg(feature = "diagnostic-taps")]
+#[test]
+fn overlap_evidence_captures_the_drafter_state() {
+    const CHILD: &str = "CHOPINFER_TEST_DRAFTER_EVIDENCE_CHILD";
+    const NAME: &str = "fake_host_tests::overlap_evidence_captures_the_drafter_state";
+    let shape = Shape::TP4;
+    if std::env::var(CHILD).is_ok() {
+        let host = speculation::drafter_host_at(3, shape);
+        let mut instance = speculation::create_drafter(&host);
+        let (item, append, slot) = speculation::plain(10, 0, 0, &speculation::truths(0..129));
+        run(
+            &host,
+            &mut instance,
+            "anchored",
+            speculation::batch(vec![(item.with_anchor(true), append, slot)]),
+        );
+        instance.commit().unwrap();
+        run(
+            &host,
+            &mut instance,
+            "continuing",
+            speculation::batch(vec![speculation::plain(
+                10,
+                0,
+                129,
+                &speculation::truths(129..160),
+            )]),
+        );
+        instance.commit().unwrap();
+        instance.destroy().unwrap();
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("qwen-drafter-evidence-{}", std::process::id()));
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([NAME, "--exact", "--test-threads=1"])
+        .env(CHILD, "1")
+        .env("CHOPINFER_TAPS_DIR", &dir)
+        .env("CHOPINFER_TAPS_SITES", "embed.out")
+        .env("CHOPINFER_QWEN38_OVERLAP_EVIDENCE", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut steps = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.join("capture.json").is_file())
+        .collect::<Vec<_>>();
+    steps.sort();
+    assert_eq!(steps.len(), 2);
+    let mtp = shape.full_layers();
+    let x_row = crate::scratch::wide_row_bytes(shape);
+    let size = |evidence: &std::path::Path, name: &str, rank: u32| {
+        std::fs::metadata(evidence.join(format!("{name}.r{rank}.bin")))
+            .map(|metadata| metadata.len())
+            .ok()
+    };
+    let ring = |name: &str| {
+        [
+            format!("{name}ring-key.l{mtp}.i0"),
+            format!("{name}ring-position.l{mtp}.i0"),
+        ]
+    };
+    // The anchored first chunk: its target capture, then the drafted one.
+    let target = steps[0].join("overlap-evidence");
+    let drafted = steps[0].join("overlap-evidence-drafted");
+    let rows: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(drafted.join("rows.json")).unwrap()).unwrap();
+    assert_eq!(rows["drafted"], true);
+    assert_eq!(rows["ring_layers"], mtp + 1);
+    for rank in 0..RANKS {
+        for name in ring("").into_iter().chain(ring("anchor-")) {
+            assert!(size(&target, &name, rank).is_some(), "{name}");
+            assert!(size(&drafted, &name, rank).is_some(), "{name}");
+        }
+        assert!(size(&drafted, "kv.i0.p2", rank).is_some());
+        assert_eq!(size(&drafted, "staged.i0", rank), Some(x_row));
+        assert_eq!(size(&drafted, "anchor-retained.i0", rank), Some(x_row));
+        // A fresh item's catch-up read nothing; the drafted capture holds
+        // no target state.
+        assert_eq!(size(&target, "retained.i0", rank), None);
+        for name in ["logits", "ple.i0", "conv.l0.i0", "anchor-ple.i0"] {
+            assert!(size(&target, name, rank).is_some(), "{name}");
+            assert_eq!(size(&drafted, name, rank), None, "{name}");
+        }
+        // The continuing chunk's catch-up read the X of row 128.
+        let continuing = steps[1].join("overlap-evidence");
+        assert_eq!(size(&continuing, "retained.i0", rank), Some(x_row));
+        for name in ring("") {
+            assert!(size(&continuing, &name, rank).is_some(), "{name}");
+        }
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn failed_overlap_drain_poison_stops_before_restore() {
     let host = Rc::new(FakeHost::default());

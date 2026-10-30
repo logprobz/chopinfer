@@ -896,6 +896,32 @@ fn staged_chunk_message_v1(tokens: usize) -> String {
     )
 }
 
+/// Logs one routine step-shape record, as a model's diagnostic step logs do,
+/// and appends its exact bytes to `emitted.jsonl` in the control directory,
+/// so a process test can compare them with what the host printed.
+#[cfg(feature = "fake-host-services")]
+fn log_step_shape_v1(services: &HostServicesV1, request: &[u8]) {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static STEPS: AtomicU64 = AtomicU64::new(0);
+    let Some(directory) = std::env::var_os("TP4_FIXTURE_CONTROL_DIR") else {
+        return;
+    };
+    let step = STEPS.fetch_add(1, Ordering::Relaxed);
+    let record = format!(
+        "{{\"schema\":\"chopinfer.tp4-fixture.step-shape.v1\",\"step\":{step},\"request_bytes\":{}}}",
+        request.len()
+    );
+    log_v1(services, &record);
+    if let Ok(mut emitted) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(std::path::Path::new(&directory).join("emitted.jsonl"))
+    {
+        let _ = writeln!(emitted, "{record}");
+    }
+}
+
 /// Runs one scheduled batch and emits the row the private operation produced.
 ///
 /// The transaction opens once everything that could refuse the batch has
@@ -919,6 +945,10 @@ pub fn execute_v1(
         }
         if directory.join("fail").exists() {
             return BundleStatusV1::InvalidState;
+        }
+        // A refused batch: its request fails and the worker keeps serving.
+        if directory.join("refuse").exists() {
+            return BundleStatusV1::InvalidArgument;
         }
     }
     match run_execution_v1(handle, request, sink) {
@@ -954,6 +984,8 @@ fn run_execution_v1(
             );
             return Err(BundleStatusV1::InvalidState);
         }
+        #[cfg(feature = "fake-host-services")]
+        log_step_shape_v1(services, request);
         let request = match BatchCodecV1::decode(request) {
             Ok(request) => request,
             Err(error) => {

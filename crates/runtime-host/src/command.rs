@@ -168,7 +168,8 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]
   [--media-fetch-timeout-ms N] [--media-request-timeout-ms N] [--media-max-redirects N]
   [--allowed-origins JSON] [--allowed-methods JSON] [--allowed-headers JSON]
   [--allow-credentials] [--api-key KEY] [--enable-request-id-headers]
-  [--log-level error|warn|info|debug] (default info, or CHOPINFER_LOG_LEVEL)
+  [--log-level error|warn|info|debug] (default info, or CHOPINFER_LOG_LEVEL;
+  CHOPINFER_LOG_SUMMARY_SECONDS sets the summary line interval, default 60)
   [--fake-host-services]
 weights keep --keeper-dir DIR [--read-write] SERVE-OPTIONS (loads what serve would, and lends it)
 weights identity [--content] [--output FILE] SERVE-OPTIONS (CPU-only rank fingerprints)
@@ -1402,6 +1403,25 @@ fn log_level_from_v1(value: Option<&str>) -> Result<runtime_log::Level, HostComm
     })
 }
 
+/// `CHOPINFER_LOG_SUMMARY_SECONDS`: how often serve writes its summary line,
+/// or `None` for the server's default.
+fn summary_interval_from_v1(
+    value: Option<&str>,
+) -> Result<Option<std::time::Duration>, HostCommandErrorV1> {
+    value
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .ok()
+                .filter(|seconds| *seconds > 0)
+                .map(std::time::Duration::from_secs)
+                .ok_or_else(|| {
+                    usage_error("CHOPINFER_LOG_SUMMARY_SECONDS must be a whole number of seconds, at least 1")
+                })
+        })
+        .transpose()
+}
+
 fn model_options_environment_v1(value: Option<&str>) -> Result<Vec<String>, HostCommandErrorV1> {
     let Some(value) = value else {
         return Ok(Vec::new());
@@ -1719,6 +1739,9 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
         std::env::var("CHOPINFER_API_KEY").ok(),
         std::env::var("VLLM_API_KEY").ok(),
     );
+    http_options.summary_interval = summary_interval_from_v1(
+        std::env::var("CHOPINFER_LOG_SUMMARY_SECONDS").ok().as_deref(),
+    )?;
     http_options.validate().map_err(usage_error)?;
     if !profile_pending
         && parsed.speculative_rows.is_some()
@@ -6913,6 +6936,43 @@ mod tests {
             let mut words = arguments(&["weights", "identity", "--model", "checkpoint"]);
             words.extend(arguments(&extra));
             assert!(parse_host_command_v1(&words).is_err());
+        }
+    }
+
+    #[test]
+    fn serve_takes_its_log_level_from_the_flag_or_its_variable() {
+        use runtime_log::Level;
+        for (value, level) in [
+            ("error", Level::Error),
+            ("warn", Level::Warn),
+            ("info", Level::Info),
+            ("debug", Level::Debug),
+        ] {
+            for selection in [["--bundle", "a"], ["--model", "checkpoint"]] {
+                let mut words = arguments(&["serve"]);
+                words.extend(arguments(&selection));
+                words.extend(arguments(&["--log-level", value]));
+                let HostCommandV1::Serve { log_level, .. } = parse_host_command_v1(&words).unwrap()
+                else {
+                    panic!("expected serve");
+                };
+                assert_eq!(log_level, level);
+            }
+            assert_eq!(super::log_level_from_v1(Some(value)).unwrap(), level);
+        }
+        assert_eq!(super::log_level_from_v1(None).unwrap(), Level::Info);
+        assert!(super::log_level_from_v1(Some("verbose")).is_err());
+        assert!(
+            parse_host_command_v1(&arguments(&["serve", "--bundle", "a", "--log-level", "trace"]))
+                .is_err()
+        );
+        assert_eq!(super::summary_interval_from_v1(None).unwrap(), None);
+        assert_eq!(
+            super::summary_interval_from_v1(Some("5")).unwrap(),
+            Some(std::time::Duration::from_secs(5))
+        );
+        for refused in ["0", "-1", "1.5", "soon"] {
+            assert!(super::summary_interval_from_v1(Some(refused)).is_err());
         }
     }
 

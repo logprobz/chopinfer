@@ -293,8 +293,11 @@ def steps(target, work, jobs, test_threads, exhaustive=False):
         step("process-lifecycle", PY + ["tests/test_process_lifecycle.py"],
              ("kernel-report-integration",) + test_variants, weight=2),
         step("deploy-entrypoint", PY + ["tests/test_deploy_entrypoint.py"], ("process-lifecycle",)),
+        # Builds the same binaries as the lifecycle test, so it runs before
+        # the next step rebuilds them.
+        step("request-logging", PY + ["tests/test_request_logging.py"], ("deploy-entrypoint",), weight=2),
         step("host-launch-arguments", ["cargo", "test", "-p", "runtime-host", "--test", "launch_argument_contract",
-                                       *LOCKED], ("deploy-entrypoint",), weight=2),
+                                       *LOCKED], ("request-logging",), weight=2),
     ]
     if exhaustive:
         # The exhaustive profile in .config/nextest.toml names the tests and

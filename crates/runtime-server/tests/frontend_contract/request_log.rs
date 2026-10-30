@@ -753,6 +753,28 @@ async fn requests_the_drain_ends_are_warnings() {
         .unwrap();
 }
 
+/// A refusal during preparation still names the model and the prompt's
+/// length once preparation knows them.
+#[tokio::test]
+async fn a_context_length_refusal_names_the_model_and_prompt_length() {
+    let server = LoggedServer::start(HoldingBackend::new(), ServerConfig::default()).await;
+    let refused = server
+        .request(&completion(json!({
+            "model": MODEL, "prompt": CANARY, "max_tokens": MAXIMUM_TOTAL_TOKENS - 3,
+        })))
+        .await;
+    assert_eq!(refused.status, 400, "{}", refused.body);
+
+    let lines = server.lines(1).await;
+
+    assert_failure(&lines[0], 400, "warn");
+    assert_eq!(lines[0]["stage"], "preparation");
+    assert_eq!(lines[0]["message"], "context length exceeded");
+    assert_eq!(lines[0]["model"], MODEL);
+    assert_eq!(lines[0]["prompt_tokens"], 4);
+    assert!(!server.raw().contains(CANARY), "{}", server.raw());
+}
+
 /// A readiness probe that hears "not ready" writes no line, but a refused
 /// method or a refused CORS preflight on the same paths does.
 #[tokio::test]

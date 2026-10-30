@@ -839,6 +839,7 @@ async fn generate_inner(
     // preparation to stop waiting on media work for it.
     let preparing = Arc::clone(&state);
     let leaving = CancelOnDrop(Some(cancellation.clone()));
+    let preparing_record = record.clone();
     let prepared = tokio::task::spawn_blocking(move || {
         let mut intake = intake;
         let prepared = (|| {
@@ -853,7 +854,7 @@ async fn generate_inner(
             } else {
                 (body, None)
             };
-            prepare_request(&preparing, endpoint, &body, identity)
+            prepare_request(&preparing, endpoint, &body, identity, &preparing_record)
                 .map(|prepared| (prepared, context))
         })();
         (prepared, intake)
@@ -875,8 +876,6 @@ async fn generate_inner(
             Ok(prepared) => prepared,
             Err(error) => return error.into_response(&request_id),
         };
-    record.set_model(&parsed.prepared.model);
-    record.set_prompt_tokens(prompt_tokens as u64);
     waiting.expand(count);
     waiting.move_to(crate::waiting::Stage::Staging);
     record.set_stage(crate::request_log::Stage::Admission);
@@ -1079,11 +1078,14 @@ type PreparedRequestParts = (
 );
 
 /// Parses one body and prepares each of its prompts.
+/// Parses and tokenizes a request, writing the model and prompt length to
+/// `record` as they become known, so a refusal's line carries them too.
 fn prepare_request(
     state: &ServerState,
     endpoint: Endpoint,
     body: &[u8],
     identity: request::RequestIdentityV1,
+    record: &crate::request_log::RecordHandle,
 ) -> Result<PreparedRequestParts, ApiError> {
     let mut parsed = request::parse(
         state.frontend.as_ref(),
@@ -1095,6 +1097,7 @@ fn prepare_request(
         body,
         identity,
     )?;
+    record.set_model(&parsed.prepared.model);
     let count = parsed
         .choices
         .saturating_mul(parsed.additional_prompts.len() + 1);
@@ -1110,7 +1113,9 @@ fn prepare_request(
     let mut prompt_tokens = 0;
     for prompt in prompts {
         parsed.prepared.prompt = prompt;
-        let tokens = prepare_prompt(state, &mut parsed)?;
+        let tokens = prepare_prompt(state, &mut parsed, &|tokens| {
+            record.set_prompt_tokens((prompt_tokens + tokens) as u64);
+        })?;
         prompt_tokens += tokens;
         prepared_prompts.push((parsed.prepared.clone(), tokens));
     }
@@ -1126,9 +1131,12 @@ fn capacity_error(state: &ServerState) -> ApiError {
     ApiError::capacity(message)
 }
 
+/// Prepares the request's current prompt and returns its token count,
+/// telling `counted` each count it learns, before any refusal that follows.
 fn prepare_prompt(
     state: &ServerState,
     parsed: &mut request::ParsedRequest,
+    counted: &dyn Fn(usize),
 ) -> Result<usize, ApiError> {
     let truncation_limit = parsed.truncation.limit(
         state.maximum_context_tokens,
@@ -1170,14 +1178,17 @@ fn prepare_prompt(
                 prompt_tokens
             }
             Err(AdmissionError::PromptTooLong { prompt_tokens }) => {
+                counted(prompt_tokens);
                 return Err(prompt_too_long(state, parsed, prompt_tokens));
             }
             Err(error) => return Err(admission_error(error)),
         };
+    counted(prompt_tokens);
     let prompt_tokens =
         parsed
             .truncation
             .apply(&mut parsed.prepared.prompt, prompt_tokens, truncation_limit)?;
+    counted(prompt_tokens);
     // Which ids a prompt became is the tokenizer's answer rather than the
     // request's, so a profile that admits one exact prompt length is enforced
     // here, on the ids the engine would run.

@@ -576,6 +576,12 @@ frontend_with_alias_delegation! {
         false
     }
 
+    /// Whether system and developer messages may carry media, subject to
+    /// served modalities and the same request limits as user media.
+    fn system_media(&self) -> bool {
+        false
+    }
+
     /// The encoded image formats the served model accepts, by name (`png`,
     /// `jpeg`, `gif`, `webp`).
     fn image_formats(&self) -> Vec<String> {
@@ -670,6 +676,12 @@ frontend_with_alias_delegation! {
     /// format, a schema without `strict: true` and a strict tool under
     /// `auto` then leave decoding unconstrained.
     fn constrains_strict_only(&self) -> bool {
+        false
+    }
+    /// Whether a chat `response_format` of `{"type": "regex", "regex":
+    /// ...}` is served, as an explicit regex constraint that applies under
+    /// either constraint scope. Otherwise that type is refused.
+    fn regex_response_format(&self) -> bool {
         false
     }
     /// Whether `required` or a named tool choice serves as `auto` when the

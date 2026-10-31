@@ -152,6 +152,20 @@ mod tests {
         );
     }
 
+    /// The request-mapping opt-ins deepseek-recipe 0.2.0 serves: a regex
+    /// response format, and images in system and developer messages, which
+    /// the packaged image component carries in its `multimodal` member.
+    #[test]
+    fn the_declaration_serves_regex_formats_and_system_images() {
+        assert!(descriptor().response.regex_response_format);
+        let packaged = FrontendDescriptorV1::from_component_bytes(
+            &multimodal_component_for(&model_deepseek41_contract::geometry::FLASH).unwrap(),
+        )
+        .unwrap();
+        assert!(packaged.response.regex_response_format);
+        assert!(packaged.multimodal.unwrap().system_media);
+    }
+
     /// Each compiled geometry's frontend states its own logits width and
     /// context and keeps everything else of the declaration; flash's is the
     /// declaration's bytes.

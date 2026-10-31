@@ -86,13 +86,13 @@ fn image_count_admission_includes_user_and_tool_images() {
 fn tool_images_keep_text_screening_and_other_role_refusals() {
     let frontend =
         PairedFrontendV1::chat_format::<DeepSeekV41Format>(multimodal_descriptor()).unwrap();
-    for role in ["assistant", "system", "developer"] {
-        let body = json!({"messages": [{"role": role, "content": [image("AA==")]}]});
-        let error =
-            prepare_chat_request_v1(&frontend, 1 << 20, body.as_object().unwrap().clone(), 1024)
-                .unwrap_err();
-        assert_eq!(error.message, "only user messages may contain media");
-    }
+    let body = json!({"continue_final_message": true, "messages": [
+        {"role": "user", "content": "q"},
+        {"role": "assistant", "content": [image("AA==")]}]});
+    let error =
+        prepare_chat_request_v1(&frontend, 1 << 20, body.as_object().unwrap().clone(), 1024)
+            .unwrap_err();
+    assert_eq!(error.message, "only user messages may contain media");
     // Their text parts serve: a developer message reads as a system message.
     for role in ["system", "developer"] {
         let body = json!({"thinking": {"type": "disabled"}, "messages": [
@@ -124,6 +124,82 @@ fn tool_images_keep_text_screening_and_other_role_refusals() {
             error.message
         );
     }
+}
+
+/// The image declaration admits images in system and developer messages,
+/// as deepseek-recipe 0.2.0 does for V4.1 (chat_completion/request/
+/// convert.rs lines 428-441): each renders in place in the system text,
+/// counts toward the request's images, keeps a system message that has no
+/// text, and follows a removed billing header.
+#[test]
+fn system_and_developer_images_render_in_place() {
+    let frontend =
+        PairedFrontendV1::chat_format::<DeepSeekV41Format>(multimodal_descriptor()).unwrap();
+    let text = |value: &str| json!({"type": "text", "text": value});
+    let render = |system: Value| {
+        let body = json!({"thinking": {"type": "disabled"}, "messages": [
+            system, {"role": "user", "content": [image("AQ=="), text("q")]}]});
+        let prepared =
+            prepare_chat_request_v1(&frontend, 1 << 20, body.as_object().unwrap().clone(), 1024)
+                .unwrap();
+        let PreparedPrompt::MediaChat { segments, media } = prepared.prompt else {
+            panic!("images must reach media preparation");
+        };
+        let mut prompt = String::new();
+        for segment in segments {
+            match segment {
+                PromptSegmentV1::Text(text) => prompt.push_str(&text),
+                PromptSegmentV1::Media(index) => {
+                    prompt.push_str(&format!("[{}]", &media[index].source[22..]));
+                }
+            }
+        }
+        prompt
+    };
+    let user = "<｜User｜>[AQ==]\n\nq<｜Assistant｜></think>";
+    for role in ["system", "developer"] {
+        assert_eq!(
+            render(json!({"role": role, "content": [text("Look."), image("AA==")]})),
+            format!("<｜begin▁of▁sentence｜><｜System｜>Look.\n\n[AA==]{user}"),
+            "{role}"
+        );
+    }
+    assert_eq!(
+        render(json!({"role": "system", "content": [image("AA==")]})),
+        format!("<｜begin▁of▁sentence｜><｜System｜>[AA==]{user}")
+    );
+    let header = "x-anthropic-billing-header: cc_version=1;";
+    for (parts, system) in [
+        (json!([text(header), image("AA==")]), "[AA==]"),
+        (json!([text(header), text(" "), image("AA==")]), "[AA==]"),
+        (
+            json!([text(&format!("{header}\nYou are b.")), image("AA==")]),
+            "You are b.\n\n[AA==]",
+        ),
+        (
+            json!([text(header), text("  You are b."), image("AA==")]),
+            "You are b.\n\n[AA==]",
+        ),
+    ] {
+        assert_eq!(
+            render(json!({"role": "system", "content": parts})),
+            format!("<｜begin▁of▁sentence｜><｜System｜>{system}{user}"),
+            "{parts}"
+        );
+    }
+    let mut descriptor = multimodal_descriptor();
+    descriptor.multimodal.as_mut().unwrap().modalities[0].maximum_items = 1;
+    let frontend = PairedFrontendV1::chat_format::<DeepSeekV41Format>(descriptor).unwrap();
+    let body = json!({"messages": [
+        {"role": "system", "content": [image("AA==")]},
+        {"role": "user", "content": [image("AQ==")]}]});
+    let error =
+        prepare_chat_request_v1(&frontend, 1 << 20, body.as_object().unwrap().clone(), 1024)
+            .unwrap_err();
+    assert_eq!(
+        error.message,
+        "At most 1 image(s) may be provided in one request; this request carried 2."
+    );
 }
 
 /// GIF and WebP images, other spellings of the JPEG type and OpenAI `file`

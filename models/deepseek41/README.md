@@ -6,7 +6,8 @@ DeepSeek V4.1 Flash, from the official checkpoint
 `deepseek41.v1` at topology `deepseek41-flash-tp4`. It is not released:
 `model.toml` declares `[release] enabled = false` until it qualifies.
 
-Supports images in tool results through Chat Completions and Responses, in the official encoder's prompt order.
+Supports images in tool results through Chat Completions and Responses, in the official encoder's prompt order,
+and in system and developer messages through Chat Completions, as deepseek-recipe 0.2.0 reads them.
 Images may be PNG, JPEG, GIF (the first frame) or WebP (lossy, lossless,
 with alpha, or the first frame of an animation), decoded as the reference's
 Pillow `Image.open` and `convert("RGB")` read them, and may arrive as

@@ -462,7 +462,7 @@ def recipe_format(response_format):
     """What deepseek-recipe 0.2.0 renders for a response format (dsv41.rs
     lines 252-256): json_object as `{"type": "json_object"}`, json_schema
     as its schema, which a strict one must normalize (`strict_response_schema`),
-    and nothing for text."""
+    and nothing for text and regex."""
     if not isinstance(response_format, dict):
         return None
     kind = response_format.get("type")
@@ -497,34 +497,60 @@ def strip_billing_header(text):
     return text[min(starts):].lstrip(RUST_WHITESPACE) if starts else ""
 
 
-def system_text(message):
-    """A system message's text, its parts joined as the encoder joins them
-    (lines 387-393)."""
-    content = message.get("content")
-    if isinstance(content, list):
-        content = "\n\n".join(part.get("text", "") for part in content
-                               if isinstance(part, dict) and part.get("type") == "text")
-    return content or ""
+def text_part(part):
+    return isinstance(part, dict) and part.get("type") == "text"
+
+
+def strip_billing_parts(parts):
+    """`strip_billing_header` over a system message's parts, as the recipe
+    strips their text joined with blank lines, each image its token
+    (convert.rs lines 291-357), and as frontend.rs's
+    `strip_billing_header_blocks` does: the cut falls in the first part when
+    it holds a newline or "You are", else at the blank line after it, and
+    the whitespace after it runs through blank text parts to the next text
+    or image."""
+    if not parts or not text_part(parts[0]) or not parts[0].get("text", "").startswith(BILLING_HEADER):
+        return parts
+    kept = strip_billing_header(parts[0]["text"])
+    if kept or len(parts) == 1:
+        return [{**parts[0], "text": kept}, *parts[1:]]
+    rest = list(parts[1:])
+    while rest and text_part(rest[0]):
+        text = rest[0].get("text", "").lstrip(RUST_WHITESPACE)
+        if text:
+            return [{**rest[0], "text": text}, *rest[1:]]
+        rest.pop(0)
+    return rest
 
 
 def recipe_message(message):
     """One HF message as deepseek-recipe maps it for the encoder: a developer
     message is a system message, as the recipe maps a Responses developer
     message for V4.1 (responses/request/convert.rs lines 421-446), and a
-    system message's billing header is removed."""
+    system message's billing header is removed. Its images stay in place,
+    as the recipe reads a V4.1 system message's (convert.rs lines
+    428-441)."""
     if message.get("role") not in ("system", "developer"):
         return message
     message = {**message, "role": "system"}
-    text = system_text(message)
-    if strip_billing_header(text) != text:
-        message["content"] = strip_billing_header(text)
+    content = message.get("content")
+    if isinstance(content, list):
+        message["content"] = strip_billing_parts(content)
+    elif isinstance(content, str):
+        message["content"] = strip_billing_header(content)
     return message
 
 
 def empty_system(message):
     """Whether a message is a system message deepseek-recipe drops: its
-    text, parts joined, is empty (convert.rs lines 428-440)."""
-    return message.get("role") == "system" and not system_text(message)
+    text, parts joined with each image as its token, is empty (convert.rs
+    lines 428-440)."""
+    if message.get("role") != "system":
+        return False
+    content = message.get("content")
+    if isinstance(content, list):
+        return not content or (len(content) == 1 and text_part(content[0]) and not content[0].get("text"))
+    return not content
 
 
 def encoder_render(namespace, messages, tools, add_generation_prompt, continue_final_message, keywords,
@@ -542,7 +568,8 @@ def encoder_render(namespace, messages, tools, add_generation_prompt, continue_f
       over an effort of `none` thinks at the default effort;
     - `preserve_thinking` turns off `drop_thinking`;
     - a developer message is a system message, a system message's billing
-      header is removed, and a system message left empty is dropped;
+      header is removed, and a system message left without text or images
+      is dropped; a system message's images render in place;
     - a tool choice of none renders without the offered tools, a named one
       with only its tool, and a required or named one ends the prompt with
       the calls block's opening and is refused in thinking mode, as the
@@ -555,11 +582,15 @@ def encoder_render(namespace, messages, tools, add_generation_prompt, continue_f
     - the tools and the response format go to the leading system message,
       an empty one when the request has none (README: tools are defined on
       the system message) and they render something; the response format
-      renders as recipe 0.2.0 renders it (`recipe_format`), and the encoder
-      renders nothing for one Python reads as false;
+      renders as recipe 0.2.0 renders it (`recipe_format`), nothing for
+      text and regex, and the encoder renders nothing for one Python reads
+      as false;
     - a continued final assistant turn renders without its end token
       (`wo_eos`); the encoder writes the generation header itself, so
-      `add_generation_prompt` changes nothing."""
+      `add_generation_prompt` changes nothing; in thinking mode a continued
+      turn with no content and no calls keeps its reasoning open, as recipe
+      0.2.0 renders a prefix turn (dsv41.rs lines 206-230), so the `</think>`
+      the encoder closes it with is removed (`R4-final-assistant-turn`)."""
     mode = "thinking" if thinking(keywords) else "chat"
     effort = keywords.get("reasoning_effort") if mode == "thinking" else None
     effort = EFFORT_ALIASES.get(effort, effort) if isinstance(effort, str) else effort
@@ -597,7 +628,20 @@ def encoder_render(namespace, messages, tools, add_generation_prompt, continue_f
     prompt = namespace["encode_messages"](
         messages, thinking_mode=mode, drop_thinking=not keywords.get("preserve_thinking", False),
         reasoning_effort=effort)
+    if continue_final_message and mode == "thinking" and reasoning_alone(messages[-1]):
+        if not prompt.endswith("</think>"):
+            raise RuntimeError("the encoder did not close the continued turn's reasoning last")
+        prompt = prompt.removesuffix("</think>")
     return prompt + FORCED_PREFILL if forced else prompt
+
+
+def reasoning_alone(message):
+    """Whether an assistant turn has no content, its parts' text joined as
+    the encoder joins it (lines 387-393), and no calls."""
+    content = message.get("content")
+    if isinstance(content, list):
+        content = "\n\n".join(part.get("text", "") for part in content if text_part(part))
+    return not content and not message.get("tool_calls")
 
 
 def turn_arguments(text):
@@ -909,8 +953,8 @@ def cases(declaration):
                                       "tool_choice": {"type": "function", "function": {"name": "get_weather"}},
                                       "thinking": {"type": "disabled"}}, {
         "fixed:strict-mix-named-choice", "tools:wrapped"}
-    # R3: a response format renders as the recipe renders it: text nothing
-    # (and needs no system message), json_object its type, json_schema its
+    # R3: a response format renders as the recipe renders it: text and regex
+    # nothing (and need no system message), json_object its type, json_schema its
     # schema, a strict one normalizing as a strict tool's does. A schema the
     # encoder reads as false renders nothing, and a missing one is refused.
     yield "response-format-text", {"messages": [user("q")], "response_format": RESPONSE_FORMATS["text"]}, {
@@ -925,6 +969,9 @@ def cases(declaration):
         yield f"response-format-{name}-schema", {"messages": [user("q")], "response_format": {
             "type": "json_schema", "json_schema": {"name": "answer", "schema": schema}}}, {
             f"fixed:response-format-{name}-schema"}
+    yield "response-format-regex", {"messages": [user("Answer yes or no.")],
+                                    "response_format": {"type": "regex", "regex": "(yes|no)"}}, {
+        "fixed:response-format-regex", "response-format:regex"}
     yield "response-format-without-schema", {"messages": [user("q")], "response_format": {
         "type": "json_schema", "json_schema": {"name": "answer"}}}, {"fixed:response-format-without-schema"}
     yield "strict-response-format-partial-required", {"messages": [user("q")], "response_format": {
@@ -954,6 +1001,17 @@ def cases(declaration):
     yield "continued-final-assistant-turn", {"messages": [user("q"), {"role": "assistant", "content": "a"}],
                                              "continue_final_message": True, "add_generation_prompt": False}, {
         "fixed:continued-final-assistant-turn", "ends:continue"}
+    # R4: `prefix: true` on the final assistant turn continues it, as the
+    # recipe sends a continuation; in thinking mode a turn of reasoning
+    # alone keeps its reasoning open, and one with content closes it.
+    yield "prefix-continues-reasoning", {"messages": [
+        user("What is 17 times 23?"),
+        {"role": "assistant", "content": "", "reasoning_content": "17 times 23 is", "prefix": True}]}, {
+        "fixed:prefix-continues-reasoning", "ends:prefix"}
+    yield "prefix-continues-answer", {"messages": [
+        user("What is 17 times 23?"),
+        {"role": "assistant", "content": "The answer is", "reasoning_content": "17 times 23 is 391.",
+         "prefix": True}]}, {"fixed:prefix-continues-answer", "ends:prefix"}
     # R5: an empty system message is dropped, leading, later or as empty
     # parts; the one carrying the offered tools is still inserted.
     yield "empty-system-messages-dropped", {"messages": [
@@ -978,6 +1036,20 @@ def cases(declaration):
         "fixed:billing-header-in-parts"}
     yield "billing-header-alone", {"messages": [{"role": "system", "content": header}, user("q")]}, {
         "fixed:billing-header-alone"}
+    # System and developer images, which the image declaration admits as the
+    # recipe reads V4.1's (`images` in frontend-divergences.json): in place
+    # in the system text, alone, which keeps the message, and after a
+    # removed billing header.
+    image = lambda data: {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{data}"}}
+    yield "system-image", {"messages": [
+        {"role": "system", "content": [text("Describe images briefly."), image("AA==")]},
+        user([image("AQ=="), text("What changed?")])]}, {"fixed:system-image", "system:image"}
+    yield "developer-image-alone", {"messages": [{"role": "developer", "content": [image("AA==")]},
+                                                 user("What is this?")]}, {
+        "fixed:developer-image-alone", "developer:present", "system:image"}
+    yield "billing-header-before-system-image", {"messages": [
+        {"role": "system", "content": [text(header), text(" "), image("AA==")]}, user("q")]}, {
+        "fixed:billing-header-before-system-image", "system:image"}
     # R6: a tool choice of none renders no tools; required and a named
     # choice end the prompt with the calls block's opening (a named one
     # renders only its tool), and are refused in thinking mode.

@@ -394,6 +394,17 @@ class TransportTests(unittest.TestCase):
         alone = {"role": "assistant", "content": "a", "reasoning": "ignored"}
         self.assertNotIn("reasoning_content", corpus.hf_messages([alone], TRANSPORT, "reasoning_content")[0])
 
+    def test_a_final_assistant_prefix_continues_the_turn_as_the_transport_reads_it(self):
+        reasoning = toy_declaration()["reasoning"]
+        turn = {"role": "assistant", "content": "a", "prefix": True}
+        continued = corpus.hf_input({"messages": [user(), turn]}, TRANSPORT, reasoning)
+        self.assertEqual((continued["continue_final_message"], continued["add_generation_prompt"]), (True, False))
+        self.assertNotIn("prefix", continued["messages"][-1])
+        unset = corpus.hf_input({"messages": [user(), dict(turn, prefix=False)]}, TRANSPORT, reasoning)
+        self.assertEqual((unset["continue_final_message"], unset["add_generation_prompt"]), (False, True))
+        self.assertEqual(corpus.round_ineligible({"messages": [user(), turn]}, TRANSPORT),
+                         "continues the final message")
+
     def test_arguments_stay_text_for_a_reference_that_decodes_them(self):
         turn = {"role": "assistant", "content": "", "tool_calls": [call("f", {"n": 1})]}
         turn["tool_calls"][0]["function"]["arguments"] = "[1,  2]"

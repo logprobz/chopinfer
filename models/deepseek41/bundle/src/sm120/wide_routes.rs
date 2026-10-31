@@ -32,6 +32,17 @@ fn tag_with_tables<'a>(
     first: u32,
     tables: impl Fn(Family) -> &'a Table,
 ) -> RouteTag {
+    tag_at(symbol, family, first, bound(family), tables)
+}
+
+/// The tag of `symbol` admitted by `family`'s table rows at `capacity`.
+fn tag_at<'a>(
+    symbol: &str,
+    family: &'static str,
+    first: u32,
+    capacity: u32,
+    tables: impl Fn(Family) -> &'a Table,
+) -> RouteTag {
     let key = match family {
         "f32_projection" => {
             let entry = super::f32_verify::entries()
@@ -67,7 +78,6 @@ fn tag_with_tables<'a>(
         _ => unreachable!("unregistered wide route family"),
     };
     // Export the full verification envelope, including for smaller instances.
-    let capacity = bound(family);
     let admitted = if let Some((source, op, weights, shape)) = key {
         tables(source)
             .rows()
@@ -99,6 +109,24 @@ pub(super) fn tags<B>(op: &dyn PreparedOp<B>, family: &'static str, first: u32) 
 
 pub(super) fn tagged<B: 'static>(op: Prepared<B>, family: &'static str, first: u32) -> Prepared<B> {
     let tags = tags(op.as_ref(), family, first);
+    kernel_core::route::tagged(op, tags)
+}
+
+/// `op` of a wide verify bucket (`Shape::wide_verify_rows`, the
+/// `wide_verify` candidate) tagged with the rows `family`'s table admits
+/// at the widest bucket (`verify_bounds::WIDE`).
+pub(super) fn tagged_wide<B: 'static>(op: Prepared<B>, family: &'static str) -> Prepared<B> {
+    let capacity = verify_bounds::WIDE[verify_bounds::WIDE.len() - 1];
+    let tags = op
+        .info()
+        .symbols
+        .iter()
+        .map(|(symbol, _)| {
+            tag_at(symbol, family, capacity, capacity, |source| {
+                tuning::table(&FLASH, source).expect("Flash wide route table")
+            })
+        })
+        .collect();
     kernel_core::route::tagged(op, tags)
 }
 
@@ -264,14 +292,12 @@ mod tests {
         assert_eq!(engram.wrappers, ["wide-verify"]);
     }
 
-    #[test]
-    fn every_wide_query_and_engram_row_reports_the_selected_target_entry() {
-        let _metadata = Metadata::enable();
-        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap().with_verify_rows(64);
-        let kernels = crate::Kernels::new(&shape).unwrap();
-        let span =
-            |id| DeviceBufferSpanV1::new(BundleDeviceBufferHandleV1::from_raw(id), 0, 1 << 32);
-        let index_views = QueryViews {
+    fn span(id: u64) -> DeviceBufferSpanV1 {
+        DeviceBufferSpanV1::new(BundleDeviceBufferHandleV1::from_raw(id), 0, 1 << 32)
+    }
+
+    fn index_views() -> QueryViews {
+        QueryViews {
             q: span(1),
             cos_sin: span(2),
             positions: span(3),
@@ -279,14 +305,25 @@ mod tests {
             output: span(5),
             workspace: span(6),
             status: span(7),
-        };
-        let latent_views = QueryRopeViews {
+        }
+    }
+
+    fn latent_views() -> QueryRopeViews {
+        QueryRopeViews {
             query: span(1),
             native_q: span(2),
             cos_sin: span(3),
             live_rows: span(4),
             status: span(5),
-        };
+        }
+    }
+
+    #[test]
+    fn every_wide_query_and_engram_row_reports_the_selected_target_entry() {
+        let _metadata = Metadata::enable();
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap().with_verify_rows(64);
+        let kernels = crate::Kernels::new(&shape).unwrap();
+        let (index_views, latent_views) = (index_views(), latent_views());
         for target in [true, false] {
             let asks = Asks::default();
             let index =
@@ -365,6 +402,82 @@ mod tests {
                 let tag = kernel_core::route::selected(op.as_ref(), counts, &call).unwrap();
                 assert_eq!((tag.class, tag.family), (RouteClass::Fast, "mxfp8_prefill"));
                 assert!(tag.admitted.iter().any(|range| range.contains(&rows)));
+            }
+        }
+    }
+
+    /// With the `wide_verify` option, every target verify step above the
+    /// decode route takes the decode queries' entries at its wide verify
+    /// bucket, tagged with the widest bucket's rows; without it, in
+    /// prefill and in the drafter, none does.
+    #[test]
+    fn wide_verify_query_rows_report_the_widest_bucket_entry() {
+        let _metadata = Metadata::enable();
+        let (index_views, latent_views) = (index_views(), latent_views());
+        for enabled in [true, false] {
+            let shape = Shape::new(&FLASH, Ranks::TP4)
+                .unwrap()
+                .with_verify_rows(192)
+                .with_wide_verify(enabled);
+            let kernels = crate::Kernels::new(&shape).unwrap();
+            for target in [true, false] {
+                let asks = Asks::default();
+                let index =
+                    IndexerOps::prepare(kernels.backend.as_ref(), &shape, &asks, target).unwrap();
+                let latent = GlueOps::prepare(
+                    kernels.backend.as_ref(),
+                    kernels.own.as_ref(),
+                    &shape,
+                    &asks,
+                    KvStorage::Native,
+                    target,
+                )
+                .unwrap();
+                for rows in 65..=192 {
+                    for phase in [
+                        Phase::Verify {
+                            rows,
+                            items: rows.div_ceil(6),
+                        },
+                        Phase::Prefill { rows },
+                    ] {
+                        for (calls, symbol, family) in [
+                            (
+                                index.prepare_query(phase, 65536, &index_views).unwrap(),
+                                "chop_position_query_deepseek41_parallel_v1",
+                                "indexer_query",
+                            ),
+                            (
+                                latent.query_rope(phase, &latent_views).unwrap(),
+                                "chop_deepseek41_latent_query_rope_heads_v1",
+                                "latent_query",
+                            ),
+                        ] {
+                            let wide = enabled && target && !phase.prefill();
+                            assert_eq!(
+                                calls.len(),
+                                if wide || family == "latent_query" {
+                                    1
+                                } else {
+                                    2
+                                }
+                            );
+                            for call in calls {
+                                let selected = call
+                                    .launch
+                                    .bindings
+                                    .route()
+                                    .filter(|tag| tag.wrappers.contains(&"wide-verify"));
+                                assert_eq!(selected.is_some(), wide, "{family} {rows} {phase:?}");
+                                assert_eq!(call.launch.symbol == symbol, wide);
+                                if let Some(tag) = selected {
+                                    assert_eq!((tag.class, tag.family), (RouteClass::Fast, family));
+                                    assert_eq!(tag.admitted, [65..=192]);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

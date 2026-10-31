@@ -31,6 +31,9 @@ pub(crate) struct IndexerOps {
     /// and rotation are the same at each.
     query: Prepared<PositionQueryBuffers<View>>,
     wide_query: Option<Prepared<PositionQueryBuffers<View>>>,
+    /// The target's query of each wide verify bucket
+    /// (`Shape::wide_verify_rows`), narrowest first.
+    wide_rows: Vec<(u32, Prepared<PositionQueryBuffers<View>>)>,
 }
 
 /// A step's spans of a query preparation: the F32 index query, the
@@ -72,7 +75,28 @@ impl IndexerOps {
         } else {
             None
         };
-        Ok(IndexerOps { query, wide_query })
+        let wide_rows = if target {
+            shape
+                .wide_verify_rows()
+                .into_iter()
+                .filter(|&rows| crate::Kernels::wide_verify_index_query_rows(rows))
+                .map(|rows| {
+                    let op = asks.ask(
+                        format!("indexer.query wide verify rows {rows}"),
+                        exact::need(rows, exact::verify(rows)),
+                        |need| crate::Kernels::wide_verify_index_query(shape, &query_spec, need),
+                    )?;
+                    Ok((rows, op))
+                })
+                .collect::<Result<_, Refused>>()?
+        } else {
+            Vec::new()
+        };
+        Ok(IndexerOps {
+            query,
+            wide_query,
+            wide_rows,
+        })
     }
 
     /// The preparation of `rows` index queries over a RoPE table of
@@ -95,10 +119,14 @@ impl IndexerOps {
             quantizer_status_row_offset: 0,
         };
         let counts = Counts::rows(rows).with_positions(table_rows);
-        let op = if matches!(phase, crate::program::Phase::Verify { .. })
-            && crate::Kernels::wide_index_query_rows(64, rows)
-        {
+        let verify = matches!(phase, crate::program::Phase::Verify { .. });
+        let op = if verify && crate::Kernels::wide_index_query_rows(64, rows) {
             self.wide_query.as_ref()
+        } else if verify && crate::Kernels::wide_verify_index_query_rows(rows) {
+            self.wide_rows
+                .iter()
+                .find(|(bucket, _)| rows <= *bucket)
+                .map(|(_, op)| op)
         } else {
             None
         }

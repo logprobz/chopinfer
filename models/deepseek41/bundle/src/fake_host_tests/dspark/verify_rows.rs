@@ -317,10 +317,11 @@ fn row_pair(rows: u32) -> (u32, u32, u32) {
 /// Row-local stages of a verify step above the 64-row budget. Each grids
 /// the step's live rows, never a prepared capacity, so the symbol says
 /// which registered entry serves the stage. With the `wide_verify` option
-/// the ceil quantizers and the shared SwiGLU take the decode entries of
-/// their wide verify buckets (`verify_bounds::WIDE`), and the HC boundary
-/// that of a 64-row step ([`WIDE_HC_STAGES`]); without it they keep the
-/// entries of [`CANDIDATE_STAGES`] and the unfused boundary.
+/// the ceil quantizers, the shared SwiGLU and the latent and index queries
+/// take the decode entries of their wide verify buckets
+/// (`verify_bounds::WIDE`), and the HC boundary that of a 64-row step
+/// ([`WIDE_HC_STAGES`]); without it they keep the entries of
+/// [`CANDIDATE_STAGES`] and the unfused boundary.
 const WIDE_STAGES: &[Stage] = &[
     ("chop_deepseek41_moe_ceil_w5120_cached_v1", 320, per_row),
     ("chop_deepseek41_moe_ceil_w3456_v1", 160, per_row),
@@ -343,9 +344,9 @@ const WIDE_STAGES: &[Stage] = &[
     ("chop_deepseek41_dense_ceil_w6144_cached_v1", 8, per_row),
     ("chop_deepseek41_latent_ceil32_parallel_v1", 160, per_row),
     ("chop_deepseek41_latent_window_rope_v1", 160, per_row),
-    ("chop_deepseek41_latent_query_rope_v1", 160, per_row),
+    ("chop_deepseek41_latent_query_rope_heads_v1", 160, per_row),
     ("chop_deepseek41_q_norm_f32_v1", 160, per_row),
-    ("chop_position_query_deepseek41_mxfp4_v2", 32, per_row),
+    ("chop_position_query_deepseek41_parallel_v1", 32, per_row),
     ("chop_row_rmsnorm_deepseek41_w5120_v1", 320, per_row),
     (
         "chop_sinkhorn_hc_deepseek41_lagged_mix_collapse_v1",
@@ -369,13 +370,9 @@ const WIDE_STAGES: &[Stage] = &[
     ),
 ];
 
-/// Decode forms of those stages that serve 33 to 64 rows and launch
-/// nowhere above them.
-const NARROW_STAGES: &[&str] = &[
-    "chop_deepseek41_latent_query_rope_heads_v1",
-    "chop_position_query_deepseek41_parallel_v1",
-    "chop_sinkhorn_hc_deepseek41_lagged_mix_collapse_split_v1",
-];
+/// The decode form of the HC mixer that serves 33 to 64 rows and launches
+/// nowhere above them: the wide boundary keeps the one-CTA mixer.
+const NARROW_STAGES: &[&str] = &["chop_sinkhorn_hc_deepseek41_lagged_mix_collapse_split_v1"];
 
 /// With the `wide_verify` option, the HC boundary of a 64-row step: the
 /// column-block pair fuses 77 of each rank's 80 boundaries, writing their
@@ -407,9 +404,10 @@ const WIDE_HC_STAGES: &[Stage] = &[
 ];
 
 /// The stages the `wide_verify` option moves to their wide verify
-/// buckets' decode entries, as (decode entry, default entry): without the
-/// option each keeps the prefill entry, and each form launches nowhere
-/// the other serves.
+/// buckets' decode entries, as (decode entry, default entry), listing a
+/// decode entry once for each default launch it replaces (the first is
+/// pinned): without the option each keeps the prefill entry, and each form
+/// launches nowhere the other serves.
 const CANDIDATE_STAGES: &[(&str, &str)] = &[
     (
         "chop_deepseek41_moe_ceil_w5120_cached_v1",
@@ -438,6 +436,18 @@ const CANDIDATE_STAGES: &[(&str, &str)] = &[
     (
         "chop_deepseek41_latent_ceil32_parallel_v1",
         "chop_deepseek41_latent_ceil32_v1",
+    ),
+    (
+        "chop_deepseek41_latent_query_rope_heads_v1",
+        "chop_deepseek41_latent_query_rope_v1",
+    ),
+    (
+        "chop_position_query_deepseek41_parallel_v1",
+        "chop_position_query_deepseek41_mxfp4_v2",
+    ),
+    (
+        "chop_position_query_deepseek41_parallel_v1",
+        "chop_position_query_deepseek41_rotate_v3",
     ),
 ];
 

@@ -38,4 +38,30 @@ impl crate::Kernels {
             .position_indexer_query(query, need)?;
         Ok(super::wide_routes::tagged(op, "indexer_query", 33))
     }
+
+    /// Whether `indexer.query.verify` admits `rows` verify rows at the
+    /// widest wide verify bucket (`verify_bounds::WIDE`).
+    pub(crate) fn wide_verify_index_query_rows(rows: u32) -> bool {
+        use model_deepseek41_contract::verify_bounds::WIDE;
+        Self::wide_index_query_rows(WIDE[WIDE.len() - 1], rows)
+    }
+
+    /// The index query of a wide verify bucket (`Shape::wide_verify_rows`,
+    /// the `wide_verify` candidate): the parallel query
+    /// [`Self::wide_index_query`] binds, through the bucket's rows.
+    pub(crate) fn wide_verify_index_query(
+        shape: &crate::shape::Shape,
+        query: &PositionIndexerQuery,
+        need: Need,
+    ) -> Result<Prepared<PositionQueryBuffers<View>>, Refused> {
+        if !shape.wide_verify_rows().contains(&need.capacity)
+            || !Self::wide_verify_index_query_rows(need.capacity)
+        {
+            return Err(Refused::Unsupported);
+        }
+        let op = super::indexer_query::register(Sm120::new(), shape.geometry)
+            .with_parallel_position_query_rows(need.capacity)?
+            .position_indexer_query(query, need)?;
+        Ok(super::wide_routes::tagged_wide(op, "indexer_query"))
+    }
 }

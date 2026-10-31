@@ -21,6 +21,7 @@ pub mod blocked;
 pub mod bounded_reuse;
 pub mod cached_spans;
 pub mod certified;
+pub mod classified_decode;
 mod decode;
 pub mod last;
 mod prefill;

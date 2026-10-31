@@ -46,6 +46,9 @@ pub struct Heads {
     logits_row: Prepared<GatherByIndexBuffers<View>>,
     hidden_rows: Prepared<GatherByIndexBuffers<View>>,
     markov: Prepared<MarkovStepBuffers<View>>,
+    /// The staged step over the item-major block logits in place and over
+    /// contiguous rows (the `dspark_markov_staged` candidate option).
+    staged: Option<[Prepared<MarkovStepBuffers<View>>; 2]>,
     /// Each rank's coupled noise on its Markov logits, in sampled mode.
     noise: Option<Vec<Prepared<DraftNoiseBuffers<View>>>>,
     confidence: Prepared<ConfidenceHeadBuffers<View>>,
@@ -210,14 +213,18 @@ impl Heads {
             },
             Need::rows(24),
         )?;
-        let markov = own.dspark_markov_step(
-            &MarkovStep {
-                rank: dim,
-                vocab_rows: width,
-                logits_stride: width,
-            },
-            need,
-        )?;
+        let step = MarkovStep {
+            rank: dim,
+            vocab_rows: width,
+            logits_stride: width,
+        };
+        let markov = own.dspark_markov_step(&step, need)?;
+        let staged = if shape.dspark_markov_staged {
+            let staged = |stride| crate::Kernels::dspark_markov_staged(&shape, &step, stride, need);
+            Some([staged(BLOCK_ROWS * width)?, staged(width)?])
+        } else {
+            None
+        };
         let noise = match mode {
             DraftMode::Greedy => None,
             DraftMode::Sampled => Some(
@@ -292,6 +299,7 @@ impl Heads {
             logits_row,
             hidden_rows,
             markov,
+            staged,
             noise,
             confidence,
             partial,
@@ -313,6 +321,7 @@ impl Heads {
             self.select.info(),
         ]
         .into_iter()
+        .chain(self.staged.iter().flatten().map(|op| op.info()))
         .chain(self.embedding.iter().map(|op| op.info()))
         .chain(self.peer.iter().flatten().map(|op| op.info()))
         .chain(self.noise.iter().flatten().map(|op| op.info()))
@@ -512,11 +521,25 @@ impl Heads {
         // contiguous slice, so its step reads the row in place instead of
         // copying it first.
         let row_bytes = u64::from(self.shape.vocab_rows()) * 4;
+        let mut markov = &self.markov;
         let base = if packed {
             let bytes = u64::from(items) * row_bytes;
+            if let Some([_, rows]) = &self.staged {
+                markov = rows;
+            }
             slice(v.block_logits, u64::from(position) * bytes, bytes)?
         } else if items == 1 {
             slice(v.block_logits, u64::from(position) * row_bytes, row_bytes)?
+        } else if let Some([block, _]) = &self.staged {
+            // The staged step reads each item's row in place, five rows
+            // apart, so no copy precedes it.
+            markov = block;
+            let rows = u64::from(items - 1) * u64::from(BLOCK_ROWS) + 1;
+            slice(
+                v.block_logits,
+                u64::from(position) * row_bytes,
+                rows * row_bytes,
+            )?
         } else {
             let mut bind = Bind::default();
             let buffers = GatherByIndexBuffers {
@@ -536,7 +559,7 @@ impl Heads {
             output: bind.view(v.position_logits),
             live_rows: bind.view(v.live_items),
         };
-        result.extend(run(bind.launch(&self.markov, &buffers, counts))?);
+        result.extend(run(bind.launch(markov, &buffers, counts))?);
         if let Some(noise) = &self.noise {
             let mut bind = Bind::default();
             let buffers = DraftNoiseBuffers {

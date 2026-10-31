@@ -27,7 +27,7 @@
     "frontend": {
       "directory": false,
       "members": {
-        ".": "3da3c404814050e38d43c7c3e0a267789b852da787ba43ac223a56079e64e3de"
+        ".": "6c7610a09f2e63f2da84abb2d401c996d2822af0d2ce11b9afeedfe3a7048762"
       },
       "path": "models/glm5next/compiler/src/frontend.json"
     },
@@ -106,7 +106,7 @@
     "media_preprocessing_frontend": {
       "directory": false,
       "members": {
-        ".": "3da3c404814050e38d43c7c3e0a267789b852da787ba43ac223a56079e64e3de"
+        ".": "6c7610a09f2e63f2da84abb2d401c996d2822af0d2ce11b9afeedfe3a7048762"
       },
       "path": "models/glm5next/compiler/src/frontend.json"
     },
@@ -5348,7 +5348,7 @@
       },
       "schema": "chopinfer.refrun.preprocessing.v1"
     },
-    "3da3c404814050e38d43c7c3e0a267789b852da787ba43ac223a56079e64e3de": {
+    "6c7610a09f2e63f2da84abb2d401c996d2822af0d2ce11b9afeedfe3a7048762": {
       "schema": "chop-frontend-openai-v2"
     }
   },

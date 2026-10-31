@@ -12,8 +12,9 @@ use frontend_format::parse_completion_v1;
 use model_glm5next::frontend::{COMPONENT, descriptor};
 use model_glm5next_contract::frontend::Glm53Format;
 use runtime_frontend::test_support::documents::PairedFrontendV1;
+use runtime_frontend::test_support::reasoning::ask;
 use runtime_frontend::{
-    BundleFrontendV1, FrontendDescriptorV1, FrontendMediaKindV1, PromptModeV1,
+    BundleChatStateV1, BundleFrontendV1, FrontendDescriptorV1, FrontendMediaKindV1, PromptModeV1,
     tokenizer_dialect_v1, tokenizer_from_components_v1,
 };
 use runtime_server::{
@@ -711,4 +712,31 @@ fn a_parameter_name_holding_a_marker_is_refused_as_history() {
         &frontend(descriptor()),
         &descriptor(),
     );
+}
+
+/// A chat or Responses request without an output limit generates at most
+/// 131,072 tokens when its prompt thinks at effort max, the default, and
+/// 65,536 at low or high (the owner decision of 2026-10-31), before the
+/// transport lowers the length to the context left. Every prompt thinks:
+/// thinking off is refused (`controls_the_template_ignores_are_refused`).
+#[test]
+fn a_request_without_an_output_limit_takes_its_effort_s_declared_length() {
+    let frontend = frontend(descriptor());
+    for (effort, expected) in [
+        (None, 131_072),
+        (Some("max"), 131_072),
+        (Some("high"), 65_536),
+        (Some("low"), 65_536),
+    ] {
+        let rendered = frontend
+            .render_chat(ask(&[], effort, None))
+            .unwrap_or_else(|error| panic!("{effort:?}: {}", error.message));
+        let state = BundleChatStateV1::from_state(&rendered.state).unwrap();
+        assert_eq!(state.mode(), PromptModeV1::Thinking, "{effort:?}");
+        assert_eq!(
+            frontend.default_output_tokens(&rendered.state),
+            Some(expected),
+            "{effort:?}"
+        );
+    }
 }

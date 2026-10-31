@@ -1,5 +1,6 @@
 {
   "multimodal": {
+    "system_media": true,
     "arena": {
       "rows": 16384,
       "page_rows": 64,

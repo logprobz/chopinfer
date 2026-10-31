@@ -178,6 +178,7 @@ fn a_reference_carrying_a_media_placeholder_is_refused() {
             layout: None,
             formats: None,
         }],
+        system_media: false,
     });
     let frontend = frontend_of::<true>(descriptor);
     let prepared = prepare_chat_request_v1(&frontend, 1 << 20, body(), 8).unwrap();

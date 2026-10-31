@@ -86,6 +86,13 @@ a `json_schema` response format with `strict: true`, an explicit
 still renders a `json_object` or non-strict schema response format, and a
 strict tool under `auto`, and leaves their decoding unconstrained.
 
+A model whose declaration sets `response.regex_response_format` (DeepSeek
+V4.1 Flash) also accepts a chat `response_format` of `{"type": "regex",
+"regex": "..."}`. It is an explicit regex constraint under either scope,
+replaces `structured_outputs.regex`, and gives way to a `required` or named
+`tool_choice` as a schema does. Other models, the completions endpoint and
+the Responses API's `text.format` refuse that type.
+
 The JSON Schema subset refuses unsupported assertions, and assertions beside
 `$ref` or combinators, instead of ignoring them. Provably vacuous assertions
 (`uniqueItems: false`, zero minimum counts, an empty `required`) are accepted,
@@ -353,7 +360,10 @@ Content arrays accept `image_url`, `audio_url`, `video_url` and
 outside the `file` object are refused; other models refuse the `file` type.
 A model that declares images in tool results (DeepSeek V4.1 Flash) accepts
 `image_url` and `file` parts in tool messages, counted and limited as user
-images. Local files need `--allowed-local-media-path DIR`.
+images. A model that declares media in system messages (DeepSeek V4.1 Flash,
+through `multimodal.system_media`) accepts them in system and developer
+messages too, under the same limits; assistant messages never carry media.
+Local files need `--allowed-local-media-path DIR`.
 
 ### Many images
 

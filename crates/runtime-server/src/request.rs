@@ -910,6 +910,7 @@ fn prepare_completion(
         request.response_format.as_ref(),
         max_string_bytes,
         false,
+        false,
     )?
     .map(|requested| requested.grammar())
     .transpose()?;
@@ -1082,6 +1083,7 @@ fn prepare_chat(
         request.response_format.as_ref(),
         max_string_bytes,
         strict_only,
+        frontend.regex_response_format(),
     )?;
     if matches!(tool_choice, FrontendToolChoiceV1::Named(_))
         && requested
@@ -1561,7 +1563,9 @@ fn convert_content_parts(
                     if kind != "file" || frontend.image_file_parts() =>
                 {
                     let image = matches!(kind.as_str(), "image_url" | "file");
-                    if role != "user" && !(role == "tool" && image && frontend.tool_result_images())
+                    if role != "user"
+                        && !(role == "tool" && image && frontend.tool_result_images())
+                        && !(matches!(role, "system" | "developer") && frontend.system_media())
                     {
                         return Err(ApiError::invalid(
                             "only user messages may contain media",
@@ -2198,6 +2202,7 @@ fn requested_output_constraint(
     response_format: Option<&FrontendJsonV1>,
     max_string_bytes: usize,
     strict_only: bool,
+    regex_format: bool,
 ) -> Result<Option<RequestedConstraint>, ApiError> {
     if let Some(format) = response_format {
         validate_json_strings(format, "response_format", max_string_bytes)?;
@@ -2205,7 +2210,12 @@ fn requested_output_constraint(
     if let Some(outputs) = structured_outputs {
         validate_json_strings(outputs, "structured_outputs", max_string_bytes)?;
     }
-    requested_constraint(structured_outputs, response_format, strict_only)
+    requested_constraint(
+        structured_outputs,
+        response_format,
+        strict_only,
+        regex_format,
+    )
 }
 
 fn frontend_error(error: FrontendErrorV1, fallback: &'static str) -> ApiError {

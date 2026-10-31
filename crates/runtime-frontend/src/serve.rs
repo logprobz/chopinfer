@@ -333,6 +333,13 @@ impl ServerFrontendV1 for BundleFrontendV1 {
         self.descriptor.tools.image_results
     }
 
+    fn system_media(&self) -> bool {
+        self.descriptor
+            .multimodal
+            .as_ref()
+            .is_some_and(|multimodal| multimodal.system_media)
+    }
+
     fn image_formats(&self) -> Vec<String> {
         match self.image_modality() {
             Some(image) => image
@@ -393,6 +400,9 @@ impl ServerFrontendV1 for BundleFrontendV1 {
     }
     fn constrains_strict_only(&self) -> bool {
         self.descriptor.response.constraint_scope == FrontendConstraintScopeV1::StrictOnly
+    }
+    fn regex_response_format(&self) -> bool {
+        self.descriptor.response.regex_response_format
     }
     fn forced_choice_without_tools_is_auto(&self) -> bool {
         self.descriptor

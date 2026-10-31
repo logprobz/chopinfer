@@ -216,7 +216,8 @@
   },
   "response": {
     "reasoning_field": "reasoning_content",
-    "constraint_scope": "strict-only"
+    "constraint_scope": "strict-only",
+    "regex_response_format": true
   },
   "format": {
     "parser": {

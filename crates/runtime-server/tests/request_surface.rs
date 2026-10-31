@@ -74,12 +74,15 @@ struct PermissiveFrontendV1 {
     /// While set, every tool choice with tools constrains to one grammar.
     constrains_tools: AtomicBool,
     /// While set, the frontend declares a vendor API's request mapping: the
-    /// thinking object, strict-only constraints and forced choices without
-    /// tools served as auto.
+    /// thinking object, strict-only constraints, regex response formats and
+    /// forced choices without tools served as auto.
     vendor_mapping: AtomicBool,
     /// While set, the frontend declares GIF and WebP images, `file` parts
     /// and images in tool results.
     declared_images: AtomicBool,
+    /// While set, the frontend declares media in system and developer
+    /// messages.
+    system_media: AtomicBool,
 }
 
 impl PermissiveFrontendV1 {
@@ -97,6 +100,7 @@ impl PermissiveFrontendV1 {
             constrains_tools: AtomicBool::new(false),
             vendor_mapping: AtomicBool::new(false),
             declared_images: AtomicBool::new(false),
+            system_media: AtomicBool::new(false),
         })
     }
 
@@ -133,6 +137,10 @@ impl ServerFrontendV1 for PermissiveFrontendV1 {
         self.declared_images.load(Ordering::Relaxed)
     }
 
+    fn system_media(&self) -> bool {
+        self.system_media.load(Ordering::Relaxed)
+    }
+
     fn image_formats(&self) -> Vec<String> {
         let formats: &[&str] = if self.declared_images.load(Ordering::Relaxed) {
             &["png", "jpeg", "gif", "webp"]
@@ -163,6 +171,10 @@ impl ServerFrontendV1 for PermissiveFrontendV1 {
     }
 
     fn constrains_strict_only(&self) -> bool {
+        self.vendor_mapping.load(Ordering::Relaxed)
+    }
+
+    fn regex_response_format(&self) -> bool {
         self.vendor_mapping.load(Ordering::Relaxed)
     }
 
@@ -1388,6 +1400,59 @@ async fn media_parts_fail_closed_for_unsupported_bundles_and_urls() {
     server.refuses_chat(&system_media, "messages").await;
 }
 
+/// A model that declares media in system messages accepts them in system
+/// and developer messages, under the served modalities and limits of user
+/// media; an assistant message's media are still refused.
+#[tokio::test]
+async fn declared_system_media_reach_the_frontend_from_system_and_developer_messages() {
+    let server = InProcessServerV1::full();
+    server.frontend.media_enabled.store(true, Ordering::Relaxed);
+    let image = r#"{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}"#;
+    let body = |role: &str| {
+        chat(&format!(
+            r#""messages":[{{"role":"{role}","content":[{{"type":"text","text":"Look."}},{image}]}},{{"role":"user","content":"hello"}}],"max_tokens":1"#
+        ))
+    };
+    for role in ["system", "developer"] {
+        server.refuses_chat(&body(role), "messages").await;
+    }
+    server.frontend.system_media.store(true, Ordering::Relaxed);
+    for role in ["system", "developer"] {
+        let response = server.post("/v1/chat/completions", &body(role)).await;
+        assert_eq!(response.status, 200, "{role}: {}", response.body);
+        let requests = server.frontend.requests.lock().unwrap();
+        let parts = requests.last().unwrap().messages[0].parts.clone().unwrap();
+        assert!(
+            matches!(
+                &parts[..],
+                [
+                    runtime_server::FrontendContentPartV1::Text(text),
+                    runtime_server::FrontendContentPartV1::Media(media),
+                ] if text == "Look." && media.source == "data:image/png;base64,AAAA"
+            ),
+            "{role}: {parts:?}"
+        );
+    }
+    let assistant = chat(&format!(
+        r#""messages":[{{"role":"user","content":"hello"}},{{"role":"assistant","content":[{image}]}}],"continue_final_message":true,"max_tokens":1"#
+    ));
+    server.refuses_chat(&assistant, "messages").await;
+    assert_eq!(
+        server.post("/v1/chat/completions", &assistant).await.json()["error"]["message"],
+        "only user messages may contain media"
+    );
+    *server.frontend.served_media.lock().unwrap() =
+        Some(vec![runtime_server::FrontendMediaPartKindV1::Audio]);
+    server.refuses_chat(&body("system"), "messages").await;
+    assert_eq!(
+        server
+            .post("/v1/chat/completions", &body("system"))
+            .await
+            .json()["error"]["message"],
+        "image input is not supported by this server, which serves text,audio"
+    );
+}
+
 /// Image formats, `file` parts and images in tool results follow the
 /// model's declaration. Undeclared, GIF and WebP data URLs are refused by
 /// format and a `file` part as an unsupported type; declared, a nested
@@ -2545,6 +2610,11 @@ async fn unsupported_structured_outputs_are_refused_with_their_field() {
             "response_format",
             "yaml",
         ),
+        (
+            r#""response_format":{"type":"regex","regex":"a"}"#,
+            "response_format",
+            "type 'regex' is not supported",
+        ),
     ];
     for (extra, parameter, message) in cases {
         for (path, body) in [
@@ -2708,6 +2778,86 @@ async fn a_declared_vendor_mapping_shapes_constraints_choices_and_thinking() {
                     assert_eq!(response.json()["error"]["param"], "tool_choice");
                 }
             }
+        }
+        // A regex response format is an explicit constraint where the
+        // mapping declares it, in chat only, replacing a structured_outputs
+        // regex; a forced choice's grammar replaces it, as it replaces a
+        // schema's. Without the mapping that type is refused.
+        let regex = r#""response_format":{"type":"regex","regex":"[ab]+"}"#;
+        let regex_grammar = runtime_grammar::regex_grammar("[ab]+").unwrap();
+        for (extra, expected) in [
+            (regex.to_owned(), regex_grammar.clone()),
+            (
+                format!(r#""structured_outputs":{{"regex":"c"}},{regex}"#),
+                regex_grammar.clone(),
+            ),
+            (
+                format!(r#"{tools},"tool_choice":"required",{regex}"#),
+                tool_grammar(),
+            ),
+            (
+                format!(
+                    r#"{tools},"tool_choice":{{"type":"function","function":{{"name":"f"}}}},{regex}"#
+                ),
+                tool_grammar(),
+            ),
+        ] {
+            let body = format!(
+                r#"{{"messages":[{{"role":"user","content":"hi"}}],"max_tokens":4,{extra}}}"#
+            );
+            let response = server.post("/v1/chat/completions", &body).await;
+            if !mapped {
+                assert_eq!(response.status, 400, "{body}: {}", response.body);
+                let error = &response.json()["error"];
+                assert_eq!(error["param"], "response_format", "{body}");
+                assert_eq!(
+                    error["message"], "response_format type 'regex' is not supported",
+                    "{body}"
+                );
+                continue;
+            }
+            assert_eq!(response.status, 200, "{body}: {}", response.body);
+            let prompts = server.backend.prompts.lock().unwrap();
+            let constraint = prompts.last().unwrap().constraint.clone();
+            assert_eq!(constraint.as_deref(), Some(&expected), "{body}");
+        }
+        for (path, body, message) in [
+            (
+                "/v1/chat/completions",
+                r#"{"messages":[{"role":"user","content":"hi"}],"response_format":{"type":"regex"}}"#,
+                if mapped {
+                    "response_format.regex must be a string"
+                } else {
+                    "response_format type 'regex' is not supported"
+                },
+            ),
+            (
+                "/v1/chat/completions",
+                r#"{"messages":[{"role":"user","content":"hi"}],"response_format":{"type":"regex","regex":"(a"}}"#,
+                if mapped {
+                    "response_format: "
+                } else {
+                    "response_format type 'regex' is not supported"
+                },
+            ),
+            (
+                "/v1/completions",
+                r#"{"prompt":"hi","response_format":{"type":"regex","regex":"a"}}"#,
+                "response_format type 'regex' is not supported",
+            ),
+            (
+                "/v1/responses",
+                r#"{"input":"hi","text":{"format":{"type":"regex","regex":"a"}}}"#,
+                "unsupported text.format",
+            ),
+        ] {
+            let response = server.post(path, body).await;
+            assert_eq!(response.status, 400, "{body}: {}", response.body);
+            let error = &response.json()["error"];
+            assert!(
+                error["message"].as_str().unwrap().starts_with(message),
+                "{mapped}: {body}: {error}"
+            );
         }
         // The thinking object switches thinking, overriding the effort and
         // the keywords, which a mapped frontend no longer reads.

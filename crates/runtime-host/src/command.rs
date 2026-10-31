@@ -8863,6 +8863,7 @@ mod tests {
                 layout: None,
                 formats: None,
             }],
+            system_media: false,
         };
         for capability in [false, true] {
             assert!(super::require_position_axes_capability_v1(None, capability).is_ok());

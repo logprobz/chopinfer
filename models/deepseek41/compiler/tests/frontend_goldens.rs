@@ -683,6 +683,10 @@ fn the_transport_maps_requests_as_the_declaration_states() {
             serde_json::json!({"structured_outputs": {"json": schema}}),
             true,
         ),
+        (
+            serde_json::json!({"response_format": {"type": "regex", "regex": "(yes|no)"}}),
+            true,
+        ),
         (serde_json::json!({"tools": weather}), false),
         (
             serde_json::json!({"tools": weather, "tool_choice": "auto"}),
@@ -712,8 +716,8 @@ fn the_transport_maps_requests_as_the_declaration_states() {
         json_object.contains("to reply:\n{\"type\": \"json_object\"}<｜User｜>"),
         "{json_object}"
     );
-    // R3: json_schema renders its schema as sent; text, and a schema Python
-    // reads as false, render nothing and insert no system message.
+    // R3: json_schema renders its schema as sent; text, regex, and a schema
+    // Python reads as false, render nothing and insert no system message.
     let json_schema = prompt(serde_json::json!({"response_format": format(true.into())}));
     assert!(
         json_schema.contains(
@@ -724,6 +728,7 @@ fn the_transport_maps_requests_as_the_declaration_states() {
     let unformatted = prompt(serde_json::json!({}));
     for format in [
         serde_json::json!({"type": "text"}),
+        serde_json::json!({"type": "regex", "regex": "(yes|no)"}),
         serde_json::json!({"type": "json_schema", "json_schema": {"name": "answer", "schema": {}}}),
         serde_json::json!({"type": "json_schema", "json_schema": {"name": "answer", "schema": false}}),
     ] {
@@ -751,6 +756,11 @@ fn the_transport_maps_requests_as_the_declaration_states() {
         ),
         (
             serde_json::json!({"tools": weather, "response_format": {"type": "text"}}),
+            "response_format should not be used with tools",
+            "response_format",
+        ),
+        (
+            serde_json::json!({"tools": weather, "response_format": {"type": "regex", "regex": "a"}}),
             "response_format should not be used with tools",
             "response_format",
         ),

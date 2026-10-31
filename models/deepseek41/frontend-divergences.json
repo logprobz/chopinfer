@@ -180,7 +180,7 @@
         331,
         332
       ],
-      "blocked_by": "the transport takes an image as a user or tool message's image_url part whose image_url is an object with a url",
+      "blocked_by": "the transport takes an image as an image_url part whose image_url is an object with a url, in a user or tool message, or in a system or developer message where the image declaration admits it (multimodal.system_media)",
       "reason": "a content part is an object with a validated source, so the encoder's string, source and data image forms and an image without a source never reach it"
     },
     {
@@ -370,13 +370,14 @@
     {
       "id": "R3-response-format",
       "follows": "recipe",
-      "rule": "a response_format renders on the leading system message as the recipe renders it: json_object as {\"type\": \"json_object\"}, json_schema as its json_schema.schema value, and nothing for text, so a text format needs no inserted system message; a json_schema without a schema is refused, and a strict one's schema must normalize as a strict tool's does (R2), an object without properties refused at the top level too, while the constraint still compiles the schema as sent (V7). The recipe's refusal of json_object without the word json in a message is not followed. One exception: the encoder renders a response format only when Python reads it as true (encoding.py line 628), so a schema of {} or false renders nothing and needs no system message, where the recipe renders it as written; such a schema carries no instruction, and matching the recipe would mean patching the reference encoder",
+      "rule": "a response_format renders on the leading system message as the recipe renders it: json_object as {\"type\": \"json_object\"}, json_schema as its json_schema.schema value, and nothing for text and regex, so neither needs an inserted system message; a json_schema without a schema is refused, and a strict one's schema must normalize as a strict tool's does (R2), an object without properties refused at the top level too, while the constraint still compiles the schema as sent (V7). The recipe's refusal of json_object without the word json in a message is not followed. One exception: the encoder renders a response format only when Python reads it as true (encoding.py line 628), so a schema of {} or false renders nothing and needs no system message, where the recipe renders it as written; such a schema carries no instruction, and matching the recipe would mean patching the reference encoder",
       "source": "plan V7 (render as the recipe does, constrain only on request); encoding.py lines 64-66, 628-629; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe-encoding/src/v4/dsv41.rs lines 250-283, deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 83-91, 108-128, deepseek-recipe/src/protocol/validation.rs lines 242-264",
       "cases": [
         "response-format-with-tools",
         "response-format-text",
         "response-format-json-object",
         "response-format-json-schema",
+        "response-format-regex",
         "response-format-empty-schema",
         "response-format-false-schema",
         "response-format-without-schema",
@@ -398,7 +399,7 @@
     {
       "id": "R5-empty-system-message",
       "follows": "recipe",
-      "rule": "a system message whose text (parts joined) is empty, once a leading x-anthropic-billing-header is removed, is dropped wherever it stands; the header is removed up to the first newline or \"You are\", whichever comes first, with the whitespace after it, and text without either becomes empty; an empty leading system message is still inserted to carry the offered tools or a rendered response_format",
+      "rule": "a system message whose text (parts joined, an image counting as its token) is empty, once a leading x-anthropic-billing-header is removed, is dropped wherever it stands; the header is removed up to the first newline or \"You are\", whichever comes first, with the whitespace after it, and text without either becomes empty; an empty leading system message is still inserted to carry the offered tools or a rendered response_format",
       "source": "plan V4; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 373-394, 428-440, deepseek-recipe-encoding/src/v4/dsv41.rs lines 258-270",
       "cases": [
         "empty-system-messages-dropped",
@@ -419,6 +420,17 @@
         "developer-message",
         "later-developer-message",
         "empty-developer-message"
+      ]
+    },
+    {
+      "id": "system-images",
+      "follows": "recipe",
+      "rule": "a system or developer message's image parts render in place in its text, joined with its text parts by blank lines as the encoder joins a user message's, where the image declaration admits them (multimodal.system_media); they count toward the request's images, keep a system message that has no text (R5), and follow a removed billing header, which is cut from the parts' joined text. An assistant turn's images are refused, as the recipe refuses them",
+      "source": "deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 291-357, 428-441, 464-469, deepseek-recipe-encoding/src/v4/mod.rs lines 107-121; encoding.py lines 323-396",
+      "cases": [
+        "system-image",
+        "developer-image-alone",
+        "billing-header-before-system-image"
       ]
     },
     {
@@ -463,13 +475,14 @@
     {
       "id": "V7-constraint-scope",
       "follows": "plan V7",
-      "rule": "decoding is constrained only for a json_schema response format with strict true, an explicit structured_outputs constraint, and a required or named tool choice (response.constraint_scope strict-only); a json_object or non-strict json_schema response format and a strict tool under auto render as the encoder renders them and leave decoding unconstrained, as the recipe leaves JSON Schema output and strict flags to the caller. The render cases show the prompts; model-deepseek41's frontend_goldens checks the constraints",
-      "source": "plan V7; deepseek-recipe 8cadfede7 deepseek-recipe/src/protocol/openai/chat_completion/request/mod.rs lines 10-13",
+      "rule": "decoding is constrained only for a json_schema response format with strict true, a regex response format ({\"type\": \"regex\", \"regex\": ...}, which response.regex_response_format serves in Chat Completions, as the recipe's request schema accepts it there), an explicit structured_outputs constraint, and a required or named tool choice (response.constraint_scope strict-only); a forced choice's constraint replaces a response format's; a json_object or non-strict json_schema response format and a strict tool under auto render as the encoder renders them and leave decoding unconstrained, as the recipe leaves JSON Schema output and strict flags to the caller. The render cases show the prompts; model-deepseek41's frontend_goldens checks the constraints",
+      "source": "plan V7; deepseek-recipe 8cadfede7 deepseek-recipe/src/protocol/openai/chat_completion/request/mod.rs lines 10-13; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 167-181 (a regex response format passes through for the caller to enforce)",
       "cases": [
         "response-format-json-object",
         "response-format-with-tools",
         "strict-tool-schemas",
-        "tool-choice-required"
+        "tool-choice-required",
+        "response-format-regex"
       ]
     },
     {

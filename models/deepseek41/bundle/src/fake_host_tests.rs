@@ -417,6 +417,10 @@ pub(crate) struct FakeHost {
     pub pull_only: Cell<bool>,
     /// Fail an upload, after its journal record, once this many more pass.
     pub fail_upload: bundle_runtime::fake_host::Countdown,
+    /// The live handles in acquisition order: releasing any but the newest
+    /// is `InvalidState`, as the host's release order refuses it. Pool peer
+    /// grants stay outside it, as they do on the host.
+    pub release_order: RefCell<Vec<Handle>>,
 }
 
 pub(crate) type Host = Backend<FakeHost>;
@@ -642,6 +646,7 @@ impl FakeHost {
             layouts: RefCell::new(BTreeMap::new()),
             pull_only: Cell::new(false),
             fail_upload: Default::default(),
+            release_order: RefCell::new(Vec::new()),
         }))
     }
 
@@ -727,7 +732,25 @@ impl FakePackage for FakeHost {
             .borrow_mut()
             .push(String::from_utf8_lossy(message).into_owned());
     }
-    fn on_acquire(&self, _handle: Handle) {}
+    fn on_acquire(&self, handle: Handle) {
+        if !matches!(handle, Handle::PeerGrant { .. }) {
+            self.release_order.borrow_mut().push(handle);
+        }
+    }
+    fn admit_release(&self, handle: Handle) -> HostServiceResultV1<()> {
+        if !matches!(handle, Handle::PeerGrant { .. })
+            && self.release_order.borrow().last() != Some(&handle)
+        {
+            return Err(BundleStatusV1::InvalidState);
+        }
+        Ok(())
+    }
+    fn release(&self, handle: Handle) {
+        if !matches!(handle, Handle::PeerGrant { .. }) {
+            self.release_order.borrow_mut().pop();
+        }
+        self.device.note("release".into());
+    }
     fn read_back(
         &self,
         destination: &mut [u8],

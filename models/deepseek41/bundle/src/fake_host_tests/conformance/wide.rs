@@ -6,10 +6,11 @@
 //! `speculation.rows` raised to 192 and nothing else changed, so its graph
 //! budget stays at 64 rows and every wider step runs eagerly. The
 //! `wide_verify` candidate is swept beside it as `tp4-dspark-rows192-wide`,
-//! the same override with the option on. Separate names keep their
-//! allowlist entries apart from the default profile, whose full sweep
-//! refuses entries it never reaches; entries for the shapes they share
-//! name `tp4-dspark*`.
+//! the same override with the option on. The `f32_row_tiles` candidate is
+//! swept as `tp4-dspark-tiles`, the profile itself with the option on.
+//! Separate names keep their allowlist entries apart from the default
+//! profile, whose full sweep refuses entries it never reaches; entries for
+//! the shapes they share name `tp4-dspark*`.
 //!
 //! Besides the host's own shapes, the envelope adds every eager width with
 //! 32 items, and 65 to 96 rows with 16 items, drafts spread as evenly as
@@ -17,7 +18,10 @@
 use super::*;
 use bundle_runtime::fake_host::conformance::route_guard;
 use conformance::Startup;
-use model_deepseek41_contract::{execution_options::WIDE_VERIFY, serving::MAX_VERIFY_ROWS};
+use model_deepseek41_contract::{
+    execution_options::{F32_ROW_TILES, WIDE_VERIFY},
+    serving::MAX_VERIFY_ROWS,
+};
 use runtime_bundle_sdk::warmup::VerifyShape;
 use std::sync::OnceLock;
 
@@ -25,6 +29,8 @@ use std::sync::OnceLock;
 const PROFILE: &str = "tp4-dspark-rows192";
 /// The override with the `wide_verify` candidate on.
 const WIDE_PROFILE: &str = "tp4-dspark-rows192-wide";
+/// The profile with the `f32_row_tiles` candidate on.
+const TILES_PROFILE: &str = "tp4-dspark-tiles";
 /// The profile the override raises.
 const BASE: &str = "tp4-dspark";
 /// The package's verify rows: every item at its deepest block.
@@ -70,6 +76,9 @@ impl Startup for Wide {
             document["profiles"][PROFILE] = wide.clone();
             wide["model_options"][WIDE_VERIFY] = "true".into();
             document["profiles"][WIDE_PROFILE] = wide;
+            let mut tiles = document["profiles"][BASE].clone();
+            tiles["model_options"][F32_ROW_TILES] = "true".into();
+            document["profiles"][TILES_PROFILE] = tiles;
             document.to_string()
         })
     }
@@ -81,17 +90,32 @@ impl Startup for Wide {
             .find(|serving| serving.profile == BASE)
             .expect("the DSpark profile")
             .clone();
-        for (at, profile) in [PROFILE, WIDE_PROFILE].into_iter().enumerate() {
+        for (at, profile) in [PROFILE, WIDE_PROFILE, TILES_PROFILE]
+            .into_iter()
+            .enumerate()
+        {
             let mut wide = base.clone();
             wide.profile = profile.into();
-            if profile == WIDE_PROFILE {
-                wide.model_options.insert(WIDE_VERIFY.into(), "true".into());
+            match profile {
+                WIDE_PROFILE => {
+                    wide.model_options.insert(WIDE_VERIFY.into(), "true".into());
+                }
+                TILES_PROFILE => {
+                    wide.model_options
+                        .insert(F32_ROW_TILES.into(), "true".into());
+                }
+                _ => {}
             }
             servings.insert(at, wide);
         }
         servings
     }
     fn envelope(serving: &conformance::Serving) -> conformance::Envelope {
+        if serving.profile == TILES_PROFILE {
+            let mut base = serving.clone();
+            base.profile = BASE.into();
+            return Served::envelope(&base);
+        }
         if ![PROFILE, WIDE_PROFILE].contains(&serving.profile.as_str()) {
             return Served::envelope(serving);
         }
@@ -154,18 +178,20 @@ impl Startup for Wide {
     }
 }
 
-/// The overrides are two more configurations beside the package's
+/// The overrides are three more configurations beside the package's
 /// profiles, and their instances start like served ones: create, prefix
-/// description and the host's startup warmup at 192 verify rows.
+/// description and the host's startup warmup, at 192 verify rows for the
+/// raised ones.
 #[test]
 fn the_override_starts_beside_the_profiles() {
     conformance::startup_profiles::<Wide>(&[
         ("tp4_dspark_rows192", PROFILE),
         ("tp4_dspark_rows192_wide", WIDE_PROFILE),
+        ("tp4_dspark_tiles", TILES_PROFILE),
         ("tp4_ar", "tp4-ar"),
         ("tp4_dspark", BASE),
     ]);
-    for profile in [PROFILE, WIDE_PROFILE] {
+    for profile in [PROFILE, WIDE_PROFILE, TILES_PROFILE] {
         let coverage = conformance::serving_startup_of::<Wide>(profile);
         assert_eq!(coverage.profile, profile);
     }
@@ -216,6 +242,15 @@ mod wide_route_sweep {
     fn tp4_dspark_rows192_wide() {
         route_guard::sweep::<Wide>(
             WIDE_PROFILE,
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
+            env!("CARGO_PKG_NAME"),
+        );
+    }
+
+    #[test]
+    fn tp4_dspark_tiles() {
+        route_guard::sweep::<Wide>(
+            TILES_PROFILE,
             include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
             env!("CARGO_PKG_NAME"),
         );

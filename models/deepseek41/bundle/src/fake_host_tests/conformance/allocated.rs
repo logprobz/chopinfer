@@ -220,17 +220,31 @@ pub(super) fn execute(
                 >= 2,
             "width {width}, reserved {reserved}, stream {stream}: packed and reserved feature gathers"
         );
+        // The `f32_row_tiles` candidate runs the head in its row tiles: the
+        // decode site's through 32 rows and the verify site's above.
+        let tiles = adapter
+            .serving
+            .model_options
+            .get(model_deepseek41_contract::execution_options::F32_ROW_TILES)
+            .is_some_and(|value| value == "true");
+        let site = if width <= 32 { "decode" } else { "verify" };
+        let tiled = format!("chop_deepseek41_{site}_f32_n32320_k5120_rows_prepare_v1");
+        assert_eq!(
+            symbols.contains(&tiled.as_str()),
+            tiles,
+            "width {width}, reserved {reserved}, stream {stream}: target head row tiles"
+        );
         assert_eq!(
             symbols
                 .iter()
                 .any(|symbol| symbol.starts_with("chop_deepseek41_head_f32")),
-            width <= 32,
+            width <= 32 && !tiles,
             "width {width}, reserved {reserved}, stream {stream}: target head route follows computed rows"
         );
         for symbol in &wide_head {
             assert_eq!(
                 symbols.contains(&symbol.as_str()),
-                width > 32,
+                width > 32 && !tiles,
                 "width {width}, reserved {reserved}, stream {stream}: wide target head {symbol}"
             );
         }

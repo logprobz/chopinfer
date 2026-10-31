@@ -43,6 +43,10 @@ pub struct Shape {
     /// the dependency wait and their row operands in shared memory (the
     /// `dspark_confidence_staged` candidate option).
     pub dspark_confidence_staged: bool,
+    /// Whether drafter forwards run the routed experts through the direct
+    /// path at the rows the drafter table admits (the `dspark_moe_direct`
+    /// candidate option).
+    pub dspark_moe_direct: bool,
 }
 
 impl Shape {
@@ -57,6 +61,7 @@ impl Shape {
             wide_verify: false,
             f32_row_tiles: false,
             phased_decode_reduce: false,
+            dspark_moe_direct: false,
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
@@ -109,6 +114,13 @@ impl Shape {
     /// (`model_deepseek41_contract::execution_options::DSPARK_CONFIDENCE_STAGED`).
     pub fn with_dspark_confidence_staged(mut self, enabled: bool) -> Shape {
         self.dspark_confidence_staged = enabled;
+        self
+    }
+
+    /// This shape with the `dspark_moe_direct` candidate on or off
+    /// (`model_deepseek41_contract::execution_options::DSPARK_MOE_DIRECT`).
+    pub fn with_dspark_moe_direct(mut self, enabled: bool) -> Shape {
+        self.dspark_moe_direct = enabled;
         self
     }
 

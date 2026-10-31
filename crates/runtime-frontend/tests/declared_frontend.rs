@@ -1954,6 +1954,63 @@ async fn sampling_defaults_follow_request_server_model_precedence() {
     }
 }
 
+/// A chat or Responses request without an output limit generates up to the
+/// declared length of the effort its prompt thinks at, else the declared
+/// default, lowered to the context left; a chat prompt takes the default
+/// even though it carries the default effort's name.
+#[tokio::test]
+async fn declared_output_lengths_follow_the_rendered_mode_and_effort() {
+    let mut declaration: Value = serde_json::from_str(KEY_VALUE).unwrap();
+    let backend = ScriptedBackendV1::new(vec![content("ok"), finished()], 1);
+    let undeclared = TestServerV1::start(backend.clone(), &declaration.to_string()).await;
+    let chat = |fields: &str| {
+        post(
+            "/v1/chat/completions",
+            &format!(r#"{{"messages":[{{"role":"user","content":"hello"}}]{fields}}}"#),
+        )
+    };
+    let last_max_new_tokens = |backend: &ScriptedBackendV1| {
+        backend
+            .prompts
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .max_new_tokens
+    };
+    // The context is 512 and the prompt one token.
+    let response = undeclared.request(&chat("")).await;
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(last_max_new_tokens(&backend), 511);
+    declaration["output_tokens"] = serde_json::json!({
+        "default": 64, "efforts": {"low": 128, "high": 1000}
+    });
+    let backend = ScriptedBackendV1::new(vec![content("ok"), finished()], 1);
+    let server = TestServerV1::start(backend.clone(), &declaration.to_string()).await;
+    for (fields, expected) in [
+        ("", 64),
+        (r#","reasoning_effort":"none""#, 64),
+        (r#","reasoning_effort":"low""#, 128),
+        (r#","reasoning_effort":"high""#, 511),
+        (r#","reasoning_effort":"high","max_tokens":300"#, 300),
+        (r#","max_completion_tokens":200"#, 200),
+    ] {
+        let response = server.request(&chat(fields)).await;
+        assert_eq!(response.status, 200, "{fields}: {}", response.body);
+        assert_eq!(last_max_new_tokens(&backend), expected, "{fields}");
+    }
+    for (fields, expected) in [
+        ("", 64),
+        (r#","reasoning":{"effort":"low"}"#, 128),
+        (r#","max_output_tokens":300"#, 300),
+    ] {
+        let body = format!(r#"{{"input":"hello","store":false{fields}}}"#);
+        let response = server.request(&post("/v1/responses", &body)).await;
+        assert_eq!(response.status, 200, "{fields}: {}", response.body);
+        assert_eq!(last_max_new_tokens(&backend), expected, "{fields}");
+    }
+}
+
 #[test]
 fn invalid_generation_defaults_are_refused_before_serving() {
     for defaults in [

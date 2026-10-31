@@ -418,6 +418,14 @@ impl ServerFrontendV1 for BundleFrontendV1 {
             .as_ref()
             .map(|namespaces| namespaces.separator.as_str())
     }
+    fn default_output_tokens(&self, state: &Arc<dyn ChatStateV1>) -> Option<usize> {
+        let output = self.descriptor.output_tokens.as_ref()?;
+        let state = BundleChatStateV1::from_state(state)?;
+        // A chat prompt carries the default effort's name without thinking
+        // at it, so only a thinking prompt takes its effort's length.
+        let effort = (state.mode() == PromptModeV1::Thinking).then(|| state.reasoning_effort());
+        Some(output.for_effort(effort))
+    }
     fn models(&self) -> &[FrontendModelV1] {
         &self.models
     }

@@ -700,6 +700,13 @@ frontend_with_alias_delegation! {
     fn tool_namespace_separator(&self) -> Option<&str> {
         None
     }
+    /// The most tokens a chat or Responses request without an output limit
+    /// generates for the prompt `state` was rendered with, at least one,
+    /// before the context left after the prompt lowers it; `None` keeps the
+    /// context left. A request's explicit limit is always honored.
+    fn default_output_tokens(&self, _state: &Arc<dyn ChatStateV1>) -> Option<usize> {
+        None
+    }
     /// The largest prompt-plus-completion token count this model serves.
     fn maximum_total_tokens(&self) -> usize;
 

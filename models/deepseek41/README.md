@@ -353,7 +353,11 @@ ms without the option; the MoE expert chains take 41.0 and 49.9 ms of them.
 With the wide fold rows from the lab sweep (weight prefetch in 14 of the 16
 keys), the five replays matched bitwise again, and the wide folds of a
 128-row step fell from 11.9 to 10.9 ms (the step from 92.2 to 90.8 ms) and
-those of a 192-row step from 17.3 to 16.2 ms (121.9 to 120.9 ms). The selected cache would save about 0.6 to
+those of a 192-row step from 17.3 to 16.2 ms (121.9 to 120.9 ms). With the
+wide direct MoE merged, the five replays matched bitwise again, eagerly and
+with graphs up to each verify capacity, and a 128-row step takes 67.4 ms and a
+192-row step 97.7 ms; their MoE router, experts and sum take 24.1 and 34.9
+ms, against 47.8 and 57.5 ms with the expert chains. The selected cache would save about 0.6 to
 0.8 ms of such a step, assuming its cost grows with the rows. At 64 rows it
 takes 2.1 ms, against 3.4 ms for the direct sources of an 80-row step, 5.0
 ms at 128 rows and 6.9 ms at 192. Its 192-row arena would add 84 MB per

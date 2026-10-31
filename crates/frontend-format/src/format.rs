@@ -86,11 +86,20 @@ pub struct FormatInputV1<'a> {
     ///
     /// With marks, an occurrence of a marker is the marker only when each
     /// ID-only spelling in it is exactly one mark and no other byte of it
-    /// lies in a mark, so a marker spelled by ordinary tokens is text. Each
-    /// push names every mark of `completion`; the parser reads the ones that
-    /// end after the bytes it kept, and drops the ones a shorter completion
-    /// cut. A parser's pushes all carry marks or none, and a declaration
-    /// without ID-only markers takes none.
+    /// lies in a mark, so a marker spelled by ordinary tokens is text.
+    ///
+    /// A mark covers exactly one whole token, and a push names it only once
+    /// all of that token's bytes are released: a token released in part has
+    /// no mark yet, and its mark, once the token is whole, may start before
+    /// the bytes the parser kept. Each push names every mark of
+    /// `completion`, and a named mark never changes, except that a push
+    /// whose completion a client stop cut below a mark's end drops that
+    /// mark; the marks it names past the cut are whole tokens again. The
+    /// parser refuses as out of sequence marks that are empty, out of order,
+    /// overlapping or past `completion`, marks of the kept bytes that differ
+    /// from the ones it kept, and a mark that overlaps a kept one. A
+    /// parser's pushes all carry marks or none, and a declaration without
+    /// ID-only markers takes none.
     pub marks: Option<&'a [Range<usize>]>,
 }
 

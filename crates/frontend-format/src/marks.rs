@@ -44,34 +44,22 @@ impl<'a> MarkMatchV1<'a> {
     /// Whether the first `present` bytes of `marker`, spelled at completion
     /// byte `at` and ending where the released bytes end, can still be the
     /// marker once later bytes complete it: each ID-only spelling they hold
-    /// whole is exactly one mark, a mark that begins the one they cut begins
-    /// with it, and no other byte of them lies in a mark.
+    /// whole is exactly one mark, and no other byte of them lies in a mark.
+    /// A spelling they cut short is a token not yet whole, which has no mark
+    /// until its last byte is released.
     pub(crate) fn admits(&self, at: usize, marker: &str, present: usize) -> bool {
         let Some((spellings, marks)) = self.marked else {
             return true;
         };
         let end = at + present;
         let first = marks.partition_point(|mark| mark.end <= at);
-        let mut marks = marks[first..]
-            .iter()
-            .take_while(|mark| mark.start < end)
-            .peekable();
+        let mut marks = marks[first..].iter().take_while(|mark| mark.start < end);
         for part in spelling_parts_v1(marker, spellings) {
-            if part.start >= present {
+            if part.end > present {
                 break;
             }
-            let expected = at + part.start..at + part.end;
-            if part.end <= present {
-                if marks.next() != Some(&expected) {
-                    return false;
-                }
-            } else if marks
-                .peek()
-                .is_some_and(|mark| mark.start == expected.start)
-            {
-                // The token is released in part; its mark covers what
-                // arrived.
-                marks.next();
+            if marks.next() != Some(&(at + part.start..at + part.end)) {
+                return false;
             }
         }
         marks.next().is_none()
@@ -196,9 +184,10 @@ mod tests {
         // `<|T| c` with the spelling marked, and the bare `<`.
         assert!(marked.admits(0, marker, 6));
         assert!(marked.admits(0, marker, 1));
-        // A spelling cut short, with or without the start of its mark.
+        // A spelling cut short is a token not yet whole, so it holds only
+        // without a mark.
         assert!(MarkMatchV1::marked(&spellings, &[]).admits(0, marker, 3));
-        assert!(MarkMatchV1::marked(&spellings, &[1..3]).admits(0, marker, 3));
+        assert!(!MarkMatchV1::marked(&spellings, &[1..3]).admits(0, marker, 3));
         assert!(!MarkMatchV1::marked(&spellings, &[2..3]).admits(0, marker, 3));
         // The spelling whole but from ordinary tokens, or a plain byte marked.
         assert!(!MarkMatchV1::marked(&spellings, &[]).admits(0, marker, 6));

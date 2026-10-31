@@ -191,9 +191,22 @@ impl DeclaredParserV1 {
         // The host only appends, except that a client stop may cut the
         // completion short, so this copy follows it with the bytes it adds.
         let keep = self.bytes.len().min(input.completion.len());
-        let marks = input
-            .marks
-            .map(|marks| &marks[marks.partition_point(|mark| mark.end <= keep)..]);
+        let marks = match input.marks {
+            Some(marks) => {
+                self.check_marked(true)?;
+                check_marks_v1(marks, 0, 0, input.completion.len())?;
+                // A named mark never changes; a cut drops the ones past it.
+                let named = marks.partition_point(|mark| mark.end <= keep);
+                let kept = self.marks.partition_point(|mark| mark.end <= keep);
+                if marks[..named] != self.marks[..kept] {
+                    return Err(sequence_v1(
+                        "the marks of the kept bytes are not the marks the parser kept",
+                    ));
+                }
+                Some(&marks[named..])
+            }
+            None => None,
+        };
         self.push_suffix(
             keep,
             &input.completion[keep..],
@@ -214,13 +227,16 @@ impl DeclaredParserV1 {
     /// Reads a push that keeps the first `keep` released bytes and appends
     /// `suffix`, as a push across the bundle ABI carries it.
     ///
-    /// `marks` are the push's marks ([`FormatInputV1::marks`]): each ends
-    /// after `keep` and within the bytes `suffix` adds, and may start before
-    /// `keep`, so a token that an earlier push released in part crosses
-    /// again whole. The parser keeps the marks that end within the kept
-    /// bytes and drops the rest. A push without marks after one with them,
-    /// or the reverse, and a marked push to a parser whose declaration names
-    /// no ID-only markers, are refused as out of sequence.
+    /// `marks` are the push's marks, whole tokens as [`FormatInputV1::marks`]
+    /// names them: each ends after `keep` and within the bytes `suffix`
+    /// adds. One may start before `keep`, when an earlier push released its
+    /// token in part, without a mark, or when the push cuts through it and
+    /// names it again. The parser keeps its marks that end within the kept
+    /// bytes and drops the rest, which only a cut (`keep` below a mark's
+    /// end) does, and it refuses a mark that overlaps a kept one. A push
+    /// without marks after one with them, or the reverse, and a marked push
+    /// to a parser whose declaration names no ID-only markers, are refused
+    /// as out of sequence.
     pub fn push_suffix(
         &mut self,
         keep: usize,
@@ -256,17 +272,9 @@ impl DeclaredParserV1 {
         }
     }
 
-    /// Keeps the marks that end within the first `keep` bytes and adds
-    /// `marks`, after checking them against the `released` bytes the push
-    /// leaves. Returns where the marks of bytes the parser already read
-    /// changed, if they did; the tool region is then read again.
-    fn take_marks(
-        &mut self,
-        keep: usize,
-        released: usize,
-        marks: Option<&[Range<usize>]>,
-    ) -> Result<Option<usize>, String> {
-        let marked = marks.is_some();
+    /// Refuses a push that carries marks, or none, against what this
+    /// parser's pushes carried.
+    fn check_marked(&self, marked: bool) -> Result<(), String> {
         if marked && self.descriptor.vocabulary.id_only_markers.is_empty() {
             return Err(sequence_v1(
                 "a push carries marks, and the declaration names no ID-only markers",
@@ -274,29 +282,32 @@ impl DeclaredParserV1 {
         }
         match self.marked {
             Some(true) if !marked => {
-                return Err(sequence_v1("a push without marks follows one with marks"));
+                Err(sequence_v1("a push without marks follows one with marks"))
             }
-            Some(false) if marked => {
-                return Err(sequence_v1("a push with marks follows one without"));
-            }
-            _ => {}
+            Some(false) if marked => Err(sequence_v1("a push with marks follows one without")),
+            _ => Ok(()),
         }
+    }
+
+    /// Keeps the marks that end within the first `keep` bytes and adds
+    /// `marks`, after checking them against the kept marks and the
+    /// `released` bytes the push leaves. Returns where the marks of bytes
+    /// the parser already read changed, if they did; the tool region is then
+    /// read again.
+    fn take_marks(
+        &mut self,
+        keep: usize,
+        released: usize,
+        marks: Option<&[Range<usize>]>,
+    ) -> Result<Option<usize>, String> {
+        self.check_marked(marks.is_some())?;
         let Some(marks) = marks else {
             self.marked = Some(false);
             return Ok(None);
         };
         let kept = self.marks.partition_point(|mark| mark.end <= keep);
-        let mut previous = kept.checked_sub(1).map_or(0, |last| self.marks[last].end);
-        for mark in marks {
-            let Range { start, end } = *mark;
-            if start >= end || start < previous || end <= keep || end > released {
-                return Err(sequence_v1(format!(
-                    "mark {start}..{end} is empty, overlaps or precedes a mark, ends within \
-                     the {keep} kept bytes, or ends past the {released} released bytes"
-                )));
-            }
-            previous = end;
-        }
+        let previous = kept.checked_sub(1).map_or(0, |last| self.marks[last].end);
+        check_marks_v1(marks, previous, keep, released)?;
         self.marked = Some(true);
         let reread = self.marks[kept..]
             .first()
@@ -1213,6 +1224,9 @@ fn parse_whole_text_v1(
             tool_schemas: Vec::new(),
         },
     );
+    if let Some(marks) = marks {
+        check_marks_v1(marks, 0, 0, text.len())?;
+    }
     // The marks of held bytes are held with them.
     let marks = marks.map(|marks| &marks[..marks.partition_point(|mark| mark.end <= released)]);
     parser
@@ -1238,6 +1252,34 @@ fn find_bytes_v1(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|window| window == needle)
+}
+
+/// Checks a list of marks, as a sequence error: each not empty, starting at
+/// or after the end of the one before it (for the first, `previous`), and
+/// ending after the `keep` kept bytes and within the `length` completion
+/// bytes.
+fn check_marks_v1(
+    marks: &[Range<usize>],
+    mut previous: usize,
+    keep: usize,
+    length: usize,
+) -> Result<(), String> {
+    for &Range { start, end } in marks {
+        let refusal = if start >= end {
+            "is empty or inverted".to_owned()
+        } else if start < previous {
+            format!("starts before the mark before it ends, at {previous}")
+        } else if end <= keep {
+            format!("ends within the {keep} kept bytes")
+        } else if end > length {
+            format!("ends past the {length} completion bytes")
+        } else {
+            previous = end;
+            continue;
+        };
+        return Err(sequence_v1(format!("mark {start}..{end} {refusal}")));
+    }
+    Ok(())
 }
 
 /// The first occurrence of `marker` in `bytes[from..end]` that `marks` lets

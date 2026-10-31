@@ -775,6 +775,58 @@ mod tests {
         );
     }
 
+    /// A token released in part crosses without a mark and is held; the push
+    /// that releases the rest marks it whole, the mark starting before
+    /// `keep`.
+    #[test]
+    #[allow(clippy::single_range_in_vec_init)]
+    fn a_marked_push_completes_a_token_released_in_part() {
+        let mut declaration: serde_json::Value =
+            serde_json::from_str(test_common::FUNCTION_PARAMETERS).unwrap();
+        declaration["vocabulary"]["id_only_markers"] = serde_json::json!(["</think>"]);
+        let (frontend, _) = export()
+            .open(&serde_json::to_vec(&declaration).unwrap())
+            .unwrap();
+        let mut open = parser_open(document::ModeV1::Thinking);
+        open.engine_tokens = false;
+        let mut parser = frontend.open_parser(&open.encode()).unwrap();
+        let mut held = Vec::new();
+        document::PushV1 {
+            keep: 0,
+            held: true,
+            stop_floor: Some(0),
+            suffix: b"plan</thi",
+            marks: Some(document::MarksV1::new(&[])),
+        }
+        .encode_into(&mut held);
+        let answer = parser.push(&held, false, 1 << 20).unwrap();
+        let events = document::EventsV1::decode(&answer).unwrap();
+        assert_eq!(events.events, [document::EventV1::Reasoning(0..4)]);
+        assert_eq!(events.cursor, 4);
+        let answer = parser
+            .push(
+                &marked_push(9, b"nk>answer[EOS]", Some(&[4..12])),
+                false,
+                1 << 20,
+            )
+            .unwrap();
+        let events = document::EventsV1::decode(&answer).unwrap();
+        assert_eq!(
+            events.events,
+            [
+                document::EventV1::Content(12..18),
+                document::EventV1::Finish {
+                    reason: document::FinishReasonV1::Stop,
+                    completion: Some(document::CompletionV1 {
+                        content: "answer",
+                        reasoning_content: Some("plan"),
+                        tool_calls: vec![],
+                    }),
+                },
+            ]
+        );
+    }
+
     #[test]
     fn the_parser_refuses_what_it_cannot_follow() {
         let frontend = frontend();

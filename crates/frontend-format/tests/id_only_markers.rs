@@ -111,6 +111,17 @@ fn pushed(
     Ok(events)
 }
 
+/// A cumulative push of `completion` naming `marks`, more to follow.
+fn input<'a>(completion: &'a [u8], marks: &'a [Range<usize>]) -> FormatInputV1<'a> {
+    FormatInputV1 {
+        completion,
+        held: false,
+        last: false,
+        stop_floor: Some(0),
+        marks: Some(marks),
+    }
+}
+
 /// Reads a marked completion whole, and token by token with and without
 /// streamed calls; all three agree.
 fn parse(written: &str, mode: PromptModeV1) -> Result<AssistantCompletionV1, String> {
@@ -300,20 +311,141 @@ fn a_cut_drops_the_marks_past_the_kept_bytes() {
     assert_eq!(events[0], FormatEventV1::Content(3..4));
 }
 
-/// A token an earlier push released in part crosses again whole, its mark
-/// starting before the kept bytes.
+/// A token an earlier push released in part crosses without a mark, and
+/// its mark, once the token is whole, starts before the kept bytes; the
+/// held start of the marker is no text meanwhile. The same holds through
+/// the bundle ABI's push form, through cumulative pushes, and for a calls
+/// open.
 #[test]
-fn a_token_released_in_part_crosses_again_whole() {
+fn a_token_released_in_part_is_marked_once_whole() {
     let descriptor = Arc::new(descriptor());
-    let mut parser = DeclaredParserV1::new(descriptor, options(PromptModeV1::Chat, false));
-    // `|T` of a `|T|` token, then the push that sends it whole.
+    let thinking = || {
+        DeclaredParserV1::new(
+            Arc::clone(&descriptor),
+            options(PromptModeV1::Thinking, false),
+        )
+    };
+    let finished = [
+        FormatEventV1::Content(12..18),
+        FormatEventV1::Finish {
+            reason: CompletionFinishV1::Stop,
+            completion: Some(answer(Some("plan"), "answer")),
+        },
+    ];
+    // `</thi` of a `</think>` token, held, then the rest with its mark.
+    let mut parser = thinking();
     let events = parser
-        .push_suffix(0, b"x\n\n<|T", false, false, Some(0), Some(&[4..6]))
+        .push_suffix(0, b"plan</thi", true, false, Some(0), Some(&[]))
+        .unwrap();
+    assert_eq!(events, [FormatEventV1::Reasoning(0..4)]);
+    let events = parser
+        .push_suffix(9, b"nk>answer[EOS]", false, false, Some(0), Some(&[4..12]))
+        .unwrap();
+    assert_eq!(events, finished);
+
+    let completion = b"plan</think>answer[EOS]";
+    let mut parser = thinking();
+    let events = parser
+        .push(FormatInputV1 {
+            completion: &completion[..9],
+            held: true,
+            last: false,
+            stop_floor: Some(0),
+            marks: Some(&[]),
+        })
+        .unwrap();
+    assert_eq!(events, [FormatEventV1::Reasoning(0..4)]);
+    let events = parser
+        .push(FormatInputV1 {
+            completion,
+            held: false,
+            last: false,
+            stop_floor: Some(0),
+            marks: Some(&[4..12]),
+        })
+        .unwrap();
+    assert_eq!(events, finished);
+    assert_eq!(
+        parse_marked_completion_v1(
+            &descriptor,
+            "plan</think>answer[EOS]",
+            &[4..12],
+            PromptModeV1::Thinking
+        ),
+        Ok(answer(Some("plan"), "answer"))
+    );
+
+    // `|T` of the `|T|` that a calls open holds, then the rest.
+    let mut parser =
+        DeclaredParserV1::new(Arc::clone(&descriptor), options(PromptModeV1::Chat, false));
+    let events = parser
+        .push_suffix(0, b"x\n\n<|T", true, false, Some(0), Some(&[]))
         .unwrap();
     assert_eq!(events, [FormatEventV1::Content(0..1)]);
     let (rest, mut marks) = marked(
-        "T| calls>\n<⟦|T|⟧ invoke name=\"f\">\n<⟦|T|⟧ parameter name=\"s\" string=\"true\">v</⟦|T|⟧ parameter>\n</⟦|T|⟧ invoke>\n</⟦|T|⟧ calls>[EOS]",
+        "| calls>\n<⟦|T|⟧ invoke name=\"f\">\n<⟦|T|⟧ parameter name=\"s\" \
+         string=\"true\">v</⟦|T|⟧ parameter>\n</⟦|T|⟧ invoke>\n</⟦|T|⟧ calls>[EOS]",
     );
+    for mark in &mut marks {
+        *mark = mark.start + 6..mark.end + 6;
+    }
+    marks.insert(0, 4..7);
+    let events = parser
+        .push_suffix(6, rest.as_bytes(), false, false, Some(0), Some(&marks))
+        .unwrap();
+    let Some(FormatEventV1::Finish { reason, completion }) = events.last() else {
+        panic!("no finish: {events:?}");
+    };
+    assert_eq!(*reason, CompletionFinishV1::ToolCalls);
+    let completion = completion.as_ref().unwrap();
+    assert_eq!(completion.content, "x");
+    assert_eq!(completion.tool_calls, [call("f", r#"{"s": "v"}"#)]);
+}
+
+/// A mark covers one whole token and never changes: a mark sent for part
+/// of a token overlaps the whole mark that follows, which is refused.
+#[test]
+fn a_mark_for_part_of_a_token_is_refused_when_the_token_completes() {
+    let descriptor = Arc::new(descriptor());
+    let thinking = || {
+        DeclaredParserV1::new(
+            Arc::clone(&descriptor),
+            options(PromptModeV1::Thinking, false),
+        )
+    };
+    let mut parser = thinking();
+    parser
+        .push_suffix(0, b"plan</thi", true, false, Some(0), Some(&[4..9]))
+        .unwrap();
+    assert_eq!(
+        parser
+            .push_suffix(9, b"nk>answer[EOS]", false, false, Some(0), Some(&[4..12]))
+            .unwrap_err(),
+        "invalid conversation sequence: mark 4..12 starts before the mark before it ends, at 9"
+    );
+    let completion = b"plan</think>answer[EOS]";
+    let mut parser = thinking();
+    parser.push(input(&completion[..9], &[4..9])).unwrap();
+    assert_eq!(
+        parser.push(input(completion, &[4..12])).unwrap_err(),
+        "invalid conversation sequence: the marks of the kept bytes are not the marks the \
+         parser kept"
+    );
+}
+
+/// A client stop that cuts through a mark drops it, and the push that cuts
+/// names the mark again, whole, when its token still stands.
+#[test]
+fn a_cut_through_a_mark_names_it_again_whole() {
+    let descriptor = Arc::new(descriptor());
+    let mut parser = DeclaredParserV1::new(descriptor, options(PromptModeV1::Chat, false));
+    let (text, marks) = marked("ok <⟦|T|⟧ ca");
+    let events = parser
+        .push_suffix(0, text.as_bytes(), false, false, Some(0), Some(&marks))
+        .unwrap();
+    assert_eq!(events, [FormatEventV1::Content(0..3)]);
+    let (rest, mut marks) =
+        marked("T| calls>\n<⟦|T|⟧ invoke name=\"f\">\n</⟦|T|⟧ invoke>\n</⟦|T|⟧ calls>[EOS]");
     for mark in &mut marks {
         *mark = mark.start + 5..mark.end + 5;
     }
@@ -326,8 +458,76 @@ fn a_token_released_in_part_crosses_again_whole() {
     };
     assert_eq!(*reason, CompletionFinishV1::ToolCalls);
     let completion = completion.as_ref().unwrap();
-    assert_eq!(completion.content, "x");
-    assert_eq!(completion.tool_calls, [call("f", r#"{"s": "v"}"#)]);
+    assert_eq!(completion.content, "ok ");
+    assert_eq!(completion.tool_calls, [call("f", "{}")]);
+}
+
+/// Every mark list is checked whole before the parser reads any of it, and
+/// a cumulative push names the kept marks unchanged.
+#[test]
+fn malformed_mark_lists_are_refused() {
+    let descriptor = Arc::new(descriptor());
+    let thinking = || {
+        DeclaredParserV1::new(
+            Arc::clone(&descriptor),
+            options(PromptModeV1::Thinking, false),
+        )
+    };
+    let sequence = |message: &str| format!("invalid conversation sequence: {message}");
+    let text = "plan</think>answer[EOS]";
+    let completion = text.as_bytes();
+    for (marks, refusal) in [
+        (
+            vec![100..101],
+            "mark 100..101 ends past the 23 completion bytes",
+        ),
+        (vec![0..0], "mark 0..0 is empty or inverted"),
+        (
+            vec![Range { start: 5, end: 4 }],
+            "mark 5..4 is empty or inverted",
+        ),
+        (
+            vec![4..12, 8..14],
+            "mark 8..14 starts before the mark before it ends, at 12",
+        ),
+        (
+            vec![8..12, 4..6],
+            "mark 4..6 starts before the mark before it ends, at 12",
+        ),
+        (
+            vec![4..12, 20..24],
+            "mark 20..24 ends past the 23 completion bytes",
+        ),
+    ] {
+        assert_eq!(
+            parse_marked_completion_v1(&descriptor, text, &marks, PromptModeV1::Thinking)
+                .unwrap_err(),
+            sequence(refusal),
+            "{marks:?}"
+        );
+        assert_eq!(
+            thinking().push(input(completion, &marks)).unwrap_err(),
+            sequence(refusal),
+            "{marks:?}"
+        );
+    }
+    // A kept mark that a later push leaves out or changes is refused; the
+    // push that names it unchanged reads on.
+    let mut parser = thinking();
+    parser.push(input(&completion[..14], &[4..12])).unwrap();
+    for marks in [vec![], vec![4..11], vec![3..12]] {
+        assert_eq!(
+            parser.push(input(completion, &marks)).unwrap_err(),
+            sequence("the marks of the kept bytes are not the marks the parser kept"),
+            "{marks:?}"
+        );
+    }
+    let events = parser.push(input(completion, &[4..12])).unwrap();
+    assert!(matches!(
+        events.last(),
+        Some(FormatEventV1::Finish { completion: Some(completion), .. })
+            if *completion == answer(Some("plan"), "answer")
+    ));
 }
 
 /// Only text that can still become a marker is held: the start of a calls

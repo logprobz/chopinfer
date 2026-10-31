@@ -276,7 +276,8 @@ pub struct PushV1<'a> {
     /// count; then the byte offset an end marker must end after.
     pub stop_floor: Option<u64>,
     pub suffix: &'a [u8],
-    /// The marks among the released bytes, when the host sends them.
+    /// The marks among the released bytes, when the host sends them: the
+    /// ones that end after `keep` ([`MarksV1`]).
     pub marks: Option<MarksV1<'a>>,
 }
 
@@ -284,10 +285,16 @@ pub struct PushV1<'a> {
 /// ID-only markers, among the bytes a push releases.
 ///
 /// The ranges ascend, do not overlap, are not empty, and each ends after
-/// the push's `keep` and at or before the end of its `suffix`. A range may
-/// start before `keep`: a mark that an earlier push released only in part
-/// crosses again whole. A writer lends the ranges it holds and a reader
-/// lends the ones it checked in the document, so neither copies them.
+/// the push's `keep` and at or before the end of its `suffix`. Each covers
+/// exactly one whole token, and a host sends it only once all of that
+/// token's bytes are released: a token released in part crosses without a
+/// mark, and its mark, once the token is whole, may start before `keep`. A
+/// mark once sent never changes, except that a push whose `keep` falls below
+/// its end (a client stop cut the completion) drops it, and that push sends
+/// again, whole, the marks that end after `keep`; the parser refuses a mark
+/// that overlaps one it kept. A writer lends the ranges it holds and a
+/// reader lends the ones it checked in the document, so neither copies
+/// them.
 #[derive(Clone, Copy)]
 pub struct MarksV1<'a>(MarksFormV1<'a>);
 

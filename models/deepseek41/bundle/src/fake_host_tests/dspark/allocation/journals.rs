@@ -65,6 +65,7 @@ impl LogitsRowSinkV1 for ProofSink {
     }
 }
 
+/// The `-wide` lifetimes run the two widest with the `wide_verify` option.
 #[test]
 fn allocated_lifetimes_journal() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
@@ -73,10 +74,24 @@ fn allocated_lifetimes_journal() {
         (4, 16, 5, "", (69334, 0x94b43e6c45e6f09b)),
         (8, 32, 5, "", (106926, 0x8d92d278eff57bef)),
         (4, 12, 3, "-d3", (69502, 0xdedf204e99d57b9b)),
-        (16, 65, 5, "-odd", (190434, 0xc79ce4b73bd87dbd)),
-        (32, 192, 5, "-maximum", (343172, 0x10f42608e1f257f9)),
+        (16, 65, 5, "-odd", (190434, 0xa53d7eeecf401235)),
+        (32, 192, 5, "-maximum", (343172, 0x423f402926f10c51)),
+        (16, 65, 5, "-odd-wide", (190434, 0xc79ce4b73bd87dbd)),
+        (32, 192, 5, "-maximum-wide", (343172, 0x10f42608e1f257f9)),
     ] {
-        let (host, mut instance) = create_with_limits(shape, 32, 192);
+        let (host, mut instance) = if suffix.ends_with("-wide") {
+            create_with_options(
+                shape,
+                32,
+                192,
+                &[(
+                    model_deepseek41_contract::execution_options::WIDE_VERIFY,
+                    true.into(),
+                )],
+            )
+        } else {
+            create_with_limits(shape, 32, 192)
+        };
         for slot in 0..items {
             execute(
                 &mut instance,

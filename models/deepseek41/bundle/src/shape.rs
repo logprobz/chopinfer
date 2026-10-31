@@ -21,6 +21,9 @@ pub struct Shape {
     /// host asks for (`--speculative-rows`), and never fewer than the widest
     /// decode bucket. Every op is prepared for this many decode-phase rows.
     pub verify_rows: u32,
+    /// Whether verify steps above the 64-row decode route run the wide
+    /// verify buckets (the `wide_verify` candidate option).
+    pub wide_verify: bool,
 }
 
 impl Shape {
@@ -32,6 +35,7 @@ impl Shape {
             ranks,
             runtime: geometry.runtime_defaults(),
             verify_rows: DECODE_BATCH,
+            wide_verify: false,
         })
     }
 
@@ -39,6 +43,13 @@ impl Shape {
     /// limit, raised to the widest decode bucket.
     pub fn with_verify_rows(mut self, rows: u32) -> Shape {
         self.verify_rows = rows.max(DECODE_BATCH);
+        self
+    }
+
+    /// This shape with the wide verify buckets on or off
+    /// (`model_deepseek41_contract::execution_options::WIDE_VERIFY`).
+    pub fn with_wide_verify(mut self, enabled: bool) -> Shape {
+        self.wide_verify = enabled;
         self
     }
 
@@ -56,13 +67,13 @@ impl Shape {
 
     /// The wide verify buckets this instance reaches
     /// (`model_deepseek41_contract::verify_bounds::WIDE`), each capped by
-    /// its verify rows: none at 64 verify rows or fewer, and none outside
-    /// Flash TP4.
+    /// its verify rows: none without the `wide_verify` option, at 64 verify
+    /// rows or fewer, or outside Flash TP4.
     pub(crate) fn wide_verify_rows(&self) -> Vec<u32> {
         use model_deepseek41_contract::{serving::VERIFY_DECODE_ROWS, verify_bounds::WIDE};
         let mut buckets = Vec::new();
         let mut covered = self.verify_rows_within(VERIFY_DECODE_ROWS);
-        if covered < VERIFY_DECODE_ROWS {
+        if !self.wide_verify || covered < VERIFY_DECODE_ROWS {
             return buckets;
         }
         for bucket in WIDE {
@@ -160,8 +171,9 @@ mod tests {
         assert_eq!(of_topology("deepseek41-flash-tp8"), None);
     }
 
-    /// Flash TP4 reaches a wide verify bucket only above 64 verify rows,
-    /// each bucket capped by its verify rows; other topologies reach none.
+    /// With the `wide_verify` option, Flash TP4 reaches a wide verify
+    /// bucket only above 64 verify rows, each bucket capped by its verify
+    /// rows; other topologies reach none, and without it no shape does.
     #[test]
     fn wide_verify_buckets_follow_the_verify_rows() {
         let flash = Shape::new(&FLASH, Ranks::TP4).unwrap();
@@ -173,11 +185,14 @@ mod tests {
             (129, &[128, 129]),
             (192, &[128, 192]),
         ] {
-            assert_eq!(flash.with_verify_rows(rows).wide_verify_rows(), buckets);
+            let shape = flash.with_verify_rows(rows);
+            assert_eq!(shape.with_wide_verify(true).wide_verify_rows(), buckets);
+            assert!(shape.wide_verify_rows().is_empty());
         }
         for shape in topologies() {
             if shape != flash {
-                assert!(shape.with_verify_rows(192).wide_verify_rows().is_empty());
+                let shape = shape.with_verify_rows(192).with_wide_verify(true);
+                assert!(shape.wide_verify_rows().is_empty());
             }
         }
     }

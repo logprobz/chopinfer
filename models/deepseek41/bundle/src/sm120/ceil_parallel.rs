@@ -178,24 +178,23 @@ pub(crate) fn registered_quantizers(
     Ok(entries)
 }
 
-/// The capacity of Flash TP4's wide verify copy of a decode entry
-/// registered at [`CAPACITY`]: the widest wide verify bucket
-/// (`verify_bounds::WIDE`). The copy keeps the entry's symbol and
-/// launches. Steps up to `CAPACITY` rows keep the narrower entry, and an
-/// entry registered below `CAPACITY` has no copy, so its selection stays.
-fn wide(g: &Geometry, ranks: u32, capacity: u32) -> Option<u32> {
-    use model_deepseek41_contract::verify_bounds::WIDE;
-    (g.id == FLASH.id && ranks == 4 && capacity == CAPACITY).then_some(WIDE[WIDE.len() - 1])
+/// The capacity of the wide verify copy of a decode entry registered at
+/// [`CAPACITY`]: `widest`, the widest wide verify bucket the instance
+/// prepares (`Shape::wide_verify_rows`), if any. The copy keeps the entry's
+/// symbol and launches. Steps up to `CAPACITY` rows keep the narrower
+/// entry, and an entry registered below `CAPACITY` has no copy, so its
+/// selection stays.
+fn wide(widest: Option<u32>, capacity: u32) -> Option<u32> {
+    widest.filter(|_| capacity == CAPACITY)
 }
 
 /// Registers `entry` and its wide verify copy ([`wide`]).
 pub(crate) fn with_quantizer(
     backend: Sm120,
-    g: &Geometry,
-    ranks: u32,
+    widest: Option<u32>,
     entry: block_quantize::Entry,
 ) -> Sm120 {
-    let backend = match wide(g, ranks, entry.capacity) {
+    let backend = match wide(widest, entry.capacity) {
         Some(capacity) => backend.with_block_quantize(block_quantize::Entry {
             capacity,
             ..entry.clone()
@@ -207,9 +206,14 @@ pub(crate) fn with_quantizer(
 
 /// Registers the decode activation ([`activation`]) and its wide verify
 /// copy ([`wide`]).
-pub(crate) fn with_activation(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
+pub(crate) fn with_activation(
+    backend: Sm120,
+    g: &Geometry,
+    ranks: u32,
+    widest: Option<u32>,
+) -> Result<Sm120, String> {
     let entry = activation(g, ranks)?;
-    let backend = match wide(g, ranks, entry.capacity) {
+    let backend = match wide(widest, entry.capacity) {
         Some(capacity) => backend.with_silu_mul_quantize(silu_mul_quantize::Entry {
             capacity,
             ..entry.clone()
@@ -219,11 +223,18 @@ pub(crate) fn with_activation(backend: Sm120, g: &Geometry, ranks: u32) -> Resul
     Ok(backend.with_silu_mul_quantize(entry))
 }
 
-pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
+/// The decode quantizers and activation, with wide verify copies at
+/// `widest` ([`wide`]).
+pub fn register(
+    mut backend: Sm120,
+    g: &Geometry,
+    ranks: u32,
+    widest: Option<u32>,
+) -> Result<Sm120, String> {
     for entry in registered_quantizers(g, ranks)? {
-        backend = with_quantizer(backend, g, ranks, entry);
+        backend = with_quantizer(backend, widest, entry);
     }
-    with_activation(backend, g, ranks)
+    with_activation(backend, g, ranks, widest)
 }
 
 #[cfg(test)]
@@ -234,13 +245,18 @@ mod tests {
     fn generic_target_quantization_keeps_its_prepared_capacity_selection() {
         use kernel_core::backend::{Backend, Need};
 
+        use model_deepseek41_contract::verify_bounds::WIDE;
+
         let query = model_deepseek41_contract::moe::quantizer(3456);
-        for register in [register, super::super::ceil_cached::register] {
+        for (register, widest) in [register, super::super::ceil_cached::register]
+            .into_iter()
+            .flat_map(|register| [None, Some(WIDE[WIDE.len() - 1])].map(|w| (register, w)))
+        {
             let baseline = baseline_quantizers(&FLASH, 4)
                 .unwrap()
                 .into_iter()
                 .fold(Sm120::new(), Sm120::with_block_quantize);
-            let backend = register(baseline, &FLASH, 4).unwrap();
+            let backend = register(baseline, &FLASH, 4, widest).unwrap();
             // A 12-row step uses a chain prepared for 64 rows. Widening
             // registration changes its quantizer even at that small step.
             for capacity in 1..=CAPACITY {
@@ -260,7 +276,8 @@ mod tests {
     /// Up to the widest wide verify bucket, a Flash TP4 entry registered at
     /// `CAPACITY` serves as it does at `CAPACITY` rows; wider steps, and
     /// entries registered narrower, keep the serial entry. The decode
-    /// activation is one such entry.
+    /// activation is one such entry. Without wide buckets every step above
+    /// `CAPACITY` keeps the serial entry.
     #[test]
     fn wide_verify_buckets_select_the_decode_entries() {
         use kernel_core::backend::{Backend, Need};
@@ -279,17 +296,20 @@ mod tests {
                 .symbols
                 .clone()
         }
-        for register in [register, super::super::ceil_cached::register] {
+        for (register, enabled) in [register, super::super::ceil_cached::register]
+            .into_iter()
+            .flat_map(|register| [false, true].map(|enabled| (register, enabled)))
+        {
             let baseline = baseline_quantizers(&FLASH, 4)
                 .unwrap()
                 .into_iter()
                 .fold(Sm120::new(), Sm120::with_block_quantize);
             let baseline = super::super::shared::register(baseline, &FLASH, 4).unwrap();
-            let backend = register(baseline, &FLASH, 4).unwrap();
+            let backend = register(baseline, &FLASH, 4, enabled.then_some(widest)).unwrap();
             let mut wide = 0;
             for entry in registered_quantizers(&FLASH, 4).unwrap() {
                 let serial = symbols(&backend, &entry.query, widest + 1);
-                let expected = if entry.capacity == CAPACITY {
+                let expected = if enabled && entry.capacity == CAPACITY {
                     wide += 1;
                     let decode = symbols(&backend, &entry.query, CAPACITY);
                     assert_ne!(decode, serial);
@@ -301,7 +321,7 @@ mod tests {
                     assert_eq!(symbols(&backend, &entry.query, rows), expected);
                 }
             }
-            assert!(wide > 0);
+            assert_eq!(wide > 0, enabled);
             let query = activation(&FLASH, 4).unwrap().query;
             let activation = |rows| {
                 backend
@@ -311,10 +331,11 @@ mod tests {
                     .symbols
                     .clone()
             };
-            let decode = activation(CAPACITY);
-            assert_ne!(decode, activation(widest + 1));
+            let (decode, serial) = (activation(CAPACITY), activation(widest + 1));
+            assert_ne!(decode, serial);
+            let expected = if enabled { decode } else { serial };
             for rows in CAPACITY + 1..=widest {
-                assert_eq!(activation(rows), decode);
+                assert_eq!(activation(rows), expected);
             }
         }
     }

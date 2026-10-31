@@ -4,10 +4,12 @@
 //! which the profile's own sweep never reaches. That supported override is
 //! swept as its own configuration, `tp4-dspark-rows192`: the profile with
 //! `speculation.rows` raised to 192 and nothing else changed, so its graph
-//! budget stays at 64 rows and every wider step runs eagerly. A separate
-//! name keeps its allowlist entries apart from the default profile, whose
-//! full sweep refuses entries it never reaches; entries for the shapes the
-//! two share name `tp4-dspark*`.
+//! budget stays at 64 rows and every wider step runs eagerly. The
+//! `wide_verify` candidate is swept beside it as `tp4-dspark-rows192-wide`,
+//! the same override with the option on. Separate names keep their
+//! allowlist entries apart from the default profile, whose full sweep
+//! refuses entries it never reaches; entries for the shapes they share
+//! name `tp4-dspark*`.
 //!
 //! Besides the host's own shapes, the envelope adds every eager width with
 //! 32 items, and 65 to 96 rows with 16 items, drafts spread as evenly as
@@ -15,12 +17,14 @@
 use super::*;
 use bundle_runtime::fake_host::conformance::route_guard;
 use conformance::Startup;
-use model_deepseek41_contract::serving::MAX_VERIFY_ROWS;
+use model_deepseek41_contract::{execution_options::WIDE_VERIFY, serving::MAX_VERIFY_ROWS};
 use runtime_bundle_sdk::warmup::VerifyShape;
 use std::sync::OnceLock;
 
 /// The swept override's configuration name.
 const PROFILE: &str = "tp4-dspark-rows192";
+/// The override with the `wide_verify` candidate on.
+const WIDE_PROFILE: &str = "tp4-dspark-rows192-wide";
 /// The profile the override raises.
 const BASE: &str = "tp4-dspark";
 /// The package's verify rows: every item at its deepest block.
@@ -54,7 +58,7 @@ impl Startup for Wide {
     type Observer = <Served as Startup>::Observer;
     type Limits = Limits;
 
-    /// The package's profiles with the override beside them.
+    /// The package's profiles with the overrides beside them.
     fn profiles() -> &'static str {
         static PROFILES: OnceLock<String> = OnceLock::new();
         PROFILES.get_or_init(|| {
@@ -63,24 +67,32 @@ impl Startup for Wide {
             let mut wide = document["profiles"][BASE].clone();
             assert!(wide.is_object(), "{BASE} is a profile");
             wide["speculation"]["rows"] = ROWS.into();
-            document["profiles"][PROFILE] = wide;
+            document["profiles"][PROFILE] = wide.clone();
+            wide["model_options"][WIDE_VERIFY] = "true".into();
+            document["profiles"][WIDE_PROFILE] = wide;
             document.to_string()
         })
     }
-    /// The override first, so it represents its own quick tier.
+    /// The overrides first, so each represents its own quick tier.
     fn servings() -> Vec<conformance::Serving> {
         let mut servings = Served::servings();
-        let mut wide = servings
+        let base = servings
             .iter()
             .find(|serving| serving.profile == BASE)
             .expect("the DSpark profile")
             .clone();
-        wide.profile = PROFILE.into();
-        servings.insert(0, wide);
+        for (at, profile) in [PROFILE, WIDE_PROFILE].into_iter().enumerate() {
+            let mut wide = base.clone();
+            wide.profile = profile.into();
+            if profile == WIDE_PROFILE {
+                wide.model_options.insert(WIDE_VERIFY.into(), "true".into());
+            }
+            servings.insert(at, wide);
+        }
         servings
     }
     fn envelope(serving: &conformance::Serving) -> conformance::Envelope {
-        if serving.profile != PROFILE {
+        if ![PROFILE, WIDE_PROFILE].contains(&serving.profile.as_str()) {
             return Served::envelope(serving);
         }
         // The profile's own model shapes, at the override's verify rows.
@@ -142,18 +154,21 @@ impl Startup for Wide {
     }
 }
 
-/// The override is one more configuration beside the package's profiles,
-/// and its instance starts like a served one: create, prefix description
-/// and the host's startup warmup at 192 verify rows.
+/// The overrides are two more configurations beside the package's
+/// profiles, and their instances start like served ones: create, prefix
+/// description and the host's startup warmup at 192 verify rows.
 #[test]
 fn the_override_starts_beside_the_profiles() {
     conformance::startup_profiles::<Wide>(&[
         ("tp4_dspark_rows192", PROFILE),
+        ("tp4_dspark_rows192_wide", WIDE_PROFILE),
         ("tp4_ar", "tp4-ar"),
         ("tp4_dspark", BASE),
     ]);
-    let coverage = conformance::serving_startup_of::<Wide>(PROFILE);
-    assert_eq!(coverage.profile, PROFILE);
+    for profile in [PROFILE, WIDE_PROFILE] {
+        let coverage = conformance::serving_startup_of::<Wide>(profile);
+        assert_eq!(coverage.profile, profile);
+    }
 }
 
 #[test]
@@ -192,6 +207,15 @@ mod wide_route_sweep {
     fn tp4_dspark_rows192() {
         route_guard::sweep::<Wide>(
             PROFILE,
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
+            env!("CARGO_PKG_NAME"),
+        );
+    }
+
+    #[test]
+    fn tp4_dspark_rows192_wide() {
+        route_guard::sweep::<Wide>(
+            WIDE_PROFILE,
             include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
             env!("CARGO_PKG_NAME"),
         );

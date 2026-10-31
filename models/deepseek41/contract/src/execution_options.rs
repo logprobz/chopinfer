@@ -10,6 +10,9 @@ pub const PREFILL_PLAN_CACHE_PLANS: &str = "prefill_plan_cache_plans";
 pub const PREFILL_PLAN_CACHE_VERIFY: &str = "prefill_plan_cache_verify";
 pub const DSPARK_GRAPH_HANDLES_PER_RANK: &str = "dspark_graph_handles_per_rank";
 pub const DIAGNOSTIC_STEP_LOGS: &str = "diagnostic_step_logs";
+/// Candidate: Flash TP4 verify steps above the 64-row decode route run the
+/// wide verify buckets (`crate::verify_bounds::WIDE`).
+pub const WIDE_VERIFY: &str = "wide_verify";
 pub const DEFAULT_PLANS: usize = 16;
 pub const MAX_PLANS: usize = 64;
 /// The served warmup fits within 512 graph handles per rank, leaving room
@@ -22,9 +25,10 @@ pub struct Options {
     pub prefill_plan_cache_verify: bool,
     pub dspark_graph_handles_per_rank: usize,
     pub diagnostic_step_logs: bool,
+    pub wide_verify: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 5] {
+pub fn declarations() -> [ModelOptionV1; 6] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -58,6 +62,7 @@ pub fn declarations() -> [ModelOptionV1; 5] {
                 maximum: i64::from(u32::MAX),
             },
         ),
+        (WIDE_VERIFY, OptionDefinitionV1::Boolean { default: false }),
     ]
     .map(|(name, definition)| ModelOptionV1 {
         name: name.into(),
@@ -100,6 +105,7 @@ impl Options {
             diagnostic_step_logs: values[DIAGNOSTIC_STEP_LOGS]
                 .as_bool()
                 .expect("checked boolean"),
+            wide_verify: values[WIDE_VERIFY].as_bool().expect("checked boolean"),
         })
     }
 }
@@ -158,6 +164,7 @@ mod tests {
             prefill_plan_cache_verify: false,
             dspark_graph_handles_per_rank: 512,
             diagnostic_step_logs: false,
+            wide_verify: false,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -173,6 +180,7 @@ mod tests {
             (PREFILL_PLAN_CACHE_VERIFY.into(), "true".into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK.into(), "0".into()),
             (DIAGNOSTIC_STEP_LOGS.into(), "true".into()),
+            (WIDE_VERIFY.into(), "true".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -183,6 +191,7 @@ mod tests {
                 prefill_plan_cache_verify: true,
                 dspark_graph_handles_per_rank: 0,
                 diagnostic_step_logs: true,
+                wide_verify: true,
             }
         );
         assert!(!declaration.is_qualified(&resolved));
@@ -199,6 +208,7 @@ mod tests {
             (PREFILL_PLAN_CACHE_PLANS, "1.5"),
             (PREFILL_PLAN_CACHE_VERIFY, "1"),
             (DIAGNOSTIC_STEP_LOGS, "\"true\""),
+            (WIDE_VERIFY, "1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),
         ] {

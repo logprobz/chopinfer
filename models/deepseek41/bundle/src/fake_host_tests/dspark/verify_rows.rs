@@ -306,9 +306,10 @@ fn row_bucket(rows: u32) -> (u32, u32, u32) {
 
 /// Row-local stages of a verify step above the 64-row budget. Each grids
 /// the step's live rows, never a prepared capacity, so the symbol says
-/// which registered entry serves the stage. The ceil quantizers and the
-/// shared SwiGLU take the decode entries of their wide verify buckets
-/// (`verify_bounds::WIDE`).
+/// which registered entry serves the stage. With the `wide_verify` option
+/// the ceil quantizers and the shared SwiGLU take the decode entries of
+/// their wide verify buckets (`verify_bounds::WIDE`); without it they keep
+/// the entries of [`CANDIDATE_STAGES`].
 const WIDE_STAGES: &[Stage] = &[
     ("chop_deepseek41_moe_ceil_w5120_cached_v1", 320, per_row),
     ("chop_deepseek41_moe_ceil_w3456_v1", 160, per_row),
@@ -357,22 +358,49 @@ const WIDE_STAGES: &[Stage] = &[
     ),
 ];
 
-/// Forms of those stages that launch nowhere above 64 rows: decode forms
-/// that serve 33 to 64 rows, and the prefill quantizers and SwiGLU the
-/// wide buckets replace.
+/// Decode forms of those stages that serve 33 to 64 rows and launch
+/// nowhere above them.
 const NARROW_STAGES: &[&str] = &[
     "chop_deepseek41_latent_query_rope_heads_v1",
     "chop_position_query_deepseek41_parallel_v1",
     "chop_deepseek41_hc_round_cols_r4_tx_v1",
     "chop_deepseek41_hc_finish_split_w32_v1",
     "chop_sinkhorn_hc_deepseek41_lagged_mix_collapse_split_v1",
-    "chop_deepseek41_moe_ceil_w5120_v1",
-    "chop_deepseek41_dense_ceil_f32_w1280_prefill_w8_v1",
-    "chop_deepseek41_dense_ceil_f32_w2048_prefill_w8_v1",
-    "chop_deepseek41_dense_ceil_w8192_prefill_w16_v1",
-    "chop_deepseek41_dense_ceil_w6144_prefill_w8_v1",
-    "chop_deepseek41_latent_ceil32_v1",
-    "chop_deepseek41_shared_swiglu_w576_v1",
+];
+
+/// The stages the `wide_verify` option moves to their wide verify
+/// buckets' decode entries, as (decode entry, default entry): without the
+/// option each keeps the prefill entry, and each form launches nowhere
+/// the other serves.
+const CANDIDATE_STAGES: &[(&str, &str)] = &[
+    (
+        "chop_deepseek41_moe_ceil_w5120_cached_v1",
+        "chop_deepseek41_moe_ceil_w5120_v1",
+    ),
+    (
+        "chop_deepseek41_shared_swiglu_w576_parallel_v1",
+        "chop_deepseek41_shared_swiglu_w576_v1",
+    ),
+    (
+        "chop_deepseek41_dense_ceil_f32_w1280_parallel_v1",
+        "chop_deepseek41_dense_ceil_f32_w1280_prefill_w8_v1",
+    ),
+    (
+        "chop_deepseek41_dense_ceil_f32_w2048_parallel_v1",
+        "chop_deepseek41_dense_ceil_f32_w2048_prefill_w8_v1",
+    ),
+    (
+        "chop_deepseek41_dense_ceil_w8192_cached_v1",
+        "chop_deepseek41_dense_ceil_w8192_prefill_w16_v1",
+    ),
+    (
+        "chop_deepseek41_dense_ceil_w6144_cached_v1",
+        "chop_deepseek41_dense_ceil_w6144_prefill_w8_v1",
+    ),
+    (
+        "chop_deepseek41_latent_ceil32_parallel_v1",
+        "chop_deepseek41_latent_ceil32_v1",
+    ),
 ];
 
 /// Widths above the 64-row budget a step of 32 items (and 16 up to its 96
@@ -398,49 +426,72 @@ const WIDE_STEPS: [(u32, u32); 17] = [
 ];
 
 /// Verify steps above the profile's 64-row budget lower eagerly at the
-/// package's 192 verify rows (`--speculative-rows 192`). With
-/// `CHOPINFER_VERIFY_ROW_JOURNALS` each step's journals are exported.
+/// package's 192 verify rows (`--speculative-rows 192`), with and without
+/// the `wide_verify` option. With `CHOPINFER_VERIFY_ROW_JOURNALS` each
+/// step's journals are exported, under `wide/` with the option and
+/// `default/` without it.
 #[test]
 fn target_programs_lower_above_the_default_verify_rows() {
-    let (host, mut instance) = create_with_options(
-        Shape::new(&FLASH, Ranks::TP4).unwrap(),
-        32,
-        192,
-        &[(DSPARK_GRAPH_HANDLES_PER_RANK, 0.into())],
-    );
-    for slot in 0..32 {
-        execute(
-            &mut instance,
-            &host,
-            &super::super::prompt(slot + 1, slot, 0, 3, true),
+    use model_deepseek41_contract::execution_options::WIDE_VERIFY;
+    for enabled in [false, true] {
+        let (host, mut instance) = create_with_options(
+            Shape::new(&FLASH, Ranks::TP4).unwrap(),
+            32,
+            192,
+            &[
+                (DSPARK_GRAPH_HANDLES_PER_RANK, 0.into()),
+                (WIDE_VERIFY, enabled.into()),
+            ],
         );
-        instance.commit().unwrap();
-    }
-    let directory = journal_directory();
-    for (count, rows) in WIDE_STEPS {
-        let (target, step, accepted) = verify_step(&mut instance, &host, count, rows);
-        if let Some(directory) = &directory {
-            write_journals(directory, count, rows, &target, &step);
-        }
-        let observed = grids(&target);
-        for &(symbol, launches, grid) in WIDE_STAGES {
-            assert_eq!(
-                observed.get(symbol),
-                Some(&[(grid(rows), launches)].into()),
-                "{symbol} at {count} items and {rows} rows"
+        for slot in 0..32 {
+            execute(
+                &mut instance,
+                &host,
+                &super::super::prompt(slot + 1, slot, 0, 3, true),
             );
+            instance.commit().unwrap();
         }
-        for &symbol in NARROW_STAGES {
-            assert!(
-                !observed.contains_key(symbol),
-                "{symbol} at {count} items and {rows} rows"
-            );
+        let served = |symbol: &'static str| match CANDIDATE_STAGES.iter().find(|s| s.0 == symbol) {
+            Some(&(_, default)) if !enabled => default,
+            _ => symbol,
+        };
+        let absent: Vec<_> = NARROW_STAGES
+            .iter()
+            .copied()
+            .chain(
+                CANDIDATE_STAGES
+                    .iter()
+                    .map(|&(wide, default)| if enabled { default } else { wide }),
+            )
+            .collect();
+        let directory =
+            journal_directory().map(|d| d.join(if enabled { "wide" } else { "default" }));
+        for (count, rows) in WIDE_STEPS {
+            let (target, step, accepted) = verify_step(&mut instance, &host, count, rows);
+            if let Some(directory) = &directory {
+                write_journals(directory, count, rows, &target, &step);
+            }
+            let observed = grids(&target);
+            for &(symbol, launches, grid) in WIDE_STAGES {
+                let symbol = served(symbol);
+                assert_eq!(
+                    observed.get(symbol),
+                    Some(&[(grid(rows), launches)].into()),
+                    "{symbol} at {count} items and {rows} rows ({enabled})"
+                );
+            }
+            for &symbol in &absent {
+                assert!(
+                    !observed.contains_key(symbol),
+                    "{symbol} at {count} items and {rows} rows ({enabled})"
+                );
+            }
+            instance.commit_accepted(&accepted).unwrap();
         }
-        instance.commit_accepted(&accepted).unwrap();
+        for request in 1..=32 {
+            instance.retire_request(request).unwrap();
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
     }
-    for request in 1..=32 {
-        instance.retire_request(request).unwrap();
-    }
-    instance.destroy().unwrap();
-    assert_eq!(host.acquired.get(), host.released.get());
 }

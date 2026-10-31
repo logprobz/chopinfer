@@ -415,6 +415,7 @@ pub(crate) mod tests {
             (PREFILL_PLAN_CACHE_VERIFY, true.into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK, 32.into()),
             (DIAGNOSTIC_STEP_LOGS, true.into()),
+            (WIDE_VERIFY, true.into()),
         ] {
             changed = with_option(changed, name, value);
         }
@@ -426,6 +427,7 @@ pub(crate) mod tests {
                 prefill_plan_cache_verify: true,
                 dspark_graph_handles_per_rank: 32,
                 diagnostic_step_logs: true,
+                wide_verify: true,
             }
         );
         for (name, value) in [

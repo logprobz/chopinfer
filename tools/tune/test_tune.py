@@ -1627,6 +1627,31 @@ class Tuner(unittest.TestCase):
             {'samples': 3, 'seconds': 3.0, 'mean_board_w': 800.0, 'sm_mhz_range': [[1690, 1792]], 'synthetic': False}],
             tokens=1000)
         self.assertEqual((energy['joules_per_token'], energy['sm_mhz_range']), (3.0, [[1690, 1792]]))
+        energy = tune.merge_energy([
+            {'samples': 1, 'seconds': 1.0, 'mean_board_w': 600.0, 'sm_mhz_range': [[1700, 1700]],
+             'sm_mhz_mean': [1700.0], 'power_cap_share': [1.0], 'synthetic': False},
+            {'samples': 3, 'seconds': 3.0, 'mean_board_w': 800.0, 'sm_mhz_range': [[1800, 1800]],
+             'sm_mhz_mean': [1800.0], 'power_cap_share': [0.0], 'synthetic': False}],
+            tokens=1000)
+        self.assertEqual((energy['sm_mhz_mean'], energy['power_cap_share']), ([1775.0], [0.25]))
+
+    def test_power_windows_record_clocks_and_the_power_cap_share(self):
+        gpus, tune.r.GPUS = tune.r.GPUS, 2
+        try:
+            power = tune.Power(Path(tempfile.mkdtemp()), dry=False)
+            lines = ['0, 240.0, 1800, 250.00, Active', '1, 200.0, 1900, 250.00, Not Active',
+                     '0, 245.0, 1700, 250.00, Active', '1, 210.0, 1950, 250.00, Active',
+                     '0, 230.0, 1850, 250.00, Not Active', '1, 205.0, 1900, 250.00, Not Active',
+                     '0, 248.0, 1750, 250.00, Active', '1, 215.0, 1880, 250.00, Not Active']
+            power.process = type('Process', (), {'stdout': (line + '\n' for line in lines)})()
+            power.read()
+            energy = power.window(float('-inf'), float('inf'), 100)
+        finally:
+            tune.r.GPUS = gpus
+        self.assertEqual(energy['samples'], 4)
+        self.assertEqual(energy['sm_mhz_range'], [[1700.0, 1850.0], [1880.0, 1950.0]])
+        self.assertEqual(energy['sm_mhz_mean'], [1775.0, 1907.5])
+        self.assertEqual(energy['power_cap_share'], [0.75, 0.25])
 
     def test_a_job_runs_only_its_depths(self):
         model = {**MODEL, 'depths': [5, 3]}

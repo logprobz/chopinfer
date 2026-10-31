@@ -50,11 +50,12 @@ spec_metrics = None
 
 
 class Power:
-    """Board power and SM clocks of every GPU every 100 ms for a server's
-    lifetime, stamped on arrival. Clocks are recorded, never asserted."""
+    """Board power, SM clocks and the software power-cap clock event of
+    every GPU every 100 ms for a server's lifetime, stamped on arrival.
+    Clocks and power capping are recorded, never asserted."""
 
-    QUERY = ['/usr/bin/nvidia-smi', '--query-gpu=index,power.draw.instant,clocks.sm,enforced.power.limit', '--format=csv,noheader,nounits',
-             '-lms', '100']
+    QUERY = ['/usr/bin/nvidia-smi', '--query-gpu=index,power.draw.instant,clocks.sm,enforced.power.limit,'
+             'clocks_event_reasons.sw_power_cap', '--format=csv,noheader,nounits', '-lms', '100']
 
     def __init__(self, directory, dry):
         self.directory, self.dry = directory, dry
@@ -75,8 +76,8 @@ class Power:
         for line in self.process.stdout:
             now = time.monotonic()
             try:
-                index, watts, mhz, limit = (x.strip() for x in line.split(','))
-                pending[int(index)] = (float(watts), float(mhz))
+                index, watts, mhz, limit, capped = (x.strip() for x in line.split(','))
+                pending[int(index)] = (float(watts), float(mhz), capped == 'Active')
                 self.limits.append((now, int(index), float(limit)))
             except ValueError:
                 continue
@@ -102,15 +103,17 @@ class Power:
                 raise r.PowerChanged('enforced power limits changed within a visit')
 
     def window(self, started, ended, tokens):
-        rows = ([(started, [(250.0, 1800.0)] * r.GPUS)] if self.dry
+        rows = ([(started, [(250.0, 1800.0, False)] * r.GPUS)] if self.dry
                 else [x for x in self.samples if started <= x[0] <= ended])
         if len(rows) < (1 if self.dry else 3):
             raise RuntimeError(f'{len(rows)} power samples in a {ended - started:.1f} s window')
-        watts = statistics.fmean(sum(w for w, _ in gpus) for _, gpus in rows)
+        watts = statistics.fmean(sum(g[0] for g in gpus) for _, gpus in rows)
         seconds = ended - started
         return {'samples': len(rows), 'seconds': seconds, 'mean_board_w': watts,
                 'enforced_power_limits_w': self.reference,
                 'sm_mhz_range': [[min(g[i][1] for _, g in rows), max(g[i][1] for _, g in rows)] for i in range(r.GPUS)],
+                'sm_mhz_mean': [statistics.fmean(g[i][1] for _, g in rows) for i in range(r.GPUS)],
+                'power_cap_share': [sum(g[i][2] for _, g in rows) / len(rows) for i in range(r.GPUS)],
                 'joules_per_token': watts * seconds / tokens, 'synthetic': self.dry}
 
 
@@ -644,9 +647,15 @@ def merge_energy(parts, tokens):
     joules = sum(x['mean_board_w'] * x['seconds'] for x in parts)
     seconds = sum(x['seconds'] for x in parts)
     ranges = [x['sm_mhz_range'] for x in parts]
-    return {'samples': sum(x['samples'] for x in parts), 'seconds': seconds, 'mean_board_w': joules / seconds,
-            'sm_mhz_range': [[min(r[i][0] for r in ranges), max(r[i][1] for r in ranges)] for i in range(len(ranges[0]))],
-            'joules_per_token': joules / tokens, 'synthetic': parts[0]['synthetic']}
+    samples = sum(x['samples'] for x in parts)
+    merged = {'samples': samples, 'seconds': seconds, 'mean_board_w': joules / seconds,
+              'sm_mhz_range': [[min(r[i][0] for r in ranges), max(r[i][1] for r in ranges)] for i in range(len(ranges[0]))],
+              'joules_per_token': joules / tokens, 'synthetic': parts[0]['synthetic']}
+    # Per-GPU means over every sample of the groups, where each part has them.
+    for key in ('sm_mhz_mean', 'power_cap_share'):
+        if all(key in x for x in parts):
+            merged[key] = [sum(x[key][i] * x['samples'] for x in parts) / samples for i in range(len(ranges[0]))]
+    return merged
 
 
 def first_difference(reference, exact):

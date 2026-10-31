@@ -34,6 +34,11 @@ pub struct Shape {
     /// step over each position's base logits in place (the
     /// `dspark_markov_staged` candidate option).
     pub dspark_markov_staged: bool,
+    /// Whether a drafter stage's sublayer boundaries, after its attention
+    /// and into the next stage, fuse the round, expansion, next mixer and
+    /// input norm at admitted rows (the `dspark_hc_fusion` candidate
+    /// option).
+    pub dspark_hc_fusion: bool,
 }
 
 impl Shape {
@@ -48,6 +53,7 @@ impl Shape {
             wide_verify: false,
             f32_row_tiles: false,
             phased_decode_reduce: false,
+            dspark_hc_fusion: false,
             dspark_markov_staged: false,
         })
     }
@@ -84,6 +90,13 @@ impl Shape {
     /// (`model_deepseek41_contract::execution_options::DSPARK_MARKOV_STAGED`).
     pub fn with_dspark_markov_staged(mut self, enabled: bool) -> Shape {
         self.dspark_markov_staged = enabled;
+        self
+    }
+
+    /// This shape with the `dspark_hc_fusion` candidate on or off
+    /// (`model_deepseek41_contract::execution_options::DSPARK_HC_FUSION`).
+    pub fn with_dspark_hc_fusion(mut self, enabled: bool) -> Shape {
+        self.dspark_hc_fusion = enabled;
         self
     }
 

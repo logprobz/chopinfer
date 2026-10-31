@@ -25,6 +25,11 @@ pub const PHASED_DECODE_REDUCE: &str = "phased_decode_reduce";
 /// wait and read each position's base logits in place, so no row copy
 /// precedes the step.
 pub const DSPARK_MARKOV_STAGED: &str = "dspark_markov_staged";
+/// Candidate: a DSpark drafter stage's sublayer boundaries, after its
+/// attention and into the next stage, fuse their all-reduce round,
+/// expansion, next mixer and input norm where the measured finish route
+/// admits the forward's rows, as the backbone's do.
+pub const DSPARK_HC_FUSION: &str = "dspark_hc_fusion";
 pub const DEFAULT_PLANS: usize = 16;
 pub const MAX_PLANS: usize = 64;
 /// The served warmup fits within 512 graph handles per rank, leaving room
@@ -41,9 +46,10 @@ pub struct Options {
     pub f32_row_tiles: bool,
     pub phased_decode_reduce: bool,
     pub dspark_markov_staged: bool,
+    pub dspark_hc_fusion: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 9] {
+pub fn declarations() -> [ModelOptionV1; 10] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -56,6 +62,10 @@ pub fn declarations() -> [ModelOptionV1; 9] {
                 minimum: 0,
                 maximum: i64::MAX,
             },
+        ),
+        (
+            DSPARK_HC_FUSION,
+            OptionDefinitionV1::Boolean { default: false },
         ),
         (
             DSPARK_MARKOV_STAGED,
@@ -137,6 +147,7 @@ impl Options {
             phased_decode_reduce: values[PHASED_DECODE_REDUCE]
                 .as_bool()
                 .expect("checked boolean"),
+            dspark_hc_fusion: values[DSPARK_HC_FUSION].as_bool().expect("checked boolean"),
             dspark_markov_staged: values[DSPARK_MARKOV_STAGED]
                 .as_bool()
                 .expect("checked boolean"),
@@ -201,6 +212,7 @@ mod tests {
             wide_verify: false,
             f32_row_tiles: false,
             phased_decode_reduce: false,
+            dspark_hc_fusion: false,
             dspark_markov_staged: false,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
@@ -220,6 +232,7 @@ mod tests {
             (WIDE_VERIFY.into(), "true".into()),
             (F32_ROW_TILES.into(), "true".into()),
             (PHASED_DECODE_REDUCE.into(), "true".into()),
+            (DSPARK_HC_FUSION.into(), "true".into()),
             (DSPARK_MARKOV_STAGED.into(), "true".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
@@ -234,6 +247,7 @@ mod tests {
                 wide_verify: true,
                 f32_row_tiles: true,
                 phased_decode_reduce: true,
+                dspark_hc_fusion: true,
                 dspark_markov_staged: true,
             }
         );
@@ -254,6 +268,7 @@ mod tests {
             (WIDE_VERIFY, "1"),
             (F32_ROW_TILES, "1"),
             (PHASED_DECODE_REDUCE, "1"),
+            (DSPARK_HC_FUSION, "1"),
             (DSPARK_MARKOV_STAGED, "1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),

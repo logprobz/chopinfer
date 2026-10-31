@@ -9,6 +9,7 @@ mod common;
 
 use std::sync::Arc;
 
+use frontend_format::toolkit::validate_parameter_name_v1;
 use frontend_format::{
     FormatDescriptorV1, FrontendJsonV1, FrontendParserDeclarationV1, FrontendToolChoiceV1,
     FrontendToolGrammarV1, FrontendToolV1, PromptModeV1, parse_completion_v1, tool_constraint_v1,
@@ -352,6 +353,104 @@ fn a_forced_call_writes_every_name_the_parser_reads_back() {
                 Some("tools"),
                 "{form}: {marker}"
             );
+        }
+    }
+}
+
+/// `descriptor` with `close` as its declared parameter name close.
+fn with_name_close(descriptor: &FormatDescriptorV1, close: &str) -> FormatDescriptorV1 {
+    let mut changed = descriptor.clone();
+    changed.parser.parameter_name_close = close.to_owned();
+    changed
+        .validate()
+        .unwrap_or_else(|error| panic!("{close:?}: {error}"));
+    changed
+}
+
+/// Whether one call to `f` with the string argument `name` = `v`, written
+/// as the tool-choice grammar writes it, reads back as written.
+fn reads_back(descriptor: &FormatDescriptorV1, name: &str) -> bool {
+    let text = format!("{}[EOS]", forced_call(descriptor, &[(name, "v")]));
+    parse_completion_v1(descriptor, &text, PromptModeV1::Chat).is_ok_and(|parsed| {
+        parsed.tool_calls.len() == 1
+            && serde_json::from_str::<Value>(&parsed.tool_calls[0].arguments).ok()
+                == Some(json!({ name: "v" }))
+    })
+}
+
+/// A parameter name inside which a marker the parser stops at while it
+/// reads the name begins, completed by the name close written after it, does
+/// not read back: under a declared `]]` close, `a]` reads as `a` with the
+/// value `]v`, or its argument is dropped, and a call close or stop text the
+/// close completes ends the call or the completion early. Such a name is
+/// refused, the tool-choice grammar never writes it, and a tool that
+/// requires one is refused. A name no marker overlaps reads back.
+#[test]
+fn a_name_that_a_marker_overlaps_across_its_close_is_refused() {
+    for (form, descriptor, _) in forms() {
+        let parser = &descriptor.parser;
+        // The marker that ends the call around a name, without its last `>`,
+        // which a `>` name close then completes.
+        let call_end = match parser.tool_grammar {
+            FrontendToolGrammarV1::XmlKeyValueArgumentsV1 => parser.tool_call_close.trim(),
+            _ => parser.function_close.trim(),
+        }
+        .strip_suffix('>')
+        .expect("the call ends with `>`")
+        .to_owned();
+        let mut cases = vec![
+            (
+                "]]".to_owned(),
+                with_name_close(&descriptor, "]]"),
+                vec!["a]".to_owned(), "a[EOS".to_owned()],
+                vec!["a]b", "[a"],
+            ),
+            (
+                ">".to_owned(),
+                with_name_close(&descriptor, ">"),
+                vec![format!("a{call_end}")],
+                vec!["a<b", "a/b"],
+            ),
+        ];
+        // The declared close, where it completes the call's end.
+        if parser.parameter_name_close.starts_with('>') {
+            cases.push((
+                parser.parameter_name_close.clone(),
+                descriptor.clone(),
+                vec![format!("a{call_end}")],
+                vec!["user.name"],
+            ));
+        }
+        for (close, declared, refused, accepted) in cases {
+            for name in &refused {
+                let label = format!("{form}: close {close:?}, name {name:?}");
+                assert!(!reads_back(&declared, name), "{label} reads back");
+                assert!(
+                    validate_parameter_name_v1(&declared, name, "parameter").is_err(),
+                    "{label}"
+                );
+                let optional = [tool(&[name, "c"], &["c"])];
+                let written = forced_call(&declared, &[(name, "v"), ("c", "w")]);
+                assert!(!admits(&declared, &optional, &written), "{label}");
+                let only = forced_call(&declared, &[("c", "w")]);
+                assert!(admits(&declared, &optional, &only), "{label}");
+                let required = [tool(&[name], &[name])];
+                let error =
+                    tool_constraint_v1(&declared, &required, &FrontendToolChoiceV1::Required)
+                        .unwrap_err();
+                assert_eq!(error.parameter.as_deref(), Some("tools"), "{label}");
+            }
+            for name in accepted {
+                let label = format!("{form}: close {close:?}, name {name:?}");
+                assert!(reads_back(&declared, name), "{label}");
+                assert!(
+                    validate_parameter_name_v1(&declared, name, "parameter").is_ok(),
+                    "{label}"
+                );
+                let optional = [tool(&[name, "c"], &["c"])];
+                let written = forced_call(&declared, &[(name, "v"), ("c", "w")]);
+                assert!(admits(&declared, &optional, &written), "{label}");
+            }
         }
     }
 }

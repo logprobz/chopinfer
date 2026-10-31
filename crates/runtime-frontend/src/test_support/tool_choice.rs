@@ -302,11 +302,11 @@ pub fn any_parameter_name_round_trips(
 }
 
 /// An assistant call with a parameter named around a tool-call marker the
-/// parser stops at while it reads a name, or a reserved marker, is refused
-/// as history: the call would not read back as it was sent. Each bare marker
-/// of `descriptor`'s parser section is tried, such as a key-value grammar's
-/// call close. The tool declares no such parameter, so only the call is
-/// refused.
+/// parser stops at while it reads a name, a reserved marker or a stop text
+/// is refused as history: the call would not read back as it was sent. Each
+/// bare marker of `descriptor`'s parser section is tried, such as a
+/// key-value grammar's call close, and each declared stop text. The tool
+/// declares no such parameter, so only the call is refused.
 ///
 /// # Panics
 ///
@@ -316,6 +316,12 @@ pub fn a_parameter_name_holding_a_marker_is_refused_as_history(
     descriptor: &FrontendDescriptorV1,
 ) {
     let parser = &descriptor.format["parser"];
+    let vocabulary = &descriptor.vocabulary;
+    let stops = vocabulary
+        .boundary_tokens
+        .iter()
+        .filter(|token| vocabulary.stop_token_ids.contains(&token.id))
+        .map(|token| token.text.as_str());
     let markers = [
         "tool_call_open",
         "tool_call_close",
@@ -336,6 +342,7 @@ pub fn a_parameter_name_holding_a_marker_is_refused_as_history(
             .flatten()
             .filter_map(serde_json::Value::as_str),
     )
+    .chain(stops)
     .map(str::trim)
     .filter(|marker| !marker.is_empty());
     let mut tried = 0;

@@ -958,3 +958,31 @@ fn any_parameter_name_round_trips() {
         &descriptor(),
     );
 }
+
+/// A forced call writes a required parameter with any name the parser
+/// reads back, and refuses a tool that requires a name holding the end of
+/// sentence, at which a completion read as text ends before the name does.
+#[test]
+fn a_forced_call_refuses_a_parameter_named_with_the_stop_text() {
+    let frontend = PairedFrontendV1::chat_format::<DeepSeekV41Format>(descriptor()).unwrap();
+    let requiring = |name: &str| FrontendToolV1 {
+        name: "f".to_owned(),
+        description: None,
+        parameters: json(&serde_json::json!({
+            "type": "object", "properties": {name: {"type": "string"}}, "required": [name]
+        })),
+        parameters_present: true,
+        strict: None,
+    };
+    let choice = FrontendToolChoiceV1::Required;
+    assert!(
+        frontend
+            .tool_constraint(&[requiring("user.name")], &choice)
+            .unwrap()
+            .is_some()
+    );
+    let error = frontend
+        .tool_constraint(&[requiring(&format!("a{EOS}b"))], &choice)
+        .unwrap_err();
+    assert_eq!(error.parameter.as_deref(), Some("tools"));
+}

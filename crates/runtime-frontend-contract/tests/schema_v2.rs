@@ -5,7 +5,7 @@
 use runtime_frontend_contract::{
     FRONTEND_FORMAT_MAX_BYTES, FrontendComponentErrorV1, FrontendConstraintScopeV1,
     FrontendDescriptorV1, FrontendNameBytesV1, FrontendReasoningFieldV1, FrontendThinkingSwitchV1,
-    FrontendToolArgumentsV1,
+    FrontendToolArgumentsV1, lower_output_tokens_v1,
 };
 use serde_json::{Value, json};
 
@@ -275,6 +275,46 @@ fn output_tokens_are_optional_and_bounded_by_the_generated_token_limit() {
     );
     refused_naming(json!({"default": 64, "maximum": 128}), "`maximum`", syntax);
     refused_naming(json!({"efforts": {"low": 128}}), "`default`", syntax);
+}
+
+/// A geometry that lowers the generated-token limit lowers each declared
+/// output length above it to it and keeps the others; a declaration
+/// without the section is left as it is.
+#[test]
+fn lowered_output_lengths_follow_the_generated_token_limit() {
+    let mut value = declaration();
+    let before = value.clone();
+    lower_output_tokens_v1(&mut value, 100);
+    assert_eq!(value, before);
+    value["output_tokens"] = json!({"default": 300, "efforts": {"low": 100}});
+    value["limits"]["maximum_generated_tokens"] = 256.into();
+    let error = read(&value).expect_err("a length past the limit is refused");
+    assert!(
+        invalid(&error) && error.to_string().contains("output_tokens.default 300"),
+        "{error}"
+    );
+    lower_output_tokens_v1(&mut value, 256);
+    assert_eq!(
+        value["output_tokens"],
+        json!({"default": 256, "efforts": {"low": 100}})
+    );
+    let output = read(&value).unwrap().output_tokens.unwrap();
+    assert_eq!(
+        (output.for_effort(None), output.for_effort(Some("low"))),
+        (256, 100)
+    );
+    value["output_tokens"] = json!({"default": 64, "efforts": {"low": 4096}});
+    lower_output_tokens_v1(&mut value, 256);
+    assert_eq!(
+        value["output_tokens"],
+        json!({"default": 64, "efforts": {"low": 256}})
+    );
+    assert!(read(&value).is_ok());
+    // A length that is not an integer is left for validation to refuse.
+    value["output_tokens"] = json!({"default": "many"});
+    lower_output_tokens_v1(&mut value, 256);
+    assert_eq!(value["output_tokens"]["default"], "many");
+    assert!(syntax(&read(&value).unwrap_err()));
 }
 
 /// Qualified function names are optional; a separator is short ASCII

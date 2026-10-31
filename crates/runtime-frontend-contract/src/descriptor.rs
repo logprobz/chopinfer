@@ -465,6 +465,31 @@ impl FrontendOutputTokensV1 {
     }
 }
 
+/// Lowers each declared output length of the frontend component
+/// `component` above `maximum` to `maximum`, so the section still validates
+/// once a geometry lowers `limits.maximum_generated_tokens` to `maximum`.
+/// A component without the section is left as it is, and a length that is
+/// not an integer is left for validation to refuse.
+pub fn lower_output_tokens_v1(component: &mut serde_json::Value, maximum: u64) {
+    let Some(output) = component.get_mut("output_tokens") else {
+        return;
+    };
+    let lower = |length: &mut serde_json::Value| {
+        if length.as_u64().is_some_and(|value| value > maximum) {
+            *length = maximum.into();
+        }
+    };
+    if let Some(default) = output.get_mut("default") {
+        lower(default);
+    }
+    if let Some(efforts) = output
+        .get_mut("efforts")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        efforts.values_mut().for_each(lower);
+    }
+}
+
 /// One boundary token, and the identifier the vocabulary gives it.
 ///
 /// A decoder needs both halves: a completion that carries one of these

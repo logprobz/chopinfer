@@ -32,12 +32,12 @@ arguments)`, the rewrite its model's processor makes of the template's text
 
 A Python encoder's render may return `(text, special_ranges)` instead of
 its text: a marked render, whose ranges name the special tokens the encoder
-wrote (`special_ranges`; Python string indices, as the recipe's Python
-binding gives them). It tokenizes as deepseek-recipe 0.2.0 encodes a prompt
-(`marked_token_ids`): each range is the added token it spells, and the text
-between ranges is plain text, encoded by a copy of the tokenizer without its
-added tokens (`plain_tokenizer`), so an added-token spelling in client text
-is ordinary tokens. A round trip of a marked render tokenizes its prompt and
+wrote (`special_ranges`, Python string indices). It tokenizes as a
+pinned recipe's prompt tokenizer encodes a prompt (`marked_token_ids`): each
+range is the added token it spells, and the text between ranges is plain
+text, encoded by a copy of the tokenizer without its added tokens
+(`plain_tokenizer`), so an added-token spelling in client text is ordinary
+tokens. A round trip of a marked render tokenizes its prompt and
 completion with the ranges each holds, cuts the completion only at a range
 that spells a stop token, appends a declared ending as a range, and, since
 the completion's client text is plain, does not count a raw-value marker
@@ -557,11 +557,9 @@ def reference_environment(*packages):
 def special_ranges(text, ranges):
     """The special ranges of a marked render, checked against its `text`, as
     a tuple of `(start, end)` pairs: half-open ranges of Python string
-    indices (code points), as deepseek-recipe's Python binding gives
-    `RenderedPrompt.special_ranges` (its Rust field holds UTF-8 byte offsets
-    instead), so `text[start:end]` spells one special token. They must be
-    ascending, disjoint and nonempty, and lie within the text; two may
-    touch."""
+    indices (code points, not UTF-8 byte offsets), so `text[start:end]`
+    spells one special token. They must be ascending, disjoint and
+    nonempty, and lie within the text; two may touch."""
     if not isinstance(ranges, (list, tuple)):
         raise CorpusError(f"a marked render's special ranges are {type(ranges).__name__}, not a list of pairs")
     checked, last = [], 0
@@ -578,11 +576,10 @@ def special_ranges(text, ranges):
 
 def marked_token_ids(text, ranges, plain, added):
     """The token ids of a marked render's `text` and `ranges`
-    (`special_ranges`), as deepseek-recipe 0.2.0 `PromptTokenizer`
-    encodes a prompt (deepseek-recipe-encoding tokenizer.rs lines 90-117):
-    `plain(region)` encodes each region before, between and after the
-    ranges, an empty one included, and each range is the id that `added`,
-    the tokenizer's added vocabulary, gives its spelling. A range that
+    (`special_ranges`), as a pinned recipe's prompt tokenizer encodes a
+    prompt: `plain(region)` encodes each region before, between and after
+    the ranges, an empty one included, and each range is the id that
+    `added`, the tokenizer's added vocabulary, gives its spelling. A range that
     spells no added token is refused."""
     ids, start = [], 0
     for begin, end in special_ranges(text, ranges):
@@ -597,10 +594,10 @@ def marked_token_ids(text, ranges, plain, added):
 
 def plain_tokenizer(tokenizer):
     """A copy of `tokenizer`, a `tokenizers.Tokenizer`, without its added
-    tokens, as recipe `PromptTokenizer::new` clones the tokenizer with an
-    empty added vocabulary (tokenizer.rs lines 48-61): it reads every
-    added-token spelling as the plain text it is. The copy also truncates
-    and pads nothing, so it adds and drops no token."""
+    tokens, as a pinned recipe's prompt tokenizer clones the tokenizer with
+    an empty added vocabulary: it reads every added-token spelling as the
+    plain text it is. The copy also truncates and pads nothing, so it adds
+    and drops no token."""
     from tokenizers import Tokenizer
 
     document = json.loads(tokenizer.to_str())

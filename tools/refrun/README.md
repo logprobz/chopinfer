@@ -275,10 +275,9 @@ build the environment in its own directory and README.
 
 A Python encoder's render (`encoder_render` in a cases module) may mark the
 special tokens it writes by returning `(text, special_ranges)`: half-open
-`(start, end)` ranges of Python string indices, which count code points as
-the recipe's Python binding counts `RenderedPrompt.special_ranges` (its Rust
-ranges are byte offsets). The ranges must be ascending, disjoint and
-nonempty. A marked render tokenizes as deepseek-recipe 0.2.0 encodes a
+`(start, end)` ranges of Python string indices, which count code points,
+not UTF-8 bytes. The ranges must be ascending, disjoint and nonempty. A
+marked render tokenizes as a pinned recipe's prompt tokenizer encodes a
 prompt: each range becomes the added token it spells, and is refused if it
 spells none, and the text between ranges is encoded by a copy of the
 checkpoint tokenizer without its added tokens (`marked_tokenizer`), so an

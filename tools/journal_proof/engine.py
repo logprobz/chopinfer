@@ -144,6 +144,19 @@ def strip_additions(lines, policy, counts, kept=None):
                 require(lines[position - 1] == f'{verb} {id_} {payload}', 'added record differs')
                 additions[position] = kind
             counts[kind] += rule['count']
+    # A bare release names no handle; each releases one of the added IDs the
+    # auxiliary rule declares (auxproof bounds their count by those IDs).
+    for rule in policy.get('added_releases', []):
+        need(set(rule) == {'count', 'positions'}, 'invalid added_releases rule')
+        positions = rule['positions']
+        need(type(rule['count']) is int and rule['count'] > 0 and isinstance(positions, list)
+             and len(positions) == rule['count'] and len(set(positions)) == len(positions)
+             and all(type(p) is int and p > 0 for p in positions), 'added_releases: count must name every exact position')
+        for position in positions:
+            need(position not in additions, 'overlapping added records')
+            require(position <= len(lines) and lines[position - 1] == 'release', 'added release differs')
+            additions[position] = 'added_releases'
+        counts['added_releases'] += rule['count']
     if kept is not None:
         kept.extend(i for i in range(len(lines)) if i + 1 not in additions)
     return [line for i, line in enumerate(lines, 1) if i not in additions]
@@ -333,5 +346,5 @@ def transform(lines, policy, counts, allocation_context=None, trace=None):
 
 
 POLICY_FIELDS={'launch_rules','symbol_substitutions','cubin_substitutions','state_sizes','moves','merges','removals',
-               'added_resolves','added_modules','added_configures','expansions','span_changes',
+               'added_resolves','added_modules','added_configures','added_releases','expansions','span_changes',
                'layout_spans','layout_strides','upload_payloads'}

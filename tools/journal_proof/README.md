@@ -225,8 +225,14 @@ Journal policies (`journals`), the auxiliary `create_policy` and
 `history_policy` accept these keys:
 - `launch_rules`, `symbol_substitutions`, `cubin_substitutions`;
 - `state_sizes`, `moves`, `merges`, `removals`, `expansions`;
-- `added_resolves`, `added_modules`, `added_configures`;
+- `added_resolves`, `added_modules`, `added_configures`, `added_releases`;
 - `span_changes`, `layout_spans`, `layout_strides`, `upload_payloads`.
+
+`added_releases` names the exact positions of bare `release` records the
+head adds. A device releases each issued ID once, and a bare release names
+none, so a fixture's added releases may not outnumber the loads and
+resolves its auxiliary rule adds. The create range, the create journal's
+prefix, is bounded on its own.
 
 `history_policy` also accepts `graph_nodes` and `graph_pieces`.
 

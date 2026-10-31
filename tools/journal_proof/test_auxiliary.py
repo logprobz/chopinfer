@@ -87,6 +87,29 @@ class AuxiliaryTests(unittest.TestCase):
         self.assertEqual(report['fixtures']['host']['buffer_map'],{str(GEN+4):GEN+6})
         self.assertEqual(report['fixtures']['host']['allocation_records'][0]['rank'],0)
 
+    def released(self,count,declared):
+        self.head[STEP]=self.head[STEP]+['release']*count
+        first=len(self.head[STEP])-count+1
+        self.spec['journals'][STEP]['added_releases']=[dict(count=declared,positions=list(range(first,first+declared)))]
+
+    def test_releases_of_the_added_module_and_resolve(self):
+        self.released(2,2)
+        report=self.check(0)
+        self.assertEqual(report['counts']['added_releases'],2)
+
+    def test_added_releases_cannot_exceed_the_added_ids(self):
+        self.released(3,3)
+        self.check(1)
+
+    def test_an_undeclared_added_release_is_a_difference(self):
+        self.released(2,1)
+        self.check(1)
+
+    def test_an_added_release_must_be_a_release(self):
+        self.released(1,1)
+        self.spec['journals'][STEP]['added_releases'][0]['positions']=[1]
+        self.check(1)
+
     def test_copied_step_rejected_with_authentic_history(self):
         self.head[STEP]=self.base[STEP][:]
         self.spec['journals'][STEP]={}

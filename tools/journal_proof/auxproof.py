@@ -333,6 +333,13 @@ def prove(base,head,fixture,policies,base_aux,head_aux,rule,replacements=(),comp
         be=bh['events'][:max(b['records'] for b in hb+list(extra['head'].values()))]
         derived=derive(ae,be,rule,replacements,layout,fixture['name'])
         buffers,functions,streams,ids,ai,bi=derived[:6]
+        # Each added load or resolve is released at most once. The create
+        # range is the create journal's prefix, so it is bounded on its own.
+        added_ids=len(set(bi['issued'])-set(ids.values()))
+        releases=lambda policy:sum(r.get('count',0) for r in policy.get('added_releases',[]))
+        require(releases(rule['create_policy'])<=added_ids and
+                sum(releases(policies.get(n,{})) for n in names)+releases(rule.get('history_policy',{}))<=added_ids,
+                'added releases exceed the added IDs')
         pairs={(a['create']['path'],b['create']['path']):(a,b) for a,b in zip(ab,hb)}
         require(len(pairs)==1,'fixture has multiple create generations; an explicit lifetime boundary is required')
         a,b=next(iter(pairs.values()))

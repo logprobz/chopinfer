@@ -54,6 +54,27 @@ impl Shape {
         }
     }
 
+    /// The wide verify buckets this instance reaches
+    /// (`model_deepseek41_contract::verify_bounds::WIDE`), each capped by
+    /// its verify rows: none at 64 verify rows or fewer, and none outside
+    /// Flash TP4.
+    pub(crate) fn wide_verify_rows(&self) -> Vec<u32> {
+        use model_deepseek41_contract::{serving::VERIFY_DECODE_ROWS, verify_bounds::WIDE};
+        let mut buckets = Vec::new();
+        let mut covered = self.verify_rows_within(VERIFY_DECODE_ROWS);
+        if covered < VERIFY_DECODE_ROWS {
+            return buckets;
+        }
+        for bucket in WIDE {
+            if self.verify_rows <= covered {
+                break;
+            }
+            covered = self.verify_rows.min(bucket);
+            buckets.push(covered);
+        }
+        buckets
+    }
+
     /// The geometry's dimensions.
     pub const fn dims(&self) -> &'static model_deepseek41_contract::geometry::Shape {
         &self.geometry.shape
@@ -137,5 +158,27 @@ mod tests {
         );
         assert_eq!(of_topology("deepseek41-flash-tp4"), Some(shape));
         assert_eq!(of_topology("deepseek41-flash-tp8"), None);
+    }
+
+    /// Flash TP4 reaches a wide verify bucket only above 64 verify rows,
+    /// each bucket capped by its verify rows; other topologies reach none.
+    #[test]
+    fn wide_verify_buckets_follow_the_verify_rows() {
+        let flash = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        for (rows, buckets) in [
+            (32, &[][..]),
+            (64, &[]),
+            (65, &[65]),
+            (128, &[128]),
+            (129, &[128, 129]),
+            (192, &[128, 192]),
+        ] {
+            assert_eq!(flash.with_verify_rows(rows).wide_verify_rows(), buckets);
+        }
+        for shape in topologies() {
+            if shape != flash {
+                assert!(shape.with_verify_rows(192).wide_verify_rows().is_empty());
+            }
+        }
     }
 }

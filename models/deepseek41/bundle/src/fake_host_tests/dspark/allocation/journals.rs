@@ -73,8 +73,8 @@ fn allocated_lifetimes_journal() {
         (4, 16, 5, "", (69334, 0x94b43e6c45e6f09b)),
         (8, 32, 5, "", (106926, 0x8d92d278eff57bef)),
         (4, 12, 3, "-d3", (69502, 0xdedf204e99d57b9b)),
-        (16, 65, 5, "-odd", (190434, 0xa53d7eeecf401235)),
-        (32, 192, 5, "-maximum", (343172, 0x423f402926f10c51)),
+        (16, 65, 5, "-odd", (190434, 0xf1a5d9efe6288b7d)),
+        (32, 192, 5, "-maximum", (343172, 0xf8534300e1fd8799)),
     ] {
         let (host, mut instance) = create_with_limits(shape, 32, 192);
         for slot in 0..items {

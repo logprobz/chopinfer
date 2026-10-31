@@ -178,9 +178,42 @@ pub(crate) fn registered_quantizers(
     Ok(entries)
 }
 
+/// Flash TP4's wide verify copy of a decode entry registered at
+/// [`CAPACITY`]: the same symbol and launches, holding the widest wide
+/// verify bucket (`verify_bounds::WIDE`). Steps up to `CAPACITY` rows keep
+/// the narrower entry, and an entry registered below `CAPACITY` has no
+/// copy, so its selection stays.
+pub(crate) fn wide(
+    g: &Geometry,
+    ranks: u32,
+    entry: &block_quantize::Entry,
+) -> Option<block_quantize::Entry> {
+    use model_deepseek41_contract::verify_bounds::WIDE;
+    if g.id != FLASH.id || ranks != 4 || entry.capacity != CAPACITY {
+        return None;
+    }
+    let mut wide = entry.clone();
+    wide.capacity = WIDE[WIDE.len() - 1];
+    Some(wide)
+}
+
+/// Registers `entry` and its wide verify copy ([`wide`]).
+pub(crate) fn with_quantizer(
+    backend: Sm120,
+    g: &Geometry,
+    ranks: u32,
+    entry: block_quantize::Entry,
+) -> Sm120 {
+    let backend = match wide(g, ranks, &entry) {
+        Some(wide) => backend.with_block_quantize(wide),
+        None => backend,
+    };
+    backend.with_block_quantize(entry)
+}
+
 pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
     for entry in registered_quantizers(g, ranks)? {
-        backend = backend.with_block_quantize(entry);
+        backend = with_quantizer(backend, g, ranks, entry);
     }
     Ok(backend.with_silu_mul_quantize(activation(g, ranks)?))
 }
@@ -213,6 +246,52 @@ mod tests {
                 };
                 assert_eq!(op.info().symbols, [(symbol.into(), 0)]);
             }
+        }
+    }
+
+    /// Up to the widest wide verify bucket, a Flash TP4 entry registered at
+    /// `CAPACITY` serves as it does at `CAPACITY` rows; wider steps, and
+    /// entries registered narrower, keep the serial entry.
+    #[test]
+    fn wide_verify_buckets_select_the_decode_entries() {
+        use kernel_core::backend::{Backend, Need};
+        use model_deepseek41_contract::verify_bounds::WIDE;
+
+        let widest = WIDE[WIDE.len() - 1];
+        fn symbols(
+            backend: &Sm120,
+            query: &kernel_core::precision::quantizer::BlockQuantizeQuery,
+            rows: u32,
+        ) -> Vec<(String, u32)> {
+            backend
+                .block_quantize(query, Need::rows(rows))
+                .unwrap()
+                .info()
+                .symbols
+                .clone()
+        }
+        for register in [register, super::super::ceil_cached::register] {
+            let baseline = baseline_quantizers(&FLASH, 4)
+                .unwrap()
+                .into_iter()
+                .fold(Sm120::new(), Sm120::with_block_quantize);
+            let backend = register(baseline, &FLASH, 4).unwrap();
+            let mut wide = 0;
+            for entry in registered_quantizers(&FLASH, 4).unwrap() {
+                let serial = symbols(&backend, &entry.query, widest + 1);
+                let expected = if entry.capacity == CAPACITY {
+                    wide += 1;
+                    let decode = symbols(&backend, &entry.query, CAPACITY);
+                    assert_ne!(decode, serial);
+                    decode
+                } else {
+                    serial.clone()
+                };
+                for rows in CAPACITY + 1..=widest {
+                    assert_eq!(symbols(&backend, &entry.query, rows), expected);
+                }
+            }
+            assert!(wide > 0);
         }
     }
 

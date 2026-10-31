@@ -306,28 +306,25 @@ fn row_bucket(rows: u32) -> (u32, u32, u32) {
 
 /// Row-local stages of a verify step above the 64-row budget. Each grids
 /// the step's live rows, never a prepared capacity, so the symbol says
-/// which registered entry serves the stage.
+/// which registered entry serves the stage. The ceil quantizers take the
+/// decode entries of their wide verify buckets (`verify_bounds::WIDE`).
 const WIDE_STAGES: &[Stage] = &[
-    ("chop_deepseek41_moe_ceil_w5120_v1", 320, per_row),
+    ("chop_deepseek41_moe_ceil_w5120_cached_v1", 320, per_row),
     ("chop_deepseek41_moe_ceil_w3456_v1", 160, per_row),
     ("chop_deepseek41_shared_swiglu_w576_v1", 160, per_row),
     (
-        "chop_deepseek41_dense_ceil_f32_w1280_prefill_w8_v1",
+        "chop_deepseek41_dense_ceil_f32_w1280_parallel_v1",
         192,
         per_row,
     ),
     (
-        "chop_deepseek41_dense_ceil_f32_w2048_prefill_w8_v1",
+        "chop_deepseek41_dense_ceil_f32_w2048_parallel_v1",
         160,
         per_row,
     ),
-    (
-        "chop_deepseek41_dense_ceil_w8192_prefill_w16_v1",
-        160,
-        per_row,
-    ),
-    ("chop_deepseek41_dense_ceil_w6144_prefill_w8_v1", 8, per_row),
-    ("chop_deepseek41_latent_ceil32_v1", 160, per_row),
+    ("chop_deepseek41_dense_ceil_w8192_cached_v1", 160, per_row),
+    ("chop_deepseek41_dense_ceil_w6144_cached_v1", 8, per_row),
+    ("chop_deepseek41_latent_ceil32_parallel_v1", 160, per_row),
     ("chop_deepseek41_latent_window_rope_v1", 160, per_row),
     ("chop_deepseek41_latent_query_rope_v1", 160, per_row),
     ("chop_deepseek41_q_norm_f32_v1", 160, per_row),
@@ -355,19 +352,22 @@ const WIDE_STAGES: &[Stage] = &[
     ),
 ];
 
-/// Decode forms of those stages, which serve 33 to 64 rows and launch
-/// nowhere above them.
+/// Forms of those stages that launch nowhere above 64 rows: decode forms
+/// that serve 33 to 64 rows, and the prefill quantizers the wide buckets
+/// replace.
 const NARROW_STAGES: &[&str] = &[
-    "chop_deepseek41_moe_ceil_w5120_cached_v1",
     "chop_deepseek41_shared_swiglu_w576_parallel_v1",
-    "chop_deepseek41_dense_ceil_f32_w1280_parallel_v1",
-    "chop_deepseek41_dense_ceil_w6144_cached_v1",
-    "chop_deepseek41_latent_ceil32_parallel_v1",
     "chop_deepseek41_latent_query_rope_heads_v1",
     "chop_position_query_deepseek41_parallel_v1",
     "chop_deepseek41_hc_round_cols_r4_tx_v1",
     "chop_deepseek41_hc_finish_split_w32_v1",
     "chop_sinkhorn_hc_deepseek41_lagged_mix_collapse_split_v1",
+    "chop_deepseek41_moe_ceil_w5120_v1",
+    "chop_deepseek41_dense_ceil_f32_w1280_prefill_w8_v1",
+    "chop_deepseek41_dense_ceil_f32_w2048_prefill_w8_v1",
+    "chop_deepseek41_dense_ceil_w8192_prefill_w16_v1",
+    "chop_deepseek41_dense_ceil_w6144_prefill_w8_v1",
+    "chop_deepseek41_latent_ceil32_v1",
 ];
 
 /// Widths above the 64-row budget a step of 32 items (and 16 up to its 96
@@ -414,6 +414,9 @@ fn target_programs_lower_above_the_default_verify_rows() {
     let directory = journal_directory();
     for (count, rows) in WIDE_STEPS {
         let (target, step, accepted) = verify_step(&mut instance, &host, count, rows);
+        if let Some(directory) = &directory {
+            write_journals(directory, count, rows, &target, &step);
+        }
         let observed = grids(&target);
         for &(symbol, launches, grid) in WIDE_STAGES {
             assert_eq!(
@@ -427,9 +430,6 @@ fn target_programs_lower_above_the_default_verify_rows() {
                 !observed.contains_key(symbol),
                 "{symbol} at {count} items and {rows} rows"
             );
-        }
-        if let Some(directory) = &directory {
-            write_journals(directory, count, rows, &target, &step);
         }
         instance.commit_accepted(&accepted).unwrap();
     }

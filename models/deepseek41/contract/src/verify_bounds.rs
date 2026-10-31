@@ -3,7 +3,15 @@
 //! wider steps raises its own bound and leaves the others in place. An
 //! instance serves each bound capped by its verify rows. Bounds of
 //! registered entries and tuning keys are the bound itself.
-use crate::serving::VERIFY_DECODE_ROWS;
+use crate::serving::{DECODE_BATCH, MAX_VERIFY_ROWS, VERIFY_DECODE_ROWS};
+
+/// Verify buckets above `VERIFY_DECODE_ROWS`, widest last: the package's
+/// verify rows, every item at its deepest block, and the bucket below it.
+/// A family that serves wide verify steps prepares one op per bucket an
+/// instance reaches, each capped by the instance's verify rows, and
+/// registers its wide entries at the widest.
+pub const WIDE: [u32; 2] = [128, DECODE_BATCH * MAX_VERIFY_ROWS];
+const _: () = assert!(WIDE[0] > VERIFY_DECODE_ROWS && WIDE[0] < WIDE[1]);
 
 /// The draft-rows op of a row-bucketed row op: decode and verify rows
 /// above the widest decode bucket.

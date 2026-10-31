@@ -215,9 +215,9 @@ impl GlueOps {
             };
         let ring = latent_glue::ring(g);
         let write = latent_glue::window_write_for_storage(g, ring, storage);
-        let window_write = RowBuckets::prepare(asks, "glue.window_write", every, shape, |need| {
-            backend.latent_window_write(&write, need)
-        })?;
+        let prepare = |need| backend.latent_window_write(&write, need);
+        let window_write = RowBuckets::prepare(asks, "glue.window_write", every, shape, prepare)?
+            .with_wide(asks, "glue.window_write", shape, prepare)?;
         let decode_window_write = asks.ask(
             "glue.decode_window_write",
             exact::need(DECODE_BATCH, exact::every_phase(DECODE_BATCH)),

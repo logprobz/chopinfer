@@ -266,7 +266,18 @@ fn export_wide_moe_graphs() {
                 .unwrap()
         )
     );
-    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap().with_verify_rows(64);
+    // CHOPINFER_MOE_GRAPH_ROWS optionally names the verify widths, in
+    // ascending order (default 16, 32 and 33 to 64); the instance serves
+    // the widest, at least 64.
+    let widths = std::env::var("CHOPINFER_MOE_GRAPH_ROWS").map_or_else(
+        |_| [16, 32].into_iter().chain(33..=64).collect::<Vec<u32>>(),
+        |list| list.split(',').map(|r| r.parse().unwrap()).collect(),
+    );
+    assert!(!widths.is_empty() && widths.windows(2).all(|w| w[0] < w[1]));
+    let verify_rows = widths.last().copied().unwrap().max(64);
+    let shape = Shape::new(&FLASH, Ranks::TP4)
+        .unwrap()
+        .with_verify_rows(verify_rows);
     let kernels = crate::Kernels::new(&shape).unwrap();
     let ops = Ops::prepare_set(
         &kernels,
@@ -276,7 +287,7 @@ fn export_wide_moe_graphs() {
     );
     let mut cases = Vec::new();
     for rank in 0..4 {
-        for rows in [16, 32].into_iter().chain(33..=64) {
+        for &rows in &widths {
             for width in [0, 1, 2, 4] {
                 let value = export(&shape, &ops, rank, rows, width);
                 let name = format!("r{rows}-rank{rank}-w{width}.json");
@@ -290,7 +301,7 @@ fn export_wide_moe_graphs() {
             }
         }
     }
-    assert_eq!(cases.len(), 544);
+    assert_eq!(cases.len(), widths.len() * 16);
     let mut out = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -301,5 +312,8 @@ fn export_wide_moe_graphs() {
             .unwrap(),
     )
     .unwrap();
-    println!("MOE_WIDE_EXPORT cases=544 PASS");
+    println!(
+        "MOE_WIDE_EXPORT verify_rows={verify_rows} cases={} PASS",
+        cases.len()
+    );
 }

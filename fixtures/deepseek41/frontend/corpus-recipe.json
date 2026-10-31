@@ -128,6 +128,16 @@
    "agrees": true,
    "sha256": "c7e39d72c680da78be90536ba85f1e5fb718ee7ad2b156f6722f172391243eb6"
   },
+  "g0013": {
+   "request_sha256": "483d95909bc4687bbca5ea6c2badaacfd18261b6a587058794b36f5896a55bbe",
+   "difference": "refuses",
+   "recipe": {
+    "refusal": {
+     "status": 400,
+     "message": "Invalid assistant message: content or tool_calls must be set"
+    }
+   }
+  },
   "g0017": {
    "request_sha256": "75e97854c6058f79ce78955300ec94d4318fd608ea04699dc338e701122f12f6",
    "agrees": true,

@@ -64,9 +64,9 @@
     "frontend_capture": {
       "directory": true,
       "members": {
-        "corpus-coverage.json": "d8c6d3f39552933c072a443b8e3d0dda7b44a8b2290db08b64b8f5ea6f6a313f",
+        "corpus-coverage.json": "64e2c5bc2e95608610c9a3d61f9d6afc5b0a3544c28d1a9df339b2d29740783e",
         "corpus-rounds.json": "cc653739cddaf7ca4484b023ba93feb1730425146cc8dd5520945c798522b6a9",
-        "corpus.json": "20d692522cd13640cffd315eab8e51b1672a1641a38907b46e478625d47de1a9",
+        "corpus.json": "69ce2ecf05172c264bb713adbb64294042f041b8d5321281095c8a58c4cc622b",
         "encoder-tests/LICENSE": "f2c6c602815669d292889e5be8c802f2ed950653b77999b1584e8e6aed25d040",
         "encoder-tests/README.md": "d0ed3e2f6258c01a41cc6a73781889293a124250311839adcf659c494cbd584b",
         "encoder-tests/test_input_1.json": "6a5a86694e47169c8f0c9243a7e24cc5db05447be0d3d3a9891034e913c518de",
@@ -81,7 +81,7 @@
         "encoder-tests/test_output_5.txt": "4d673091746553d1cb2e40a3fc01dc09a7c53c40627096a3e49c97a269a81f64",
         "tokenizer-golden.json": "68ed31564260e7013fa284531dfe74ae449d8a7e2bd2b042687a2f7d2ac96891",
         "chat-renders.json": "6550c1c3164b56a1215fcd9b1b5c0f0b63ee418eb4d59c617097208a298877c8",
-        "corpus-recipe.json": "1c227c8a5fa474627e9f14381587d3a1ee03a9d7e908af8442d92a90a33d83ec"
+        "corpus-recipe.json": "9d7b339157f85fa31a5c125927e4498d822b68f67a8b80bf2c9b6b386d976f4e"
       },
       "path": "fixtures/deepseek41/frontend"
     },
@@ -369,14 +369,14 @@
     "cc653739cddaf7ca4484b023ba93feb1730425146cc8dd5520945c798522b6a9": {
       "schema": "legacy-json-array"
     },
-    "1c227c8a5fa474627e9f14381587d3a1ee03a9d7e908af8442d92a90a33d83ec": {
-      "schema": "chop-frontend-recipe-v1"
+    "64e2c5bc2e95608610c9a3d61f9d6afc5b0a3544c28d1a9df339b2d29740783e": {
+      "schema": "chop-frontend-corpus-coverage-v1"
     },
-    "20d692522cd13640cffd315eab8e51b1672a1641a38907b46e478625d47de1a9": {
+    "69ce2ecf05172c264bb713adbb64294042f041b8d5321281095c8a58c4cc622b": {
       "schema": "legacy-json-array"
     },
-    "d8c6d3f39552933c072a443b8e3d0dda7b44a8b2290db08b64b8f5ea6f6a313f": {
-      "schema": "chop-frontend-corpus-coverage-v1"
+    "9d7b339157f85fa31a5c125927e4498d822b68f67a8b80bf2c9b6b386d976f4e": {
+      "schema": "chop-frontend-recipe-v1"
     }
   },
   "schema": "chopinfer-qual-references/v1"

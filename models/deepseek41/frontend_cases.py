@@ -806,9 +806,26 @@ def image_format_cases():
         "file:flat"}
 
 
+def partial_results(messages):
+    """Whether an assistant turn's calls are not all answered by the tool
+    messages directly after it, which deepseek-recipe refuses
+    (`partial-tool-results` in frontend-divergences.json)."""
+    for index, message in enumerate(messages):
+        calls = {call["id"] for call in message.get("tool_calls") or []}
+        answered = set()
+        for result in messages[index + 1:]:
+            if result.get("role") != "tool":
+                break
+            answered.add(result.get("tool_call_id"))
+        if calls - answered:
+            return True
+    return False
+
+
 def cases(declaration):
     for name, request, _ in tool_image_cases():
-        yield name, request, {f"fixed:{name}", "tool-results:images"}
+        yield name, request, {f"fixed:{name}", "tool-results:images",
+                              *(("results:partial",) if partial_results(request["messages"]) else ())}
     for name, request, tags in image_format_cases():
         yield name, request, {f"fixed:{name}", *tags}
     # The encoder's test pair 1 (encoding/tests/test_input_1.json) as a

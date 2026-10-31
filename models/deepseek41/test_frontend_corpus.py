@@ -7,13 +7,15 @@ divergence gate with `models/deepseek41/frontend-divergences.json`. Needs
 transformers and the pinned encoder and tokenizer files, from
 `CHOPINFER_DEEPSEEK_TOKENIZER_DIR` or `CHOPINFER_DEEPSEEK_CHECKPOINT`; skipped
 without them. The recipe oracle's own helpers (`recipe_reference.py`) are
-checked without the recipe package.
+checked without the recipe package, and the recipe gate's attribution with
+outcomes injected into the committed record.
 
     CUDA_VISIBLE_DEVICES= $CHOPINFER_REFRUN_PYTHON -B -m unittest models/deepseek41/test_frontend_corpus.py
 """
 
 from pathlib import Path
 import base64
+import copy
 import hashlib
 import importlib.metadata
 import json
@@ -28,6 +30,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from tools.refrun import frontend_corpus  # noqa: E402
 from tools.refrun.frontend_corpus import Model, corpus_test_case, reference_variables  # noqa: E402
 from models.deepseek41 import recipe_reference  # noqa: E402
 
@@ -154,6 +157,74 @@ class RecipeOracleHelpers(unittest.TestCase):
             with self.subTest(status=status), self.assertRaisesRegex(
                     SystemExit, f"deepseek-recipe failed with status {status}"):
                 recipe_reference.convert(recipe, None, {"messages": []})
+
+
+class RecipeAttribution(unittest.TestCase):
+    """The committed corpus-recipe.json with one outcome replaced, as the
+    recipe might give it: the gate explains a difference only as its entry
+    states it (a refusal by its message, any other by its review)."""
+
+    def setUp(self):
+        self.model = Model("deepseek41", root=ROOT)
+        self.vectors, self.rounds, self.coverage, _ = frontend_corpus.read_corpus(self.model.fixtures)
+        self.record = frontend_corpus.read_recipe(self.model.fixtures)
+        self.table = frontend_corpus.read_divergences(self.model.divergences_path)
+
+    def errors(self, case=None, outcome=None, round=None, parse=None):
+        """The recipe gate's errors once the recipe gives `outcome` for
+        `case` or `parse` for `round`."""
+        record = copy.deepcopy(self.record)
+        if case is not None:
+            vector = next(vector for vector in self.vectors if vector["id"] == case)
+            record["cases"][case] = frontend_corpus.case_row(vector, outcome)
+        if round is not None:
+            vector = next(vector for vector in self.rounds if vector["id"] == round)
+            record["rounds"][round] = frontend_corpus.round_row(vector, parse)
+        directory = Path(tempfile.mkdtemp())
+        frontend_corpus.write_json(directory / frontend_corpus.RECIPE_FILE, record)
+        return frontend_corpus.check_recipe(self.model, directory, self.vectors, self.rounds, self.coverage,
+                                            self.table)
+
+    def other_render(self, case):
+        vector = next(vector for vector in self.vectors if vector["id"] == case)
+        return {"rendered_text": vector["rendered_text"] + "x", "token_ids": [*vector["token_ids"], 87]}
+
+    def test_the_committed_record_passes(self):
+        self.assertEqual(self.errors(), [])
+
+    def test_an_unreviewed_render_is_not_explained(self):
+        for case in ("namespaced-function-object", "continued-final-assistant-turn", "preserved-reasoning-at-max"):
+            with self.subTest(case=case):
+                self.assertIn(f"case {case}: the recipe renders other text, and no inputs or mapping entry explains "
+                              "it", self.errors(case, self.other_render(case)))
+
+    def test_an_unrelated_refusal_is_not_explained(self):
+        refusal = {"refusal": {"status": 400, "message": "an unrelated failure"}}
+        for case in ("namespaced-function-object", "qualified-tool-name", "developer-message"):
+            with self.subTest(case=case):
+                self.assertIn(f"case {case}: the recipe refuses it ({refusal['refusal']}), and no inputs or mapping "
+                              "entry explains it", self.errors(case, refusal))
+
+    def test_a_parse_rule_explains_no_refused_request(self):
+        refusal = {"refusal": {"status": 400, "message": "an unrelated failure"}}
+        for round in ("newline-edged-turn-round-endofsentence", "json-fenced-answer-round-endofsentence"):
+            with self.subTest(round=round):
+                self.assertIn(f"round trip {round}: the recipe's parse differs in refused, and no parser entry "
+                              "explains it", self.errors(round=round, parse=refusal))
+
+    def test_the_type_alias_rule_explains_only_the_served_aliases(self):
+        round = "s-string-type-str-round-endofsentence"
+        message = ("Invalid schema for function 'f': {} is not valid under any of the schemas listed in the 'anyOf' "
+                   "keyword")
+        self.assertEqual(self.errors(round=round, parse={"refusal": {"status": 400, "message": message.format(
+            '"text"')}}), [])
+        # A numeric type, as {"type": 42} gives, and a name the served
+        # coercion does not read as string.
+        for name in ("42", '"strings"'):
+            with self.subTest(name=name):
+                self.assertIn(f"round trip {round}: the recipe's parse differs in refused, and no parser entry "
+                              "explains it", self.errors(round=round, parse={"refusal": {
+                                  "status": 400, "message": message.format(name)}}))
 
 
 class StrictSchemaReference(unittest.TestCase):

@@ -220,15 +220,19 @@
       "when": [
         "message-tools:present"
       ],
-      "recipe_when": [
-        "message-tools:present",
-        "recipe:accepts"
-      ],
       "outcome": {
         "message": "invalid conversation field: message tools are not served",
         "parameter": "messages"
       },
-      "reason": "the recipe's request messages carry no tools (deepseek-recipe 0.2.0 (93b0fd229c), deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 62-90; unknown fields are ignored, line 7), so it drops a message's own tools and renders the request without them; this format refuses them by name rather than drop the client's tools silently"
+      "reason": "the recipe's request messages carry no tools (deepseek-recipe 0.2.0 (93b0fd229c), deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 62-90; unknown fields are ignored, line 7), so it drops a message's own tools and renders the request without them; this format refuses them by name rather than drop the client's tools silently",
+      "recipe_when": [
+        "message-tools:present",
+        "recipe:accepts"
+      ],
+      "recipe_reviewed": {
+        "g0095": "ff6dd06ba4c1c97688485ed04b950eb2416f935800165f65056d9c7af241b71d",
+        "system-message-tools": "8482b98f60a06287d2d417b178ede21e05b7a8b0a312c27e48ca6655b5a0db78"
+      }
     },
     {
       "id": "final-assistant-turn",
@@ -236,16 +240,29 @@
       "when": [
         "ends:assistant"
       ],
-      "recipe_when": [
-        "ends:assistant",
-        "recipe:accepts"
-      ],
       "outcome": {
         "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
         "parameter": "messages"
       },
       "reason": "mapping R4: the encoder ends a final assistant turn with the end-of-sentence token and writes no generation header after it (encoding.py lines 60, 695-706, 710-739), so the prompt leaves nothing to answer; the format refuses it rather than add the recipe's header; the refusal concerns the final turn alone, so the conversation's round trip still runs",
-      "ending_only": true
+      "ending_only": true,
+      "recipe_when": [
+        "ends:assistant",
+        "recipe:accepts"
+      ],
+      "recipe_reviewed": {
+        "final-assistant-turn": "0b00452796eeb3e496b5651e725fffc34688a952696bd9b354370b7741e20e89",
+        "g0039": "cb2d324469890e2084a60a2dda2fe712ba45588a548a799d3fe7ac149bade2d4",
+        "g0051": "1efd1c8a64164e30f0928e083f72777bdc5ef01119b9893ed350dbd57701fe4f",
+        "g0077": "6250c28b2ce81e26ae635e62c5fe5c12c37a0a30ed31937f55cbe56acc17229f",
+        "g0109": "b827791d25b5e3f24da0b49acf90874774efb7fd7b89f2f33203073c84bc5af7",
+        "g0110": "d4a35e5f00c042edc3c9fafa83850d27fecae3d46d739d0aded8e98da770f558",
+        "g0111": "bc2c5524fa724189216bf4ef56b76fcf2b1333af9804170ab9ce8ffd3207bd7f",
+        "json-fenced-answer": "5991fc3e2df9e24cc70926f116543d6e4fbe91db9db1c85ca42b2f00f781d2ed",
+        "newline-edged-turn": "51ebd8aaab874ceec52efb9510a27aa9e74d8911f205ee086d69eecd02585290",
+        "special-token-in-assistant-turn": "b56121621353a71323f2d4205ac91058faf0170ce7b05815d5e13a9f399cc0c1",
+        "vendor-pair-1": "d89b61ce9d3b16b6097c6dd7549c8458ba70e44c5df4addd52a8c58d17bfb3ba"
+      }
     },
     {
       "id": "missing-call-id",
@@ -312,15 +329,18 @@
       "when": [
         "file:flat"
       ],
-      "recipe_when": [
-        "file:flat",
-        "recipe:accepts"
-      ],
       "outcome": {
         "message": "a file part carries its fields in a \"file\" object: {\"type\": \"file\", \"file\": {\"file_data\": ...}}",
         "parameter": "messages"
       },
-      "reason": "deepseek-recipe 0.2.0 (93b0fd229c) reads a file part's file_id, file_data and filename at the part's top level (deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 133-139, convert.rs lines 332-353), which is not OpenAI's shape, and renders the image; this format reads the nested file object of OpenAI's file content part and refuses the flat fields by name"
+      "reason": "deepseek-recipe 0.2.0 (93b0fd229c) reads a file part's file_id, file_data and filename at the part's top level (deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 133-139, convert.rs lines 332-353), which is not OpenAI's shape, and renders the image; this format reads the nested file object of OpenAI's file content part and refuses the flat fields by name",
+      "recipe_when": [
+        "file:flat",
+        "recipe:accepts"
+      ],
+      "recipe_reviewed": {
+        "file-flat": "d7a42a350d39f3b8b1454aa541550d531e69578db27103c7aaca73bf4a299d1d"
+      }
     },
     {
       "id": "file-non-image",
@@ -365,7 +385,7 @@
     {
       "id": "R1-earlier-reasoning",
       "follows": "encoding.py",
-      "rule": "in thinking mode, reasoning before the last user turn drops, and such a turn writes </think> alone, unless preserve_thinking or a declared tool keeps it; a turn after the last user turn keeps its reasoning, or writes <think></think> without any. The recipe renders every turn's reasoning when its tool prompt renders, as the encoder does with a declared tool, and otherwise drops every turn's reasoning and writes </think> alone, so without the tool prompt (no offered tools, or tool_choice none) it differs after the last user turn; its request has no preserve_thinking. A generated request carries no tag for this cause, so its differences are reviewed one by one and bound by fingerprint (recipe_reviewed); a continued request's is continue-final-message's",
+      "rule": "in thinking mode, reasoning before the last user turn drops, and such a turn writes </think> alone, unless preserve_thinking or a declared tool keeps it; a turn after the last user turn keeps its reasoning, or writes <think></think> without any. The recipe renders every turn's reasoning when its tool prompt renders, as the encoder does with a declared tool, and otherwise drops every turn's reasoning and writes </think> alone, so without the tool prompt (no offered tools, or tool_choice none) it differs after the last user turn; its request has no preserve_thinking. Each difference is reviewed and bound by fingerprint (recipe_reviewed); a continued request's is continue-final-message's",
       "source": "plan V4 (rendering follows encoding.py); encoding.py lines 690-694, 749-790; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe-encoding/src/v4/dsv41.rs lines 206-226, 285-286, deepseek-recipe-encoding/src/v4/mod.rs lines 94-96",
       "cases": [
         "earlier-reasoning-dropped",
@@ -374,13 +394,14 @@
         "reasoning-after-last-user"
       ],
       "recipe_when": [
-        "reasoning:rendered-without-tools",
         "recipe:render"
       ],
       "recipe_reviewed": {
         "g0045": "4590d0a17411089c876259229b2ba292be6e72706fe29e89ae6114c9324def41",
         "g0050": "4ff3b0800c9aec50ffafc22261771d6e119b5ef8fe9ebe4b412746c918181ec9",
-        "g0076": "45c8d9e370b887a9611282ce4265ca7890fa50cc9ed29c4ff19f2826049e697a"
+        "g0076": "45c8d9e370b887a9611282ce4265ca7890fa50cc9ed29c4ff19f2826049e697a",
+        "preserved-reasoning-at-max": "fb5d421b601b05333c6991d75ed468e90257025ab96a68c9a46afeb1d5eee9c5",
+        "reasoning-after-last-user": "6e7312a31bffbe6ead588b0ed441d2b1c4dd152baba5e22c131e47352d2f7434"
       }
     },
     {
@@ -459,7 +480,7 @@
         "developer:present",
         "recipe:refuses"
       ],
-      "recipe_message": "^invalid request body: unknown variant `developer`"
+      "recipe_message": "^invalid request body: unknown variant `developer`, expected one of `system`, `user`, `assistant`, `tool`, `latest_reminder`$"
     },
     {
       "id": "system-images",
@@ -539,7 +560,15 @@
       ],
       "recipe_when": [
         "namespace:present"
-      ]
+      ],
+      "recipe_message": "^(Invalid 'tools\\[[0-9]+\\]\\.function\\.name': string does not match pattern\\. Expected a string that matches the pattern '\\^\\[a-zA-Z0-9_-\\]\\+\\$'\\.|Invalid value for 'tool_call': no function named '[^':]+::[^']+' was specified in the 'tools' parameter\\.)$",
+      "recipe_reviewed": {
+        "namespace-name-on-function": "f8dfd12eadfdda4771017ac71b4ebb8befb0bcc8621c13c30de6c04d63d3e299",
+        "namespace-on-tool-object": "12bc05bbcd248cde37ac01a59c644099d5b04987dd18b6ff0c993c1234068bdc",
+        "namespaced-function-object": "c99e16f5cd102d6c6949cb94ec249bd6662ad09e8ea2ec5ad8bf6d6580b33bf6",
+        "qualified-call-in-history": "f3e8c79329f0c0d099596748fa3a54f59c4ad6ac165500f45bbe583cdd77a99c",
+        "separator-in-namespace": "0f3f453b98cc14c94d37797a06bd5008c9f36670e04a995bfff66fed2d9c00b8"
+      }
     },
     {
       "id": "file-parts",
@@ -554,7 +583,8 @@
       "recipe_when": [
         "file:image",
         "recipe:refuses"
-      ]
+      ],
+      "recipe_message": "^\\.messages\\[[0-9]+\\]: file must have a file_id or file_data$"
     },
     {
       "id": "continue-final-message",
@@ -567,7 +597,19 @@
       "recipe_when": [
         "ends:continue",
         "recipe:render"
-      ]
+      ],
+      "recipe_reviewed": {
+        "continued-final-assistant-turn": "3003425242a3c17428cc6a4e894995e7d49e655a6ebbbdc8753418b2b6219261",
+        "g0001": "f8352f9a2ad03b9f19074e2b498842e4dec095a7a2e0f410515f2ba7ef5768c1",
+        "g0007": "556f730f3477268fcf45a7a3fd01c244a619b8849c003092b6ebf5df63265677",
+        "g0014": "608b4dc009cc7f1b036f3cf6440db1fed778efd424ab275e7f199186b3287390",
+        "g0016": "8c002ade446bd00f853ceb41f6289363c8953683f47c920fd1ab8fe2cdc22584",
+        "g0029": "ba5c3b4ccb110f8c94d1efcb8d33f51cd341aa7703eb98b46330d969dced19cb",
+        "g0033": "f74a82bb91d677cf2748dce135d209be0d6b595769d5118895d65a1c01a7bbf6",
+        "g0060": "485f8b466451b4b7831f29894576faa6dbd6c96f2e5cad67c142d4390ecd77cd",
+        "g0078": "cd3aaf223a8ea87a25700d5bc0db225c197b0b0dc91bb1e08209ac93a7622565",
+        "g0091": "3f94ddea99fefc6e80959631508df23b1851f4c1a6a86737b07402a6648fece7"
+      }
     },
     {
       "id": "prefix-beside-tools-or-json-object",
@@ -597,7 +639,11 @@
       "recipe_when": [
         "json-schema:falsy",
         "recipe:render"
-      ]
+      ],
+      "recipe_reviewed": {
+        "response-format-empty-schema": "dc3a7c8d78555e7dd33ea251a406abff39a0fd8c448b9101d5fc7d9b0b1552f9",
+        "response-format-false-schema": "d0e0c1bc9e72a20dbe6668e6c0550d33d258fe674816142dcf401ba66d50555d"
+      }
     },
     {
       "id": "double-encoded-arguments",
@@ -610,22 +656,83 @@
       "recipe_when": [
         "fixed:double-encoded-arguments",
         "recipe:render"
-      ]
+      ],
+      "recipe_reviewed": {
+        "double-encoded-arguments": "4749020c1be788d0a107475b6ca7f96f72783e0cb4d6ed512ebb45d7cd3705a9"
+      }
     },
     {
-      "id": "recipe-conversation-checks",
+      "id": "partial-tool-results",
       "follows": "encoding.py",
-      "rule": "conversation shapes the encoder renders are rendered, where the recipe refuses them: tool messages directly after a turn's tool calls that do not answer each call once (a result missing, or naming no call of that turn), which the encoder renders and sorts as they are; a tool message with no call turn before it; and an assistant message with neither content nor tool calls. The recipe reports the first failure in its own check order, so this entry explains a refusal whose message names one of these checks. Where both refuse a request their refusal texts differ; the corpus compares only whether each refuses",
-      "source": "encoding.py lines 184-260; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 41-46, 449-558",
+      "rule": "tool messages directly after a turn's calls that do not answer each call render as the encoder renders and sorts them; the recipe refuses the request for insufficient tool messages. A result that comes after a later user turn does not count for the recipe",
+      "source": "encoding.py lines 184-260; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 473-474, 492-507",
       "cases": [
         "tool-image-single",
         "tool-images-with-user",
         "tool-images-sorted"
       ],
       "recipe_when": [
+        "results:partial",
         "recipe:refuses"
       ],
-      "recipe_message": "^(An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'|Messages with role 'tool' must be a response to a preceding message with 'tool_calls'|Invalid assistant message: content or tool_calls must be set)"
+      "recipe_message": "^An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'\\. \\(insufficient tool messages following tool_calls message\\)$"
+    },
+    {
+      "id": "continued-tool-calls",
+      "follows": "encoding.py",
+      "rule": "continue_final_message on a final assistant turn with calls continues that turn after its calls, as the encoder writes it without its end-of-sentence token; the recipe has no continue_final_message (continue-final-message), so it reads the turn's calls as unanswered and refuses the request for insufficient tool messages",
+      "source": "encoding.py lines 695-706; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs line 7, deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 473-474, 492-507",
+      "cases": [
+        "g0107"
+      ],
+      "recipe_when": [
+        "ends:continue-calls",
+        "recipe:refuses"
+      ],
+      "recipe_message": "^An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'\\. \\(insufficient tool messages following tool_calls message\\)$"
+    },
+    {
+      "id": "unmatched-tool-results",
+      "follows": "encoding.py",
+      "rule": "a tool message directly after a turn's calls that names none of them renders as the encoder renders it; the recipe refuses the request, quoting the id that message names",
+      "source": "encoding.py lines 184-260; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 508-513",
+      "cases": [
+        "g0011"
+      ],
+      "recipe_when": [
+        "results:unmatched",
+        "recipe:refuses"
+      ],
+      "recipe_message": "^An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id', The following tool_call_ids did not have response messages: .+$"
+    },
+    {
+      "id": "duplicate-tool-results",
+      "follows": "encoding.py",
+      "rule": "tool messages beyond one per call of the turn before them, such as a second result for a call, render as the encoder renders them; the recipe reads one tool message per call and refuses the next as a tool message that answers no preceding call",
+      "source": "encoding.py lines 184-260; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 492-507, 553-557",
+      "cases": [
+        "g0003"
+      ],
+      "recipe_when": [
+        "results:duplicate",
+        "recipe:refuses"
+      ],
+      "recipe_message": "^Messages with role 'tool' must be a response to a preceding message with 'tool_calls'$"
+    },
+    {
+      "id": "empty-assistant-message",
+      "follows": "encoding.py",
+      "rule": "an assistant message with neither content nor tool calls renders as the encoder renders an empty turn; the recipe refuses it",
+      "source": "encoding.py lines 184-260; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 456-460",
+      "cases": [
+        "g0013"
+      ],
+      "recipe_when": [
+        "assistant-content:none",
+        "calls:0",
+        "recipe:refuses"
+      ],
+      "recipe_message": "^Invalid assistant message: content or tool_calls must be set$"
     },
     {
       "id": "json-word-check",
@@ -640,7 +747,7 @@
         "response-format:json-object",
         "recipe:refuses"
       ],
-      "recipe_message": "^Prompt must contain the word 'json'"
+      "recipe_message": "^Prompt must contain the word 'json' in some form to use 'response_format' of type 'json_object'\\.$"
     },
     {
       "id": "non-strict-schema-validation",
@@ -653,7 +760,8 @@
       "recipe_when": [
         "tool-schema:type-alias",
         "recipe:refuses"
-      ]
+      ],
+      "recipe_message": "^Invalid schema for function '[^']*': \"(str|text|varchar|char|enum)\" is not valid under any of the schemas listed in the 'anyOf' keyword$"
     },
     {
       "id": "strict-schema-numbers",
@@ -666,7 +774,10 @@
       "recipe_when": [
         "strict-schema:large-number",
         "recipe:render"
-      ]
+      ],
+      "recipe_reviewed": {
+        "strict-large-number": "c9b5005846af6723216265e89ea8ba3fbb22c8068faef83f4d8e317e4abc3e24"
+      }
     },
     {
       "id": "strict-schema-positional-nodes",
@@ -679,7 +790,10 @@
       "recipe_when": [
         "strict-schema:positional-node",
         "recipe:accepts"
-      ]
+      ],
+      "recipe_reviewed": {
+        "strict-positional-node": "c7ecd654881c7f39cc3c027404b4d1007617b8ed2855001479d6c561a6bd176d"
+      }
     },
     {
       "id": "named-choice-schema-scope",
@@ -693,7 +807,8 @@
       "recipe_when": [
         "fixed:named-choice-skips-schema",
         "recipe:refuses"
-      ]
+      ],
+      "recipe_message": "^Required properties must match all properties in the object$"
     },
     {
       "id": "special-token-spellings",
@@ -706,12 +821,17 @@
       "recipe_when": [
         "assistant-content:inline-think",
         "recipe:tokens"
-      ]
+      ],
+      "recipe_reviewed": {
+        "g0042": "78af00bfa05a21d6caff2958e94542cec5ebae7618ff556f3ca211b504cc2476",
+        "g0043": "841ff804262c11ddd9cde1c18e4deaef0571d6a04c055471daf7795f1d84f98c",
+        "special-token-in-history": "71628a3ca5ccd5bd243e002da0a12bda7c1a688d32c33d933465062dd5332ae5"
+      }
     },
     {
       "id": "image-placeholder-spelling",
       "follows": "encoding.py",
-      "rule": "the image placeholder <｜deepseek_image｜> typed in client text is refused, as the encoder refuses it in string content, reasoning and text parts, where it would read as an image; the recipe encodes client text as plain text and renders it (special-token-spellings)",
+      "rule": "the image placeholder <｜deepseek_image｜> typed in client text is refused, as the encoder refuses it in string content, reasoning and text parts, where it would read as an image; the recipe accepts the request: it encodes client text as plain text and renders it (special-token-spellings), or drops reasoning it does not render (R1)",
       "source": "encoding.py lines 342-348, 355-367; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 297-308; follow-up: special-token spellings in client text",
       "cases": [
         "image-placeholder-in-content",
@@ -721,51 +841,63 @@
       "recipe_when": [
         "client-text:image-placeholder",
         "recipe:accepts"
-      ]
+      ],
+      "recipe_reviewed": {
+        "image-placeholder-in-content": "cda7ce75be86e0e3180068213d793ef8e5487292d8aca5e580fc80c1ce35d17d",
+        "image-placeholder-in-reasoning": "2dc631b05459433e5c165b6400b623bbd0d7d42f1c7e462e21390c6f4af75f5a",
+        "image-placeholder-in-text-part": "133492b8ec016f1c65b6370a84a671bb1bf1d54c18bb63cd8b7142e93574984c"
+      }
     }
   ],
   "parser": [
     {
       "id": "newline-trimming",
+      "reason": "the served parser keeps every byte of reasoning and answer text, as the encoder wrote the turn; deepseek-recipe 0.2.0 (93b0fd229c)'s stream parser drops the newlines that start the reasoning, those before </think> and those that start the answer (deepseek-recipe/src/stream/output_parser.rs lines 108-125, 441-449, 573-588)",
       "recipe_when": [
         "turn-text:edge-newlines",
         "recipe:parse"
       ],
-      "reason": "the served parser keeps every byte of reasoning and answer text, as the encoder wrote the turn; deepseek-recipe 0.2.0 (93b0fd229c)'s stream parser drops the newlines that start the reasoning, those before </think> and those that start the answer (deepseek-recipe/src/stream/output_parser.rs lines 108-125, 441-449, 573-588)"
+      "recipe_reviewed": {
+        "newline-edged-turn-round-endofsentence": "da7c33524ecf66cf32ac8adebfe63a58e76bb4d78c71d80772868e4190c5a170"
+      }
     },
     {
       "id": "json-fences",
+      "reason": "under a json_object response format the served parser passes the answer through as the model wrote it; deepseek-recipe 0.2.0 (93b0fd229c) drops a JSON fence and turns text outside the JSON into spaces (deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs line 157, deepseek-recipe/src/stream/output_parser.rs lines 8, 422-434, 459-479)",
       "recipe_when": [
         "answer:json-fence",
         "recipe:parse"
       ],
-      "reason": "under a json_object response format the served parser passes the answer through as the model wrote it; deepseek-recipe 0.2.0 (93b0fd229c) drops a JSON fence and turns text outside the JSON into spaces (deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs line 157, deepseek-recipe/src/stream/output_parser.rs lines 8, 422-434, 459-479)"
+      "recipe_reviewed": {
+        "json-fenced-answer-round-endofsentence": "a40152d92b5f40f2d479df0b81bc9d6a22fd19d900a09613a59c32f79f96284a"
+      }
     },
     {
       "id": "developer-round-trips",
+      "reason": "the recipe refuses the request of a round trip that holds a developer message, for which its Chat Completions request has no role (developer-as-system), so it parses nothing",
       "recipe_when": [
         "developer:present",
         "parse:refused"
       ],
-      "recipe_message": "^invalid request body: unknown variant `developer`",
-      "reason": "the recipe refuses the request of a round trip that holds a developer message, for which its Chat Completions request has no role (developer-as-system), so it parses nothing"
+      "recipe_message": "^invalid request body: unknown variant `developer`, expected one of `system`, `user`, `assistant`, `tool`, `latest_reminder`$"
     },
     {
       "id": "json-word-round-trips",
+      "reason": "the recipe refuses the request of a round trip with a json_object response format and no word json in its messages (json-word-check), so it parses nothing",
       "recipe_when": [
         "response-format:json-object",
         "parse:refused"
       ],
-      "recipe_message": "^Prompt must contain the word 'json'",
-      "reason": "the recipe refuses the request of a round trip with a json_object response format and no word json in its messages (json-word-check), so it parses nothing"
+      "recipe_message": "^Prompt must contain the word 'json' in some form to use 'response_format' of type 'json_object'\\.$"
     },
     {
       "id": "type-alias-round-trips",
+      "reason": "the recipe refuses the request of the shared string-type round trips (s-string-type-* in tools/refrun/frontend_cases.py), whose tool declares one of the type names str, text, varchar, char or enum, which JSON Schema does not have, which the served argument coercion reads as string (non-strict-schema-validation), so it parses nothing",
       "recipe_when": [
+        "tools:wrapped",
         "parse:refused"
       ],
-      "recipe_message": "^Invalid schema for function '[^']*': .* is not valid under any of the schemas listed in the 'anyOf' keyword",
-      "reason": "the recipe refuses the request of the shared string-type round trips (s-string-type-* in tools/refrun/frontend_cases.py), whose tool declares a type name JSON Schema does not have, such as str or text, which the served argument coercion reads as string (non-strict-schema-validation), so it parses nothing"
+      "recipe_message": "^Invalid schema for function '[^']*': \"(str|text|varchar|char|enum)\" is not valid under any of the schemas listed in the 'anyOf' keyword$"
     }
   ]
 }

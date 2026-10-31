@@ -770,9 +770,10 @@ def toy_render(text):
     return {"rendered_text": text, "token_ids": [ord(character) for character in text]}
 
 
-def mapping_entry(identifier, follows, cases, recipe_when=None):
+def mapping_entry(identifier, follows, cases, recipe_when=None, **recipe):
+    """A mapping entry; `recipe` sets its recipe_message or recipe_reviewed."""
     entry = {"id": identifier, "follows": follows, "rule": "r", "source": "s", "cases": cases}
-    return dict(entry, recipe_when=recipe_when) if recipe_when else entry
+    return {**entry, **({"recipe_when": recipe_when} if recipe_when else {}), **recipe}
 
 
 class RecipeOracleTests(Harness):
@@ -792,6 +793,14 @@ class RecipeOracleTests(Harness):
 
     def record(self, directory):
         return json.loads((directory / corpus.RECIPE_FILE).read_text())
+
+    def reviews(self, directory, *keys):
+        """A recipe_reviewed of the differences of the cases or round trips
+        `keys` names in the corpus at `directory`."""
+        vectors, rounds, coverage, _ = corpus.read_corpus(directory)
+        found = {difference.key: difference.fingerprint for difference in corpus.recipe_differences(
+            self.record(directory), coverage, vectors, rounds)}
+        return {key: found[key] for key in keys}
 
     def test_an_agreeing_recipe_is_recorded_with_its_pin_and_passes(self):
         model = self.model()
@@ -815,16 +824,17 @@ class RecipeOracleTests(Harness):
     def test_a_difference_must_match_exactly_one_entry(self):
         model = self.model()
         oracle = FakeOracle(model, renders={"low": toy_render("<sys>low!<user>hi<asst>")})
-        rule = mapping_entry("low-rule", "chat_template.jinja", ["low"], ["effort:low", "recipe:render"])
-        table = self.tables([rule])
-        committed = self.corpus_of(model, table, oracle)
+        committed = self.corpus_of(model, self.tables(), oracle)
         self.assertEqual(self.record(committed)["cases"]["low"]["difference"], "render")
+        rule = mapping_entry("low-rule", "chat_template.jinja", ["low"], ["effort:low", "recipe:render"],
+                             recipe_reviewed=self.reviews(committed, "low"))
+        table = self.tables([rule])
         self.assertEqual(self.check(model, committed, table), [])
-        twin = mapping_entry("twin", "chat_template.jinja", ["low"], ["recipe:render"])
-        twin = dict(twin, recipe_when=["effort:low", "recipe:render"])
+        twin = dict(rule, id="twin")
         self.assertIn("case low: the recipe renders other text, and several entries explain it (low-rule, twin)",
                       self.check(model, committed, self.tables([rule, twin])))
-        # The same text as other ids is a class of its own.
+        # The same text as other ids is a class of its own, and another
+        # difference than the reviewed one.
         oracle = FakeOracle(model, renders={"low": {**toy_render("<sys>low<user>hi<asst>"), "token_ids": [0]}})
         committed = self.corpus_of(model, table, oracle)
         self.assertIn("case low: the recipe gives other token ids, and no inputs or mapping entry explains it",
@@ -834,41 +844,92 @@ class RecipeOracleTests(Harness):
         pinned = {"id": "pinned", "request": {"messages": [user("p")]}, "features": ["fixed:pinned"]}
         model = self.model(cases=WITHOUT_LEGACY + [pinned])
         role = {"refusal": {"status": 400, "message": "unknown variant `critic`, expected `user`"}}
-        oracle = FakeOracle(model, renders={"low": role, "high": role}, refuses=("undeclared", "pinned"))
-        roles = dict(mapping_entry("roles", "chat_template.jinja", ["low"], ["recipe:refuses"]),
-                     recipe_message="unknown variant `[a-z]+`")
-        fixed = mapping_entry("fixed", "chat_template.jinja", ["pinned"], ["fixed:pinned", "recipe:refuses"])
+        oracle = FakeOracle(model, renders={"low": role}, refuses=("undeclared", "pinned"))
+        roles = mapping_entry("roles", "chat_template.jinja", ["low"], ["effort:low", "recipe:refuses"],
+                              recipe_message="^unknown variant `[a-z]+`")
+        fixed = mapping_entry("fixed", "chat_template.jinja", ["pinned"], ["fixed:pinned", "recipe:refuses"],
+                              recipe_message="^refused$")
         table = self.tables([roles, fixed])
         committed = self.corpus_of(model, table, oracle)
         self.assertEqual(self.check(model, committed, table), [])
-        # A generated case the recipe refuses for another cause carries the
-        # same tags, and no entry explains it.
+        # The same case refused for another cause carries the same tags, and
+        # no entry explains it.
         json_word = {"refusal": {"status": 400, "message": "Prompt must contain the word 'json'"}}
-        oracle = FakeOracle(model, renders={"low": role, "high": json_word}, refuses=("undeclared", "pinned"))
+        oracle = FakeOracle(model, renders={"low": json_word}, refuses=("undeclared", "pinned"))
         committed = self.corpus_of(model, table, oracle)
         self.assertEqual(self.check(model, committed, table), [
-            "case high: the recipe refuses it ({'status': 400, 'message': \"Prompt must contain the word 'json'\"}), "
-            "and no inputs or mapping entry explains it"])
-        # An entry that names no cause, only the difference's class and the
-        # case's status, would have explained it, so it is refused.
-        for tags in (["case:generated", "recipe:refuses"], ["recipe:refuses"]):
-            broad = mapping_entry("generated", "chat_template.jinja", ["low"], tags)
-            with self.subTest(tags=tags), self.assertRaisesRegex(
-                    corpus.CorpusError, "mapping entry generated would explain a difference by its class alone: its "
-                                        "recipe_when names no cause"):
+            "case low: the recipe refuses it ({'status': 400, 'message': \"Prompt must contain the word 'json'\"}), "
+            "and no inputs or mapping entry explains it",
+            "mapping entry roles is stale: it explains no committed difference from the recipe"])
+        # Nor does a review of it: a refusal is explained by its message.
+        reviewed = mapping_entry("reviewed", "chat_template.jinja", ["low"], ["effort:low", "recipe:refuses"],
+                                 recipe_reviewed=self.reviews(committed, "low"))
+        self.assertIn("case low: the recipe refuses it ({'status': 400, 'message': \"Prompt must contain the word "
+                      "'json'\"}), and no inputs or mapping entry explains it",
+                      self.check(model, committed, self.tables([reviewed, fixed])))
+        # An entry that would explain a refusal by its message or tags alone
+        # is refused.
+        for tags, recipe, error in (
+                (["case:generated", "recipe:refuses"], {"recipe_message": "."}, "by its message alone"),
+                (["recipe:refuses"], {"recipe_message": "."}, "by its message alone"),
+                (["effort:low", "recipe:refuses"], {}, "sets recipe_when but neither recipe_message nor "
+                                                       "recipe_reviewed")):
+            broad = mapping_entry("broad", "chat_template.jinja", ["low"], tags, **recipe)
+            with self.subTest(tags=tags, recipe=recipe), self.assertRaisesRegex(
+                    corpus.CorpusError, f"mapping entry broad (would explain a refusal )?{error}"):
                 corpus.read_divergences(self.tables([broad, fixed]))
+
+    def test_only_a_review_explains_a_render_an_acceptance_or_a_parse(self):
+        model = self.model()
+        renders = {"low": toy_render("<sys>low!<user>hi<asst>"), "high": toy_render("<sys>max!<user>hi<asst>")}
+        parse = {"reasoning": "", "content": "", "finish_reason": "tool_calls",
+                 "tool_calls": [{"name": "f", "arguments": "{\"n\": true}"}]}
+        oracle = FakeOracle(model, renders=renders, parses={"called-round-end": parse}, refuses=())
+        committed = self.corpus_of(model, self.tables(), oracle)
+        reviewed = self.reviews(committed, "low", "high", "undeclared", "called-round-end")
+        efforts = mapping_entry("efforts", "chat_template.jinja", ["low"], ["recipe:render"],
+                                recipe_reviewed={key: reviewed[key] for key in ("low", "high")})
+        accepted = dict(UNDECLARED, recipe_when=["effort:undeclared", "recipe:accepts"],
+                        recipe_reviewed={"undeclared": reviewed["undeclared"]})
+        bools = {"id": "bools", "recipe_when": ["calls:1", "parse:tool_calls"], "reason": "-",
+                 "recipe_reviewed": {"called-round-end": reviewed["called-round-end"]}}
+        table = self.tables([efforts], [bools], [accepted])
+        self.assertEqual(self.check(model, committed, table), [])
+        # A render the entry did not review is not explained, though its
+        # tags hold, nor is an acceptance or a parse; a message pattern
+        # explains no render.
+        partial = mapping_entry("efforts", "chat_template.jinja", ["low"], ["recipe:render"],
+                                recipe_reviewed={"low": reviewed["low"]})
+        maxes = mapping_entry("maxes", "chat_template.jinja", ["high"], ["effort:high", "recipe:render"],
+                              recipe_message=".")
+        errors = self.check(model, committed, self.tables([partial, maxes], [dict(bools, recipe_reviewed={
+            "answer-round-end": reviewed["called-round-end"]})], [dict(accepted, recipe_reviewed={
+                "low": reviewed["undeclared"]})]))
+        self.assertIn("case high: the recipe renders other text, and no inputs or mapping entry explains it", errors)
+        self.assertIn("case undeclared: the recipe renders it where the corpus refuses, and no inputs or mapping "
+                      "entry explains it", errors)
+        self.assertIn("round trip called-round-end: the recipe's parse differs in tool_calls, and no parser entry "
+                      "explains it", errors)
+        # A parse rule explains no refusal of the round trip's request.
+        oracle = FakeOracle(model, renders=renders, parses={
+            "called-round-end": {"refusal": {"status": 400, "message": "unrelated"}}}, refuses=())
+        refused = self.corpus_of(model, table, oracle)
+        self.assertIn("round trip called-round-end: the recipe's parse differs in refused, and no parser entry "
+                      "explains it", self.check(model, refused, table))
 
     def test_a_review_binds_one_difference_and_fails_once_it_changes(self):
         model = self.model()
-        # Its tags explain nothing here; only its review can.
-        reviewed = mapping_entry("reviewed", "chat_template.jinja", ["low"], ["effort:high", "recipe:render"])
         oracle = FakeOracle(model, renders={"low": toy_render("<sys>low!<user>hi<asst>")})
-        committed = self.corpus_of(model, self.tables([reviewed]), oracle)
+        committed = self.corpus_of(model, self.tables(), oracle)
         vector = next(vector for vector in json.loads((committed / "corpus.json").read_text())
                       if vector["id"] == "low")
         fingerprint = corpus.difference_fingerprint(self.record(committed)["cases"]["low"],
                                                     corpus.corpus_outcome(vector))
+        self.assertEqual(self.reviews(committed, "low"), {"low": fingerprint})
         unexplained = "case low: the recipe renders other text, and no inputs or mapping entry explains it"
+        # A review of another case's difference explains nothing here.
+        reviewed = mapping_entry("reviewed", "chat_template.jinja", ["low"], ["effort:low", "recipe:render"],
+                                 recipe_reviewed={"absent": fingerprint})
         self.assertEqual(self.check(model, committed, self.tables([reviewed])), [
             unexplained, "mapping entry reviewed is stale: it explains no committed difference from the recipe"])
         table = self.tables([dict(reviewed, recipe_reviewed={"low": fingerprint})])
@@ -907,10 +968,11 @@ class RecipeOracleTests(Harness):
 
     def test_an_inputs_entry_explains_what_the_recipe_accepts(self):
         model = self.model()
-        explained = dict(UNDECLARED, recipe_when=["effort:undeclared", "recipe:accepts"])
-        table = self.tables(inputs=[explained])
-        committed = self.corpus_of(model, table, FakeOracle(model, refuses=()))
+        committed = self.corpus_of(model, self.tables(), FakeOracle(model, refuses=()))
         self.assertEqual(self.record(committed)["cases"]["undeclared"]["difference"], "accepts")
+        explained = dict(UNDECLARED, recipe_when=["effort:undeclared", "recipe:accepts"],
+                         recipe_reviewed=self.reviews(committed, "undeclared"))
+        table = self.tables(inputs=[explained])
         self.assertEqual(self.check(model, committed, table), [])
 
     def test_an_unattributed_difference_fails_the_gate_and_minimization(self):
@@ -924,7 +986,7 @@ class RecipeOracleTests(Harness):
                                                         + unexplained.replace("(", r"\(").replace(")", r"\)")):
             corpus.minimize(model, self.directory / "full", self.directory / "minimal", table)
         # A parser entry explains no render difference, and is stale itself.
-        parser = {"id": "p", "recipe_when": ["effort:high"], "reason": "-"}
+        parser = {"id": "p", "recipe_when": ["effort:high"], "recipe_message": "^refused$", "reason": "-"}
         self.assertEqual(self.check(model, committed, self.tables(parser=[parser])), [
             unexplained, "parser entry p is stale: it explains no committed difference from the recipe"])
 
@@ -939,9 +1001,10 @@ class RecipeOracleTests(Harness):
             "mapping entry R1 follows encoding.py where the recipe differs, but every case it names agrees with "
             "the recipe"])
         # Once one of its cases differs, R1 holds, and R2, which names it, fails.
-        reference = dict(reference, recipe_when=["effort:high", "recipe:render"])
-        table = self.tables([reference, recipe])
         committed = self.corpus_of(model, table, FakeOracle(model, renders={"high": toy_render("<sys>max<user>hi")}))
+        reference = dict(reference, recipe_when=["effort:high", "recipe:render"],
+                         recipe_reviewed=self.reviews(committed, "high"))
+        table = self.tables([reference, recipe])
         self.assertEqual(self.check(model, committed, table),
                          ["mapping entry R2 follows the recipe, but its case high differs from it"])
 
@@ -980,10 +1043,13 @@ class RecipeOracleTests(Harness):
                        "explains it")
         self.assertEqual(self.check(model, committed, table), [unexplained])
         # An inputs or mapping entry explains no parse; a parser entry does,
-        # by the case's features, the fields and the prompt's mode.
-        rule = mapping_entry("rule", "s", ["called"], ["calls:1"])
+        # by its review, where the case's features, the fields and the
+        # prompt's mode hold.
+        reviewed = self.reviews(committed, "called-round-end")
+        rule = mapping_entry("rule", "s", ["called"], ["calls:1"], recipe_reviewed=reviewed)
         self.assertIn(unexplained, self.check(model, committed, self.tables([rule])))
-        parser = {"id": "bools", "recipe_when": ["calls:1", "parse:tool_calls", "mode:thinking"], "reason": "-"}
+        parser = {"id": "bools", "recipe_when": ["calls:1", "parse:tool_calls", "mode:thinking"], "reason": "-",
+                  "recipe_reviewed": reviewed}
         self.assertEqual(self.check(model, committed, self.tables(parser=[parser])), [])
         # A refused request and a failed parse are differences too.
         committed = self.corpus_of(model, table, FakeOracle(model, parses={
@@ -992,11 +1058,17 @@ class RecipeOracleTests(Harness):
         rounds = self.record(committed)["rounds"]
         self.assertEqual((rounds["called-round-end"]["differences"], rounds["answer-round-end"]["differences"]),
                          (["refused"], ["error"]))
-        # A parser entry's message pattern reads a refusal's message and a
-        # failed parse's error.
-        refused = {"id": "refused", "recipe_when": ["parse:refused"], "recipe_message": "^no$", "reason": "-"}
-        failed = {"id": "failed", "recipe_when": ["parse:error"], "recipe_message": "decode", "reason": "-"}
+        # A parser entry's message pattern reads a refused request's message;
+        # a failed parse, like any other parse, is explained by its review.
+        refused = {"id": "refused", "recipe_when": ["calls:1", "parse:refused"], "recipe_message": "^no$",
+                   "reason": "-"}
+        failed = {"id": "failed", "recipe_when": ["parse:error"], "reason": "-",
+                  "recipe_reviewed": self.reviews(committed, "answer-round-end")}
         self.assertEqual(self.check(model, committed, self.tables(parser=[refused, failed])), [])
+        self.assertIn("round trip answer-round-end: the recipe's parse differs in error, and no parser entry "
+                      "explains it", self.check(model, committed, self.tables(parser=[refused, dict(
+                          failed, recipe_reviewed=None, recipe_when=["ends:assistant", "parse:error"],
+                          recipe_message="decode")])))
         self.assertEqual(self.check(model, committed, self.tables(parser=[dict(refused, recipe_message="^n$"),
                                                                           failed])), [
             "round trip called-round-end: the recipe's parse differs in refused, and no parser entry explains it",
@@ -1031,7 +1103,9 @@ class RecipeOracleTests(Harness):
         model = self.model(cases=WITHOUT_LEGACY + [REDUNDANT])
         oracle = FakeOracle(model, renders={"low": toy_render("<sys>low!<user>hi<asst>"),
                                             "low-again": toy_render("<sys>low!<user>hey<asst>")})
-        table = self.tables([mapping_entry("lows", "chat_template.jinja", ["low"], ["effort:low", "recipe:render"])])
+        full = self.generate(model, self.tables(), oracle=oracle)
+        table = self.tables([mapping_entry("lows", "chat_template.jinja", ["low"], ["effort:low", "recipe:render"],
+                                           recipe_reviewed=self.reviews(full, "low", "low-again"))])
         full = self.generate(model, table, oracle=oracle)
         self.assertEqual(set(self.record(full)["cases"]), {case["id"] for case in model.cases_list})
         minimal = self.directory / "minimal"
@@ -1049,9 +1123,10 @@ class RecipeOracleTests(Harness):
 
     def test_a_record_that_no_longer_holds_against_the_corpus_fails(self):
         model = self.model()
-        rule = mapping_entry("low-rule", "chat_template.jinja", ["low"], ["effort:low", "recipe:render"])
-        table = self.tables([rule])
-        committed = self.corpus_of(model, table, FakeOracle(model, renders={"low": toy_render("<sys>low!")}))
+        committed = self.corpus_of(model, self.tables(), FakeOracle(model, renders={"low": toy_render("<sys>low!")}))
+        table = self.tables([mapping_entry("low-rule", "chat_template.jinja", ["low"], ["effort:low", "recipe:render"],
+                                           recipe_reviewed=self.reviews(committed, "low"))])
+        self.assertEqual(self.check(model, committed, table), [])
         record = self.record(committed)
         changed = json.loads(json.dumps(record))
         changed["cases"]["high"]["sha256"] = "0" * 64
@@ -1059,15 +1134,18 @@ class RecipeOracleTests(Harness):
         changed["rounds"]["answer-round-end"]["sha256"] = "0" * 64
         del changed["cases"]["int"]
         corpus.write_json(committed / corpus.RECIPE_FILE, changed)
-        self.assertEqual(self.check(model, committed, table), [
+        errors = self.check(model, committed, table)
+        self.assertEqual(errors[:4], [
             "corpus-recipe.json and corpus.json name different cases",
             "case low: corpus-recipe.json records the difference 'render', but the recipe's outcome gives None",
             "case high: corpus-recipe.json records another render than the corpus's",
             "round trip answer-round-end: corpus-recipe.json records another parse than the turn the vector expects"])
+        # The changed row is no longer the reviewed difference.
+        self.assertIn("case low: the recipe renders other text, and no inputs or mapping entry explains it", errors)
 
     def test_recipe_tags_need_a_recipe_pin_and_their_shape(self):
         model = self.model(recipe=None)
-        parser = {"id": "p", "recipe_when": ["calls:1", "recipe:parse"], "reason": "-"}
+        parser = {"id": "p", "recipe_when": ["calls:1", "recipe:parse"], "recipe_message": "x", "reason": "-"}
         table = self.tables(parser=[parser])
         committed = self.corpus_of(model, table, None)
         self.assertEqual(self.check(model, committed, table),
@@ -1086,8 +1164,8 @@ class RecipeOracleTests(Harness):
     def test_rows_bind_the_requests_and_token_ids_they_were_computed_from(self):
         model = self.model()
         table = self.tables([mapping_entry("high-rule", "chat_template.jinja", ["high"],
-                                           ["effort:high", "recipe:render"])])
-        oracle = FakeOracle(model, renders={"high": toy_render("<sys>max")})
+                                           ["effort:high", "recipe:refuses"], recipe_message="^refused$")])
+        oracle = FakeOracle(model, refuses=("undeclared", "high"))
         stale = self.record(self.corpus_of(model, table, oracle))
         # A strict tool the template never reads renders as before; the
         # recipe may read it, so an old row says nothing of the new request.
@@ -1131,8 +1209,9 @@ class RecipeOracleTests(Harness):
             "case critic: corpus-recipe.json records an internal recipe failure as its refusal"])
 
     def test_entries_of_the_recipe_sections_need_distinct_ids(self):
-        parser = {"id": "shared", "recipe_when": ["calls:1", "recipe:parse"], "reason": "-"}
-        rule = mapping_entry("shared", "chat_template.jinja", ["high"], ["effort:high", "recipe:render"])
+        parser = {"id": "shared", "recipe_when": ["calls:1", "recipe:parse"], "recipe_message": "x", "reason": "-"}
+        rule = mapping_entry("shared", "chat_template.jinja", ["high"], ["effort:high", "recipe:render"],
+                             recipe_message="x")
         with self.assertRaisesRegex(corpus.CorpusError, "inputs, mapping and parser entries share the id shared"):
             corpus.read_divergences(self.tables([rule], [parser]))
         with self.assertRaisesRegex(corpus.CorpusError, "share the id undeclared-effort"):

@@ -44,15 +44,15 @@ A cases module may pin a second authority, a published recipe package, as
 `RECIPE` (`RECIPE_KEYS`). `generate` then runs the recipe's oracle script
 under its own interpreter (`SubprocessOracle`) on every case and round trip
 and writes `corpus-recipe.json`: the recipe it ran, and where the recipe's
-render or parse differs from the corpus. An entry explains a difference by
-a cause (`explains`): its `recipe_when` tags, which must name more than the
-difference's class, optionally narrowed by `recipe_message`, a pattern the
-recipe's refusal or parser error must match, or a review, `recipe_reviewed`,
-which binds a case or round trip id to the fingerprint of its difference.
-`minimize` refuses a difference that no entry or several explain, and a
-review the full corpus no longer holds, and keeps a case of each entry;
-`check` requires exactly one entry to explain each committed difference
-(`check_recipe`).
+render or parse differs from the corpus. An entry explains a difference
+exactly (`explains`): its `recipe_when` tags are preconditions, a refusal
+must also match `recipe_message`, a pattern of the recipe's refusal message
+beside at least one feature tag, and any other difference must be one the
+entry reviewed, `recipe_reviewed`, which binds a case or round trip id to
+the fingerprint of both outcomes. `minimize` refuses a difference that no
+entry or several explain, and a review the full corpus no longer holds, and
+keeps a case of each entry; `check` requires exactly one entry to explain
+each committed difference (`check_recipe`).
 """
 
 import argparse
@@ -89,9 +89,15 @@ PARSER_KEYS = ("id", "recipe_when", "reason")
 # The sections whose entries may carry recipe_when tags.
 RECIPE_SECTIONS = ("inputs", "mapping", "parser")
 # Difference tags that say how or where a difference shows, not what causes
-# it (`RecipeDifference`). An entry's recipe_when needs a tag besides these,
-# or a recipe_message, so it never explains a difference by its class alone.
+# it (`RecipeDifference`); every other tag is a feature tag.
 RECIPE_OUTCOME_TAGS = ("recipe:", "parse:", "case:", "mode:")
+# The difference classes of a refusal: the recipe refuses a case the corpus
+# renders, or a round trip's request. Its message names the check that failed
+# first, so an entry explains one by its feature tags and recipe_message.
+# Every other difference (a render, its token ids, a parsed field, a parser
+# error, or a render where the corpus refuses) is explained only by a review
+# of both outcomes (recipe_reviewed, `difference_fingerprint`).
+RECIPE_REFUSALS = ("recipe:refuses", "parse:refused")
 FINGERPRINT = re.compile(r"[0-9a-f]{64}")
 # The request fields a render vector may carry besides `messages`
 # (crates/runtime-host/src/frontend_check.rs REQUEST_FIELDS_V1).
@@ -255,6 +261,9 @@ def read_divergences(path):
                 if pattern is not None or reviewed is not None:
                     raise CorpusError(f"{name} sets recipe_message or recipe_reviewed without recipe_when")
                 continue
+            if pattern is None and reviewed is None:
+                raise CorpusError(f"{name} sets recipe_when but neither recipe_message nor recipe_reviewed, so it "
+                                  "explains no difference")
             if pattern is not None:
                 try:
                     if not (isinstance(pattern, str) and pattern):
@@ -262,10 +271,10 @@ def read_divergences(path):
                     re.compile(pattern)
                 except re.error as error:
                     raise CorpusError(f"{name} has a recipe_message that is not a regular expression") from error
-            elif all(tag.startswith(RECIPE_OUTCOME_TAGS) for tag in tags):
-                raise CorpusError(f"{name} would explain a difference by its class alone: its recipe_when names "
-                                  f"no cause, only {', '.join(prefix + '*' for prefix in RECIPE_OUTCOME_TAGS)} "
-                                  "tags, and it sets no recipe_message")
+                if all(tag.startswith(RECIPE_OUTCOME_TAGS) for tag in tags):
+                    outcome = ", ".join(prefix + "*" for prefix in RECIPE_OUTCOME_TAGS)
+                    raise CorpusError(f"{name} would explain a refusal by its message alone: its recipe_when names "
+                                      f"no feature tag, only {outcome} tags")
             if reviewed is not None and not (isinstance(reviewed, dict) and reviewed and all(
                     isinstance(key, str) and key and isinstance(value, str) and FINGERPRINT.fullmatch(value)
                     for key, value in reviewed.items())):
@@ -1231,7 +1240,8 @@ class RecipeDifference:
     `mode:<mode>`, and a parser entry explains it. A recipe refuses a
     request with the first failure its checks find, where a request may
     carry several causes, so the message names the cause it reports
-    (`recipe_message`)."""
+    (`recipe_message`); every other difference is explained by its review
+    (`RECIPE_REFUSALS`)."""
 
     def __init__(self, case, tags, section, detail, round=None, message=None, fingerprint=None):
         self.case = case
@@ -1247,6 +1257,11 @@ class RecipeDifference:
         """The id a review names the difference by: its round trip's or its
         case's."""
         return self.round or self.case
+
+    @property
+    def refusal(self):
+        """Whether the difference is the recipe's refusal of the request."""
+        return any(tag in self.tags for tag in RECIPE_REFUSALS)
 
     @property
     def name(self):
@@ -1330,18 +1345,19 @@ def recipe_candidates(table, section):
 
 
 def explains(entry, difference):
-    """Whether an entry explains a difference: it reviewed the difference
-    (its recipe_reviewed fingerprint for the difference's id is the
-    difference's), or its recipe_when tags all hold, as `when` matches
-    features, and the recipe's message matches its recipe_message pattern,
-    when it sets one."""
-    reviewed = entry.get("recipe_reviewed") or {}
-    if difference.fingerprint is not None and reviewed.get(difference.key) == difference.fingerprint:
-        return True
+    """Whether an entry explains a difference. Its recipe_when tags must all
+    hold, as `when` matches features. Then a refusal (`RECIPE_REFUSALS`)
+    must match its recipe_message pattern, and any other difference must be
+    one it reviewed: its recipe_reviewed fingerprint for the difference's id
+    is the difference's. Tags alone explain nothing."""
     if not set(entry["recipe_when"]) <= difference.tags:
         return False
-    pattern = entry.get("recipe_message")
-    return pattern is None or (difference.message is not None and re.search(pattern, difference.message) is not None)
+    if difference.refusal:
+        pattern = entry.get("recipe_message")
+        return (pattern is not None and difference.message is not None
+                and re.search(pattern, difference.message) is not None)
+    reviewed = entry.get("recipe_reviewed") or {}
+    return difference.fingerprint is not None and reviewed.get(difference.key) == difference.fingerprint
 
 
 def attribute(table, differences):
@@ -1906,10 +1922,10 @@ def check_recipe(model, fixtures, vectors, rounds, coverage, table):
     recorded difference recomputes from the recipe's outcome, and an
     agreement's digest is the vector's. Each difference
     (`recipe_differences`) is explained by exactly one entry (`explains`):
-    by its recipe_when tags, narrowed by its recipe_message, or by a review
-    of that difference (recipe_reviewed); an entry that explains none is
-    stale, as is a review of a committed case or round trip whose
-    difference has changed (`stale_reviews`). A mapping entry that
+    a refusal by the entry's recipe_when tags and recipe_message, any other
+    difference by the entry's review of it (recipe_reviewed); an entry that
+    explains none is stale, as is a review of a committed case or round trip
+    whose difference has changed (`stale_reviews`). A mapping entry that
     follows the recipe needs every case it names to agree with it; one that
     follows the pinned reference (the pin's source file, or the chat
     template) is stale when every case it names agrees, as an inputs entry is

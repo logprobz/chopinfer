@@ -99,6 +99,10 @@ struct Config {
     model_options: BTreeMap<String, String>,
     #[serde(default)]
     allocation: Option<allocation::AllocationConfig>,
+    /// An allocated replay also records each drafted request's raw F32
+    /// drafter confidence words beside its proposals and compares them.
+    #[serde(default)]
+    draft_confidence: bool,
     bundle: PathBuf,
     /// The checkpoint the package's weight plans load.
     checkpoint: PathBuf,
@@ -171,11 +175,26 @@ impl Config {
         if self.default_owners {
             invariants["default_owners"] = true.into();
         }
+        if self.draft_confidence {
+            invariants["draft_confidence"] = true.into();
+        }
         if self.transitions {
             invariants["capacity"]["kv_pages"] = pages.into();
             invariants["drafter_sampling_wire"] = "native-v6-when-declared".into();
         }
         invariants
+    }
+
+    /// Allocated captures are transition replays, and only they can record
+    /// the drafter's confidence, which travels with the device proposals.
+    fn check_allocation(&self) -> Result<()> {
+        if self.allocation.is_some() && !self.transitions {
+            return Err("allocation capture requires a transition replay".into());
+        }
+        if self.draft_confidence && self.allocation.is_none() {
+            return Err("drafter confidence capture requires an allocated replay".into());
+        }
+        Ok(())
     }
 
     fn serve_arguments(&self) -> Vec<String> {
@@ -309,6 +328,55 @@ mod configuration_tests {
         );
     }
 
+    /// The confidence mode needs an allocated replay and binds into the
+    /// comparison invariants, so a capture without it is no reference.
+    #[test]
+    fn drafter_confidence_requires_allocation_and_binds_the_comparison() {
+        let mut value = json!({
+            "bundle":"bundle", "checkpoint":"checkpoint", "topology":"topology",
+            "trace":"trace.json", "output":"capture", "concurrency":16,
+            "verify":true, "owned":false, "source":{}, "transitions":true
+        });
+        let plain: Config = serde_json::from_value(value.clone()).unwrap();
+        assert!(!plain.draft_confidence);
+        plain.check_allocation().unwrap();
+        value["draft_confidence"] = true.into();
+        let alone: Config = serde_json::from_value(value.clone()).unwrap();
+        assert!(alone.check_allocation().is_err());
+        value["allocation"] = json!({"width":16,"confidence":{
+            "contract":"fixture.confidence.v1","floor":1,
+            "greedy":[[1.0,0.0]],"sampled":[[1.0,0.0]]}});
+        let config: Config = serde_json::from_value(value.clone()).unwrap();
+        config.check_allocation().unwrap();
+        value["transitions"] = false.into();
+        let plain_allocation: Config = serde_json::from_value(value).unwrap();
+        assert!(plain_allocation.check_allocation().is_err());
+        let description = |invariants| Description {
+            invariants,
+            manifest: json!({}),
+            environment: json!({}),
+            source_checkpoint: None,
+            declared_differences: Vec::new(),
+            reproduction: vec!["fixed-batch".into()],
+            expected_steps: 275,
+            expected_rows: 4480,
+            limits: diagnostic::Limits::default(),
+            context: json!({}),
+        };
+        let mut config = config;
+        let on = description(config.diagnostic_invariants("trace", 1024, 4, (32, 64, 8192)));
+        assert_eq!(on.invariants["draft_confidence"], true);
+        config.draft_confidence = false;
+        let off = description(config.diagnostic_invariants("trace", 1024, 4, (32, 64, 8192)));
+        assert!(off.invariants.get("draft_confidence").is_none());
+        assert!(
+            diagnostic::compatible(&off, &on)
+                .unwrap_err()
+                .to_string()
+                .contains("draft_confidence")
+        );
+    }
+
     #[test]
     fn replay_forwards_keeper_options_through_the_serving_parser() {
         let mut value = json!({
@@ -356,6 +424,9 @@ struct RecordingSampler {
     budget: Option<RefCell<Budget>>,
     device_results: bool,
     device_drafts: RefCell<Vec<(u64, Vec<u32>)>>,
+    /// Whether device proposals' confidence words are read beside them.
+    confidence: bool,
+    device_confidence: RefCell<Vec<(u64, Vec<u32>)>>,
 }
 impl RecordingSampler {
     fn raw(
@@ -550,9 +621,7 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
     let max_sequences = config.max_sequences.unwrap_or(config.concurrency);
     let mixed = config.mixed;
     let transitions = config.transitions;
-    if config.allocation.is_some() && !transitions {
-        return Err("allocation capture requires a transition replay".into());
-    }
+    config.check_allocation()?;
     if config.default_owners
         && (config.owned
             || config.control.is_some()
@@ -991,6 +1060,8 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
         capture: RefCell::new(Capture::default()),
         device_results: allocation.is_some(),
         device_drafts: RefCell::new(Vec::new()),
+        confidence: config.draft_confidence,
+        device_confidence: RefCell::new(Vec::new()),
         budget: config
             .diagnostic
             .as_ref()
@@ -999,6 +1070,7 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
     let memory_after_create = memory(&backend)?;
     let mut rank_rows: BTreeMap<u32, usize> = BTreeMap::new();
     let mut boundary_splits = 0;
+    let mut confidence_words = 0;
     // The owner layouts, `[gathered, owned]`, every default-owner step matched.
     let mut layouts = [true, true];
     let mut history = transitions.then(|| transition::History::new(&trace));
@@ -1184,6 +1256,11 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
             );
             if allocated.is_some() {
                 frame.acceptance = Some(emitted.accepted_prefixes.iter().map(Into::into).collect());
+                if config.draft_confidence {
+                    let confidence = std::mem::take(&mut *sampler.device_confidence.borrow_mut());
+                    confidence_words += confidence.iter().map(|(_, w)| w.len()).sum::<usize>();
+                    frame.confidence = Some(confidence);
+                }
             }
             if let Err(error) = golden.step(&frame, &rows) {
                 if config.diagnostic.is_some() {
@@ -1269,6 +1346,9 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
         {
             return Err("verify trace missed owner-boundary splits".into());
         }
+        if config.draft_confidence && confidence_words == 0 {
+            return Err("the replay recorded no drafter confidence".into());
+        }
         golden.finish(trace.steps.len())?;
         if config.default_owners
             && let Some(reference) = &config.reference
@@ -1320,6 +1400,9 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
     }
     if config.default_owners {
         receipt["default_owners"] = super::record::owner_layout(layouts).into();
+    }
+    if config.draft_confidence {
+        receipt["draft_confidence_words"] = confidence_words.into();
     }
     serde_json::to_writer_pretty(create(&config.output.join("receipt.json"))?, &receipt)?;
     golden.publish(

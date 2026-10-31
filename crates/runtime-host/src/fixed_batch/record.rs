@@ -200,6 +200,10 @@ pub struct Frame {
     pub rows: Vec<RowEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acceptance: Option<Vec<AcceptanceEvidence>>,
+    /// Each drafted request's raw F32 drafter confidence words, one per
+    /// computed token, in proposal order, when the replay records them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<Vec<(u64, Vec<u32>)>>,
 }
 impl Frame {
     pub fn from_rows(
@@ -212,6 +216,7 @@ impl Frame {
         Self {
             request,
             acceptance: None,
+            confidence: None,
             kept,
             bucket,
             drafts,
@@ -416,6 +421,7 @@ impl Golden {
                 || expected.bucket != frame.bucket
                 || expected.drafts != frame.drafts
                 || expected.acceptance != frame.acceptance
+                || expected.confidence != frame.confidence
             {
                 self.first = Some(schedule_difference(&expected, frame, self.steps));
                 return Err(
@@ -553,6 +559,9 @@ fn schedule(frame: &Frame) -> Value {
     if let Some(acceptance) = &frame.acceptance {
         value["acceptance"] = json!(acceptance);
     }
+    if let Some(confidence) = &frame.confidence {
+        value["confidence"] = json!(confidence);
+    }
     value
 }
 
@@ -593,6 +602,13 @@ fn schedule_difference(expected: &Frame, observed: &Frame, step: usize) -> Value
                         .drafts
                         .iter()
                         .zip(&expected.drafts)
+                        .find(|(a, b)| a != b)
+                        .map(|(a, _)| a.0))
+                    .or_else(|| observed
+                        .confidence
+                        .iter()
+                        .flatten()
+                        .zip(expected.confidence.iter().flatten())
                         .find(|(a, b)| a != b)
                         .map(|(a, _)| a.0))
             );

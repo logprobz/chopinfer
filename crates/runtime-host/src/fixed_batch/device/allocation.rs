@@ -153,6 +153,29 @@ impl RecordingSampler {
                 Ok(u32::from_le_bytes(word.try_into().unwrap()))
             })
             .collect::<HostServiceResultV1<Vec<_>>>()?;
+        if self.confidence {
+            // The words are retained with the proposals, in their context
+            // and behind their ready event.
+            if drafts.confidence.buffer.raw == 0 {
+                return Err(refusal(
+                    "device proposals carry no drafter confidence".into(),
+                ));
+            }
+            let bytes = self.read_ready(BundleReadyDeviceViewV1 {
+                buffer: runtime_bundle_abi::BundleDeviceBufferViewV1 {
+                    length: u64::from(drafts.computed_tokens) * 4,
+                    ..drafts.confidence
+                },
+                ..drafts.proposals
+            })?;
+            let words = bytes
+                .chunks_exact(4)
+                .map(|word| u32::from_le_bytes(word.try_into().unwrap()))
+                .collect();
+            self.device_confidence
+                .borrow_mut()
+                .push((drafts.request_id, words));
+        }
         self.device_drafts
             .borrow_mut()
             .push((drafts.request_id, tokens));
@@ -482,6 +505,8 @@ mod readback_tests {
             budget: None,
             device_results: true,
             device_drafts: RefCell::default(),
+            confidence: false,
+            device_confidence: RefCell::default(),
         };
         assert_eq!(recorder.read_ready(view).unwrap(), bytes[19..]);
         let small = BundleReadyDeviceViewV1 {
@@ -492,6 +517,94 @@ mod readback_tests {
             ..view
         };
         assert_eq!(recorder.read_ready(small).unwrap(), bytes[19..39]);
+        assert_eq!(fake_driver::ordering_violations(), 0);
+    }
+
+    /// With `draft_confidence` the recorder reads every computed token's
+    /// raw confidence word beside the requested proposals, through the
+    /// proposals' context and ready event, and refuses proposals without
+    /// confidence; without it, it reads the proposals alone.
+    #[test]
+    fn recorder_reads_drafter_confidence_beside_the_proposals() {
+        fake_driver::reset();
+        let backend = Rc::new(Backend::new(
+            crate::cuda::CudaHostDeviceV1::new().unwrap(),
+            HostInstanceConfigV1::new(HostTopologyV1::new(vec![0]).unwrap()),
+        ));
+        let context = backend.select_context(0, 0).unwrap();
+        let pool = backend.select_memory_pool(context).unwrap();
+        let stream = backend.create_stream(context, 0).unwrap();
+        let upload = |words: &[u32]| {
+            let bytes = words
+                .iter()
+                .flat_map(|word| word.to_le_bytes())
+                .collect::<Vec<_>>();
+            let buffer = backend
+                .allocate_device_buffer(pool, stream, bytes.len() as u64, 8)
+                .unwrap();
+            backend
+                .copy_host_to_device(
+                    stream,
+                    DeviceBufferSpanV1::new(buffer, 0, bytes.len() as u64),
+                    &bytes,
+                )
+                .unwrap();
+            buffer
+        };
+        let proposals = upload(&[11, 12, 13, 14, 15]);
+        // A NaN payload and negative zero keep their bits.
+        let words = [0x3f00_0000, 0x7fc0_0001, 0x8000_0000, 0x3e80_0000, 1];
+        let confidence = upload(&words);
+        let ready = backend.create_event(context).unwrap();
+        backend.record_event(ready, stream).unwrap();
+        let view = |buffer| BundleDeviceBufferViewV1 {
+            buffer,
+            offset: 0,
+            length: 20,
+            ..BundleDeviceBufferViewV1::empty()
+        };
+        let drafts = BundleDeviceDraftsV1 {
+            struct_size: std::mem::size_of::<BundleDeviceDraftsV1>() as u32,
+            flags: 0,
+            cycle_epoch: 1,
+            request_id: 3,
+            slot_generation: 1,
+            requested_tokens: 2,
+            computed_tokens: 5,
+            token_stride_bytes: 4,
+            proposals: BundleReadyDeviceViewV1 {
+                context,
+                rank: 0,
+                reserved: 0,
+                buffer: view(proposals),
+                ready,
+            },
+            confidence: view(confidence),
+        };
+        let recorder = |confidence| RecordingSampler {
+            backend: backend.clone(),
+            capture: RefCell::default(),
+            budget: None,
+            device_results: true,
+            device_drafts: RefCell::default(),
+            confidence,
+            device_confidence: RefCell::default(),
+        };
+        let on = recorder(true);
+        let lease = DeviceLogitsSamplerV1::retain_device_drafts(&on, drafts).unwrap();
+        assert_eq!(*on.device_drafts.borrow(), [(3, vec![11, 12])]);
+        assert_eq!(*on.device_confidence.borrow(), [(3, words.to_vec())]);
+        drop(lease);
+        let off = recorder(false);
+        off.capture_drafts(drafts).unwrap();
+        assert_eq!(*off.device_drafts.borrow(), [(3, vec![11, 12])]);
+        assert!(off.device_confidence.borrow().is_empty());
+        let absent = BundleDeviceDraftsV1 {
+            confidence: BundleDeviceBufferViewV1::empty(),
+            ..drafts
+        };
+        assert!(on.capture_drafts(absent).is_err());
+        assert_eq!(on.device_drafts.borrow().len(), 1);
         assert_eq!(fake_driver::ordering_violations(), 0);
     }
 }

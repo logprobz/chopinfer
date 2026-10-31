@@ -1122,6 +1122,62 @@ fn prefill_only_traces_preserve_anchors_and_bound_work() {
     }
 }
 
+/// Recorded drafter confidence is compared word for word, by request and
+/// order, beside the proposals; frames without it keep their encoding.
+#[test]
+fn drafter_confidence_compares_every_raw_word() {
+    let scratch = Scratch::new();
+    let baseline = scratch.0.join("baseline");
+    let identity = json!({"trace":1});
+    let data = rows();
+    let legacy = frame(&data);
+    assert!(
+        serde_json::to_value(&legacy)
+            .unwrap()
+            .get("confidence")
+            .is_none()
+    );
+    let mut original = legacy;
+    original.drafts = vec![(1, vec![7, 8]), (2, vec![9])];
+    original.confidence = Some(vec![
+        (1, vec![0x3f00_0000, 0x7fc0_0001, 0x8000_0000, 1, 2]),
+        (2, vec![0x3e80_0000, 0, 0, 0, 0]),
+    ]);
+    let mut golden = Golden::open(&baseline, None, &identity).unwrap();
+    golden.step(&original, &data).unwrap();
+    golden.finish(1).unwrap();
+    std::fs::write(baseline.join("receipt.json"), r#"{"passed":true}"#).unwrap();
+    for case in 0..7 {
+        let mut actual = original.clone();
+        let confidence = actual.confidence.as_mut().unwrap();
+        match case {
+            1 => confidence[0].1[1] ^= 1,
+            2 => confidence[0].1[2] = 0,
+            3 => confidence[1].1[4] = 0x8000_0000,
+            4 => confidence[1].1.truncate(4),
+            5 => confidence.swap(0, 1),
+            6 => actual.confidence = None,
+            _ => (),
+        }
+        assert_eq!(actual.drafts, original.drafts);
+        let mut compare = Golden::open(
+            &scratch.0.join(format!("arm{case}")),
+            Some(&baseline),
+            &identity,
+        )
+        .unwrap();
+        let result = compare.step(&actual, &data);
+        if case == 0 {
+            result.unwrap();
+        } else {
+            assert!(
+                result.is_err(),
+                "confidence drift {case} escaped comparison"
+            );
+        }
+    }
+}
+
 #[test]
 fn allocated_evidence_compares_each_request_even_when_totals_and_kept_match() {
     use super::record::AcceptanceEvidence;

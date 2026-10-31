@@ -329,7 +329,12 @@ prefills followed by one final drafted step, using greedy, seeded or top-logprob
 sampling. The width must cover the calibration's floor and be smaller than
 the reserved rows. The recorder submits serving's allocation and device-result
 metadata, records every reserved row and proposal, and commits the actual
-device acceptance instead of the trace's prescribed `kept` counts. Configurations
+device acceptance instead of the trace's prescribed `kept` counts. With
+`draft_confidence: true` it also reads each drafted request's raw F32 drafter
+confidence, one word per computed token, beside its proposals and compares
+every word bit for bit; it refuses proposals without confidence and a replay
+that records none. The mode is part of the comparison identity, so its
+reference sets it too. Configurations
 without `allocation` keep the existing replay path. Model options must also
 be included in the executable's keeper proof.
 

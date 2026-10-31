@@ -17,6 +17,7 @@ mod item_keys;
 mod layers;
 #[cfg(test)]
 mod native_package;
+mod phased_reduce;
 mod prefetch;
 mod results;
 mod retention;

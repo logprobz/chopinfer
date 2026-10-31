@@ -1241,7 +1241,8 @@ impl crate::Kernels {
             || storage == model_deepseek41_contract::state::KvStorage::Native
     }
 
-    /// Only the target's optional prefill reduction registers this entry.
+    /// Only the target's optional phased reductions register these entries:
+    /// prefill's F32 gather and the `phased_decode_reduce` candidate's.
     pub(crate) fn prefill_reduction_backend(
         shape: &crate::shape::Shape,
     ) -> Box<dyn kernel_core::backend::Backend> {

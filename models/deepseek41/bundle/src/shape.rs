@@ -24,6 +24,9 @@ pub struct Shape {
     /// Whether verify steps above the 64-row decode route run the wide
     /// verify buckets (the `wide_verify` candidate option).
     pub wide_verify: bool,
+    /// Whether decode and verify steps' complete all-reduces take the phased
+    /// F32 rounding entries (the `phased_decode_reduce` candidate option).
+    pub phased_decode_reduce: bool,
 }
 
 impl Shape {
@@ -36,6 +39,7 @@ impl Shape {
             runtime: geometry.runtime_defaults(),
             verify_rows: DECODE_BATCH,
             wide_verify: false,
+            phased_decode_reduce: false,
         })
     }
 
@@ -50,6 +54,13 @@ impl Shape {
     /// (`model_deepseek41_contract::execution_options::WIDE_VERIFY`).
     pub fn with_wide_verify(mut self, enabled: bool) -> Shape {
         self.wide_verify = enabled;
+        self
+    }
+
+    /// This shape with the phased decode reduction on or off
+    /// (`model_deepseek41_contract::execution_options::PHASED_DECODE_REDUCE`).
+    pub fn with_phased_decode_reduce(mut self, enabled: bool) -> Shape {
+        self.phased_decode_reduce = enabled;
         self
     }
 

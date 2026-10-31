@@ -340,7 +340,10 @@ the dense folds, the HC fusion and the queries took a 128-row step from
 193.8 to 182.1 ms and a 192-row step from 225.0 to 214.6 ms. Their HC
 boundaries fell from 12.9 to 2.8 ms and from 13.6 to 3.9 ms, and their
 index queries from 0.7 to under 0.1 ms. Replays at the same five
-configurations matched bitwise. The selected cache would save about 0.6 to
+configurations matched bitwise. With both changes merged, the five
+replays matched bitwise again, and a 128-row step takes 92.2 ms and a
+192-row step 121.9 ms of GPU-busy time per device, against 196.3 and 234.9
+ms without the option; the MoE expert chains take 41.0 and 49.9 ms of them. The selected cache would save about 0.6 to
 0.8 ms of such a step, assuming its cost grows with the rows. At 64 rows it
 takes 2.1 ms, against 3.4 ms for the direct sources of an 80-row step, 5.0
 ms at 128 rows and 6.9 ms at 192. Its 192-row arena would add 84 MB per

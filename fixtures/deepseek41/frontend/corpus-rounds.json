@@ -3789,5 +3789,69 @@
    "finish_reason": "stop"
   },
   "separator": ""
+ },
+ {
+  "id": "newline-edged-turn-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "q"
+    }
+   ]
+  },
+  "token_ids": [
+   201,
+   15205,
+   270,
+   7130,
+   603,
+   128822,
+   271,
+   2107,
+   344,
+   18857,
+   16,
+   1
+  ],
+  "expect": {
+   "reasoning": "\nCheck the units.\n",
+   "content": "\n\nIt is mild.",
+   "finish_reason": "stop"
+  },
+  "separator": ""
+ },
+ {
+  "id": "json-fenced-answer-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Weather in Oslo as JSON."
+    }
+   ],
+   "response_format": {
+    "type": "json_object"
+   }
+  },
+  "token_ids": [
+   128822,
+   9854,
+   14479,
+   201,
+   24313,
+   26343,
+   3362,
+   223,
+   864,
+   1778,
+   9854,
+   1
+  ],
+  "expect": {
+   "content": "```json\n{\"temp\": 18}\n```",
+   "finish_reason": "stop"
+  },
+  "separator": ""
  }
 ]

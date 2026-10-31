@@ -64,9 +64,9 @@
     "frontend_capture": {
       "directory": true,
       "members": {
-        "corpus-coverage.json": "5e15671a4e7aa0888cc216e022cd8815ede543fe82f402f607069ad5264c5b13",
-        "corpus-rounds.json": "475b971d6eb16876559f87d9c8c0f89d08c90db0bc4c49fbdb986c51591d8a89",
-        "corpus.json": "e5a1a5f3fae6a1a6ca303b2e26d67a98753b57fbf1282e33398a5cbedcfbfe05",
+        "corpus-coverage.json": "02a82aee9dceffcae9af998f35d24c0127b41bbe5ca1d0b40792cfa8acba616f",
+        "corpus-rounds.json": "db295502c22ebb23956ec4ddac7bacf11d170a9090a415567567e9dafda88954",
+        "corpus.json": "19da49dd6384b0b385fdee76e4f4de5f3a639bfbf8eb38b434b5278006977777",
         "encoder-tests/LICENSE": "f2c6c602815669d292889e5be8c802f2ed950653b77999b1584e8e6aed25d040",
         "encoder-tests/README.md": "d0ed3e2f6258c01a41cc6a73781889293a124250311839adcf659c494cbd584b",
         "encoder-tests/test_input_1.json": "6a5a86694e47169c8f0c9243a7e24cc5db05447be0d3d3a9891034e913c518de",
@@ -80,7 +80,8 @@
         "encoder-tests/test_output_4.txt": "94433b68370dcc69fa61efc5011b5d0e28685e4716fee1ee77fbbfc0c9935b54",
         "encoder-tests/test_output_5.txt": "4d673091746553d1cb2e40a3fc01dc09a7c53c40627096a3e49c97a269a81f64",
         "tokenizer-golden.json": "68ed31564260e7013fa284531dfe74ae449d8a7e2bd2b042687a2f7d2ac96891",
-        "chat-renders.json": "6550c1c3164b56a1215fcd9b1b5c0f0b63ee418eb4d59c617097208a298877c8"
+        "chat-renders.json": "6550c1c3164b56a1215fcd9b1b5c0f0b63ee418eb4d59c617097208a298877c8",
+        "corpus-recipe.json": "acc1efa911fd4a1286755f6df90f2542d5899d8cbd9a0d052b345465873a0ecc"
       },
       "path": "fixtures/deepseek41/frontend"
     },
@@ -365,13 +366,16 @@
     "6550c1c3164b56a1215fcd9b1b5c0f0b63ee418eb4d59c617097208a298877c8": {
       "schema": "legacy-json-array"
     },
-    "475b971d6eb16876559f87d9c8c0f89d08c90db0bc4c49fbdb986c51591d8a89": {
-      "schema": "legacy-json-array"
-    },
-    "5e15671a4e7aa0888cc216e022cd8815ede543fe82f402f607069ad5264c5b13": {
+    "02a82aee9dceffcae9af998f35d24c0127b41bbe5ca1d0b40792cfa8acba616f": {
       "schema": "chop-frontend-corpus-coverage-v1"
     },
-    "e5a1a5f3fae6a1a6ca303b2e26d67a98753b57fbf1282e33398a5cbedcfbfe05": {
+    "19da49dd6384b0b385fdee76e4f4de5f3a639bfbf8eb38b434b5278006977777": {
+      "schema": "legacy-json-array"
+    },
+    "acc1efa911fd4a1286755f6df90f2542d5899d8cbd9a0d052b345465873a0ecc": {
+      "schema": "chop-frontend-recipe-v1"
+    },
+    "db295502c22ebb23956ec4ddac7bacf11d170a9090a415567567e9dafda88954": {
       "schema": "legacy-json-array"
     }
   },

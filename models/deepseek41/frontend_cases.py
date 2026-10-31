@@ -21,6 +21,19 @@ PIN = {
     "checkpoint_env": "CHOPINFER_DEEPSEEK_CHECKPOINT",
 }
 
+# The published recipe the corpus is compared with at generation, by
+# recipe_reference.py under CHOPINFER_DEEPSEEK_RECIPE_PYTHON
+# (tools/refrun/README.md, "Frontend corpus recipe oracle").
+RECIPE = {
+    "package": "deepseek-recipe",
+    "version": "0.2.0",
+    "wheel": "deepseek_recipe-0.2.0-cp310-abi3-manylinux_2_28_x86_64.whl",
+    "wheel_sha256": "259812bf382bc82668b672707c5922095cc4f5f60a6c514ff89640bb62a746f7",
+    "installed_sha256": "84ef54ed1b08cd105614efc36d0722c4f8b741f080ca4268bd90d8898b8856b0",
+    "python_env": "CHOPINFER_DEEPSEEK_RECIPE_PYTHON",
+    "oracle": "recipe_reference.py",
+}
+
 # What the export's OpenedV1 states: history reasoning_content on every
 # assistant turn and the client's tool objects whole.
 TRANSPORT = {
@@ -624,7 +637,10 @@ def expected_turn(message, context):
     thinking mode (the prompt leaves `<think>` open), the content, and each
     call's arguments as `decode_dsml_to_arguments` (lines 156-177) writes
     them from the DSML the encoder wrote, the object `json.dumps` writes.
-    None for a turn whose text holds a marker the vendor parser refuses."""
+    None for a turn whose text holds a marker the vendor parser refuses, and
+    for a turn whose content ends with a newline before its calls: the
+    vendor parser keeps it, while the served parser drops every newline
+    before the calls block (`call-open-newlines`)."""
     reasoning = message.get("reasoning_content") if context["prompt"].endswith("<think>") else None
     content = message.get("content")
     if isinstance(content, list):
@@ -633,6 +649,8 @@ def expected_turn(message, context):
     content = content or ""
     reasoning = reasoning or ""
     if any(marker in text for marker in SPECIAL for text in (content, reasoning)):
+        return None
+    if message.get("tool_calls") and content.endswith("\n"):
         return None
     calls = [{"name": call["function"]["name"],
               "arguments": json.dumps(turn_arguments(call["function"]["arguments"]), ensure_ascii=False)}
@@ -744,9 +762,26 @@ def image_format_cases():
         "file:flat"}
 
 
+def partial_results(messages):
+    """Whether an assistant turn's calls are not all answered by the tool
+    messages directly after it, which deepseek-recipe refuses
+    (`recipe-conversation-checks` in frontend-divergences.json)."""
+    for index, message in enumerate(messages):
+        calls = {call["id"] for call in message.get("tool_calls") or []}
+        answered = set()
+        for result in messages[index + 1:]:
+            if result.get("role") != "tool":
+                break
+            answered.add(result.get("tool_call_id"))
+        if calls - answered:
+            return True
+    return False
+
+
 def cases(declaration):
     for name, request, _ in tool_image_cases():
-        yield name, request, {f"fixed:{name}", "tool-results:images"}
+        yield name, request, {f"fixed:{name}", "tool-results:images",
+                              *(("results:partial",) if partial_results(request["messages"]) else ())}
     for name, request, tags in image_format_cases():
         yield name, request, {f"fixed:{name}", *tags}
     # The encoder's test pair 1 (encoding/tests/test_input_1.json) as a
@@ -778,7 +813,7 @@ def cases(declaration):
     yield "preserved-reasoning-at-max", {"messages": [
         user("q1"), {"role": "assistant", "content": "a1", "reasoning_content": "r1"}, user("q2"),
     ], "chat_template_kwargs": {"preserve_thinking": True}, "reasoning_effort": "max"}, {
-        "fixed:preserved-reasoning-at-max", "preserve_thinking:true"}
+        "fixed:preserved-reasoning-at-max", "preserve_thinking:true", "reasoning:rendered-without-tools"}
     # The response format on a request without a system message, and with
     # tools: both go to an inserted empty system message.
     yield "response-format-with-tools", {"messages": [user("Weather in Oslo as JSON.")],
@@ -798,13 +833,13 @@ def cases(declaration):
     # (lines 342-348).
     placeholder = "<｜deepseek_image｜>"
     yield "image-placeholder-in-content", {"messages": [user(f"see {placeholder}")]}, {
-        "fixed:image-placeholder-in-content"}
+        "fixed:image-placeholder-in-content", "client-text:image-placeholder"}
     yield "image-placeholder-in-reasoning", {"messages": [
         user("q"), {"role": "assistant", "content": "a", "reasoning_content": f"r {placeholder}"}, user("q2"),
-    ]}, {"fixed:image-placeholder-in-reasoning"}
+    ]}, {"fixed:image-placeholder-in-reasoning", "client-text:image-placeholder"}
     yield "image-placeholder-in-text-part", {"messages": [
         {"role": "user", "content": [{"type": "text", "text": f"see {placeholder}"}]}]}, {
-        "fixed:image-placeholder-in-text-part", "user:parts"}
+        "fixed:image-placeholder-in-text-part", "user:parts", "client-text:image-placeholder"}
     # Arguments that are JSON text of JSON text, which the encoder reads
     # twice (lines 533-544).
     yield "double-encoded-arguments", {"messages": [
@@ -868,6 +903,14 @@ def cases(declaration):
         user("q1"), {"role": "assistant", "content": "a1", "reasoning_content": "r1"},
         user("q2"), {"role": "assistant", "content": "a2"}, user("q3"),
     ]}, {"fixed:earlier-reasoning-dropped"}
+    # R1: a turn after the last user turn keeps its reasoning, without
+    # offered tools too.
+    yield "reasoning-after-last-user", {"messages": [
+        user("Weather in Oslo?"),
+        {"role": "assistant", "content": "", "reasoning_content": "Call the tool.",
+         "tool_calls": [call("call_o", "get_weather", {"location": "Oslo"})]},
+        {"role": "tool", "tool_call_id": "call_o", "content": "18"},
+    ]}, {"fixed:reasoning-after-last-user", "reasoning:rendered-without-tools"}
     # R2: each offered tool is the recipe's function object: name,
     # description or "", parameters or {}, every other field dropped.
     yield "recipe-tool-schema", {"messages": [user("q")], "tools": [
@@ -911,6 +954,30 @@ def cases(declaration):
                                       "tool_choice": {"type": "function", "function": {"name": "get_weather"}},
                                       "thinking": {"type": "disabled"}}, {
         "fixed:strict-mix-named-choice", "tools:wrapped"}
+    # A named choice leaves only its tool, so a schema the recipe refuses on
+    # a tool it drops is not checked (`named-choice-schema-scope`).
+    yield "named-choice-skips-schema", {"messages": [user("Weather in Oslo?")], "tools": [partial, WEATHER],
+                                        "tool_choice": {"type": "function", "function": {"name": "get_weather"}},
+                                        "thinking": {"type": "disabled"}}, {
+        "fixed:named-choice-skips-schema", "tools:wrapped"}
+    # A strict schema keeps a number's digits as sent, where the recipe
+    # rounds one beyond u64 to a float, and refuses a node written as a
+    # sequence, which the recipe reads by position (`strict-schema-reading`).
+    yield "strict-large-number", {"messages": [user("q")], "tools": [
+        {"type": "function", "function": {"name": "f", "strict": True, "parameters": {
+            "type": "object", "properties": {"x": {"type": "number", "maximum": 18446744073709551617}}}}}]}, {
+        "fixed:strict-large-number", "tools:wrapped", "strict-schema:large-number"}
+    yield "strict-positional-node", {"messages": [user("q")], "tools": [
+        {"type": "function", "function": {"name": "f", "strict": True, "parameters": {
+            "type": "object", "properties": {"x": {"anyOf": [["string", None, None, None, None]]}}}}}]}, {
+        "fixed:strict-positional-node", "tools:wrapped", "strict-schema:positional-node"}
+    # A non-strict tool's parameters are checked only for type object; the
+    # recipe validates them against its JSON Schema meta-schema, which has
+    # no type `str` (`non-strict-schema-validation`).
+    yield "non-strict-type-alias", {"messages": [user("q")], "tools": [
+        {"type": "function", "function": {"name": "f", "parameters": {
+            "type": "object", "properties": {"x": {"type": "str"}}}}}]}, {
+        "fixed:non-strict-type-alias", "tools:wrapped", "tool-schema:type-alias"}
     # R3: a response format renders as the recipe renders it: text nothing
     # (and needs no system message), json_object its type, json_schema its
     # schema, a strict one normalizing as a strict tool's does. A schema the
@@ -926,9 +993,17 @@ def cases(declaration):
     for name, schema in (("empty", {}), ("false", False)):
         yield f"response-format-{name}-schema", {"messages": [user("q")], "response_format": {
             "type": "json_schema", "json_schema": {"name": "answer", "schema": schema}}}, {
-            f"fixed:response-format-{name}-schema"}
+            f"fixed:response-format-{name}-schema", "json-schema:falsy"}
     yield "response-format-without-schema", {"messages": [user("q")], "response_format": {
         "type": "json_schema", "json_schema": {"name": "answer"}}}, {"fixed:response-format-without-schema"}
+    yield "response-format-null-schema", {"messages": [user("q")], "response_format": {
+        "type": "json_schema", "json_schema": {"name": "answer", "schema": None}}}, {
+        "fixed:response-format-null-schema"}
+    # json_object without the word json in a message, which the recipe
+    # refuses and this format renders (`json-word-check`).
+    yield "json-object-without-json-word", {"messages": [user("Weather in Oslo?")],
+                                            "response_format": RESPONSE_FORMATS["json-object"]}, {
+        "fixed:json-object-without-json-word", "response-format:json-object", "json-word:absent"}
     yield "strict-response-format-partial-required", {"messages": [user("q")], "response_format": {
         "type": "json_schema", "json_schema": {"name": "answer", "strict": True, "schema": {
             "type": "object", "properties": {"city": {"type": "string"}, "days": {"type": "integer"}},
@@ -953,6 +1028,30 @@ def cases(declaration):
     yield "special-token-in-assistant-turn", {"messages": [
         user("q"), {"role": "assistant", "content": "<think>inline plan</think> It is mild."}]}, {
         "fixed:special-token-in-assistant-turn", "ends:assistant", "assistant-content:inline-think"}
+    # A turn whose content ends with a newline before its calls, which the
+    # served parser reads back without it (`call-open-newlines`).
+    yield "content-newline-before-calls", {"messages": [
+        user("Weather in Oslo?"),
+        {"role": "assistant", "content": "Calling.\n", "tool_calls": [call("call_n", "get_weather", {"location": "Oslo"})]},
+    ], "tools": [WEATHER]}, {"fixed:content-newline-before-calls", "ends:assistant", "tools:wrapped",
+                             "assistant-content:newline-before-calls"}
+    # Turns the served parser reads back byte for byte where the recipe's
+    # parser does not (`parser` in frontend-divergences.json): newlines
+    # around reasoning and answer text, and an answer in a JSON fence under
+    # json_object.
+    yield "newline-edged-turn", {"messages": [
+        user("q"), {"role": "assistant", "content": "\n\nIt is mild.", "reasoning_content": "\nCheck the units.\n"}]}, {
+        "fixed:newline-edged-turn", "ends:assistant", "turn-text:edge-newlines"}
+    yield "json-fenced-answer", {"messages": [
+        user("Weather in Oslo as JSON."), {"role": "assistant", "content": "```json\n{\"temp\": 18}\n```"}],
+        "response_format": RESPONSE_FORMATS["json-object"]}, {
+        "fixed:json-fenced-answer", "ends:assistant", "response-format:json-object", "answer:json-fence"}
+    # A special token's spelling in history text, which the served
+    # tokenizer reads as that token and the recipe as plain text
+    # (`special-token-spellings`).
+    yield "special-token-in-history", {"messages": [
+        user("q1"), {"role": "assistant", "content": "<think>inline plan</think> It is mild."}, user("q2")]}, {
+        "fixed:special-token-in-history", "assistant-content:inline-think"}
     yield "continued-final-assistant-turn", {"messages": [user("q"), {"role": "assistant", "content": "a"}],
                                              "continue_final_message": True, "add_generation_prompt": False}, {
         "fixed:continued-final-assistant-turn", "ends:continue"}
@@ -1026,33 +1125,33 @@ def cases(declaration):
         "name": "f", "namespace": {"name": "ns", "description": "Tools of ns."},
         "description": "F.", "parameters": {"type": "object"}}}
     yield "namespaced-function-object", {"messages": [user("q")], "tools": [namespaced]}, {
-        "fixed:namespaced-function-object", "tools:wrapped"}
+        "fixed:namespaced-function-object", "tools:wrapped", "namespace:present"}
     yield "namespace-name-on-function", {"messages": [user("q")], "tools": [
         {"type": "function", "function": {"name": "f", "namespace": "ns", "parameters": {"type": "object"}}}]}, {
-        "fixed:namespace-name-on-function", "tools:wrapped"}
+        "fixed:namespace-name-on-function", "tools:wrapped", "namespace:present"}
     yield "namespace-on-tool-object", {"messages": [user("q")], "tools": [
         {"type": "function", "namespace": {"name": "ns", "description": "Tools of ns."},
          "function": {"name": "f", "description": "F.", "parameters": {"type": "object"}}}]}, {
-        "fixed:namespace-on-tool-object", "tools:wrapped"}
+        "fixed:namespace-on-tool-object", "tools:wrapped", "namespace:present"}
     yield "qualified-tool-name", {"messages": [user("q")], "tools": [
         {"type": "function", "function": {"name": "ns::f", "parameters": {"type": "object"}}}]}, {
-        "fixed:qualified-tool-name", "tools:wrapped"}
+        "fixed:qualified-tool-name", "tools:wrapped", "namespace:present"}
     yield "qualified-call-in-history", {"messages": [
         user("Go."),
         {"role": "assistant", "content": "", "tool_calls": [call("call_q", "ns::f", {"x": "v"})]},
         {"role": "tool", "tool_call_id": "call_q", "content": "ok"}, user("Again."),
-    ], "tools": [namespaced]}, {"fixed:qualified-call-in-history", "tools:wrapped"}
+    ], "tools": [namespaced]}, {"fixed:qualified-call-in-history", "tools:wrapped", "namespace:present"}
     # Refused by the encoder's assertions and here by name: a namespace
     # other than the one the name spells, and a separator inside a part.
     yield "conflicting-namespace", {"messages": [user("q")], "tools": [
         {"type": "function", "namespace": "b", "function": {"name": "a::f", "parameters": {"type": "object"}}}]}, {
-        "fixed:conflicting-namespace", "tools:wrapped"}
+        "fixed:conflicting-namespace", "tools:wrapped", "namespace:present"}
     yield "separator-in-namespace", {"messages": [user("q")], "tools": [
         {"type": "function", "function": {"name": "f", "namespace": "a::b", "parameters": {"type": "object"}}}]}, {
-        "fixed:separator-in-namespace", "tools:wrapped"}
+        "fixed:separator-in-namespace", "tools:wrapped", "namespace:present"}
     yield "named-choice-of-qualified-tool", {"messages": [user("q")], "tools": [namespaced, second],
                                              "tool_choice": {"type": "function", "function": {"name": "ns::f"}},
-                                             **chat}, {"fixed:named-choice-of-qualified-tool", "tools:wrapped"}
+                                             **chat}, {"fixed:named-choice-of-qualified-tool", "tools:wrapped", "namespace:present"}
     # A system message's own tools, which the recipe's request messages do
     # not carry and this format refuses.
     yield "system-message-tools", {"messages": [

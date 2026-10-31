@@ -220,6 +220,10 @@
       "when": [
         "message-tools:present"
       ],
+      "recipe_when": [
+        "message-tools:present",
+        "recipe:accepts"
+      ],
       "outcome": {
         "message": "invalid conversation field: message tools are not served",
         "parameter": "messages"
@@ -231,6 +235,10 @@
       "kind": "refused",
       "when": [
         "ends:assistant"
+      ],
+      "recipe_when": [
+        "ends:assistant",
+        "recipe:accepts"
       ],
       "outcome": {
         "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
@@ -304,6 +312,10 @@
       "when": [
         "file:flat"
       ],
+      "recipe_when": [
+        "file:flat",
+        "recipe:accepts"
+      ],
       "outcome": {
         "message": "a file part carries its fields in a \"file\" object: {\"type\": \"file\", \"file\": {\"file_data\": ...}}",
         "parameter": "messages"
@@ -334,9 +346,19 @@
       "id": "special-token-in-turn",
       "kind": "no-round-trip",
       "when": [
-        "round-trip:read-back"
+        "round-trip:read-back",
+        "assistant-content:inline-think"
       ],
       "reason": "the vendor parser refuses a turn whose content or reasoning holds a special token or DSML marker (lines 981-983), so no generated turn carries one and none reads back"
+    },
+    {
+      "id": "call-open-newlines",
+      "kind": "no-round-trip",
+      "when": [
+        "round-trip:read-back",
+        "assistant-content:newline-before-calls"
+      ],
+      "reason": "the served parser opens a calls block after any run of newlines before it, including none, and drops the run, as deepseek-recipe 0.2.0 (93b0fd229c)'s stream parser does (deepseek-recipe/src/stream/output_parser.rs lines 326-334), while the encoder writes a turn's content and then the block's blank line (line 679) and the vendor parser reads the content up to that blank line (lines 956-968); a turn whose content ends with a newline before its calls reads back without it, and a block a model opens without the blank line reads back as history with it"
     }
   ],
   "mapping": [
@@ -348,13 +370,18 @@
       "cases": [
         "earlier-reasoning-dropped",
         "later-system-message",
-        "preserved-reasoning-at-max"
+        "preserved-reasoning-at-max",
+        "reasoning-after-last-user"
+      ],
+      "recipe_when": [
+        "reasoning:rendered-without-tools",
+        "recipe:render"
       ]
     },
     {
       "id": "R2-tool-schemas",
       "follows": "recipe",
-      "rule": "each offered tool is the function object {name, description or \"\", parameters or {}}, a null field read as absent, every other field (strict, defer_loading, any other key) dropped; the encoder renders that object. A strict tool's parameters are the recipe's normalized schema: each type keeps only its own keywords, in the recipe's key order, every object lists all of its properties as required and sets additionalProperties to false, and a missing schema is the empty object {\"type\": \"object\", \"properties\": {}, \"additionalProperties\": false, \"required\": []}; an unknown, duplicate or partial required list, additionalProperties true, an object without properties below the top level, a node of no known shape and a top level other than an object are refused with the recipe's messages. A non-strict tool's present parameters must declare type object. Strict and non-strict tools together, and any response_format beside strict tools, are refused among the tools the declared tools.choice policy leaves, as the recipe checks after its named-choice filtering",
+      "rule": "each offered tool is the function object {name, description or \"\", parameters or {}}, a null field read as absent, every other field (strict, defer_loading, any other key) dropped; the encoder renders that object. A strict tool's parameters are the recipe's normalized schema: each type keeps only its own keywords, in the recipe's key order, every object lists all of its properties as required and sets additionalProperties to false, and a missing schema is the empty object {\"type\": \"object\", \"properties\": {}, \"additionalProperties\": false, \"required\": []}; an unknown, duplicate or partial required list, additionalProperties true, an object without properties below the top level, a node of no known shape and a top level other than an object are refused with the recipe's messages. A non-strict tool's present parameters must declare type object. Strict and non-strict tools together, and any response_format beside strict tools, are refused among the tools the declared tools.choice policy leaves, as the recipe checks after its named-choice filtering. The recipe reads every declared tool's schema before that filtering (named-choice-schema-scope); a strict schema's numbers and sequence-written nodes are read apart from the recipe (strict-schema-numbers, strict-schema-positional-nodes), and non-strict parameters are not checked against the JSON Schema meta-schema (non-strict-schema-validation)",
       "source": "plan V4 (request mapping follows the recipe); deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 254-283, deepseek-recipe/src/protocol/client_tools.rs lines 63-105, deepseek-recipe/src/protocol/validation.rs lines 200-240, deepseek-recipe/src/protocol/json_schema.rs lines 1-287, deepseek-recipe/src/protocol/output_constraint.rs lines 28-60, deepseek-recipe-encoding/src/v4/mod.rs lines 45-52",
       "cases": [
         "recipe-tool-schema",
@@ -370,16 +397,15 @@
     {
       "id": "R3-response-format",
       "follows": "recipe",
-      "rule": "a response_format renders on the leading system message as the recipe renders it: json_object as {\"type\": \"json_object\"}, json_schema as its json_schema.schema value, and nothing for text, so a text format needs no inserted system message; a json_schema without a schema is refused, and a strict one's schema must normalize as a strict tool's does (R2), an object without properties refused at the top level too, while the constraint still compiles the schema as sent (V7). The recipe's refusal of json_object without the word json in a message is not followed. One exception: the encoder renders a response format only when Python reads it as true (encoding.py line 628), so a schema of {} or false renders nothing and needs no system message, where the recipe renders it as written; such a schema carries no instruction, and matching the recipe would mean patching the reference encoder",
-      "source": "plan V7 (render as the recipe does, constrain only on request); encoding.py lines 64-66, 628-629; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe-encoding/src/v4/dsv41.rs lines 250-283, deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 83-91, 108-128, deepseek-recipe/src/protocol/validation.rs lines 242-264",
+      "rule": "a response_format renders on the leading system message as the recipe renders it: json_object as {\"type\": \"json_object\"}, json_schema as its json_schema.schema value, and nothing for text, so a text format needs no inserted system message; a json_schema whose schema is missing or null is refused, with this format's own message where the recipe refuses a missing one as it reads the request and a null one as no JSON Schema, and a strict one's schema must normalize as a strict tool's does (R2), an object without properties refused at the top level too, while the constraint still compiles the schema as sent (V7). Not followed: the recipe's refusal of json_object without the word json in a message (json-word-check), its JSON Schema meta-schema check of a non-strict schema (non-strict-schema-validation), and its render of a schema the encoder reads as false (falsy-json-schema)",
+      "source": "plan V7 (render as the recipe does, constrain only on request); encoding.py lines 64-66; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe-encoding/src/v4/dsv41.rs lines 250-283, deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 83-91, 108-128, deepseek-recipe/src/protocol/validation.rs lines 242-264",
       "cases": [
         "response-format-with-tools",
         "response-format-text",
         "response-format-json-object",
         "response-format-json-schema",
-        "response-format-empty-schema",
-        "response-format-false-schema",
         "response-format-without-schema",
+        "response-format-null-schema",
         "strict-response-format-partial-required"
       ]
     },
@@ -419,6 +445,11 @@
         "developer-message",
         "later-developer-message",
         "empty-developer-message"
+      ],
+      "recipe_when": [
+        "case:fixed",
+        "developer:present",
+        "recipe:refuses"
       ]
     },
     {
@@ -483,7 +514,11 @@
         "namespace-on-tool-object",
         "qualified-tool-name",
         "qualified-call-in-history",
-        "named-choice-of-qualified-tool"
+        "named-choice-of-qualified-tool",
+        "separator-in-namespace"
+      ],
+      "recipe_when": [
+        "namespace:present"
       ]
     },
     {
@@ -495,7 +530,222 @@
         "file-image",
         "tool-file-image",
         "file-id"
+      ],
+      "recipe_when": [
+        "file:image",
+        "recipe:refuses"
       ]
+    },
+    {
+      "id": "continue-final-message",
+      "follows": "encoding.py",
+      "rule": "continue_final_message continues the final assistant turn as the encoder writes it without its end-of-sentence token (wo_eos); the recipe's Chat Completions request has no continue_final_message and ignores it, so it ends that turn with the end-of-sentence token and appends a generation header. The continued turn follows the last user turn, so in thinking mode without the tool prompt it also keeps the reasoning block the recipe drops (R1)",
+      "source": "encoding.py lines 695-706; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 7, 17-60, deepseek-recipe-encoding/src/v4/dsv41.rs lines 228-231, 298-306",
+      "cases": [
+        "continued-final-assistant-turn"
+      ],
+      "recipe_when": [
+        "case:fixed",
+        "ends:continue",
+        "recipe:render"
+      ]
+    },
+    {
+      "id": "falsy-json-schema",
+      "follows": "encoding.py",
+      "rule": "the encoder renders a response format only when Python reads it as true, so a json_schema whose schema is {} or false renders nothing and needs no system message, where the recipe renders it as written; such a schema carries no instruction, and matching the recipe would mean patching the reference encoder",
+      "source": "encoding.py lines 628-629; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe-encoding/src/v4/dsv41.rs lines 253-257, 278-283",
+      "cases": [
+        "response-format-empty-schema",
+        "response-format-false-schema"
+      ],
+      "recipe_when": [
+        "json-schema:falsy",
+        "recipe:render"
+      ]
+    },
+    {
+      "id": "double-encoded-arguments",
+      "follows": "encoding.py",
+      "rule": "a call's arguments text is read as JSON up to twice, as the encoder reads it, so JSON text of an object's JSON text renders as that object's parameters; the recipe reads the text once and renders text that is not a JSON object as one string parameter named arguments",
+      "source": "encoding.py lines 533-544; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe-encoding/src/v4/mod.rs lines 38-43, deepseek-recipe-encoding/src/v4/dsv41.rs lines 99-111",
+      "cases": [
+        "double-encoded-arguments"
+      ],
+      "recipe_when": [
+        "fixed:double-encoded-arguments",
+        "recipe:render"
+      ]
+    },
+    {
+      "id": "recipe-conversation-checks",
+      "follows": "encoding.py",
+      "rule": "conversation shapes the encoder renders are rendered, where the recipe refuses them: tool messages directly after a turn's tool calls that do not answer each call once (a result missing, or naming no call of that turn), which the encoder renders and sorts as they are; a tool message with no call turn before it; and an assistant message with neither content nor tool calls. Where both refuse a request their refusal texts differ, and the recipe reports the first failure in its own check order; the corpus compares only whether each refuses",
+      "source": "encoding.py lines 184-260; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 41-46, 449-558",
+      "cases": [
+        "tool-image-single",
+        "tool-images-with-user",
+        "tool-images-sorted"
+      ],
+      "recipe_when": [
+        "results:partial",
+        "recipe:refuses"
+      ]
+    },
+    {
+      "id": "json-word-check",
+      "follows": "encoding.py",
+      "rule": "a json_object response format renders whatever the messages say; the recipe refuses it unless some message's text holds the word json in any ASCII case, a guard for a JSON constraint this format does not apply to json_object (V7)",
+      "source": "deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 83-91, deepseek-recipe/src/protocol/validation.rs lines 266-283",
+      "cases": [
+        "json-object-without-json-word",
+        "response-format-json-object"
+      ],
+      "recipe_when": [
+        "json-word:absent",
+        "recipe:refuses"
+      ]
+    },
+    {
+      "id": "non-strict-schema-validation",
+      "follows": "encoding.py",
+      "rule": "a non-strict tool's present parameters must declare type object, as the recipe requires, and otherwise render as sent, as a non-strict json_schema's schema does; the recipe also validates both against the JSON Schema meta-schema and refuses one that fails, such as a property of type str, a type name the served argument coercion reads as string",
+      "source": "deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/validation.rs lines 226-239, 261-262, deepseek-recipe/src/protocol/json_schema.rs lines 255-266",
+      "cases": [
+        "non-strict-type-alias"
+      ],
+      "recipe_when": [
+        "tool-schema:type-alias",
+        "recipe:refuses"
+      ]
+    },
+    {
+      "id": "strict-schema-numbers",
+      "follows": "encoding.py",
+      "rule": "a strict schema keeps each number as sent, so 18446744073709551617 renders with every digit; the recipe's serde_json reads an integer beyond u64 as a float and renders 1.8446744073709552e+19, and rounding a client's constant would change its schema",
+      "source": "integration owner decision (a strict schema keeps its numbers); model-deepseek41-contract strict_schema numbers_keep_the_digits_sent; deepseek-recipe 0.2.0 (93b0fd229c) server-py/main.py lines 98-116, deepseek-recipe-python/src/request.rs lines 631-642 (serde_json reads the body)",
+      "cases": [
+        "strict-large-number"
+      ],
+      "recipe_when": [
+        "strict-schema:large-number",
+        "recipe:render"
+      ]
+    },
+    {
+      "id": "strict-schema-positional-nodes",
+      "follows": "integration owner decision",
+      "rule": "a strict schema node written as a sequence where the recipe reads one single-type node is refused once its tag is read; the recipe's serde derive reads the rest of the sequence by position and accepts it, so the schema language served stays narrower",
+      "source": "integration owner decision (strict schemas refuse positional nodes); model-deepseek41-contract strict_schema positional_nodes_are_refused; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/json_schema.rs lines 13-40",
+      "cases": [
+        "strict-positional-node"
+      ],
+      "recipe_when": [
+        "strict-schema:positional-node",
+        "recipe:accepts"
+      ]
+    },
+    {
+      "id": "named-choice-schema-scope",
+      "follows": "integration owner decision",
+      "rule": "under a named tool choice the format receives only the chosen tool, which the host's tools.choice policy keeps, so only that tool's schema is read and a schema only an omitted tool holds is not refused; the recipe reads every declared tool's schema before its named-choice filtering. Passing the omitted tools to the format would need host and ABI work",
+      "source": "integration owner decision (check the tools the host keeps); crates/runtime-frontend/src/serve.rs; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/client_tools.rs lines 70-90",
+      "cases": [
+        "named-choice-skips-schema",
+        "strict-mix-named-choice"
+      ],
+      "recipe_when": [
+        "fixed:named-choice-skips-schema",
+        "recipe:refuses"
+      ]
+    },
+    {
+      "id": "special-token-spellings",
+      "follows": "encoding.py",
+      "rule": "client text tokenizes as the encoder's prompt text does, so a special token's spelling typed in a message, such as <think> in assistant content, is that special token; the recipe encodes client text as plain text. Following it needs the special ranges carried across the frontend export ABI: the special-token spellings follow-up",
+      "source": "deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 297-308, 545-550, deepseek-recipe-encoding/src/v4/mod.rs lines 210-224; follow-up: special-token spellings in client text",
+      "cases": [
+        "special-token-in-history"
+      ],
+      "recipe_when": [
+        "assistant-content:inline-think",
+        "recipe:tokens"
+      ]
+    },
+    {
+      "id": "image-placeholder-spelling",
+      "follows": "encoding.py",
+      "rule": "the image placeholder <｜deepseek_image｜> typed in client text is refused, as the encoder refuses it in string content, reasoning and text parts, where it would read as an image; the recipe encodes client text as plain text and renders it (special-token-spellings)",
+      "source": "encoding.py lines 342-348, 355-367; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 297-308; follow-up: special-token spellings in client text",
+      "cases": [
+        "image-placeholder-in-content",
+        "image-placeholder-in-reasoning",
+        "image-placeholder-in-text-part"
+      ],
+      "recipe_when": [
+        "client-text:image-placeholder",
+        "recipe:accepts"
+      ]
+    },
+    {
+      "id": "generated-refusals",
+      "follows": "encoding.py",
+      "rule": "a generated case the recipe refuses carries a cause one of these entries records, and the recipe reports the first it meets: a developer message, for which its Chat Completions request has no role (developer-as-system); tool results that do not answer a turn's calls each once, a tool message with no call turn before it, or an assistant message with neither content nor tool calls (recipe-conversation-checks); or json_object without the word json (json-word-check). A generated case combines several inputs, so its refusal is matched here rather than by its cause's entry",
+      "source": "tools/refrun/frontend_cases.py generated cases; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 41-46",
+      "cases": [
+        "g0000"
+      ],
+      "recipe_when": [
+        "case:generated",
+        "recipe:refuses"
+      ]
+    },
+    {
+      "id": "generated-renders",
+      "follows": "encoding.py",
+      "rule": "a generated case the recipe renders differently differs by R1 (without the tool prompt the recipe drops reasoning the encoder keeps after the last user turn or with preserve_thinking), by continue-final-message (the recipe ends a continued turn and appends a generation header), or both; a turn whose text spells a special token there also tokenizes differently (special-token-spellings). A generated case combines several inputs, so its render is matched here rather than by its causes' entries",
+      "source": "tools/refrun/frontend_cases.py generated cases; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe-encoding/src/v4/dsv41.rs lines 206-231, 285-306",
+      "cases": [
+        "g0001"
+      ],
+      "recipe_when": [
+        "case:generated",
+        "recipe:render"
+      ]
+    }
+  ],
+  "parser": [
+    {
+      "id": "newline-trimming",
+      "recipe_when": [
+        "turn-text:edge-newlines",
+        "recipe:parse"
+      ],
+      "reason": "the served parser keeps every byte of reasoning and answer text, as the encoder wrote the turn; deepseek-recipe 0.2.0 (93b0fd229c)'s stream parser drops the newlines that start the reasoning, those before </think> and those that start the answer (deepseek-recipe/src/stream/output_parser.rs lines 108-125, 441-449, 573-588)"
+    },
+    {
+      "id": "json-fences",
+      "recipe_when": [
+        "answer:json-fence",
+        "recipe:parse"
+      ],
+      "reason": "under a json_object response format the served parser passes the answer through as the model wrote it; deepseek-recipe 0.2.0 (93b0fd229c) drops a JSON fence and turns text outside the JSON into spaces (deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs line 157, deepseek-recipe/src/stream/output_parser.rs lines 8, 422-434, 459-479)"
+    },
+    {
+      "id": "generated-round-trip-refusals",
+      "recipe_when": [
+        "case:generated",
+        "parse:refused"
+      ],
+      "reason": "the recipe refuses the request of a generated round trip for a cause generated-refusals records (a developer message, or json_object without the word json), so it parses nothing"
+    },
+    {
+      "id": "type-alias-round-trips",
+      "recipe_when": [
+        "case:fixed",
+        "parse:refused"
+      ],
+      "reason": "the recipe refuses the request of the shared string-type round trips (s-string-type-* in tools/refrun/frontend_cases.py), whose tool declares a type name JSON Schema does not have, such as str or text, which the served argument coercion reads as string (non-strict-schema-validation), so it parses nothing"
     }
   ]
 }

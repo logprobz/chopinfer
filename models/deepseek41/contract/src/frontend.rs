@@ -524,7 +524,7 @@ fn offer(
     }
     // The encoder renders a response format only when Python reads it as
     // true (encoding.py line 628), so a schema of `{}` or `false` needs no
-    // system message (the R3 exception in frontend-divergences.json).
+    // system message (`falsy-json-schema` in frontend-divergences.json).
     let format = format.filter(json_truthy);
     if tools.is_empty() && format.is_none() {
         return Ok(());

@@ -40,9 +40,9 @@ impl SharedOps {
     ) -> Result<SharedOps, Refused> {
         let every = exact::need(PREFILL_TOKENS, exact::every_phase(shape.verify_rows));
         let query = moe::shared_activation(shape.geometry, shape.ranks());
-        let activation = RowBuckets::prepare(asks, "shared.activation", every, shape, |need| {
-            backend.silu_mul_quantize(&query, need)
-        })?;
+        let activate = |need| backend.silu_mul_quantize(&query, need);
+        let activation = RowBuckets::prepare(asks, "shared.activation", every, shape, activate)?
+            .with_wide(asks, "shared.activation", shape, activate)?;
         Ok(SharedOps { activation })
     }
 

@@ -306,12 +306,17 @@ fn row_bucket(rows: u32) -> (u32, u32, u32) {
 
 /// Row-local stages of a verify step above the 64-row budget. Each grids
 /// the step's live rows, never a prepared capacity, so the symbol says
-/// which registered entry serves the stage. The ceil quantizers take the
-/// decode entries of their wide verify buckets (`verify_bounds::WIDE`).
+/// which registered entry serves the stage. The ceil quantizers and the
+/// shared SwiGLU take the decode entries of their wide verify buckets
+/// (`verify_bounds::WIDE`).
 const WIDE_STAGES: &[Stage] = &[
     ("chop_deepseek41_moe_ceil_w5120_cached_v1", 320, per_row),
     ("chop_deepseek41_moe_ceil_w3456_v1", 160, per_row),
-    ("chop_deepseek41_shared_swiglu_w576_v1", 160, per_row),
+    (
+        "chop_deepseek41_shared_swiglu_w576_parallel_v1",
+        160,
+        per_row,
+    ),
     (
         "chop_deepseek41_dense_ceil_f32_w1280_parallel_v1",
         192,
@@ -353,10 +358,9 @@ const WIDE_STAGES: &[Stage] = &[
 ];
 
 /// Forms of those stages that launch nowhere above 64 rows: decode forms
-/// that serve 33 to 64 rows, and the prefill quantizers the wide buckets
-/// replace.
+/// that serve 33 to 64 rows, and the prefill quantizers and SwiGLU the
+/// wide buckets replace.
 const NARROW_STAGES: &[&str] = &[
-    "chop_deepseek41_shared_swiglu_w576_parallel_v1",
     "chop_deepseek41_latent_query_rope_heads_v1",
     "chop_position_query_deepseek41_parallel_v1",
     "chop_deepseek41_hc_round_cols_r4_tx_v1",
@@ -368,6 +372,7 @@ const NARROW_STAGES: &[&str] = &[
     "chop_deepseek41_dense_ceil_w8192_prefill_w16_v1",
     "chop_deepseek41_dense_ceil_w6144_prefill_w8_v1",
     "chop_deepseek41_latent_ceil32_v1",
+    "chop_deepseek41_shared_swiglu_w576_v1",
 ];
 
 /// Widths above the 64-row budget a step of 32 items (and 16 up to its 96

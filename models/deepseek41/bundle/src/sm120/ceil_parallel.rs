@@ -178,23 +178,14 @@ pub(crate) fn registered_quantizers(
     Ok(entries)
 }
 
-/// Flash TP4's wide verify copy of a decode entry registered at
-/// [`CAPACITY`]: the same symbol and launches, holding the widest wide
-/// verify bucket (`verify_bounds::WIDE`). Steps up to `CAPACITY` rows keep
-/// the narrower entry, and an entry registered below `CAPACITY` has no
-/// copy, so its selection stays.
-pub(crate) fn wide(
-    g: &Geometry,
-    ranks: u32,
-    entry: &block_quantize::Entry,
-) -> Option<block_quantize::Entry> {
+/// The capacity of Flash TP4's wide verify copy of a decode entry
+/// registered at [`CAPACITY`]: the widest wide verify bucket
+/// (`verify_bounds::WIDE`). The copy keeps the entry's symbol and
+/// launches. Steps up to `CAPACITY` rows keep the narrower entry, and an
+/// entry registered below `CAPACITY` has no copy, so its selection stays.
+fn wide(g: &Geometry, ranks: u32, capacity: u32) -> Option<u32> {
     use model_deepseek41_contract::verify_bounds::WIDE;
-    if g.id != FLASH.id || ranks != 4 || entry.capacity != CAPACITY {
-        return None;
-    }
-    let mut wide = entry.clone();
-    wide.capacity = WIDE[WIDE.len() - 1];
-    Some(wide)
+    (g.id == FLASH.id && ranks == 4 && capacity == CAPACITY).then_some(WIDE[WIDE.len() - 1])
 }
 
 /// Registers `entry` and its wide verify copy ([`wide`]).
@@ -204,18 +195,35 @@ pub(crate) fn with_quantizer(
     ranks: u32,
     entry: block_quantize::Entry,
 ) -> Sm120 {
-    let backend = match wide(g, ranks, &entry) {
-        Some(wide) => backend.with_block_quantize(wide),
+    let backend = match wide(g, ranks, entry.capacity) {
+        Some(capacity) => backend.with_block_quantize(block_quantize::Entry {
+            capacity,
+            ..entry.clone()
+        }),
         None => backend,
     };
     backend.with_block_quantize(entry)
+}
+
+/// Registers the decode activation ([`activation`]) and its wide verify
+/// copy ([`wide`]).
+pub(crate) fn with_activation(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
+    let entry = activation(g, ranks)?;
+    let backend = match wide(g, ranks, entry.capacity) {
+        Some(capacity) => backend.with_silu_mul_quantize(silu_mul_quantize::Entry {
+            capacity,
+            ..entry.clone()
+        }),
+        None => backend,
+    };
+    Ok(backend.with_silu_mul_quantize(entry))
 }
 
 pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
     for entry in registered_quantizers(g, ranks)? {
         backend = with_quantizer(backend, g, ranks, entry);
     }
-    Ok(backend.with_silu_mul_quantize(activation(g, ranks)?))
+    with_activation(backend, g, ranks)
 }
 
 #[cfg(test)]
@@ -251,7 +259,8 @@ mod tests {
 
     /// Up to the widest wide verify bucket, a Flash TP4 entry registered at
     /// `CAPACITY` serves as it does at `CAPACITY` rows; wider steps, and
-    /// entries registered narrower, keep the serial entry.
+    /// entries registered narrower, keep the serial entry. The decode
+    /// activation is one such entry.
     #[test]
     fn wide_verify_buckets_select_the_decode_entries() {
         use kernel_core::backend::{Backend, Need};
@@ -275,6 +284,7 @@ mod tests {
                 .unwrap()
                 .into_iter()
                 .fold(Sm120::new(), Sm120::with_block_quantize);
+            let baseline = super::super::shared::register(baseline, &FLASH, 4).unwrap();
             let backend = register(baseline, &FLASH, 4).unwrap();
             let mut wide = 0;
             for entry in registered_quantizers(&FLASH, 4).unwrap() {
@@ -292,6 +302,20 @@ mod tests {
                 }
             }
             assert!(wide > 0);
+            let query = activation(&FLASH, 4).unwrap().query;
+            let activation = |rows| {
+                backend
+                    .silu_mul_quantize(&query, Need::rows(rows))
+                    .unwrap()
+                    .info()
+                    .symbols
+                    .clone()
+            };
+            let decode = activation(CAPACITY);
+            assert_ne!(decode, activation(widest + 1));
+            for rows in CAPACITY + 1..=widest {
+                assert_eq!(activation(rows), decode);
+            }
         }
     }
 

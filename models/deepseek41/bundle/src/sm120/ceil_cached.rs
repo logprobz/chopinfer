@@ -54,7 +54,7 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
 }
 
 /// `ceil_parallel::register` with each measured width's cached twin in place
-/// of its parallel entry, wide verify copy included.
+/// of its parallel entry, wide verify copies included.
 pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
     for entry in super::ceil_parallel::registered_quantizers(g, ranks)? {
         let selected = if g.id == model_deepseek41_contract::geometry::FLASH.id {
@@ -76,5 +76,5 @@ pub fn register(mut backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, S
         };
         backend = super::ceil_parallel::with_quantizer(backend, g, ranks, entry);
     }
-    Ok(backend.with_silu_mul_quantize(super::ceil_parallel::activation(g, ranks)?))
+    super::ceil_parallel::with_activation(backend, g, ranks)
 }

@@ -74,11 +74,14 @@ fn rows_of(twin: &Entry, rows: &[u32]) -> Vec<u32> {
         .filter(|&r| twin.merge_plan(r).is_ok())
         .collect()
 }
-/// WO_a's compiled sliced quantizers, one per symbol.
+/// WO_a's compiled sliced quantizers, one per symbol, at the 64-row
+/// capacity serving gives the 32-row form above 32 rows
+/// (`Kernels::sliced_quantizers`); capacity only bounds the plan.
 fn quantizers() -> Vec<Quantizer> {
     let mut all: Vec<Quantizer> = Vec::new();
-    for q in fold_fused::quantizers() {
+    for mut q in fold_fused::quantizers() {
         if !all.iter().any(|a| a.symbol == q.symbol) {
+            q.capacity = MAX_ROWS as u32;
             all.push(q);
         }
     }

@@ -503,6 +503,50 @@ fn default_owner_steps_match_the_gathered_or_block_layout() {
     assert!(super::trace::row_owner_layouts(&[], 4).is_err());
 }
 
+/// A default-owner baseline and its repeat, both on block owners, can
+/// stand for neither the owned arm's gathered baseline nor its control: the
+/// identity binds the mode, the gate refuses any default-owner receipt, and
+/// a repeat must take its reference's layout.
+#[test]
+fn default_owner_receipts_cannot_stand_for_gathered_evidence() {
+    use super::record::{
+        bind_default_owners, check_gathered_control, check_owner_layout, owner_layout,
+    };
+    let scratch = Scratch::new();
+    let plain = json!({"format":"fixed-batch-logits-v1","trace":16});
+    let mut bound = plain.clone();
+    bind_default_owners(&mut bound);
+    assert_ne!(bound, plain);
+    let data = rows();
+    let baseline = scratch.0.join("baseline");
+    let repeat = scratch.0.join("repeat");
+    for (output, reference) in [(&baseline, None), (&repeat, Some(baseline.as_path()))] {
+        let mut golden = Golden::open(output, reference, &bound).unwrap();
+        golden.step(&frame(&data), &data).unwrap();
+        golden.finish(1).unwrap();
+        if let Some(reference) = reference {
+            check_owner_layout(reference, owner_layout([false, true])).unwrap();
+            assert!(check_owner_layout(reference, owner_layout([true, true])).is_err());
+        }
+        let receipt = json!({"passed":true,"identity":bound,"reference":reference,
+            "default_owners":owner_layout([false, true])});
+        std::fs::write(output.join("receipt.json"), receipt.to_string()).unwrap();
+    }
+    let control: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(repeat.join("receipt.json")).unwrap()).unwrap();
+    // The owned arm's identity is the plain one.
+    assert!(Golden::open(&scratch.0.join("owned"), Some(&baseline), &plain).is_err());
+    assert!(check_gathered_control(&control, &plain, Some(&baseline)).is_err());
+    // A repeat's receipt as written before the identity bound the mode.
+    let mut unbound = control.clone();
+    unbound["identity"] = plain.clone();
+    assert!(check_gathered_control(&unbound, &plain, Some(&baseline)).is_err());
+    let mut gathered = unbound;
+    gathered.as_object_mut().unwrap().remove("default_owners");
+    check_gathered_control(&gathered, &plain, Some(&baseline)).unwrap();
+    assert!(check_gathered_control(&gathered, &plain, None).is_err());
+}
+
 fn description(root: &std::path::Path) -> Description {
     Description {
         invariants: json!({"host":{"build":"fixture","binary_sha256":"fixture"},"trace":"two-steps",

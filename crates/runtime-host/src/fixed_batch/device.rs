@@ -168,6 +168,9 @@ impl Config {
         if let Some(allocation) = &self.allocation {
             invariants["verify_allocation"] = serde_json::to_value(allocation).unwrap();
         }
+        if self.default_owners {
+            invariants["default_owners"] = true.into();
+        }
         if self.transitions {
             invariants["capacity"]["kv_pages"] = pages.into();
             invariants["drafter_sampling_wire"] = "native-v6-when-declared".into();
@@ -825,6 +828,9 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
             "max_sequences":max_sequences,"maximum_verify_tokens":maximum_verify_tokens,
             "kv_pages":pages,"native_draft_sampling":draft_sampling});
     }
+    if config.default_owners {
+        super::record::bind_default_owners(&mut identity);
+    }
     if config.temperature.is_some() {
         identity["sampling_temperature_bits"] = temperature.to_bits().into();
     }
@@ -869,12 +875,7 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
                 .ok_or("owned arm requires gathered repeat receipt")?
                 .join("receipt.json"),
         )?)?;
-        if control["passed"] != true
-            || control["identity"] != identity
-            || control["reference"] != json!(config.reference)
-        {
-            return Err("gathered/gathered identity gate did not pass for this trace".into());
-        }
+        super::record::check_gathered_control(&control, &identity, config.reference.as_deref())?;
     }
     let mut golden = if let Some(options) = &config.diagnostic {
         options.validate_environment(std::env::vars())?;
@@ -1269,6 +1270,11 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
             return Err("verify trace missed owner-boundary splits".into());
         }
         golden.finish(trace.steps.len())?;
+        if config.default_owners
+            && let Some(reference) = &config.reference
+        {
+            super::record::check_owner_layout(reference, super::record::owner_layout(layouts))?;
+        }
         if lifetimes {
             lifetime.finish(&mut lifecycle::Context {
                 instance: &mut instance,
@@ -1313,12 +1319,7 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
         receipt["lifecycle_events"] = json!(lifetime.events);
     }
     if config.default_owners {
-        receipt["default_owners"] = match layouts {
-            [true, true] => "either",
-            [true, false] => "gathered",
-            _ => "owned",
-        }
-        .into();
+        receipt["default_owners"] = super::record::owner_layout(layouts).into();
     }
     serde_json::to_writer_pretty(create(&config.output.join("receipt.json"))?, &receipt)?;
     golden.publish(

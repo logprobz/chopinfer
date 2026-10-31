@@ -296,8 +296,11 @@ expects every decode row on rank 0 and `owned: true` the owner blocks, after a
 gathered repeat control. A package without a rank-0 gather switch sets
 `default_owners: true` (with `owned: false` and no `control`) instead: each
 step's rows must then sit all on rank 0 or all in the owner blocks, one layout
-for the whole trace, and the receipt records which. Ownership is never
-numerical evidence; the rows themselves still match the reference bit for bit.
+for the whole trace, and the receipt records which. The mode is part of the
+comparison identity, so such a capture only serves as the reference of another
+default-owner replay, which must take the same layout, and never as a gathered
+baseline or the owned arm's control. Ownership is never numerical evidence;
+the rows themselves still match the reference bit for bit.
 
 For a bounded drafting transition, supply a version-6 trace and set
 `transitions: true`, `trace_input: true`, `verify: true`, explicit `kv_pages`

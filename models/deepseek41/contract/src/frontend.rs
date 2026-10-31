@@ -46,6 +46,7 @@
 //! encoder's `latest_reminder` role and `task` flag are not served.
 
 pub mod encoding;
+pub mod strict_schema;
 
 use frontend_format::toolkit::{
     field_v1, media_kind_v1, media_placeholder_v1, resource_v1, screen_media_text_v1,

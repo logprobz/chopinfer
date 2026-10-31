@@ -11,8 +11,8 @@ Images may be PNG, JPEG, GIF (the first frame) or WebP (lossy, lossless,
 with alpha, or the first frame of an animation), decoded as the reference's
 Pillow `Image.open` and `convert("RGB")` read them, and may arrive as
 `image_url` parts or OpenAI `file` parts whose `file_data` is an image data
-URL (the deepseek-recipe's mapping in OpenAI's nested shape; its flat shape
-is refused). See [the request surface](../../docs/serving-request-surface.md#media-inputs).
+URL (deepseek-recipe 0.2.0's mapping, read from OpenAI's nested file object;
+the recipe's flat fields are refused). See [the request surface](../../docs/serving-request-surface.md#media-inputs).
 
 | Crate | Directory | Holds |
 |---|---|---|

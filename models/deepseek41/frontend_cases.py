@@ -37,7 +37,7 @@ INPUT_FIELDS = ("response_format", "tool_choice")
 
 # What a forced tool choice's prompt ends with (the declaration's
 # tools.choice forced_prefill): the opening of the calls block, as
-# deepseek-recipe prefills it (v4/mod.rs lines 261-266).
+# deepseek-recipe 0.2.0 prefills it (dsv41.rs lines 307-310).
 FORCED_PREFILL = "\n\n<｜DSML｜ calls>\n"
 
 # Tool-call arguments reach the encoder as the text sent: it reads them
@@ -80,9 +80,9 @@ def thinking(keywords):
 def encoder_message(message):
     """One HF message as the encoder reads it: a media item back in OpenAI's
     `image_url` form, which `_extract_image` (lines 305-320) reads. A file
-    part's data URL is an image, as deepseek-recipe maps it (convert.rs
-    lines 263-279), from OpenAI's nested file object or the recipe's flat
-    fields; a file ID is refused, as the recipe refuses it."""
+    part's data URL is an image, as deepseek-recipe 0.2.0 maps it
+    (convert.rs lines 332-353), from OpenAI's nested file object or the
+    recipe's flat fields; a file ID is refused, as the recipe refuses it."""
     message = copy.deepcopy(message)
     if isinstance(message.get("content"), list):
         parts = []
@@ -101,10 +101,11 @@ def encoder_message(message):
 
 
 def recipe_tool(tool, encoder):
-    """An offered tool as deepseek-recipe maps it (convert.rs lines 178-192,
-    v4/mod.rs lines 284-293): its name, its description or "", its
-    parameters as sent (None when absent or null) and whether it is strict,
-    every other field dropped; `recipe_function` checks the parameters. A
+    """An offered tool as deepseek-recipe 0.2.0 maps it (convert.rs lines
+    265-274, client_tools.rs lines 24-37, v4/mod.rs lines 45-52): its name,
+    its description or "", its parameters as sent (None when absent or
+    null) and whether it is strict, every other field dropped;
+    `recipe_function` checks the parameters. A
     tool in a namespace (on the tool, else on its function) is named and
     described as the encoder's `tools_from_openai_format` (lines 84-98)
     names it, the transport's qualified name (`namespace` in
@@ -460,7 +461,7 @@ SCHEMA_REQUIRED = "response_format.json_schema.schema is required"
 
 def recipe_format(response_format):
     """What deepseek-recipe 0.2.0 renders for a response format (dsv41.rs
-    lines 252-256): json_object as `{"type": "json_object"}`, json_schema
+    lines 253-257): json_object as `{"type": "json_object"}`, json_schema
     as its schema, which a strict one must normalize (`strict_response_schema`),
     and nothing for text."""
     if not isinstance(response_format, dict):
@@ -534,21 +535,22 @@ def encoder_render(namespace, messages, tools, add_generation_prompt, continue_f
     V4; `mapping` in frontend-divergences.json) and the served format
     serves it:
     - the mode from the top-level thinking object, else the top-level
-      effort (`none` disables), as deepseek-recipe resolves it (convert.rs
-      lines 81-98) and the HF input carries it; the thinking keywords and
-      the effort in `chat_template_kwargs` are ignored, as the recipe
-      ignores that object; the effort, with a protocol alias read as the
-      effort it names, applies in thinking mode only, and an enabled object
-      over an effort of `none` thinks at the default effort;
+      effort (`none` disables), as deepseek-recipe 0.2.0 resolves it
+      (convert.rs lines 49-53, reasoning.rs lines 51-78) and the HF input
+      carries it; the thinking keywords and the effort in
+      `chat_template_kwargs` are ignored, as the recipe ignores that object;
+      the effort, with a protocol alias read as the effort it names, applies
+      in thinking mode only, and an enabled object over an effort of `none`
+      thinks at the default effort;
     - `preserve_thinking` turns off `drop_thinking`;
     - a developer message is a system message, a system message's billing
       header is removed, and a system message left empty is dropped;
     - a tool choice of none renders without the offered tools, a named one
       with only its tool, and a required or named one ends the prompt with
       the calls block's opening and is refused in thinking mode, as the
-      recipe maps it (convert.rs lines 155-215, v4/mod.rs lines 261-266);
-      without offered tools any choice but none is auto (convert.rs lines
-      172-174);
+      recipe maps it (convert.rs lines 254-283, client_tools.rs lines
+      83-104, dsv41.rs lines 307-310); without offered tools any choice but
+      none is auto (convert.rs lines 262-264);
     - each tool left is the recipe's function object, a strict one's
       parameters normalized; strict and non-strict tools together, and a
       response format beside strict tools, are refused (recipe 0.2.0);

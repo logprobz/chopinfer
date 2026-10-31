@@ -379,8 +379,9 @@ fn the_default_request_thinks_at_high_effort() {
         "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the \
          value, the more thorough the reasoning)\n\n<｜User｜>question<｜Assistant｜><think>"
     );
-    // The protocol aliases read as deepseek-recipe maps them, top-level
-    // and nested.
+    // The protocol aliases read as deepseek-recipe 0.2.0 maps them
+    // (reasoning.rs lines 37-48, dsv41.rs lines 21-30), top-level and
+    // nested.
     let efforts = [
         ("low", 50),
         ("max", 100),
@@ -579,9 +580,11 @@ fn the_served_format_reads_tool_objects_and_arguments_as_the_encoder_does() {
     }
 }
 
-/// The declared tool choice policy, as deepseek-recipe maps a choice: none
-/// renders no tools, a named choice only its tool, and a forced choice
-/// ends the prompt with the calls block's opening, refused in thinking.
+/// The declared tool choice policy, as deepseek-recipe 0.2.0 maps a choice
+/// (chat_completion/request/convert.rs lines 254-283, client_tools.rs lines
+/// 83-104, dsv41.rs lines 307-310): none renders no tools, a named choice
+/// only its tool, and a forced choice ends the prompt with the calls block's
+/// opening, refused in thinking.
 #[test]
 fn a_tool_choice_changes_the_render_as_the_recipe_maps_it() {
     let frontend = PairedFrontendV1::chat_format::<DeepSeekV41Format>(descriptor()).unwrap();
@@ -847,10 +850,11 @@ fn the_transport_maps_requests_as_the_declaration_states() {
 }
 
 /// A calls block opens after any run of newlines before its open, including
-/// none, and the open drops them, as deepseek-recipe's stream parser reads
-/// it: the content or reasoning before it, then the call, whole and at every
-/// byte split. A DSML marker that does not open a calls block is refused,
-/// as the vendor parser refuses it in content (encoding.py lines 981-983).
+/// none, and the open drops them, as deepseek-recipe 0.2.0's stream parser
+/// reads it (output_parser.rs lines 326-334): the content or reasoning
+/// before it, then the call, whole and at every byte split. A DSML marker
+/// that does not open a calls block is refused, as the vendor parser
+/// refuses it in content (encoding.py lines 981-983).
 #[test]
 fn a_calls_block_opens_after_any_run_of_newlines() {
     use runtime_frontend::{
@@ -925,9 +929,10 @@ fn a_calls_block_opens_after_any_run_of_newlines() {
 
 /// Generation that ends inside the calls opening, after any run of
 /// newlines: once the DSML marker is complete the opening and the newlines
-/// before it are structure, as deepseek-recipe's stream parser has entered
-/// its calls by then and drops the unfinished block; before that, and
-/// newlines that no opening follows, are text.
+/// before it are structure, as deepseek-recipe 0.2.0's stream parser has
+/// entered its calls by then (output_parser.rs lines 326-334, 480-494) and
+/// drops the unfinished block; before that, and newlines that no opening
+/// follows, are text.
 #[test]
 fn a_cut_calls_opening_is_not_content() {
     use runtime_frontend::{
@@ -1076,8 +1081,9 @@ fn a_namespaced_tool_is_named_as_the_encoder_names_it() {
             .is_ok()
     );
     assert!(frontend.validate_tool_call("ns::a::f", "{}").is_err());
-    // A qualified name holds two names of the recipe's 128 bytes, past the
-    // declared name length, when rendered, forced, parsed and validated.
+    // A qualified name holds two names of the recipe's 128 bytes
+    // (validation.rs lines 136-142), past the declared name length, when
+    // rendered, forced, parsed and validated.
     let (namespace, name) = ("n".repeat(128), "f".repeat(128));
     let long = format!("{namespace}::{name}");
     let tools = serde_json::json!([{"type": "function", "function": {

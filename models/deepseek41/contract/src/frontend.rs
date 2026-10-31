@@ -8,10 +8,11 @@
 //! the messages the encoder reads and returns the encoder's prompt. No Jinja
 //! and no Python runs at serving time.
 //!
-//! The request reaches the encoder as deepseek-recipe (commit 8cadfede)
-//! maps an OpenAI request into messages, and the encoder renders those
-//! messages (plan V4 and V7; each rule, its source and its corpus cases are
-//! in `models/deepseek41/frontend-divergences.json`, section `mapping`). The
+//! The request reaches the encoder as deepseek-recipe 0.2.0 (commit
+//! 93b0fd229c) maps an OpenAI request into messages, and the encoder renders
+//! those messages (plan V4 and V7; each rule, its source and its corpus cases
+//! are in `models/deepseek41/frontend-divergences.json`, section `mapping`,
+//! with where the recipe differs and why). The
 //! corpus reference in `models/deepseek41/frontend_cases.py` maps its HF
 //! input the same way:
 //! - Thinking mode and the effort come from the declared reasoning controls
@@ -415,8 +416,9 @@ impl DeepSeekV41Format {
             FrontendRoleV1::Tool => Role::Tool,
         };
         if !message.tools.is_empty() {
-            // The recipe's request messages carry no tools (schema.rs lines
-            // 52-71), so a message's own tools never reach its encoder.
+            // The recipe's request messages carry no tools (recipe 0.2.0
+            // chat_completion/request/schema.rs lines 62-90), so a message's
+            // own tools never reach its encoder.
             return Err(field_v1(MESSAGE_TOOLS_UNSERVED));
         }
         let mut result = Message::new(role, message.content.clone());
@@ -544,8 +546,9 @@ fn offer(
     Ok(())
 }
 
-/// The offered tools as the recipe maps them (convert.rs lines 178-192,
-/// v4/mod.rs lines 284-293): each a tool object around its name, its
+/// The offered tools as the recipe maps them (recipe 0.2.0
+/// chat_completion/request/convert.rs lines 265-274, client_tools.rs lines
+/// 24-37, v4/mod.rs lines 45-52): each a tool object around its name, its
 /// description or "", and its parameters or `{}`; every other field of the
 /// client's function object is dropped. The transport has already named a
 /// tool in a namespace `namespace::name`, as the encoder names it (lines
@@ -582,7 +585,7 @@ const FORMAT_WITH_STRICT_TOOLS: &str = "response_format should not be used with 
 /// recipe's request schema requires.
 const SCHEMA_REQUIRED: &str = "response_format.json_schema.schema is required";
 
-/// What the recipe renders for a response format (dsv41.rs lines 252-256):
+/// What the recipe renders for a response format (dsv41.rs lines 253-257):
 /// json_object as `{"type": "json_object"}`, json_schema as its schema, and
 /// nothing for text. A strict json_schema's schema must normalize as the
 /// recipe checks it (`validation.rs` lines 249-264); the schema renders as

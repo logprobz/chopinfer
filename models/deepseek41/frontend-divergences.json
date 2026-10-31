@@ -224,7 +224,7 @@
         "message": "invalid conversation field: message tools are not served",
         "parameter": "messages"
       },
-      "reason": "the recipe's request messages carry no tools (deepseek-recipe 8cadfede7, deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 52-71, unknown fields ignored), so request mapping never passes a message's own tools to the encoder; the format refuses them by name rather than drop the client's tools silently, so every request the recipe accepts renders the same"
+      "reason": "the recipe's request messages carry no tools (deepseek-recipe 0.2.0 (93b0fd229c), deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 62-90; unknown fields are ignored, line 7), so it drops a message's own tools and renders the request without them; this format refuses them by name rather than drop the client's tools silently"
     },
     {
       "id": "final-assistant-turn",
@@ -308,7 +308,7 @@
         "message": "a file part carries its fields in a \"file\" object: {\"type\": \"file\", \"file\": {\"file_data\": ...}}",
         "parameter": "messages"
       },
-      "reason": "deepseek-recipe 8cadfede7 reads a file part's file_id, file_data and filename at the part's top level (deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 110-116), which is not OpenAI's shape; this format reads the nested file object of OpenAI's file content part and refuses the flat fields by name"
+      "reason": "deepseek-recipe 0.2.0 (93b0fd229c) reads a file part's file_id, file_data and filename at the part's top level (deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 133-139, convert.rs lines 332-353), which is not OpenAI's shape, and renders the image; this format reads the nested file object of OpenAI's file content part and refuses the flat fields by name"
     },
     {
       "id": "file-non-image",
@@ -320,7 +320,7 @@
         "message": "unsupported media MIME type or invalid base64",
         "parameter": "messages"
       },
-      "reason": "the recipe takes any file_data as an image source (convert.rs lines 263-279) and fails only when the image loads, after rendering; the transport refuses a file_data that is not a base64 data URL of a declared image format before anything renders"
+      "reason": "the transport refuses a file_data that is not a base64 data URL of a declared image format before anything renders, where the encoder renders any file as an image; deepseek-recipe 0.2.0 (93b0fd229c) refuses one in its flat shape as well when it converts the request (deepseek-recipe/src/protocol/image.rs lines 130-152), and a nested one for lacking the flat fields (file-parts)"
     },
     {
       "id": "marker-in-raw-value",
@@ -343,8 +343,8 @@
     {
       "id": "R1-earlier-reasoning",
       "follows": "encoding.py",
-      "rule": "reasoning before the last user turn drops, and such a turn writes </think> alone, unless preserve_thinking or a declared tool keeps it; the recipe keeps every turn's reasoning and writes <think></think> for a turn without any",
-      "source": "plan V4 (rendering follows encoding.py); encoding.py lines 690-694, 749-790; deepseek-recipe 8cadfede7 deepseek-recipe-encoding/src/v4/mod.rs lines 183-196",
+      "rule": "in thinking mode, reasoning before the last user turn drops, and such a turn writes </think> alone, unless preserve_thinking or a declared tool keeps it; a turn after the last user turn keeps its reasoning, or writes <think></think> without any. The recipe renders every turn's reasoning when its tool prompt renders, as the encoder does with a declared tool, and otherwise drops every turn's reasoning and writes </think> alone, so without the tool prompt (no offered tools, or tool_choice none) it differs after the last user turn; its request has no preserve_thinking",
+      "source": "plan V4 (rendering follows encoding.py); encoding.py lines 690-694, 749-790; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe-encoding/src/v4/dsv41.rs lines 206-226, 285-286, deepseek-recipe-encoding/src/v4/mod.rs lines 94-96",
       "cases": [
         "earlier-reasoning-dropped",
         "later-system-message",
@@ -355,7 +355,7 @@
       "id": "R2-tool-schemas",
       "follows": "recipe",
       "rule": "each offered tool is the function object {name, description or \"\", parameters or {}}, a null field read as absent, every other field (strict, defer_loading, any other key) dropped; the encoder renders that object. A strict tool's parameters are the recipe's normalized schema: each type keeps only its own keywords, in the recipe's key order, every object lists all of its properties as required and sets additionalProperties to false, and a missing schema is the empty object {\"type\": \"object\", \"properties\": {}, \"additionalProperties\": false, \"required\": []}; an unknown, duplicate or partial required list, additionalProperties true, an object without properties below the top level, a node of no known shape and a top level other than an object are refused with the recipe's messages. A non-strict tool's present parameters must declare type object. Strict and non-strict tools together, and any response_format beside strict tools, are refused among the tools the declared tools.choice policy leaves, as the recipe checks after its named-choice filtering",
-      "source": "plan V4 (request mapping follows the recipe); deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 254-283, deepseek-recipe/src/protocol/client_tools.rs lines 63-105, deepseek-recipe/src/protocol/validation.rs lines 200-240, deepseek-recipe/src/protocol/json_schema.rs lines 1-287, deepseek-recipe/src/protocol/output_constraint.rs lines 28-60, deepseek-recipe-encoding/src/v4/mod.rs lines 44-51",
+      "source": "plan V4 (request mapping follows the recipe); deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 254-283, deepseek-recipe/src/protocol/client_tools.rs lines 63-105, deepseek-recipe/src/protocol/validation.rs lines 200-240, deepseek-recipe/src/protocol/json_schema.rs lines 1-287, deepseek-recipe/src/protocol/output_constraint.rs lines 28-60, deepseek-recipe-encoding/src/v4/mod.rs lines 45-52",
       "cases": [
         "recipe-tool-schema",
         "joined-user-turns",
@@ -411,9 +411,9 @@
     },
     {
       "id": "developer-as-system",
-      "follows": "recipe",
-      "rule": "a developer message is a system message, in Chat Completions as in Responses: leading, it carries the offered tools and the response_format; later, the generation header follows it (R4); empty, it is dropped (R5); its billing header is removed as a system message's is. The recipe maps a Responses developer message to a system message for V4.1 and has no Chat Completions developer role; the encoder has no developer role and would drop one unread before the last user turn in thinking mode (encoding.py lines 756-761)",
-      "source": "plan V4 (request mapping follows the recipe); deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/responses/request/convert.rs lines 421-446",
+      "follows": "recipe Responses API",
+      "rule": "a developer message is a system message, in Chat Completions as in Responses: leading, it carries the offered tools and the response_format; later, the generation header follows it (R4); empty, it is dropped (R5); its billing header is removed as a system message's is. The recipe maps a Responses developer message to a system message for V4.1, but its Chat Completions request has no developer role and refuses a developer message as it reads the request; the encoder has no developer role and would drop one unread before the last user turn in thinking mode (encoding.py lines 756-761)",
+      "source": "plan V4 (request mapping follows the recipe); deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/responses/request/convert.rs lines 421-446, deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 62-90",
       "cases": [
         "developer-before-last-user",
         "developer-message",
@@ -425,7 +425,7 @@
       "id": "R6-tool-choice",
       "follows": "recipe",
       "rule": "the declared tools.choice policy, which the host applies around the render: none renders without the offered tools; a named choice renders only its tool; required and a named choice end the prompt with the calls block's opening, which the completion's parser and the forced constraint read as its start, and are refused in thinking mode; without offered tools, required and a named choice serve as auto (tools.choice forced_without_tools_is_auto), in thinking mode too, rather than the transport's refusal",
-      "source": "plan V4 (request mapping follows the recipe); deepseek-recipe 8cadfede7 deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 155-215 (lines 172-174: no tools is auto), deepseek-recipe-encoding/src/v4/mod.rs lines 215-218, 261-266",
+      "source": "plan V4 (request mapping follows the recipe); deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 254-283 (lines 262-264: no tools is auto), deepseek-recipe/src/protocol/client_tools.rs lines 83-104 (lines 94-98: refused in thinking mode), deepseek-recipe-encoding/src/v4/dsv41.rs lines 307-310",
       "cases": [
         "tool-choice-none",
         "tool-choice-required",
@@ -450,8 +450,8 @@
     {
       "id": "thinking-switch",
       "follows": "recipe",
-      "rule": "thinking switches by the top-level thinking object (reasoning.switch thinking-object): type enabled or its alias adaptive thinks, disabled does not, and the object overrides the effort; without it, reasoning_effort none disables thinking and any other effort enables it, and with neither the request thinks (default_enabled). An enabled object over an effort of none thinks at the default effort, high. budget_tokens is checked and not read. The thinking keywords and the effort in chat_template_kwargs are ignored, as the recipe ignores that object; preserve_thinking there still renders earlier reasoning (R1). Other models keep the template keywords",
-      "source": "integration owner decision (follow the recipe for the thinking switch); deepseek-recipe 8cadfede7 deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 81-98, schema.rs lines 40-45, 205-226",
+      "rule": "thinking switches by the top-level thinking object (reasoning.switch thinking-object): type enabled or its alias adaptive thinks, disabled does not, and the object overrides the effort; without it, reasoning_effort none disables thinking and any other effort enables it, and with neither the request thinks (default_enabled). An enabled object over an effort of none thinks at the default effort, high. budget_tokens is checked and not read. The thinking keywords and the effort in chat_template_kwargs are ignored, as the recipe ignores that object, which its request does not read; preserve_thinking there still renders earlier reasoning (R1). Other models keep the template keywords",
+      "source": "integration owner decision (follow the recipe for the thinking switch); deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 49-53, deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 7, 53-57, 236-242, deepseek-recipe/src/protocol/reasoning.rs lines 6-14, 51-78, deepseek-recipe/src/request/options.rs line 155",
       "cases": [
         "thinking-object-disabled",
         "thinking-object-adaptive-over-none",
@@ -463,8 +463,8 @@
     {
       "id": "V7-constraint-scope",
       "follows": "plan V7",
-      "rule": "decoding is constrained only for a json_schema response format with strict true, an explicit structured_outputs constraint, and a required or named tool choice (response.constraint_scope strict-only); a json_object or non-strict json_schema response format and a strict tool under auto render as the encoder renders them and leave decoding unconstrained, as the recipe leaves JSON Schema output and strict flags to the caller. The render cases show the prompts; model-deepseek41's frontend_goldens checks the constraints",
-      "source": "plan V7; deepseek-recipe 8cadfede7 deepseek-recipe/src/protocol/openai/chat_completion/request/mod.rs lines 10-13",
+      "rule": "decoding is constrained only for a json_schema response format with strict true, an explicit structured_outputs constraint, and a required or named tool choice (response.constraint_scope strict-only); a json_object or non-strict json_schema response format and a strict tool under auto render as the encoder renders them and leave decoding unconstrained. The recipe now proposes an output constraint for every request (the calls block, JSON or the JSON Schema) and leaves its use to the caller; this format's caller applies the strict-only scope. The render cases show the prompts; model-deepseek41's frontend_goldens checks the constraints",
+      "source": "plan V7; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/mod.rs lines 18-28, deepseek-recipe/src/protocol/output_constraint.rs lines 8-60, deepseek-recipe/src/request/mod.rs lines 49-54",
       "cases": [
         "response-format-json-object",
         "response-format-with-tools",
@@ -475,8 +475,8 @@
     {
       "id": "namespace",
       "follows": "encoding.py",
-      "rule": "a tool in a namespace (tools.namespaces separator \"::\") is named namespace::name as the encoder names it: the namespace on the tool object, else on its function, as a name or an object with a name and an optional description, which goes before the function's on its own line; a name already spelled ns::f keeps its namespace, and a different given one is refused, as is a second separator or a namespace without a name. Calls and a named tool_choice use the qualified name, and Chat Completions returns it whole in function.name; the recipe's Chat Completions has no namespaces and refuses ':' in a name, so this is an extension, while its Responses API flattens a namespace tool to ns::f and returns a call's name and namespace apart, as /v1/responses does here",
-      "source": "integration owner decision (D-ns: follow the recipe's returned calls, else ns::f in function.name); encoding.py lines 84-136; deepseek-recipe 8cadfede7 deepseek-recipe/src/protocol/validation.rs lines 88-100, deepseek-recipe/src/protocol/openai/responses/request/tools.rs lines 37-90, 113-136, deepseek-recipe/src/protocol/openai/responses/response/chunk_generator.rs lines 338-350",
+      "rule": "a tool in a namespace (tools.namespaces separator \"::\") is named namespace::name as the encoder names it: the namespace on the tool object, else on its function, as a name or an object with a name and an optional description, which goes before the function's on its own line; a name already spelled ns::f keeps its namespace, and a different given one is refused, as is a second separator or a namespace without a name. Calls and a named tool_choice use the qualified name, and Chat Completions returns it whole in function.name. The recipe's Chat Completions has no namespaces: it ignores a namespace field, so it renders the bare name and description, and its name pattern refuses ':', so a qualified name or a named choice of one is refused there and a separator inside a namespace, which the encoder refuses, renders. Its Responses API flattens a namespace tool to ns::f and returns a call's name and namespace apart, as /v1/responses does here; it suffixes a namespaced name that is already taken (ns::f_1), where /v1/responses refuses a repeated namespace name",
+      "source": "integration owner decision (D-ns: follow the recipe's returned calls, else ns::f in function.name); encoding.py lines 84-136; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/validation.rs lines 129-153, deepseek-recipe/src/protocol/openai/responses/request/tools.rs lines 98-147, 228-268, 345-366, deepseek-recipe/src/protocol/openai/responses/response/chunk_generator.rs lines 104-116, 437-445",
       "cases": [
         "namespaced-function-object",
         "namespace-name-on-function",
@@ -488,9 +488,9 @@
     },
     {
       "id": "file-parts",
-      "follows": "recipe",
-      "rule": "a file part's file_data is an image data URL, rendered as an image_url part is, as the recipe maps it, read from OpenAI's nested {\"type\": \"file\", \"file\": {\"file_data\", \"filename\"}} object rather than the recipe's flat fields; a file_id is refused, as the recipe refuses it",
-      "source": "OpenAI's chat completions file content part (the nested file object); deepseek-recipe 8cadfede7 deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 263-279",
+      "follows": "OpenAI file content part",
+      "rule": "a file part's file_data is an image data URL, rendered as an image_url part is, as the recipe maps it, read from OpenAI's nested {\"type\": \"file\", \"file\": {\"file_data\", \"filename\"}} object; the recipe reads the flat fields instead (file-flat) and refuses the nested object for lacking them; a file_id is refused, as the recipe refuses it",
+      "source": "OpenAI's chat completions file content part (the nested file object); deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 133-139, deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 332-353, deepseek-recipe/src/protocol/image.rs lines 130-152",
       "cases": [
         "file-image",
         "tool-file-image",

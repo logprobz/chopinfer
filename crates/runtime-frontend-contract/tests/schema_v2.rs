@@ -206,6 +206,77 @@ fn request_mapping_policies_default_to_the_template_and_every_constraint() {
     );
 }
 
+/// The output-length section is optional and written back only when
+/// declared. Its lengths are bounded by the generated-token limit, not the
+/// context, which the transport lowers them to.
+#[test]
+fn output_tokens_are_optional_and_bounded_by_the_generated_token_limit() {
+    let descriptor = read(&declaration()).unwrap();
+    assert!(descriptor.output_tokens.is_none());
+    let written = serde_json::to_value(&descriptor).unwrap();
+    assert!(written.get("output_tokens").is_none());
+    assert_eq!(read(&written).unwrap(), descriptor);
+    for (section, expected) in [
+        (json!({"default": 64}), json!({"default": 64})),
+        (
+            json!({"default": 64, "efforts": {"low": 128}}),
+            json!({"default": 64, "efforts": {"low": 128}}),
+        ),
+        (
+            json!({"default": 64, "efforts": {}}),
+            json!({"default": 64}),
+        ),
+    ] {
+        let mut value = declaration();
+        value["output_tokens"] = section;
+        let descriptor = read(&value).unwrap();
+        let written = serde_json::to_value(&descriptor).unwrap();
+        assert_eq!(written["output_tokens"], expected);
+        assert_eq!(read(&written).unwrap(), descriptor);
+    }
+    let mut value = declaration();
+    value["output_tokens"] = json!({"default": 64, "efforts": {"low": 128}});
+    let output = read(&value).unwrap().output_tokens.unwrap();
+    assert_eq!(output.for_effort(None), 64);
+    assert_eq!(output.for_effort(Some("low")), 128);
+    assert_eq!(output.for_effort(Some("high")), 64);
+    // Past the context of 512 and within maximum_generated_tokens 4096.
+    value["output_tokens"] = json!({"default": 4096, "efforts": {"low": 513}});
+    assert!(read(&value).is_ok());
+    // Each refusal names the member it blames.
+    let refused_naming =
+        |section: Value, member: &str, kind: fn(&FrontendComponentErrorV1) -> bool| {
+            let mut value = declaration();
+            value["output_tokens"] = section.clone();
+            let error = read(&value).expect_err("the section must be refused");
+            assert!(kind(&error), "{section}: {error}");
+            assert!(error.to_string().contains(member), "{section}: {error}");
+        };
+    refused_naming(json!({"default": 0}), "output_tokens.default 0", invalid);
+    refused_naming(
+        json!({"default": 4097}),
+        "output_tokens.default 4097",
+        invalid,
+    );
+    refused_naming(
+        json!({"default": 64, "efforts": {"high": 128}}),
+        "output_tokens effort 'high' is not a declared effort",
+        invalid,
+    );
+    refused_naming(
+        json!({"default": 64, "efforts": {"low": 0}}),
+        "output_tokens.efforts.low 0",
+        invalid,
+    );
+    refused_naming(
+        json!({"default": 64, "efforts": {"low": 4097}}),
+        "output_tokens.efforts.low 4097",
+        invalid,
+    );
+    refused_naming(json!({"default": 64, "maximum": 128}), "`maximum`", syntax);
+    refused_naming(json!({"efforts": {"low": 128}}), "`default`", syntax);
+}
+
 /// Qualified function names are optional; a separator is short ASCII
 /// punctuation that no name byte spells, so its first byte splits a name.
 #[test]

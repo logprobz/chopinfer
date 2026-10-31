@@ -14,7 +14,7 @@
 //! is known, and every declared bound is checked against a ceiling this crate
 //! fixes. There is no migration and no default for a missing section.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::str;
 
@@ -432,6 +432,39 @@ pub struct FrontendLimitsV1 {
     pub maximum_json_values: usize,
 }
 
+/// How many tokens a chat or Responses request that sets no output limit
+/// generates.
+///
+/// When such a request's rendered prompt thinks at an effort `efforts`
+/// lists, the transport generates at most that effort's length, and
+/// otherwise at most `default`, either lowered to the context left after
+/// the prompt. An explicit limit is always honored. A declaration without
+/// this section lets such a request fill the context left.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrontendOutputTokensV1 {
+    /// The length for a chat prompt, and for a thinking prompt at an effort
+    /// `efforts` does not list.
+    pub default: usize,
+    /// The length for a thinking prompt at each listed effort, keyed by
+    /// declared effort name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub efforts: BTreeMap<String, usize>,
+}
+
+impl FrontendOutputTokensV1 {
+    /// The length for a prompt that thinks at `effort`, or for a chat
+    /// prompt when `effort` is `None`: the effort's length when `efforts`
+    /// lists it, else `default`.
+    #[must_use]
+    pub fn for_effort(&self, effort: Option<&str>) -> usize {
+        effort
+            .and_then(|name| self.efforts.get(name))
+            .copied()
+            .unwrap_or(self.default)
+    }
+}
+
 /// One boundary token, and the identifier the vocabulary gives it.
 ///
 /// A decoder needs both halves: a completion that carries one of these
@@ -792,6 +825,11 @@ pub struct FrontendDescriptorV1 {
     pub vocabulary: FrontendVocabularyV1,
     #[serde(default)]
     pub generation_config: runtime_sampling::SamplingDefaults,
+    /// The output length of a chat or Responses request that sets no
+    /// output limit. Absent: such a request may fill the context left
+    /// after its prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<FrontendOutputTokensV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub multimodal: Option<FrontendMultimodalV1>,
     pub response: FrontendResponseV1,
@@ -935,6 +973,7 @@ impl FrontendDescriptorV1 {
         self.validate_limits()?;
         self.validate_vocabulary()?;
         self.validate_reasoning()?;
+        self.validate_output_tokens()?;
         self.validate_tools()?;
         self.validate_tokenizer()?;
         self.validate_multimodal()?;
@@ -1422,6 +1461,26 @@ impl FrontendDescriptorV1 {
                 "default reasoning effort '{}' is not a declared effort",
                 reasoning.default_effort
             )));
+        }
+        Ok(())
+    }
+
+    fn validate_output_tokens(&self) -> Result<(), FrontendComponentErrorV1> {
+        let Some(output) = &self.output_tokens else {
+            return Ok(());
+        };
+        // The transport lowers each length to the context left after the
+        // prompt, so a length at or past the context is valid.
+        let maximum = self.limits.maximum_generated_tokens;
+        bounded_count(output.default, maximum, "output_tokens.default")?;
+        for (name, &length) in &output.efforts {
+            bounded_identifier(name, "output_tokens effort name")?;
+            if self.reasoning.effort(name).is_none() {
+                return Err(invalid(format!(
+                    "output_tokens effort '{name}' is not a declared effort"
+                )));
+            }
+            bounded_count(length, maximum, &format!("output_tokens.efforts.{name}"))?;
         }
         Ok(())
     }

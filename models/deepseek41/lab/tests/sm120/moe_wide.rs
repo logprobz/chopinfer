@@ -4,6 +4,7 @@ mod full;
 mod graphs;
 mod recorded;
 mod router;
+mod timing;
 
 #[test]
 #[ignore = "requires frozen programs, weights and an allocated GPU pair"]
@@ -14,6 +15,14 @@ fn full_gpu() {
         return;
     }
     let ran = kernel_harness::gpu_test(4_u64 << 30, |s| full::run(Some(s), options)).unwrap();
+    assert!(ran.is_some(), "an idle GPU is required");
+}
+
+#[test]
+#[ignore = "requires frozen programs, weights and an allocated GPU"]
+fn timing_gpu() {
+    let options = timing::Options::environment().unwrap();
+    let ran = kernel_harness::gpu_test(8_u64 << 30, |s| timing::run(s, options)).unwrap();
     assert!(ran.is_some(), "an idle GPU is required");
 }
 

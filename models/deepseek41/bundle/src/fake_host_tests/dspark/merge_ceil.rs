@@ -237,3 +237,25 @@ fn quantizing_merges_replace_each_sliced_quantizer_at_decode() {
         assert_eq!(count(b, TWIN), twins);
     }
 }
+
+/// The pinned AR lifecycle journals of Flash TP4 with the option, at both
+/// KV layouts (`journal_steps`): its decode steps launch the quantizing merges.
+#[test]
+fn mergeceil_lifetimes_journal() {
+    let mut mismatches = Vec::new();
+    for (kv, expected) in [
+        (KV_LAYOUTS[0], (72829, 0xeeae96be4fc5f174)),
+        (KV_LAYOUTS[1], (74437, 0xd5f436585ba6dc2f)),
+    ] {
+        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), kv);
+        super::super::journal_steps_with(&host, &[(ATTENTION_MERGE_CEIL, true.into())]);
+        assert_eq!(host.acquired.get(), host.released.get());
+        let lines = host.device.journal.borrow().clone();
+        let layout = format!("{:?}", kv.storage).to_lowercase();
+        let name = format!("deepseek41-flash-tp4.{layout}-mergeceil.journal");
+        if let Err(observed) = bundle_runtime::fake_host::check_journal(&lines, expected, &name) {
+            mismatches.push(format!("{name}: {observed}"));
+        }
+    }
+    assert!(mismatches.is_empty(), "{mismatches:#?}");
+}

@@ -181,3 +181,25 @@ fn classifying_router_replaces_the_prepare_and_producer_at_decode() {
         assert_eq!(count(b, CLASSIFIED), folds);
     }
 }
+
+/// The pinned AR lifecycle journals of Flash TP4 with the option, at both
+/// KV layouts (`journal_steps`): its decode steps launch the classifying router producer.
+#[test]
+fn routerprep_lifetimes_journal() {
+    let mut mismatches = Vec::new();
+    for (kv, expected) in [
+        (KV_LAYOUTS[0], (72725, 0x8ac4e0d3d145b81b)),
+        (KV_LAYOUTS[1], (74333, 0x1d35dc43cce0f088)),
+    ] {
+        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), kv);
+        super::super::journal_steps_with(&host, &[(ROUTER_PREPARE_FUSION, true.into())]);
+        assert_eq!(host.acquired.get(), host.released.get());
+        let lines = host.device.journal.borrow().clone();
+        let layout = format!("{:?}", kv.storage).to_lowercase();
+        let name = format!("deepseek41-flash-tp4.{layout}-routerprep.journal");
+        if let Err(observed) = bundle_runtime::fake_host::check_journal(&lines, expected, &name) {
+            mismatches.push(format!("{name}: {observed}"));
+        }
+    }
+    assert!(mismatches.is_empty(), "{mismatches:#?}");
+}

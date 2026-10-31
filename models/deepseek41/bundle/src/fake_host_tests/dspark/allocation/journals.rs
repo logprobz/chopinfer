@@ -66,8 +66,10 @@ impl LogitsRowSinkV1 for ProofSink {
 }
 
 /// The `-wide` lifetimes run the two widest with the `wide_verify` option,
-/// and the `-phased` ones the first and a 65-row one with the
-/// `phased_decode_reduce` option.
+/// the `-phased` ones the first and a 65-row one with the
+/// `phased_decode_reduce` option, and the `-rowfuse`, `-mergeceil` and
+/// `-routerprep` ones the two narrowest with the `verify_row_fusions`,
+/// `attention_merge_ceil` and `router_prepare_fusion` options.
 #[test]
 fn allocated_lifetimes_journal() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
@@ -82,15 +84,27 @@ fn allocated_lifetimes_journal() {
         (32, 192, 5, "-maximum-wide", (344540, 0x07785bc19d29a6ff)),
         (4, 16, 5, "-phased", (69358, 0xfdbd662fbe69bdf6)),
         (16, 65, 5, "-odd-phased", (189194, 0xb6fd29e113df566c)),
+        (4, 16, 5, "-rowfuse", (68842, 0x2d8ee53cda81f23f)),
+        (8, 32, 5, "-rowfuse", (106446, 0x5a961ce8aca1e16f)),
+        (4, 16, 5, "-mergeceil", (69278, 0x37bf1ad6747adcd5)),
+        (8, 32, 5, "-mergeceil", (106870, 0x399317ba7f2a3cef)),
+        (4, 16, 5, "-routerprep", (69186, 0xff46c394254bc9b0)),
+        (8, 32, 5, "-routerprep", (106778, 0x4eeb2ce4a86c76aa)),
     ] {
-        use model_deepseek41_contract::execution_options::{PHASED_DECODE_REDUCE, WIDE_VERIFY};
-        let option = if suffix.ends_with("-wide") {
-            Some(WIDE_VERIFY)
-        } else if suffix.ends_with("-phased") {
-            Some(PHASED_DECODE_REDUCE)
-        } else {
-            None
+        use model_deepseek41_contract::execution_options::{
+            ATTENTION_MERGE_CEIL, PHASED_DECODE_REDUCE, ROUTER_PREPARE_FUSION, VERIFY_ROW_FUSIONS,
+            WIDE_VERIFY,
         };
+        let option = [
+            ("-wide", WIDE_VERIFY),
+            ("-phased", PHASED_DECODE_REDUCE),
+            ("-rowfuse", VERIFY_ROW_FUSIONS),
+            ("-mergeceil", ATTENTION_MERGE_CEIL),
+            ("-routerprep", ROUTER_PREPARE_FUSION),
+        ]
+        .into_iter()
+        .find(|(name, _)| suffix.ends_with(name))
+        .map(|(_, option)| option);
         let (host, mut instance) = match option {
             Some(option) => create_with_options(shape, 32, 192, &[(option, true.into())]),
             None => create_with_limits(shape, 32, 192),

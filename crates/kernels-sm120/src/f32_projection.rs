@@ -25,6 +25,7 @@ mod decode;
 pub mod last;
 mod prefill;
 pub mod reuse;
+pub mod rows;
 mod split;
 pub mod wide;
 pub mod zero_decode;

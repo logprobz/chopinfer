@@ -1,0 +1,175 @@
+#pragma once
+#include "chained_lanes_scale_tiles.cuh"
+
+// The absorbing gate queue finishing its own expert strips, so no gate
+// finisher launch reads the K-block partials back. After an item's last
+// pass its CTA counts the item on the strip's ticket; the CTA whose item
+// arrives last of the strip's K blocks then does the gate finisher's work
+// for every routed row of the strip's 64 columns, reading the partials the
+// strip's items have just written. Each output folds its gate and up
+// chains by ascending K block from +0 with the finisher's adds, takes the
+// same epilogue and BF16 rounding, and each 32-column group the same ceil
+// quantizer, status flags and per-token sticky-error ticket, so every
+// intermediate, code, scale and status is the finisher's.
+//
+// One route at a time, each warp loads a quarter of the K blocks (its
+// lanes: half h = lane / 16, four columns at 4 * (lane % 16)); the warps
+// then continue one fold in K order through shared memory, and the last
+// warp finishes the route while the others load the next.
+//
+// The strip tickets (one word per expert and strip) start every launch at
+// zero: they are zeroed at create, only this queue writes them, its
+// launches are serialized on one stream, and a launch that does not finish
+// ends the context. Every strip of an expert with routes receives exactly
+// one arrival per K block, so its last arrival resets it; an arrival of at
+// least the block count means corrupted state and traps.
+namespace chop::moe::lanes {
+template<class C, uint32_t FloorBits, class K,
+    class Clamp = typename C::clamp,
+    class Quantization = chained_policy::CeilE4M3Group32<FloorBits>,
+    class RouteWeight = chained_policy::BeforeQuantizeRouteWeight,
+    class Output = chained_policy::Bf16IntermediateF32Output,
+    class Reduction = chained_policy::OrderedF32>
+struct StripFinish {
+  static constexpr int Strips = C::n / Columns, Warps = Threads / 32;
+  static constexpr int Blocks = Layout<C>::blocks, Span = Blocks / Warps;
+  const float* route_weights;
+  uint16_t* intermediate;
+  uint8_t* codes;
+  uint8_t* scales;
+  uint32_t* status;
+  uint32_t* tickets;
+  uint32_t* strip_tickets;
+
+  // Every thread calls this after the item's last pass and its barrier.
+  __device__ __forceinline__ void strip(const float* partial, int expert, int column,
+      int count, int first, const int32_t* sorted_rows) const {
+    static_assert(C::gate_up && C::halves == 2 && Columns == 64 && Threads == 128 &&
+                  C::n % Columns == 0 && C::n % 32 == 0 && Blocks % Warps == 0,
+                  "a strip is two 32-column groups and two lines of each partial row");
+    __shared__ uint32_t last;
+    __shared__ float carry[2][Columns];
+    __shared__ uint16_t values[Columns];
+    if (threadIdx.x == 0) {
+      uint32_t* ticket = strip_tickets + expert * Strips + column / Columns;
+      uint32_t arrived;
+      asm volatile("atom.add.acq_rel.gpu.u32 %0, [%1], 1;"
+          : "=r"(arrived) : "l"(ticket) : "memory");
+      if (arrived >= Blocks) __trap();
+      last = arrived == Blocks - 1;
+      if (last) *ticket = 0;
+    }
+    __syncthreads();
+    if (!last) return;
+    if (reinterpret_cast<uintptr_t>(partial) & (K::retire ? 127u : 15u)) __trap();
+    const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
+    const int h = lane >> 4, q = lane & 15;
+    for (int i = 0; i < count; ++i) {
+      const int route = sorted_rows[first + i];
+      const float* row = partial + ((uint64_t(route) * 2 + h) * Blocks + warp * Span) * C::n +
+                         column + 4 * q;
+      float4 value[Span];
+#pragma unroll
+      for (int b = 0; b < Span; ++b)
+        value[b] = __ldcg(reinterpret_cast<const float4*>(row + uint64_t(b) * C::n));
+      float sum[4] = {};
+#pragma unroll 1
+      for (int w = 0; w < Warps; ++w) {
+        if (warp == w) {
+          if (w > 0)
+#pragma unroll
+            for (int j = 0; j < 4; ++j) sum[j] = carry[h][4 * q + j];
+#pragma unroll
+          for (int b = 0; b < Span; ++b) {
+            sum[0] = Reduction::add(sum[0], value[b].x);
+            sum[1] = Reduction::add(sum[1], value[b].y);
+            sum[2] = Reduction::add(sum[2], value[b].z);
+            sum[3] = Reduction::add(sum[3], value[b].w);
+          }
+          if (w + 1 < Warps)
+#pragma unroll
+            for (int j = 0; j < 4; ++j) carry[h][4 * q + j] = sum[j];
+        }
+        __syncthreads();
+      }
+      if constexpr (K::retire) {
+        // The warp has used its loads: two lines of each of its (half, K
+        // block) rows.
+        for (int line = lane; line < 4 * Span; line += 32)
+          knobs::discard_line(partial + ((uint64_t(route) * 2 + line % 2) * Blocks +
+                              warp * Span + line / 4) * C::n + column + 32 * (line / 2 % 2));
+      }
+      if (warp != Warps - 1) continue;
+      // Lanes 0-15 hold the gate sums of their four columns and lanes 16-31
+      // the up sums of the same columns.
+      float up[4];
+#pragma unroll
+      for (int j = 0; j < 4; ++j) up[j] = __shfl_down_sync(0xffffffffu, sum[j], 16);
+      if (h == 0) {
+        const float weight = route_weights[route];
+#pragma unroll
+        for (int j = 0; j < 4; ++j) {
+          const uint16_t out = Output::intermediate(
+              RouteWeight::template apply<Clamp>(sum[j], up[j], weight));
+          values[4 * q + j] = out;
+          intermediate[uint64_t(route) * C::n + column + 4 * q + j] = out;
+        }
+      }
+      __syncwarp();
+      uint32_t flags = 0;
+#pragma unroll
+      for (int g = 0; g < 2; ++g) {
+        auto value = Quantization::quantize(values + 32 * g, lane * 2);
+        flags |= value.flags;
+        const int group = column / 32 + g;
+        if (lane == 0) scales[uint64_t(route) * (C::n / 32) + group] = value.scale_code;
+        if (lane < 16) {
+          const uint64_t at = uint64_t(route) * C::n + group * 32 + lane * 2;
+          codes[at] = uint8_t(value.codes);
+          codes[at + 1] = uint8_t(value.codes >> 8);
+        }
+      }
+#pragma unroll
+      for (int step = 16; step; step >>= 1)
+        flags |= __shfl_xor_sync(0xffffffffu, flags, step);
+      // One arrival per routed row and strip: the token's last of its
+      // strips times its routes clears its whole quantized row on any
+      // sticky error, as the gate finisher's last CTA does.
+      const int token = route / C::top_k;
+      __syncwarp();
+      uint32_t is_last = 0;
+      if (lane == 0) {
+        if (flags) atomicOr(status + token, flags);
+        uint32_t arrived;
+        asm volatile("atom.add.acq_rel.gpu.u32 %0, [%1], 1;"
+            : "=r"(arrived) : "l"(tickets + token) : "memory");
+        is_last = arrived == Strips * C::top_k - 1;
+      }
+      is_last = __shfl_sync(0xffffffffu, is_last, 0);
+      __syncwarp();
+      if (is_last && __ldcg(status + token)) {
+        for (int at = lane; at < C::top_k * C::n; at += 32)
+          codes[uint64_t(token) * C::top_k * C::n + at] = 0;
+        for (int at = lane; at < C::top_k * C::n / 32; at += 32)
+          scales[uint64_t(token) * (C::top_k * C::n / 32) + at] = 127;
+      }
+    }
+  }
+};
+
+// The absorbing gate queue with K::finish: its own arguments, then the gate
+// finisher's outputs and tickets, then the strip tickets.
+template<class C, class Scales, uint32_t FloorBits, class K>
+__device__ void absorbing_finish(const uint8_t* input, const uint8_t* weight,
+    const uint8_t* weight_scales, const uint8_t* activation_scales,
+    const int32_t* offsets, const int32_t* sorted_rows, const int32_t* padded_rows,
+    const int32_t* live_tokens, void* scratch, const float* route_weights,
+    uint16_t* intermediate, uint8_t* codes, uint8_t* scales, uint32_t* status,
+    uint32_t* tickets, uint32_t* strip_tickets) {
+  static_assert(K::finish);
+  absorbing<C, Scales, K>(input, weight, weight_scales, activation_scales, offsets,
+      sorted_rows, padded_rows, live_tokens, scratch,
+      StripFinish<C, FloorBits, K>{route_weights, intermediate, codes, scales, status,
+                                   tickets, strip_tickets});
+}
+} // namespace chop::moe::lanes

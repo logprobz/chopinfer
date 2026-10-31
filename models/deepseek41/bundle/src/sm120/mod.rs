@@ -185,6 +185,7 @@ pub(crate) mod moe;
 pub(crate) mod moe_direct;
 #[allow(dead_code, reason = "the build script compiles the locked entries")]
 pub(crate) mod moe_direct_kernels;
+pub(crate) mod moe_direct_knobs;
 pub(crate) mod moe_direct_wide;
 #[allow(dead_code, reason = "the build script uses the entry declarations")]
 mod moe_grouped_entries;
@@ -1042,6 +1043,9 @@ impl crate::Kernels {
                     && shape.ranks() == 4))
             && (cubin != moe_router64::CUBIN
                 || moe_router64::enabled(shape.geometry, shape.ranks(), shape.verify_rows))
+            // No step selects the knob candidates yet.
+            && cubin != moe_direct_knobs::CUBIN
+            && cubin != moe_direct_knobs::WIDE_CUBIN
             && (cubin != moe_direct_wide::CUBIN
                 || !moe_direct::wide_rows(
                     shape,

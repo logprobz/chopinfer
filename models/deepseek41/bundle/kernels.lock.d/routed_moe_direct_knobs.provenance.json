@@ -1,0 +1,10 @@
+[
+  {
+    "name": "bandwidth_moe_deepseek41_knobs_sm120",
+    "source_closure_sha256": "d5cbce11ad9ba7bb025022b0809cf9b3a7f65a24c590405b2f332814f9fe9210"
+  },
+  {
+    "name": "bandwidth_moe_deepseek41_wide_knobs_sm120",
+    "source_closure_sha256": "05cf002c42c3aaf217d39d5d99e15390e37e975162ad442bcf79fa122e1dafab"
+  }
+]

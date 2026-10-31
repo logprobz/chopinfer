@@ -61,6 +61,7 @@ pub mod bandwidth;
 pub mod down_scale_tiles;
 pub mod floor;
 pub mod formats;
+pub mod knobs;
 pub mod lanes;
 pub mod prefill;
 pub mod quantized;

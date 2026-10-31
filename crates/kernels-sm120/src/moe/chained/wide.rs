@@ -174,7 +174,7 @@ pub fn cubin_spec(name: &str, entries: &[Entry]) -> Result<CubinSpec, Refusal> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::moe::chained::quantized::Projection;
     use kernel_core::contract::{
@@ -184,7 +184,7 @@ mod tests {
     use kernel_core::gated_mlp::{GatedMlpProjection, GatedMlpProjectionQuery, RouteWeightPoint};
     use kernel_core::moe_chained::{ChainedK, ChainedMlpProjectionQuery};
 
-    fn fixture(capacity: u32) -> Entry {
+    pub(crate) fn fixture(capacity: u32) -> Entry {
         let projection = |gate: bool| {
             let k = if gate { 5120 } else { 576 };
             let p = Projection::new(

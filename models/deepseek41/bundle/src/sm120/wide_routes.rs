@@ -130,9 +130,57 @@ pub(super) fn tagged_wide<B: 'static>(op: Prepared<B>, family: &'static str) -> 
     kernel_core::route::tagged(op, tags)
 }
 
+impl crate::Kernels {
+    /// `op`, the fold of a wide verify bucket (`Shape::wide_verify_rows`,
+    /// the `wide_verify` candidate), as the served route of `rows`: the
+    /// verify rows its bucket holds above the next narrower one.
+    pub(crate) fn wide_verify_fold<B: 'static>(
+        op: Prepared<B>,
+        rows: std::ops::RangeInclusive<u32>,
+    ) -> Prepared<B> {
+        let tags = op
+            .info()
+            .symbols
+            .iter()
+            .map(|(symbol, _)| {
+                kernel_core::route::branch(
+                    symbol,
+                    RouteClass::Fast,
+                    "mxfp8_fold",
+                    "wide-verify",
+                    [rows.clone()],
+                )
+            })
+            .collect();
+        kernel_core::route::tagged(op, tags)
+    }
+}
+
 #[cfg(test)]
 pub(super) fn catalogue(shape: &crate::shape::Shape) -> Result<Vec<RouteTag>, String> {
     let mut tags = Vec::new();
+    // The wide verify folds (`DenseOps::with_wide_verify`), each bucket's
+    // admitting the rows above the next narrower one.
+    let mut lowest = crate::Kernels::dense_decode_capacity() + 1;
+    for (capacity, bucket) in shape
+        .wide_verify_rows()
+        .into_iter()
+        .zip(verify_bounds::WIDE)
+    {
+        for base in super::mxfp8_fold::wide_bases(shape.geometry, shape.ranks())? {
+            let entry = super::mxfp8_fold::wide_entry(shape.geometry, &base, bucket, capacity)?;
+            for spec in entry.packed_specs().map_err(|e| e.to_string())? {
+                tags.push(kernel_core::route::branch(
+                    &spec.symbol,
+                    RouteClass::Fast,
+                    "mxfp8_fold",
+                    "wide-verify",
+                    [lowest..=capacity],
+                ));
+            }
+        }
+        lowest = capacity + 1;
+    }
     let rows = |family| shape.verify_rows_within(bound(family));
     if !super::f32_verify::enabled(shape.geometry, shape.ranks(), rows("f32_projection")) {
         return Ok(tags);

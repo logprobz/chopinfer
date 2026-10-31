@@ -468,8 +468,9 @@ impl DenseOps {
     /// ([`Shape::wide_verify_rows`]): the decode folds with a wider row
     /// bound, the shared gate and up each on its own like the 8192-row
     /// folds they replace, and Engram's matrix tile at every verify row
-    /// count above 64 that they hold, as below 64. The drafter's verify
-    /// forwards stay within the decode buckets.
+    /// count above 64 that they hold, as below 64. Each bucket's folds are
+    /// the served route of the rows above the next narrower bucket. The
+    /// drafter's verify forwards stay within the decode buckets.
     pub(crate) fn with_wide_verify(
         mut self,
         backend: &dyn Backend,
@@ -488,6 +489,8 @@ impl DenseOps {
                 self.wide_engram.push((rows, op));
             }
         }
+        // Each bucket serves the rows above the next narrower one.
+        let mut lowest = first;
         for capacity in shape.wide_verify_rows() {
             let need = exact::need(capacity, exact::verify(capacity));
             for dense in projections(shape) {
@@ -500,8 +503,10 @@ impl DenseOps {
                     need,
                     |need| backend.mxfp8_fold_gemm(&query, need),
                 )?;
+                let op = crate::Kernels::wide_verify_fold(op, lowest..=capacity);
                 self.wide.push((dense.id, capacity, op));
             }
+            lowest = capacity + 1;
         }
         Ok(self)
     }
@@ -949,6 +954,7 @@ mod tests {
     #[test]
     fn wide_verify_folds_serve_target_steps_above_the_decode_buckets() {
         use model_deepseek41_contract::{moe::Experts, state::KvStorage};
+        let _routes = kernel_core::route::Metadata::enable();
         let span = |index, length| {
             DeviceBufferSpanV1::new(
                 runtime_bundle_abi::BundleDeviceBufferHandleV1::from_parts(index, 1),
@@ -988,6 +994,7 @@ mod tests {
                 .with_verify_rows(192)
                 .with_wide_verify(enabled);
             let kernels = crate::Kernels::new(&shape).unwrap();
+            let catalogue = crate::Kernels::route_tags(&shape);
             for target in [false, true] {
                 let experts = if target {
                     Experts {
@@ -1049,6 +1056,23 @@ mod tests {
                             assert!(symbols[1].ends_with("_packed_v1"), "{what}");
                             assert_eq!(calls[0].launch.plan.grid, [rows, 1, 1], "{what}");
                             assert_eq!(calls[1].launch.plan.grid[1], rows.div_ceil(16), "{what}");
+                            // The served route of its bucket's rows, never
+                            // the reuse wrapper's fallback.
+                            let bucket = if rows <= 128 { 65..=128 } else { 129..=192 };
+                            for call in &calls {
+                                let tag = call.launch.bindings.route().expect("a route tag");
+                                assert_eq!(
+                                    (tag.class, tag.family, tag.wrappers.as_slice()),
+                                    (
+                                        kernel_core::route::RouteClass::Fast,
+                                        "mxfp8_fold",
+                                        &["wide-verify"][..]
+                                    ),
+                                    "{what}"
+                                );
+                                assert_eq!(tag.admitted, std::slice::from_ref(&bucket), "{what}");
+                                assert!(catalogue.contains(tag), "{what}: unregistered {tag:?}");
+                            }
                         }
                     }
                 }

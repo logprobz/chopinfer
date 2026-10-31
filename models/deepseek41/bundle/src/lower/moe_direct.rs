@@ -64,6 +64,9 @@ impl Lowering<'_> {
                     (layer, Point::RouterPrepare, Some(projected.remove(1)))
                 }
             }
+            // The wide verify buckets keep the served routes and their
+            // scale expansion.
+            Stage::Route(_) if !op.has(Point::Route) => return Ok(None),
             Stage::Route(l) => (l, Point::Route, None),
             Stage::ExpertsGateUp(l) => (l, Point::Gate, None),
             Stage::ExpertsDown(l) => (l, Point::Down, None),

@@ -279,12 +279,21 @@ fn export_wide_moe_graphs() {
         .unwrap()
         .with_verify_rows(verify_rows);
     let kernels = crate::Kernels::new(&shape).unwrap();
-    let ops = Ops::prepare_set(
-        &kernels,
-        &shape,
-        KvStorage::Native,
-        moe::expert_sets(&FLASH)[0],
-    );
+    let prepare = || {
+        Ops::prepare_set(
+            &kernels,
+            &shape,
+            KvStorage::Native,
+            moe::expert_sets(&FLASH)[0],
+        )
+    };
+    // CHOPINFER_MOE_GRAPH_ARM=wide exports the wide direct candidate above
+    // 64 rows; otherwise the served selection.
+    let ops = match std::env::var("CHOPINFER_MOE_GRAPH_ARM").as_deref() {
+        Ok("wide") => crate::sm120::moe_direct::with_wide_candidate(prepare),
+        Ok(other) => panic!("unknown MoE graph arm {other}"),
+        Err(_) => prepare(),
+    };
     let mut cases = Vec::new();
     for rank in 0..4 {
         for &rows in &widths {

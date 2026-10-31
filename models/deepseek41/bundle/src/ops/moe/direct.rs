@@ -32,6 +32,9 @@ pub(crate) struct Prepared {
     pub info: OpInfo,
     calls: Vec<Call>,
     ticket_offset: u64,
+    /// The gate finisher's tickets: one word per token of the compiled
+    /// capacity, in whole 256-byte blocks.
+    ticket_bytes: u64,
     router_planes: Option<RouterPlanes>,
 }
 
@@ -114,13 +117,23 @@ impl Prepared {
     pub(crate) fn fuses_router(&self) -> bool {
         self.calls.iter().any(|c| c.point == Point::RouterPrepare)
     }
+    /// Whether the op launches anything at `point`. Without route calls
+    /// the served routes keep their stage.
+    pub(crate) fn has(&self, point: Point) -> bool {
+        self.calls.iter().any(|c| c.point == point)
+    }
     pub(crate) fn new(info: OpInfo, calls: Vec<Call>, ticket_offset: u64) -> Self {
         Self {
             info,
             calls,
             ticket_offset,
+            ticket_bytes: 256,
             router_planes: None,
         }
+    }
+    pub(crate) fn with_ticket_bytes(mut self, bytes: u64) -> Self {
+        self.ticket_bytes = bytes;
+        self
     }
     pub(crate) fn record(&self, asks: &Asks, phase: ExecutionPhase, rows: u32) {
         asks.record(
@@ -162,7 +175,7 @@ impl Prepared {
                             .offset
                             .checked_add(self.ticket_offset)
                             .ok_or("MoE ticket offset overflows")?,
-                        256,
+                        self.ticket_bytes,
                     ),
                     Source::View(role) => view(role)?,
                 };

@@ -81,25 +81,139 @@ pub(super) fn prepare_set(
     .map_err(Refused::Rule)?;
     let maximum_rows =
         shape.verify_rows_within(model_deepseek41_contract::verify_bounds::MOE_DIRECT);
-    buckets(set, maximum_rows)
-        .into_iter()
-        .map(|(phase, rows)| {
-            let wide = super::moe_router_finish::wide(set, phase, rows, maximum_rows);
-            Ok((
-                phase,
+    let wide = wide_rows(shape, set);
+    let wide_entry = if wide.is_empty() {
+        None
+    } else {
+        Some(super::moe_direct_wide::entry(shape.geometry).map_err(Refused::Rule)?)
+    };
+    let narrow = buckets(set, maximum_rows).into_iter().map(|(phase, rows)| {
+        let wide = super::moe_router_finish::wide(set, phase, rows, maximum_rows);
+        Ok((
+            phase,
+            rows,
+            prepare(
+                &entry,
                 rows,
-                prepare(
-                    &entry,
-                    rows,
-                    phase,
-                    scaling,
-                    super::moe_router_finish::qualified(set, phase, rows) || wide,
-                    super::moe_router_finish::r2(set, phase, rows) || wide,
-                    &tiles,
-                )?,
-            ))
-        })
-        .collect()
+                phase,
+                scaling,
+                super::moe_router_finish::qualified(set, phase, rows) || wide,
+                super::moe_router_finish::r2(set, phase, rows) || wide,
+                &tiles,
+            )?,
+        ))
+    });
+    let wide = wide.map(|rows| {
+        let entry = wide_entry.as_ref().expect("wide direct entry");
+        Ok((
+            ExecutionPhase::Verify,
+            rows,
+            prepare_wide(entry, rows, scaling)?,
+        ))
+    });
+    narrow.chain(wide).collect()
+}
+
+/// The verify rows above 64 the backbone bank serves through the direct
+/// queues at the package's verify rows (`moe_direct_wide`), over the
+/// served generic route, with its gate/up bank in quad-lane row tiles.
+/// Unmeasured: only a lab export selects them
+/// (`with_wide_candidate`). An instance loads the wide module exactly where
+/// this range is not empty for its backbone bank.
+pub(crate) fn wide_rows(
+    shape: &crate::shape::Shape,
+    set: Experts,
+) -> std::ops::RangeInclusive<u32> {
+    let g = shape.geometry;
+    let eligible = g.id == model_deepseek41_contract::geometry::FLASH.id
+        && shape.ranks() == 4
+        && shape.verify_rows > 64
+        && set == model_deepseek41_contract::moe::expert_sets(g)[0]
+        && super::moe_row_tiles_op::layout(g, shape.ranks(), set)
+            == model_deepseek41_contract::weight_plan::RoutedLayout::Lanes;
+    #[cfg(test)]
+    if eligible && WIDE_CANDIDATE.get() {
+        return 65..=shape.verify_rows.min(super::moe_direct_wide::CAPACITY);
+    }
+    let _ = eligible;
+    1..=0
+}
+
+#[cfg(test)]
+thread_local! {
+    static WIDE_CANDIDATE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Prepare the wide direct verify buckets inside `f`, for lab exports of
+/// the candidate.
+#[cfg(test)]
+pub(crate) fn with_wide_candidate<T>(f: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            WIDE_CANDIDATE.set(self.0);
+        }
+    }
+    let _restore = Restore(WIDE_CANDIDATE.replace(true));
+    f()
+}
+
+/// A verify step above 64 rows: the generic route's metadata packs into
+/// the queue table (the pack also clears the gate tickets), then the
+/// absorbing gate queue, the direct gate finisher, the two-strip down
+/// queue and the down finisher, each the 64-row entry at the package's
+/// verify rows. The served route and its scale expansion keep their
+/// stage; no route launch is part of this op.
+fn prepare_wide(wide: &Entry, rows: u32, scaling: u32) -> Result<Prepared, Refused> {
+    use kernels_sm120::moe::chained::wide as queues;
+    let scratch = wide.workspace_bytes(rows)?;
+    let ticket_offset = scratch.next_multiple_of(256);
+    let tickets = queues::ticket_bytes(wide);
+    let mut info = OpInfo::new(
+        "sm120.moe.direct.v1",
+        kernel_core::properties::Invariance::any_rows(rows),
+        Vec::new(),
+    );
+    info.workspace = ticket_offset + tickets;
+    let stages = [
+        (
+            Point::Gate,
+            None,
+            queues::pack_entry(wide)?,
+            queues::pack_plan(wide, rows)?,
+        ),
+        (
+            Point::Gate,
+            Some(Stage::GateSmall),
+            queues::gate_entry(wide, None)?,
+            queues::gate_plan(wide, rows)?,
+        ),
+        (
+            Point::Gate,
+            Some(Stage::GateFinish),
+            queues::gate_finish_entry(wide, false)?,
+            queues::gate_finish_plan(wide, rows)?,
+        ),
+        (
+            Point::Down,
+            Some(Stage::DownSmall),
+            queues::down_entry(wide, None)?,
+            queues::down_plan(wide, rows)?,
+        ),
+        (
+            Point::Sum,
+            Some(Stage::DownFinish),
+            queues::down_finish_entry(wide)?,
+            queues::down_finish_plan(wide, rows)?,
+        ),
+    ];
+    let mut calls = Vec::new();
+    for (point, stage, spec, plan) in stages {
+        info.symbols
+            .push((spec.symbol.clone(), plan.dynamic_shared_bytes));
+        calls.push(call(wide, point, stage, spec, plan, rows, scaling, 0));
+    }
+    Ok(Prepared::new(info, calls, ticket_offset).with_ticket_bytes(tickets))
 }
 
 /// TP4, 250 W, 2026-10-21, captured full MoE graphs (absorb-r1): small
@@ -312,55 +426,25 @@ fn prepare(
                 spec.symbol
             )));
         }
-        let pointers = spec
-            .params
-            .iter()
-            .enumerate()
-            .filter_map(|(index, p)| match p {
-                kernel_build::EntryParam::DevicePointer { name, .. } => Some(Pointer {
-                    index,
-                    source: match name.as_str() {
-                        "scratch" => Source::WorkspaceAt(routed_offset),
-                        "tickets" => Source::Tickets,
-                        _ => Source::View(role(stage, name).into()),
-                    },
-                    bytes: bytes(entry, stage, name, rows),
-                    alignment: if name == "weight" { 16 } else { 1 },
-                }),
-                _ => None,
-            })
-            .collect();
         info.symbols
             .push((spec.symbol.clone(), plan.dynamic_shared_bytes));
-        let arguments = ArgumentList(
-            spec.params
-                .iter()
-                .map(|p| match p {
-                    kernel_build::EntryParam::U32 { name } if name == "scale_bits" => {
-                        Argument::U32(scaling)
-                    }
-                    _ => Argument::NullDevicePointer,
-                })
-                .collect(),
-        );
-        calls.push(Call {
-            point: match stage {
-                None | Some(Stage::Metadata) => Point::Route,
-                Some(Stage::GateSmall | Stage::GateWide | Stage::GateFinish) => Point::Gate,
-                Some(Stage::DownSmall | Stage::DownWide) => Point::Down,
-                Some(Stage::DownFinish) => Point::Sum,
-                _ => unreachable!(),
-            },
-            pointers,
-            launch: Launch {
-                symbol: spec.symbol,
-                rows,
-                plan,
-                arguments,
-                collective: false,
-                persistent: false,
-            },
-        });
+        let point = match stage {
+            None | Some(Stage::Metadata) => Point::Route,
+            Some(Stage::GateSmall | Stage::GateWide | Stage::GateFinish) => Point::Gate,
+            Some(Stage::DownSmall | Stage::DownWide) => Point::Down,
+            Some(Stage::DownFinish) => Point::Sum,
+            _ => unreachable!(),
+        };
+        calls.push(call(
+            entry,
+            point,
+            stage,
+            spec,
+            plan,
+            rows,
+            scaling,
+            routed_offset,
+        ));
     }
     let mut prepared = Prepared::new(info, calls, ticket_offset);
     if fused_router && rows > 32 {
@@ -372,6 +456,62 @@ fn prepare(
         });
     }
     Ok(prepared)
+}
+
+/// A stage launch of `spec` with `plan` at `point`, each pointer bound to
+/// its role's view, the routed scratch at `routed_offset` or the tickets.
+#[allow(clippy::too_many_arguments)]
+fn call(
+    entry: &Entry,
+    point: Point,
+    stage: Option<Stage>,
+    spec: kernel_build::EntrySpec,
+    plan: kernel_core::contract::LaunchPlan,
+    rows: u32,
+    scaling: u32,
+    routed_offset: u64,
+) -> Call {
+    let pointers = spec
+        .params
+        .iter()
+        .enumerate()
+        .filter_map(|(index, p)| match p {
+            kernel_build::EntryParam::DevicePointer { name, .. } => Some(Pointer {
+                index,
+                source: match name.as_str() {
+                    "scratch" => Source::WorkspaceAt(routed_offset),
+                    "tickets" => Source::Tickets,
+                    _ => Source::View(role(stage, name).into()),
+                },
+                bytes: bytes(entry, stage, name, rows),
+                alignment: if name == "weight" { 16 } else { 1 },
+            }),
+            _ => None,
+        })
+        .collect();
+    let arguments = ArgumentList(
+        spec.params
+            .iter()
+            .map(|p| match p {
+                kernel_build::EntryParam::U32 { name } if name == "scale_bits" => {
+                    Argument::U32(scaling)
+                }
+                _ => Argument::NullDevicePointer,
+            })
+            .collect(),
+    );
+    Call {
+        point,
+        pointers,
+        launch: Launch {
+            symbol: spec.symbol,
+            rows,
+            plan,
+            arguments,
+            collective: false,
+            persistent: false,
+        },
+    }
 }
 
 fn role(stage: Option<Stage>, name: &str) -> &str {
@@ -399,11 +539,14 @@ fn bytes(e: &Entry, s: Option<Stage>, name: &str, rows: u32) -> u64 {
     match name {
         "live" | "live_tokens" | "padded" => 4,
         "status" => r * 4,
-        "tickets" => 256,
+        "tickets" => (4 * u64::from(e.capacity())).next_multiple_of(256),
         "scratch" => e.workspace_bytes(rows).unwrap(),
         "ids" | "weights" => r * k * 4,
         "counts" => x * 4,
         "offsets" | "active" => (x + 1) * 4,
+        // Above 64 rows the generic route pads each expert's range to whole
+        // 64-row tiles, so an expert may own several.
+        "sorted" if rows > 64 => u64::from(e.gate.padded_rows(rows).unwrap()) * 4,
         "sorted" => x * 64 * 4,
         "bias" | "alternate_bias" => x * 4,
         "scores" | "logits" => r * x * 4,

@@ -514,6 +514,30 @@ stalls on rank 1's head tile and is slower than the chunks. See
 [wide drafter forwards](dspark-wide-draft.md). This is not served
 step-time acceptance.
 
+Merged into the wide verify branch with the exact F32 fallback fix, the
+five wide replays matched bitwise again against the h2 references. A
+128-row step takes 60.9 ms and a 192-row step 88.3 ms of GPU-busy time per
+device in the target's eager verify kernels (the drafter's graph launches
+are outside this measure, as in the times above), and 56.5 and 82.5 ms with
+the robust knob set, against 76.9 and 104.0 ms with the rank-1 stall. The
+head's row tile takes 0.6 ms on every rank at 128 rows and 1.0 ms at 192,
+and the logits row exchange of a 128-row step fell from 10.9 to 0.3 ms.
+With the wide drafter merged, the five wide replays matched bitwise in
+logits, proposals and committed state with `wide_verify` alone and with
+`wide_draft` too (whose drafter ran fewer graph launches), eagerly and,
+with `wide_draft`, with graphs up to each verify capacity; so did the four
+at 16-64 rows with `f32_row_tiles` and `wide_draft`, and the five graph
+replays with the knob set, whose graph rows this time reached each
+capacity. Allocated replays of one drafted step after the prefills, at C16
+(seeded), C24 (greedy) and C32 (seeded and greedy), with five drafts an
+item and 64, 96 and 128 computed of 96, 144 and 192 reserved rows, matched
+captures of the previous package with `wide_verify` alone and with
+`wide_draft`, whose drafter then runs each step's 16, 24 or 32 items in one
+forward: the logits of every reserved row, the proposals, the device
+acceptance and all 80, 120 and 160 raw F32 drafter confidence words of the
+step's items (the replay tool's `draft_confidence` mode). This is not
+served step-time acceptance.
+
 Prefill commit projections are batched across prompts. Undrafted pure
 decode joins status once and submits private sampling before collecting it
 on the native result path. Verify and undrafted commits with at least eight

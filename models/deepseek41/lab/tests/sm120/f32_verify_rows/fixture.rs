@@ -580,6 +580,38 @@ impl<'w> Step<'w> {
         self.set_live(s, self.rows)?;
         Ok(compared)
     }
+
+    /// The reference form's output at the planned rows equals `expected`
+    /// (every output at the verify capacity) bit for bit.
+    pub fn check(
+        &self,
+        s: &Session,
+        modules: &Modules,
+        expected: &[f32],
+        label: &str,
+    ) -> LabResult<()> {
+        let n = self.weights.shape.n as usize;
+        self.poison(s)?;
+        self.run(s, modules, 0)?;
+        let actual = self.output(s, 0)?;
+        let rows = self.rows as usize;
+        for (i, (bytes, value)) in actual
+            .chunks_exact(4)
+            .zip(&expected[..rows * n])
+            .enumerate()
+        {
+            if bytes != value.to_le_bytes().as_slice() {
+                return Err(format!(
+                    "{label}: {} rows={rows} differs from the witness at row {} feature {}: {bytes:?} != {:?}",
+                    self.forms[0].name(),
+                    i / n,
+                    i % n,
+                    value.to_le_bytes()
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 fn reuse(s: Shape, rows: u32) -> Entry {
@@ -592,6 +624,105 @@ pub fn operands(s: Shape, witness: cases::Witness) -> (Vec<f32>, Vec<f32>) {
     cases::operands(&catalog::lab_entry(s), witness)
 }
 
+/// Signed operands just below, at and just above the tensor domain's edges
+/// 2^-30 and 2^31 (`step` bits apart: adjacent F32 activations or BF16
+/// weights), each with whether the domain admits it.
+pub fn edges(step: u32) -> [(f32, bool); 12] {
+    let (low, high) = (97_u32 << 23, 158_u32 << 23);
+    let unsigned = [
+        (low - step, false),
+        (low, true),
+        (low + step, true),
+        (high - step, true),
+        (high, false),
+        (high + step, false),
+    ];
+    std::array::from_fn(|i| {
+        let (bits, inside) = unsigned[i % 6];
+        (f32::from_bits(bits | (i as u32 / 6) << 31), inside)
+    })
+}
+
+const ROW_SCALES: [f32; 4] = [1., -2., 0.5, -4.];
+const FEATURE_SCALES: [f32; 4] = [1., -0.5, 2., -1.];
+
+/// The domain-boundary witness of a shape at the verify capacity, with the
+/// tiles its weights put outside the tensor domain and every output.
+pub struct Boundary {
+    pub a: Vec<f32>,
+    pub b: Vec<f32>,
+    pub outside: Vec<usize>,
+    pub expected: Vec<f32>,
+}
+
+/// Chain 0 of a row and feature with scales `s` and `t`, on the tensor
+/// path or the SIMT one: `s x` times `t (1 + 2^-7)` at K 3, then `-s` times
+/// `t` at K 100, with x = 1 + 2^-8 + 2^-16 + 2^-23.
+fn witness_chain(s: f32, t: f32, tensor: bool) -> f32 {
+    let (mut a, mut b) = ([0.; 128], [0.; 128]);
+    a[3] = s * (1. + 2_f32.powi(-8) + 2_f32.powi(-16) + 2_f32.powi(-23));
+    a[100] = -s;
+    b[3] = t * (1. + 2_f32.powi(-7));
+    b[100] = t;
+    cases::chain_values(&a, &b, tensor)[0]
+}
+
+/// The domain-boundary witness: every output's only nonzero products are
+/// `witness_chain`'s, with power-of-two scales by row and feature. The
+/// tensor chains hold its components' products exactly and keep the 2^-30
+/// bit of x (1 + 2^-7) that the first SIMT FMA rounds away, so after the
+/// cancellation each output's bits show its path. Every 16-feature tile
+/// and row but each 13th holds one of `edges`, at one of five K positions
+/// where every operand of the other side is zero, which alone decides its
+/// domain; a CTA's feature range holds several tiles outside it.
+pub fn boundary(s: Shape) -> Boundary {
+    let (m, n, k) = (catalog::CAPACITY as usize, s.n as usize, s.k as usize);
+    let rows_at = [0, 128, 255, k / 2 + 17, k - 1];
+    let weights_at = [1, 129, 254, k / 2 + 34, k - 2];
+    let mut a = vec![0.; m * k];
+    let mut inside_rows = vec![true; m];
+    for r in 0..m {
+        let chain = |c: usize| r * k + c;
+        a[chain(3)] = ROW_SCALES[r % 4] * (1. + 2_f32.powi(-8) + 2_f32.powi(-16) + 2_f32.powi(-23));
+        a[chain(100)] = -ROW_SCALES[r % 4];
+        if r % 13 != 0 {
+            let (value, inside) = edges(1)[r % 13 - 1];
+            a[chain(rows_at[r / 13 % 5])] = value;
+            inside_rows[r] = inside;
+        }
+    }
+    let mut b = vec![0.; n * k];
+    for f in 0..n {
+        b[f * k + 3] = FEATURE_SCALES[f % 4] * (1. + 2_f32.powi(-7));
+        b[f * k + 100] = FEATURE_SCALES[f % 4];
+    }
+    let mut inside_tiles = vec![true; n / 16];
+    for tile in 0..n / 16 {
+        if tile % 13 != 0 {
+            let (value, inside) = edges(1 << 16)[tile % 13 - 1];
+            b[(tile * 16 + tile * 7 % 16) * k + weights_at[tile / 13 % 5]] = value;
+            inside_tiles[tile] = inside;
+        }
+    }
+    // The other chains are zero, so each output is its chain 0.
+    let chains: Vec<[f32; 2]> = (0..16)
+        .map(|i| [false, true].map(|t| witness_chain(ROW_SCALES[i / 4], FEATURE_SCALES[i % 4], t)))
+        .collect();
+    let expected = (0..m * n)
+        .map(|i| {
+            let (r, f) = (i / n, i % n);
+            let tensor = inside_rows[r] && inside_tiles[f / 16];
+            chains[r % 4 * 4 + f % 4][usize::from(tensor)]
+        })
+        .collect();
+    Boundary {
+        a,
+        b,
+        outside: (0..n / 16).filter(|&t| !inside_tiles[t]).collect(),
+        expected,
+    }
+}
+
 /// A deterministic real-valued pattern with a late subnormal that forces
 /// one row's SIMT chains, and a weight tile outside the tensor domain.
 pub fn mixed(s: Shape) -> (Vec<f32>, Vec<f32>) {
@@ -600,4 +731,66 @@ pub fn mixed(s: Shape) -> (Vec<f32>, Vec<f32>) {
     a[5 * k + k - 1] = f32::from_bits(1);
     b[17 * k + 3] = 2_f32.powi(-40);
     (a, b)
+}
+
+#[test]
+fn cpu_boundary_witness_shows_each_outputs_path() {
+    for (step, weight) in [(1, false), (1 << 16, true)] {
+        for (value, inside) in edges(step) {
+            assert_eq!(cases::tensor_operand(value), inside, "{value:e}");
+            if weight {
+                assert_eq!(u32::from(bf16_weight_code(value)) << 16, value.to_bits());
+            }
+        }
+    }
+    let p = |e: i32| 2_f32.powi(e);
+    for s in ROW_SCALES {
+        for t in FEATURE_SCALES {
+            let [simt, tensor] = [false, true].map(|path| witness_chain(s, t, path));
+            assert_eq!(simt, s * t * (p(-7) + p(-8) + p(-15) + p(-16) + p(-22)));
+            assert_eq!(tensor, simt + s * t * p(-30));
+            assert_ne!(simt.to_bits(), tensor.to_bits());
+        }
+    }
+    // Every shape but the head, whose weights alone take 530 MB: the
+    // classification and, at two features of each of the first 16 tiles
+    // and every row, the original chains over the whole K.
+    for shape in catalog::shapes().into_iter().filter(|s| s.name != "head") {
+        let w = boundary(shape);
+        let (n, k) = (shape.n as usize, shape.k as usize);
+        let domains = cases::weight_domains(&w.b, k, kernel_core::contract::WeightFormat::Bf16);
+        let outside: Vec<usize> = (0..n / 16).filter(|&t| domains[t] == 0).collect();
+        assert_eq!(w.outside, outside, "{}", shape.name);
+        assert!(
+            w.outside.len() >= (n / 16).min(13) * 6 / 13,
+            "{}",
+            shape.name
+        );
+        let rows: Vec<bool> =
+            w.a.chunks_exact(k)
+                .map(|row| row.iter().all(|&v| cases::tensor_operand(v)))
+                .collect();
+        // Six of every 13 rows hold an activation outside the domain.
+        assert_eq!(rows.iter().filter(|&&inside| !inside).count(), 88);
+        for tile in 0..(n / 16).min(16) {
+            for f in [tile * 16 + tile * 7 % 16, tile * 16 + (tile * 7 + 5) % 16] {
+                for (r, &inside) in rows.iter().enumerate() {
+                    let tensor = inside && domains[f / 16] != 0;
+                    let total = cases::chain_values(
+                        &w.a[r * k..(r + 1) * k],
+                        &w.b[f * k..(f + 1) * k],
+                        tensor,
+                    )
+                    .into_iter()
+                    .fold(0_f32, |total, chain| total + chain);
+                    assert_eq!(
+                        total.to_bits(),
+                        w.expected[r * n + f].to_bits(),
+                        "{} row {r} feature {f}",
+                        shape.name
+                    );
+                }
+            }
+        }
+    }
 }

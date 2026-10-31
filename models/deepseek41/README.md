@@ -386,8 +386,9 @@ head row 49423 (tile 1068 of rank 1's slice), one in each router of layers
 holds; the index projections hold none, and the drafter's vocabulary head
 reads the same `head.weight`. Such a 16-feature tile keeps the SIMT chains
 at every row, which the row tiles first ran serially in 16 threads: on
-2026-10-31 the kernel lab, run on each rank's real slices (`CHOPINFER_F32_ROWS_WEIGHTS`, one GPU per rank at its 250 W
-enforced limit, in-job A/A controls within 2.7% and 4.5% at 65 rows),
+2026-10-31 the kernel lab, run on each rank's real slices
+(`CHOPINFER_F32_ROWS_SLICE`, one GPU per rank at its 250 W enforced limit,
+in-job A/A controls within 2.7% and 4.5% at 65 rows),
 measured rank 1's head tile at 14.3 to 14.7 ms at every width from 33 to
 192 rows and its decode tiles at up to 14.1 ms, and the affected router
 and compressor tiles at 0.51 to 0.63 ms. The fallback now stages the tile's

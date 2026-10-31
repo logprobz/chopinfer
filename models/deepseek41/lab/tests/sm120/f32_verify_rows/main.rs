@@ -6,20 +6,23 @@
 //! every form bit for bit with the split route and time them under the
 //! pair-lab rules. Each needs the lab cubin that `cpu_build_verify_rows`
 //! stages in `CHOPINFER_F32_ROWS_CUBINS` (outside the repository), and runs
-//! only when `CHOPINFER_KERNEL_GPU` names an idle GPU. With
-//! `CHOPINFER_F32_ROWS_WEIGHTS` naming a rank's raw BF16 weights of the one
-//! shape `CHOPINFER_F32_ROWS_SHAPES` selects (outside the repository), both
-//! tests run those weights: the bitwise test under the mixed activation,
-//! the timing under the General one.
+//! only when `CHOPINFER_KERNEL_GPU` names an idle GPU. The domain-boundary
+//! witness also checks the reference against the outputs its operands fix.
+//! `gpu_verify_rows_real_slices` runs the real-slice matrix (`real::SLICES`)
+//! of the checkpoint `CHOPINFER_DEEPSEEK_CHECKPOINT` names under the mixed
+//! activation; with `CHOPINFER_F32_ROWS_SLICE` naming one of its slices of
+//! the one shape `CHOPINFER_F32_ROWS_SHAPES` selects, the timing runs that
+//! slice's weights under the General activation.
 mod catalog;
 mod fixture;
+mod real;
 mod timing;
 
-use catalog::{CUBIN, FAMILY, PROBE_SYMBOLS};
+use catalog::{CUBIN, FAMILY, PROBE_SYMBOLS, Shape};
 use fixture::{Form, Modules, Step, Weights};
 use kernel_build::{BuildOptions, LockDir, Toolchain};
-use kernel_harness::Cubins;
 use kernel_harness::kit::cases::f32_projection::Witness;
+use kernel_harness::{Cubins, LabResult, Session};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -98,8 +101,29 @@ const BOUNDARY_ROWS: [u32; 56] = [
 ];
 const WITNESS_ROWS: [u32; 9] = [1, 6, 16, 32, 33, 60, 64, 65, 192];
 
-/// A named operand pattern and the row counts it runs at.
-type Case = (String, (Vec<f32>, Vec<f32>), Vec<u32>);
+/// A named operand pattern, the row counts it runs at, and what its
+/// operands fix: the tiles outside the tensor domain and every output.
+struct Case {
+    label: String,
+    a: Vec<f32>,
+    b: Vec<f32>,
+    rows: Vec<u32>,
+    outside: Option<Vec<usize>>,
+    expected: Option<Vec<f32>>,
+}
+
+impl Case {
+    fn new(label: impl Into<String>, (a, b): (Vec<f32>, Vec<f32>), rows: Vec<u32>) -> Self {
+        Self {
+            label: label.into(),
+            a,
+            b,
+            rows,
+            outside: None,
+            expected: None,
+        }
+    }
+}
 
 /// Every form a row count admits, the split route first.
 fn every_form(shape: catalog::Shape, rows: u32) -> Vec<Form> {
@@ -124,6 +148,42 @@ fn every_form(shape: catalog::Shape, rows: u32) -> Vec<Form> {
     forms
 }
 
+/// Every form of `case` against the split route at each of its row counts.
+fn compare(s: &Session, modules: &Modules, shape: Shape, case: Case) -> LabResult<usize> {
+    let Case {
+        label,
+        a,
+        b,
+        rows,
+        outside,
+        expected,
+    } = case;
+    let weights = Weights::new(s, modules, shape, &b)?;
+    if outside.is_some_and(|o| o != weights.outside) {
+        return Err(format!(
+            "{} {label}: device weight domain differs",
+            shape.name
+        ));
+    }
+    drop(b);
+    let mut compared = 0;
+    for rows in rows {
+        let step = Step::new(s, &weights, rows, &a, every_form(shape, rows))?;
+        let name = format!("{} {label}", shape.name);
+        let n = step.compare(s, modules, &name)?;
+        if let Some(expected) = &expected {
+            step.check(s, modules, expected, &name)?;
+        }
+        compared += n;
+        println!(
+            "F32_ROWS_BITWISE shape={} pattern={label} rows={rows} forms={} comparisons={n} PASS",
+            shape.name,
+            step.forms.len()
+        );
+    }
+    Ok(compared)
+}
+
 #[test]
 #[ignore = "requires staged cubins and an idle GPU"]
 fn gpu_verify_rows_bitwise() {
@@ -131,54 +191,77 @@ fn gpu_verify_rows_bitwise() {
         let mut compared = 0;
         for shape in timing::selected_shapes() {
             let modules = Modules::load(s, lab_bytes(), shape)?;
-            let mut cases: Vec<Case> = Vec::new();
-            let mut real_outside = None;
-            if let Some((source, b, outside)) = timing::real_weights(shape) {
-                // A rank's real weights under the mixed activation, whose
-                // subnormal also sends one row to the SIMT chains.
-                println!(
-                    "F32_ROWS_WEIGHTS shape={} weights={source} outside_tiles={outside:?}",
-                    shape.name
-                );
-                real_outside = Some(outside);
-                cases.push((
-                    format!("real:{source}"),
-                    (fixture::mixed(shape).0, b),
-                    timing::rows_or(&BOUNDARY_ROWS),
-                ));
-            } else {
-                cases.push((
-                    "mixed".into(),
-                    fixture::mixed(shape),
-                    timing::rows_or(&BOUNDARY_ROWS),
-                ));
-                for witness in WITNESSES {
-                    cases.push((
+            let rows = timing::rows_or(&BOUNDARY_ROWS);
+            compared += compare(
+                s,
+                &modules,
+                shape,
+                Case::new("mixed", fixture::mixed(shape), rows.clone()),
+            )?;
+            let boundary = fixture::boundary(shape);
+            compared += compare(
+                s,
+                &modules,
+                shape,
+                Case {
+                    outside: Some(boundary.outside),
+                    expected: Some(boundary.expected),
+                    ..Case::new("Boundary", (boundary.a, boundary.b), rows)
+                },
+            )?;
+            for witness in WITNESSES {
+                compared += compare(
+                    s,
+                    &modules,
+                    shape,
+                    Case::new(
                         format!("{witness:?}"),
                         fixture::operands(shape, witness),
                         timing::rows_or(&WITNESS_ROWS),
-                    ));
-                }
-            }
-            for (label, (a, b), rows) in cases {
-                let weights = Weights::new(s, &modules, shape, &b)?;
-                if real_outside.as_ref().is_some_and(|o| *o != weights.outside) {
-                    return Err(format!("{}: device weight domain differs", shape.name));
-                }
-                drop(b);
-                for rows in rows {
-                    let step = Step::new(s, &weights, rows, &a, every_form(shape, rows))?;
-                    let n = step.compare(s, &modules, &format!("{} {label}", shape.name))?;
-                    compared += n;
-                    println!(
-                        "F32_ROWS_BITWISE shape={} pattern={label} rows={rows} forms={} comparisons={n} PASS",
-                        shape.name,
-                        step.forms.len()
-                    );
-                }
+                    ),
+                )?;
             }
         }
         println!("F32_ROWS_BITWISE_COMPLETE comparisons={compared}");
+        Ok(compared)
+    })
+    .unwrap();
+    assert!(ran.is_some_and(|n| n > 0), "an idle GPU is required");
+}
+
+/// Every slice of the real-slice matrix at every boundary row, under the
+/// mixed activation, whose subnormal also sends one row to the SIMT chains.
+#[test]
+#[ignore = "requires staged cubins, the checkpoint CHOPINFER_DEEPSEEK_CHECKPOINT names and an idle GPU"]
+fn gpu_verify_rows_real_slices() {
+    let root = real::checkpoint();
+    let ran = kernel_harness::gpu_test_with(cubins(), 8 << 30, |s| {
+        let (mut slices, mut compared) = (0, 0);
+        for shape in catalog::shapes() {
+            let modules = Modules::load(s, lab_bytes(), shape)?;
+            for slice in real::SLICES.iter().filter(|r| r.shape() == shape) {
+                println!(
+                    "F32_ROWS_SLICE {} shape={} outside_tiles={:?}",
+                    slice.stem, shape.name, slice.outside
+                );
+                compared += compare(
+                    s,
+                    &modules,
+                    shape,
+                    Case {
+                        outside: Some(slice.outside.to_vec()),
+                        ..Case::new(
+                            format!("real:{}", slice.stem),
+                            (fixture::mixed(shape).0, slice.load(&root)),
+                            BOUNDARY_ROWS.to_vec(),
+                        )
+                    },
+                )?;
+                slices += 1;
+            }
+        }
+        assert_eq!(slices, real::SLICES.len());
+        println!("F32_ROWS_REAL_COMPLETE slices={slices} comparisons={compared}");
         Ok(compared)
     })
     .unwrap();

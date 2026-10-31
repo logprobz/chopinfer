@@ -63,6 +63,36 @@ Its CPU test `timing::timed_arms_launch_what_serving_issues` pins this
 table and checks every verify width, so a change to the admission fails
 it.
 
+## Phased F32 parity
+
+The phased F32 rounding entries give the served form's bits. Every form
+sums each element's rank partials in F32 in rank order from zero and
+rounds the sum once with `cvt.rn.bf16.f32`, and the HC mixes that take a
+deferred round convert the pair's F32 sum with the same instruction before
+any other arithmetic. The CPU test
+`phased_parity::candidate_registration_serves_the_phased_entries_at_every_row`
+pins the forms: with the phased entries registered beside the rounding
+rows, every row count from 1 to 192 launches one phased entry (the
+one-shot round at 1 to 4 rows) and exposes no deferred round. The GPU test
+`phased_parity::phased_f32_matches_the_served_reduction_on_gpu` compares,
+on every rank and live row, the phased output with the served complete
+output and with the round of the deferred pair's F32 sum, at 1, 2, 4, 5, 8,
+16, 32, 33, 64, 128 and 192 rows, each with every row live and with the
+last row dead, and in graph replay. Its patterns cover cancellation in rank
+order, every binade, subnormal sums, signed zeros, overflow to infinity,
+NaN payloads and infinities, BF16 ties and the BF16 overflow boundary,
+uniformly random bits and sums whose round depends on the rank order:
+
+```sh
+CHOPINFER_KERNEL_GPUS=0,1,2,3 CHOPINFER_KERNEL_REQUIRE=1 \
+  cargo test --locked --offline -p model-deepseek41-lab --test bf16_partials \
+  phased_parity -- --ignored --nocapture
+```
+
+On 2026-10-31 it passed on four GPUs: 231 cases, every output bit equal,
+every NaN sum giving 0x7fff in both forms, and no difference from the
+rank-ordered host oracle.
+
 ## Arms
 
 - `f32_deferred`: the reduce-scatter and all-gather, a served step's

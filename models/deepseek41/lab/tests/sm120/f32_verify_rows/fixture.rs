@@ -32,6 +32,9 @@ pub enum Form {
     Reuse,
     /// A whole-K row tile.
     Rows(Box<rows::Candidate>),
+    /// A row tile the bundle registers (`f32_verify_rows`), launched from
+    /// the packaged cubin at the verify rows its tuning row serves.
+    Packed(Box<rows::Candidate>, [u32; 2]),
 }
 
 impl Form {
@@ -42,10 +45,17 @@ impl Form {
             Self::Spans => "spans".into(),
             Self::Bounded => "bounded_reuse_m60".into(),
             Self::Reuse => "reuse32".into(),
-            Self::Rows(c) => c
+            Self::Rows(c) | Self::Packed(c, _) => c
                 .symbol()
                 .split_once("_rows_")
-                .map(|(_, tag)| format!("rows_{}", tag.trim_end_matches("_v1")))
+                .map(|(_, tag)| {
+                    let tag = tag.trim_end_matches("_v1");
+                    if matches!(self, Self::Packed(..)) {
+                        format!("packed_rows_{tag}")
+                    } else {
+                        format!("rows_{tag}")
+                    }
+                })
                 .expect("row tile symbol"),
         }
     }
@@ -61,6 +71,9 @@ impl Form {
                     && kernels_sm120::gemm::dense_decode::supported_reuse_rows(rows)
             }
             Self::Rows(c) => rows <= c.capacity(),
+            Self::Packed(c, served) => {
+                (served[0]..=served[1]).contains(&rows) && rows <= c.capacity()
+            }
         }
     }
 }
@@ -126,6 +139,21 @@ impl Modules {
             modules[0]
                 .function(&c.symbol())
                 .map_err(err)?
+                .set_max_dynamic_shared_memory(c.tile().shared_bytes())
+                .map_err(err)?;
+        }
+        for (c, _) in catalog::packed(shape) {
+            for symbol in c.symbols() {
+                if modules.iter().all(|m| m.function(&symbol).is_err()) {
+                    let (_, bytes) = fold_cubin_for_symbol(&symbol)
+                        .ok_or_else(|| format!("no bundle cubin holds {symbol}"))?;
+                    modules.push(s.load_cubin(bytes)?);
+                }
+            }
+            modules
+                .iter()
+                .find_map(|m| m.function(&c.symbol()).ok())
+                .ok_or("missing packed row tile")?
                 .set_max_dynamic_shared_memory(c.tile().shared_bytes())
                 .map_err(err)?;
         }
@@ -310,7 +338,7 @@ impl<'w> Step<'w> {
                 ),
                 Form::Bounded => (bounded_at(shape, rows).runtime_workspace_bytes(rows), 16),
                 Form::Reuse => (reuse(shape, rows).runtime_workspace_bytes(rows), 16),
-                Form::Rows(c) => (c.workspace_bytes(rows).map_err(err)?, 16),
+                Form::Rows(c) | Form::Packed(c, _) => (c.workspace_bytes(rows).map_err(err)?, 16),
             };
             planes.push(Planes {
                 output: s.allocate((rows * q.n * 4) as usize)?,
@@ -407,7 +435,7 @@ impl<'w> Step<'w> {
                 .map_err(err)?
                 .into_launches()
                 .into()),
-            Form::Rows(c) => Ok(c
+            Form::Rows(c) | Form::Packed(c, _) => Ok(c
                 .launches(
                     rows::Buffers {
                         activation: view(ACTIVATION),

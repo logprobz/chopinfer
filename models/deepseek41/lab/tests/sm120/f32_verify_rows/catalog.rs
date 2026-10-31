@@ -1,5 +1,7 @@
 //! The projections, forms and lab tiles the verify-row tests cover.
-use bundle_deepseek41::sm120::{f32_prefill, f32_split, f32_verify, head_last, projection_reuse};
+use bundle_deepseek41::sm120::{
+    f32_prefill, f32_split, f32_verify, f32_verify_rows, head_last, projection_reuse,
+};
 use kernel_build::{CubinSpec, EntryParam, EntrySpec};
 use kernel_core::contract::{ActivationFormat, DType, Epilogues, GemmQuery, WeightFormat};
 use kernel_core::precision::{ExecutionPhase, OperationUse};
@@ -171,6 +173,16 @@ pub fn spans(s: Shape) -> Option<cached_spans::Candidate> {
         .find(|c| c.entry().query().n == s.n && c.entry().query().k == s.k)
 }
 
+/// The row tiles the bundle registers for `s`, with the verify rows each
+/// serves; none for a projection that keeps its other routes.
+pub fn packed(s: Shape) -> Vec<(Candidate, [u32; 2])> {
+    f32_verify_rows::tiles(s.n, s.k)
+        .unwrap()
+        .into_iter()
+        .map(|t| (t.candidate, t.rows))
+        .collect()
+}
+
 /// The lab cubin: every candidate and the timing probes.
 pub fn spec() -> CubinSpec {
     let all: Vec<_> = shapes().into_iter().flat_map(candidates).collect();
@@ -267,4 +279,13 @@ fn cpu_lab_tiles_plan_every_timed_row_count() {
     }
     assert!(spans(shape("head").unwrap()).is_some());
     assert!(spans(shape("router").unwrap()).is_some());
+    // The bundle's tiles are lab tiles at the same capacity.
+    for s in shapes() {
+        for (c, _) in packed(s) {
+            assert!(candidates(s).iter().any(|lab| lab.tile() == c.tile()));
+            assert_eq!(c.capacity(), CAPACITY);
+        }
+    }
+    assert_eq!(packed(shape("index_weights").unwrap()).len(), 0);
+    assert_eq!(packed(shape("compressor").unwrap()).len(), 2);
 }

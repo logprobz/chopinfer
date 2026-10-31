@@ -185,6 +185,11 @@ fn forms(shape: Shape, rows: u32) -> Vec<Form> {
             .into_iter()
             .map(|c| Form::Rows(Box::new(c))),
     );
+    others.extend(
+        catalog::packed(shape)
+            .into_iter()
+            .map(|(c, served)| Form::Packed(Box::new(c), served)),
+    );
     for form in others {
         if form.admits(shape, rows) && form.name() != current.name() {
             forms.push(form);

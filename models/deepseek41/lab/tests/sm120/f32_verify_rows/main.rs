@@ -1,12 +1,12 @@
 //! Flash TP4's exact F32 projections at verify row counts: every form a
 //! step can take (the ordered split route, the separate-span cached
 //! stages, the drafter's bounded reuse and the decode reuse), the whole-K
-//! row tiles (`kernels_sm120::f32_projection::rows`) and the weight-read
-//! floor. The GPU tests compare every form bit for bit with the split
-//! route and time them under the pair-lab rules. Each needs the lab cubin
-//! that `cpu_build_verify_rows` stages in `CHOPINFER_F32_ROWS_CUBINS`
-//! (outside the repository), and runs only when `CHOPINFER_KERNEL_GPU`
-//! names an idle GPU.
+//! row tiles (`kernels_sm120::f32_projection::rows`), the bundle's
+//! packaged row tiles and the weight-read floor. The GPU tests compare
+//! every form bit for bit with the split route and time them under the
+//! pair-lab rules. Each needs the lab cubin that `cpu_build_verify_rows`
+//! stages in `CHOPINFER_F32_ROWS_CUBINS` (outside the repository), and runs
+//! only when `CHOPINFER_KERNEL_GPU` names an idle GPU.
 mod catalog;
 mod fixture;
 mod timing;
@@ -107,6 +107,11 @@ fn every_form(shape: catalog::Shape, rows: u32) -> Vec<Form> {
         catalog::candidates(shape)
             .into_iter()
             .map(|c| Form::Rows(Box::new(c))),
+    );
+    forms.extend(
+        catalog::packed(shape)
+            .into_iter()
+            .map(|(c, served)| Form::Packed(Box::new(c), served)),
     );
     forms.retain(|f| f.admits(shape, rows));
     forms

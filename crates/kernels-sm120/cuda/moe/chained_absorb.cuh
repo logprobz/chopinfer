@@ -1,5 +1,6 @@
 #pragma once
 #include "chained_policies.cuh"
+#include "chained_knobs.cuh"
 
 // The streamed small queue that also runs the wide queue's experts, so no
 // wide launch follows it. Wide experts take the first slots, so their longer
@@ -25,7 +26,8 @@ template<class C, bool Tiled = false, class Scales = RawScales, int Strips = 1,
     class Activation = chained_policy::ExactE4M3Activation,
     class Scale = chained_policy::ExactMxFp4Scale,
     class Chain = chained_policy::Bf16Chain128,
-    class Reduction = chained_policy::OrderedF32>
+    class Reduction = chained_policy::OrderedF32,
+    class K = knobs::Served>
 __device__ void compute(const uint8_t* input, const uint8_t* weight,
     const uint8_t* weight_scales, const uint8_t* activation_scales,
     const int32_t* offsets, const int32_t* sorted_rows, const int32_t* padded_rows,
@@ -85,10 +87,10 @@ __device__ void compute(const uint8_t* input, const uint8_t* weight,
           // and its row in the tile is the lane's.
           const uint64_t tile = (uint64_t(expert) * C::weight_rows + (h / Strips) * C::n + (h % Strips) * Columns + column) / 64 * L::blocks + block;
           const int row = warp * 16 + g + r * 8;
-          owned[h][r] = valid ? load16(weight + tile * 4096 + row * 64 + t * 16) : make_uint4(0,0,0,0);
+          owned[h][r] = valid ? knobs::weight16<K>(weight + tile * 4096 + row * 64 + t * 16) : make_uint4(0,0,0,0);
           scales[h][r] = valid ? weight_scales[tile * 256 + row * 4 + t] : 127;
         } else {
-          owned[h][r] = valid ? load16(weight + wr * (C::k / 2) + k / 2) : make_uint4(0,0,0,0);
+          owned[h][r] = valid ? knobs::weight16<K>(weight + wr * (C::k / 2) + k / 2) : make_uint4(0,0,0,0);
           if constexpr (Scales::staged) {
             static_assert(!C::gate_up);
             scales[h][r] = valid ? ((scale_words[h * Columns + warp * 16 + g + r * 8] >> (8 * t)) & 255) : 127;
@@ -171,7 +173,7 @@ __device__ void compute(const uint8_t* input, const uint8_t* weight,
         const int n = column + warp * 16 + g + (i >= 2 ? 8 : 0);
 #pragma unroll
         for (int h = 0; h < H; ++h)
-          out[((uint64_t(route) * C::halves + h / Strips) * L::blocks + block) * C::n + n + (h % Strips) * Columns] = chain[h].v[i];
+          knobs::store_partial<K>(&out[((uint64_t(route) * C::halves + h / Strips) * L::blocks + block) * C::n + n + (h % Strips) * Columns], chain[h].v[i]);
       }
       __syncthreads();
     }

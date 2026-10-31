@@ -84,7 +84,7 @@ struct RawScales {
 
 // Loads the lane's bytes of the item's tile: the row-tiled queues' tile,
 // row and K block, at the lane's quad-lane offset.
-template<class C, int H, class Scales = RawScales>
+template<class C, int H, class Scales = RawScales, class K = knobs::Served>
 __device__ __forceinline__ Weights<H> load(const uint8_t* weight, const uint8_t* weight_scales,
     int expert, int column, int block, int warp, int g, int t) {
   using L = Layout<C>;
@@ -95,7 +95,7 @@ __device__ __forceinline__ Weights<H> load(const uint8_t* weight, const uint8_t*
     for (int r = 0; r < 2; ++r) {
       const uint64_t tile = (uint64_t(expert) * C::weight_rows + h * C::n + column) / 64 * L::blocks + block;
       const int row = warp * 16 + g + r * 8;
-      w.codes[h][r] = load16(weight + tile * 4096 + row * 64 + t * 16);
+      w.codes[h][r] = knobs::weight16<K>(weight + tile * 4096 + row * 64 + t * 16);
       w.scales[h][r] = Scales::template load<C>(weight_scales, expert, h, column, block, row, tile);
       const uint32_t words[4] = {w.codes[h][r].x, w.codes[h][r].y, w.codes[h][r].z, w.codes[h][r].w};
       if (!checks::weights_valid(words, w.scales[h][r])) __trap();
@@ -245,12 +245,18 @@ __device__ void compute(const uint8_t* input, const uint8_t* weight,
   }
 }
 
-// absorb::compute<C, true> over the quad-lane bank.
-template<class C, class Scales = RawScales>
+// No work after an item; `absorbing_finish` passes its strip finisher.
+struct NoFinish {
+  __device__ __forceinline__ void strip(const float*, int, int, int, int, const int32_t*) const {}
+};
+
+// absorb::compute<C, true> over the quad-lane bank. With K::finish, after
+// each item's last pass `finish.strip` runs (chained_gate_tickets.cuh).
+template<class C, class Scales = RawScales, class K = knobs::Served, class Finish = NoFinish>
 __device__ void absorbing(const uint8_t* input, const uint8_t* weight,
     const uint8_t* weight_scales, const uint8_t* activation_scales,
     const int32_t* offsets, const int32_t* sorted_rows, const int32_t* padded_rows,
-    const int32_t* live_tokens, void* scratch) {
+    const int32_t* live_tokens, void* scratch, const Finish& finish = Finish{}) {
   using L = Layout<C>;
   constexpr int H = C::halves, Rows = ::chop::moe::absorb::Rows;
   static_assert(C::k % 128 == 0 && C::loop_k == C::k && C::n % 64 == 0 &&
@@ -283,7 +289,7 @@ __device__ void absorbing(const uint8_t* input, const uint8_t* weight,
     if (first < 0 || first % 64 || first + count > padded) __trap();
     const uint8_t* item_scales = Scales::template prepare<C>(weight_scales, expert, column, block);
     if constexpr (Scales::staged) __syncthreads();
-    const Weights<H> w = load<C, H, Scales>(weight, item_scales, expert, column, block, warp, g, t);
+    const Weights<H> w = load<C, H, Scales, K>(weight, item_scales, expert, column, block, warp, g, t);
     for (int base = 0; base < count; base += Rows) {
       for (int r = threadIdx.x; r < Rows; r += Threads) {
         const int route = base + r < count ? sorted_rows[first + base + r] : -1;
@@ -306,10 +312,11 @@ __device__ void absorbing(const uint8_t* input, const uint8_t* weight,
         const int n = column + warp * 16 + g + (i >= 2 ? 8 : 0);
 #pragma unroll
         for (int h = 0; h < H; ++h)
-          out[((uint64_t(route) * H + h) * L::blocks + block) * C::n + n] = chain[h][0].v[i];
+          knobs::store_partial<K>(&out[((uint64_t(route) * H + h) * L::blocks + block) * C::n + n], chain[h][0].v[i]);
       }
       __syncthreads();
     }
+    if constexpr (K::finish) finish.strip(out, expert, column, count, first, sorted_rows);
   }
 }
 } // namespace chop::moe::lanes

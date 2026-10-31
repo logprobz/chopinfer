@@ -382,13 +382,15 @@ impl ExactF32Ops {
             shape.dims().hidden,
             target && !shape.geometry.shape.csa.kv_sources.is_empty(),
         )?;
+        // With the `f32_row_tiles` option the index weights keep the split
+        // route, which the lab measured faster than the spans.
         let cached_index_weights = cached::prepare(
             shape,
             asks,
             "f32.indexer.weights wide verify",
             shape.geometry.shape.indexer.heads,
             shape.dims().hidden,
-            target && !shape.geometry.shape.csa.index_sources.is_empty(),
+            target && !shape.geometry.shape.csa.index_sources.is_empty() && !shape.f32_row_tiles,
         )?;
         let rows_router = rows::prepare(
             shape,

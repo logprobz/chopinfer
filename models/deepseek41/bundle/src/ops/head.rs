@@ -28,6 +28,7 @@ pub(crate) struct HeadOps {
     pub(crate) project: Prepared<ProjectionBuffers<View>>,
     wide: Option<super::exact_f32::cached::Wide>,
     rows: Option<super::exact_f32::rows::Rows>,
+    decode: Option<super::exact_f32::rows::Rows>,
 }
 
 /// A step's spans of the head: its F32 rows, the rank's head weight shard,
@@ -69,10 +70,19 @@ impl HeadOps {
             shape.dims().hidden,
             target,
         )?;
+        let decode = super::exact_f32::rows::prepare_decode(
+            shape,
+            asks,
+            "head.project rows decode",
+            shape.vocab_rows(),
+            shape.dims().hidden,
+            target,
+        )?;
         Ok(HeadOps {
             project,
             wide,
             rows,
+            decode,
         })
     }
 
@@ -88,7 +98,11 @@ impl HeadOps {
         rows: u32,
         views: &HeadViews,
     ) -> Result<Vec<Lowered>, Refusal> {
-        if let Some(tiles) = self.rows.as_ref().filter(|tiles| tiles.for_phase(phase)) {
+        if let Some(tiles) = [&self.decode, &self.rows]
+            .into_iter()
+            .flatten()
+            .find(|tiles| tiles.for_phase(phase))
+        {
             return tiles.project(
                 rows,
                 views.input,

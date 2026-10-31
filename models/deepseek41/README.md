@@ -185,7 +185,7 @@ them. A non-default value is unqualified.
 | `dspark_coupled_drafts` | `true` | Couple sampled drafts to the target sampler's noise. |
 | `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |
 | `dspark_graph_handles_per_rank` | `512` | Graph handles per rank, from 0 to 9223372036854775807; 0 keeps DSpark eager. The total across ranks must fit the platform's count range. |
-| `f32_row_tiles` | `false` | Candidate: Flash TP4 verify steps of 33 to 64 rows run the vocabulary head and the compressor in their measured exact F32 row tiles instead of the cached separate spans; the router keeps its spans. Bitwise lab twins and fixed-batch GPU replays matched; served step-time acceptance remains required before adoption. |
+| `f32_row_tiles` | `false` | Candidate: Flash TP4 steps of 64 rows or fewer run the vocabulary head in its measured exact F32 row tiles at every decode and verify width, the DSpark drafter's head alike, and at 33 to 64 verify rows the compressor in its row tiles and the index weights on the split route instead of the cached separate spans; the router keeps its spans. Bitwise lab twins and fixed-batch GPU replays matched; served step-time acceptance remains required before adoption. |
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit and each reused plan template again and refuse a differing plan. |

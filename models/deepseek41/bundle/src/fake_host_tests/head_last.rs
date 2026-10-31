@@ -158,3 +158,56 @@ fn measured_heads_preserve_other_launches_and_graph_dependencies() {
         "all other arithmetic and cross-stream dependencies remain unchanged"
     );
 }
+
+/// With the `f32_row_tiles` option every AR decode graph runs the head's
+/// decode row tiles at its capacity, and no other head route.
+#[test]
+fn row_tile_option_runs_decode_heads_in_row_tiles() {
+    use model_deepseek41_contract::execution_options::F32_ROW_TILES;
+    let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    let host = FakeHost::new(shape, KV_LAYOUTS[0]);
+    let mut instance = super::create_with_options(&host, 32, &[(F32_ROW_TILES, true.into())]);
+    for slot in 0..32 {
+        step(
+            &mut instance,
+            &prompt(slot + 1, slot, 0, 1, true),
+            &mut Views::default(),
+        );
+    }
+    let mut ends = [1u64; 32];
+    let stem = "chop_deepseek41_decode_f32_n32320_k5120_rows";
+    for (rows, tag) in [
+        (1u32, "f96_r8_w32x8_s3_k64"),
+        (2, "f96_r8_w32x8_s3_k64"),
+        (4, "f96_r8_w32x8_s3_k64"),
+        (8, "f96_r8_w32x8_s3_k64"),
+        (16, "f96_r16_w32x16_s2_k64"),
+        (32, "f256_r32_w32x32_s2_k64"),
+    ] {
+        let from = host.device.journal.borrow().len();
+        let items = (0..rows)
+            .map(|i| (u64::from(i) + 1, u64::from(i), ends[i as usize], 7))
+            .collect::<Vec<_>>();
+        step(&mut instance, &decode(&items), &mut Views::default());
+        let lines = host.device.journal.borrow();
+        let mut heads: Vec<_> = lines[from..]
+            .iter()
+            .filter(|line| line.starts_with("launch ") && line.contains("n32320_k5120"))
+            .map(|line| line.split_whitespace().nth(2).unwrap().to_owned())
+            .collect();
+        heads.sort();
+        let mut expected: Vec<_> = (0..4)
+            .flat_map(|_| [format!("{stem}_prepare_v1"), format!("{stem}_{tag}_v1")])
+            .collect();
+        expected.sort();
+        assert_eq!(heads, expected, "rows={rows}");
+        for end in &mut ends[..rows as usize] {
+            *end += 1;
+        }
+    }
+    for id in 1..=32 {
+        instance.retire_request(id).unwrap();
+    }
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}

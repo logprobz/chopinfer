@@ -1,6 +1,7 @@
 //! Own-op preparation for the model's Markov and confidence heads.
 
 use super::confidence_parallel;
+use super::confidence_staged;
 use super::dspark_entries::{MARKOV, THREADS};
 use super::markov_row;
 use super::markov_staged;
@@ -16,6 +17,8 @@ use model_deepseek41_contract::own_ops::dspark::{
 
 // Both heads launch through `launch`, which uses the shared block size.
 const _: () = assert!(markov_tiled::THREADS == THREADS);
+const _: () = assert!(confidence_staged::THREADS == THREADS);
+const _: () = assert!(confidence_staged::MAX_CHAINS <= THREADS);
 
 /// The tiled Markov step stages each weight tile once for up to eight rows;
 /// a single row takes the row step, which stages coalesced tiles before its
@@ -100,6 +103,38 @@ pub fn confidence(
         op: *op,
         capacity: need.capacity,
         info,
+        symbol: confidence_parallel::SYMBOL,
+    }))
+}
+
+/// The staged confidence head (the `dspark_confidence_staged` candidate):
+/// each chain's weights load into registers before the dependency wait and
+/// each row's operands into shared memory, then every chain and the fold
+/// run as in `confidence`, so the scores keep their bits. Only operands of
+/// whole chains, at most the block's, are served.
+pub fn confidence_staged(
+    geometry: &Geometry,
+    op: &ConfidenceHead,
+    need: Need,
+) -> Result<Prepared<ConfidenceHeadBuffers<View>>, Refused> {
+    op.validate(need)?;
+    let total = op.hidden + op.markov_rank;
+    if need.capacity > 65535
+        || geometry.shape.dspark.markov_rank != op.markov_rank
+        || geometry.shape.hidden != op.hidden
+        || !total.is_multiple_of(confidence_staged::CHAIN)
+        || total / confidence_staged::CHAIN > confidence_staged::MAX_CHAINS
+    {
+        return Err(Refused::Rule(
+            "sm120 DSpark staged confidence shape is unsupported".into(),
+        ));
+    }
+    let info = info(confidence_staged::SYMBOL, CONFIDENCE_CONTRACT, need)?;
+    Ok(Box::new(Confidence {
+        op: *op,
+        capacity: need.capacity,
+        info,
+        symbol: confidence_staged::SYMBOL,
     }))
 }
 
@@ -212,6 +247,7 @@ struct Confidence {
     op: ConfidenceHead,
     capacity: u32,
     info: OpInfo,
+    symbol: &'static str,
 }
 
 impl PreparedOp<ConfidenceHeadBuffers<View>> for Confidence {
@@ -235,7 +271,7 @@ impl PreparedOp<ConfidenceHeadBuffers<View>> for Confidence {
         b.live_rows.covers(4)?;
         distinct(b.scores, &[b.hidden, b.markov, b.weight, b.live_rows])?;
         Ok(launch(
-            confidence_parallel::SYMBOL,
+            self.symbol,
             rows,
             [rows, 1, 1],
             vec![

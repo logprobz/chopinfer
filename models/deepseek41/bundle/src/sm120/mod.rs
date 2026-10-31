@@ -9,6 +9,7 @@ pub mod ceil_parallel;
 pub mod ceil_prefill;
 pub mod ceil_split;
 pub mod confidence_parallel;
+pub mod confidence_staged;
 pub mod dense_dual;
 mod dense_dual_serving;
 pub mod dspark;
@@ -1021,6 +1022,7 @@ impl crate::Kernels {
             || cubin == allocate_entries::CUBIN
             || cubin == allocated_acceptance_entries::CUBIN
             || cubin == confidence_parallel::CUBIN
+            || cubin == confidence_staged::CUBIN
             || cubin == markov_tiled::CUBIN
             || cubin == markov_row::CUBIN
             || cubin == markov_staged::CUBIN
@@ -1077,6 +1079,7 @@ impl crate::Kernels {
             && (cubin != f32_verify::CUBIN
                 || f32_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows))
             && (cubin != markov_staged::CUBIN || shape.dspark_markov_staged)
+            && (cubin != confidence_staged::CUBIN || shape.dspark_confidence_staged)
             && (cubin != f32_verify_rows::CUBIN
                 || crate::ops::exact_f32::rows::admitted(shape).is_some())
             && (!ceil_split::is_cubin(cubin) || ceil_split::serves(shape.geometry, shape.ranks()))

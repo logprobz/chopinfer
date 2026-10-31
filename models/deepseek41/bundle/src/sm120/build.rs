@@ -27,6 +27,8 @@ mod ceil_prefill;
 #[allow(dead_code, reason = "the bundle registers the measured part counts")]
 mod ceil_split;
 mod confidence_parallel;
+#[allow(dead_code, reason = "the bundle dispatches the staged head")]
+mod confidence_staged;
 mod dspark_argmax;
 #[allow(dead_code, reason = "the bundle registers the auxiliary entries")]
 mod dspark_aux;
@@ -262,6 +264,10 @@ pub fn selection(
     specs.push((
         confidence_parallel::FAMILY,
         confidence_parallel::cubin_spec(manifest),
+    ));
+    specs.push((
+        confidence_staged::FAMILY,
+        confidence_staged::cubin_spec(manifest),
     ));
     specs.push((markov_tiled::FAMILY, markov_tiled::cubin_spec(manifest)));
     specs.push((markov_row::FAMILY, markov_row::cubin_spec(manifest)));

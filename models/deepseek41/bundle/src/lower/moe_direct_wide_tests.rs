@@ -185,3 +185,16 @@ fn the_wide_router_family_loads_only_with_a_wide_tp4_budget() {
     assert_eq!(specs.len(), 1);
     assert_eq!(specs[0].1.entries.len(), 2);
 }
+
+/// No instance loads the wide direct MoE module before a verify bucket
+/// selects it.
+#[test]
+fn no_instance_loads_the_wide_direct_family_yet() {
+    let cubin = crate::sm120::moe_direct_wide::CUBIN;
+    for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
+        let shape = Shape::new(&FLASH, ranks).unwrap();
+        for rows in [32, 64, 65, 128, 192] {
+            assert!(!crate::Kernels::loads(cubin, &shape.with_verify_rows(rows)));
+        }
+    }
+}

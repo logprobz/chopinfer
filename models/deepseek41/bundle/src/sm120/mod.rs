@@ -185,6 +185,7 @@ pub(crate) mod moe;
 mod moe_direct;
 #[allow(dead_code, reason = "the build script compiles the locked entries")]
 pub(crate) mod moe_direct_kernels;
+pub(crate) mod moe_direct_wide;
 #[allow(dead_code, reason = "the build script uses the entry declarations")]
 mod moe_grouped_entries;
 pub mod moe_grouped_prefill;
@@ -1041,6 +1042,8 @@ impl crate::Kernels {
                     && shape.ranks() == 4))
             && (cubin != moe_router64::CUBIN
                 || moe_router64::enabled(shape.geometry, shape.ranks(), shape.verify_rows))
+            // No step selects the wide direct queues yet.
+            && cubin != moe_direct_wide::CUBIN
             && (cubin != f32_verify::CUBIN
                 || f32_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows))
             && (!ceil_split::is_cubin(cubin) || ceil_split::serves(shape.geometry, shape.ranks()))

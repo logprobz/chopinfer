@@ -190,6 +190,8 @@ mod moe;
 #[allow(dead_code)]
 mod moe_direct_kernels;
 #[allow(dead_code)]
+mod moe_direct_wide;
+#[allow(dead_code)]
 mod moe_grouped_entries;
 #[allow(dead_code)]
 mod moe_native_entries;
@@ -541,6 +543,7 @@ pub fn selection(
             owners.push((fold_verify_local::CUBIN.into(), geometry.id));
             owners.push((f32_verify::CUBIN.into(), geometry.id));
             owners.push((moe_router64::CUBIN.into(), geometry.id));
+            owners.push((moe_direct_wide::CUBIN.into(), geometry.id));
             owners.push((head_last::CUBIN.into(), geometry.id));
             owners.push((dspark_projection::CUBIN.into(), geometry.id));
             owners.push((prefill_tma_scales::CUBIN.into(), geometry.id));
@@ -763,6 +766,7 @@ pub fn selection(
     }
     specs.extend(encoder::cubins().expect("deepseek41 encoder cubins"));
     specs.extend(moe_router64::cubins(geometries).expect("wide router finish cubins"));
+    specs.extend(moe_direct_wide::cubins(geometries).expect("wide direct MoE cubins"));
     // A composition may already carry the floor family for a drafter route.
     // Reuse that identical locked module; add only absent direct dependencies.
     for geometry in geometries {

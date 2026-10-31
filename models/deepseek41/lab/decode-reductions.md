@@ -3,9 +3,11 @@
 The `bf16_partials` lab target's opt-in bench
 `timing::decode_reduction_timing` times decode and verify's served F32
 reduction against the BF16-partial transport that prefill serves
-([communication-partials.md](../communication-partials.md)) on four idle
-GPUs at 1, 8, 16, 32, 64 and 128 rows of 5120 elements. It changes no
-serving route, default, kernel or lock.
+([communication-partials.md](../communication-partials.md)) and the phased
+F32 rounding entries on four idle GPUs at 16 row counts from 1 to 192 rows
+of 5120 elements. `CHOPINFER_DECODE_REDUCTION_ROWS=LO-HI` times every row
+count of an inclusive range instead. It changes no serving route, default,
+kernel or lock.
 
 ## Served forms
 
@@ -41,9 +43,14 @@ On native Flash TP4, serving's hidden-row all-reduces take these forms:
   Where admitted, prefill DMA carries the same BF16 partials instead
   ([prefill-communication.md](../prefill-communication.md)).
 - `Kernels::prefill_reduction_backend` registers the phased F32 rounding
-  entries (`with_phased_f32_all_reduce`) only for Flash TP4 instances
-  without BF16 partials (BF16 KV storage), whose prefill steps of at least
-  512 rows use them. No decode or verify step serves them.
+  entries (`with_phased_f32_all_reduce`) for Flash TP4 instances without
+  BF16 partials (BF16 KV storage), whose prefill steps of at least 512 rows
+  use them. Without the `phased_decode_reduce` candidate option no decode
+  or verify step serves them. With it, `ReduceOps::prepare_phased_decode`
+  prepares a second rounded all-reduce on them for the instance's decode
+  and verify rows, over its own comm state, and every decode or verify
+  reduction that issues the complete sequence takes it instead. The
+  deferred pair stays.
 
 At the timed row counts, the form each served step issues at a boundary
 with a next sublayer, and the primary baseline, are:
@@ -51,11 +58,21 @@ with a next sublayer, and the primary baseline, are:
 | Rows | Decode | Verify | Primary baseline |
 | ---: | --- | --- | --- |
 | 1 | deferred | complete | decode, `f32_deferred` |
+| 2 | deferred | complete | decode, `f32_deferred` |
+| 4 | deferred | deferred | decode, `f32_deferred` |
+| 5 | not served | complete | verify, `f32_complete` |
+| 6 | not served | deferred | verify, `f32_deferred` |
 | 8 | deferred | deferred | decode, `f32_deferred` |
+| 12 | not served | deferred | verify, `f32_deferred` |
 | 16 | deferred | deferred | decode, `f32_deferred` |
+| 24 | not served | complete | verify, `f32_complete` |
+| 31 | not served | complete | verify, `f32_complete` |
 | 32 | deferred | deferred | decode, `f32_deferred` |
+| 48 | not served | deferred | verify, `f32_deferred` |
 | 64 | not served | deferred | verify, `f32_deferred` |
+| 96 | not served | complete | verify, `f32_complete` |
 | 128 | not served | complete | verify, `f32_complete` |
+| 192 | not served | complete | verify, `f32_complete` |
 
 The bundle's admission code is private to it, so the bench applies the
 same rule through the contract's public tuning table and decode buckets.
@@ -93,6 +110,31 @@ On 2026-10-31 it passed on four GPUs: 231 cases, every output bit equal,
 every NaN sum giving 0x7fff in both forms, and no difference from the
 rank-ordered host oracle.
 
+## Phased F32 timing
+
+On 2026-10-31 the bench timed every row count from 1 to 192 on four
+exclusive GPUs, each at an enforced 250 W limit that no sample changed.
+Against the complete sequence, the phased F32 entries were faster at every
+row count, resolved against the A/A bound: by 1.1 to 62.6 us per call, for
+example 6.5 us at 1 row (13.4 against 7.0), 1.1 at 6, 2.3 at 16, 4.8 at 32,
+9.0 at 64, 19.8 at 128 and 15.7 at 192. Against the deferred pair, which
+leaves the round to the next HC mix, they were faster at 1 to 4 rows (4.6
+us at one row, 1.0 at four), at 11 and from 14 to 192, slower at 5 to 10
+and at 13 (by 0.2 to 0.9 us), and unresolved at 12. The round alone took
+2.0 to 2.6 us.
+
+The `phased_decode_reduce` candidate therefore serves the phased entries
+only where a step issues the complete sequence: four reductions per rank
+at every width (the embedding's and those before the two Engram layers and
+the head), and all 81 at the verify widths that defer no round. Where the
+next HC boundary takes the round, the deferred pair stays: the phased
+entries write the rounded BF16 rows, and without a deferred round that
+boundary runs the expand-mix and a standalone input norm instead of its
+fused finish norm, which this bench does not time. A deferred phased form
+would need the F32-output phased entries, which the bundle's comm cubin
+does not hold. At one row that is 77 of each rank's 81 reductions, about
+0.35 ms of a C1 step at 4.6 us each.
+
 ## Arms
 
 - `f32_deferred`: the reduce-scatter and all-gather, a served step's
@@ -104,14 +146,18 @@ rank-ordered host oracle.
 - `bf16_partials`, the candidate: the phased BF16-partial all-reduce as
   prefill serves it.
 - `f32_phased`, a same-transport precision reference: the phased F32
-  rounding entries, which share the candidate's transport.
+  rounding entries, which share the candidate's transport and which the
+  `phased_decode_reduce` option serves where the complete sequence was.
 - `f32_round`: the round alone, for reference.
 
 For each served step at a row count, `bf16_vs_served_decode` or
 `bf16_vs_served_verify` compares `bf16_partials` with the form that step
 issues. The row's `primary_comparison` names decode's where decode has the
 row count as a bucket, else verify's. `bf16_vs_f32_phased` isolates
-precision on one transport. Every arm's complete step first matches its
+precision on one transport. `f32_phased_vs_served_decode` and
+`f32_phased_vs_served_verify` compare `f32_phased` with each step's form,
+and `f32_phased_vs_f32_complete` and `f32_phased_vs_f32_deferred` with
+both forms at every row count. Every arm's complete step first matches its
 exact oracle.
 
 ## Method and receipt
@@ -122,8 +168,9 @@ visited in one order and then reversed, so each pair runs A1 B1 B2 A2. For
 each row count the receipt gives the served forms, every visit's
 slowest-rank median per call, the critical path and the launched symbols.
 Each comparison reports d1, d2, their mean and spread as rates (positive
-when BF16 is faster), the saved microseconds per call and the A/A bound,
-the larger of the control's absolute mean and spread. A comparison is
+when the compared arm, BF16 partials or phased F32, is faster), the saved
+microseconds per call and the A/A bound, the larger of the control's
+absolute mean and spread. A comparison is
 resolved when d1 and d2 share a sign and the mean exceeds both its spread
 and that bound.
 

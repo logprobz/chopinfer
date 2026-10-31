@@ -26,3 +26,7 @@ Each journal loses 64 lines: C16 odd-width from 188210 to 188146 and C32
 maximum from 340948 to 340884. Every retained operation keeps its text and
 order, and every other journal, create range and device history is
 identical.
+
+On 2026-10-31 the journal proof of the query commit against the HC fusion
+commit, with this declaration, was PROVEN with full history coverage: 23
+journals identical, 2 proven, 25 of 25 fixture histories compared.

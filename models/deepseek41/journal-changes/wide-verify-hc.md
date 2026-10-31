@@ -31,3 +31,8 @@ C32 maximum from 343172 to 340948. Every retained operation keeps its text
 and order. The three standalone mixers per rank and step keep the one-CTA
 entry, and every other journal, create range and device history is
 identical.
+
+On 2026-10-31 the journal proof of the HC fusion commit against its parent
+(the expand-mix capacity commit), with this declaration, was PROVEN with
+full history coverage: 23 journals identical, 2 proven, 25 of 25 fixture
+histories compared.

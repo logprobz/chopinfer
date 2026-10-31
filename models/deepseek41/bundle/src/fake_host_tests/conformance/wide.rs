@@ -9,8 +9,9 @@
 //! the same override with the option on, the `phased_decode_reduce`
 //! candidate as `tp4-dspark-rows192-phased`, whose decode buckets and verify
 //! widths reach every phased form, the `verify_row_fusions` candidate as
-//! `tp4-dspark-rows192-rowfuse` and the `attention_merge_ceil` candidate as
-//! `tp4-dspark-rows192-mergeceil`. Separate names keep their
+//! `tp4-dspark-rows192-rowfuse`, the `attention_merge_ceil` candidate as
+//! `tp4-dspark-rows192-mergeceil` and the `router_prepare_fusion` candidate
+//! as `tp4-dspark-rows192-routerprep`. Separate names keep their
 //! allowlist entries apart from the default profile, whose full sweep
 //! refuses entries it never reaches; entries for the shapes they share
 //! name `tp4-dspark*`.
@@ -23,7 +24,8 @@ use bundle_runtime::fake_host::conformance::route_guard;
 use conformance::Startup;
 use model_deepseek41_contract::{
     execution_options::{
-        ATTENTION_MERGE_CEIL, PHASED_DECODE_REDUCE, VERIFY_ROW_FUSIONS, WIDE_VERIFY,
+        ATTENTION_MERGE_CEIL, PHASED_DECODE_REDUCE, ROUTER_PREPARE_FUSION, VERIFY_ROW_FUSIONS,
+        WIDE_VERIFY,
     },
     serving::MAX_VERIFY_ROWS,
 };
@@ -40,13 +42,16 @@ const PHASED_PROFILE: &str = "tp4-dspark-rows192-phased";
 const ROW_FUSIONS_PROFILE: &str = "tp4-dspark-rows192-rowfuse";
 /// The override with the `attention_merge_ceil` candidate on.
 const MERGE_CEIL_PROFILE: &str = "tp4-dspark-rows192-mergeceil";
+/// The override with the `router_prepare_fusion` candidate on.
+const ROUTER_PREPARE_PROFILE: &str = "tp4-dspark-rows192-routerprep";
 /// Every override, and the candidate option each turns on.
-const OVERRIDES: [(&str, Option<&str>); 5] = [
+const OVERRIDES: [(&str, Option<&str>); 6] = [
     (PROFILE, None),
     (WIDE_PROFILE, Some(WIDE_VERIFY)),
     (PHASED_PROFILE, Some(PHASED_DECODE_REDUCE)),
     (ROW_FUSIONS_PROFILE, Some(VERIFY_ROW_FUSIONS)),
     (MERGE_CEIL_PROFILE, Some(ATTENTION_MERGE_CEIL)),
+    (ROUTER_PREPARE_PROFILE, Some(ROUTER_PREPARE_FUSION)),
 ];
 /// The profile the override raises.
 const BASE: &str = "tp4-dspark";
@@ -195,6 +200,7 @@ fn the_override_starts_beside_the_profiles() {
         ("tp4_dspark_rows192_phased", PHASED_PROFILE),
         ("tp4_dspark_rows192_rowfuse", ROW_FUSIONS_PROFILE),
         ("tp4_dspark_rows192_mergeceil", MERGE_CEIL_PROFILE),
+        ("tp4_dspark_rows192_routerprep", ROUTER_PREPARE_PROFILE),
         ("tp4_ar", "tp4-ar"),
         ("tp4_dspark", BASE),
     ]);
@@ -276,6 +282,15 @@ mod wide_route_sweep {
     fn tp4_dspark_rows192_mergeceil() {
         route_guard::sweep::<Wide>(
             MERGE_CEIL_PROFILE,
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
+            env!("CARGO_PKG_NAME"),
+        );
+    }
+
+    #[test]
+    fn tp4_dspark_rows192_routerprep() {
+        route_guard::sweep::<Wide>(
+            ROUTER_PREPARE_PROFILE,
             include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
             env!("CARGO_PKG_NAME"),
         );

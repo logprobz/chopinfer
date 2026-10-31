@@ -6,8 +6,9 @@
 # the profile's shapes, tp4-dspark-rows192-wide, the same override with
 # the `wide_verify` candidate on, tp4-dspark-rows192-phased, with the
 # `phased_decode_reduce` candidate on, tp4-dspark-rows192-rowfuse, with
-# the `verify_row_fusions` candidate on, and tp4-dspark-rows192-mergeceil,
-# with the `attention_merge_ceil` candidate on.
+# the `verify_row_fusions` candidate on, tp4-dspark-rows192-mergeceil, with
+# the `attention_merge_ceil` candidate on, and tp4-dspark-rows192-routerprep,
+# with the `router_prepare_fusion` candidate on.
 
 [[allow]]
 profiles = ["tp4-ar", "tp4-dspark*"]
@@ -1266,7 +1267,7 @@ task = "MXFP8-fold-packed-cones"
 # package's 192 verify rows. Each family's wide route replaces its entries.
 
 [[allow]]
-profiles = ["tp4-dspark-rows192", "tp4-dspark-rows192-phased", "tp4-dspark-rows192-rowfuse", "tp4-dspark-rows192-mergeceil"]
+profiles = ["tp4-dspark-rows192", "tp4-dspark-rows192-phased", "tp4-dspark-rows192-rowfuse", "tp4-dspark-rows192-mergeceil", "tp4-dspark-rows192-routerprep"]
 phase = "verify"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_split_prepare_v2"
@@ -1276,7 +1277,7 @@ reason = "The cached verify head serves at most 64 rows; without the wide_verify
 task = "WIDE-VERIFY-head"
 
 [[allow]]
-profiles = ["tp4-dspark-rows192", "tp4-dspark-rows192-phased", "tp4-dspark-rows192-rowfuse", "tp4-dspark-rows192-mergeceil"]
+profiles = ["tp4-dspark-rows192", "tp4-dspark-rows192-phased", "tp4-dspark-rows192-rowfuse", "tp4-dspark-rows192-mergeceil", "tp4-dspark-rows192-routerprep"]
 phase = "verify"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_split_v2"
@@ -1346,7 +1347,7 @@ reason = "Direct MoE buckets fuse the router finish through 64 verify rows; eage
 task = "WIDE-VERIFY-moe"
 
 [[allow]]
-profiles = ["tp4-dspark-rows192", "tp4-dspark-rows192-phased", "tp4-dspark-rows192-rowfuse", "tp4-dspark-rows192-mergeceil"]
+profiles = ["tp4-dspark-rows192", "tp4-dspark-rows192-phased", "tp4-dspark-rows192-rowfuse", "tp4-dspark-rows192-mergeceil", "tp4-dspark-rows192-routerprep"]
 phase = "verify"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1"
@@ -1356,7 +1357,7 @@ reason = "Dense verify folds are bucketed through 64 rows; eager verify steps of
 task = "WIDE-VERIFY-dense-folds"
 
 [[allow]]
-profiles = ["tp4-dspark-rows192", "tp4-dspark-rows192-phased", "tp4-dspark-rows192-rowfuse", "tp4-dspark-rows192-mergeceil"]
+profiles = ["tp4-dspark-rows192", "tp4-dspark-rows192-phased", "tp4-dspark-rows192-rowfuse", "tp4-dspark-rows192-mergeceil", "tp4-dspark-rows192-routerprep"]
 phase = "verify"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1"
@@ -1366,7 +1367,7 @@ reason = "Dense verify folds are bucketed through 64 rows; eager verify steps of
 task = "WIDE-VERIFY-dense-folds"
 
 [[allow]]
-profiles = ["tp4-dspark-rows192", "tp4-dspark-rows192-phased", "tp4-dspark-rows192-rowfuse", "tp4-dspark-rows192-mergeceil"]
+profiles = ["tp4-dspark-rows192", "tp4-dspark-rows192-phased", "tp4-dspark-rows192-rowfuse", "tp4-dspark-rows192-mergeceil", "tp4-dspark-rows192-routerprep"]
 phase = "verify"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1"
@@ -1376,7 +1377,7 @@ reason = "Dense verify folds are bucketed through 64 rows; eager verify steps of
 task = "WIDE-VERIFY-dense-folds"
 
 [[allow]]
-profiles = ["tp4-dspark-rows192", "tp4-dspark-rows192-phased", "tp4-dspark-rows192-rowfuse", "tp4-dspark-rows192-mergeceil"]
+profiles = ["tp4-dspark-rows192", "tp4-dspark-rows192-phased", "tp4-dspark-rows192-rowfuse", "tp4-dspark-rows192-mergeceil", "tp4-dspark-rows192-routerprep"]
 phase = "verify"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1"

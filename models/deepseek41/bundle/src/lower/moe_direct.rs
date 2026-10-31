@@ -115,6 +115,17 @@ impl Lowering<'_> {
         if matches!(point, Point::Gate | Point::Down) {
             self.bind_inplace_scales(phase, layer, point == Point::Gate, &mut calls)?;
         }
+        // The wide direct queues, encoded-scale entries included, are the
+        // served route of their verify rows.
+        if kernel_core::route::Metadata::enabled()
+            && let Some(moe) = &self.ops.moe
+        {
+            for call in &mut calls {
+                if let Some(tag) = moe.wide_route(phase, &call.launch.symbol) {
+                    call.launch.bindings.set_route(Some(tag));
+                }
+            }
+        }
         calls.extend(partial);
         Ok(Some(calls))
     }
@@ -518,6 +529,145 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// With the `wide_verify` option, every launch of a verify step's wide
+    /// direct queues, above the 64-row direct buckets through the
+    /// package's 192 rows, carries their served route, which the route
+    /// catalogue registers for every entry of the wide module (its
+    /// encoded-scale entries included). A 64-row step's queues carry none.
+    #[test]
+    fn wide_direct_queues_take_the_route_of_their_rows() {
+        let _metadata = kernel_core::route::Metadata::enable();
+        let shape = Shape::new(&FLASH, Ranks::TP4)
+            .unwrap()
+            .with_verify_rows(192)
+            .with_wide_verify(true);
+        let kernels = crate::Kernels::new(&shape).unwrap();
+        let set = moe::expert_sets(&FLASH)[0];
+        let ops = Ops::prepare_set(&kernels, &shape, KvStorage::Native, set);
+        let catalogue = crate::Kernels::route_tags(&shape);
+        let wide = crate::sm120::moe_direct_wide::cubins(&[FLASH])
+            .unwrap()
+            .remove(0)
+            .1;
+        assert_eq!(wide.entries.len(), 12);
+        for entry in &wide.entries {
+            let tag = crate::sm120::moe_direct::wide_route(
+                &entry.symbol,
+                &(65..=192).collect::<Vec<_>>(),
+            );
+            assert!(catalogue.contains(&tag), "{}", entry.symbol);
+        }
+        let rank = 0;
+        let mut b = buffers(&shape, rank);
+        b.workspace.length = ops.workspace();
+        b.shared_workspace.length = ops.shared_workspace();
+        b.sorted_rows.length = ops.moe.as_ref().unwrap().sorted_rows_bytes();
+        for (n, name) in [
+            "ffn.experts.gate_up.weight",
+            "ffn.experts.gate_up.scale",
+            "ffn.experts.down.weight",
+            "ffn.experts.down.scale",
+        ]
+        .iter()
+        .enumerate()
+        {
+            b.views.insert(
+                layer_view(0, name),
+                DeviceBufferSpanV1::new(
+                    BundleDeviceBufferHandleV1::from_parts(10000 + n as u32, rank + 1),
+                    0,
+                    1 << 32,
+                ),
+            );
+        }
+        let live =
+            DeviceBufferSpanV1::new(BundleDeviceBufferHandleV1::from_parts(999, rank + 1), 0, 4);
+        let inputs = DeviceInputs {
+            live_tokens: live,
+            ..DeviceInputs::within(
+                PhaseArena {
+                    arena: live,
+                    block_tables: live,
+                },
+                &InputLayout::decode_within(Items::new(1).unwrap()),
+            )
+        };
+        let peers = [b.clone()];
+        for rows in [64, 65, 192] {
+            let phase = Phase::Verify {
+                rows,
+                items: rows.div_ceil(6),
+            };
+            let lowering = Lowering {
+                prefill_row_origin: None,
+                shape: &shape,
+                ops: &ops,
+                buffers: &b,
+                peers: &peers,
+                inputs: &inputs,
+                rank,
+                kv: KvExtent {
+                    storage: KvStorage::Native,
+                    pages: 1,
+                    extent: Extent {
+                        served: 1,
+                        bucket: rows.min(32),
+                        verify_rows: rows,
+                    },
+                    sequences: 1,
+                    max_pages: 1,
+                },
+                head_rows: 1,
+                prefill_hc_fusion: true,
+            };
+            let mut tagged = 0;
+            for stage in [
+                Stage::ExpertsGateUp(0),
+                Stage::ExpertsDown(0),
+                Stage::RoutedSum(0),
+            ] {
+                let calls = lowering.moe_direct_stage(phase, stage).unwrap();
+                for call in calls.unwrap_or_default() {
+                    let what = format!("{rows} rows: {}", call.launch.symbol);
+                    let tag = call.launch.bindings.route();
+                    if rows <= 64 {
+                        assert!(
+                            tag.is_none_or(|tag| !tag.wrappers.contains(&"wide-verify")),
+                            "{what}"
+                        );
+                        continue;
+                    }
+                    let tag = tag.expect("a wide direct route");
+                    assert_eq!(
+                        (
+                            tag.class,
+                            tag.family,
+                            tag.wrappers.as_slice(),
+                            tag.symbol.as_str()
+                        ),
+                        (
+                            kernel_core::route::RouteClass::Fast,
+                            "moe_direct",
+                            &["wide-verify"][..],
+                            call.launch.symbol.as_str()
+                        ),
+                        "{what}"
+                    );
+                    assert_eq!(tag.admitted, [65..=192], "{what}");
+                    assert!(catalogue.contains(tag), "{what}: unregistered");
+                    assert!(
+                        wide.entries.iter().any(|e| e.symbol == call.launch.symbol),
+                        "{what}"
+                    );
+                    tagged += 1;
+                }
+            }
+            // The pack, gate queue, gate finisher, down queue and down
+            // finisher.
+            assert_eq!(tagged, if rows > 64 { 5 } else { 0 }, "{rows} rows");
         }
     }
 }

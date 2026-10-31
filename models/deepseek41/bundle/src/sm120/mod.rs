@@ -340,6 +340,7 @@ impl crate::Kernels {
             .route_tags();
         tags.extend(dspark_main::route_tags(shape));
         tags.extend(wide_routes::catalogue(shape).expect("qualified wide route metadata"));
+        tags.extend(moe_direct::wide_route_tags(shape));
         if let Some(backend) = Self::small_decode_norm_backend(shape) {
             tags.extend(backend.route_tags());
         }

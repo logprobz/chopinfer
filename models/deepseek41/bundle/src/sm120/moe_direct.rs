@@ -160,6 +160,44 @@ pub(crate) fn wide_rows(shape: &crate::shape::Shape, set: Experts) -> Vec<u32> {
         .collect()
 }
 
+/// The route of `symbol`, a launch of the wide direct queues: the served
+/// route of the verify rows `rows` ([`wide_rows`]) that run them.
+pub(crate) fn wide_route(symbol: &str, rows: &[u32]) -> kernel_core::route::RouteTag {
+    let mut admitted: Vec<std::ops::RangeInclusive<u32>> = Vec::new();
+    for &row in rows {
+        match admitted.last_mut() {
+            Some(range) if *range.end() + 1 == row => *range = *range.start()..=row,
+            _ => admitted.push(row..=row),
+        }
+    }
+    kernel_core::route::branch(
+        symbol,
+        kernel_core::route::RouteClass::Fast,
+        "moe_direct",
+        "wide-verify",
+        admitted,
+    )
+}
+
+/// The route of every entry of the wide direct module, its encoded-scale
+/// entries included, for each expert set `shape` serves through it.
+#[cfg(test)]
+pub(crate) fn wide_route_tags(shape: &crate::shape::Shape) -> Vec<kernel_core::route::RouteTag> {
+    let mut tags = Vec::new();
+    for set in model_deepseek41_contract::moe::expert_sets(shape.geometry) {
+        let rows = wide_rows(shape, set);
+        if rows.is_empty() {
+            continue;
+        }
+        for (_, spec) in super::moe_direct_wide::cubins(std::slice::from_ref(shape.geometry))
+            .expect("wide direct MoE catalog")
+        {
+            tags.extend(spec.entries.iter().map(|e| wide_route(&e.symbol, &rows)));
+        }
+    }
+    tags
+}
+
 /// A verify step above 64 rows: the generic route's metadata packs into
 /// the queue table (the pack also clears the gate tickets), then the
 /// absorbing gate queue, the direct gate finisher, the two-strip down

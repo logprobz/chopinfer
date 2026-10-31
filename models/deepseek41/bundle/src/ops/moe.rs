@@ -365,6 +365,30 @@ impl MoeOps {
             .map(|(_, _, op)| op)
     }
 
+    /// The route of `symbol`, launched by a verify step that runs the wide
+    /// direct queues (a direct op above the 64-row direct buckets): their
+    /// served route, admitting every verify row this instance prepares
+    /// them for (`sm120::moe_direct::wide_rows`).
+    pub(crate) fn wide_route(
+        &self,
+        phase: Phase,
+        symbol: &str,
+    ) -> Option<kernel_core::route::RouteTag> {
+        let bound = model_deepseek41_contract::verify_bounds::MOE_DIRECT;
+        if !matches!(phase, Phase::Verify { .. }) || phase.rows() <= bound {
+            return None;
+        }
+        self.direct(phase)?;
+        let mut rows: Vec<_> = self
+            .direct
+            .iter()
+            .filter(|(of, rows, _)| *of == ExecutionPhase::Verify && *rows > bound)
+            .map(|(_, rows, _)| *rows)
+            .collect();
+        rows.sort_unstable();
+        Some(crate::sm120::moe_direct::wide_route(symbol, &rows))
+    }
+
     pub(crate) fn router_route(
         &self,
         phase: Phase,

@@ -346,6 +346,10 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
                          "definition": {"type": "integer", "default": 12, "minimum": 1, "maximum": 32}},
                         {"name": "dspark_graph_handles_per_rank", "default_is_qualified": true,
                          "definition": {"type": "integer", "default": 512, "minimum": 0, "maximum": i64::MAX}},
+                        {"name": "f32_row_tiles", "default_is_qualified": true,
+                         "definition": {"type": "boolean", "default": false}},
+                        {"name": "phased_decode_reduce", "default_is_qualified": true,
+                         "definition": {"type": "boolean", "default": false}},
                         {"name": "prefill_chunk_tokens", "default_is_qualified": true,
                          "definition": {"type": "integer", "default": 8192, "minimum": 0, "maximum": 8192}},
                         {"name": "prefill_plan_cache_plans", "default_is_qualified": true,
@@ -365,7 +369,9 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
                         {"name": "text_config.indexer_prefill_tile", "default_is_qualified": true,
                              "definition": {"type": "boolean", "default": true}},
                         {"name": "verify_graph_rows", "default_is_qualified": true,
-                             "definition": {"type": "integer", "default": 64, "minimum": 1, "maximum": 192}}]
+                             "definition": {"type": "integer", "default": 64, "minimum": 1, "maximum": 192}},
+                        {"name": "wide_verify", "default_is_qualified": true,
+                             "definition": {"type": "boolean", "default": false}}]
             })
         );
         // The serving host resolves the complete declaration before encoding
@@ -384,6 +390,8 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
                 "dspark_coupled_drafts": true,
                 "dspark_draft_chunk_items": 12,
                 "dspark_graph_handles_per_rank": 512,
+                "f32_row_tiles": false,
+                "phased_decode_reduce": false,
                 "prefill_chunk_tokens": 8192,
                 "prefill_plan_cache_plans": 16,
                 "prefill_plan_cache_verify": false,
@@ -394,6 +402,7 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
                 "text_config.indexer_mma": true,
                 "text_config.indexer_prefill_tile": true,
                 "verify_graph_rows": 64,
+                "wide_verify": false,
             });
             assert_eq!(serde_json::to_value(&resolved).unwrap(), expected);
             let host_config = runtime_host::HostInstanceConfigV1::new(

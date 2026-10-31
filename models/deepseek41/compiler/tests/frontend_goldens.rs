@@ -695,35 +695,88 @@ fn the_transport_maps_requests_as_the_declaration_states() {
     assert_eq!(error.parameter.as_deref(), Some("thinking"));
 }
 
-/// A DSML marker outside a calls block that the blank line opens is
-/// refused, as the vendor parser refuses it in content (encoding.py lines
-/// 981-983); inside one it is the call.
+/// A calls block opens after any run of newlines before its open, including
+/// none, and the open drops them, as deepseek-recipe's stream parser reads
+/// it: the content or reasoning before it, then the call, whole and at every
+/// byte split. A DSML marker that does not open a calls block is refused,
+/// as the vendor parser refuses it in content (encoding.py lines 981-983).
 #[test]
-fn a_dsml_marker_outside_a_calls_block_is_refused() {
-    let descriptor = descriptor();
-    let invoke = "<｜DSML｜ invoke name=\"f\">\n<｜DSML｜ parameter name=\"x\" string=\"true\">v</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n";
-    let parse = |text: String| {
-        runtime_frontend::parse_completion_v1(&descriptor, &text, PromptModeV1::Chat)
+fn a_calls_block_opens_after_any_run_of_newlines() {
+    use runtime_frontend::{
+        CompletionDecoderV1, CompletionFinishV1, CompletionUpdateV1, DecoderLimitsV1,
+        GeneratedTokenV1,
     };
-    let called = parse(format!(
-        "a\n\n<｜DSML｜ calls>\n{invoke}</｜DSML｜ calls>{EOS}"
-    ))
-    .unwrap();
-    assert_eq!(called.content, "a");
-    assert_eq!(called.tool_calls.len(), 1);
-    assert_eq!(called.tool_calls[0].arguments, r#"{"x": "v"}"#);
-    for text in [
-        format!("a{invoke}{EOS}"),
-        format!("a<｜DSML｜ calls>\n{invoke}</｜DSML｜ calls>{EOS}"),
-    ] {
-        assert!(parse(text.clone()).is_err(), "{text:?}");
+    let descriptor = std::sync::Arc::new(descriptor());
+    let invoke = "<｜DSML｜ invoke name=\"f\">\n<｜DSML｜ parameter name=\"x\" string=\"true\">v</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n";
+    let parse = |text: &str, mode| runtime_frontend::parse_completion_v1(&descriptor, text, mode);
+    // Each way of streaming `text`: in two pieces split at every byte, and
+    // one byte per token.
+    let streamed = |text: &str, mode| {
+        let bytes = text.as_bytes();
+        let mut splits: Vec<Vec<&[u8]>> = (0..=bytes.len())
+            .map(|split| vec![&bytes[..split], &bytes[split..]])
+            .collect();
+        splits.push(bytes.chunks(1).collect());
+        splits
+            .into_iter()
+            .map(|parts| {
+                let mut decoder = CompletionDecoderV1::new(
+                    std::sync::Arc::clone(&descriptor),
+                    mode,
+                    DecoderLimitsV1::declared(&descriptor),
+                );
+                let mut updates = Vec::new();
+                for (ordinal, part) in parts.iter().filter(|part| !part.is_empty()).enumerate() {
+                    updates.extend(decoder.push(GeneratedTokenV1::new(
+                        ordinal as u64,
+                        100,
+                        part.to_vec(),
+                    ))?);
+                }
+                updates
+                    .into_iter()
+                    .find_map(|update| match update {
+                        CompletionUpdateV1::Finished(done) => Some(done),
+                        _ => None,
+                    })
+                    .ok_or_else(|| "no finish".to_owned())
+            })
+            .collect::<Vec<_>>()
+    };
+    for lead in ["", "\n", "\n\n", "\n\n\n"] {
+        for (mode, text, reasoning, content) in [
+            (PromptModeV1::Chat, "a", None, "a"),
+            (PromptModeV1::Thinking, "r", Some("r"), ""),
+        ] {
+            let whole = format!("{text}{lead}<｜DSML｜ calls>\n{invoke}</｜DSML｜ calls>{EOS}");
+            let called = parse(&whole, mode).unwrap_or_else(|error| panic!("{whole:?}: {error}"));
+            assert_eq!(called.content, content, "{whole:?}");
+            assert_eq!(called.reasoning_content.as_deref(), reasoning, "{whole:?}");
+            assert_eq!(called.tool_calls.len(), 1, "{whole:?}");
+            assert_eq!(called.tool_calls[0].arguments, r#"{"x": "v"}"#);
+            for done in streamed(&whole, mode) {
+                let done = done.unwrap_or_else(|error| panic!("{whole:?}: {error}"));
+                assert_eq!(done.completion.as_ref(), Some(&called), "{whole:?}");
+                assert_eq!(done.reason, CompletionFinishV1::ToolCalls, "{whole:?}");
+            }
+        }
+        for whole in [
+            format!("a{lead}{invoke}{EOS}"),
+            format!("a{lead}<｜DSML｜ call>\n{invoke}</｜DSML｜ calls>{EOS}"),
+        ] {
+            assert!(parse(&whole, PromptModeV1::Chat).is_err(), "{whole:?}");
+            for done in streamed(&whole, PromptModeV1::Chat) {
+                assert!(done.is_err(), "{whole:?}: {done:?}");
+            }
+        }
     }
 }
 
-/// Generation that ends inside the calls opening: once the DSML marker is
-/// complete the opening is structure, as deepseek-recipe's stream parser
-/// has entered its calls by then and drops the unfinished block; before
-/// that it is text.
+/// Generation that ends inside the calls opening, after any run of
+/// newlines: once the DSML marker is complete the opening and the newlines
+/// before it are structure, as deepseek-recipe's stream parser has entered
+/// its calls by then and drops the unfinished block; before that, and
+/// newlines that no opening follows, are text.
 #[test]
 fn a_cut_calls_opening_is_not_content() {
     use runtime_frontend::{
@@ -733,7 +786,10 @@ fn a_cut_calls_opening_is_not_content() {
     for (generated, content) in [
         ("ok\n\n<｜DSML｜ calls", "ok"),
         ("ok\n\n<｜DSML｜", "ok"),
+        ("ok\n<｜DSML｜", "ok"),
+        ("ok<｜DSML｜ calls", "ok"),
         ("ok\n\n<｜DS", "ok\n\n<｜DS"),
+        ("ok\n\n", "ok\n\n"),
     ] {
         let mut decoder = CompletionDecoderV1::new(
             std::sync::Arc::clone(&descriptor),

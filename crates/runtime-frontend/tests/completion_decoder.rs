@@ -453,10 +453,9 @@ fn a_typed_completion_with_full_width_markers_cut_anywhere_leaks_no_markup() {
     cut_anywhere_leaks_no_markup("｜DSML｜", "｜DSML｜");
 }
 
-/// Cuts a typed completion whose tags carry `tag` after their `<` or `</`
-/// at every byte, fed as one token and as one byte per token, with
-/// `reserved` declared a reserved marker.
-fn cut_anywhere_leaks_no_markup(tag: &str, reserved: &str) {
+/// The typed fixture with room for one byte per token, whose tags carry
+/// `tag` after their `<` or `</`, with `reserved` declared a reserved marker.
+fn tagged_typed(tag: &str, reserved: &str) -> FixtureV1 {
     let mut declaration: serde_json::Value = serde_json::from_str(TYPED_PARAMETERS).unwrap();
     declaration["context"]["maximum_total_tokens"] = json!(1024);
     declaration["tokenizer"]["model_max_length"] = json!(1024);
@@ -483,7 +482,109 @@ fn cut_anywhere_leaks_no_markup(tag: &str, reserved: &str) {
         .as_array_mut()
         .unwrap()
         .push(json!(reserved));
-    let fixture = FixtureV1::new("typed-parameters", &declaration.to_string());
+    FixtureV1::new("typed-parameters", &declaration.to_string())
+}
+
+/// `whole` streamed in any two pieces and one byte per token: the finish
+/// each way of streaming it reports, or the first error.
+fn streamed(
+    fixture: &FixtureV1,
+    mode: PromptModeV1,
+    whole: &str,
+) -> Vec<Result<runtime_frontend::CompletedCompletionV1, String>> {
+    let bytes = whole.as_bytes();
+    let mut splits: Vec<Vec<&[u8]>> = (0..=bytes.len())
+        .map(|split| vec![&bytes[..split], &bytes[split..]])
+        .collect();
+    splits.push(bytes.chunks(1).collect());
+    splits
+        .into_iter()
+        .map(|parts| {
+            let mut decoder = fixture.decoder(mode);
+            let mut updates = Vec::new();
+            for (ordinal, part) in parts.iter().filter(|part| !part.is_empty()).enumerate() {
+                updates.extend(decoder.push(GeneratedTokenV1::new(
+                    ordinal as u64,
+                    200,
+                    part.to_vec(),
+                ))?);
+            }
+            if finished(&updates).is_none() {
+                updates.extend(decoder.finish_length()?);
+            }
+            finished(&updates)
+                .cloned()
+                .ok_or_else(|| "no finish".to_owned())
+        })
+        .collect()
+}
+
+/// A typed calls block opens after any run of newlines before its open,
+/// including none, and the open drops them, as deepseek-recipe's stream
+/// parser reads it: content or reasoning, then the call, at every split.
+/// Newlines that no open follows are text, and a reserved marker that does
+/// not open the block is still refused.
+#[test]
+fn a_typed_calls_block_opens_after_any_run_of_newlines() {
+    let fixture = tagged_typed("｜DSML｜", "｜DSML｜");
+    let end = fixture.end().to_owned();
+    let block = "<｜DSML｜calls>\n<｜DSML｜invoke name=\"f\">\n\
+                 <｜DSML｜parameter name=\"x\" string=\"true\">v</｜DSML｜parameter>\n\
+                 </｜DSML｜invoke>\n</｜DSML｜calls>";
+    for lead in ["", "\n", "\n\n", "\n\n\n"] {
+        for (mode, text, reasoning, content) in [
+            (PromptModeV1::Chat, "a", None, "a"),
+            (PromptModeV1::Thinking, "r", Some("r"), ""),
+        ] {
+            let whole = format!("{text}{lead}{block}{end}");
+            let expected = parse_completion_v1(&fixture.descriptor, &whole, mode)
+                .unwrap_or_else(|error| panic!("{whole:?}: {error}"));
+            assert_eq!(expected.content, content, "{whole:?}");
+            assert_eq!(
+                expected.reasoning_content.as_deref(),
+                reasoning,
+                "{whole:?}"
+            );
+            assert_eq!(expected.tool_calls.len(), 1, "{whole:?}");
+            assert_eq!(expected.tool_calls[0].arguments, r#"{"x": "v"}"#);
+            for done in streamed(&fixture, mode, &whole) {
+                let done = done.unwrap_or_else(|error| panic!("{whole:?}: {error}"));
+                assert_eq!(done.completion.as_ref(), Some(&expected), "{whole:?}");
+                assert_eq!(done.reason, CompletionFinishV1::ToolCalls, "{whole:?}");
+            }
+        }
+        // Newlines that end the answer, or that text follows, are text.
+        for whole in [format!("a{lead}{end}"), format!("a{lead}b{end}")] {
+            let expected = parse_completion_v1(&fixture.descriptor, &whole, PromptModeV1::Chat)
+                .unwrap_or_else(|error| panic!("{whole:?}: {error}"));
+            assert_eq!(expected.content, whole.strip_suffix(&end).unwrap());
+            for done in streamed(&fixture, PromptModeV1::Chat, &whole) {
+                let done = done.unwrap_or_else(|error| panic!("{whole:?}: {error}"));
+                assert_eq!(done.completion.as_ref(), Some(&expected), "{whole:?}");
+            }
+        }
+        // A reserved marker that does not open the calls block is refused.
+        let invoke = "<｜DSML｜invoke name=\"f\">\n</｜DSML｜invoke>\n";
+        for whole in [
+            format!("a{lead}{invoke}{end}"),
+            format!("a{lead}<｜DSML｜call>\n{invoke}</｜DSML｜calls>{end}"),
+        ] {
+            assert!(
+                parse_completion_v1(&fixture.descriptor, &whole, PromptModeV1::Chat).is_err(),
+                "{whole:?}"
+            );
+            for done in streamed(&fixture, PromptModeV1::Chat, &whole) {
+                assert!(done.is_err(), "{whole:?}: {done:?}");
+            }
+        }
+    }
+}
+
+/// Cuts a typed completion whose tags carry `tag` after their `<` or `</`
+/// at every byte, fed as one token and as one byte per token, with
+/// `reserved` declared a reserved marker.
+fn cut_anywhere_leaks_no_markup(tag: &str, reserved: &str) {
+    let fixture = tagged_typed(tag, reserved);
     let close = format!("</{tag}parameter>");
     let whole = format!(
         "ok\n\n<{tag}calls>\n<{tag}invoke name=\"f\">\n\

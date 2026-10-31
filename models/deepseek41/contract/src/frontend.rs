@@ -89,9 +89,11 @@ const THINKING_KEYWORDS: [&str; 2] = ["enable_thinking", "thinking"];
 /// parameters carry `string="true"` for a string written raw and
 /// `string="false"` for any other value written as JSON. The shared typed
 /// tool grammar reads exactly that, as `parse_message_from_completion_text`
-/// (lines 897-990) does. The DSML marker is reserved outside the calls
-/// block the blank line opens, as that parser refuses it in content or
-/// reasoning (lines 981-983).
+/// (lines 897-990) does. The calls block opens after any run of newlines
+/// before it, including none, and drops them, as deepseek-recipe 0.2.0's
+/// stream parser reads it; the encoder's blank line is one such run. The
+/// DSML marker is reserved outside a calls block, as that parser refuses it
+/// in content or reasoning (lines 981-983).
 #[must_use]
 pub fn parser_declaration() -> FrontendParserDeclarationV1 {
     let text = |value: &str| value.to_owned();

@@ -119,12 +119,16 @@ fn each_close_types_its_value() {
     );
 }
 
+/// The calls block opens after any run of newlines, including none, which
+/// the open drops, as deepseek-recipe's stream parser reads it.
 #[test]
-fn a_block_open_without_its_blank_line_is_text() {
-    let completion = "Hi<calls>\n</calls>[EOS]";
-    let parsed = parse_completion_v1(&descriptor(), completion, PromptModeV1::Chat).unwrap();
-    assert!(parsed.tool_calls.is_empty());
-    assert_eq!(parsed.content, "Hi<calls>\n</calls>");
+fn a_block_opens_after_any_run_of_newlines() {
+    for lead in ["", "\n", "\n\n\n"] {
+        let completion = format!("Hi{lead}<calls>\n<invoke name=\"f\">\n</invoke>\n</calls>[EOS]");
+        let parsed = parse_completion_v1(&descriptor(), &completion, PromptModeV1::Chat).unwrap();
+        assert_eq!(parsed.content, "Hi", "{completion:?}");
+        assert_eq!(parsed.tool_calls.len(), 1, "{completion:?}");
+    }
 }
 
 /// Whether the grammar `choice` imposes on `tools` admits `text` whole.

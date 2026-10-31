@@ -135,6 +135,25 @@ would need the F32-output phased entries, which the bundle's comm cubin
 does not hold. At one row that is 77 of each rank's 81 reductions, about
 0.35 ms of a C1 step at 4.6 us each.
 
+## Fixed-batch replays
+
+On 2026-10-31 Flash TP4 packages with the `phased_decode_reduce` option on
+replayed 13-step fixed-batch traces on four GPUs bit for bit, every
+instance logging an admitted phased decode reduction. In package-comparison
+mode, verify traces at one request and 4 to 6 rows per step, compared with
+the candidate package's own recording without the option, and the wide
+verify traces at 16 and 32 requests (64 to 192 rows per step), compared
+with the base package's recordings, matched in every logits row: 55, 67,
+880, 1072, 1376, 1760 and 2144 rows. These cover the one-shot round entry
+at 4 rows, the two-shot at 5 and 6 and the two-shot with workers at 64 to
+192. A one-request AR decode trace recorded with the option equalled its
+recording without it in every step frame and logits row (13 rows); the host
+refuses to destroy the instance after an AR trace, with the base package
+too, so the two recordings were compared directly. The host's AR replay
+does not run 16 or 32 requests on this package (it expects every logits row
+on rank 0), and the bundle refuses the 2-row verify trace; both fail
+without the option too.
+
 ## Arms
 
 - `f32_deferred`: the reduce-scatter and all-gather, a served step's

@@ -238,15 +238,32 @@ def shape(sample):
     }
 
 
-def length_cut_call(ours, reference):
+def token_limit(body):
+    """The completion token limit a request body sets, or None."""
+    limit = body.get("max_completion_tokens", body.get("max_tokens"))
+    return limit if type(limit) is int and limit > 0 else None
+
+
+def budget_spent(sample, limit):
+    """Whether a whole response's completion tokens reached `limit`, the
+    token limit its request set."""
+    usage = (sample.get("body") or {}).get("usage") or {}
+    tokens = usage.get("completion_tokens")
+    return limit is not None and type(tokens) is int and tokens >= limit
+
+
+def length_cut_call(ours, reference, spent):
     """Whether `ours` is `reference`'s call that the token budget cut: it
-    finishes `length` with the same calls where vLLM finishes `tool_calls`
-    (docs/serving-request-surface.md)."""
-    return (ours.get("finish_reason") == "length" and reference.get("finish_reason") == "tool_calls"
+    used the whole budget (`spent`) and finishes `length` with the same calls
+    where vLLM finishes `tool_calls` (docs/serving-request-surface.md)."""
+    return (spent and ours.get("finish_reason") == "length" and reference.get("finish_reason") == "tool_calls"
             and bool(ours.get("tool_calls")) and {**ours, "finish_reason": "tool_calls"} == reference)
 
 
-def api(ours, theirs):
+def api(ours, theirs, limits=None):
+    """Each sample's shape against the reference's. `limits` maps a sample
+    to its request's token limit, which a call the budget cut must reach."""
+    limits = limits or {}
     rows = []
     for name, sample in ours.items():
         if name not in theirs:
@@ -256,7 +273,7 @@ def api(ours, theirs):
             rows.append({"name": name, "agrees": bool(sample) and theirs[name] == {"status": 200}})
             continue
         a, b = shape(sample), theirs[name]
-        agrees = a == b or length_cut_call(a, b)
+        agrees = a == b or length_cut_call(a, b, budget_spent(sample, limits.get(name)))
         if name == "completion-n2-seeded":
             choices = (sample.get("body") or {}).get("choices", [])
             agrees = (agrees and len(choices) == 2 and {choice.get("index") for choice in choices} == {0, 1}
@@ -372,7 +389,8 @@ def compare():
         bindings["api-shapes.json"] = {"input": "frontend_capture", "file": "api-shapes.json",
                                       "sha256": hashlib.sha256(shape_bytes).hexdigest(), "rows": len(expected_shapes)}
     if samples and expected_shapes:
-        report["api-samples.json"] = api(samples, expected_shapes)
+        limits = {row["name"]: token_limit(row["body"]) for row in (plan or {}).get("api", [])}
+        report["api-samples.json"] = api(samples, expected_shapes, limits)
         counts["api-samples.json"] = len(report["api-samples.json"]["rows"])
     else:
         omitted.append("api-samples.json")

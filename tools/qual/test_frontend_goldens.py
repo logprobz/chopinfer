@@ -214,7 +214,11 @@ class BoundCapture(unittest.TestCase):
         reference = self.root / 'reference';reference.mkdir()
         (reference / 'chat-renders.json').write_text(json.dumps(self.rows))
         golden = self.root / 'tokenizer-golden.json';golden.write_text(json.dumps(self.texts))
-        (reference / 'api-shapes.json').write_text(json.dumps({'refusal': {'status': 400}}))
+        # A call the token budget its request set cut agrees with the
+        # reference's tool_calls.
+        cut = {'status': 200, 'finish_reason': 'tool_calls', 'content': False, 'reasoning': False,
+               'tool_calls': ['lookup']}
+        (reference / 'api-shapes.json').write_text(json.dumps({'refusal': {'status': 400}, 'cut': cut}))
         self.config['inputs']['frontend_capture'] = str(reference)
         self.config['inputs']['tokenizer_goldens'] = str(golden)
         check = next(c for c in self.config['checks'] if c['module'] == 'frontend_goldens')
@@ -222,7 +226,8 @@ class BoundCapture(unittest.TestCase):
                           for name, field in [('needles.json', 'passed'), ('api-samples.json', 'agrees'),
                                                ('chat-renders.json', 'agrees'), ('tokenizer-golden.json', 'agrees')]]
         plan = {'renders': self.rows, 'identity': {'fixture': 'a' * 64},
-                'api': [{'name': 'refusal', 'endpoint': '/refusal', 'body': {'model': self.model}}],
+                'api': [{'name': 'refusal', 'endpoint': '/refusal', 'body': {'model': self.model}},
+                        {'name': 'cut', 'endpoint': '/cut', 'body': {'model': self.model, 'max_tokens': 2}}],
                 'needles': [{'name': 'needle', 'total_context': 8, 'expected': 'BLUE',
                              'endpoint': '/needle', 'body': {'model': self.model, 'prompt': [1, 2]}}]}
         server, live = self.server, self.live
@@ -233,6 +238,11 @@ class BoundCapture(unittest.TestCase):
                 self.responders.add((live['checkpoint_identity'], live['startup_nonce']))
                 if endpoint == '/refusal': raise RuntimeError('HTTP 400: {"error":"unsupported"}')
                 if endpoint == '/needle': return {'choices': [{'text': 'blue'}]}, 0.1
+                if endpoint == '/cut':
+                    call = {'function': {'name': 'lookup', 'arguments': '{}'}}
+                    return {'choices': [{'index': 0, 'finish_reason': 'length',
+                                         'message': {'content': None, 'tool_calls': [call]}}],
+                            'usage': {'completion_tokens': 2}}, 0.1
                 return {'tokens': [1] if 'messages' in body else [2]}, 0.1
         out = self.root / 'capture'
         import refs
@@ -357,16 +367,29 @@ class FrontendContracts(unittest.TestCase):
                                   "reasoning": False, "tool_calls": ["lookup"]}}
         choice = {"index": 0, "finish_reason": "length",
                   "message": {"content": None, "tool_calls": [{"function": {"name": "lookup", "arguments": "{}"}}]}}
-        sample = {"tools-cut": {"status": 200, "body": {"choices": [choice]}}}
-        self.assertTrue(frontend_goldens.api(sample, expected)["agrees"])
+        usage = {"prompt_tokens": 4, "completion_tokens": 8, "total_tokens": 12}
+        sample = {"tools-cut": {"status": 200, "body": {"choices": [choice], "usage": usage}}}
+        limits = {"tools-cut": frontend_goldens.token_limit({"max_tokens": 8})}
+        self.assertTrue(frontend_goldens.api(sample, expected, limits)["agrees"])
+        # Only a call that used the whole budget its request set stands for
+        # tool_calls: below it, without usage or without a limit, `length`
+        # is still a mismatch.
+        usage["completion_tokens"] = 7
+        self.assertFalse(frontend_goldens.api(sample, expected, limits)["agrees"])
+        del usage["completion_tokens"]
+        self.assertFalse(frontend_goldens.api(sample, expected, limits)["agrees"])
+        usage["completion_tokens"] = 8
+        self.assertFalse(frontend_goldens.api(sample, expected)["agrees"])
+        self.assertFalse(frontend_goldens.api(sample, expected, {"tools-cut": frontend_goldens.token_limit({})})["agrees"])
+        self.assertEqual(frontend_goldens.token_limit({"max_completion_tokens": 8, "max_tokens": 3}), 8)
         # Only a length finish with the same calls stands for tool_calls.
         choice["finish_reason"] = "stop"
-        self.assertFalse(frontend_goldens.api(sample, expected)["agrees"])
+        self.assertFalse(frontend_goldens.api(sample, expected, limits)["agrees"])
         choice["finish_reason"] = "length"
         choice["message"]["tool_calls"] = []
-        self.assertFalse(frontend_goldens.api(sample, expected)["agrees"])
+        self.assertFalse(frontend_goldens.api(sample, expected, limits)["agrees"])
         expected["tools-cut"].update(finish_reason="stop", tool_calls=[])
-        self.assertFalse(frontend_goldens.api(sample, expected)["agrees"])
+        self.assertFalse(frontend_goldens.api(sample, expected, limits)["agrees"])
 
     def test_declared_tokenizer_and_context_do_not_change_the_gate(self):
         config = declared()

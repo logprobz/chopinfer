@@ -2192,7 +2192,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "759ebc5c5d18f2e1c77e8306acb77cfd9dc2391dfb72b0b7d47b775b3c240f74",
+    "cubin_sha256": "82bc1cdf7ec520ef1080600208754e644c26fbecd8a803280de777da12f0489d",
     "resources": [
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_e384_k6_gate_small_tickets_v1",
@@ -4668,7 +4668,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "4f7a493990e3815176e6a81df3cd6861777a940621dc46ec61b2a522a32cc127",
+    "cubin_sha256": "25fcd4ea4394dcc96617c65e4732e19eb2befc495285ba78c043b880c04f9217",
     "resources": [
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_tickets_v1",

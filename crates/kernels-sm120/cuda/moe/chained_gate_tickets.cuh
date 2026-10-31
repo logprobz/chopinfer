@@ -15,7 +15,8 @@
 // One route at a time, each warp loads a quarter of the K blocks (its
 // lanes: half h = lane / 16, four columns at 4 * (lane % 16)); the warps
 // then continue one fold in K order through shared memory, and the last
-// warp finishes the route while the others load the next.
+// warp finishes the route while the others load the next. That warp
+// arrives on the token tickets for all the strip's rows at the end.
 //
 // The strip tickets (one word per expert and strip) start every launch at
 // zero: they are zeroed at create, only this queue writes them, its
@@ -132,26 +133,33 @@ struct StripFinish {
 #pragma unroll
       for (int step = 16; step; step >>= 1)
         flags |= __shfl_xor_sync(0xffffffffu, flags, step);
-      // One arrival per routed row and strip: the token's last of its
-      // strips times its routes clears its whole quantized row on any
-      // sticky error, as the gate finisher's last CTA does.
-      const int token = route / C::top_k;
-      __syncwarp();
-      uint32_t is_last = 0;
-      if (lane == 0) {
-        if (flags) atomicOr(status + token, flags);
+      if (lane == 0 && flags) atomicOr(status + route / C::top_k, flags);
+    }
+    if (warp != Warps - 1) return;
+    // One arrival per routed row and strip once the strip's codes are
+    // stored, the warp's lanes for different rows at once: the token's last
+    // of its strips times its routes clears its whole quantized row on any
+    // sticky error, as the gate finisher's last CTA does.
+    __syncwarp();
+    for (int base = 0; base < count; base += 32) {
+      int token = 0;
+      bool clear = false;
+      if (base + lane < count) {
+        token = sorted_rows[first + base + lane] / C::top_k;
         uint32_t arrived;
         asm volatile("atom.add.acq_rel.gpu.u32 %0, [%1], 1;"
             : "=r"(arrived) : "l"(tickets + token) : "memory");
-        is_last = arrived == Strips * C::top_k - 1;
+        clear = arrived == Strips * C::top_k - 1 && __ldcg(status + token);
       }
-      is_last = __shfl_sync(0xffffffffu, is_last, 0);
+      uint32_t pending = __ballot_sync(0xffffffffu, clear);
       __syncwarp();
-      if (is_last && __ldcg(status + token)) {
+      while (pending) {
+        const int cleared = __shfl_sync(0xffffffffu, token, __ffs(pending) - 1);
+        pending &= pending - 1;
         for (int at = lane; at < C::top_k * C::n; at += 32)
-          codes[uint64_t(token) * C::top_k * C::n + at] = 0;
+          codes[uint64_t(cleared) * C::top_k * C::n + at] = 0;
         for (int at = lane; at < C::top_k * C::n / 32; at += 32)
-          scales[uint64_t(token) * (C::top_k * C::n / 32) + at] = 127;
+          scales[uint64_t(cleared) * (C::top_k * C::n / 32) + at] = 127;
       }
     }
   }

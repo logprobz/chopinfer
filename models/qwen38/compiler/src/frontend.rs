@@ -9,7 +9,8 @@ pub const COMPONENT: &[u8] = include_bytes!("frontend.json");
 /// The chat format writes the labels around each image itself.
 pub const MULTIMODAL: &[u8] = include_bytes!("frontend-multimodal.json");
 
-/// Bind model limits to the matched geometry while retaining tokenizer artifact limits.
+/// Bind model limits to the matched geometry, each declared output length lowered to its
+/// context, while retaining tokenizer artifact limits.
 pub(crate) fn component_for_geometry(
     bytes: &[u8],
     geometry: &model_qwen38_contract::geometry::Geometry,
@@ -19,6 +20,7 @@ pub(crate) fn component_for_geometry(
     component["vocabulary"]["size"] = geometry.vocab().into();
     component["context"]["maximum_total_tokens"] = geometry.context_tokens().into();
     component["limits"]["maximum_generated_tokens"] = geometry.context_tokens().into();
+    runtime_frontend_contract::lower_output_tokens_v1(&mut component, geometry.context_tokens());
     if component == original {
         return Ok(bytes.to_vec());
     }
@@ -126,6 +128,20 @@ mod tests {
             "invalid frontend declaration: boundary token '<|audio_pad|>' has identifier 248076 outside the vocabulary of 248076"
         );
         geometry.shape.vocab = model_qwen38_contract::geometry::FLASH.vocab();
+        // A shorter context lowers each declared output length above it.
+        for (context, default, xhigh) in [(98_304, 65_536, 98_304), (32_768, 32_768, 32_768)] {
+            geometry.shape.context = context;
+            let bytes = component_for_geometry(COMPONENT, &geometry).unwrap();
+            let output = FrontendDescriptorV1::from_component_bytes(&bytes)
+                .unwrap()
+                .output_tokens
+                .unwrap();
+            assert_eq!(
+                (output.for_effort(None), output.for_effort(Some("xhigh"))),
+                (default, xhigh),
+                "{context}"
+            );
+        }
         geometry.shape.context = 524288;
         assert!(
             component_for_geometry(COMPONENT, &geometry)

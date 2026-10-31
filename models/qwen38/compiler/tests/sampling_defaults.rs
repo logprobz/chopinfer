@@ -1,4 +1,5 @@
-//! The served descriptor supplies omitted sampling controls without weights.
+//! The served descriptor supplies omitted sampling controls and output
+//! lengths without weights.
 use std::sync::{Arc, Mutex};
 
 use runtime_server::{
@@ -28,18 +29,19 @@ impl GenerationBackend for Capture {
     }
 }
 
-#[tokio::test]
-async fn omitted_top_k_comes_from_the_checkpoint_declaration() {
-    let backend = Arc::new(Capture::default());
+/// The checkpoint's declared frontend served over `backend` on a local
+/// port: its address and the server task.
+async fn serve_declared(
+    backend: Arc<Capture>,
+) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
         .unwrap();
     let address = listener.local_addr().unwrap();
-    let capture = backend.clone();
     let server = tokio::spawn(async move {
         serve(
             listener,
-            capture,
+            backend,
             Arc::new(
                 runtime_frontend::BundleFrontendV1::from_export(
                     &model_qwen38_contract::frontend::export(),
@@ -52,6 +54,23 @@ async fn omitted_top_k_comes_from_the_checkpoint_declaration() {
         .await
         .unwrap();
     });
+    (address, server)
+}
+
+/// Posts `body` to `endpoint` and waits for the response.
+async fn post(address: std::net::SocketAddr, endpoint: &str, body: &str) {
+    let stream = tokio::net::TcpStream::connect(address).await.unwrap();
+    let request = format!(
+        "POST {endpoint} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    exchange(&stream, request.as_bytes()).await;
+}
+
+#[tokio::test]
+async fn omitted_top_k_comes_from_the_checkpoint_declaration() {
+    let backend = Arc::new(Capture::default());
+    let (address, server) = serve_declared(backend.clone()).await;
     for (endpoint, input) in [
         ("/v1/completions", r#""prompt":"hello""#),
         (
@@ -67,18 +86,43 @@ async fn omitted_top_k_comes_from_the_checkpoint_declaration() {
             (",\"top_k\":7", 7),
         ] {
             let body = format!(r#"{{{input},"max_tokens":1{field}}}"#);
-            let stream = tokio::net::TcpStream::connect(address).await.unwrap();
-            let request = format!(
-                "POST {endpoint} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            exchange(&stream, request.as_bytes()).await;
+            post(address, endpoint, &body).await;
             let requests = backend.0.lock().unwrap();
             let request = requests.last().expect("request reached capture");
             assert_eq!(request.sampling.top_k(), expected);
             assert_eq!(request.sampling.temperature(), 1.0);
             assert_eq!(request.sampling.top_p(), 0.95);
         }
+    }
+    server.abort();
+}
+
+/// A chat request without an output limit reaches the backend with the
+/// declared length of its prompt's effort, the context left after the
+/// one-token prompt being longer: 131,072 when it thinks at xhigh, the
+/// default, and 65,536 with thinking off. An explicit limit is honored.
+#[tokio::test]
+async fn an_omitted_output_limit_comes_from_the_checkpoint_declaration() {
+    let backend = Arc::new(Capture::default());
+    let (address, server) = serve_declared(backend.clone()).await;
+    let messages = r#""messages":[{"role":"user","content":"hello"}]"#;
+    for (fields, expected) in [
+        ("", 131_072),
+        (
+            r#","chat_template_kwargs":{"enable_thinking":false}"#,
+            65_536,
+        ),
+        (r#","max_tokens":200000"#, 200_000),
+    ] {
+        post(
+            address,
+            "/v1/chat/completions",
+            &format!("{{{messages}{fields}}}"),
+        )
+        .await;
+        let requests = backend.0.lock().unwrap();
+        let request = requests.last().expect("request reached capture");
+        assert_eq!(request.max_new_tokens, expected, "{fields}");
     }
     server.abort();
 }

@@ -517,7 +517,7 @@ mod tests {
         let checkpoint = FLASH.check_runtime(&config).unwrap();
         assert_eq!(checkpoint.index_topk, 512);
         let options = FLASH.model_options(checkpoint);
-        assert_eq!(options.len(), 16);
+        assert_eq!(options.len(), 17);
         assert_eq!(options[0].name, "diagnostic_step_logs");
         assert_eq!(options[1].name, "dspark_coupled_drafts");
         assert_eq!(options[2].name, "dspark_draft_chunk_items");
@@ -525,7 +525,8 @@ mod tests {
         assert_eq!(options[10].name, "text_config.candidate_topk_blocks");
         assert_eq!(options[11].name, "text_config.index_topk");
         assert_eq!(options[12].name, "text_config.indexer_mma");
-        assert_eq!(options[15].name, "wide_verify");
+        assert_eq!(options[15].name, "wide_draft");
+        assert_eq!(options[16].name, "wide_verify");
         assert_eq!(
             options[11].definition,
             OptionDefinitionV1::Integer {

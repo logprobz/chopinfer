@@ -158,6 +158,7 @@ impl NativeFormatV1 {
             extract_tools: options.extract_tools,
             stream_tool_calls: options.stream_tool_calls,
             request: Vec::new(),
+            marks: Vec::new(),
             delivered: 0,
             cursor: 0,
             text_end: 0,
@@ -491,6 +492,8 @@ pub(crate) struct NativeParserV1 {
     stream_tool_calls: bool,
     /// The push document, reused across pushes.
     request: Vec<u8>,
+    /// A push's marks as the document carries them, reused across pushes.
+    marks: Vec<std::ops::Range<u64>>,
     /// How many completion bytes the format holds.
     delivered: usize,
     cursor: usize,
@@ -514,12 +517,23 @@ impl FormatParserV1 for NativeParserV1 {
             return Err(malformed_v1("bytes received after terminal completion"));
         }
         let keep = self.delivered.min(input.completion.len());
+        // A push carries the marks that end in the bytes it adds; the
+        // format keeps the ones before.
+        self.marks.clear();
+        if let Some(marks) = input.marks {
+            let first = marks.partition_point(|mark| mark.end <= keep);
+            self.marks.extend(
+                marks[first..]
+                    .iter()
+                    .map(|mark| mark.start as u64..mark.end as u64),
+            );
+        }
         document::PushV1 {
             keep: keep as u64,
             held: input.held,
             stop_floor: input.stop_floor.map(|floor| floor as u64),
             suffix: &input.completion[keep..],
-            marks: None,
+            marks: input.marks.map(|_| document::MarksV1::new(&self.marks)),
         }
         .encode_into(&mut self.request);
         let limits = &self.descriptor.limits;

@@ -1476,6 +1476,7 @@ fn bad_parser_answers_are_refused_and_end_the_parser() {
                 held: *held,
                 last: *last,
                 stop_floor: Some(0),
+                marks: None,
             });
             if outcome.is_err() {
                 break;
@@ -1492,6 +1493,7 @@ fn bad_parser_answers_are_refused_and_end_the_parser() {
                         held: false,
                         last: false,
                         stop_floor: None,
+                        marks: None,
                     }),
                     Err(sequence_v1("bytes pushed after the format parser failed")),
                     "{}",
@@ -1606,6 +1608,7 @@ fn good_parser_answers_become_format_events() {
         held: false,
         last,
         stop_floor: Some(0),
+        marks: None,
     };
     assert_eq!(
         parser.push(input(false)).unwrap(),

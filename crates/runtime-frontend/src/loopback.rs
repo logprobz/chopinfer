@@ -7,8 +7,9 @@
 //! `chop.frontend.v1` documents. A test decoder given no bundle frontend
 //! calls the shared parser directly ([`LibraryParserV1`]), tests compare a
 //! decoder against the shared whole-completion parse
-//! ([`parse_completion_v1`]), and they compare the documents against a chat
-//! format called directly (`LibraryRendererV1`).
+//! ([`parse_completion_v1`], [`parse_marked_completion_v1`]), and they
+//! compare the documents against a chat format called directly
+//! (`LibraryRendererV1`).
 
 use std::sync::Arc;
 
@@ -97,14 +98,14 @@ impl FormatParserV1 for LibraryParserV1 {
             held,
             last,
             stop_floor,
+            marks,
         } = input;
         let events = self.0.push(frontend_format::FormatInputV1 {
             completion,
             held,
             last,
             stop_floor,
-            // The host sends no marks yet.
-            marks: None,
+            marks,
         })?;
         Ok(events.into_iter().map(event_v1).collect())
     }
@@ -160,6 +161,20 @@ pub fn parse_completion_v1(
     let descriptor = frontend_format::FormatDescriptorV1::read(descriptor.clone())
         .map_err(|error| error.to_string())?;
     frontend_format::parse_completion_v1(&descriptor, text, mode).map(completion_v1)
+}
+
+/// [`parse_completion_v1`] for a completion whose `marks` are the byte
+/// ranges of its tokens generated as the declaration's ID-only markers, so
+/// a marker spelled by other tokens is text.
+pub fn parse_marked_completion_v1(
+    descriptor: &FrontendDescriptorV1,
+    text: &str,
+    marks: &[std::ops::Range<usize>],
+    mode: PromptModeV1,
+) -> Result<AssistantCompletionV1, String> {
+    let descriptor = frontend_format::FormatDescriptorV1::read(descriptor.clone())
+        .map_err(|error| error.to_string())?;
+    frontend_format::parse_marked_completion_v1(&descriptor, text, marks, mode).map(completion_v1)
 }
 
 fn completion_v1(completion: frontend_format::AssistantCompletionV1) -> AssistantCompletionV1 {

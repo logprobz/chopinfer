@@ -37,6 +37,9 @@ pub struct Heads {
     collapse: Prepared<WeightedStreamHeadBuffers<View>>,
     norm: Prepared<RmsNormBuffers<View>>,
     vocabulary: Prepared<ProjectionBuffers<View>>,
+    /// The target head's exact F32 row tiles for a wide drafter forward
+    /// (`wide_draft`): the same weight and bits as the split route.
+    vocabulary_rows: Option<exact_f32::rows::Rows>,
     embedding: Vec<Prepared<EmbeddingBuffers<View>>>,
     /// The gather, widening and reduction in one launch through immutable
     /// peer table reads, where the backend has the entry.
@@ -155,6 +158,14 @@ impl Heads {
                 Need::rows(DECODE_BATCH * BLOCK_ROWS),
             )?
             .handle;
+        let vocabulary_rows = exact_f32::rows::prepare(
+            &shape,
+            &crate::ops::Asks::default(),
+            "dspark.head rows verify",
+            width,
+            g.shape.hidden,
+            shape.wide_draft,
+        )?;
         let embedding = (0..shape.ranks())
             .map(|rank| {
                 backend.embedding_gather(
@@ -285,6 +296,7 @@ impl Heads {
             collapse,
             norm,
             vocabulary,
+            vocabulary_rows,
             embedding,
             peer,
             widen,
@@ -313,6 +325,7 @@ impl Heads {
             self.select.info(),
         ]
         .into_iter()
+        .chain(self.vocabulary_rows.iter().map(|rows| rows.info()))
         .chain(self.embedding.iter().map(|op| op.info()))
         .chain(self.peer.iter().flatten().map(|op| op.info()))
         .chain(self.noise.iter().flatten().map(|op| op.info()))
@@ -401,6 +414,29 @@ impl Heads {
         } else {
             (rows, v.normalized_f32, v.live_rows)
         };
+        let phase = crate::program::Phase::Verify {
+            rows: project_rows,
+            items: project_rows.div_ceil(BLOCK_ROWS),
+        };
+        // Only wide forwards: the drafter's narrower forwards keep their
+        // reuse route whatever the `f32_row_tiles` option selects.
+        if packed.is_none()
+            && project_rows > model_deepseek41_contract::serving::VERIFY_DECODE_ROWS
+            && let Some(tiles) = self
+                .vocabulary_rows
+                .as_ref()
+                .filter(|tiles| tiles.for_phase(phase))
+        {
+            result.extend(tiles.project(
+                project_rows,
+                normalized,
+                v.vocabulary_weight,
+                v.logits,
+                live_rows,
+                v.projection_state,
+            )?);
+            return Ok(result);
+        }
         result.extend(exact_f32::project(
             &self.vocabulary,
             project_rows,

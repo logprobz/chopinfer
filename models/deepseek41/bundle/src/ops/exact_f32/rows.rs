@@ -109,6 +109,10 @@ pub(crate) fn prepare(
 }
 
 impl Rows {
+    pub(crate) fn info(&self) -> &OpInfo {
+        self.op.info()
+    }
+
     pub(crate) fn for_phase(&self, phase: crate::program::Phase) -> bool {
         matches!(phase, crate::program::Phase::Verify { .. })
             && (self.rows[0]..=self.rows[1]).contains(&phase.rows())

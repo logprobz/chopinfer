@@ -416,6 +416,7 @@ pub(crate) mod tests {
             (DSPARK_GRAPH_HANDLES_PER_RANK, 32.into()),
             (DIAGNOSTIC_STEP_LOGS, true.into()),
             (WIDE_VERIFY, true.into()),
+            (WIDE_DRAFT, true.into()),
             (F32_ROW_TILES, true.into()),
         ] {
             changed = with_option(changed, name, value);
@@ -429,6 +430,7 @@ pub(crate) mod tests {
                 dspark_graph_handles_per_rank: 32,
                 diagnostic_step_logs: true,
                 wide_verify: true,
+                wide_draft: true,
                 f32_row_tiles: true,
             }
         );
@@ -438,6 +440,7 @@ pub(crate) mod tests {
             (PREFILL_PLAN_CACHE_VERIFY, "verify".into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK, (-1).into()),
             (DIAGNOSTIC_STEP_LOGS, 1.into()),
+            (WIDE_DRAFT, true.into()),
         ] {
             assert_eq!(
                 decode(&with_option(base.clone(), name, value), |_| {}).unwrap_err(),

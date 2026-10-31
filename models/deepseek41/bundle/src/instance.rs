@@ -933,6 +933,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         .shape
         .with_verify_rows(verify.rows_per_step)
         .with_wide_verify(config.execution.wide_verify)
+        .with_wide_draft(config.execution.wide_draft)
         .with_f32_row_tiles(config.execution.f32_row_tiles);
     if verify_rows > 0 && config.kv.storage == model_deepseek41_contract::state::KvStorage::Bf16 {
         log("BF16 KV supports autoregressive serving only; set --speculative-tokens 0");

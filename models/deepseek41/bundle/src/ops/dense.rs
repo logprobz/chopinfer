@@ -470,7 +470,9 @@ impl DenseOps {
     /// folds they replace, and Engram's matrix tile at every verify row
     /// count above 64 that they hold, as below 64. Each bucket's folds are
     /// the served route of the rows above the next narrower bucket. The
-    /// drafter's verify forwards stay within the decode buckets.
+    /// drafter binds the same folds only with the `wide_draft` option, whose
+    /// forwards reach the buckets; its other forwards stay within the
+    /// decode buckets.
     pub(crate) fn with_wide_verify(
         mut self,
         backend: &dyn Backend,
@@ -478,11 +480,18 @@ impl DenseOps {
         asks: &Asks,
         target: bool,
     ) -> Result<Self, Refused> {
-        if !target {
+        // A wide drafter forward (`wide_draft`) folds its projections at the
+        // same buckets; Engram's projection is the target's alone.
+        if !target && !shape.wide_draft {
             return Ok(self);
         }
         let first = crate::Kernels::dense_decode_capacity() + 1;
-        for rows in first..=shape.wide_verify_rows().last().copied().unwrap_or(0) {
+        let engram = if target {
+            shape.wide_verify_rows().last().copied().unwrap_or(0)
+        } else {
+            0
+        };
+        for rows in first..=engram {
             if let Some(op) = crate::Kernels::wide_verify_engram_fold(shape, rows)? {
                 let need = exact::need(rows, exact::verify(rows));
                 asks.record(format!("dense.engram.kv verify {rows}"), need, op.info());

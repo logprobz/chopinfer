@@ -238,7 +238,7 @@ fn item_widths(count: u32, rows: u32) -> Vec<u32> {
 /// requests, each in its own slot, and checks its drafts. Returns the
 /// target's launches (after the step's one Engram hash), the step's whole
 /// journal and the commit that keeps one row of each verifying item.
-fn verify_step(
+pub(super) fn verify_step(
     instance: &mut BundleInstanceV1,
     host: &Host,
     count: u32,

@@ -3,8 +3,9 @@
 # unfused-stage exceptions are retired. HC and drafter entries remain separate.
 # `tp4-dspark*` also names tp4-dspark-rows192, the profile at the package's 192
 # verify rows (fake_host_tests/conformance/wide.rs), whose envelope repeats
-# the profile's shapes, and tp4-dspark-rows192-wide, the same override with
-# the `wide_verify` candidate on.
+# the profile's shapes, tp4-dspark-rows192-wide, the same override with
+# the `wide_verify` candidate on, and tp4-dspark-rows192-wide-draft, with
+# `wide_draft` too.
 
 [[allow]]
 profiles = ["tp4-ar", "tp4-dspark*"]
@@ -1372,3 +1373,22 @@ rows = [[65, 192]]
 reason = "Dense verify folds are bucketed through 64 rows; eager verify steps of 65 to 192 rows at the package's verify rows take the 8192-row stream fold without the wide_verify option"
 task = "WIDE-VERIFY-dense-folds"
 
+[[allow]]
+profiles = ["tp4-dspark-rows192-wide-draft"]
+phase = "verify"
+family = "f32_reuse"
+entry = "f32_reuse/reuse-fallback/chop_deepseek41_dspark_router_f32_v1_split_prepare_v2"
+symbol = "chop_deepseek41_dspark_router_f32_v1_split_prepare_v2"
+rows = [[26, 192]]
+reason = "With the wide_draft option, drafter forwards of 13 to 32 items (65 to 160 block rows) run the drafter's 128-expert router on its exact F32 split route: its reuse plan admits forwards of up to 60 rows and no row tile is measured for its shape. The rows are the enclosing step's, from 13 drafting items at two rows each"
+task = "WIDE-DRAFT-router"
+
+[[allow]]
+profiles = ["tp4-dspark-rows192-wide-draft"]
+phase = "verify"
+family = "f32_reuse"
+entry = "f32_reuse/reuse-fallback/chop_deepseek41_dspark_router_f32_v1_split_v2"
+symbol = "chop_deepseek41_dspark_router_f32_v1_split_v2"
+rows = [[26, 192]]
+reason = "With the wide_draft option, drafter forwards of 13 to 32 items (65 to 160 block rows) run the drafter's 128-expert router on its exact F32 split route: its reuse plan admits forwards of up to 60 rows and no row tile is measured for its shape. The rows are the enclosing step's, from 13 drafting items at two rows each"
+task = "WIDE-DRAFT-router"

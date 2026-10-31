@@ -3,9 +3,12 @@
 # unfused-stage exceptions are retired. HC and drafter entries remain separate.
 # `tp4-dspark*` also names tp4-dspark-rows192, the profile at the package's 192
 # verify rows (fake_host_tests/conformance/wide.rs), whose envelope repeats
-# the profile's shapes, tp4-dspark-rows192-wide, the same override with
-# the `wide_verify` candidate on, and tp4-dspark-rows192-phased, with the
-# `phased_decode_reduce` candidate on.
+# the profile's shapes, tp4-dspark-rows192-wide, the same override with the
+# `wide_verify` candidate on, tp4-dspark-rows192-phased, with the
+# `phased_decode_reduce` candidate on, and tp4-dspark-tiles, the profile with
+# the `f32_row_tiles` candidate on. With that option the head runs its row
+# tiles, so the head's cached-stage entries name the other DSpark profiles
+# alone.
 
 [[allow]]
 profiles = ["tp4-ar", "tp4-dspark*"]
@@ -568,7 +571,7 @@ reason = "The selected-key cache covers Verify-4/6/16 and 32..64; intervening ve
 task = "LATENT-source-range"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark*"]
+profiles = ["tp4-ar", "tp4-dspark", "tp4-dspark-rows192*"]
 phase = "decode"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1"
@@ -578,7 +581,7 @@ reason = "head_last::head admits rows 1, 8 and 32, and projection_reuse::head ad
 task = "ODR-HEAD-decode-2-4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark*"]
+profiles = ["tp4-ar", "tp4-dspark", "tp4-dspark-rows192*"]
 phase = "decode"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_reduce_v1"
@@ -588,7 +591,7 @@ reason = "head_last::head admits rows 1, 8 and 32, and projection_reuse::head ad
 task = "ODR-HEAD-decode-2-4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark*"]
+profiles = ["tp4-ar", "tp4-dspark", "tp4-dspark-rows192*"]
 phase = "decode"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_rows_v1"
@@ -628,7 +631,7 @@ reason = "hc_cols::buckets replaces the pair at 1, 8, 16, 32 and larger widths, 
 task = "HC-cols-verify-4-12"
 
 [[allow]]
-profiles = ["tp4-dspark*"]
+profiles = ["tp4-dspark", "tp4-dspark-rows192*"]
 phase = "verify"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1"
@@ -638,7 +641,7 @@ reason = "head_last::head admits 1, 8 and 32 and projection_reuse::head admits 9
 task = "ODR-HEAD-verify-tails"
 
 [[allow]]
-profiles = ["tp4-dspark*"]
+profiles = ["tp4-dspark", "tp4-dspark-rows192*"]
 phase = "verify"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_reduce_v1"
@@ -648,7 +651,7 @@ reason = "head_last::head admits 1, 8 and 32 and projection_reuse::head admits 9
 task = "ODR-HEAD-verify-tails"
 
 [[allow]]
-profiles = ["tp4-dspark*"]
+profiles = ["tp4-dspark", "tp4-dspark-rows192*"]
 phase = "verify"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_rows_v1"

@@ -51,7 +51,7 @@ pub(super) fn validate(row: &Row) -> Result<(), TuningError> {
         | "norm.ceil_cached_f32.decode" => (&["cached"], &[], &[]),
         "f32.head_last.decode" => (&["last"], &[], &[]),
         "f32.router_norm.prefill" => (&["certified"], &[], &[]),
-        "f32.rows.verify" => (
+        "f32.rows.decode" | "f32.rows.verify" => (
             &["rows"],
             &[
                 "features",
@@ -245,11 +245,22 @@ fn validate_values(row: &Row) -> Result<(), TuningError> {
         "f32.band.prefill" | "f32.exact.prefill" => [32, 64].contains(&count("tile")),
         "f32.blocked.prefill" => count("tile") == 32,
         "f32.wide.prefill" => count("tile") == 64,
-        // Above the decode bucket, at the bound itself; each tile holds
-        // whole 128-K chains and a ring of at least two planes.
-        "f32.rows.verify" => {
-            row.key.bucket == crate::verify_bounds::F32_ROWS
-                && first > crate::serving::DECODE_BATCH
+        // Above the decode bucket, at the bound itself, or within it; each
+        // tile holds whole 128-K chains and a ring of at least two planes.
+        "f32.rows.decode" | "f32.rows.verify" => {
+            let (bucket, within) = if row.key.op == "f32.rows.decode" {
+                (
+                    crate::serving::DECODE_BATCH,
+                    last <= crate::serving::DECODE_BATCH,
+                )
+            } else {
+                (
+                    crate::verify_bounds::F32_ROWS,
+                    first > crate::serving::DECODE_BATCH,
+                )
+            };
+            row.key.bucket == bucket
+                && within
                 && [32, 64, 128].contains(&count("plane_k"))
                 && count("stages") >= 2
                 && count("slices") >= 1

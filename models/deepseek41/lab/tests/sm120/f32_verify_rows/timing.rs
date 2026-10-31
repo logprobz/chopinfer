@@ -8,6 +8,7 @@
 //! end, never set; a job whose limit changes is void.
 use super::catalog::{self, Shape};
 use super::fixture::{self, Form, Modules, Step, Weights, err};
+use super::real;
 use kernel_harness::kit::cases::f32_projection::Witness;
 use kernel_harness::{LabResult, Session, eviction::EvictionMode, launch};
 use runtime_cuda::{DeviceBuffer, KernelArgument, LaunchConfig};
@@ -36,8 +37,27 @@ pub fn selected_shapes() -> Vec<Shape> {
         .collect()
 }
 
+/// The row counts `CHOPINFER_F32_ROWS_ROWS` names, or `rows`.
+pub fn rows_or(rows: &[u32]) -> Vec<u32> {
+    list("CHOPINFER_F32_ROWS_ROWS").unwrap_or_else(|| rows.to_vec())
+}
+
 pub fn selected_rows() -> Vec<u32> {
-    list("CHOPINFER_F32_ROWS_ROWS").unwrap_or_else(|| ROWS.to_vec())
+    rows_or(&ROWS)
+}
+
+/// The real slice `CHOPINFER_F32_ROWS_SLICE` names (`real::SLICES`), of the
+/// one selected shape, with its weights read from the checkpoint.
+pub fn real_weights(shape: Shape) -> Option<(&'static real::Slice, Vec<f32>)> {
+    let stem = std::env::var("CHOPINFER_F32_ROWS_SLICE").ok()?;
+    let slice = real::find(&stem).unwrap_or_else(|| panic!("{stem}: not a real slice"));
+    assert_eq!(
+        selected_shapes(),
+        [slice.shape()],
+        "CHOPINFER_F32_ROWS_SLICE times one shape's slice"
+    );
+    assert_eq!(slice.shape(), shape);
+    Some((slice, slice.load(&real::checkpoint())))
 }
 
 /// The enforced power limit and SM clock of this session's GPU.
@@ -208,7 +228,18 @@ pub fn bench(s: &Session, lab: &'static [u8]) -> LabResult<BTreeMap<String, Valu
     for shape in selected_shapes() {
         let modules = Modules::load(s, lab, shape)?;
         let (a, b) = fixture::operands(shape, Witness::General);
+        let (source, b, outside) = match real_weights(shape) {
+            Some((slice, b)) => (slice.stem, b, slice.outside.to_vec()),
+            None => ("general", b, Vec::new()),
+        };
         let weights = Weights::new(s, &modules, shape, &b)?;
+        if weights.outside != outside {
+            return Err(format!("{}: device weight domain differs", shape.name));
+        }
+        println!(
+            "F32_ROWS_WEIGHTS {}",
+            json!({"shape": shape.name, "weights": source, "outside_tiles": outside})
+        );
         let extra = (1..copies(shape))
             .map(|_| s.allocate(weights.weight.byte_len()))
             .collect::<LabResult<Vec<_>>>()?;
@@ -257,6 +288,7 @@ pub fn bench(s: &Session, lab: &'static [u8]) -> LabResult<BTreeMap<String, Valu
                 let flops = 6. * f64::from(rows) * f64::from(shape.n) * f64::from(shape.k);
                 let record = json!({
                     "shape": shape.name, "n": shape.n, "k": shape.k, "rows": rows,
+                    "weights": source,
                     "calls_per_graph": copies.len(),
                     "baseline": step.forms[0].name(), "form": step.forms[f].name(),
                     "control": f == 1,
@@ -272,10 +304,13 @@ pub fn bench(s: &Session, lab: &'static [u8]) -> LabResult<BTreeMap<String, Valu
                 println!("F32_ROWS_TIME {record}");
                 timed.push(record);
             }
-            results.push(json!({"shape": shape.name, "rows": rows, "aa_ratio": aa,
-                "aa_spread": (aa - 1.).abs(), "timed": timed}));
+            results.push(json!({"shape": shape.name, "weights": source, "rows": rows,
+                "aa_ratio": aa, "aa_spread": (aa - 1.).abs(), "timed": timed}));
         }
-        results.push(json!({"shape": shape.name, "floor": floor}));
+        results.push(
+            json!({"shape": shape.name, "weights": source, "outside_tiles": outside,
+            "floor": floor}),
+        );
     }
     power.sample(s, "end")?;
     let void = !power.changes.is_empty();
@@ -289,7 +324,8 @@ pub fn bench(s: &Session, lab: &'static [u8]) -> LabResult<BTreeMap<String, Valu
         json!(
             "Single-GPU CUDA event medians of one graph per form, AB/BA with a 256 MiB write \
             eviction before each sample, 15 pairs after 2 warmups; arm A is the form a verify \
-            step serves today and the first pairing is its A/A control. General witness operands. \
+            step serves today and the first pairing is its A/A control. General witness operands, \
+            or a real slice's weights (`weights` names it) with the General activation. \
             The floor is one cold 16-byte-load pass over the weight bytes. Pair-lab timings \
             locate work and never decide adoption."
         ),

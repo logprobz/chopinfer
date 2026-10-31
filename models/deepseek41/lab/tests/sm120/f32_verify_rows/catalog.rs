@@ -94,6 +94,17 @@ pub fn tiles(s: Shape) -> Vec<Tile> {
             tile(256, 32, 32, 32, 4, 32, 1),
             tile(64, 96, 32, 32, 3, 32, 1),
             tile(128, 64, 16, 64, 2, 64, 1),
+            // Decode rows: as many CTAs as one wave of two to four per SM
+            // holds, each streaming its feature lines over the whole K.
+            tile(96, 8, 32, 8, 3, 64, 1),
+            tile(64, 8, 16, 8, 5, 32, 1),
+            tile(48, 8, 16, 8, 5, 32, 1),
+            tile(128, 8, 32, 8, 2, 64, 1),
+            tile(32, 8, 16, 8, 4, 64, 1),
+            tile(96, 16, 32, 16, 2, 64, 1),
+            tile(64, 16, 16, 16, 4, 32, 1),
+            tile(96, 32, 32, 32, 3, 32, 1),
+            tile(64, 32, 32, 32, 3, 32, 1),
         ]
     } else {
         vec![
@@ -173,12 +184,12 @@ pub fn spans(s: Shape) -> Option<cached_spans::Candidate> {
         .find(|c| c.entry().query().n == s.n && c.entry().query().k == s.k)
 }
 
-/// The row tiles the bundle registers for `s`, with the verify rows each
-/// serves; none for a projection that keeps its other routes.
+/// The row tiles the bundle registers for `s` at every site, with the
+/// rows each serves; none for a projection that keeps its other routes.
 pub fn packed(s: Shape) -> Vec<(Candidate, [u32; 2])> {
-    f32_verify_rows::tiles(s.n, s.k)
-        .unwrap()
+    f32_verify_rows::SITES
         .into_iter()
+        .flat_map(|site| f32_verify_rows::tiles(site, s.n, s.k).unwrap())
         .map(|t| (t.candidate, t.rows))
         .collect()
 }
@@ -279,11 +290,14 @@ fn cpu_lab_tiles_plan_every_timed_row_count() {
     }
     assert!(spans(shape("head").unwrap()).is_some());
     assert!(spans(shape("router").unwrap()).is_some());
-    // The bundle's tiles are lab tiles at the same capacity.
+    // The bundle's tiles are lab tiles, each at its site's bound.
     for s in shapes() {
-        for (c, _) in packed(s) {
-            assert!(candidates(s).iter().any(|lab| lab.tile() == c.tile()));
-            assert_eq!(c.capacity(), CAPACITY);
+        for site in f32_verify_rows::SITES {
+            for t in f32_verify_rows::tiles(site, s.n, s.k).unwrap() {
+                let c = t.candidate;
+                assert!(candidates(s).iter().any(|lab| lab.tile() == c.tile()));
+                assert_eq!(c.capacity(), site.bound);
+            }
         }
     }
     assert_eq!(packed(shape("index_weights").unwrap()).len(), 0);

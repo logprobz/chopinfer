@@ -1,14 +1,13 @@
-//! Bind the measured whole-K exact-F32 row tiles of verify steps.
+//! Bind the measured whole-K exact-F32 row tiles of decode and verify steps.
 use super::f32_verify_rows::{self, Served};
 use crate::ops::{
     Bind, Lowered,
-    exact_f32::rows::{RowsProjection, Spans},
+    exact_f32::rows::{RowsProjection, Spans, Steps},
 };
 use kernel_core::backend::{OpInfo, Refused};
 use kernel_core::contract::Refusal;
 use kernel_core::properties::Invariance;
 use kernels_sm120::f32_projection::rows::Buffers;
-use model_deepseek41_contract::verify_bounds::F32_ROWS;
 
 struct Projection {
     tiles: Vec<Served>,
@@ -58,15 +57,21 @@ impl RowsProjection for Projection {
     }
 }
 impl crate::Kernels {
-    /// The measured row tiles of the projection of `n` outputs from `k`
-    /// inputs, admitted at `rows` only, prepared once before lowering.
-    /// Selecting them still requires the caller's verify phase and row gate.
-    pub(crate) fn rows_verify_projection(
+    /// The measured row tiles of `steps` for the projection of `n` outputs
+    /// from `k` inputs, admitted at `rows` only, prepared once before
+    /// lowering. Selecting them still requires the caller's phase and row
+    /// gate.
+    pub(crate) fn rows_projection(
+        steps: Steps,
         n: u32,
         k: u32,
         rows: [u32; 2],
     ) -> Result<Box<dyn RowsProjection>, Refused> {
-        let tiles: Vec<_> = f32_verify_rows::tiles(n, k)?
+        let site = match steps {
+            Steps::Verify => f32_verify_rows::VERIFY,
+            Steps::Decode => f32_verify_rows::DECODE,
+        };
+        let tiles: Vec<_> = f32_verify_rows::tiles(site, n, k)?
             .into_iter()
             .filter(|t| t.rows[0] <= rows[1] && rows[0] <= t.rows[1])
             .collect();
@@ -93,8 +98,8 @@ impl crate::Kernels {
             workspace = workspace.max(t.candidate.workspace_bytes(t.rows[1].min(rows[1]))?);
         }
         let mut info = OpInfo::new(
-            "deepseek41.verify.exact-f32.rows",
-            Invariance::any_rows(F32_ROWS),
+            format!("deepseek41.{}.exact-f32.rows", site.stem),
+            Invariance::any_rows(site.bound),
             symbols,
         );
         info.workspace = workspace;
@@ -133,8 +138,12 @@ mod tests {
                     .with_wide_verify(wide)
                     .with_f32_row_tiles(tiles);
                 assert_eq!(
-                    crate::Kernels::loads(f32_verify_rows::CUBIN, &shape),
+                    crate::Kernels::loads(f32_verify_rows::VERIFY.cubin, &shape),
                     (wide && rows > 64) || (tiles && rows > 32)
+                );
+                assert_eq!(
+                    crate::Kernels::loads(f32_verify_rows::DECODE.cubin, &shape),
+                    tiles
                 );
             }
         }
@@ -143,7 +152,9 @@ mod tests {
             .with_verify_rows(192)
             .with_wide_verify(true)
             .with_f32_row_tiles(true);
-        assert!(!crate::Kernels::loads(f32_verify_rows::CUBIN, &shape));
+        for site in f32_verify_rows::SITES {
+            assert!(!crate::Kernels::loads(site.cubin, &shape));
+        }
     }
 
     /// Each projection's launches are its tile's preparation, compute and,
@@ -158,7 +169,7 @@ mod tests {
             (512, 3, 192 * 5120 * 6 + 192 * 512 * 40 * 4 + 48 * 16),
             (32320, 2, 192 * 5120 * 6 + 48 * 16),
         ] {
-            let op = crate::Kernels::rows_verify_projection(n, 5120, [65, 192]).unwrap();
+            let op = crate::Kernels::rows_projection(Steps::Verify, n, 5120, [65, 192]).unwrap();
             assert_eq!(op.info().workspace, workspace);
             let compute: Vec<_> = op
                 .info()
@@ -203,7 +214,8 @@ mod tests {
             ),
             (32320, "f256_r32_w32x32_s2_k64", 64 * 5120 * 6 + 16 * 16),
         ] {
-            let op = crate::Kernels::rows_verify_projection(n as u32, 5120, [33, 64]).unwrap();
+            let op =
+                crate::Kernels::rows_projection(Steps::Verify, n as u32, 5120, [33, 64]).unwrap();
             assert_eq!(op.info().workspace, workspace);
             assert!(!op.admits(32) && !op.admits(65));
             for rows in 33..=64 {
@@ -214,11 +226,11 @@ mod tests {
         }
         // The router keeps its separate spans at 33 to 64 rows.
         assert!(matches!(
-            crate::Kernels::rows_verify_projection(384, 5120, [33, 64]),
+            crate::Kernels::rows_projection(Steps::Verify, 384, 5120, [33, 64]),
             Err(Refused::Unsupported)
         ));
         assert!(matches!(
-            crate::Kernels::rows_verify_projection(32, 5120, [65, 192]),
+            crate::Kernels::rows_projection(Steps::Verify, 32, 5120, [65, 192]),
             Err(Refused::Unsupported)
         ));
     }

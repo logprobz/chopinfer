@@ -451,3 +451,99 @@ fn peer_symbol(shape: &Shape) -> String {
 fn hidden_width(shape: &Shape) -> u64 {
     u64::from(shape.geometry.shape.hidden) * 4
 }
+
+/// With the `f32_row_tiles` option the drafter's vocabulary projection runs
+/// the head's row tiles: the decode site's through 32 rows and the verify
+/// site's head tile above, to the instance's narrow verify rows. Without
+/// the option, and above those rows, it keeps its own routes.
+#[test]
+fn row_tile_option_runs_the_drafter_vocabulary_in_row_tiles() {
+    use bundle_runtime::geometry::Ranks;
+    use model_deepseek41_contract::geometry::FLASH;
+    use runtime_bundle_abi::BundleDeviceBufferHandleV1;
+    let tp4 = Shape::new(&FLASH, Ranks::TP4).unwrap();
+    for (shape, last) in [
+        (tp4.with_verify_rows(192), 0),
+        (tp4.with_verify_rows(192).with_wide_verify(true), 0),
+        (tp4.with_verify_rows(192).with_f32_row_tiles(true), 64),
+        (tp4.with_verify_rows(48).with_f32_row_tiles(true), 48),
+        (tp4.with_f32_row_tiles(true), 32),
+    ] {
+        let kernels = crate::Kernels::new(&shape).unwrap();
+        let heads = Heads::prepare(
+            kernels.backend.as_ref(),
+            kernels.own.as_ref(),
+            shape,
+            DraftMode::Greedy,
+        )
+        .unwrap();
+        let hidden = u64::from(shape.geometry.shape.hidden);
+        let vocab = u64::from(shape.vocab_rows());
+        let span =
+            |buffer, bytes| Span::new(BundleDeviceBufferHandleV1::from_raw(buffer), 0, bytes);
+        let rows = 60_u64;
+        let streams = u64::from(shape.geometry.shape.hc.streams);
+        let views = HeadViews {
+            streams: span(1, rows * hidden * streams * 2),
+            pre: span(2, rows * streams * 4),
+            hidden_f32: span(3, rows * hidden * 4),
+            norm_weight: span(4, hidden * 2),
+            normalized_f32: span(5, rows * hidden * 4),
+            vocabulary_weight: span(6, vocab * hidden * 2),
+            projection_state: crate::ops::exact_f32::ProjectionState {
+                weight_domain: Some(span(7, vocab.div_ceil(16) * 4)),
+                workspace: span(8, heads.workspace()),
+            },
+            logits: span(9, rows * vocab * 4),
+            live_rows: span(10, 4),
+            status: span(11, rows * 4),
+        };
+        let stem = |site| format!("chop_deepseek41_{site}_f32_n32320_k5120_rows");
+        // The vocabulary projection's launches, after the collapse, the
+        // norm and any packing gather.
+        let projection = |program: &[Lowered]| -> Vec<String> {
+            program
+                .iter()
+                .map(|call| call.launch.symbol.clone())
+                .filter(|symbol| symbol.contains("n32320_k5120"))
+                .collect()
+        };
+        for items in 1..=12 {
+            let rows = items * 5;
+            let symbols = projection(&heads.vocabulary(rows, &views).unwrap());
+            let site = if rows <= 32 { "decode" } else { "verify" };
+            assert_eq!(
+                symbols[0] == format!("{}_prepare_v1", stem(site)),
+                rows <= last,
+                "{} rows={rows}: {symbols:?}",
+                shape.topology()
+            );
+            assert_eq!(
+                symbols
+                    .iter()
+                    .any(|s| s.contains("_f32_n32320_k5120_rows_")),
+                rows <= last
+            );
+        }
+        // The depth-three heads project their packed rows alike.
+        for items in 3..=8 {
+            let rows = items * 3;
+            let packed = PackedHead {
+                rows,
+                indices: span(12, u64::from(rows) * 4),
+                live_rows: span(13, 4),
+                normalized_f32: span(14, u64::from(rows) * hidden * 4),
+            };
+            let symbols = projection(
+                &heads
+                    .vocabulary_packed(items * 5, &views, Some(packed))
+                    .unwrap(),
+            );
+            assert_eq!(
+                symbols[0] == format!("{}_prepare_v1", stem("decode")),
+                last > 0,
+                "packed rows={rows}: {symbols:?}"
+            );
+        }
+    }
+}

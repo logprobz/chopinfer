@@ -165,7 +165,8 @@ fn target_programs_lower_at_wide_verify_rows() {
 
 /// With the `f32_row_tiles` option, verify steps of 33 to 64 rows run the
 /// head's and the compressor's measured row tiles in place of their cached
-/// separate spans; the router and the index weights keep their spans.
+/// separate spans and the index weights' split route; the router keeps its
+/// spans.
 #[test]
 fn row_tile_option_replaces_the_head_and_compressor_spans() {
     use model_deepseek41_contract::execution_options::F32_ROW_TILES;
@@ -207,8 +208,111 @@ fn row_tile_option_replaces_the_head_and_compressor_spans() {
         assert_eq!(launched(&spans(32320)), 0);
         assert_eq!(launched(&spans(512)), 0);
         assert_eq!(launched(&spans(384)), 40 * 4);
-        assert_eq!(launched(&spans(32)), 8 * 4);
+        assert_eq!(launched(&spans(32)), 0);
+        assert_eq!(
+            observed
+                .iter()
+                .filter(|(s, _)| s.contains("_n32_k5120_") && s.ends_with("_split_v2"))
+                .map(|(_, g)| g.values().sum::<usize>())
+                .sum::<usize>(),
+            8 * 4,
+            "index weights at {rows} rows"
+        );
         assert!(!observed.keys().any(|s| s.contains("n384_k5120_rows")));
+        instance.commit_accepted(&accepted).unwrap();
+    }
+    for request in 1..=16 {
+        instance.retire_request(request).unwrap();
+    }
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
+/// With the `f32_row_tiles` option, verify steps of 32 rows or fewer run
+/// the head's decode row tiles, and the drafter's head runs the head's row
+/// tiles at its own rows: the decode site's through 32 rows (five rows an
+/// item, or three in the packed depth-three heads of three to eight
+/// items) and the verify site's above.
+#[test]
+fn row_tile_option_runs_the_head_decode_tiles() {
+    use model_deepseek41_contract::execution_options::F32_ROW_TILES;
+    let (host, mut instance) = create_with_options(
+        Shape::new(&FLASH, Ranks::TP4).unwrap(),
+        16,
+        128,
+        &[
+            (DSPARK_GRAPH_HANDLES_PER_RANK, 0.into()),
+            (F32_ROW_TILES, true.into()),
+        ],
+    );
+    for slot in 0..16 {
+        execute(
+            &mut instance,
+            &host,
+            &super::super::prompt(slot + 1, slot, 0, 3, true),
+        );
+        instance.commit().unwrap();
+    }
+    let symbol = |site, tag| format!("chop_deepseek41_{site}_f32_n32320_k5120_rows_{tag}_v1");
+    let tile = |rows: u32| match rows {
+        ..=8 => ("decode", "f96_r8_w32x8_s3_k64"),
+        9..=16 => ("decode", "f96_r16_w32x16_s2_k64"),
+        17..=32 => ("decode", "f256_r32_w32x32_s2_k64"),
+        _ => ("verify", "f256_r32_w32x32_s2_k64"),
+    };
+    let hash = crate::sm120::engram_hash_rows::SYMBOL;
+    for (count, rows, drafter_rows) in [
+        (1_u32, 2_u32, 5_u32),
+        (1, 6, 5),
+        (2, 12, 10),
+        (4, 16, 12),
+        (4, 24, 20),
+        (8, 32, 24),
+        (12, 48, 60),
+        (16, 64, 40),
+    ] {
+        let (target, step, accepted) = verify_step(&mut instance, &host, count, rows);
+        let observed = grids(&target);
+        let (site, tag) = tile(rows);
+        let (tile_rows, features) = if tag.starts_with("f96_r8") {
+            (8, 96)
+        } else if tag.starts_with("f96") {
+            (16, 96)
+        } else {
+            (32, 256)
+        };
+        let grid = (rows.div_ceil(tile_rows), 32320_u32.div_ceil(features), 1);
+        assert_eq!(
+            observed.get(&symbol(site, tag)),
+            Some(&[(grid, 4)].into()),
+            "head at {rows} rows"
+        );
+        let heads = |lines: &[String]| -> Vec<String> {
+            lines
+                .iter()
+                .filter(|line| line.starts_with("launch ") && line.contains("n32320_k5120"))
+                .map(|line| line.split_whitespace().nth(2).unwrap().to_owned())
+                .collect()
+        };
+        assert!(
+            heads(&target).iter().all(|s| s.contains("_rows_")),
+            "head at {rows} rows"
+        );
+        // The drafter's heads precede the step's Engram hash.
+        let drafted = step.iter().position(|line| line.contains(hash)).unwrap();
+        let drafter = heads(&step[..drafted]);
+        let (site, tag) = tile(drafter_rows);
+        let chunks = count.div_ceil(12) as usize;
+        assert_eq!(
+            drafter.iter().filter(|s| **s == symbol(site, tag)).count(),
+            4 * chunks,
+            "drafter at {count} items: {drafter:?}"
+        );
+        assert_eq!(
+            drafter.len(),
+            8 * chunks,
+            "drafter at {count} items: {drafter:?}"
+        );
         instance.commit_accepted(&accepted).unwrap();
     }
     for request in 1..=16 {

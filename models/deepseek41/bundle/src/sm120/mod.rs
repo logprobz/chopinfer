@@ -1058,8 +1058,10 @@ impl crate::Kernels {
                 .is_empty())
             && (cubin != f32_verify::CUBIN
                 || f32_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows))
-            && (cubin != f32_verify_rows::CUBIN
+            && (cubin != f32_verify_rows::VERIFY.cubin
                 || crate::ops::exact_f32::rows::admitted(shape).is_some())
+            && (cubin != f32_verify_rows::DECODE.cubin
+                || crate::ops::exact_f32::rows::decode_admitted(shape).is_some())
             && (!ceil_split::is_cubin(cubin) || ceil_split::serves(shape.geometry, shape.ranks()))
             && (cubin != query_window::CUBIN || query_window::serves(shape.geometry, shape.ranks()))
             && cubin != acceptance_entries::CUBIN

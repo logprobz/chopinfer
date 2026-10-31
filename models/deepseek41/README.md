@@ -190,7 +190,7 @@ them. A non-default value is unqualified.
 | `dspark_coupled_drafts` | `true` | Couple sampled drafts to the target sampler's noise. |
 | `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |
 | `dspark_graph_handles_per_rank` | `512` | Graph handles per rank, from 0 to 9223372036854775807; 0 keeps DSpark eager. The total across ranks must fit the platform's count range. |
-| `f32_row_tiles` | `false` | Candidate: Flash TP4 verify steps of 33 to 64 rows run the vocabulary head and the compressor in their measured exact F32 row tiles instead of the cached separate spans; the router keeps its spans. Bitwise lab twins and fixed-batch GPU replays matched; served step-time acceptance remains required before adoption. |
+| `f32_row_tiles` | `false` | Candidate: Flash TP4 steps of 64 rows or fewer run the vocabulary head in its measured exact F32 row tiles at every decode and verify width, the DSpark drafter's head alike, and at 33 to 64 verify rows the compressor in its row tiles and the index weights on the split route instead of the cached separate spans; the router keeps its spans. Bitwise lab twins and fixed-batch GPU replays matched; served step-time acceptance remains required before adoption. |
 | `moe_direct_keep` | `false` | Candidate: on Flash TP4, the direct MoE's 32- to 64-row and wide verify buckets' queues store their K-block partials with an L2 evict_last policy. With the stream, retire and loads options this is the robust knob set, bitwise equal to the default in the kernel-lab MoE pairs and faster in the lab with served-like routing ([lab](lab/moe_direct_small.md#served-body-candidates)); served step-time acceptance remains required. |
 | `moe_direct_loads` | `false` | Candidate: the same buckets' gate finisher issues every partial load before its first add. Part of the robust knob set. |
 | `moe_direct_retire` | `false` | Candidate: the same buckets' finishers discard each partial line from L2 once read. Part of the robust knob set. |
@@ -410,6 +410,65 @@ spans, and each compressor projection 28 us against 33 and 38 us.
 Fixed-batch GPU replays with both options on, at verify widths 32 to 64
 (concurrency 16 and 32, two to four rows per item, against captures of the
 previous package) and at the five wide configurations, matched bitwise.
+
+The option also runs the head at every decode and verify width of 32 rows
+or fewer in its decode tiles (tuning site `f32.rows.decode`, a module of its
+own so the verify module keeps its bytes): 96 features by 8 rows through 8
+rows, 96 by 16 through 16 and 256 by 32 through 32, each a wave of CTAs that
+streams its features over every chain. The DSpark drafter's head runs the
+head's tiles at its own rows, the decode tiles through 32 rows and the
+verify tile above to the instance's narrow verify rows, in place of its
+bounded reuse, so its proposals keep their bits. The index weights at 33 to
+64 verify rows keep the split route instead of the cached spans. On
+2026-10-31, the kernel lab (one GPU at its 250 W enforced limit, in-job A/A
+controls within 2.5%) measured the head at 240 to 244 us from 2 to 8 rows
+against 262 to 277 us on the served route, 256 to 258 us from 9 to 16 rows
+against 346 to 399 us and 262 to 266 us from 17 to 32 rows against 492 to
+688 us. At one row it took 240 us against 246 to 250 us in three runs, a
+gain near that row's A/A spread. The drafter's head took 0.40 to 0.43 ms at
+35 to 60 rows against 0.89 to 1.35 ms on the bounded reuse, and the index
+weights 14.6 to 14.9 us at 33 to 64 rows against 18.3 to 18.4 us on the
+spans. The lab's comparisons matched the split route bit for bit at every
+tile boundary and at the decode, small verify and drafter head widths from 1
+to 64 rows, on every operand witness, for the lab's tiles and the packaged
+ones. Fixed-batch GPU replays with the option on at verify
+widths 4 to 64 (concurrency 1, 16 and 32, two to six rows per item, against
+captures of the previous package) matched bitwise in logits, proposals,
+acceptance and committed state. The route sweep `tp4-dspark-tiles` serves
+the profile with the option on. This is not served step-time acceptance.
+
+The lab timings above ran the General witness, whose weights all lie in the
+tensor domain, which admits a nonzero operand only at 2^-30 <= |x| < 2^31.
+The checkpoint holds five BF16 weights of these projections below 2^-30:
+head row 49423 (tile 1068 of rank 1's slice), one in each router of layers
+19, 22 and 35 and one in layer 8's compressor `wkv`, whose tiles every rank
+holds; the index projections hold none, and the drafter's vocabulary head
+reads the same `head.weight`. Such a 16-feature tile keeps the SIMT chains
+at every row, which the row tiles first ran serially in 16 threads: on
+2026-10-31 the kernel lab, run on each rank's real slices
+(`CHOPINFER_F32_ROWS_SLICE`, one GPU per rank at its 250 W enforced limit,
+in-job A/A controls within 2.7% and 4.5% at 65 rows),
+measured rank 1's head tile at 14.3 to 14.7 ms at every width from 33 to
+192 rows and its decode tiles at up to 14.1 ms, and the affected router
+and compressor tiles at 0.51 to 0.63 ms. The fallback now stages the tile's
+weight and activation lines through the CTA's ring and shares its chains
+among every thread, so rank 1's head took 0.40 to 0.44 ms at 33 to 64 rows,
+0.59 to 0.63 ms at 65 to 128 and 1.01 ms at 192, within 2% of the other
+ranks, and its decode tiles 252 to 297 us at 1 to 32 rows against 240 to
+266 us on the other ranks and 250 to 672 us on the served route. Router
+layer 19 took 41 to 44 us against 30 to 34 us for layer 0, and compressor
+layer 8 36 to 53 us against 28 to 43 us for layer 2. The lab's comparisons
+matched the split route bit for bit on every rank's head slice, the four
+routers, both compressors and layer 8's index projections, one of them with
+a weight set below 2^-30, at every boundary row from 1 to 192, and on the
+default operand matrix. Later that day the lab's `real::SLICES` matrix, read
+from the checkpoint, found exactly these five tiles and matched bit for bit
+on all 12 slices at all 56 boundary rows, and the default matrix gained a
+domain-boundary witness: signed operands just below, at and just above
+2^-30 and 2^31 at five K positions put six of every 13 rows and tiles
+outside the domain, and on all five projections at every boundary row the
+reference matched the outputs those operands fix, a cancelling chain whose
+bits show each output's path, and every form matched the reference.
 
 Merged with the wide direct MoE, the five wide replays matched bitwise
 again, eagerly and with graphs up to each verify capacity, and so did the

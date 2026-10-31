@@ -103,24 +103,34 @@ fn tag_at<'a>(
     kernel_core::route::branch(symbol, RouteClass::Fast, family, "wide-verify", admitted)
 }
 
-/// A row tile symbol admits the rows of every tuning row whose tile
-/// launches it: a preparation or reducer every tile of its projection
-/// shares, a compute only its own tile's.
+/// A row tile symbol admits the rows of every tuning row of its site
+/// whose tile launches it: a preparation or reducer every tile of its
+/// projection shares, a compute only its own tile's.
 fn rows_tag(symbol: &str) -> RouteTag {
-    let admitted: Vec<_> = super::f32_verify_rows::served()
-        .expect("measured row tiles")
-        .into_iter()
-        .filter(|(_, _, t)| t.candidate.symbols().iter().any(|s| s == symbol))
-        .map(|(_, _, t)| t.rows[0]..=t.rows[1])
-        .collect();
-    assert!(!admitted.is_empty(), "registered row tile symbol");
-    kernel_core::route::branch(
-        symbol,
-        RouteClass::Fast,
-        "f32_rows",
-        "wide-verify",
-        admitted,
-    )
+    use super::f32_verify_rows::{SITES, VERIFY, served};
+    for site in SITES {
+        let admitted: Vec<_> = served(site)
+            .expect("measured row tiles")
+            .into_iter()
+            .filter(|(_, _, t)| t.candidate.symbols().iter().any(|s| s == symbol))
+            .map(|(_, _, t)| t.rows[0]..=t.rows[1])
+            .collect();
+        if !admitted.is_empty() {
+            let wrapper = if site == VERIFY {
+                "wide-verify"
+            } else {
+                "decode-rows"
+            };
+            return kernel_core::route::branch(
+                symbol,
+                RouteClass::Fast,
+                "f32_rows",
+                wrapper,
+                admitted,
+            );
+        }
+    }
+    unreachable!("registered row tile symbol")
 }
 
 pub(super) fn tags<B>(op: &dyn PreparedOp<B>, family: &'static str, first: u32) -> Vec<RouteTag> {
@@ -205,9 +215,11 @@ pub(super) fn catalogue(shape: &crate::shape::Shape) -> Result<Vec<RouteTag>, St
         }
         lowest = capacity + 1;
     }
-    if crate::Kernels::loads(super::f32_verify_rows::CUBIN, shape) {
-        for (_, _, t) in super::f32_verify_rows::served().map_err(|e| e.to_string())? {
-            tags.extend(t.candidate.symbols().iter().map(|s| rows_tag(s)));
+    for site in super::f32_verify_rows::SITES {
+        if crate::Kernels::loads(site.cubin, shape) {
+            for (_, _, t) in super::f32_verify_rows::served(site).map_err(|e| e.to_string())? {
+                tags.extend(t.candidate.symbols().iter().map(|s| rows_tag(s)));
+            }
         }
     }
     let rows = |family| shape.verify_rows_within(bound(family));

@@ -317,7 +317,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "5a22a7ee090ca73a8436aab0626a824391128326dcce6495bbdc6e8fd99c38af",
+    "cubin_sha256": "5c0ea78c2e8fe317e031157a1054a39ff04a5ead711a69f6d1a4ad8bc1f70d35",
     "resources": [
       {
         "symbol": "chop_deepseek41_verify_f32_n384_k5120_rows_prepare_v1",
@@ -330,7 +330,7 @@
       },
       {
         "symbol": "chop_deepseek41_verify_f32_n384_k5120_rows_f64_r64_w32x16_s2_k64_z10_v1",
-        "registers": 176,
+        "registers": 190,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -357,7 +357,7 @@
       },
       {
         "symbol": "chop_deepseek41_verify_f32_n512_k5120_rows_f64_r32_w32x16_s3_k64_z8_v1",
-        "registers": 180,
+        "registers": 162,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -375,7 +375,7 @@
       },
       {
         "symbol": "chop_deepseek41_verify_f32_n512_k5120_rows_f64_r64_w32x16_s2_k64_z10_v1",
-        "registers": 176,
+        "registers": 190,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -393,7 +393,7 @@
       },
       {
         "symbol": "chop_deepseek41_verify_f32_n32320_k5120_rows_f256_r32_w32x32_s2_k64_v1",
-        "registers": 244,
+        "registers": 242,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,

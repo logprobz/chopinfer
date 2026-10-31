@@ -37,6 +37,9 @@ pub struct Heads {
     collapse: Prepared<WeightedStreamHeadBuffers<View>>,
     norm: Prepared<RmsNormBuffers<View>>,
     vocabulary: Prepared<ProjectionBuffers<View>>,
+    /// The vocabulary projection's exact F32 row tiles, at the rows they
+    /// serve (the `f32_row_tiles` option).
+    vocabulary_rows: Vec<exact_f32::rows::Rows>,
     embedding: Vec<Prepared<EmbeddingBuffers<View>>>,
     /// The gather, widening and reduction in one launch through immutable
     /// peer table reads, where the backend has the entry.
@@ -155,6 +158,7 @@ impl Heads {
                 Need::rows(DECODE_BATCH * BLOCK_ROWS),
             )?
             .handle;
+        let vocabulary_rows = exact_f32::rows::prepare_drafter(&shape, width, g.shape.hidden)?;
         let embedding = (0..shape.ranks())
             .map(|rank| {
                 backend.embedding_gather(
@@ -285,6 +289,7 @@ impl Heads {
             collapse,
             norm,
             vocabulary,
+            vocabulary_rows,
             embedding,
             peer,
             widen,
@@ -313,6 +318,7 @@ impl Heads {
             self.select.info(),
         ]
         .into_iter()
+        .chain(self.vocabulary_rows.iter().map(|op| op.info()))
         .chain(self.embedding.iter().map(|op| op.info()))
         .chain(self.peer.iter().flatten().map(|op| op.info()))
         .chain(self.noise.iter().flatten().map(|op| op.info()))
@@ -401,6 +407,21 @@ impl Heads {
         } else {
             (rows, v.normalized_f32, v.live_rows)
         };
+        if let Some(tiles) = self
+            .vocabulary_rows
+            .iter()
+            .find(|tiles| tiles.admits(project_rows))
+        {
+            result.extend(tiles.project(
+                project_rows,
+                normalized,
+                v.vocabulary_weight,
+                v.logits,
+                live_rows,
+                v.projection_state,
+            )?);
+            return Ok(result);
+        }
         result.extend(exact_f32::project(
             &self.vocabulary,
             project_rows,

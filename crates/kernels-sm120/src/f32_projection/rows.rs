@@ -37,7 +37,7 @@ impl Tile {
         self.stages * (self.features + 3 * self.rows) * self.plane_k * 2
     }
     pub fn validate(self) -> Result<(), Refusal> {
-        let fits = |part: u32, whole: u32| part != 0 && whole.is_multiple_of(part);
+        let fits = |part: u32, whole: u32| part != 0 && whole != 0 && whole.is_multiple_of(part);
         let row_tiles = self.warp_rows / 8;
         if !fits(self.warp_features, self.features)
             || !fits(self.warp_rows, self.rows)
@@ -54,7 +54,28 @@ impl Tile {
                 "whole-K F32 tiles need 16-feature by 8-row warp tiles, two stages and bounded shared memory",
             ));
         }
+        if !self.fallback_fits() {
+            return Err(Refusal(
+                "whole-K F32 tiles need at most 512 features, a thread count they divide and room for the SIMT fallback's panels",
+            ));
+        }
         Ok(())
+    }
+    /// The SIMT fallback's static requirements (`simt`, `SimtPanel`,
+    /// `simt_split` and `SplitPanel` in the header): one mask bit per
+    /// 16-feature tile, a feature per thread in each lost-row pass, and in
+    /// the ring two 32-K panels of each form: every feature's weight line
+    /// with a line per thread slot for the lost rows, one tile's weight
+    /// lines with `ceil(16 rows / threads)` lines per slot for a tile
+    /// outside the domain, and the split form's chain values.
+    fn fallback_fits(self) -> bool {
+        let threads = self.threads();
+        let panels = |width: u32, lines: u32| 2 * (width * (32 + 8) * 2 + lines * (32 + 4) * 4);
+        let tile_lines = threads / 16 * (self.rows * 16).div_ceil(threads);
+        self.features <= 32 * 16
+            && threads.is_multiple_of(self.features)
+            && panels(self.features, threads / self.features) <= self.shared_bytes()
+            && panels(16, tile_lines) + tile_lines * 16 * 4 <= self.shared_bytes()
     }
     fn tag(self) -> String {
         let tag = format!(
@@ -71,8 +92,9 @@ impl Tile {
 
 /// The caller checks physical span alignment and disjointness before
 /// binding these views. The workspace holds the preparation's row domain
-/// and components (`prefill::Workspace`) and must start on a 16-byte
-/// boundary.
+/// and components (`prefill::Workspace`); it, the weights and the
+/// activation must start on a 16-byte boundary, as the tiles and their
+/// SIMT fallback copy them in 16-byte vectors.
 #[derive(Clone, Copy)]
 pub struct Buffers {
     pub activation: View,
@@ -482,6 +504,46 @@ mod tests {
         assert!(Candidate::new(bf16.clone().with_decode(), TILE, 192).is_err());
         assert!(Candidate::new(bf16.clone(), TILE, 193).is_err());
         assert!(Candidate::new(bf16, TILE, 192).is_ok());
+    }
+
+    #[test]
+    fn refuses_tiles_whose_simt_fallback_does_not_compile() {
+        let tile = |features, rows, warp_features, warp_rows, stages, plane_k| Tile {
+            features,
+            rows,
+            warp_features,
+            warp_rows,
+            stages,
+            plane_k,
+            slices: 1,
+        };
+        // Each refused tile passes every other check, and its neighbour
+        // after the arrow compiles: a feature per thread (64 features at 32
+        // threads, 96 at 128), the split form's chain values after its two
+        // panels (16 x 8 rows in two 32-K planes) and the lost-row panels
+        // of 128 features (128 x 8 in two 32-K planes).
+        for (refused, accepted) in [
+            (tile(64, 8, 64, 8, 2, 64), tile(64, 8, 32, 8, 2, 64)),
+            (tile(96, 16, 48, 8, 2, 64), tile(96, 16, 32, 8, 2, 64)),
+            (tile(16, 8, 16, 8, 2, 32), tile(16, 8, 16, 8, 3, 32)),
+            (tile(128, 8, 32, 8, 2, 32), tile(128, 8, 32, 8, 3, 32)),
+        ] {
+            assert_eq!(
+                refused.validate().unwrap_err().0,
+                "whole-K F32 tiles need at most 512 features, a thread count they divide and room for the SIMT fallback's panels",
+                "{refused:?}"
+            );
+            accepted.validate().unwrap();
+        }
+        for tile in [
+            Tile {
+                features: 0,
+                ..TILE
+            },
+            Tile { rows: 0, ..TILE },
+        ] {
+            assert!(tile.validate().is_err(), "{tile:?}");
+        }
     }
 
     #[test]

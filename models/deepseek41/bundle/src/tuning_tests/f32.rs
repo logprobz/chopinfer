@@ -36,7 +36,8 @@ fn pin_untuned_served_keys() {
                 8192,
             ));
         }
-        // The row tiles serve Flash TP4's head, router and compressor.
+        // The row tiles serve Flash TP4's head, router and compressor
+        // above the decode bucket, and its head within it.
         if ranks == 4 {
             let s = &FLASH.shape;
             for n in [s.vocab / 4, s.moe.experts, s.attention.head_dim] {
@@ -47,6 +48,12 @@ fn pin_untuned_served_keys() {
                     model_deepseek41_contract::verify_bounds::F32_ROWS,
                 ));
             }
+            domain.insert(key(
+                "f32.rows.decode",
+                "bf16",
+                &[("n", s.vocab / 4), ("k", s.hidden), ("ranks", ranks)],
+                model_deepseek41_contract::serving::DECODE_BATCH,
+            ));
         }
         for candidate in crate::sm120::f32_verify::entries().unwrap() {
             let q = candidate.entry().query();
@@ -60,7 +67,7 @@ fn pin_untuned_served_keys() {
             }
         }
     }
-    assert_eq!(domain.len(), 572);
+    assert_eq!(domain.len(), 573);
     assert_untuned(
         Family::F32,
         domain,

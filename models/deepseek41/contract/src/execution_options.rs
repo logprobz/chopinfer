@@ -13,9 +13,11 @@ pub const DIAGNOSTIC_STEP_LOGS: &str = "diagnostic_step_logs";
 /// Candidate: Flash TP4 verify steps above the 64-row decode route run the
 /// wide verify buckets (`crate::verify_bounds::WIDE`).
 pub const WIDE_VERIFY: &str = "wide_verify";
-/// Candidate: Flash TP4 verify steps of 33 to 64 rows run the measured
-/// whole-K exact F32 row tiles (`f32.rows.verify`) of the vocabulary head
-/// and the compressor.
+/// Candidate: Flash TP4 steps of 64 rows or fewer run the measured whole-K
+/// exact F32 row tiles of the vocabulary head (`f32.rows.decode` at decode
+/// and verify widths of 32 rows or fewer, `f32.rows.verify` above), the
+/// DSpark drafter's head alike and the compressor's at 33 to 64 verify rows,
+/// where the index weights take the split route.
 pub const F32_ROW_TILES: &str = "f32_row_tiles";
 /// Candidate: Flash TP4 decode and verify all-reduces whose round no HC
 /// boundary defers take the phased F32 rounding entries.

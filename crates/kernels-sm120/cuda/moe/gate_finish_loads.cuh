@@ -5,7 +5,8 @@
 // serial L2 round trips. The served body loads the K-block partials in
 // groups of four, one dependent round trip per group, then the route
 // weight. Here every partial and the route weight load before the first
-// add; the adds, their order and the quantized tail are unchanged.
+// add; the adds, their order and the quantized tail are unchanged. With
+// K::retire each warp then discards the partial lines it read.
 namespace chop::moe::bandwidth_loads {
 using namespace streamed;
 
@@ -13,7 +14,8 @@ template<class C, uint32_t FloorBits, class Clamp = typename C::clamp,
     class Quantization = chained_policy::CeilE4M3Group32<FloorBits>,
     class RouteWeight = chained_policy::BeforeQuantizeRouteWeight,
     class Output = chained_policy::Bf16IntermediateF32Output,
-    class Reduction = chained_policy::OrderedF32>
+    class Reduction = chained_policy::OrderedF32,
+    class K = knobs::Served>
 __device__ void gate_finish(const void* scratch, const int32_t* live_tokens,
     const float* route_weights, uint16_t* intermediate, uint8_t* codes,
     uint8_t* scales, uint32_t* status, uint32_t* tickets) {
@@ -49,6 +51,9 @@ __device__ void gate_finish(const void* scratch, const int32_t* live_tokens,
     values[threadIdx.x] = out;
     intermediate[uint64_t(route) * C::n + column] = out;
   } else values[threadIdx.x] = 0;
+  // A warp's 32 columns are all valid or all past C::n.
+  if constexpr (K::retire)
+    if (column0 + 32 * warp < C::n) knobs::retire_gate<Blocks, C::n>(input, route, column0 + 32 * warp);
   __syncthreads();
   if (group < C::n / 32) {
     auto value = Quantization::quantize(

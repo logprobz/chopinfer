@@ -6,7 +6,8 @@ use kernel_core::precision::ExecutionPhase;
 use kernels_sm120::moe::chained::{
     absorb, bandwidth,
     floor::{Entry, Stage},
-    strip2,
+    knobs::{self, Knobs},
+    lanes, strip2,
 };
 use model_deepseek41_contract::moe::Experts;
 
@@ -81,6 +82,7 @@ pub(super) fn prepare_set(
     .map_err(Refused::Rule)?;
     let maximum_rows =
         shape.verify_rows_within(model_deepseek41_contract::verify_bounds::MOE_DIRECT);
+    let knobs = knobs_of(shape, set);
     let wide = wide_rows(shape, set);
     let wide_entry = if wide.is_empty() {
         None
@@ -100,6 +102,7 @@ pub(super) fn prepare_set(
                 super::moe_router_finish::qualified(set, phase, rows) || wide,
                 super::moe_router_finish::r2(set, phase, rows) || wide,
                 &tiles,
+                knobs,
             )?,
         ))
     });
@@ -108,10 +111,66 @@ pub(super) fn prepare_set(
         Ok((
             ExecutionPhase::Verify,
             rows,
-            prepare_wide(entry, rows, scaling)?,
+            prepare_wide(entry, rows, scaling, knobs)?,
         ))
     });
     narrow.chain(wide).collect()
+}
+
+/// The direct MoE candidate knobs `set` takes: the shape's
+/// (`moe_direct_*` options) for the backbone bank with its gate/up bank
+/// in quad-lane row tiles, and none otherwise.
+fn knobs_of(shape: &crate::shape::Shape, set: Experts) -> Knobs {
+    let g = shape.geometry;
+    if set == model_deepseek41_contract::moe::expert_sets(g)[0]
+        && super::moe_row_tiles_op::layout(g, shape.ranks(), set)
+            == model_deepseek41_contract::weight_plan::RoutedLayout::Lanes
+    {
+        let options = shape.moe_knobs;
+        Knobs {
+            stream: options.stream,
+            keep: options.keep,
+            retire: options.retire,
+            loads: options.loads,
+        }
+    } else {
+        Knobs::default()
+    }
+}
+
+/// Whether an instance of `shape` launches knob candidates
+/// (`moe_direct_knobs`): at a direct bucket of at most 64 rows that runs
+/// the absorbing path (`wide` false), or at a wide verify bucket (`wide`
+/// true). Loads alone takes the served all-loads-first finisher.
+pub(crate) fn takes_knobs(shape: &crate::shape::Shape, wide: bool) -> bool {
+    let g = shape.geometry;
+    let set = model_deepseek41_contract::moe::expert_sets(g)[0];
+    let k = knobs_of(shape, set);
+    if !(k.stream || k.keep || k.retire) || !super::moe::streamed_qualified(g, shape.ranks()) {
+        return false;
+    }
+    if wide {
+        return !wide_rows(shape, set).is_empty();
+    }
+    let maximum_rows =
+        shape.verify_rows_within(model_deepseek41_contract::verify_bounds::MOE_DIRECT);
+    buckets(set, maximum_rows).into_iter().any(|(phase, rows)| {
+        let wide = super::moe_router_finish::wide(set, phase, rows, maximum_rows);
+        absorbing_path(
+            set.count,
+            phase,
+            rows,
+            super::moe_router_finish::qualified(set, phase, rows) || wide,
+        )
+    })
+}
+
+/// Whether a bucket runs the absorbing path: the absorbing gate small
+/// queue and the two-strip down queue, with no wide queue.
+fn absorbing_path(experts: u32, phase: ExecutionPhase, rows: u32, fused_router: bool) -> bool {
+    fused_router && stage_selected("wide", experts, phase, rows)
+        || stage_selected("absorb", experts, phase, rows)
+            && stage_selected("strip2", experts, phase, rows)
 }
 
 /// The verify rows above the direct buckets that the backbone bank serves
@@ -190,7 +249,10 @@ pub(crate) fn wide_route_tags(shape: &crate::shape::Shape) -> Vec<kernel_core::r
 /// verify rows. The served route keeps its stage; no route launch is part
 /// of this op. Its queues read encoded scale banks in place, so no scale
 /// expansion precedes them.
-fn prepare_wide(wide: &Entry, rows: u32, scaling: u32) -> Result<Prepared, Refused> {
+///
+/// Under knobs (`knobs_of`) each launch is its knob candidate
+/// (`kernels_sm120::moe::chained::knobs`).
+fn prepare_wide(wide: &Entry, rows: u32, scaling: u32, k: Knobs) -> Result<Prepared, Refused> {
     use kernels_sm120::moe::chained::wide as queues;
     let scratch = wide.workspace_bytes(rows)?;
     let ticket_offset = scratch.next_multiple_of(256);
@@ -211,25 +273,25 @@ fn prepare_wide(wide: &Entry, rows: u32, scaling: u32) -> Result<Prepared, Refus
         (
             Point::Gate,
             Some(Stage::GateSmall),
-            queues::gate_entry(wide, None)?,
+            knobs::gate_entry(wide, k, None)?,
             queues::gate_plan(wide, rows)?,
         ),
         (
             Point::Gate,
             Some(Stage::GateFinish),
-            queues::gate_finish_entry(wide, false)?,
+            knobs::gate_finish_entry(wide, k),
             queues::gate_finish_plan(wide, rows)?,
         ),
         (
             Point::Down,
             Some(Stage::DownSmall),
-            queues::down_entry(wide, None)?,
+            knobs::down_entry(wide, k, None)?,
             queues::down_plan(wide, rows)?,
         ),
         (
             Point::Sum,
             Some(Stage::DownFinish),
-            queues::down_finish_entry(wide)?,
+            knobs::down_finish_entry(wide, k),
             queues::down_finish_plan(wide, rows)?,
         ),
     ];
@@ -293,6 +355,7 @@ fn stage_selected(site: &str, experts: u32, phase: ExecutionPhase, rows: u32) ->
     .is_some()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn prepare(
     entry: &Entry,
     rows: u32,
@@ -301,10 +364,21 @@ fn prepare(
     fused_router: bool,
     r2: bool,
     tiles: &std::collections::BTreeMap<String, kernel_build::EntrySpec>,
+    knobs: Knobs,
 ) -> Result<Prepared, Refused> {
     let wide = fused_router && stage_selected("wide", entry.experts(), phase, rows);
     let absorb_queues = absorbs(entry, phase, rows) || wide;
     let strip2_down = strips2(entry, phase, rows) || wide;
+    // The knob candidates replace the absorbing path's launches only.
+    debug_assert_eq!(
+        absorb_queues && strip2_down,
+        absorbing_path(entry.experts(), phase, rows, fused_router)
+    );
+    let knobs = if absorb_queues && strip2_down {
+        knobs
+    } else {
+        Knobs::default()
+    };
     let scratch = entry.workspace_bytes(rows)?;
     let routed_offset = if fused_router {
         super::moe_router_finish::layout(entry, rows).routed
@@ -451,6 +525,29 @@ fn prepare(
                 "{} would read the row-tiled backbone gate/up bank as rows",
                 spec.symbol
             )));
+        }
+        // Each knob candidate keeps its served launch's plan.
+        if !knobs.served() {
+            match stage {
+                Some(Stage::GateSmall) => {
+                    if spec.symbol != lanes::absorb_symbol(entry) {
+                        return Err(Refused::Rule(format!(
+                            "{} is not the quad-lane absorbing gate the knobs replace",
+                            spec.symbol
+                        )));
+                    }
+                    spec = knobs::gate_entry(entry, knobs, None)?;
+                }
+                Some(Stage::GateFinish) => {
+                    // The served all-loads-first finisher keeps its loads.
+                    let loads =
+                        knobs.loads || stage_selected("gate_finish", entry.experts(), phase, rows);
+                    spec = knobs::gate_finish_entry(entry, Knobs { loads, ..knobs });
+                }
+                Some(Stage::DownSmall) => spec = knobs::down_entry(entry, knobs, None)?,
+                Some(Stage::DownFinish) => spec = knobs::down_finish_entry(entry, knobs),
+                _ => {}
+            }
         }
         info.symbols
             .push((spec.symbol.clone(), plan.dynamic_shared_bytes));
@@ -619,6 +716,116 @@ mod tests {
     use bundle_runtime::geometry::Ranks;
     use model_deepseek41_contract::geometry::FLASH;
     use runtime_bundle_abi::{BundleDeviceBufferHandleV1, DeviceBufferSpanV1};
+
+    /// Each knob set replaces only the absorbing path's launches (the
+    /// backbone's 32- to 64-row buckets and the wide verify buckets) with
+    /// its candidates, each with its served launch's plan and bindings;
+    /// every other launch and bucket stays served.
+    #[test]
+    fn knob_options_replace_only_the_absorbing_launches() {
+        use kernel_core::contract::Argument;
+        use model_deepseek41_contract::execution_options::MoeDirect;
+        let base = crate::shape::Shape::new(&FLASH, Ranks::TP4)
+            .unwrap()
+            .with_verify_rows(192)
+            .with_wide_verify(true);
+        let lowered = |op: &Prepared| {
+            let workspace = DeviceBufferSpanV1::new(
+                BundleDeviceBufferHandleV1 { raw: 1 },
+                0,
+                op.info.workspace,
+            );
+            [
+                Point::RouterPrepare,
+                Point::Route,
+                Point::Gate,
+                Point::Down,
+                Point::Sum,
+            ]
+            .into_iter()
+            .flat_map(|point| {
+                op.launch(point, workspace, |role| {
+                    let id = role
+                        .bytes()
+                        .fold(7u64, |h, b| (h * 31 + u64::from(b)) % 65521);
+                    Ok(DeviceBufferSpanV1::new(
+                        BundleDeviceBufferHandleV1 { raw: 2 + id },
+                        0,
+                        1 << 34,
+                    ))
+                })
+                .unwrap()
+            })
+            .map(|call| {
+                let l = call.launch;
+                let args = l
+                    .arguments
+                    .0
+                    .iter()
+                    .map(|a| match a {
+                        Argument::DeviceBuffer(h) => format!("{:?}", l.bindings.get(*h).unwrap()),
+                        other => format!("{other:?}"),
+                    })
+                    .collect::<Vec<_>>();
+                (l.symbol, l.plan, args)
+            })
+            .collect::<Vec<_>>()
+        };
+        for set in model_deepseek41_contract::moe::expert_sets(&FLASH) {
+            let served = prepare_set(&base, set).unwrap();
+            let mut absorbing = 0;
+            for bits in 1..16u32 {
+                let option = MoeDirect {
+                    stream: bits & 1 != 0,
+                    keep: bits & 2 != 0,
+                    retire: bits & 4 != 0,
+                    loads: bits & 8 != 0,
+                };
+                let ops = prepare_set(&base.with_moe_knobs(option), set).unwrap();
+                assert_eq!(ops.len(), served.len());
+                for ((phase, rows, op), (served_phase, served_rows, served_op)) in
+                    ops.iter().zip(&served)
+                {
+                    assert_eq!((phase, rows), (served_phase, served_rows));
+                    let (new, old) = (lowered(op), lowered(served_op));
+                    let path = old.iter().any(|(s, ..)| {
+                        s.contains("_absorb_lanes_") && s.ends_with("_gate_small_v1")
+                    }) && old.iter().any(|(s, ..)| s.contains("_strip2_"));
+                    assert_eq!(
+                        path,
+                        set.count == 384 && *rows >= 32,
+                        "{phase:?} rows={rows}"
+                    );
+                    if !path {
+                        assert_eq!(new, old);
+                        continue;
+                    }
+                    absorbing += 1;
+                    assert_eq!(new.len(), old.len());
+                    for ((symbol, plan, args), (old_symbol, old_plan, old_args)) in
+                        new.iter().zip(&old)
+                    {
+                        assert_eq!(plan, old_plan, "{symbol}");
+                        assert_eq!(args, old_args, "{symbol}");
+                        let gate = old_symbol.ends_with("_gate_small_v1");
+                        let down = old_symbol.contains("_strip2_");
+                        let gate_finish = old_symbol.contains("_gate_finish");
+                        let down_finish = old_symbol.contains("_down_finish");
+                        let changed = ((gate || down) && (option.stream || option.keep))
+                            || (gate_finish && (option.retire || option.loads))
+                            || (down_finish && option.retire);
+                        assert_eq!(symbol != old_symbol, changed, "{symbol}");
+                        if gate_finish {
+                            assert_eq!(symbol.contains("_gate_finish_loads"), option.loads);
+                            assert_eq!(symbol.ends_with("_policy_r_v1"), option.retire);
+                        }
+                    }
+                }
+            }
+            // 32, 48 and 64 rows of both phases and the wide verify rows.
+            assert_eq!(absorbing > 0, set.count == 384);
+        }
+    }
 
     #[test]
     fn direct_admission_keeps_unmeasured_phases_and_weak_buckets_out() {

@@ -337,10 +337,15 @@ impl Arm {
     }
     /// The calls of the stage named `stage`.
     pub fn scope(&self, stage: &str) -> LabResult<&[Launch]> {
+        Ok(&self.calls[self.scope_range(stage)?])
+    }
+
+    /// The indices in `calls` of a lowered stage's calls.
+    pub fn scope_range(&self, stage: &str) -> LabResult<std::ops::Range<usize>> {
         self.scopes
             .iter()
             .find(|(name, _)| name == stage)
-            .map(|(_, range)| &self.calls[range.clone()])
+            .map(|(_, range)| range.clone())
             .ok_or_else(|| format!("missing stage scope {stage}"))
     }
     /// The symbols each routed expert stage launches, in stage order.
@@ -371,9 +376,12 @@ const EXPERT_STAGES: [&str; 3] = ["ExpertsGateUp(0)", "ExpertsDown(0)", "RoutedS
 /// reference: gate/up chain and its ceil quantizer, down chain, routed sum)
 /// with the backbone bank's wide direct queues (the candidate: pack,
 /// absorbing gate queue and finisher, two-strip down queue, down finisher,
-/// all compiled at one capacity of at least `rows`). Two exports of the
-/// same selection would otherwise compare a path with itself. Pairs of 64
-/// rows or fewer compare revisions and are not checked here.
+/// all compiled at one capacity of at least `rows`), or the wide direct
+/// queues with the direct MoE knob candidates (a cache policy tag, or loads
+/// alone: the all-loads-first gate finisher) against either reference. Two
+/// exports of the same selection would otherwise compare a path with
+/// itself. Pairs of 64 rows or fewer compare revisions and are not checked
+/// here.
 pub fn check_wide_pair(
     rows: u32,
     reference: &[Vec<&str>],
@@ -398,40 +406,56 @@ pub fn check_wide_pair(
         }
         _ => false,
     };
-    if !chain {
+    let Some(knobs) = wide_direct(rows, candidate) else {
         return Err(format!(
-            "{rows} rows: the reference does not run the 8192-row expert chains: {reference:?}"
+            "{rows} rows: the candidate does not run the wide direct queues: {candidate:?}"
+        ));
+    };
+    if !(chain || knobs && wide_direct(rows, reference) == Some(false)) {
+        return Err(format!(
+            "{rows} rows: the reference runs neither the 8192-row expert chains nor, against \
+             knob candidates, the wide direct queues: {reference:?}"
         ));
     }
-    let capacity = match candidate {
+    Ok(())
+}
+
+/// Whether `stages` run the wide direct queues at a capacity of at least
+/// `rows`: `Some(true)` with knob candidates, `Some(false)` without. No
+/// wide step serves the all-loads-first gate finisher, so it marks the
+/// loads knob alone.
+fn wide_direct(rows: u32, stages: &[Vec<&str>]) -> Option<bool> {
+    let t = match stages {
         [gate, ..] => gate
             .first()
             .and_then(|s| s.strip_prefix("chop_deepseek41_moe_wide_t"))
             .and_then(|s| s.strip_suffix("_e384_k6_pack_v1"))
-            .and_then(|t| t.parse::<u32>().ok()),
-        _ => None,
+            .and_then(|t| t.parse::<u32>().ok())?,
+        _ => return None,
     };
-    let wide = capacity.is_some_and(|t| {
-        let bank = format!("t{t}_e384_k6_");
-        let named = |s: &str, prefix: &str, stage: &str| {
-            s.strip_prefix(prefix)
-                .and_then(|s| s.strip_prefix(bank.as_str()))
-                .is_some_and(|s| s.starts_with(stage))
-        };
-        t >= rows
-            && matches!(candidate, [gate, down, sum]
-                if matches!(gate.as_slice(), [_, g, f]
-                    if named(g, "chop_deepseek41_moe_absorb_lanes_", "gate_small")
-                        && named(f, "chop_deepseek41_moe_bandwidth_direct_", "gate_finish"))
-                && matches!(down.as_slice(), [d]
-                    if named(d, "chop_deepseek41_moe_strip2_", "down_small"))
-                && matches!(sum.as_slice(), [s]
-                    if named(s, "chop_deepseek41_moe_floor_", "down_finish")))
-    });
-    if !wide {
-        return Err(format!(
-            "{rows} rows: the candidate does not run the wide direct queues: {candidate:?}"
-        ));
-    }
-    Ok(())
+    let bank = format!("t{t}_e384_k6_");
+    let named = |s: &str, prefix: &str, stage: &str| {
+        s.strip_prefix(prefix)
+            .and_then(|s| s.strip_prefix(bank.as_str()))
+            .is_some_and(|s| s.starts_with(stage))
+    };
+    let queues = t >= rows
+        && matches!(stages, [gate, down, sum]
+            if matches!(gate.as_slice(), [_, g, f]
+                if named(g, "chop_deepseek41_moe_absorb_lanes_", "gate_small")
+                    && named(f, "chop_deepseek41_moe_bandwidth_direct_", "gate_finish"))
+            && matches!(down.as_slice(), [d]
+                if named(d, "chop_deepseek41_moe_strip2_", "down_small"))
+            && matches!(sum.as_slice(), [s]
+                if named(s, "chop_deepseek41_moe_floor_", "down_finish")));
+    queues.then(|| {
+        stages.iter().flatten().any(|s| {
+            s.contains("_policy_")
+                || named(
+                    s,
+                    "chop_deepseek41_moe_bandwidth_direct_",
+                    "gate_finish_loads_v1",
+                )
+        })
+    })
 }

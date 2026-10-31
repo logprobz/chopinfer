@@ -1,4 +1,5 @@
 //! Complete routed and shared MoE pairs over all planned wide row counts.
+use super::candidate::Lab;
 use super::device::{Pool, Programs};
 use super::graphs::{self, Graphs};
 use super::recorded::{Arm, Weights, check_wide_pair};
@@ -11,12 +12,15 @@ pub struct Options {
     worker: u32,
     checked: bool,
     compact: bool,
+    trace: bool,
+    scale_widths: Vec<u32>,
     widths: Vec<u32>,
     ranks: Vec<u32>,
     patterns: Vec<u32>,
     reference: PathBuf,
     candidate: PathBuf,
     weights: PathBuf,
+    lab: Option<Lab>,
 }
 impl Options {
     pub fn environment() -> LabResult<Self> {
@@ -44,12 +48,22 @@ impl Options {
             Ok(text) => list(text)?,
             Err(_) => (0..PATTERNS).collect(),
         };
+        // Scale widths, all four by default; raw first, as the encoded
+        // widths compare their outputs with its.
+        let scale_widths = match std::env::var("CHOPINFER_MOE_WIDE_SCALE_WIDTHS") {
+            Ok(text) => list(text)?,
+            Err(_) => vec![0, 1, 2, 4],
+        };
         let ordered = |v: &[u32]| !v.is_empty() && v.windows(2).all(|w| w[0] < w[1]);
+        if scale_widths.first() != Some(&0)
+            || !ordered(&scale_widths)
+            || scale_widths.iter().any(|w| ![0, 1, 2, 4].contains(w))
+        {
+            return Err("scale widths must be raw first, then 1, 2 or 4 ascending".into());
+        }
         if worker > 3
             || !ordered(&widths)
-            || widths
-                .iter()
-                .any(|&r| r != 16 && r != 32 && !(33..=192).contains(&r))
+            || widths.iter().any(|&r| !(1..=192).contains(&r))
             || !ordered(&ranks)
             || ranks.iter().any(|&r| r > 3)
             || !ordered(&patterns)
@@ -60,6 +74,9 @@ impl Options {
         Ok(Self {
             worker,
             compact: std::env::var("CHOPINFER_MOE_WIDE_COMPACT").as_deref() == Ok("1"),
+            // CHOPINFER_MOE_WIDE_TRACE=1 names each replay before it runs.
+            trace: std::env::var("CHOPINFER_MOE_WIDE_TRACE").as_deref() == Ok("1"),
+            scale_widths,
             checked,
             widths,
             ranks,
@@ -67,6 +84,7 @@ impl Options {
             reference: env("CHOPINFER_MOE_WIDE_REFERENCE")?.into(),
             candidate: env("CHOPINFER_MOE_WIDE_CANDIDATE")?.into(),
             weights: env("CHOPINFER_MOE_WIDE_WEIGHTS")?.into(),
+            lab: Lab::environment()?,
         })
     }
 }
@@ -205,6 +223,14 @@ const SEMANTIC: &[&str] = &[
     "scratch.shared_row_status",
 ];
 
+/// Each semantic role of `arm`, by name.
+pub(super) fn snapshot(pool: &Pool<'_>, arm: &Arm) -> LabResult<Vec<(&'static str, Vec<u8>)>> {
+    SEMANTIC
+        .iter()
+        .map(|&name| Ok((name, pool.read(arm.role(name)?)?)))
+        .collect()
+}
+
 fn same(label: &str, a: &[u8], b: &[u8]) -> LabResult<()> {
     if a != b {
         let at = a.iter().zip(b).position(|(a, b)| a != b);
@@ -313,6 +339,7 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
     let mut destroyed = 0;
     let mut peak = 0;
     let mut wide_pairs = 0;
+    let mut swapped = 0;
     for &rank in &options.ranks {
         let mut pool = Pool::new(session);
         let weights = Weights::load(&mut pool, &options.weights, rank)?;
@@ -320,17 +347,23 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
         let mut programs = if dry {
             None
         } else {
-            Some(Programs::load(&pool, &[])?)
+            Some(Programs::with_lab(
+                &pool,
+                &[],
+                options.lab.as_ref().map(|s| s.cubin.clone()),
+            )?)
         };
         let mut raw_outputs = BTreeMap::new();
         for &rows in &options.widths {
-            for width in [0, 1, 2, 4] {
-                let arms = [
+            for &width in &options.scale_widths {
+                let mut arms = [
                     Arm::load(&mut pool, &weights, &options.reference, rows, rank, width)?,
                     Arm::load(&mut pool, &weights, &options.candidate, rows, rank, width)?,
                 ];
                 check_wide_pair(rows, &arms[0].expert_symbols()?, &arms[1].expert_symbols()?)?;
                 wide_pairs += u32::from(rows > 64);
+                let twins = options.lab.as_ref().map_or(0, |s| s.apply(&mut arms[1]));
+                swapped += twins;
                 for name in SEMANTIC {
                     if arms[0].role(name)?.bytes != arms[1].role(name)?.bytes {
                         return Err(format!("semantic extent differs: {name}"));
@@ -372,23 +405,35 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
                             }
                             for (live_index, &live) in lives.iter().enumerate() {
                                 if !dry {
-                                    for (index, arm) in arms.iter().enumerate() {
-                                        pool.write(arm.role("live")?, &live.to_le_bytes())?;
-                                        status(&pool, arm)?;
-                                        if mode == 0 {
-                                            graphs::serial(
-                                                &pool,
-                                                programs.as_ref().unwrap(),
-                                                arm,
-                                                &session.unwrap().stream,
-                                            )?;
-                                        } else {
-                                            graphs.as_ref().unwrap().run((mode - 1) * 2 + index)?;
-                                        }
+                                    let context = format!(
+                                        "rows={rows} rank={rank} width={width} pattern={pattern} live={live} mode={mode} poison={poison}"
+                                    );
+                                    if options.trace {
+                                        eprintln!("MOE_FULL_TRACE {context}");
                                     }
-                                    pool.sync()?;
+                                    let replay = || -> LabResult<()> {
+                                        for (index, arm) in arms.iter().enumerate() {
+                                            pool.write(arm.role("live")?, &live.to_le_bytes())?;
+                                            status(&pool, arm)?;
+                                            if mode == 0 {
+                                                graphs::serial(
+                                                    &pool,
+                                                    programs.as_ref().unwrap(),
+                                                    arm,
+                                                    &session.unwrap().stream,
+                                                )?;
+                                            } else {
+                                                graphs
+                                                    .as_ref()
+                                                    .unwrap()
+                                                    .run((mode - 1) * 2 + index)?;
+                                            }
+                                        }
+                                        pool.sync()
+                                    };
+                                    replay().map_err(|e| format!("{context}: {e}"))?;
                                     let output = compare(&pool, &arms, live, pattern, rank)
-                                        .map_err(|e| format!("rows={rows} rank={rank} width={width} pattern={pattern} live={live} mode={mode} poison={poison}: {e}"))?;
+                                        .map_err(|e| format!("{context}: {e}"))?;
                                     if mode == 0
                                         && poison_index == 0
                                         && live_index < lives.len() - 1
@@ -410,6 +455,11 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
                     }
                     if !options.checked {
                         if !dry {
+                            if options.trace {
+                                eprintln!(
+                                    "MOE_FULL_TRACE rows={rows} rank={rank} width={width} pattern={pattern} controls"
+                                );
+                            }
                             let candidate = &arms[1];
                             setup(&pool, candidate, pattern, rank, 0x5a)?;
                             pool.write(candidate.role("live")?, &rows.to_le_bytes())?;
@@ -435,7 +485,7 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
                     }
                     cases += 1;
                     println!(
-                        "MOE_FULL_{} rows={rows} rank={rank} width={width} pattern={pattern} replays={} negative={} PASS",
+                        "MOE_FULL_{} rows={rows} rank={rank} width={width} pattern={pattern} replays={} negative={} lab_twins={twins} PASS",
                         if dry { "DRY" } else { "PAIR" },
                         poisons.len() * modes * lives.len(),
                         usize::from(!options.checked)
@@ -452,7 +502,10 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
             }
         }
     }
-    let expected = options.widths.len() * options.ranks.len() * 4 * options.patterns.len();
+    let expected = options.widths.len()
+        * options.ranks.len()
+        * options.scale_widths.len()
+        * options.patterns.len();
     if cases != expected
         || replays
             != cases
@@ -468,8 +521,13 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
     {
         return Err("full MoE executed inventory differs".into());
     }
+    if let Some(tag) = options.lab.as_ref().and_then(|l| l.swap.as_ref())
+        && swapped == 0
+    {
+        return Err(format!("knob set {tag} replaced no served launch"));
+    }
     println!(
-        "MOE_FULL_COMPLETE worker={} checked={} compact={} dry={dry} cases={cases} replays={replays} negatives={negatives} graphs_destroyed={destroyed} wide_pairs_checked={wide_pairs} allocated_peak={peak} PASS",
+        "MOE_FULL_COMPLETE worker={} checked={} compact={} dry={dry} cases={cases} replays={replays} negatives={negatives} graphs_destroyed={destroyed} wide_pairs_checked={wide_pairs} lab_twins={swapped} allocated_peak={peak} PASS",
         options.worker, options.checked, options.compact
     );
     Ok(())

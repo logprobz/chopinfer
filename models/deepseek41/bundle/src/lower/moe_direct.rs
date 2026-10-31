@@ -7,6 +7,10 @@ use crate::program::{Phase, Stage};
 #[path = "moe_direct_wide_tests.rs"]
 mod wide_tests;
 
+#[cfg(test)]
+#[path = "moe_direct_knobs_tests.rs"]
+mod knobs_tests;
+
 impl Lowering<'_> {
     pub(super) fn moe_direct_stage(
         &self,

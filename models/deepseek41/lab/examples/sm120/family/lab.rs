@@ -35,6 +35,8 @@ pub mod hc_prefill_fused;
 pub mod hc_prefill_warp;
 #[path = "../../../tests/sm120/indexer_prefill_probe.rs"]
 pub mod indexer_prefill_probe;
+#[path = "../../../sm120/moe_small_l2.rs"]
+pub mod moe_small_l2;
 #[path = "../../../tests/sm120/norm_query_cached/catalog.rs"]
 pub mod norm_query_cached;
 #[path = "../../../sm120/packed_serving.rs"]

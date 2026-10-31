@@ -1,7 +1,7 @@
 [
   {
     "name": "floor_moe_deepseek41_compute_sm120",
-    "source_closure_sha256": "d95e970ae233c9d45937fc243f305b6370ac646372fb862c366e71314d126a9b"
+    "source_closure_sha256": "dff4428530479932905d7f6f4887ceaf1d72296d09c5e6c3116dd9c22d50a4ac"
   },
   {
     "name": "floor_moe_deepseek41_route_sm120",

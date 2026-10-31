@@ -1,5 +1,6 @@
 #pragma once
 #include "chained_pipeline.cuh"
+#include "chained_knobs.cuh"
 #include "../row/ceil_parallel.cuh"
 
 // A separate entry preserves the locked streamed consumers. Every weight
@@ -92,10 +93,12 @@ __device__ void gate_finish(const void* scratch, const int32_t* live_tokens,
 
 // Route weights were applied before intermediate quantization. Fold each
 // down output in K order, add routes in selection order, then add shared.
-// The caller places this launch after the shared-expert join.
+// The caller places this launch after the shared-expert join. With
+// K::retire each warp then discards the partial lines it read.
 template<class C, bool OmitFirst = false,
     class Reduction = chained_policy::OrderedF32,
-    class Output = chained_policy::Bf16IntermediateF32Output>
+    class Output = chained_policy::Bf16IntermediateF32Output,
+    class K = knobs::Served>
 __device__ void down_finish(const void* scratch, const int32_t* live_tokens,
     const int32_t* ids, const float* shared, float* routed, float* output) {
   static_assert(!C::gate_up);
@@ -122,5 +125,19 @@ __device__ void down_finish(const void* scratch, const int32_t* live_tokens,
   }
   output[uint64_t(token) * C::n + column] =
       Output::output(Reduction::add(total, shared[uint64_t(token) * C::n + column]));
+  if constexpr (K::retire) {
+    // Whole CTAs take the early return together, and a warp's 32 columns
+    // of one (route, K block) row are one 128-byte line.
+    static_assert(!OmitFirst && C::n % 128 == 0 && C::n * 4 % 128 == 0);
+    if (reinterpret_cast<uintptr_t>(input) & 127u) __trap();
+    __syncwarp();
+    const int lane = threadIdx.x & 31, column0 = column - lane;
+    for (int line = lane; line < C::top_k * Layout<C>::blocks; line += 32) {
+      const int route = token * C::top_k + line / Layout<C>::blocks;
+      const int expert = ids[route];
+      if (expert < 0 || expert >= C::experts) continue;
+      knobs::discard_line(input + (uint64_t(route) * Layout<C>::blocks + line % Layout<C>::blocks) * C::n + column0);
+    }
+  }
 }
 } // namespace chop::moe::floor

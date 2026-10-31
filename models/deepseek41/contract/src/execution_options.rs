@@ -20,6 +20,18 @@ pub const F32_ROW_TILES: &str = "f32_row_tiles";
 /// Candidate: Flash TP4 decode and verify all-reduces whose round no HC
 /// boundary defers take the phased F32 rounding entries.
 pub const PHASED_DECODE_REDUCE: &str = "phased_decode_reduce";
+/// Candidate: the Flash TP4 direct MoE's absorbing queues stream their weight codes
+/// past L1 with an L2 evict_first policy.
+pub const MOE_DIRECT_STREAM: &str = "moe_direct_stream";
+/// Candidate: the direct MoE's absorbing queues store their K-block
+/// partials with an L2 evict_last policy.
+pub const MOE_DIRECT_KEEP: &str = "moe_direct_keep";
+/// Candidate: the direct MoE's finishers discard each partial line from L2
+/// once read.
+pub const MOE_DIRECT_RETIRE: &str = "moe_direct_retire";
+/// Candidate: the direct MoE's gate finisher issues every partial load
+/// before its first add (`kernels_sm120::moe::chained::knobs`).
+pub const MOE_DIRECT_LOADS: &str = "moe_direct_loads";
 pub const DEFAULT_PLANS: usize = 16;
 pub const MAX_PLANS: usize = 64;
 /// The served warmup fits within 512 graph handles per rank, leaving room
@@ -35,9 +47,19 @@ pub struct Options {
     pub wide_verify: bool,
     pub f32_row_tiles: bool,
     pub phased_decode_reduce: bool,
+    pub moe_direct: MoeDirect,
 }
 
-pub fn declarations() -> [ModelOptionV1; 8] {
+/// The direct MoE candidate knobs; all off serves the qualified path.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MoeDirect {
+    pub stream: bool,
+    pub keep: bool,
+    pub retire: bool,
+    pub loads: bool,
+}
+
+pub fn declarations() -> [ModelOptionV1; 12] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -53,6 +75,22 @@ pub fn declarations() -> [ModelOptionV1; 8] {
         ),
         (
             F32_ROW_TILES,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            MOE_DIRECT_KEEP,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            MOE_DIRECT_LOADS,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            MOE_DIRECT_RETIRE,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            MOE_DIRECT_STREAM,
             OptionDefinitionV1::Boolean { default: false },
         ),
         (
@@ -106,6 +144,7 @@ impl Options {
                 Ok((option.name, value))
             })
             .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let flag = |name: &str| values[name].as_bool().expect("checked boolean");
         let count = |name: &str| {
             usize::try_from(values[name].as_u64().expect("checked integer"))
                 .map_err(|_| format!("model option {name} exceeds the platform's count range"))
@@ -122,11 +161,15 @@ impl Options {
             diagnostic_step_logs: values[DIAGNOSTIC_STEP_LOGS]
                 .as_bool()
                 .expect("checked boolean"),
-            wide_verify: values[WIDE_VERIFY].as_bool().expect("checked boolean"),
-            f32_row_tiles: values[F32_ROW_TILES].as_bool().expect("checked boolean"),
-            phased_decode_reduce: values[PHASED_DECODE_REDUCE]
-                .as_bool()
-                .expect("checked boolean"),
+            wide_verify: flag(WIDE_VERIFY),
+            f32_row_tiles: flag(F32_ROW_TILES),
+            phased_decode_reduce: flag(PHASED_DECODE_REDUCE),
+            moe_direct: MoeDirect {
+                stream: flag(MOE_DIRECT_STREAM),
+                keep: flag(MOE_DIRECT_KEEP),
+                retire: flag(MOE_DIRECT_RETIRE),
+                loads: flag(MOE_DIRECT_LOADS),
+            },
         })
     }
 }
@@ -188,6 +231,7 @@ mod tests {
             wide_verify: false,
             f32_row_tiles: false,
             phased_decode_reduce: false,
+            moe_direct: MoeDirect::default(),
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -206,6 +250,10 @@ mod tests {
             (WIDE_VERIFY.into(), "true".into()),
             (F32_ROW_TILES.into(), "true".into()),
             (PHASED_DECODE_REDUCE.into(), "true".into()),
+            (MOE_DIRECT_STREAM.into(), "true".into()),
+            (MOE_DIRECT_KEEP.into(), "true".into()),
+            (MOE_DIRECT_RETIRE.into(), "true".into()),
+            (MOE_DIRECT_LOADS.into(), "true".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -219,9 +267,30 @@ mod tests {
                 wide_verify: true,
                 f32_row_tiles: true,
                 phased_decode_reduce: true,
+                moe_direct: MoeDirect {
+                    stream: true,
+                    keep: true,
+                    retire: true,
+                    loads: true,
+                },
             }
         );
         assert!(!declaration.is_qualified(&resolved));
+        for name in [
+            MOE_DIRECT_STREAM,
+            MOE_DIRECT_KEEP,
+            MOE_DIRECT_RETIRE,
+            MOE_DIRECT_LOADS,
+        ] {
+            let one = declaration
+                .resolve(&BTreeMap::from([(name.into(), "true".into())]))
+                .unwrap();
+            assert!(!declaration.is_qualified(&one));
+            assert_ne!(
+                Options::read(&one).unwrap().moe_direct,
+                MoeDirect::default()
+            );
+        }
     }
 
     #[test]
@@ -238,6 +307,10 @@ mod tests {
             (WIDE_VERIFY, "1"),
             (F32_ROW_TILES, "1"),
             (PHASED_DECODE_REDUCE, "1"),
+            (MOE_DIRECT_STREAM, "\"true\""),
+            (MOE_DIRECT_KEEP, "0"),
+            (MOE_DIRECT_RETIRE, "1"),
+            (MOE_DIRECT_LOADS, "1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),
         ] {

@@ -1,4 +1,5 @@
 //! Complete wide MoE pairs keep explicit reference schedules and guarded spans.
+mod candidate;
 mod device;
 mod full;
 mod graphs;
@@ -74,6 +75,91 @@ fn wide_pair_rejects_a_served_candidate() {
     short[0].pop();
     assert!(check(128, &chain, &short).is_err());
     check(64, &chain, &chain).unwrap();
+    // Knob candidates pair with either reference, and every queue keeps its
+    // finisher.
+    let mut policy = wide(
+        "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_policy_sk_v1",
+        "chop_deepseek41_moe_strip2_t192_e384_k6_down_small_policy_sk_v1",
+    );
+    policy[0][2] =
+        "chop_deepseek41_moe_bandwidth_direct_t192_e384_k6_gate_finish_loads_policy_r_v1";
+    let mut unfinished = policy.clone();
+    unfinished[0].pop();
+    // Loads alone changes only the gate finisher, untagged.
+    let loads = |stages: &Vec<Vec<&'static str>>| {
+        let mut stages = stages.clone();
+        stages[0][2] = "chop_deepseek41_moe_bandwidth_direct_t192_e384_k6_gate_finish_loads_v1";
+        stages
+    };
+    let (raw_loads, encoded_loads) = (loads(&raw), loads(&encoded));
+    for rows in [65, 128, 192] {
+        check(rows, &chain, &policy).unwrap();
+        check(rows, &raw, &policy).unwrap();
+        check(rows, &encoded, &policy).unwrap();
+        assert!(check(rows, &policy, &policy).is_err());
+        assert!(check(rows, &policy, &raw).is_err());
+        assert!(check(rows, &raw, &encoded).is_err());
+        assert!(check(rows, &chain, &unfinished).is_err());
+        for candidate in [&raw_loads, &encoded_loads] {
+            check(rows, &chain, candidate).unwrap();
+            check(rows, &raw, candidate).unwrap();
+            check(rows, &encoded, candidate).unwrap();
+            assert!(check(rows, candidate, candidate).is_err());
+            assert!(check(rows, candidate, &raw).is_err());
+            assert!(check(rows, &raw_loads, candidate).is_err());
+        }
+    }
+}
+
+/// Each lab twin keeps its served entry's ABI, launch bounds and call,
+/// changing only the device function and its cache policy, and the served
+/// entries rebuilt here are the ones the bundle embeds.
+#[test]
+fn lab_l2_twins_keep_the_served_abi() {
+    use candidate::moe_small_l2 as l2;
+    let entry = l2::entry().unwrap();
+    let served = l2::served(&entry).unwrap();
+    for spec in &served {
+        assert!(
+            bundle_deepseek41::sm120::fold_cubin_for_symbol(&spec.symbol).is_some(),
+            "{}",
+            spec.symbol
+        );
+    }
+    let names = [
+        "lanes::absorbing",
+        "bandwidth::gate_finish",
+        "strip2::compute",
+        "floor::down_finish",
+    ];
+    let twins = [
+        "lab_l2::absorbing",
+        "lab_l2::gate_finish",
+        "lab_l2::strip2",
+        "lab_l2::down_finish",
+    ];
+    for (tag, knobs) in l2::VARIANTS {
+        let candidates = l2::candidates(&entry, tag, knobs).unwrap();
+        assert_eq!(candidates.len(), served.len());
+        let policy = format!(
+            "chop::moe::lab_l2::Policy<{}>",
+            knobs.map(|k| k.to_string()).join(",")
+        );
+        for (i, (served, twin)) in served.iter().zip(&candidates).enumerate() {
+            assert_eq!(twin.symbol, l2::candidate_symbol(&served.symbol, tag));
+            assert_eq!(format!("{:?}", twin.params), format!("{:?}", served.params));
+            assert_eq!(
+                (twin.max_threads, twin.min_blocks),
+                (served.max_threads, served.min_blocks)
+            );
+            assert!(served.body.contains(names[i]) && twin.body.contains(twins[i]));
+            let undo = twin
+                .body
+                .replace(twins[i], names[i])
+                .replace(&format!(",{policy}>"), if i == 3 { ",false>" } else { ">" });
+            assert_eq!(undo, served.body, "{tag} {}", served.symbol);
+        }
+    }
 }
 
 #[test]

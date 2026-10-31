@@ -1,7 +1,7 @@
 [
   {
     "name": "bandwidth_moe_deepseek41_compute_sm120",
-    "source_closure_sha256": "4ecb44aa8e583e5f0d6daa2f510c5c035a595f74118a69cc659cb74eae70ac5d"
+    "source_closure_sha256": "6edb15985328fc9b63be2b4050c8380da761b14714c8aaf35190ffab0fc1b58b"
   },
   {
     "name": "bandwidth_moe_deepseek41_route_sm120",

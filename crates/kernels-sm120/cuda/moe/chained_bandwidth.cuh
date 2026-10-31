@@ -18,7 +18,8 @@ template<class C, uint32_t FloorBits, class Clamp = typename C::clamp,
     class Quantization = chained_policy::CeilE4M3Group32<FloorBits>,
     class RouteWeight = chained_policy::BeforeQuantizeRouteWeight,
     class Output = chained_policy::Bf16IntermediateF32Output,
-    class Reduction = chained_policy::OrderedF32>
+    class Reduction = chained_policy::OrderedF32,
+    class K = knobs::Served>
 __device__ void gate_finish(const void* scratch, const int32_t* live_tokens,
     const float* route_weights, uint16_t* intermediate, uint8_t* codes,
     uint8_t* scales, uint32_t* status, uint32_t* tickets) {
@@ -60,6 +61,11 @@ __device__ void gate_finish(const void* scratch, const int32_t* live_tokens,
     values[threadIdx.x] = value;
     intermediate[uint64_t(route) * C::n + column] = value;
   } else values[threadIdx.x] = 0;
+  // With K::retire each warp then discards the partial lines it read; its
+  // 32 columns are all valid or all past C::n.
+  if constexpr (K::retire)
+    if (column0 + 32 * warp < C::n)
+      knobs::retire_gate<Layout<C>::blocks, C::n>(input, route, column0 + 32 * warp);
   __syncthreads();
   if (group < C::n / 32) {
     auto value = Quantization::quantize(

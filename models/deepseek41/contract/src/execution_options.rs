@@ -13,6 +13,22 @@ pub const DIAGNOSTIC_STEP_LOGS: &str = "diagnostic_step_logs";
 /// Candidate: Flash TP4 verify steps above the 64-row decode route run the
 /// wide verify buckets (`crate::verify_bounds::WIDE`).
 pub const WIDE_VERIFY: &str = "wide_verify";
+/// Candidate: the Flash TP4 direct MoE's absorbing gate queue finishes each
+/// expert strip once its last K-block item arrives, and no gate finisher
+/// runs (`kernels_sm120::moe::chained::knobs`).
+pub const MOE_DIRECT_GATE_TICKETS: &str = "moe_direct_gate_tickets";
+/// Candidate: the direct MoE's absorbing queues stream their weight codes
+/// past L1 with an L2 evict_first policy.
+pub const MOE_DIRECT_STREAM: &str = "moe_direct_stream";
+/// Candidate: the direct MoE's absorbing queues store their K-block
+/// partials with an L2 evict_last policy.
+pub const MOE_DIRECT_KEEP: &str = "moe_direct_keep";
+/// Candidate: the direct MoE's finishers discard each partial line from L2
+/// once read.
+pub const MOE_DIRECT_RETIRE: &str = "moe_direct_retire";
+/// Candidate: the direct MoE's gate finisher issues every partial load
+/// before its first add.
+pub const MOE_DIRECT_LOADS: &str = "moe_direct_loads";
 pub const DEFAULT_PLANS: usize = 16;
 pub const MAX_PLANS: usize = 64;
 /// The served warmup fits within 512 graph handles per rank, leaving room
@@ -26,9 +42,20 @@ pub struct Options {
     pub dspark_graph_handles_per_rank: usize,
     pub diagnostic_step_logs: bool,
     pub wide_verify: bool,
+    pub moe_direct: MoeDirect,
 }
 
-pub fn declarations() -> [ModelOptionV1; 6] {
+/// The direct MoE candidate knobs; all off serves the qualified path.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MoeDirect {
+    pub gate_tickets: bool,
+    pub stream: bool,
+    pub keep: bool,
+    pub retire: bool,
+    pub loads: bool,
+}
+
+pub fn declarations() -> [ModelOptionV1; 11] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -41,6 +68,26 @@ pub fn declarations() -> [ModelOptionV1; 6] {
                 minimum: 0,
                 maximum: i64::MAX,
             },
+        ),
+        (
+            MOE_DIRECT_GATE_TICKETS,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            MOE_DIRECT_KEEP,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            MOE_DIRECT_LOADS,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            MOE_DIRECT_RETIRE,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            MOE_DIRECT_STREAM,
+            OptionDefinitionV1::Boolean { default: false },
         ),
         (
             PREFILL_PLAN_CACHE_PLANS,
@@ -89,6 +136,7 @@ impl Options {
                 Ok((option.name, value))
             })
             .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let flag = |name: &str| values[name].as_bool().expect("checked boolean");
         let count = |name: &str| {
             usize::try_from(values[name].as_u64().expect("checked integer"))
                 .map_err(|_| format!("model option {name} exceeds the platform's count range"))
@@ -105,7 +153,14 @@ impl Options {
             diagnostic_step_logs: values[DIAGNOSTIC_STEP_LOGS]
                 .as_bool()
                 .expect("checked boolean"),
-            wide_verify: values[WIDE_VERIFY].as_bool().expect("checked boolean"),
+            wide_verify: flag(WIDE_VERIFY),
+            moe_direct: MoeDirect {
+                gate_tickets: flag(MOE_DIRECT_GATE_TICKETS),
+                stream: flag(MOE_DIRECT_STREAM),
+                keep: flag(MOE_DIRECT_KEEP),
+                retire: flag(MOE_DIRECT_RETIRE),
+                loads: flag(MOE_DIRECT_LOADS),
+            },
         })
     }
 }
@@ -165,6 +220,7 @@ mod tests {
             dspark_graph_handles_per_rank: 512,
             diagnostic_step_logs: false,
             wide_verify: false,
+            moe_direct: MoeDirect::default(),
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -181,6 +237,11 @@ mod tests {
             (DSPARK_GRAPH_HANDLES_PER_RANK.into(), "0".into()),
             (DIAGNOSTIC_STEP_LOGS.into(), "true".into()),
             (WIDE_VERIFY.into(), "true".into()),
+            (MOE_DIRECT_GATE_TICKETS.into(), "true".into()),
+            (MOE_DIRECT_STREAM.into(), "true".into()),
+            (MOE_DIRECT_KEEP.into(), "true".into()),
+            (MOE_DIRECT_RETIRE.into(), "true".into()),
+            (MOE_DIRECT_LOADS.into(), "true".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -192,9 +253,32 @@ mod tests {
                 dspark_graph_handles_per_rank: 0,
                 diagnostic_step_logs: true,
                 wide_verify: true,
+                moe_direct: MoeDirect {
+                    gate_tickets: true,
+                    stream: true,
+                    keep: true,
+                    retire: true,
+                    loads: true,
+                },
             }
         );
         assert!(!declaration.is_qualified(&resolved));
+        for name in [
+            MOE_DIRECT_GATE_TICKETS,
+            MOE_DIRECT_STREAM,
+            MOE_DIRECT_KEEP,
+            MOE_DIRECT_RETIRE,
+            MOE_DIRECT_LOADS,
+        ] {
+            let one = declaration
+                .resolve(&BTreeMap::from([(name.into(), "true".into())]))
+                .unwrap();
+            assert!(!declaration.is_qualified(&one));
+            assert_ne!(
+                Options::read(&one).unwrap().moe_direct,
+                MoeDirect::default()
+            );
+        }
     }
 
     #[test]
@@ -209,6 +293,11 @@ mod tests {
             (PREFILL_PLAN_CACHE_VERIFY, "1"),
             (DIAGNOSTIC_STEP_LOGS, "\"true\""),
             (WIDE_VERIFY, "1"),
+            (MOE_DIRECT_GATE_TICKETS, "1"),
+            (MOE_DIRECT_STREAM, "\"true\""),
+            (MOE_DIRECT_KEEP, "0"),
+            (MOE_DIRECT_RETIRE, "1"),
+            (MOE_DIRECT_LOADS, "1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),
         ] {

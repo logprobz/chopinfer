@@ -66,21 +66,4 @@ mod tests {
         );
         assert!(cubins(&[]).unwrap().is_empty());
     }
-
-    /// No instance loads a knob module before an option selects it.
-    #[test]
-    fn no_instance_loads_the_knob_family_yet() {
-        use bundle_runtime::geometry::Ranks;
-        for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
-            let shape = crate::shape::Shape::new(&FLASH, ranks).unwrap();
-            for rows in [32, 64, 65, 128, 192] {
-                let shape = shape.with_verify_rows(rows);
-                for wide in [false, true] {
-                    let shape = shape.with_wide_verify(wide);
-                    assert!(!crate::Kernels::loads(CUBIN, &shape));
-                    assert!(!crate::Kernels::loads(WIDE_CUBIN, &shape));
-                }
-            }
-        }
-    }
 }

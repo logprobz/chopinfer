@@ -682,6 +682,10 @@ pub struct RankBuffers {
     /// its partials and its tickets, zeroed at create.
     pub mix_partials: Option<DeviceBufferSpanV1>,
     pub mix_tickets: Option<DeviceBufferSpanV1>,
+    /// The direct MoE gate queues' strip tickets
+    /// (`ops::moe::MoeOps::strip_ticket_bytes`), zeroed at create; `None`
+    /// unless a direct bucket finishes its gate strips in the queue.
+    pub moe_strip_tickets: Option<DeviceBufferSpanV1>,
     /// The compressed RoPE table (`RopeTable::Compressed`) of every served
     /// position, filled at create.
     pub rope_compressed: DeviceBufferSpanV1,

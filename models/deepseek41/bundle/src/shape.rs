@@ -24,6 +24,9 @@ pub struct Shape {
     /// Whether verify steps above the 64-row decode route run the wide
     /// verify buckets (the `wide_verify` candidate option).
     pub wide_verify: bool,
+    /// The direct MoE candidate knobs (the `moe_direct_*` options); none
+    /// serves the qualified path.
+    pub moe_knobs: kernels_sm120::moe::chained::knobs::Knobs,
 }
 
 impl Shape {
@@ -36,6 +39,7 @@ impl Shape {
             runtime: geometry.runtime_defaults(),
             verify_rows: DECODE_BATCH,
             wide_verify: false,
+            moe_knobs: Default::default(),
         })
     }
 
@@ -50,6 +54,22 @@ impl Shape {
     /// (`model_deepseek41_contract::execution_options::WIDE_VERIFY`).
     pub fn with_wide_verify(mut self, enabled: bool) -> Shape {
         self.wide_verify = enabled;
+        self
+    }
+
+    /// This shape with the direct MoE candidate knobs
+    /// (`model_deepseek41_contract::execution_options::MoeDirect`).
+    pub fn with_moe_knobs(
+        mut self,
+        options: model_deepseek41_contract::execution_options::MoeDirect,
+    ) -> Shape {
+        self.moe_knobs = kernels_sm120::moe::chained::knobs::Knobs {
+            tickets: options.gate_tickets,
+            stream: options.stream,
+            keep: options.keep,
+            retire: options.retire,
+            loads: options.loads,
+        };
         self
     }
 

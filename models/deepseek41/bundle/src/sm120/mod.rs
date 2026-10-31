@@ -1043,9 +1043,8 @@ impl crate::Kernels {
                     && shape.ranks() == 4))
             && (cubin != moe_router64::CUBIN
                 || moe_router64::enabled(shape.geometry, shape.ranks(), shape.verify_rows))
-            // No step selects the knob candidates yet.
-            && cubin != moe_direct_knobs::CUBIN
-            && cubin != moe_direct_knobs::WIDE_CUBIN
+            && (cubin != moe_direct_knobs::CUBIN || moe_direct::takes_knobs(shape, false))
+            && (cubin != moe_direct_knobs::WIDE_CUBIN || moe_direct::takes_knobs(shape, true))
             && (cubin != moe_direct_wide::CUBIN
                 || !moe_direct::wide_rows(
                     shape,

@@ -211,6 +211,7 @@ fn dspark_full_block_journal_at_each_topology() {
                 prefill_cache: None,
                 mix_partials: mix.partials.map(alloc),
                 mix_tickets: mix.tickets.map(alloc),
+                moe_strip_tickets: ops.moe.as_ref().unwrap().strip_ticket_bytes().map(alloc),
                 rope_compressed: alloc(
                     u64::from(model_deepseek41_contract::own_ops::rope::MAX_POSITIONS) * 32 * 2 * 4,
                 ),

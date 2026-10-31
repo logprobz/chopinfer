@@ -675,6 +675,7 @@ mod tests {
             prefill_cache: None,
             mix_partials: None,
             mix_tickets: None,
+            moe_strip_tickets: None,
             rope_compressed: span(64),
             encoded_scales: Default::default(),
         }

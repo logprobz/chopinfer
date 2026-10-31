@@ -17,8 +17,10 @@ use runtime_cuda::{DeviceBuffer, Function, Stream};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
-const ROWS: [u32; 6] = [1, 2, 4, 8, 16, DECODE_BATCH];
-const PATTERNS: [&str; 16] = [
+// The decode buckets and the verify steps of one, two and four DSpark items
+// (six rows each) that the `verify_row_fusions` option admits.
+const ROWS: [u32; 9] = [1, 2, 4, 6, 8, 12, 16, 24, DECODE_BATCH];
+const PATTERNS: [&str; 17] = [
     "finite",
     "zero",
     "wide",
@@ -35,7 +37,11 @@ const PATTERNS: [&str; 16] = [
     "future",
     "staged_left",
     "ties",
+    "verify",
 ];
+/// The rows of one sequence in the `verify` pattern: a DSpark item's six
+/// consecutive positions.
+const VERIFY_ITEM_ROWS: u32 = 6;
 const OFFSET: usize = 3;
 const SLOTS: usize = 136;
 struct Case {
@@ -311,6 +317,9 @@ fn set_inputs(s: &Session, c: &Case, rows: u32, pattern: &str, i: &Inputs) -> La
             "stale" => 17,
             "future" => 200,
             "staged_left" => 127,
+            // Each item's rows at consecutive positions, the last one the
+            // item's last position.
+            "verify" => 130 + (r % VERIFY_ITEM_ROWS) as i32,
             _ => 135 + (r % 2) as i32,
         })
         .collect::<Vec<_>>();
@@ -334,25 +343,33 @@ fn set_inputs(s: &Session, c: &Case, rows: u32, pattern: &str, i: &Inputs) -> La
             .collect::<Vec<_>>(),
         &s.stream,
     )?;
-    let last = positions
-        .iter()
-        .map(|p| match pattern {
-            "stale" => p + SLOTS as i32,
-            "future" => p - 1,
-            _ => *p,
-        })
-        .collect::<Vec<_>>();
+    let last = if pattern == "verify" {
+        // Indexed by sequence: each item's last row's position.
+        (0..rows)
+            .map(|item| {
+                let first = item * VERIFY_ITEM_ROWS;
+                130 + (rows.saturating_sub(first).clamp(1, VERIFY_ITEM_ROWS) - 1) as i32
+            })
+            .collect::<Vec<_>>()
+    } else {
+        positions
+            .iter()
+            .map(|p| match pattern {
+                "stale" => p + SLOTS as i32,
+                "future" => p - 1,
+                _ => *p,
+            })
+            .collect::<Vec<_>>()
+    };
     for (b, values) in [
         (&i.positions, positions),
         (
             &i.batches,
             (0..rows)
-                .map(|r| {
-                    if pattern == "bad_sequence" {
-                        rows as i32
-                    } else {
-                        r as i32
-                    }
+                .map(|r| match pattern {
+                    "bad_sequence" => rows as i32,
+                    "verify" => (r / VERIFY_ITEM_ROWS) as i32,
+                    _ => r as i32,
                 })
                 .collect(),
         ),

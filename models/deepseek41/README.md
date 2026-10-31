@@ -138,7 +138,11 @@ C1/C8/C32, with unchanged output bits. The host's
 
 Native TP4 prefill rounds completed local partials to BF16, sums ranks in
 ascending F32 order and rounds the result once. Decode, target verify and
-draft blocks keep F32 partials. The shared ordered DMA transport preserves
+draft blocks keep F32 partials. With the `phased_decode_reduce` candidate
+option, their reductions that no HC boundary takes the round of (four per
+rank at every width, and all 81 at the verify widths that defer no round)
+run the phased F32 rounding entries, which sum in the same rank order and
+round with the same instruction ([decode reductions](lab/decode-reductions.md)). The shared ordered DMA transport preserves
 the selected collective's rounding. See
 [partial arithmetic](communication-partials.md) and
 [attention admission](prefill-attention.md).
@@ -185,6 +189,7 @@ them. A non-default value is unqualified.
 | `dspark_coupled_drafts` | `true` | Couple sampled drafts to the target sampler's noise. |
 | `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |
 | `dspark_graph_handles_per_rank` | `512` | Graph handles per rank, from 0 to 9223372036854775807; 0 keeps DSpark eager. The total across ranks must fit the platform's count range. |
+| `phased_decode_reduce` | `false` | Candidate: Flash TP4 decode and verify all-reduces whose round no HC boundary takes launch the phased F32 rounding entries, over comm state of their own, instead of the F32 reduce-scatter, all-gather and round row. They give the same bits; the deferred pairs and prefill are unchanged. Served step-time acceptance remains required before adoption. |
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit and each reused plan template again and refuse a differing plan. |

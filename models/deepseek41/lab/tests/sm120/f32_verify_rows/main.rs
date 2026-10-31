@@ -83,12 +83,14 @@ const WITNESSES: [Witness; 11] = [
     Witness::NonfiniteWeight,
     Witness::Overflow,
 ];
-/// Every tile boundary of 8, 16, 32 and 64 rows from one row to the
-/// package's verify rows, the decode and DSpark verify widths of one to
-/// eight items, the drafter's head widths and the wide buckets.
-const BOUNDARY_ROWS: [u32; 42] = [
-    1, 2, 4, 5, 6, 8, 9, 10, 12, 15, 16, 17, 20, 24, 25, 30, 31, 32, 33, 35, 40, 45, 47, 48, 50,
-    55, 60, 63, 64, 65, 66, 95, 96, 97, 127, 128, 129, 159, 160, 161, 191, 192,
+/// Every width from one to 32 rows (every decode, small verify and drafter
+/// head width, the packed depth-three heads' 18 and 21 among them), then
+/// every tile boundary of 8, 16, 32 and 64 rows to the package's verify
+/// rows, the drafter's wider head widths and the wide buckets.
+const BOUNDARY_ROWS: [u32; 56] = [
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
+    27, 28, 29, 30, 31, 32, 33, 35, 40, 45, 47, 48, 50, 55, 60, 63, 64, 65, 66, 95, 96, 97, 127,
+    128, 129, 159, 160, 161, 191, 192,
 ];
 const WITNESS_ROWS: [u32; 9] = [1, 6, 16, 32, 33, 60, 64, 65, 192];
 

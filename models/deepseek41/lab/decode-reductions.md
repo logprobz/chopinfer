@@ -106,9 +106,12 @@ CHOPINFER_KERNEL_GPUS=0,1,2,3 CHOPINFER_KERNEL_REQUIRE=1 \
   phased_parity -- --ignored --nocapture
 ```
 
-On 2026-10-31 it passed on four GPUs: 231 cases, every output bit equal,
-every NaN sum giving 0x7fff in both forms, and no difference from the
-rank-ordered host oracle.
+On 2026-10-31 it passed on four GPUs: 231 eager cases (11 row counts, 11
+patterns, each with every row live and with the last row dead) and 121
+graph replays of three launches each, every output bit equal, every NaN
+sum giving 0x7fff in both forms, and no difference from the rank-ordered
+host oracle. The adversarial cases cover those 11 row counts, not every
+row count from 1 to 192.
 
 ## Phased F32 timing
 

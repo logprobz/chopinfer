@@ -411,9 +411,12 @@ Output parsing (`deepseek-recipe/src/stream/output_parser.rs`):
 - A calls block without its `calls` wrapper, or closed in the V4 spelling
   `</｜DSML｜tool_calls>`: the recipe reads its calls (lines 394-405,
   480-494); the served parser refuses the completion.
-- Markers: the recipe matches `</think>` and `｜DSML｜` only as their special
-  tokens; the served parser matches their text. This belongs to the
-  special-token spellings follow-up (`special-token-spellings` in the
+- Markers: given a completion's token IDs, as the corpus oracle passes
+  them, the recipe matches `</think>` and `｜DSML｜` only as their special
+  tokens, so their spelling in plain tokens is content; given text without
+  token boundaries (`InferenceChunk::Text`), it matches their spelling
+  (lines 74-94). The served parser matches their spelling. This belongs to
+  the special-token spellings follow-up (`special-token-spellings` in the
   divergence record).
 - Client stop sequences: the recipe matches them in answer text only (lines
   411-417); the served parser also matches them in reasoning and tool
@@ -437,11 +440,13 @@ Responses API (`deepseek-recipe/src/protocol/openai/responses/request`):
   tools only.
 
 Sampling and limits: in thinking mode the recipe fixes the temperature at
-1.0 and raises `top_p` to at least 0.95 (`deepseek-recipe/src/request/options.rs`
-lines 79-92, `protocol/openai/chat_completion/request/mod.rs` lines 7-11),
-and bounds `max_tokens` by mode (`options.rs` lines 230-240). The server
-keeps the request's sampling and limits; the sampling and `max_tokens`
-follow-up decides whether to follow.
+1.0 and raises `top_p` to at least 0.95; outside thinking mode it keeps the
+requested temperature and sets V4.1's `top_p` to 1.0
+(`deepseek-recipe/src/request/options.rs` lines 79-92,
+`protocol/openai/chat_completion/request/mod.rs` lines 7-11). It bounds
+`max_tokens` by mode (`options.rs` lines 230-240). The server keeps the
+request's sampling, `top_p` included in either mode, and its limits; the
+sampling and `max_tokens` follow-up decides whether to follow.
 
 ## Qualification
 

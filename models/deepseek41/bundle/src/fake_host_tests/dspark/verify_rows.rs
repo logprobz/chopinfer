@@ -403,6 +403,39 @@ const CANDIDATE_STAGES: &[(&str, &str)] = &[
     ),
 ];
 
+/// An exact F32 projection the `wide_verify` option moves to its measured
+/// row tile (`sm120::f32_verify_rows`): the tile's compute, the split
+/// route it replaces, its launches in one step and the tile's grid.
+type F32Stage = (
+    &'static str,
+    &'static str,
+    usize,
+    fn(u32) -> (u32, u32, u32),
+);
+
+/// The head on every rank, the router of every MoE layer and each
+/// compressor projection. Without the option each keeps the split route.
+const F32_STAGES: &[F32Stage] = &[
+    (
+        "chop_deepseek41_verify_f32_n32320_k5120_rows_f256_r32_w32x32_s2_k64_v1",
+        "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_split_v2",
+        4,
+        |rows| (rows.div_ceil(32), 127, 1),
+    ),
+    (
+        "chop_deepseek41_verify_f32_n384_k5120_rows_f64_r64_w32x16_s2_k64_z10_v1",
+        "chop_deepseek41_dense_f32_m8192_n384_k5120_v1_split_v2",
+        160,
+        |rows| (rows.div_ceil(64), 6, 10),
+    ),
+    (
+        "chop_deepseek41_verify_f32_n512_k5120_rows_f64_r64_w32x16_s2_k64_z10_v1",
+        "chop_deepseek41_dense_f32_m8192_n512_k5120_v1_split_v2",
+        28,
+        |rows| (rows.div_ceil(64), 8, 10),
+    ),
+];
+
 /// Widths above the 64-row budget a step of 32 items (and 16 up to its 96
 /// rows) can take: both sides of 64, 96, 128 and 160, and 192.
 const WIDE_STEPS: [(u32, u32); 17] = [
@@ -484,6 +517,30 @@ fn target_programs_lower_above_the_default_verify_rows() {
                 assert!(
                     !observed.contains_key(symbol),
                     "{symbol} at {count} items and {rows} rows ({enabled})"
+                );
+            }
+            for &(tiles, split, launches, grid) in F32_STAGES {
+                let (served, other) = if enabled {
+                    (tiles, split)
+                } else {
+                    (split, tiles)
+                };
+                let launched: Option<usize> = observed.get(served).map(|g| g.values().sum());
+                assert_eq!(
+                    launched,
+                    Some(launches),
+                    "{served} at {count} items and {rows} rows ({enabled})"
+                );
+                if enabled {
+                    assert_eq!(
+                        observed.get(tiles),
+                        Some(&[(grid(rows), launches)].into()),
+                        "{tiles} at {count} items and {rows} rows"
+                    );
+                }
+                assert!(
+                    !observed.contains_key(other),
+                    "{other} at {count} items and {rows} rows ({enabled})"
                 );
             }
             instance.commit_accepted(&accepted).unwrap();

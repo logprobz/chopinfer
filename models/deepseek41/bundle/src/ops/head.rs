@@ -27,6 +27,7 @@ pub(crate) fn query(shape: &Shape) -> GemmQuery {
 pub(crate) struct HeadOps {
     pub(crate) project: Prepared<ProjectionBuffers<View>>,
     wide: Option<super::exact_f32::cached::Wide>,
+    rows: Option<super::exact_f32::rows::Rows>,
 }
 
 /// A step's spans of the head: its F32 rows, the rank's head weight shard,
@@ -60,7 +61,19 @@ impl HeadOps {
             shape.dims().hidden,
             target,
         )?;
-        Ok(HeadOps { project, wide })
+        let rows = super::exact_f32::rows::prepare(
+            shape,
+            asks,
+            "head.project rows verify",
+            shape.vocab_rows(),
+            shape.dims().hidden,
+            target,
+        )?;
+        Ok(HeadOps {
+            project,
+            wide,
+            rows,
+        })
     }
 
     /// The codes layout the head reads its weight view in.
@@ -75,6 +88,16 @@ impl HeadOps {
         rows: u32,
         views: &HeadViews,
     ) -> Result<Vec<Lowered>, Refusal> {
+        if let Some(tiles) = self.rows.as_ref().filter(|tiles| tiles.for_phase(phase)) {
+            return tiles.project(
+                rows,
+                views.input,
+                views.weight,
+                views.logits,
+                views.live_rows,
+                views.state,
+            );
+        }
         if let Some(wide) = self.wide.as_ref().filter(|wide| wide.for_phase(phase)) {
             return wide
                 .project(

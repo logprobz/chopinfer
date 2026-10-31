@@ -195,7 +195,7 @@ them. A non-default value is unqualified.
 | `text_config.indexer_mma` | `true` | Use the guarded native Flash index scorer where eligible. |
 | `text_config.indexer_prefill_tile` | `true` | Enable the qualified Flash tiled indexer routes. |
 | `verify_graph_rows` | `64` | Widest graphed verify step; wider admitted steps run eagerly. |
-| `wide_verify` | `false` | Candidate: Flash TP4 eager verify steps of 65 to 192 rows prepare their row-local stages at the wide verify buckets (128 rows and the verify rows) and launch the decode entries a 64-row step uses. Fixed-batch GPU replays matched the default bitwise; served step-time acceptance remains required before adoption. |
+| `wide_verify` | `false` | Candidate: Flash TP4 eager verify steps of 65 to 192 rows prepare their row-local stages at the wide verify buckets (128 rows and the verify rows) and launch the decode entries a 64-row step uses; the vocabulary head, router and compressor run their measured exact F32 row tiles. Fixed-batch GPU replays matched the default bitwise; served step-time acceptance remains required before adoption. |
 
 TP4 native-KV single-item DMA prefill overlaps both prepared Engram gathers
 by default at 512-8192 rows. The model joins each layer before its decoder;
@@ -308,10 +308,9 @@ it those stages keep their prefill entries. The route sweep
 `tp4-dspark-rows192-wide` serves the override with the option on. The other
 stages of those steps keep their prefill entries either way. The HC fusions,
 the query and row norms, the latent query and selected cache, the index
-query, the cached F32 projections, the dense and Engram folds and the MoE
-need kernel, tuning or shared-limit changes to serve more than 64 rows, and
-the chained MoE's intermediate quantizer is selected inside its 64-row
-chain. On 2026-10-31, fixed-batch GPU replays of the option's stages at
+query, the dense and Engram folds and the MoE need kernel, tuning or
+shared-limit changes to serve more than 64 rows, and the chained MoE's
+intermediate quantizer is selected inside its 64-row chain. On 2026-10-31, fixed-batch GPU replays of the option's stages at
 verify widths 64 to 192 (concurrency 16 and 32, four to six rows per item,
 verify capacities 80 to 192) matched the previous package bitwise in
 logits, proposals, acceptance and committed state. Under a CUDA trace, the
@@ -320,6 +319,23 @@ time per device. The projections after them had overlapped those stages
 and now expose most of that time, so the step fell only from 196.3 to 193.9
 ms, and a 96-row step from 175.6 to 169.6 ms. This is not served step-time
 acceptance.
+
+With the option, the same steps run the vocabulary head, the MoE router and
+the compressor projections in the measured whole-K exact F32 row tiles
+(`sm120::f32_verify_rows`, tuning site `f32.rows.verify`) instead of the
+ordered split route. A CTA owns a tile of outputs over every 128-K chain,
+or over a K slice whose chain values an ordered reduction adds, and keeps
+the split route's components, chains and order, so every output keeps its
+bits. The index weights and index keys keep the split route, which the lab
+measured as fast. On 2026-10-31, the kernel lab's verify-row timing (one
+GPU at its 250 W enforced limit, in-job A/A controls within 2%) measured
+the head at 0.59, 0.62, 0.81 and 0.99 ms at 96, 128, 160 and 192 rows
+against 3.44, 4.69, 6.00 and 6.85 ms on the split route (a cold read of its
+weights takes 0.23 ms), the router at 30 to 32 us against 53 to 93 us, and
+each compressor projection at 30 to 43 us against 68 to 120 us. The lab's
+comparisons matched the split route bit for bit at every tile boundary
+from 1 to 192 rows and on every operand witness. This is not served
+step-time acceptance.
 
 Prefill commit projections are batched across prompts. Undrafted pure
 decode joins status once and submits private sampling before collecting it

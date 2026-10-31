@@ -76,8 +76,8 @@ fn allocated_lifetimes_journal() {
         (4, 12, 3, "-d3", (69502, 0xdedf204e99d57b9b)),
         (16, 65, 5, "-odd", (190434, 0xa53d7eeecf401235)),
         (32, 192, 5, "-maximum", (343172, 0x423f402926f10c51)),
-        (16, 65, 5, "-odd-wide", (190434, 0xc79ce4b73bd87dbd)),
-        (32, 192, 5, "-maximum-wide", (343172, 0x10f42608e1f257f9)),
+        (16, 65, 5, "-odd-wide", (190898, 0xb82036b6854c5261)),
+        (32, 192, 5, "-maximum-wide", (343636, 0x956094864282addb)),
     ] {
         let (host, mut instance) = if suffix.ends_with("-wide") {
             create_with_options(

@@ -111,3 +111,7 @@ path = "tests/sm120/norm_small_rows/main.rs"
 [[example]]
 name = "build_family"
 path = "examples/sm120/build_family.rs"
+
+[[test]]
+name = "f32_verify_rows"
+path = "tests/sm120/f32_verify_rows/main.rs"

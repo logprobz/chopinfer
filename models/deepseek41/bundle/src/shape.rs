@@ -31,7 +31,8 @@ pub struct Shape {
     /// F32 rounding entries (the `phased_decode_reduce` candidate option).
     pub phased_decode_reduce: bool,
     /// Whether verify steps of at most `DECODE_BATCH` rows run the decode
-    /// row fusions (the `verify_row_fusions` candidate option).
+    /// row fusions, and the drafter's small window writes the parallel
+    /// decode ceil entry (the `verify_row_fusions` candidate option).
     pub verify_row_fusions: bool,
 }
 

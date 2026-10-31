@@ -222,7 +222,10 @@ fn row_tile_option_replaces_the_head_and_compressor_spans() {
 /// run the decode steps' fused query norm and ceil, the target's and the
 /// drafter's, and the target's fused window write, in place of the query
 /// norm and its ceil and the window's norm/RoPE, ceil and store; every
-/// other launch keeps its order. Wider steps keep the chains.
+/// other launch keeps its order. Wider steps keep the chains. At every
+/// width the drafter's window writes of at most 64 rows quantize with the
+/// parallel decode ceil entry in place of the prefill one, with the same
+/// rows and every other launch unchanged.
 #[test]
 fn row_fusion_option_fuses_the_query_and_window_chains_through_32_rows() {
     use model_deepseek41_contract::execution_options::VERIFY_ROW_FUSIONS;
@@ -250,16 +253,39 @@ fn row_fusion_option_fuses_the_query_and_window_chains_through_32_rows() {
         }
     }
     let symbol = |line: &String| line.split_whitespace().nth(2).unwrap().to_owned();
+    // The drafter's window quantizers, whose groups compute the same codes,
+    // scales and status (`journal-changes/wide-verify-ceil.md`).
+    const SERIAL: &str = "chop_deepseek41_latent_ceil32_v1";
+    const PARALLEL: &str = "chop_deepseek41_latent_ceil32_parallel_v1";
+    let grid = |line: &String| -> u32 {
+        let at = line.find("grid_x: ").unwrap() + 8;
+        line[at..].split(',').next().unwrap().parse().unwrap()
+    };
     let launches = |step: &[String]| -> Vec<String> {
         step.iter()
             .filter(|line| line.starts_with("launch "))
-            .map(symbol)
+            .map(|line| match symbol(line) {
+                s if s == SERIAL && grid(line) <= 64 => PARALLEL.into(),
+                s => s,
+            })
             .collect()
     };
+    let serial = |step: &[String]| {
+        step.iter()
+            .filter(|line| line.starts_with("launch ") && symbol(line) == SERIAL)
+            .map(grid)
+            .collect::<Vec<_>>()
+    };
     let mut drafted = 0;
+    let mut windows = 0;
     for (items, rows) in [(1_u32, 6_u32), (2, 12), (8, 32), (16, 33), (16, 64)] {
         let (a, step_a, accepted_a) = verify_step(&mut served, &served_host, items, rows);
         let (b, step_b, accepted_b) = verify_step(&mut fused, &fused_host, items, rows);
+        // The served step's small drafter windows quantize serially; the
+        // fused step's never do. `launches` names both arms' parallel.
+        let small = serial(&step_a).into_iter().filter(|&r| r <= 64).count();
+        assert!(serial(&step_b).iter().all(|&r| r > 64), "{rows} rows");
+        windows += small;
         let (all_a, all_b) = (launches(&step_a), launches(&step_b));
         let (target_a, target_b): (Vec<_>, Vec<_>) = (
             a.iter().map(symbol).collect(),
@@ -292,7 +318,7 @@ fn row_fusion_option_fuses_the_query_and_window_chains_through_32_rows() {
         served.commit_accepted(&accepted_a).unwrap();
         fused.commit_accepted(&accepted_b).unwrap();
     }
-    assert!(drafted > 0);
+    assert!(drafted > 0 && windows > 0);
     for (host, instance) in [(&served_host, &mut served), (&fused_host, &mut fused)] {
         for request in 1..=16 {
             instance.retire_request(request).unwrap();

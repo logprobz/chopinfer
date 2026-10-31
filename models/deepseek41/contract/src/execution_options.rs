@@ -22,7 +22,8 @@ pub const F32_ROW_TILES: &str = "f32_row_tiles";
 pub const PHASED_DECODE_REDUCE: &str = "phased_decode_reduce";
 /// Candidate: verify steps of at most `serving::DECODE_BATCH` rows run the
 /// decode steps' fused query norm and ceil and fused window norm, RoPE,
-/// ceil and store.
+/// ceil and store, and the drafter's window writes of at most its draft
+/// rows quantize with the parallel decode ceil entry.
 pub const VERIFY_ROW_FUSIONS: &str = "verify_row_fusions";
 pub const DEFAULT_PLANS: usize = 16;
 pub const MAX_PLANS: usize = 64;

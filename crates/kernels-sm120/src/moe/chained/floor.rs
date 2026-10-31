@@ -1,6 +1,10 @@
 //! Experimental exact MoE pipeline. Metadata completes before any weight
 //! prefetch; gate and down reuse chain scratch only behind a PDL wait.
 //! The shared expert must use disjoint scratch and join before DownFinish.
+//!
+//! The capacity is 64 tokens, or above 64 for the absorbing queues alone,
+//! fed by the generic route's metadata: the router and metadata stages here
+//! serve 64 tokens only.
 use super::{quantized::Projection, streamed};
 use crate::moe::{SM_COUNT, ptr};
 use kernel_build::{CubinSpec, EntryParam, EntrySpec};
@@ -47,7 +51,7 @@ impl Entry {
         prefix: String,
     ) -> Result<Self, Refusal> {
         for p in [&gate, &down] {
-            Projection::new(p.query, p.row_tile, p.tokens_capacity)?.with_streamed_chains()?;
+            Projection::new(p.query, p.row_tile, p.tokens_capacity)?.with_direct_chains()?;
         }
         let a = gate.query.projection.gemm;
         let b = down.query.projection.gemm;
@@ -58,9 +62,9 @@ impl Entry {
             || !down.streamed
             || a.grouped != b.grouped
             || gate.tokens_capacity != down.tokens_capacity
-            || gate.tokens_capacity != 64
-            || gate.max_rows != 64
-            || down.max_rows != 64
+            || gate.tokens_capacity < 64
+            || gate.max_rows != gate.tokens_capacity
+            || down.max_rows != down.tokens_capacity
             // The split router reserves 40 KiB, plus four expert rows and
             // CUDA static overhead, within the 48 KiB static allocation.
             || g.experts > 448
@@ -73,7 +77,7 @@ impl Entry {
             || f32::from_bits(floor_bits) <= 0.0
         {
             return Err(Refusal(
-                "floor requires compatible 64-row streamed projections",
+                "floor requires compatible streamed projections of at least 64 rows",
             ));
         }
         Ok(Self {
@@ -94,6 +98,10 @@ impl Entry {
     }
     pub fn intermediate(&self) -> u32 {
         self.gate.columns()
+    }
+    /// The compiled token capacity: 64, or above 64 for the absorbing queues.
+    pub fn capacity(&self) -> u32 {
+        self.gate.tokens_capacity
     }
     pub fn symbol(&self, stage: Stage) -> String {
         let suffix = match stage {
@@ -124,8 +132,8 @@ impl Entry {
             + rows * u64::from(self.experts()) * u64::from(self.hidden().div_ceil(128)) * 4)
     }
     fn rows(&self, rows: u32) -> Result<(), Refusal> {
-        if rows == 0 || rows > 64 {
-            return Err(Refusal("floor supports 1..64 prepared rows"));
+        if rows == 0 || rows > self.capacity() {
+            return Err(Refusal("floor supports 1..=capacity prepared rows"));
         }
         Ok(())
     }
@@ -144,7 +152,8 @@ impl Entry {
             ),
             Stage::Metadata => (
                 [1, 1, 1],
-                self.experts().max((64 * self.top_k()).next_multiple_of(32)),
+                self.experts()
+                    .max((self.capacity() * self.top_k()).next_multiple_of(32)),
                 self.workspace_bytes(rows)?,
             ),
             Stage::GateSmall | Stage::GateWide | Stage::DownSmall | Stage::DownWide => {
@@ -188,7 +197,7 @@ impl Entry {
         plan.validate()?;
         Ok(plan)
     }
-    fn config(&self, gate: bool) -> String {
+    pub(super) fn config(&self, gate: bool) -> String {
         let p = if gate { &self.gate } else { &self.down };
         let clamp = p.query.projection.swiglu_clamp.map_or_else(
             || "chop::moe::clamp::SwigluClamp<false,0u,0u>".into(),
@@ -200,12 +209,13 @@ impl Entry {
             },
         );
         format!(
-            "chop::moe::chained::quantized::Config<chop::moe::chained::Projection::{},{},{},{},{},64,64,{}>",
+            "chop::moe::chained::quantized::Config<chop::moe::chained::Projection::{},{},{},{},{},64,{},{}>",
             if gate { "gate_up" } else { "down" },
             self.experts(),
             self.top_k(),
             p.columns(),
             p.query.projection.gemm.k,
+            self.capacity(),
             clamp
         )
     }
@@ -265,7 +275,8 @@ impl Entry {
                     tickets,
                 ],
                 format!(
-                    "metadata<{e},{t},64>(ids,counts,offsets,sorted,padded,live,active,static_cast<int32_t*>(scratch),tickets)"
+                    "metadata<{e},{t},{}>(ids,counts,offsets,sorted,padded,live,active,static_cast<int32_t*>(scratch),tickets)",
+                    self.capacity()
                 ),
             ),
             Stage::GateSmall | Stage::GateWide | Stage::DownSmall | Stage::DownWide => {

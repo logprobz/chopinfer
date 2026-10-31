@@ -164,16 +164,24 @@ impl Projection {
         self.query.projection.gemm.n / if self.gate_up() { 2 } else { 1 }
     }
 
-    pub fn with_streamed_chains(mut self) -> Result<Self, Refusal> {
-        if self.active
-            || self.prefill
-            || self.compact_columns
-            || self.row_tile != 64
-            || self.tokens_capacity > 64
-        {
+    pub fn with_streamed_chains(self) -> Result<Self, Refusal> {
+        if self.tokens_capacity > 64 {
             return Err(Refusal(
                 "streamed chains require plain 64-row entries up to 64 tokens",
             ));
+        }
+        self.with_direct_chains()
+    }
+
+    /// The streamed chains of the direct path's absorbing queues, which run
+    /// an expert's rows eight at a time: any capacity, an expert holding at
+    /// most one route per token. Only the direct path serves a capacity
+    /// above 64; the streamed backend op refuses it
+    /// ([`Self::with_streamed_chains`]), since its wide queue holds an
+    /// expert's rows in one 64-row pass.
+    pub fn with_direct_chains(mut self) -> Result<Self, Refusal> {
+        if self.active || self.prefill || self.compact_columns || self.row_tile != 64 {
+            return Err(Refusal("streamed chains require plain 64-row entries"));
         }
         let g = self.query.projection.gemm;
         let experts = g.grouped.expect("routed contract").experts;
@@ -214,9 +222,11 @@ impl Projection {
 
     pub fn padded_rows(&self, tokens: u32) -> Result<u32, Refusal> {
         let g = self.query.projection.gemm.grouped.expect("routed contract");
-        if self.streamed {
+        if self.streamed && tokens <= 64 {
             // At most 64 rows per expert, so each active expert owns one
             // complete tile. Do not round the looser router extent up.
+            // Above 64 rows an expert may own several tiles: the general
+            // bound below.
             return tokens
                 .checked_mul(g.top_k)
                 .and_then(|routes| g.experts.min(routes).checked_mul(64))

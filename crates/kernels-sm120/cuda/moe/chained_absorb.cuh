@@ -8,7 +8,8 @@
 // successive 8 rows of the expert. Each pass stages, decodes, multiplies
 // from +0 and stores exactly as the wide queue's fragment of those rows, so
 // every chain and partial is unchanged and the merge and finishers are the
-// served ones.
+// served ones. A wide expert holds at most the capacity's rows
+// (`Layout::expert_rows`), above 64 at a capacity above 64.
 //
 // With Tiled the weights are stored in 64-row by 128-K tiles
 // (`row-tiles-64x128-groups`): tile (strip, block) holds the 64 rows of one
@@ -58,7 +59,7 @@ __device__ void compute(const uint8_t* input, const uint8_t* weight,
     const int at = is_wide ? 2 + 2 * C::experts + 2 * slot : 2 + 2 * (slot - wide);
     const int expert = table[at], count = table[at + 1];
     if (expert < 0 || expert >= C::experts || count <= 0 || count > live ||
-        (is_wide ? count <= 8 || count > 64 : count > 8)) __trap();
+        (is_wide ? count <= 8 || count > L::expert_rows : count > 8)) __trap();
     const int first = offsets[expert];
     if (first < 0 || first % 64 || first + count > padded) __trap();
 

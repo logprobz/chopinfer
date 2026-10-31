@@ -283,10 +283,13 @@ mod renderer {
     }
 
     /// A chat format called directly, with what its export adds to a
-    /// render: the export decides `reasoning_open` from the prompt with the
-    /// parser section's markers, and refuses a render that leaves parser
-    /// state (`frontend_format::ChatFormatExportV1`). Its tool constraints
-    /// come from the parser section, as the export's do.
+    /// render (`frontend_format::ChatFormatExportV1`): the export refuses a
+    /// render that leaves parser state, and decides `reasoning_open` with
+    /// the parser section's markers. Under
+    /// `vocabulary.explicit_special_tokens` it reads them from the special
+    /// segments alone; otherwise it refuses special segments and reads the
+    /// prompt. Its tool constraints come from the parser section, as the
+    /// export's do.
     struct LibraryChatFormatV1<F> {
         descriptor: Arc<frontend_format::FormatDescriptorV1>,
         format: F,
@@ -315,14 +318,35 @@ mod renderer {
                     None,
                 ));
             }
+            let explicit = self.descriptor.vocabulary.explicit_special_tokens;
+            let special = |segment: &frontend_format::PromptSegmentV1| {
+                matches!(segment, frontend_format::PromptSegmentV1::Special(_))
+            };
+            if !explicit && rendered.segments.iter().any(special) {
+                return Err(frontend_format::FrontendErrorV1::new(
+                    "a chat format render answers special segments only under \
+                     vocabulary.explicit_special_tokens",
+                    None,
+                ));
+            }
             let parser = &self.descriptor.parser;
-            rendered.reasoning_open = frontend_format::toolkit::reasoning_open_v1(
-                rendered.mode,
-                continue_final_message,
-                &parser.reasoning_open,
-                &parser.reasoning_close,
-                &rendered.prompt,
-            );
+            rendered.reasoning_open = if explicit {
+                frontend_format::toolkit::reasoning_open_segments_v1(
+                    rendered.mode,
+                    continue_final_message,
+                    &parser.reasoning_open,
+                    &parser.reasoning_close,
+                    &rendered.segments,
+                )
+            } else {
+                frontend_format::toolkit::reasoning_open_v1(
+                    rendered.mode,
+                    continue_final_message,
+                    &parser.reasoning_open,
+                    &parser.reasoning_close,
+                    &rendered.prompt,
+                )
+            };
             Ok(rendered)
         }
 

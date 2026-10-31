@@ -77,8 +77,10 @@ def argument(expr, originals, allocation_context=None):
         return bound_argument(expr,allocation_context)
     if set(expr) == {'literal'}:
         result = expr['literal']
-        need(isinstance(result, str) and re.fullmatch(r'(?:Scalar)?(?:U32|U64|I32|F32)\([-+0-9.e]+\)', result),
-             'only scalar literals are allowed; handles must come from original arguments')
+        # A null pointer names no buffer, so it is a literal like a scalar.
+        need(isinstance(result, str)
+             and re.fullmatch(r'(?:Scalar)?(?:U32|U64|I32|F32)\([-+0-9.e]+\)|NullDevicePointer', result),
+             'only scalar and null pointer literals are allowed; handles must come from original arguments')
         return result
     need(set(expr) <= {'launch', 'arg', 'replace', 'subspan'} and 'arg' in expr, 'unknown argument expression')
     source = expr.get('launch', 0)

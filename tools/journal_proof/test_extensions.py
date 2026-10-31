@@ -192,6 +192,20 @@ class ExtensionTests(unittest.TestCase):
         self.expansion()
         self.run_case(0)
 
+    def test_expansion_with_null_pointer_literal(self):
+        self.expansion()
+        rule=self.spec['journals'][STEP]['expansions'][0]
+        rule['sequence'][1]['args'].append({'literal':'NullDevicePointer'})
+        self.head[STEP][1]=line('chop_mm',[span(GEN+6,length=128),span(GEN+5),'ScalarU32(1)','NullDevicePointer'],1)
+        self.run_case(0)
+
+    def test_expansion_refuses_a_handle_literal(self):
+        self.expansion()
+        rule=self.spec['journals'][STEP]['expansions'][0]
+        rule['sequence'][1]['args'].append({'literal':span(GEN+5)})
+        self.head[STEP][1]=line('chop_mm',[span(GEN+6,length=128),span(GEN+5),'ScalarU32(1)',span(GEN+5)],1)
+        self.run_case(2)
+
     def test_expansion_wrong_buffer(self):
         self.expansion()
         self.head[STEP][1]=self.head[STEP][1].replace(f'raw: {GEN+6}',f'raw: {GEN+5}')

@@ -234,7 +234,9 @@ An auxiliary rule may also declare:
 - `removed_resolves`;
 - `allocation_resizes`, `allocation_bindings`, `allocation_layouts`.
 
-Every rewrite names exact lines, symbols or counts. `count: "all"` transforms
+Every rewrite names exact lines, symbols or counts. A rewritten argument is
+an original launch's argument, a bound allocation span or a literal: a
+scalar or `NullDevicePointer`, never a buffer handle. `count: "all"` transforms
 every matching base launch and never selects by inspecting the head.
 Overlapping rewrites are refused. Every span of a rewritten journal must lie
 inside its allocation's head size. The one exception is an oversized span the

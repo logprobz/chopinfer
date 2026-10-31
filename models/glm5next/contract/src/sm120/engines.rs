@@ -696,7 +696,8 @@ pub fn phased_state_bytes(shape: Shape) -> Result<CommBytes, String> {
 
 /// The most rows of GLM's own all-reduce that take the F32 one-shot, below
 /// the shared tuning's byte threshold (16 rows): none. The one-shot writes
-/// every peer at once, which on this PCIe fabric collapses to about 2 GB/s;
+/// every peer at once, which on this PCIe fabric collapses to about 2 GB/s
+/// (also with the IOMMU in passthrough and ACS redirection off, 2026-10-31);
 /// on four ranks it took 22, 44, 83, 159 and 371 us at 1, 2, 4, 8 and 16
 /// rows, the phased pair 13.6, 14.6, 14.8, 15.7 and 18.6 us (kernel-lab
 /// `comm_phased_f32` timing, 2026-10-08). Both sum the ranks in rank order

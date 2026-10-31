@@ -16,6 +16,18 @@ every pairing, while a GPU that writes to (or pulls from) two or more peers
 at once collapses to about 2 GB/s in total. Copy-engine copies give no
 bandwidth advantage and cannot fuse the reduction, so no path uses them.
 
+The collapse is not an IOMMU or ACS effect. On 2026-10-31 the same host ran
+with the IOMMU in passthrough and ACS redirection disabled on the four GPU
+root ports ([host configuration](../../../../docs/contributing.md#multi-gpu-host-configuration)),
+at 250 W per GPU. `peer_push_fanout` sent 46.5 GB/s at 64 KiB and 47.6 GB/s
+at 256 KiB to one destination and 2.3 GB/s in total to three at once; a push
+to one peer during a pull from another took 292 us for 256 KiB, against
+5.5 us for the push alone. nvbandwidth agreed: per pair, 42.6 GB/s SM
+writes, 53.2 GB/s SM reads and 54 GB/s copy-engine writes, with about
+1.0 us SM read latency; one GPU writing to, or reading from, all three
+peers at once got 2.2 to 2.4 GB/s per peer. Several GPUs writing to one peer
+kept 40 to 43 GB/s each.
+
 ## Fused epilogues
 
 A fused all-reduce runs a model's epilogue on each reduced row in the same

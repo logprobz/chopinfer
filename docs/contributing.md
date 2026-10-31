@@ -524,3 +524,31 @@ model exists, a J/token increase vetoes adoption only when it exceeds 3% and
 agrees in sign across the concurrencies where the candidate is active;
 otherwise report it as informational. Energy does not replace the timing or
 bitwise gates.
+
+### Multi-GPU host configuration
+
+The reference four-GPU RTX PRO 6000 host runs the IOMMU in passthrough and
+disables ACS redirection on each GPU's root port, the configuration
+commonly used for peer-to-peer GPU hosts. On GRUB, add both to
+`GRUB_CMDLINE_LINUX_DEFAULT`, escaping the semicolons between root ports,
+and run `update-grub`:
+
+```sh
+GRUB_CMDLINE_LINUX_DEFAULT="iommu=pt pci=disable_acs_redir=<port>\;<port>\;<port>\;<port>"
+```
+
+Each `<port>` is the PCI address of a GPU's parent root port, for example
+`readlink -f /sys/bus/pci/devices/<gpu>/..`. After rebooting, check that
+`/proc/cmdline` carries both parameters, that the kernel log reports
+`Default domain type: Passthrough` and `Configured ACS to 0x0000` for each
+port, and that every GPU's IOMMU group reports `identity` in
+`/sys/kernel/iommu_groups/<group>/type`. The `disable-acs` script's
+`--verify` reads the same state; its `--apply` refuses on Ubuntu, whose
+recovery entries carry only `GRUB_CMDLINE_LINUX`.
+
+On the reference host (GPUs behind separate root ports of one CPU), these
+settings did not change measured peer traffic on 2026-10-31: one destination
+still runs at 42 to 54 GB/s and a GPU driving two or more peers at once
+still collapses, as [SM120 PCIe communication](../crates/kernels-sm120/cuda/comm/README.md#measured-pcie-behaviour)
+records. Record the host's IOMMU mode and kernel command line with timing
+evidence, and compare timings only between runs on the same configuration.

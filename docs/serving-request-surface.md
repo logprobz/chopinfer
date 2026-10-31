@@ -27,10 +27,21 @@ served name.
 
 ## Request parameters and defaults
 
-**Output length.** Completions without `max_tokens` generate 16 tokens. Chat
-and Responses requests without an output limit may use the remaining
-context; in chat, `max_completion_tokens` takes precedence over `max_tokens`.
-Explicit `max_tokens: 0` is refused.
+**Output length.** Completions without `max_tokens` generate 16 tokens. A
+chat or Responses request without `max_tokens`, `max_completion_tokens` or
+`max_output_tokens` generates up to the package's declared default
+(`output_tokens` in the frontend descriptor): the length declared for the
+effort its prompt thinks at, else the default, lowered to the context left
+after the prompt. Without a declaration it may use the remaining context.
+DeepSeek declares 65,536 and 131,072 at `max`; GLM 131,072 at `max`, its
+default, and 65,536 at `low` and `high`; Qwen 131,072 at `xhigh`, its
+default, and 65,536 at other efforts and with thinking off; MiMo 65,536.
+An explicit limit is honored within the context; in chat,
+`max_completion_tokens` takes precedence over `max_tokens`. Explicit
+`max_tokens: 0` is refused. A `min_tokens` above the default is refused
+("min_tokens exceeds the default output limit of N tokens"), and a
+Responses request that ends at the default is `incomplete` with
+`max_output_tokens`.
 
 **Sampling.** Defaults come from the package's frontend descriptor
 (`generation_config`); precedence is neutral defaults, model defaults, then

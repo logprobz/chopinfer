@@ -200,15 +200,30 @@ and constraints agree with the prompt the same way for every model. The
 shared parser reads no parser state, so the export refuses a render that
 leaves some.
 
+### Marked prompts
+
+A declaration that sets `vocabulary.explicit_special_tokens` renders a
+prompt that names its special tokens. The renderer writes a
+`toolkit::MarkedPromptV1`: each special token its template writes with
+`push_special`, and every other piece, client text included, with
+`push_plain`. `split_marked_media_segments_v1` cuts it into text, media and
+special segments, each special segment a declared boundary token. The host
+encodes the text segments as plain text, so a special token spelled in
+client text stays ordinary text, and media pads in client text are not
+refused. The export refuses special segments from a declaration without
+the flag, and under it reads the reasoning markers from the special
+segments alone (`toolkit::reasoning_open_segments_v1`).
+
 ## The toolkit
 
 `frontend_format::toolkit` holds the model-neutral pieces a renderer is
 written with:
 
-- prompt writing under `maximum_prompt_bytes` (`append_v1`), name checks,
-  and media segments: a private placeholder per item, client text screened
-  for it and for media pads, and the finished prompt split into text and
-  media segments;
+- prompt writing under `maximum_prompt_bytes` (`append_v1`,
+  `MarkedPromptV1`), name checks, and media segments: a private placeholder
+  per item, client text screened for it and for media pads, and the finished
+  prompt split into text and media segments, and special segments for a
+  marked prompt;
 - the conversation as a renderer reads it from a request, and the checks it
   passes before anything is written (`chat_message_v1`, `validate_chat_v1`);
 - bounded JSON reading and the declared JSON encodings
@@ -221,7 +236,8 @@ written with:
 - tool objects as a template writes them (`json_truthy`,
   `defers_loading_v1`, `write_tool_object_v1`);
 - the reasoning controls (`select_mode_v1`, `preserve_thinking_v1`,
-  `reasoning_open_v1`) and the refusal messages, including
+  `reasoning_open_v1`, `reasoning_open_segments_v1`) and the refusal
+  messages, including
   `TOOL_REFERENCES_UNSUPPORTED_V1` for a format that reads no
   `tool_reference` part.
 
@@ -245,5 +261,6 @@ The `test-support` feature adds what format and host tests share: the
 parser fixture declarations (`test_support::fixtures::KEY_VALUE` and
 `FUNCTION_PARAMETERS`, one on each parser family), `FixtureFormatV1`, a
 minimal chat format with one documented layout for tests that need a prompt
-but assert nothing about a model's, and the chat-capture readers model tests
-use.
+but assert nothing about a model's (it writes a marked prompt when the
+declaration sets explicit special tokens), and the chat-capture readers
+model tests use.

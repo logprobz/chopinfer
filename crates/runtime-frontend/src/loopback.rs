@@ -388,12 +388,19 @@ mod renderer {
                 segments: segments
                     .into_iter()
                     .map(|segment| match segment {
-                        frontend_format::PromptSegmentV1::Text(text) => PromptSegmentV1::Text(text),
-                        frontend_format::PromptSegmentV1::Media(index) => {
-                            PromptSegmentV1::Media(index)
+                        frontend_format::PromptSegmentV1::Text(text) => {
+                            Ok(PromptSegmentV1::Text(text))
                         }
+                        frontend_format::PromptSegmentV1::Media(index) => {
+                            Ok(PromptSegmentV1::Media(index))
+                        }
+                        frontend_format::PromptSegmentV1::Special(_) => Err(FrontendErrorV1::new(
+                            "the chat format answered a special segment, which this host does \
+                             not read",
+                            None,
+                        )),
                     })
-                    .collect(),
+                    .collect::<Result<_, _>>()?,
                 media: media.into_iter().map(media_from_v1).collect(),
                 mode,
                 effort,

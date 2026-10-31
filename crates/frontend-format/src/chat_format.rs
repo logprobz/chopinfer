@@ -19,8 +19,8 @@ use crate::export::{
     render_document_v1,
 };
 use crate::format::{FormatRenderRequestV1, FormatRenderedV1};
-use crate::request::FrontendErrorV1;
-use crate::toolkit::reasoning_open_v1;
+use crate::request::{FrontendErrorV1, PromptSegmentV1};
+use crate::toolkit::{reasoning_open_segments_v1, reasoning_open_v1};
 
 /// A model's chat format: the renderer a bundle exports with
 /// [`crate::export_chat_format_v1!`].
@@ -48,6 +48,11 @@ pub trait ChatFormatV1: Sized + Send + Sync + 'static {
     /// returns, so the parser and constraint agree with the prompt the same
     /// way for every model. The shared parser reads no parser state, so a
     /// render leaves `parser_state` empty.
+    ///
+    /// A render answers special segments only when the declaration sets
+    /// `vocabulary.explicit_special_tokens`; the export refuses them
+    /// otherwise. Under it, the export reads the reasoning markers from the
+    /// special segments alone ([`reasoning_open_segments_v1`]).
     fn render(
         &self,
         request: FormatRenderRequestV1<'_>,
@@ -99,13 +104,34 @@ impl<F: ChatFormatV1> FrontendV1 for ChatFormatExportV1<F> {
                 ));
             }
             let parser = self.parser();
-            rendered.reasoning_open = reasoning_open_v1(
-                rendered.mode,
-                continue_final_message,
-                &parser.reasoning_open,
-                &parser.reasoning_close,
-                &rendered.prompt,
-            );
+            rendered.reasoning_open = if self.descriptor.vocabulary.explicit_special_tokens {
+                reasoning_open_segments_v1(
+                    rendered.mode,
+                    continue_final_message,
+                    &parser.reasoning_open,
+                    &parser.reasoning_close,
+                    &rendered.segments,
+                )
+            } else {
+                if rendered
+                    .segments
+                    .iter()
+                    .any(|segment| matches!(segment, PromptSegmentV1::Special(_)))
+                {
+                    return Err(FrontendErrorV1::new(
+                        "a chat format render answers special segments only under \
+                         vocabulary.explicit_special_tokens",
+                        None,
+                    ));
+                }
+                reasoning_open_v1(
+                    rendered.mode,
+                    continue_final_message,
+                    &parser.reasoning_open,
+                    &parser.reasoning_close,
+                    &rendered.prompt,
+                )
+            };
             Ok(rendered)
         })
     }

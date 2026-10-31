@@ -5,6 +5,11 @@
 //! as a private placeholder ([`media_placeholder_v1`]) that no client text can
 //! carry ([`screen_media_text_v1`]); [`split_media_segments_v1`] then cuts the
 //! finished prompt into text and media segments and charges each item's pad.
+//! A renderer whose declaration sets `vocabulary.explicit_special_tokens`
+//! writes a [`MarkedPromptV1`] instead, which names its special tokens, and
+//! cuts it with [`split_marked_media_segments_v1`].
+
+use std::ops::Range;
 
 use crate::chat::{ChatMessageV1, ChatRenderV1};
 use crate::descriptor::{FormatDescriptorV1, FrontendMediaKindV1, FrontendToolGrammarV1};
@@ -33,6 +38,83 @@ pub fn append_v1(output: &mut String, value: &str, maximum: usize) -> Result<(),
         .map_err(|_| resource_v1("prompt allocation failed"))?;
     output.push_str(value);
     Ok(())
+}
+
+/// A prompt that names its special tokens: what a renderer writes when its
+/// declaration sets `vocabulary.explicit_special_tokens`.
+///
+/// The renderer writes each special token its template writes with
+/// [`MarkedPromptV1::push_special`] and every other piece, client text
+/// included, with [`MarkedPromptV1::push_plain`], so the spelling of a
+/// special token in client text stays plain text. Each push charges
+/// `maximum_prompt_bytes` as [`append_v1`] does.
+/// [`split_marked_media_segments_v1`] then cuts the finished prompt into
+/// segments.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MarkedPromptV1 {
+    text: String,
+    /// The byte ranges of the special tokens in `text`, ascending, disjoint
+    /// and not empty.
+    specials: Vec<Range<usize>>,
+}
+
+impl MarkedPromptV1 {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            text: String::new(),
+            specials: Vec::new(),
+        }
+    }
+
+    /// Appends plain text, refusing a prompt longer than `maximum`.
+    pub fn push_plain(&mut self, text: &str, maximum: usize) -> Result<(), String> {
+        append_v1(&mut self.text, text, maximum)
+    }
+
+    /// Appends one special token by its text, refusing an empty token and
+    /// a prompt longer than `maximum`.
+    pub fn push_special(&mut self, token: &str, maximum: usize) -> Result<(), String> {
+        if token.is_empty() {
+            return Err(field_v1("a prompt special token cannot be empty"));
+        }
+        self.specials
+            .try_reserve(1)
+            .map_err(|_| resource_v1("prompt allocation failed"))?;
+        let start = self.text.len();
+        append_v1(&mut self.text, token, maximum)?;
+        self.specials.push(start..self.text.len());
+        Ok(())
+    }
+
+    /// Appends `other` with its special tokens, refusing a prompt longer
+    /// than `maximum`.
+    pub fn push_prompt(&mut self, other: &Self, maximum: usize) -> Result<(), String> {
+        self.specials
+            .try_reserve(other.specials.len())
+            .map_err(|_| resource_v1("prompt allocation failed"))?;
+        let offset = self.text.len();
+        append_v1(&mut self.text, &other.text, maximum)?;
+        self.specials.extend(
+            other
+                .specials
+                .iter()
+                .map(|special| special.start + offset..special.end + offset),
+        );
+        Ok(())
+    }
+
+    /// The prompt's text, special tokens included.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// The byte ranges of the special tokens in [`Self::text`], ascending.
+    #[must_use]
+    pub fn specials(&self) -> &[Range<usize>] {
+        &self.specials
+    }
 }
 
 /// Checks one name against the charset and length this model declared.
@@ -168,22 +250,26 @@ pub fn media_placeholder_v1(index: usize) -> String {
     format!("{OPEN}{index}{CLOSE}")
 }
 
-/// Whether `text` holds a media placeholder boundary or a declared media
-/// pad, which no client text may carry.
+/// Whether `text` holds a media placeholder boundary, which no client text
+/// may carry, or a declared media pad. A pad is reserved too, unless the
+/// declaration sets `vocabulary.explicit_special_tokens`: there client text
+/// is plain text, so a pad's spelling in it is ordinary text.
 #[must_use]
 pub fn reserved_media_text_v1(descriptor: &FormatDescriptorV1, text: &str) -> bool {
     text.contains(OPEN)
         || text.contains(CLOSE)
-        || descriptor.multimodal.as_ref().is_some_and(|declaration| {
-            declaration
-                .modalities
-                .iter()
-                .any(|modality| text.contains(&modality.render.pad))
-        })
+        || (!descriptor.vocabulary.explicit_special_tokens
+            && descriptor.multimodal.as_ref().is_some_and(|declaration| {
+                declaration
+                    .modalities
+                    .iter()
+                    .any(|modality| text.contains(&modality.render.pad))
+            }))
 }
 
-/// Refuses a render whose client text anywhere holds a media boundary or
-/// pad ([`reserved_media_text_v1`]): every message, tool and tool object.
+/// Refuses a render whose client text anywhere holds a media boundary, or a
+/// pad where pads are reserved ([`reserved_media_text_v1`]): every message,
+/// tool and tool object.
 pub fn screen_media_text_v1(
     descriptor: &FormatDescriptorV1,
     render: &ChatRenderV1<'_>,
@@ -281,18 +367,7 @@ pub fn split_media_segments_v1(
         segments.push(PromptSegmentV1::Text(before.to_owned()));
         debug_prompt.push_str(before);
         segments.push(PromptSegmentV1::Media(index));
-        let kind = media_part_kind_v1(item.kind);
-        let pad = &descriptor
-            .multimodal
-            .as_ref()
-            .expect("media declaration checked")
-            .modalities
-            .iter()
-            .find(|entry| entry.kind == kind)
-            .expect("modality checked")
-            .render
-            .pad;
-        debug_prompt.push_str(pad);
+        debug_prompt.push_str(media_pad_v1(descriptor, item));
         rest = after;
     }
     segments.push(PromptSegmentV1::Text(rest.to_owned()));
@@ -303,6 +378,114 @@ pub fn split_media_segments_v1(
         ));
     }
     Ok((debug_prompt, segments, media))
+}
+
+/// Cuts a marked prompt into text, media and special segments, and returns
+/// what [`split_media_segments_v1`] returns: the prompt with each
+/// placeholder replaced by its kind's pad, which must fit
+/// `maximum_prompt_bytes`, the segments and the media.
+///
+/// Each special token becomes a special segment and must spell a declared
+/// boundary token. The plain text around them is cut at the placeholders of
+/// `media`, in order; a placeholder lies whole in plain text. Adjacent plain
+/// text is one text segment. A media segment has a text segment on each
+/// side, empty or not, as [`split_media_segments_v1`] writes them; a text
+/// segment between special segments, or at either end next to one, is
+/// written only when it holds text. A prompt with no special token so
+/// splits exactly as [`split_media_segments_v1`] splits its text.
+pub fn split_marked_media_segments_v1(
+    descriptor: &FormatDescriptorV1,
+    prompt: MarkedPromptV1,
+    media: Vec<FrontendMediaPartV1>,
+) -> Result<(String, Vec<PromptSegmentV1>, Vec<FrontendMediaPartV1>), String> {
+    let MarkedPromptV1 { text, specials } = prompt;
+    if text.matches(OPEN).count() != media.len() || text.matches(CLOSE).count() != media.len() {
+        return Err(field_v1("unexpected media boundary in rendered prompt"));
+    }
+    // Every segment, with a text segment between each two others and at
+    // both ends, empty or not.
+    let mut full = Vec::new();
+    let mut padded = String::new();
+    let mut placed = 0;
+    let mut from = 0;
+    let ends = specials
+        .iter()
+        .map(|special| special.start)
+        .chain(std::iter::once(text.len()));
+    for (index, end) in ends.enumerate() {
+        let mut rest = &text[from..end];
+        while let Some(item) = media.get(placed) {
+            let Some((before, after)) = rest.split_once(&media_placeholder_v1(placed)) else {
+                break;
+            };
+            full.push(PromptSegmentV1::Text(before.to_owned()));
+            padded.push_str(before);
+            full.push(PromptSegmentV1::Media(placed));
+            padded.push_str(media_pad_v1(descriptor, item));
+            placed += 1;
+            rest = after;
+        }
+        full.push(PromptSegmentV1::Text(rest.to_owned()));
+        padded.push_str(rest);
+        let Some(special) = specials.get(index) else {
+            break;
+        };
+        let token = &text[special.clone()];
+        if !descriptor
+            .vocabulary
+            .boundary_tokens
+            .iter()
+            .any(|boundary| boundary.text == token)
+        {
+            return Err(field_v1(format!(
+                "rendered special token '{token}' is not a declared boundary token"
+            )));
+        }
+        full.push(PromptSegmentV1::Special(token.to_owned()));
+        padded.push_str(token);
+        from = special.end;
+    }
+    if placed != media.len() {
+        return Err(field_v1("media render boundary was lost"));
+    }
+    if padded.len() > descriptor.limits.maximum_prompt_bytes {
+        return Err(resource_v1(
+            "rendered media prompt exceeds maximum_prompt_bytes",
+        ));
+    }
+    let media_at = |index: usize| matches!(full.get(index), Some(PromptSegmentV1::Media(_)));
+    let written = (0..full.len())
+        .map(|index| match &full[index] {
+            PromptSegmentV1::Text(run) => {
+                !run.is_empty()
+                    || full.len() == 1
+                    || media_at(index + 1)
+                    || index.checked_sub(1).is_some_and(media_at)
+            }
+            _ => true,
+        })
+        .collect::<Vec<_>>();
+    let segments = full
+        .into_iter()
+        .zip(written)
+        .filter_map(|(segment, written)| written.then_some(segment))
+        .collect();
+    Ok((padded, segments, media))
+}
+
+/// The pad of the placed media part `item`'s kind.
+fn media_pad_v1<'a>(descriptor: &'a FormatDescriptorV1, item: &FrontendMediaPartV1) -> &'a str {
+    let kind = media_part_kind_v1(item.kind);
+    &descriptor
+        .multimodal
+        .as_ref()
+        .expect("media declaration checked")
+        .modalities
+        .iter()
+        .find(|entry| entry.kind == kind)
+        .expect("modality checked")
+        .render
+        .pad
 }
 
 const fn media_part_kind_v1(kind: FrontendMediaPartKindV1) -> FrontendMediaKindV1 {

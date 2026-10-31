@@ -7,7 +7,7 @@ use crate::descriptor::{
     FrontendEffortUseV1, FrontendReasoningEffortV1, FrontendReasoningPolicyV1,
 };
 use crate::format::FormatRenderRequestV1;
-use crate::request::{FrontendErrorV1, FrontendJsonV1};
+use crate::request::{FrontendErrorV1, FrontendJsonV1, PromptSegmentV1};
 
 /// Whether the last reasoning marker in `prompt` closes reasoning: a
 /// reasoning close that no reasoning open follows. This is the test vLLM's
@@ -27,6 +27,31 @@ fn closes_reasoning_v1(open: &str, close: &str, prompt: &str) -> bool {
         .is_some_and(|start| open.is_empty() || !prompt[start + close.len()..].contains(open))
 }
 
+/// [`closes_reasoning_v1`] over a prompt that names its special tokens,
+/// reading only its special segments: the last one that is the reasoning
+/// close, when no special segment that is the reasoning open follows it.
+/// A marker spelled in a text segment is ordinary text.
+#[must_use]
+fn closes_reasoning_segments_v1(open: &str, close: &str, segments: &[PromptSegmentV1]) -> bool {
+    let (open, close) = (open.trim(), close.trim());
+    if close.is_empty() {
+        return false;
+    }
+    segments
+        .iter()
+        .filter_map(|segment| match segment {
+            PromptSegmentV1::Special(token) => Some(token.as_str()),
+            PromptSegmentV1::Text(_) | PromptSegmentV1::Media(_) => None,
+        })
+        .fold(false, |closed, token| {
+            if token == close {
+                true
+            } else {
+                closed && (open.is_empty() || token != open)
+            }
+        })
+}
+
 /// Whether a rendered prompt leaves reasoning open, so the completion begins
 /// in reasoning: a thinking prompt does, except a continued final assistant
 /// turn whose reasoning the prompt already closed (`closes_reasoning_v1`),
@@ -41,6 +66,22 @@ pub fn reasoning_open_v1(
 ) -> bool {
     mode == PromptModeV1::Thinking
         && !(continue_final_message && closes_reasoning_v1(open, close, prompt))
+}
+
+/// [`reasoning_open_v1`] for a prompt that names its special tokens, as a
+/// declaration with `vocabulary.explicit_special_tokens` renders it: the
+/// reasoning markers close reasoning only as special segments, so client
+/// text that spells them closes nothing.
+#[must_use]
+pub fn reasoning_open_segments_v1(
+    mode: PromptModeV1,
+    continue_final_message: bool,
+    open: &str,
+    close: &str,
+    segments: &[PromptSegmentV1],
+) -> bool {
+    mode == PromptModeV1::Thinking
+        && !(continue_final_message && closes_reasoning_segments_v1(open, close, segments))
 }
 
 /// The top-level `reasoning_effort` values the OpenAI protocol accepts, as

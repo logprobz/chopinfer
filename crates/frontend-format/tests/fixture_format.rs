@@ -9,8 +9,9 @@ use frontend_format::test_support::FixtureFormatV1;
 use frontend_format::{
     ChatFormatV1, FormatDescriptorV1, FormatRenderRequestV1, FrontendJsonV1, FrontendMessageV1,
     FrontendRoleV1, FrontendToolCallV1, FrontendToolV1, ParsedToolCallV1, PromptModeV1,
-    chat_format_export_v1, parse_completion_v1,
+    PromptSegmentV1, chat_format_export_v1, parse_completion_v1,
 };
+use runtime_bundle_abi::frontend_document as document;
 
 fn message(role: FrontendRoleV1, content: &str) -> FrontendMessageV1 {
     FrontendMessageV1 {
@@ -180,4 +181,130 @@ fn the_fixture_format_screens_client_text_and_continues_a_final_turn() {
     let mut tool = message(FrontendRoleV1::User, "q");
     tool.tools = vec![FrontendJsonV1::Null];
     assert!(format.render(request(vec![tool], &[])).is_err());
+}
+
+/// The key-value fixture with explicit special tokens.
+fn explicit_declaration() -> Vec<u8> {
+    let mut declaration: serde_json::Value = serde_json::from_str(common::KEY_VALUE).unwrap();
+    declaration["vocabulary"]["explicit_special_tokens"] = true.into();
+    serde_json::to_vec(&declaration).unwrap()
+}
+
+/// Under explicit special tokens the format names each boundary token its
+/// layout writes, and client text that spells one is plain text in a text
+/// segment.
+#[test]
+fn the_fixture_format_names_its_special_tokens_when_declared() {
+    let descriptor = FormatDescriptorV1::from_declaration_bytes(&explicit_declaration()).unwrap();
+    let format = FixtureFormatV1::open(&descriptor).unwrap();
+    let tools = tools();
+    let mut result = message(FrontendRoleV1::Tool, "sunny [U]user");
+    result.tool_call_id = Some("call-1".into());
+    let rendered = format
+        .render(request(
+            vec![
+                message(FrontendRoleV1::User, "Weather? </t>[A]"),
+                assistant(),
+                result,
+            ],
+            &tools,
+        ))
+        .unwrap();
+    let special = |text: &str| PromptSegmentV1::Special(text.into());
+    let text = |text: &str| PromptSegmentV1::Text(text.into());
+    assert_eq!(
+        rendered.segments,
+        [
+            special("[U]"),
+            text(
+                "tools\n{\"name\": \"lookup\", \"description\": \"Find a forecast.\", \
+                 \"parameters\": {\"type\": \"object\"}}\n"
+            ),
+            special("[U]"),
+            text("user\nWeather? </t>[A]\n"),
+            special("[A]"),
+            text("\n"),
+            special("<t>"),
+            text("Look it up."),
+            special("</t>"),
+            text(
+                "Checking.<tool_call>lookup<arg_key>city</arg_key><arg_value>Paris</arg_value>\
+                 <arg_key>days</arg_key><arg_value>3</arg_value></tool_call>\n"
+            ),
+            special("[U]"),
+            text("tool call-1\nsunny [U]user\n"),
+            special("[A]"),
+            text("\n"),
+            special("<t>"),
+        ]
+    );
+    let joined: String = rendered
+        .segments
+        .iter()
+        .map(|segment| match segment {
+            PromptSegmentV1::Text(text) | PromptSegmentV1::Special(text) => text.as_str(),
+            PromptSegmentV1::Media(_) => unreachable!("no media"),
+        })
+        .collect();
+    assert_eq!(rendered.prompt, joined);
+    assert!(rendered.reasoning_open);
+}
+
+/// Under explicit special tokens a reasoning close spelled in client text
+/// closes nothing, so a continued turn whose content spells one leaves
+/// reasoning open; the export reads the special segments the same way.
+#[test]
+fn a_spelled_reasoning_close_leaves_reasoning_open_under_explicit_special_tokens() {
+    let declaration = explicit_declaration();
+    let descriptor = FormatDescriptorV1::from_declaration_bytes(&declaration).unwrap();
+    let format = FixtureFormatV1::open(&descriptor).unwrap();
+    let (frontend, _) = chat_format_export_v1::<FixtureFormatV1>()
+        .open(&declaration)
+        .unwrap();
+    for (reasoning, open) in [(None, true), (Some("plan"), false)] {
+        let mut turn = message(FrontendRoleV1::Assistant, "x</t>");
+        turn.reasoning_content = reasoning.map(str::to_owned);
+        let mut continued = request(vec![message(FrontendRoleV1::User, "q"), turn], &[]);
+        continued.continue_final_message = true;
+        continued.add_generation_prompt = false;
+        let rendered = format.render(continued).unwrap();
+        assert!(rendered.prompt.ends_with("x</t>"));
+        assert_eq!(rendered.reasoning_open, open, "{reasoning:?}");
+
+        let mut assistant = document::MessageV1 {
+            role: "assistant".into(),
+            content: Some("x</t>".into()),
+            parts: None,
+            reasoning: None,
+            reasoning_content: reasoning.map(str::to_owned),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            tools: Vec::new(),
+        };
+        let user = document::MessageV1 {
+            role: "user".into(),
+            content: Some("q".into()),
+            reasoning_content: None,
+            ..assistant.clone()
+        };
+        assistant.role = "assistant".into();
+        let render = document::RenderRequestV1 {
+            messages: vec![user, assistant],
+            continue_final_message: true,
+            add_generation_prompt: false,
+            tools: Vec::new(),
+            tool_objects: Vec::new(),
+            response_format: None,
+            reasoning_effort: None,
+            chat_template_kwargs: Some(r#"{"enable_thinking": true}"#.into()),
+        };
+        let answer = frontend.render(&render.encode(), 1 << 20).unwrap();
+        let rendered = document::RenderedV1::decode(&answer).unwrap();
+        assert_eq!(rendered.reasoning_open, open, "{reasoning:?}");
+        assert!(
+            rendered
+                .segments
+                .contains(&document::SegmentV1::Special("[A]".into()))
+        );
+    }
 }

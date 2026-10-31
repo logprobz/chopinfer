@@ -44,6 +44,7 @@ pub(crate) fn render_document_v1(
         .into_iter()
         .map(|segment| match segment {
             PromptSegmentV1::Text(text) => Ok(document::SegmentV1::Text(text)),
+            PromptSegmentV1::Special(text) => Ok(document::SegmentV1::Special(text)),
             // The renderer's media list holds the parts it placed, each
             // carrying its request index (see `media_part_v1`).
             PromptSegmentV1::Media(index) => rendered

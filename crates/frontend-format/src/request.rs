@@ -290,12 +290,17 @@ pub struct FrontendMediaPartV1 {
     pub format: Option<String>,
 }
 
-/// One piece of a rendered prompt: text, or the media part at an index of
-/// the rendered media.
+/// One piece of a rendered prompt: text, the media part at an index of the
+/// rendered media, or one special token.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PromptSegmentV1 {
     Text(String),
     Media(usize),
+    /// One special token of the prompt, given by its text, which names a
+    /// declared boundary token. Only a declaration with
+    /// `vocabulary.explicit_special_tokens` lets a render answer one; under
+    /// it, the host encodes every text segment as plain text.
+    Special(String),
 }
 
 /// One function tool a request offered.

@@ -26,7 +26,9 @@
 //! [`FRONTEND_DOCUMENT_ENTRIES_MAX_V1`] or past the bytes left, parser state
 //! past [`FRONTEND_PARSER_STATE_BYTES_MAX_V1`], and trailing bytes. A parser
 //! push runs once per generated token, so the push request and the event
-//! answer borrow their bytes rather than copy them.
+//! answer borrow their bytes rather than copy them. A push with marks
+//! ([`MarksV1`]) crosses under its own magic, so a push without them keeps
+//! the bytes it always had.
 
 use std::fmt;
 use std::ops::Range;
@@ -38,6 +40,7 @@ const REFUSAL_MAGIC: &[u8; 8] = b"CHOPFREF";
 const CONSTRAINT_MAGIC: &[u8; 8] = b"CHOPFCRQ";
 const PARSER_OPEN_MAGIC: &[u8; 8] = b"CHOPFPOP";
 const PUSH_MAGIC: &[u8; 8] = b"CHOPFPSH";
+const MARKED_PUSH_MAGIC: &[u8; 8] = b"CHOPFPMK";
 const EVENTS_MAGIC: &[u8; 8] = b"CHOPFEVT";
 
 /// The layout of every frontend document.
@@ -170,6 +173,12 @@ pub enum SegmentV1 {
     Text(String),
     /// The media part with this request index.
     Media(u32),
+    /// One special token of the prompt, given by its text, which names a
+    /// declared boundary token. Only a declaration with
+    /// `vocabulary.explicit_special_tokens` lets a render answer one, and
+    /// the host refuses one otherwise; under it, the host encodes every
+    /// text segment as plain text.
+    Special(String),
 }
 
 /// One rendered prompt.
@@ -267,7 +276,112 @@ pub struct PushV1<'a> {
     /// count; then the byte offset an end marker must end after.
     pub stop_floor: Option<u64>,
     pub suffix: &'a [u8],
+    /// The marks among the released bytes, when the host sends them.
+    pub marks: Option<MarksV1<'a>>,
 }
+
+/// The completion byte ranges of the tokens generated as the declaration's
+/// ID-only markers, among the bytes a push releases.
+///
+/// The ranges ascend, do not overlap, are not empty, and each ends after
+/// the push's `keep` and at or before the end of its `suffix`. A range may
+/// start before `keep`: a mark that an earlier push released only in part
+/// crosses again whole. A writer lends the ranges it holds and a reader
+/// lends the ones it checked in the document, so neither copies them.
+#[derive(Clone, Copy)]
+pub struct MarksV1<'a>(MarksFormV1<'a>);
+
+#[derive(Clone, Copy)]
+enum MarksFormV1<'a> {
+    Ranges(&'a [Range<u64>]),
+    /// Each range as its `u64` start and end.
+    Encoded(&'a [u8]),
+}
+
+/// The bytes of one encoded mark.
+const MARK_BYTES: usize = 16;
+
+impl<'a> MarksV1<'a> {
+    /// Marks that lend these ranges; a reader checks them.
+    #[must_use]
+    pub const fn new(ranges: &'a [Range<u64>]) -> Self {
+        Self(MarksFormV1::Ranges(ranges))
+    }
+
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        match self.0 {
+            MarksFormV1::Ranges(ranges) => ranges.len(),
+            MarksFormV1::Encoded(pairs) => pairs.len() / MARK_BYTES,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The ranges, in order.
+    #[must_use]
+    pub const fn iter(&self) -> MarkRangesV1<'a> {
+        MarkRangesV1 {
+            marks: *self,
+            index: 0,
+        }
+    }
+
+    fn get(&self, index: usize) -> Option<Range<u64>> {
+        match self.0 {
+            MarksFormV1::Ranges(ranges) => ranges.get(index).cloned(),
+            MarksFormV1::Encoded(pairs) => {
+                let pair = pairs.chunks_exact(MARK_BYTES).nth(index)?;
+                let (start, end) = pair.split_at(8);
+                Some(
+                    u64::from_le_bytes(start.try_into().expect("8 bytes"))
+                        ..u64::from_le_bytes(end.try_into().expect("8 bytes")),
+                )
+            }
+        }
+    }
+}
+
+impl PartialEq for MarksV1<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.iter().eq(other.iter())
+    }
+}
+
+impl Eq for MarksV1<'_> {}
+
+impl fmt::Debug for MarksV1<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_list().entries(self.iter()).finish()
+    }
+}
+
+/// The ranges of one [`MarksV1`], in order.
+#[derive(Clone, Debug)]
+pub struct MarkRangesV1<'a> {
+    marks: MarksV1<'a>,
+    index: usize,
+}
+
+impl Iterator for MarkRangesV1<'_> {
+    type Item = Range<u64>;
+
+    fn next(&mut self) -> Option<Range<u64>> {
+        let range = self.marks.get(self.index)?;
+        self.index += 1;
+        Some(range)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let left = self.marks.len() - self.index;
+        (left, Some(left))
+    }
+}
+
+impl ExactSizeIterator for MarkRangesV1<'_> {}
 
 /// Why a completion ended.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -523,6 +637,35 @@ impl<'a> ReaderV1<'a> {
         }
         Ok(start..end)
     }
+    /// A push's marks, each ending after `keep` and at or before
+    /// `released`, the end of the released bytes.
+    fn marks(&mut self, keep: u64, released: u64) -> DocumentResultV1<MarksV1<'a>> {
+        let count = self.count()?;
+        let marks = MarksV1(MarksFormV1::Encoded(self.take(count * MARK_BYTES)?));
+        let mut previous = 0;
+        for Range { start, end } in marks.iter() {
+            if start >= end {
+                return fail(format!("mark {start}..{end} is empty or inverted"));
+            }
+            if start < previous {
+                return fail(format!(
+                    "mark {start}..{end} starts before the previous mark ends at {previous}"
+                ));
+            }
+            if end <= keep {
+                return fail(format!(
+                    "mark {start}..{end} ends within the {keep} kept bytes"
+                ));
+            }
+            if end > released {
+                return fail(format!(
+                    "mark {start}..{end} ends past the released bytes, which end at {released}"
+                ));
+            }
+            previous = end;
+        }
+        Ok(marks)
+    }
     fn calls(&mut self) -> DocumentResultV1<Vec<CallV1<'a>>> {
         let count = self.count()?;
         let mut calls = Vec::with_capacity(count);
@@ -738,6 +881,10 @@ impl RenderedV1 {
                         writer.u8(1);
                         writer.u32(*index);
                     }
+                    SegmentV1::Special(text) => {
+                        writer.u8(2);
+                        writer.text(text);
+                    }
                 }
             }
             writer.mode(self.mode);
@@ -755,6 +902,7 @@ impl RenderedV1 {
             segments.push(match reader.u8()? {
                 0 => SegmentV1::Text(reader.owned_text()?),
                 1 => SegmentV1::Media(reader.u32()?),
+                2 => SegmentV1::Special(reader.owned_text()?),
                 other => return fail(format!("unknown segment tag {other}")),
             });
         }
@@ -886,19 +1034,36 @@ impl ParserOpenV1 {
 
 impl<'a> PushV1<'a> {
     /// Writes this push into `bytes`, replacing what it held.
+    ///
+    /// A push with marks writes them after the fields of one without.
     pub fn encode_into(&self, bytes: &mut Vec<u8>) {
         bytes.clear();
         let mut writer = WriterV1(bytes);
-        writer.start(PUSH_MAGIC);
+        writer.start(match self.marks {
+            Some(_) => MARKED_PUSH_MAGIC,
+            None => PUSH_MAGIC,
+        });
         writer.u64(self.keep);
         writer.flag(self.held);
         writer.flag(self.stop_floor.is_some());
         writer.u64(self.stop_floor.unwrap_or(0));
         writer.bytes(self.suffix);
+        if let Some(marks) = self.marks {
+            writer.count(marks.len());
+            for mark in marks.iter() {
+                writer.range(&mark);
+            }
+        }
     }
 
     pub fn decode(bytes: &'a [u8]) -> DocumentResultV1<Self> {
-        let mut reader = ReaderV1::open(bytes, PUSH_MAGIC, "parser push")?;
+        let marked = bytes.starts_with(MARKED_PUSH_MAGIC);
+        let magic = if marked {
+            MARKED_PUSH_MAGIC
+        } else {
+            PUSH_MAGIC
+        };
+        let mut reader = ReaderV1::open(bytes, magic, "parser push")?;
         let keep = reader.u64()?;
         let held = reader.flag()?;
         let floored = reader.flag()?;
@@ -906,11 +1071,24 @@ impl<'a> PushV1<'a> {
         if !floored && floor != 0 {
             return fail("an absent stop floor is not zero");
         }
+        let suffix = reader.bytes()?;
+        let marks = if marked {
+            let Some(released) = u64::try_from(suffix.len())
+                .ok()
+                .and_then(|length| keep.checked_add(length))
+            else {
+                return fail("the released bytes end past the largest offset");
+            };
+            Some(reader.marks(keep, released)?)
+        } else {
+            None
+        };
         let push = Self {
             keep,
             held,
             stop_floor: floored.then_some(floor),
-            suffix: reader.bytes()?,
+            suffix,
+            marks,
         };
         reader.finish()?;
         Ok(push)
@@ -1143,7 +1321,8 @@ mod tests {
     fn rendered() -> RenderedV1 {
         RenderedV1 {
             segments: vec![
-                SegmentV1::Text("<|user|>look".into()),
+                SegmentV1::Special("<|user|>".into()),
+                SegmentV1::Text("look".into()),
                 SegmentV1::Media(0),
                 SegmentV1::Text(String::new()),
             ],
@@ -1259,15 +1438,18 @@ mod tests {
                 ConstraintRequestV1::decode(bytes).is_ok()
             }));
         }
-        let mut push = Vec::new();
-        PushV1 {
-            keep: 3,
-            held: true,
-            stop_floor: Some(2),
-            suffix: b"abc",
+        for marks in [None, Some(MarksV1::new(&[1..4, 4..6]))] {
+            let mut push = Vec::new();
+            PushV1 {
+                keep: 3,
+                held: true,
+                stop_floor: Some(2),
+                suffix: b"abc",
+                marks,
+            }
+            .encode_into(&mut push);
+            documents.push((push, |bytes| PushV1::decode(bytes).is_ok()));
         }
-        .encode_into(&mut push);
-        documents.push((push, |bytes| PushV1::decode(bytes).is_ok()));
         documents
     }
 
@@ -1302,17 +1484,38 @@ mod tests {
                 held: false,
                 stop_floor: None,
                 suffix: b"",
+                marks: None,
             },
             PushV1 {
                 keep: 9,
                 held: true,
                 stop_floor: Some(0),
                 suffix: b"\xff\xfe",
+                marks: None,
+            },
+            PushV1 {
+                keep: 0,
+                held: false,
+                stop_floor: None,
+                suffix: b"",
+                marks: Some(MarksV1::new(&[])),
+            },
+            PushV1 {
+                keep: 4,
+                held: false,
+                stop_floor: Some(1),
+                suffix: b"abcdef",
+                marks: Some(MarksV1::new(&[1..5, 5..6, 8..10])),
             },
         ] {
             let mut bytes = vec![7; 3];
             push.encode_into(&mut bytes);
-            assert_eq!(PushV1::decode(&bytes), Ok(push));
+            let decoded = PushV1::decode(&bytes).unwrap();
+            assert_eq!(decoded, push);
+            assert_eq!(
+                decoded.marks.map(|marks| marks.iter().collect::<Vec<_>>()),
+                push.marks.map(|marks| marks.iter().collect::<Vec<_>>())
+            );
         }
         let events = events();
         let bytes = events.encode();
@@ -1352,10 +1555,18 @@ mod tests {
             layout[8] = 2;
             assert!(!decodes(&layout));
         }
-        // No document decodes as another kind.
+        // No document decodes as another kind; a push with marks and one
+        // without are one kind.
+        let kind = |bytes: &[u8]| {
+            if bytes.starts_with(MARKED_PUSH_MAGIC) {
+                *PUSH_MAGIC
+            } else {
+                bytes[..8].try_into().unwrap()
+            }
+        };
         for (index, (bytes, _)) in documents.iter().enumerate() {
             for (other, (_, decodes)) in documents.iter().enumerate() {
-                if bytes[..8] != documents[other].0[..8] {
+                if kind(bytes) != kind(&documents[other].0) {
                     assert!(!decodes(bytes), "{index} as {other}");
                 }
             }
@@ -1371,6 +1582,7 @@ mod tests {
             held: false,
             stop_floor: None,
             suffix: b"",
+            marks: None,
         }
         .encode_into(&mut push);
         let mut bad = push.clone();
@@ -1472,6 +1684,141 @@ mod tests {
         assert_eq!(
             RenderRequestV1::decode(&unknown),
             Err(FrontendDocumentErrorV1("unknown content part tag 3".into()))
+        );
+    }
+
+    /// A special segment crosses as segment tag 2 and its text; tag 3 is
+    /// unknown.
+    #[test]
+    fn a_special_segment_is_tag_two_and_its_text() {
+        let rendered = |segment| RenderedV1 {
+            segments: vec![segment],
+            mode: ModeV1::Chat,
+            effort: "low".into(),
+            reasoning_open: false,
+            parser_state: vec![],
+        };
+        let text = rendered(SegmentV1::Text("<|end|>".into())).encode();
+        let special = rendered(SegmentV1::Special("<|end|>".into())).encode();
+        let tag = text
+            .iter()
+            .zip(&special)
+            .position(|(text, special)| text != special)
+            .unwrap();
+        assert_eq!((text[tag], special[tag]), (0, 2));
+        assert_eq!(text[tag + 1..], special[tag + 1..]);
+        assert_eq!(
+            RenderedV1::decode(&special),
+            Ok(rendered(SegmentV1::Special("<|end|>".into())))
+        );
+        let mut unknown = special;
+        unknown[tag] = 3;
+        assert_eq!(
+            RenderedV1::decode(&unknown),
+            Err(FrontendDocumentErrorV1("unknown segment tag 3".into()))
+        );
+    }
+
+    /// The push's fields as they cross, under `magic`.
+    fn push_bytes(magic: &[u8; 8], keep: u64, floor: Option<u64>, suffix: &[u8]) -> Vec<u8> {
+        let mut bytes = magic.to_vec();
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.extend_from_slice(&keep.to_le_bytes());
+        bytes.push(1);
+        bytes.push(u8::from(floor.is_some()));
+        bytes.extend_from_slice(&floor.unwrap_or(0).to_le_bytes());
+        bytes.extend_from_slice(&u32::try_from(suffix.len()).unwrap().to_le_bytes());
+        bytes.extend_from_slice(suffix);
+        bytes
+    }
+
+    /// A push without marks keeps the bytes it had before marks existed,
+    /// and a push with them adds its ranges under its own magic.
+    #[test]
+    fn a_push_without_marks_keeps_its_bytes() {
+        let push = |marks| PushV1 {
+            keep: 5,
+            held: true,
+            stop_floor: Some(3),
+            suffix: b"xyz",
+            marks,
+        };
+        let expected = push_bytes(b"CHOPFPSH", 5, Some(3), b"xyz");
+        let mut bytes = Vec::new();
+        push(None).encode_into(&mut bytes);
+        assert_eq!(bytes, expected);
+        assert_eq!(PushV1::decode(&expected), Ok(push(None)));
+        let mut expected = push_bytes(b"CHOPFPMK", 5, Some(3), b"xyz");
+        expected.extend_from_slice(&2_u32.to_le_bytes());
+        for offset in [2_u64, 6, 7, 8] {
+            expected.extend_from_slice(&offset.to_le_bytes());
+        }
+        let ranges = [2..6, 7..8];
+        push(Some(MarksV1::new(&ranges))).encode_into(&mut bytes);
+        assert_eq!(bytes, expected);
+        let decoded = PushV1::decode(&expected).unwrap();
+        assert_eq!(decoded, push(Some(MarksV1::new(&ranges))));
+        assert_ne!(decoded, push(None));
+        assert_ne!(decoded, push(Some(MarksV1::new(&ranges[..1]))));
+        let marks = decoded.marks.unwrap();
+        assert_eq!((marks.len(), marks.is_empty()), (2, false));
+        assert_eq!(marks.iter().len(), 2);
+        assert_eq!(format!("{marks:?}"), "[2..6, 7..8]");
+    }
+
+    /// Marks ascend, do not overlap, are not empty, and end after the kept
+    /// bytes and within the released ones.
+    #[test]
+    fn marks_outside_the_released_bytes_are_refused() {
+        // Marks are start and end pairs here, so the table can spell any range.
+        let decode = |keep: u64, pairs: &[(u64, u64)]| {
+            let ranges: Vec<_> = pairs.iter().map(|&(start, end)| start..end).collect();
+            let mut bytes = Vec::new();
+            PushV1 {
+                keep,
+                held: false,
+                stop_floor: None,
+                suffix: b"abcdef",
+                marks: Some(MarksV1::new(&ranges)),
+            }
+            .encode_into(&mut bytes);
+            PushV1::decode(&bytes).map(|push| push.marks.unwrap().iter().collect::<Vec<_>>())
+        };
+        // A mark may start in the kept bytes, and marks may touch.
+        assert_eq!(decode(4, &[(0, 5), (5, 10)]), Ok(vec![0..5, 5..10]));
+        // Each refusal comes from a push that keeps 4 of its 10 bytes.
+        for (pairs, refusal) in [
+            (vec![(6, 5)], "mark 6..5 is empty or inverted"),
+            (vec![(6, 6)], "mark 6..6 is empty or inverted"),
+            (
+                vec![(5, 8), (7, 9)],
+                "mark 7..9 starts before the previous mark ends at 8",
+            ),
+            (
+                vec![(8, 9), (5, 6)],
+                "mark 5..6 starts before the previous mark ends at 9",
+            ),
+            (vec![(2, 4)], "mark 2..4 ends within the 4 kept bytes"),
+            (
+                vec![(1, 2), (5, 6)],
+                "mark 1..2 ends within the 4 kept bytes",
+            ),
+            (
+                vec![(9, 11)],
+                "mark 9..11 ends past the released bytes, which end at 10",
+            ),
+        ] {
+            assert_eq!(
+                decode(4, &pairs),
+                Err(FrontendDocumentErrorV1(refusal.into())),
+                "{pairs:?}"
+            );
+        }
+        assert_eq!(
+            decode(u64::MAX - 1, &[]),
+            Err(FrontendDocumentErrorV1(
+                "the released bytes end past the largest offset".into()
+            ))
         );
     }
 

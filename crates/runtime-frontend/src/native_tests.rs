@@ -81,6 +81,7 @@ impl FrontendV1 for FakeFrontendV1 {
         };
         let text = |text: &str| document::SegmentV1::Text(text.into());
         let media = document::SegmentV1::Media;
+        let special = |text: &str| document::SegmentV1::Special(text.into());
         let limit = descriptor().limits.maximum_prompt_bytes;
         let pads = |count: usize| count * "[A]".len();
         Ok(match self.scenario.as_str() {
@@ -93,6 +94,7 @@ impl FrontendV1 for FakeFrontendV1 {
             "media-dropped" => rendered(vec![text("x"), media(1), text("z")], "low"),
             "media-extra" => rendered(vec![media(0), media(1), media(2)], "low"),
             "undeclared-effort" => rendered(vec![media(0), media(1)], "extreme"),
+            "undeclared-special" => rendered(vec![special("[A]"), media(0), media(1)], "low"),
             "media-prompt-at-the-limit" => rendered(
                 vec![text(&"p".repeat(limit - pads(2))), media(0), media(1)],
                 "low",
@@ -482,6 +484,7 @@ fn bad_render_answers_are_refused() {
         "media-out-of-order",
         "media-extra",
         "undeclared-effort",
+        "undeclared-special",
         "reasoning-open-in-chat",
         "malformed",
     ] {
@@ -495,6 +498,12 @@ fn bad_render_answers_are_refused() {
         );
         assert_eq!(error.parameter, None);
     }
+    assert!(
+        render("undeclared-special")
+            .unwrap_err()
+            .message
+            .ends_with(": a special segment needs vocabulary.explicit_special_tokens")
+    );
     assert_eq!(
         render("refuse").unwrap_err(),
         FrontendErrorV1::new("no tools here", Some("tools"))

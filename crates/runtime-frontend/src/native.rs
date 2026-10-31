@@ -237,6 +237,11 @@ impl NativeFormatV1 {
                     placed[index] = true;
                     next = next.max(index + 1);
                 }
+                document::SegmentV1::Special(_) => {
+                    return Err(malformed(
+                        "a special segment needs vocabulary.explicit_special_tokens",
+                    ));
+                }
             }
         }
         // The toolkit's prompt writer refuses a prompt past the declared
@@ -476,6 +481,7 @@ impl FormatParserV1 for NativeParserV1 {
             held: input.held,
             stop_floor: input.stop_floor.map(|floor| floor as u64),
             suffix: &input.completion[keep..],
+            marks: None,
         }
         .encode_into(&mut self.request);
         let limits = &self.descriptor.limits;

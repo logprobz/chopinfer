@@ -498,6 +498,7 @@ mod tests {
             held: false,
             stop_floor: Some(0),
             suffix,
+            marks: None,
         }
         .encode_into(&mut bytes);
         bytes

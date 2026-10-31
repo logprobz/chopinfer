@@ -68,18 +68,20 @@ impl LogitsRowSinkV1 for ProofSink {
 /// The `-wide` lifetimes run the two widest with the `wide_verify` option,
 /// the `-phased` ones the first and a 65-row one with the
 /// `phased_decode_reduce` option, and the drafter ones the C8 lifetime with
-/// each drafter candidate option and the C4 one with all four.
+/// each drafter candidate option, the C4 one with `dspark_hc_fusion` and
+/// `dspark_hc_draft_rows`, and the C4 one with all five.
 #[test]
 fn allocated_lifetimes_journal() {
     use model_deepseek41_contract::execution_options::{
-        DSPARK_CONFIDENCE_STAGED, DSPARK_HC_FUSION, DSPARK_MARKOV_STAGED, DSPARK_MOE_DIRECT,
-        PHASED_DECODE_REDUCE, WIDE_VERIFY,
+        DSPARK_CONFIDENCE_STAGED, DSPARK_HC_DRAFT_ROWS, DSPARK_HC_FUSION, DSPARK_MARKOV_STAGED,
+        DSPARK_MOE_DIRECT, PHASED_DECODE_REDUCE, WIDE_VERIFY,
     };
     let drafter = [
         DSPARK_MARKOV_STAGED,
         DSPARK_HC_FUSION,
         DSPARK_CONFIDENCE_STAGED,
         DSPARK_MOE_DIRECT,
+        DSPARK_HC_DRAFT_ROWS,
     ];
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let mut mismatches = Vec::new();
@@ -150,10 +152,18 @@ fn allocated_lifetimes_journal() {
             32,
             5,
             "-moe-direct",
-            &drafter[3..],
+            &drafter[3..4],
             (106866, 0x39dbc028f5685113),
         ),
-        (4, 16, 5, "-drafter", &drafter, (69278, 0x365dec3de318ec44)),
+        (
+            4,
+            16,
+            5,
+            "-hc-draft-rows",
+            &[DSPARK_HC_FUSION, DSPARK_HC_DRAFT_ROWS],
+            (69262, 0x4db4a4e157875315),
+        ),
+        (4, 16, 5, "-drafter", &drafter, (69206, 0xf7b1328155f83920)),
     ] {
         let (host, mut instance) = if options.is_empty() {
             create_with_limits(shape, 32, 192)

@@ -44,3 +44,9 @@ finisher at five column groups by six rows per routed token, the down
 finisher at 40 strips by the step's rows, the pack, gate and down queues
 at their capacity grids). Positions belong to that capture pair;
 regenerate the edits after a rebase.
+
+On 2026-10-31 the journal proof of this change against the parent tip it
+is based on was PROVEN with full history coverage, the declaration read at
+the head commit: 23 journals identical, 2 proven, 25 of 25 fixture
+histories compared. Each proven fixture removed 1280 operations and added
+1652 operations and 48 resolves.

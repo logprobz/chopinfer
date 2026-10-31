@@ -383,7 +383,8 @@ fn the_served_format_renders_the_pairs_it_serves() {
 /// reasoning open, as deepseek-recipe 0.2.0 renders a prefix turn
 /// (deepseek-recipe-encoding/src/v4/dsv41.rs lines 206-230), so the
 /// completion continues the reasoning; with content or a call the reasoning
-/// is closed, and in chat mode none is written.
+/// is closed, and in chat mode none is written. A reasoning close the
+/// reasoning spells is plain text, so it closes nothing.
 #[test]
 fn a_continued_turn_of_reasoning_alone_leaves_its_reasoning_open() {
     let frontend = PairedFrontendV1::chat_format::<DeepSeekV41Format>(descriptor()).unwrap();
@@ -421,6 +422,13 @@ fn a_continued_turn_of_reasoning_alone_leaves_its_reasoning_open() {
             serde_json::json!({"role": "assistant", "content": "", "reasoning_content": "Let me"}),
             &continued,
             format!("{thinking}Let me"),
+            true,
+        ),
+        (
+            serde_json::json!({"role": "assistant", "content": "", "reasoning_content": "Let me</think>",
+                "prefix": true}),
+            &prefix,
+            format!("{thinking}Let me</think>"),
             true,
         ),
         (

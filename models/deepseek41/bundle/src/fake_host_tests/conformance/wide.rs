@@ -6,9 +6,10 @@
 //! `speculation.rows` raised to 192 and nothing else changed, so its graph
 //! budget stays at 64 rows and every wider step runs eagerly. The
 //! `wide_verify` candidate is swept beside it as `tp4-dspark-rows192-wide`,
-//! the same override with the option on, and the `phased_decode_reduce`
+//! the same override with the option on, the `phased_decode_reduce`
 //! candidate as `tp4-dspark-rows192-phased`, whose decode buckets and verify
-//! widths reach every phased form. Separate names keep their
+//! widths reach every phased form, and the `verify_row_fusions` candidate as
+//! `tp4-dspark-rows192-rowfuse`. Separate names keep their
 //! allowlist entries apart from the default profile, whose full sweep
 //! refuses entries it never reaches; entries for the shapes they share
 //! name `tp4-dspark*`.
@@ -20,7 +21,7 @@ use super::*;
 use bundle_runtime::fake_host::conformance::route_guard;
 use conformance::Startup;
 use model_deepseek41_contract::{
-    execution_options::{PHASED_DECODE_REDUCE, WIDE_VERIFY},
+    execution_options::{PHASED_DECODE_REDUCE, VERIFY_ROW_FUSIONS, WIDE_VERIFY},
     serving::MAX_VERIFY_ROWS,
 };
 use runtime_bundle_sdk::warmup::VerifyShape;
@@ -32,11 +33,14 @@ const PROFILE: &str = "tp4-dspark-rows192";
 const WIDE_PROFILE: &str = "tp4-dspark-rows192-wide";
 /// The override with the `phased_decode_reduce` candidate on.
 const PHASED_PROFILE: &str = "tp4-dspark-rows192-phased";
+/// The override with the `verify_row_fusions` candidate on.
+const ROW_FUSIONS_PROFILE: &str = "tp4-dspark-rows192-rowfuse";
 /// Every override, and the candidate option each turns on.
-const OVERRIDES: [(&str, Option<&str>); 3] = [
+const OVERRIDES: [(&str, Option<&str>); 4] = [
     (PROFILE, None),
     (WIDE_PROFILE, Some(WIDE_VERIFY)),
     (PHASED_PROFILE, Some(PHASED_DECODE_REDUCE)),
+    (ROW_FUSIONS_PROFILE, Some(VERIFY_ROW_FUSIONS)),
 ];
 /// The profile the override raises.
 const BASE: &str = "tp4-dspark";
@@ -174,7 +178,7 @@ impl Startup for Wide {
     }
 }
 
-/// The overrides are two more configurations beside the package's
+/// The overrides are more configurations beside the package's
 /// profiles, and their instances start like served ones: create, prefix
 /// description and the host's startup warmup at 192 verify rows.
 #[test]
@@ -183,6 +187,7 @@ fn the_override_starts_beside_the_profiles() {
         ("tp4_dspark_rows192", PROFILE),
         ("tp4_dspark_rows192_wide", WIDE_PROFILE),
         ("tp4_dspark_rows192_phased", PHASED_PROFILE),
+        ("tp4_dspark_rows192_rowfuse", ROW_FUSIONS_PROFILE),
         ("tp4_ar", "tp4-ar"),
         ("tp4_dspark", BASE),
     ]);
@@ -246,6 +251,15 @@ mod wide_route_sweep {
     fn tp4_dspark_rows192_phased() {
         route_guard::sweep::<Wide>(
             PHASED_PROFILE,
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
+            env!("CARGO_PKG_NAME"),
+        );
+    }
+
+    #[test]
+    fn tp4_dspark_rows192_rowfuse() {
+        route_guard::sweep::<Wide>(
+            ROW_FUSIONS_PROFILE,
             include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
             env!("CARGO_PKG_NAME"),
         );

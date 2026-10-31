@@ -60,12 +60,21 @@ pub(crate) trait RowsProjection: Send + Sync {
     fn lower(&self, rows: u32, spans: Spans) -> Result<Vec<Lowered>, Refusal>;
 }
 
-/// The verify rows an instance runs in row tiles, if any: the wide verify
-/// buckets above the 64-row decode route (the `wide_verify` option).
+/// The verify rows an instance runs in row tiles, if any: 33 to 64 rows
+/// with the `f32_row_tiles` candidate option, and the wide verify buckets
+/// above the 64-row decode route with the `wide_verify` option.
 pub(crate) fn admitted(shape: &crate::shape::Shape) -> Option<[u32; 2]> {
-    use model_deepseek41_contract::serving::VERIFY_DECODE_ROWS;
-    let last = shape.wide_verify_rows().last().copied()?;
-    Some([VERIFY_DECODE_ROWS + 1, last])
+    use model_deepseek41_contract::serving::{DECODE_BATCH, VERIFY_DECODE_ROWS};
+    let narrow = (shape.f32_row_tiles
+        && shape.verify_rows_within(VERIFY_DECODE_ROWS) > DECODE_BATCH)
+        .then(|| shape.verify_rows_within(VERIFY_DECODE_ROWS));
+    let last = shape.wide_verify_rows().last().copied().or(narrow)?;
+    let first = if narrow.is_some() {
+        DECODE_BATCH + 1
+    } else {
+        VERIFY_DECODE_ROWS + 1
+    };
+    Some([first, last])
 }
 
 /// A projection's row tiles, prepared only for an instance that admits
@@ -149,8 +158,9 @@ mod tests {
     use bundle_runtime::geometry::Ranks;
     use model_deepseek41_contract::geometry::FLASH;
 
-    /// Only a Flash TP4 target with the wide verify buckets prepares row
-    /// tiles, and they serve only verify steps above 64 rows.
+    /// Without the `f32_row_tiles` option only a Flash TP4 target with the
+    /// wide verify buckets prepares row tiles, and they serve only verify
+    /// steps above 64 rows.
     #[test]
     fn row_tiles_follow_the_wide_verify_buckets() {
         let asks = Asks::default();
@@ -199,6 +209,61 @@ mod tests {
                     );
                     assert!(!op.for_phase(Phase::Decode(rows)));
                     assert!(!op.for_phase(Phase::Prefill { rows }));
+                }
+            }
+        }
+    }
+
+    /// The `f32_row_tiles` option adds the head's and the compressor's
+    /// tiles at 33 to 64 rows; the router keeps its separate spans there.
+    #[test]
+    fn row_tile_option_adds_the_measured_narrow_rows() {
+        let asks = Asks::default();
+        let tp4 = Shape::new(&FLASH, Ranks::TP4)
+            .unwrap()
+            .with_f32_row_tiles(true);
+        for shape in [
+            tp4,
+            tp4.with_verify_rows(192)
+                .with_wide_verify(false)
+                .with_f32_row_tiles(false),
+            Shape::new(&FLASH, Ranks::TP2)
+                .unwrap()
+                .with_verify_rows(64)
+                .with_f32_row_tiles(true),
+        ] {
+            assert!(admitted(&shape).is_none());
+        }
+        for (verify_rows, wide, last) in [
+            (33, false, 33),
+            (64, false, 64),
+            (192, false, 64),
+            (96, true, 96),
+            (192, true, 192),
+        ] {
+            let shape = tp4.with_verify_rows(verify_rows).with_wide_verify(wide);
+            assert_eq!(admitted(&shape), Some([33, last]));
+            for (n, name, served) in [
+                (32320, "head", 33..=last),
+                (512, "compressor", 33..=last),
+                (384, "router", 65..=last),
+            ] {
+                let op = prepare(&shape, &asks, name, n, 5120, true).unwrap();
+                assert_eq!(
+                    op.is_some(),
+                    !served.is_empty(),
+                    "{name} {verify_rows} {wide}"
+                );
+                for rows in 1..=192 {
+                    let phase = Phase::Verify {
+                        rows,
+                        items: rows.div_ceil(6),
+                    };
+                    assert_eq!(
+                        op.as_ref().is_some_and(|op| op.for_phase(phase)),
+                        served.contains(&rows),
+                        "{name} rows={rows} verify_rows={verify_rows} wide={wide}"
+                    );
                 }
             }
         }

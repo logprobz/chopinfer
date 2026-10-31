@@ -13,6 +13,10 @@ pub const DIAGNOSTIC_STEP_LOGS: &str = "diagnostic_step_logs";
 /// Candidate: Flash TP4 verify steps above the 64-row decode route run the
 /// wide verify buckets (`crate::verify_bounds::WIDE`).
 pub const WIDE_VERIFY: &str = "wide_verify";
+/// Candidate: Flash TP4 verify steps of 33 to 64 rows run the measured
+/// whole-K exact F32 row tiles (`f32.rows.verify`) of the vocabulary head
+/// and the compressor.
+pub const F32_ROW_TILES: &str = "f32_row_tiles";
 pub const DEFAULT_PLANS: usize = 16;
 pub const MAX_PLANS: usize = 64;
 /// The served warmup fits within 512 graph handles per rank, leaving room
@@ -26,9 +30,10 @@ pub struct Options {
     pub dspark_graph_handles_per_rank: usize,
     pub diagnostic_step_logs: bool,
     pub wide_verify: bool,
+    pub f32_row_tiles: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 6] {
+pub fn declarations() -> [ModelOptionV1; 7] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -41,6 +46,10 @@ pub fn declarations() -> [ModelOptionV1; 6] {
                 minimum: 0,
                 maximum: i64::MAX,
             },
+        ),
+        (
+            F32_ROW_TILES,
+            OptionDefinitionV1::Boolean { default: false },
         ),
         (
             PREFILL_PLAN_CACHE_PLANS,
@@ -106,6 +115,7 @@ impl Options {
                 .as_bool()
                 .expect("checked boolean"),
             wide_verify: values[WIDE_VERIFY].as_bool().expect("checked boolean"),
+            f32_row_tiles: values[F32_ROW_TILES].as_bool().expect("checked boolean"),
         })
     }
 }
@@ -165,6 +175,7 @@ mod tests {
             dspark_graph_handles_per_rank: 512,
             diagnostic_step_logs: false,
             wide_verify: false,
+            f32_row_tiles: false,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -181,6 +192,7 @@ mod tests {
             (DSPARK_GRAPH_HANDLES_PER_RANK.into(), "0".into()),
             (DIAGNOSTIC_STEP_LOGS.into(), "true".into()),
             (WIDE_VERIFY.into(), "true".into()),
+            (F32_ROW_TILES.into(), "true".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -192,6 +204,7 @@ mod tests {
                 dspark_graph_handles_per_rank: 0,
                 diagnostic_step_logs: true,
                 wide_verify: true,
+                f32_row_tiles: true,
             }
         );
         assert!(!declaration.is_qualified(&resolved));
@@ -209,6 +222,7 @@ mod tests {
             (PREFILL_PLAN_CACHE_VERIFY, "1"),
             (DIAGNOSTIC_STEP_LOGS, "\"true\""),
             (WIDE_VERIFY, "1"),
+            (F32_ROW_TILES, "1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),
         ] {

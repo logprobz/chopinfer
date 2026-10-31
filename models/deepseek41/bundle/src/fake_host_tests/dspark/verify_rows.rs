@@ -163,6 +163,61 @@ fn target_programs_lower_at_wide_verify_rows() {
     assert_eq!(host.acquired.get(), host.released.get());
 }
 
+/// With the `f32_row_tiles` option, verify steps of 33 to 64 rows run the
+/// head's and the compressor's measured row tiles in place of their cached
+/// separate spans; the router and the index weights keep their spans.
+#[test]
+fn row_tile_option_replaces_the_head_and_compressor_spans() {
+    use model_deepseek41_contract::execution_options::F32_ROW_TILES;
+    let (host, mut instance) = create_with_options(
+        Shape::new(&FLASH, Ranks::TP4).unwrap(),
+        16,
+        128,
+        &[
+            (DSPARK_GRAPH_HANDLES_PER_RANK, 0.into()),
+            (F32_ROW_TILES, true.into()),
+        ],
+    );
+    for slot in 0..16 {
+        execute(
+            &mut instance,
+            &host,
+            &super::super::prompt(slot + 1, slot, 0, 3, true),
+        );
+        instance.commit().unwrap();
+    }
+    let spans = |n| {
+        format!("chop_deepseek41_verify_f32_n{n}_k5120_v1_cached_decode_v1_spans_m64_compute_v1")
+    };
+    for rows in [33_u32, 40, 48, 63, 64] {
+        let (target, _, accepted) = verify_step(&mut instance, &host, 16, rows);
+        let observed = grids(&target);
+        let launched =
+            |symbol: &str| -> usize { observed.get(symbol).map_or(0, |g| g.values().sum()) };
+        assert_eq!(
+            observed.get("chop_deepseek41_verify_f32_n32320_k5120_rows_f256_r32_w32x32_s2_k64_v1"),
+            Some(&[((rows.div_ceil(32), 127, 1), 4)].into()),
+            "head at {rows} rows"
+        );
+        assert_eq!(
+            observed.get("chop_deepseek41_verify_f32_n512_k5120_rows_f64_r32_w32x16_s3_k64_z8_v1"),
+            Some(&[((rows.div_ceil(32), 8, 8), 7 * 4)].into()),
+            "compressor at {rows} rows"
+        );
+        assert_eq!(launched(&spans(32320)), 0);
+        assert_eq!(launched(&spans(512)), 0);
+        assert_eq!(launched(&spans(384)), 40 * 4);
+        assert_eq!(launched(&spans(32)), 8 * 4);
+        assert!(!observed.keys().any(|s| s.contains("n384_k5120_rows")));
+        instance.commit_accepted(&accepted).unwrap();
+    }
+    for request in 1..=16 {
+        instance.retire_request(request).unwrap();
+    }
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
 /// `CHOPINFER_VERIFY_ROW_JOURNALS`, a directory outside the repository that
 /// receives each exported step's journals.
 fn journal_directory() -> Option<std::path::PathBuf> {

@@ -126,19 +126,23 @@ mod tests {
         use bundle_runtime::geometry::Ranks;
         use model_deepseek41_contract::geometry::FLASH;
         let tp4 = crate::shape::Shape::new(&FLASH, Ranks::TP4).unwrap();
-        for rows in [32, 64, 65, 128, 192] {
-            for wide in [false, true] {
-                let shape = tp4.with_verify_rows(rows).with_wide_verify(wide);
+        for rows in [32, 33, 64, 65, 128, 192] {
+            for (wide, tiles) in [(false, false), (true, false), (false, true), (true, true)] {
+                let shape = tp4
+                    .with_verify_rows(rows)
+                    .with_wide_verify(wide)
+                    .with_f32_row_tiles(tiles);
                 assert_eq!(
                     crate::Kernels::loads(f32_verify_rows::CUBIN, &shape),
-                    wide && rows > 64
+                    (wide && rows > 64) || (tiles && rows > 32)
                 );
             }
         }
         let shape = crate::shape::Shape::new(&FLASH, Ranks::TP2)
             .unwrap()
             .with_verify_rows(192)
-            .with_wide_verify(true);
+            .with_wide_verify(true)
+            .with_f32_row_tiles(true);
         assert!(!crate::Kernels::loads(f32_verify_rows::CUBIN, &shape));
     }
 
@@ -187,6 +191,25 @@ mod tests {
                 let mut wrong = spans(n.into(), rows, bytes);
                 wrong.output.buffer = wrong.activation.buffer;
                 assert!(op.lower(rows, wrong).is_err());
+            }
+        }
+        // At 33 to 64 rows the compressor takes its eight-slice tile and
+        // the head its one tile.
+        for (n, tag, workspace) in [
+            (
+                512_u64,
+                "f64_r32_w32x16_s3_k64_z8",
+                64 * 5120 * 6 + 64 * 512 * 40 * 4 + 16 * 16,
+            ),
+            (32320, "f256_r32_w32x32_s2_k64", 64 * 5120 * 6 + 16 * 16),
+        ] {
+            let op = crate::Kernels::rows_verify_projection(n as u32, 5120, [33, 64]).unwrap();
+            assert_eq!(op.info().workspace, workspace);
+            assert!(!op.admits(32) && !op.admits(65));
+            for rows in 33..=64 {
+                let bytes = op.workspace_bytes(rows).unwrap();
+                let calls = op.lower(rows, spans(n, rows, bytes)).unwrap();
+                assert!(calls[1].launch.symbol.ends_with(&format!("_rows_{tag}_v1")));
             }
         }
         // The router keeps its separate spans at 33 to 64 rows.

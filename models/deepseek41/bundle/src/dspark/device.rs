@@ -314,11 +314,16 @@ impl Device {
     }
 
     pub fn bind_stages(&mut self, buffers: &[RankBuffers]) -> Result<(), String> {
+        let views = if self.shape.dspark_hc_fusion {
+            crate::lower::dspark::stage_views_with_next
+        } else {
+            crate::lower::dspark::stage_views
+        };
         self.stages = (0..self.config.stages)
             .map(|stage| {
                 buffers
                     .iter()
-                    .map(|rank| crate::lower::dspark::stage_views(rank, self.shape.geometry, stage))
+                    .map(|rank| views(rank, self.shape.geometry, stage))
                     .collect()
             })
             .collect::<Result<_, _>>()?;

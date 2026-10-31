@@ -126,6 +126,26 @@ pub fn stage_views(buffers: &RankBuffers, g: &Geometry, stage: u32) -> Result<Ra
         return Err("DSpark stage is outside geometry".into());
     }
     let mut result = buffers.clone();
+    alias_stage(&mut result, buffers, g, stage);
+    Ok(result)
+}
+
+/// `stage_views`, with the next stage's namespace bound too, for a stage
+/// whose last boundary runs the next stage's mixer and input norm (the
+/// `dspark_hc_fusion` candidate).
+pub fn stage_views_with_next(
+    buffers: &RankBuffers,
+    g: &Geometry,
+    stage: u32,
+) -> Result<RankBuffers, String> {
+    let mut result = stage_views(buffers, g, stage)?;
+    if stage + 1 < g.dspark_stages() {
+        alias_stage(&mut result, buffers, g, stage + 1);
+    }
+    Ok(result)
+}
+
+fn alias_stage(result: &mut RankBuffers, buffers: &RankBuffers, g: &Geometry, stage: u32) {
     let prefix = format!("mtp.{stage}.");
     let target = format!("layers.{}.", g.layers() + stage);
     for (name, &span) in &buffers.views {
@@ -133,7 +153,6 @@ pub fn stage_views(buffers: &RankBuffers, g: &Geometry, stage: u32) -> Result<Ra
             result.views.insert(format!("{target}{suffix}"), span);
         }
     }
-    Ok(result)
 }
 
 /// The two ordinary sublayers, with ratio-zero attention, on all five

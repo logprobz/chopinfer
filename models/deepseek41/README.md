@@ -186,6 +186,7 @@ them. A non-default value is unqualified.
 
 | Option | Default | Meaning |
 |---|---|---|
+| `attention_merge_ceil` | `false` | Candidate: Flash TP4 decode steps and verify steps of at most 64 rows launch each attention heads merge whose WO_a folds row status, the target's and the drafter's, as its quantizing twin, which also writes the codes, scales and status of the sliced quantizer that no longer launches. Bitwise in the lab; its chain timings there differ from the pair by about half a microsecond a layer either way ([small-kernel latency](lab/small-kernel-latency.md#quantizing-attention-merge-candidate)). Served step-time acceptance decides. |
 | `diagnostic_step_logs` | `false` | Emit DSpark phase, prefetch, Engram, commit and drafter-confidence JSON records. |
 | `dspark_coupled_drafts` | `true` | Couple sampled drafts to the target sampler's noise. |
 | `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |
@@ -196,12 +197,14 @@ them. A non-default value is unqualified.
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit and each reused plan template again and refuse a differing plan. |
 | `prefill_upper_skip` | `true` | Use upper-skip prefill; requires nonzero guaranteed chunk ends. |
+| `router_prepare_fusion` | `false` | Candidate: Flash TP4 decode and verify steps of at most 32 rows fold each target layer's router finish prepare into the router F32 producer, which classifies its own rows in one cluster of eight CTAs. Bitwise in the lab but slower there, by about 0.5 us a layer at 6 rows and 8 us at 32 ([small-kernel latency](lab/small-kernel-latency.md#classifying-router-producer-candidate)); not proposed for adoption. |
 | `shared_overlap_max_rows` | `4294967295` | Largest graph bucket that overlaps shared-expert and eligible window-KV work. Positive values only; the default covers every admitted bucket. |
 | `text_config.candidate_topk_blocks` | `2048` | Candidate block pool, checked with index top-k and the partial newest block. |
 | `text_config.index_topk` | `512` | Index selection top-k, from 1 to 512. |
 | `text_config.indexer_mma` | `true` | Use the guarded native Flash index scorer where eligible. |
 | `text_config.indexer_prefill_tile` | `true` | Enable the qualified Flash tiled indexer routes. |
 | `verify_graph_rows` | `64` | Widest graphed verify step; wider admitted steps run eagerly. |
+| `verify_row_fusions` | `false` | Candidate: Flash TP4 verify steps of at most 32 rows launch the decode steps' fused query norm and ceil and fused window norm, RoPE, ceil and store, and the drafter's window writes of at most the draft rows quantize with the parallel ceil32 entry instead of the serial one. Bitwise in the lab ([small-kernel latency](lab/small-kernel-latency.md#verify-row-fusions-candidate)); served step-time acceptance remains required before adoption. |
 | `wide_verify` | `false` | Candidate: Flash TP4 eager verify steps of 65 to 192 rows prepare their row-local stages and HC boundaries at the wide verify buckets (128 rows and the verify rows) and launch the decode entries a 64-row step uses, fold their dense projections through wide folds at those buckets, run their routed experts through the wide direct MoE queues, and run the vocabulary head, router and compressor in their measured exact F32 row tiles. Fixed-batch GPU replays and kernel-lab MoE pairs matched the default bitwise; served step-time acceptance remains required before adoption. |
 
 TP4 native-KV single-item DMA prefill overlaps both prepared Engram gathers

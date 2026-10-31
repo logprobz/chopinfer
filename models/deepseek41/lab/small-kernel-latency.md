@@ -1,9 +1,12 @@
-# Small-kernel latency at C1 to C8
+# Small-kernel latency at C1 to C16
 
-Where a DSpark step's GPU time goes at one to eight concurrent sequences
-on native Flash TP4, what earlier fusion work did about it, and which
-fusions that keep every value and every add are left. The first of them
-is built as the `verify_row_fusions` candidate option (below).
+Where a DSpark step's GPU time goes at one to sixteen concurrent
+sequences on native Flash TP4, what earlier fusion work did about it, and
+which fusions that keep every value and every add are left. Proposals 1
+to 4 are built as candidate options (`verify_row_fusions`, which holds
+the first two, `attention_merge_ceil` and `router_prepare_fusion`), and
+proposal 5 as a lab prototype; [estimates](#estimates-at-c1-c8-and-c16)
+puts their expected gains side by side.
 
 ## Method
 
@@ -14,6 +17,8 @@ profile, CUDA graphs traced per node, read on device 0 on 2026-10-31:
 - C8: 209 steps of 32 verify rows (four per sequence). The same capture
   holds 551 plain decode steps at C32, 32 rows each, which run the decode
   fusions and give their served times.
+- C16: an export of a C16 run from the same day, read the same way: 198
+  steps of 64 verify rows.
 
 Steps are split at the acceptance kernel. Each kernel is charged its
 advance: how far it moves the end of the device's busy time
@@ -41,6 +46,10 @@ Per step, device 0. Busy is the sum of advances.
 | Engram | 3 | 0.02 | 3 | 0.02 |
 | Busy | 1,874 | 13.68 | 1,822 | 30.33 |
 | Idle | | 0.51 | | 0.61 |
+
+A C16 step launches 2,087 kernels and is busy for 50.2 ms, with 1.41 ms
+idle; its 95 reduce-scatters and 95 all-gathers advance 27.1 and 29.6 us
+a launch (C1: 6.7 and 6.3 over 88 each; C8: 15.4 and 18.3).
 
 The dense projections include the `_admit_v1` decode folds (141
 launches and 0.48 ms per C1 step): they are the projections themselves,
@@ -132,15 +141,17 @@ Engram hash and sampling, and 0.11 ms before the layers 1 to 13 graph.
 ## Proposals
 
 Fusions that keep each value, each add and its order, by expected gain
-per step against risk. Estimates come from the served advances above.
+per step against risk, as first estimated from the served advances above.
+The built candidates' measured estimates replace these
+([estimates](#estimates-at-c1-c8-and-c16)).
 
 | # | Fusion | Launches per step | C1 ms | C8 ms | Work |
 | ---: | --- | ---: | ---: | ---: | --- |
 | 1 | Decode row fusions at verify rows of at most 32 | -120 to -123 | 0 to 0.05 | 0.15 | built (below) |
-| 2 | Drafter window ceil: the parallel ceil32 or the fused window | 0 to -12 | 0.06 | 0.06 | admission |
-| 3 | Attention heads merge and output ceil in one kernel | -40 to -43 | 0.05 to 0.07 | 0.12 to 0.17 | new kernel |
-| 4 | Router finish prepare into the finish | -40 | up to 0.08 | up to 0.12 | new kernel, unread |
-| 5 | Reduce-scatter and all-gather in one launch | -88 | 0.13 to 0.26 | 0.26 to 0.5 | new kernel, high risk |
+| 2 | Drafter window ceil: the parallel ceil32 or the fused window | 0 to -12 | 0.06 | 0.06 | built (below) |
+| 3 | Attention heads merge and output ceil in one kernel | -40 to -43 | 0.05 to 0.07 | 0.12 to 0.17 | built (below) |
+| 4 | Router finish prepare into the router producer | -40 | up to 0.08 | up to 0.12 | built, slower (below) |
+| 5 | Reduce-scatter and all-gather in one launch | -88 | 0.13 to 0.26 | 0.26 to 0.5 | lab prototype (below) |
 | 6 | Drafter HC on the target's producer and finisher | 0 | 0.05 | 0.08 | unchecked |
 
 1. The decode steps' fused query norm and ceil (5.30 us at 32 rows in
@@ -156,20 +167,24 @@ per step against risk. Estimates come from the served advances above.
    ([wide-verify-ceil.md](../journal-changes/wide-verify-ceil.md), which
    moved wide verify steps to the parallel entry and left drafter
    forwards on theirs by scope).
-3. The output ceil needs each row's amax over the merged heads. A merge
-   that quantizes each row once its last head arrives (a per-row arrival
-   count) keeps the merge's adds and the ceil's amax, scale and
-   rounding, removing a launch and a round trip through global memory.
-4. Prepare costs 1.9 to 3.1 us per layer before the finish. Its
-   arithmetic is selection and integer work, likely exact, but has not
-   been read.
+3. WO_a's input quantizer, where WO_a folds row status, is the sliced
+   ceil: one E4M3 scale per 32-column group, and each group lies within
+   one head. So the merge CTA that writes a row's head can quantize that
+   head's groups itself after a block barrier and OR their flags into the
+   row status, as the sliced quantizer does. No per-row amax or arrival
+   count is needed (the first draft of this note assumed one).
+4. The prepare runs before the router F32 producer, not the finish: it
+   classifies which rows the producer's tensor path may take (every K
+   value a tensor operand) and resets the finish's arrival ticket, 1.9 to
+   3.1 us a layer. The producer can classify its own rows if one CTA
+   cluster covers every K of a token block.
 5. The largest gain and the largest risk. Each rank would still sum its
    slice of the four partials in rank order and then gather the slices,
    so the bytes match; one kernel then waits on peer flags between the
    phases, which needs every CTA resident on every rank and care with
    programmatic dependent launch. A one-shot all-reduce stays ruled out
    here: reads from several peers at once collapse to about 2.3 GB/s on
-   this host.
+   this host. Such a kernel already exists (below).
 6. The drafter's lagged mix takes 25.6 to 31.4 us a launch against 17.7
    us for a target boundary's producer and finisher. Whether its
    arithmetic matches the target's pair has not been checked.
@@ -214,7 +229,119 @@ chain's 10.24 us except one step slower at 1, 2 and 12 rows on one GPU.
 The estimates in the proposals therefore come from the served graphs. The option goes to served step-time acceptance at C1
 to C8 before any adoption.
 
+## Drafter window ceil
+
+`verify_row_fusions` also carries proposal 2. The drafter's catch-up and
+block window writes were prepared at prefill capacity, so they launched
+the serial `latent_ceil32_v1`. With the option they also prepare writes
+of at most the draft rows, which select the parallel
+`latent_ceil32_parallel_v1` the target's window takes; its groups compute
+the same codes, scales and status. Wider writes, such as the 85-row
+catch-up writes at C8, keep the serial entry. In the C4 and C8 allocated
+journals the 36 serial launches become parallel ones.
+
+The serial and parallel ceil lab pairs (`ceil_parallel`) now also run 3,
+5 and 12 rows. On 2026-10-31, on two idle GPUs, each GPU passed 4,695
+bitwise cases over every serial and parallel ceil pair at 14 row counts
+from 1 to 64 and detected all 939 negative controls. The ceil32 pair took 20.5
+against 8.2 us for one launch. In the served graphs the drafter's serial
+ceil32 advances 12.35, 13.56 and 13.60 us a launch at C1, C8 and C16
+against the target's parallel 1.99, 2.56 and 2.74 us. At the 6.1, 6 and
+12 launches per step the option moves, that saves about 0.063, 0.066 and
+0.13 ms a step.
+
+## Quantizing attention merge candidate
+
+The `attention_merge_ceil` model option, off by default, serves proposal
+3. Each merge entry of the latent sources has a quantizing twin
+(`latent/sources_merge_ceil.cuh`, lock family `latent_merge_ceil`): the
+merge stores every BF16 output exactly as before, then after a block
+barrier each warp quantizes its head's 32-column groups with the
+parallel ceil's group function, stores codes and scale codes and ORs
+its flags into the row status, as the sliced quantizer does. The twin
+takes the merge's plan, arguments and bindings followed by the codes,
+scales and status buffers and a row offset. Where WO_a runs as a status
+fold, every decode and verify attention, the target's and the
+drafter's, launches the twin, and the sliced quantizer no longer
+launches. Verify steps above 64 rows, past the sliced quantizer's
+capacity, keep the pair. Only an instance with the option loads the
+cubin. The fake-host tests pair instances with the option off and on at
+6, 12, 32, 33, 64 and 65 verify rows and 1, 2 and 8 decode rows: every
+other launch keeps its symbol, grid and arguments.
+
+The lab pair (`merge_ceil`) compares each twin with the served merge
+and sliced quantizer. On 2026-10-31, on two idle GPUs, each GPU passed
+2,492 bitwise cases (14 patterns, every decode twin at 11 row counts up
+to its 32 rows and every verify twin at 14 up to 64) and detected all 56
+negative controls; compute-sanitizer
+memcheck and synccheck found no errors and racecheck no hazards, with no
+Xid. Single launches sit on the timer's 2.05 us step. In chains of 16
+launches the twin took 3.84 against 3.58 us a layer at 6 rows with the
+32-group quantizer C1 serves, 6.40 against 5.89 us at 32 rows and 9.60
+against 10.11 us at 64 rows with the 16-group quantizer C8 and C16
+serve. At 43, 43 and 46 merges a step that is 0.011 and 0.022 ms slower
+at C1 and C8 and 0.024 ms faster at C16, within what the chain timing
+resolves, so served step time decides.
+
+## Classifying router producer candidate
+
+The `router_prepare_fusion` model option, off by default, serves
+proposal 4. The classifying producer (`gemm/exact_f32_classified.cuh`,
+lock family `f32_router_classified`) is the cached exact F32 decode
+regrouped into eight CTAs of five warps (the 40 chains of K 5120), one
+cluster per token block and feature tile, since the runtime's portable
+cluster limit of eight cannot hold the served ten CTAs of four warps.
+Each warp stages and checks its chain, the CTA and then the cluster AND
+the row flags through distributed shared memory, rows outside the domain
+are zeroed in shared memory (the zeros decode stages for them) and take
+the SIMT path, and block (0,0,0) resets the finish's ticket. Each target
+layer of a step of at most 32 rows launches it in place of the prepare
+and the producer; the drafter's router and wider steps keep both.
+
+The lab pair (`router_classified`) passed 260 bitwise cases (13 row
+counts, 10 patterns, tensor and tile-out weights) and detected both
+negative controls on each of two GPUs on 2026-10-31, with clean
+sanitizers. It is slower: in chains of 16, 7.42 against 6.91 us a layer
+at 6 rows and 22.4 against 14.5 us at 32 rows, about 0.020 ms a step at
+C1 and 0.32 ms at C8; C16's 64-row steps do not take it. The regrouped
+grid and its cluster exchange cost more than the launch saved, and the
+lab does not separate the two. The option should not be adopted, and no
+fixed-batch replays were run for it. Computing the row domain where the
+router's input rows are produced, upstream of the producer, would avoid
+the cluster.
+
+## Estimates at C1, C8 and C16
+
+Expected savings per step on device 0, in ms (negative is slower), from
+the served advances where a candidate removes or replaces a launch the
+captures show and from the lab chain timings where it changes one. C1
+steps verify 6 rows, C8 steps 32 and C16 steps 64. None of these is
+served step-time evidence, which adoption still needs.
+
+| Candidate | C1 | C8 | C16 | Basis |
+| --- | ---: | ---: | ---: | --- |
+| `verify_row_fusions`, target query and window chains | 0 to 0.05 | 0.15 | 0 | served advances; steps above 32 rows keep the chains |
+| `verify_row_fusions`, drafter window ceil | 0.063 | 0.066 | 0.13 | served advances of the serial and parallel ceil32 |
+| `attention_merge_ceil` | -0.011 | -0.022 | 0.024 | lab chains, 43, 43 and 46 merges a step |
+| `router_prepare_fusion` | -0.020 | -0.32 | 0 | lab chains; 64-row steps keep both launches |
+
+The C16 inventory is 2,087 launches and 50.2 ms busy a step, so the
+largest of these is about a quarter of a percent of a C16 step and the
+two `verify_row_fusions` parts together at most about 0.8 percent of a C1
+step (13.68 ms busy) and 0.7 percent of a C8 step (30.33 ms).
+
 ## Rerunning
+
+The candidates' lab pairs run on one GPU each through their ignored
+`bitwise_graph_live_rows_and_timing_on_gpu` tests (`ceil_parallel`,
+`merge_ceil`, `router_classified`), each after its ignored
+`frozen_modules_are_complete` stages the frozen modules: with
+`CHOPINFER_CEIL_ARTIFACTS`, `CHOPINFER_MERGE_CEIL` or
+`CHOPINFER_ROUTER_CLASSIFIED` naming the directory and the matching
+`_EXPORT` variable set, and the kernel lab's `probe_sm120.cubin` in it
+(`CHOPINFER_CEIL_TIMING_PROBE` for the ceil pairs). The merge and router
+pairs' `sanitized_twin_on_gpu` and `sanitized_producer_on_gpu` run under
+compute-sanitizer.
 
 Stage the frozen lab artifacts outside the tree with
 `CHOPINFER_NORM_EXPORT=1`, `CHOPINFER_NORM_ARTIFACTS` naming the

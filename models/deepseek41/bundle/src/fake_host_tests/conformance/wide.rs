@@ -6,7 +6,9 @@
 //! `speculation.rows` raised to 192 and nothing else changed, so its graph
 //! budget stays at 64 rows and every wider step runs eagerly. The
 //! `wide_verify` candidate is swept beside it as `tp4-dspark-rows192-wide`,
-//! the same override with the option on. Separate names keep their
+//! the same override with the option on, and the `phased_decode_reduce`
+//! candidate as `tp4-dspark-rows192-phased`, whose decode buckets and verify
+//! widths reach every phased form. Separate names keep their
 //! allowlist entries apart from the default profile, whose full sweep
 //! refuses entries it never reaches; entries for the shapes they share
 //! name `tp4-dspark*`.
@@ -17,7 +19,10 @@
 use super::*;
 use bundle_runtime::fake_host::conformance::route_guard;
 use conformance::Startup;
-use model_deepseek41_contract::{execution_options::WIDE_VERIFY, serving::MAX_VERIFY_ROWS};
+use model_deepseek41_contract::{
+    execution_options::{PHASED_DECODE_REDUCE, WIDE_VERIFY},
+    serving::MAX_VERIFY_ROWS,
+};
 use runtime_bundle_sdk::warmup::VerifyShape;
 use std::sync::OnceLock;
 
@@ -25,6 +30,14 @@ use std::sync::OnceLock;
 const PROFILE: &str = "tp4-dspark-rows192";
 /// The override with the `wide_verify` candidate on.
 const WIDE_PROFILE: &str = "tp4-dspark-rows192-wide";
+/// The override with the `phased_decode_reduce` candidate on.
+const PHASED_PROFILE: &str = "tp4-dspark-rows192-phased";
+/// Every override, and the candidate option each turns on.
+const OVERRIDES: [(&str, Option<&str>); 3] = [
+    (PROFILE, None),
+    (WIDE_PROFILE, Some(WIDE_VERIFY)),
+    (PHASED_PROFILE, Some(PHASED_DECODE_REDUCE)),
+];
 /// The profile the override raises.
 const BASE: &str = "tp4-dspark";
 /// The package's verify rows: every item at its deepest block.
@@ -67,9 +80,13 @@ impl Startup for Wide {
             let mut wide = document["profiles"][BASE].clone();
             assert!(wide.is_object(), "{BASE} is a profile");
             wide["speculation"]["rows"] = ROWS.into();
-            document["profiles"][PROFILE] = wide.clone();
-            wide["model_options"][WIDE_VERIFY] = "true".into();
-            document["profiles"][WIDE_PROFILE] = wide;
+            for (profile, option) in OVERRIDES {
+                let mut serving = wide.clone();
+                if let Some(option) = option {
+                    serving["model_options"][option] = "true".into();
+                }
+                document["profiles"][profile] = serving;
+            }
             document.to_string()
         })
     }
@@ -81,18 +98,21 @@ impl Startup for Wide {
             .find(|serving| serving.profile == BASE)
             .expect("the DSpark profile")
             .clone();
-        for (at, profile) in [PROFILE, WIDE_PROFILE].into_iter().enumerate() {
+        for (at, (profile, option)) in OVERRIDES.into_iter().enumerate() {
             let mut wide = base.clone();
             wide.profile = profile.into();
-            if profile == WIDE_PROFILE {
-                wide.model_options.insert(WIDE_VERIFY.into(), "true".into());
+            if let Some(option) = option {
+                wide.model_options.insert(option.into(), "true".into());
             }
             servings.insert(at, wide);
         }
         servings
     }
     fn envelope(serving: &conformance::Serving) -> conformance::Envelope {
-        if ![PROFILE, WIDE_PROFILE].contains(&serving.profile.as_str()) {
+        if !OVERRIDES
+            .iter()
+            .any(|(profile, _)| *profile == serving.profile)
+        {
             return Served::envelope(serving);
         }
         // The profile's own model shapes, at the override's verify rows.
@@ -162,10 +182,11 @@ fn the_override_starts_beside_the_profiles() {
     conformance::startup_profiles::<Wide>(&[
         ("tp4_dspark_rows192", PROFILE),
         ("tp4_dspark_rows192_wide", WIDE_PROFILE),
+        ("tp4_dspark_rows192_phased", PHASED_PROFILE),
         ("tp4_ar", "tp4-ar"),
         ("tp4_dspark", BASE),
     ]);
-    for profile in [PROFILE, WIDE_PROFILE] {
+    for (profile, _) in OVERRIDES {
         let coverage = conformance::serving_startup_of::<Wide>(profile);
         assert_eq!(coverage.profile, profile);
     }
@@ -216,6 +237,15 @@ mod wide_route_sweep {
     fn tp4_dspark_rows192_wide() {
         route_guard::sweep::<Wide>(
             WIDE_PROFILE,
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
+            env!("CARGO_PKG_NAME"),
+        );
+    }
+
+    #[test]
+    fn tp4_dspark_rows192_phased() {
+        route_guard::sweep::<Wide>(
+            PHASED_PROFILE,
             include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
             env!("CARGO_PKG_NAME"),
         );

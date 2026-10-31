@@ -3,7 +3,9 @@ use super::*;
 use kernel_core::backend::{Backend, Counts, Launch, Need, View};
 use kernel_core::latent_glue::LatentQueryRopeBuffers;
 
-const WIDTHS: [u32; 8] = [32, 33, 40, 48, 49, 56, 63, 64];
+/// The decode route's widths, then the wide verify buckets' through the
+/// 256 rows a wide verify capacity can take (`row::smallest_bucket`).
+const WIDTHS: [u32; 13] = [32, 33, 40, 48, 49, 56, 63, 64, 65, 128, 129, 192, 256];
 const ROW: usize = 16 * 512;
 
 fn launches(rows: u32) -> LabResult<[Launch; 2]> {
@@ -210,7 +212,11 @@ fn wide_query_pair_forces_the_head_parallel_entry() {
 #[ignore = "requires allocated idle GPUs through the staged pair job"]
 fn gpu_wide_query_rope() {
     let small = std::env::var("CHOPINFER_QUERY_WIDE_MODE").as_deref() == Ok("memcheck");
-    let widths = if small { vec![33, 64] } else { WIDTHS.to_vec() };
+    let widths = if small {
+        vec![33, 64, 65, 256]
+    } else {
+        WIDTHS.to_vec()
+    };
     let ran = kernel_harness::gpu_test_with(cubins().unwrap(), 1 << 30, |session| {
         let modules = Modules::load(session)?;
         for &rows in &widths {

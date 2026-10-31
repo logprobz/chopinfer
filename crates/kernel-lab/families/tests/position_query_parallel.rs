@@ -136,41 +136,48 @@ fn cpu_explicit_wide_query_keeps_the_default_crossover() {
                 .is_ok()
         );
     }
-    let wide = backend(false)
-        .with_parallel_position_query_rows(64)
-        .unwrap();
-    let op = wide
-        .position_indexer_query(&family::query(), Need::rows(64))
-        .unwrap();
-    assert_eq!(op.info().symbols.len(), 1);
     let v = |handle, bytes| View { handle, bytes };
+    let most = u64::from(family::CAPACITY);
     let buffers = PositionQueryBuffers {
-        q: v(1, 64 * 4096 * 4),
+        q: v(1, most * 4096 * 4),
         cos_sin: v(2, 8 * 64 * 4),
-        positions: v(3, 64 * 4),
+        positions: v(3, most * 4),
         live_rows: v(4, 4),
-        output: v(5, 64 * 4096 * 2),
-        quantizer_status: v(6, 66 * 4),
+        output: v(5, most * 4096 * 2),
+        quantizer_status: v(6, (most + 2) * 4),
         quantizer_status_row_offset: 1,
     };
-    let scratch = v(7, op.info().workspace);
-    let default = backend(true)
-        .position_indexer_query(&family::query(), Need::rows(64))
-        .unwrap();
-    for rows in 1..=64 {
-        let counts = Counts::rows(rows).with_positions(8);
-        let calls = op.launches(&buffers, scratch, counts).unwrap();
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].plan.grid, [rows, 1, 1]);
-        assert_eq!(calls[0].plan.block, [1024, 1, 1]);
-        assert!(calls[0].symbol.ends_with("_parallel_v1"));
-        let old = default.launches(&buffers, scratch, counts).unwrap();
-        if rows <= 32 {
-            assert_eq!(calls, old);
-        } else {
-            assert_eq!(old.len(), 2);
-            assert!(old[0].symbol.ends_with("rotate_v3"));
+    // Each explicit bound, the decode route's 64 and every wide verify
+    // bound through the shared 256, launches the parallel entry at every
+    // row it admits and refuses the next.
+    for limit in [64, 65, 128, 129, 192, 256] {
+        let op = backend(false)
+            .with_parallel_position_query_rows(limit)
+            .unwrap()
+            .position_indexer_query(&family::query(), Need::rows(limit))
+            .unwrap();
+        assert_eq!(op.info().symbols.len(), 1);
+        let scratch = v(7, op.info().workspace);
+        let default = backend(true)
+            .position_indexer_query(&family::query(), Need::rows(limit))
+            .unwrap();
+        for rows in 1..=limit {
+            let counts = Counts::rows(rows).with_positions(8);
+            let calls = op.launches(&buffers, scratch, counts).unwrap();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].plan.grid, [rows, 1, 1]);
+            assert_eq!(calls[0].plan.block, [1024, 1, 1]);
+            assert!(calls[0].symbol.ends_with("_parallel_v1"));
+            let old = default.launches(&buffers, scratch, counts).unwrap();
+            if rows <= 32 {
+                assert_eq!(calls, old);
+            } else {
+                assert_eq!(old.len(), 2);
+                assert!(old[0].symbol.ends_with("rotate_v3"));
+            }
         }
+        let counts = Counts::rows(limit + 1).with_positions(8);
+        assert!(op.launches(&buffers, scratch, counts).is_err());
     }
 }
 

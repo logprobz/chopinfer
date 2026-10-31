@@ -10,6 +10,10 @@
 //!
 //! Each rank's op keeps comm state regions (`OpInfo::state`) that its
 //! peers write; every rank allocates the same regions, zeroed at create.
+//! With the `phased_decode_reduce` candidate option, decode and verify
+//! steps' complete all-reduces (those whose round no HC boundary defers)
+//! take the phased F32 rounding entries over state regions of their own,
+//! which give the composed form's bits.
 
 use kernel_core::backend::{Backend, Counts, Prepared, Refused, View};
 use kernel_core::collective::{AllReduceBuffers, RankViews};
@@ -51,6 +55,18 @@ pub(crate) fn prefill_only_partials(shape: &Shape, storage: KvStorage) -> bool {
 
 pub(crate) fn requested(shape: &Shape) -> bool {
     shape.geometry == &model_deepseek41_contract::geometry::FLASH
+}
+
+/// Whether the instance takes the phased decode reduction: the
+/// `phased_decode_reduce` option on Flash TP4, whose rows are whole
+/// 1024-element granules. An execute issues at most one decode or verify
+/// phase of fewer than 256 layers (`RESET_RUNS` in `instance/prefill_reduce.rs`).
+pub(crate) fn phased_decode_requested(shape: &Shape) -> bool {
+    shape.phased_decode_reduce
+        && requested(shape)
+        && shape.ranks() == 4
+        && shape.dims().hidden.is_multiple_of(1024)
+        && shape.geometry.layers() < 256
 }
 
 /// The element format a prefill DMA reduction copies between ranks.
@@ -146,9 +162,12 @@ pub(crate) fn dma_requested() -> PrefillDma {
     PrefillDma::Skip
 }
 
-struct Prefill {
+/// An op set beside the main one, over its own comm state regions, which
+/// create must admit on every rank before use.
+struct Alternate {
     reduces: Vec<Prepared<AllReduceBuffers<View>>>,
-    first_state: usize,
+    /// Its regions in `ReduceOps::state`.
+    state: std::ops::Range<usize>,
     admitted: bool,
 }
 
@@ -160,10 +179,15 @@ pub(crate) struct ReduceOps {
     /// The embedding's widening into F32 partials.
     widen: Prepared<WidenRowsBuffers<View>>,
     /// The bytes of each comm state region every rank keeps, in the ops'
-    /// role order.
+    /// role order: the main ops', then each alternate's.
     state: Vec<u64>,
+    /// The main ops' regions: the first of `state`.
+    main_state: usize,
     width: u32,
-    prefill: Option<Prefill>,
+    prefill: Option<Alternate>,
+    /// The `phased_decode_reduce` candidate's phased F32 rounding all-reduce
+    /// of decode and verify steps.
+    phased_decode: Option<Alternate>,
 }
 
 /// One hidden row of the all-reduce: every rank's F32 partial summed in F32
@@ -255,9 +279,11 @@ impl ReduceOps {
             bf16_partials: partials_mode(shape, storage),
             reduces,
             widen,
+            main_state: state.len(),
             state,
             width: shape.dims().hidden,
             prefill: None,
+            phased_decode: None,
         })
     }
 
@@ -290,12 +316,65 @@ impl ReduceOps {
         }
         let first_state = self.state.len();
         self.state.extend_from_slice(state);
-        self.prefill = Some(Prefill {
+        self.prefill = Some(Alternate {
             reduces,
-            first_state,
+            state: first_state..self.state.len(),
             admitted: false,
         });
         Ok(())
+    }
+
+    /// The `phased_decode_reduce` candidate: every rank's rounded
+    /// all-reduce on `backend`'s phased F32 entries for decode and verify
+    /// steps of up to the instance's verify rows, over state regions of its
+    /// own. Create must admit every rank before use.
+    pub(crate) fn prepare_phased_decode(
+        &mut self,
+        backend: &dyn Backend,
+        shape: &Shape,
+        asks: &Asks,
+    ) -> Result<(), Refused> {
+        let need = exact::need(shape.verify_rows, exact::verify(shape.verify_rows));
+        let query = rounded_query(shape);
+        let reduces = (0..shape.ranks())
+            .map(|rank| {
+                asks.ask(format!("reduce.phased_decode rank {rank}"), need, |need| {
+                    backend.all_reduce(&query, rank, need)
+                })
+            })
+            .collect::<Result<Vec<_>, Refused>>()?;
+        let state = &reduces[0].info().state;
+        if reduces.iter().any(|op| op.info().state != *state) {
+            return Err(Refused::Rule(
+                "phased decode reduction ranks disagree on state".into(),
+            ));
+        }
+        let first_state = self.state.len();
+        self.state.extend_from_slice(state);
+        self.phased_decode = Some(Alternate {
+            reduces,
+            state: first_state..self.state.len(),
+            admitted: false,
+        });
+        Ok(())
+    }
+
+    pub(crate) fn phased_decode_prepared(&self) -> bool {
+        self.phased_decode.is_some()
+    }
+
+    pub(crate) fn admit_phased_decode(&mut self, admitted: bool) {
+        if let Some(phased) = &mut self.phased_decode {
+            phased.admitted = admitted;
+        }
+    }
+
+    /// The admitted phased decode reduction's state regions.
+    pub(crate) fn phased_decode_state(&self) -> Option<std::ops::Range<usize>> {
+        self.phased_decode
+            .as_ref()
+            .filter(|p| p.admitted)
+            .map(|p| p.state.clone())
     }
 
     pub(crate) fn prefill_prepared(&self) -> bool {
@@ -320,7 +399,7 @@ impl ReduceOps {
         self.prefill
             .as_ref()
             .filter(|p| p.admitted)
-            .map(|p| p.first_state..self.state.len())
+            .map(|p| p.state.clone())
     }
 
     /// The bytes of each comm state region every rank allocates.
@@ -336,20 +415,16 @@ impl ReduceOps {
         views: &ReduceViews,
     ) -> Result<Vec<Lowered>, Refusal> {
         let rows = phase.rows();
-        let (ops, state) = match &self.prefill {
-            Some(p)
+        let (ops, state) = match (&self.prefill, &self.phased_decode) {
+            (Some(p), _)
                 if p.admitted
                     && phase.prefill()
                     && (rows >= 512 || self.prefill_only_partials()) =>
             {
-                (&p.reduces, p.first_state..self.state.len())
+                (&p.reduces, p.state.clone())
             }
-            candidate => (
-                &self.reduces,
-                0..candidate
-                    .as_ref()
-                    .map_or(self.state.len(), |p| p.first_state),
-            ),
+            (_, Some(p)) if p.admitted && !phase.prefill() => (&p.reduces, p.state.clone()),
+            _ => (&self.reduces, 0..self.main_state),
         };
         let op = ops
             .get(rank as usize)
@@ -391,12 +466,9 @@ impl ReduceOps {
             .reduces
             .get(rank as usize)
             .ok_or(Refusal("no all-reduce for this rank"))?;
-        // Decode keeps the original transport's state, ahead of any prefill
-        // gather's range.
-        let state = 0..self
-            .prefill
-            .as_ref()
-            .map_or(self.state.len(), |p| p.first_state);
+        // Decode keeps the original transport's state, ahead of any
+        // alternate's range.
+        let state = 0..self.main_state;
         let mut bind = Bind::default();
         let buffers = AllReduceBuffers {
             input: bind.view(views.input),

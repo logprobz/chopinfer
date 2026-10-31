@@ -138,7 +138,11 @@ C1/C8/C32, with unchanged output bits. The host's
 
 Native TP4 prefill rounds completed local partials to BF16, sums ranks in
 ascending F32 order and rounds the result once. Decode, target verify and
-draft blocks keep F32 partials. The shared ordered DMA transport preserves
+draft blocks keep F32 partials. With the `phased_decode_reduce` candidate
+option, their reductions that no HC boundary takes the round of (four per
+rank at every width, and all 81 at the verify widths that defer no round)
+run the phased F32 rounding entries, which sum in the same rank order and
+round with the same instruction ([decode reductions](lab/decode-reductions.md)). The shared ordered DMA transport preserves
 the selected collective's rounding. See
 [partial arithmetic](communication-partials.md) and
 [attention admission](prefill-attention.md).
@@ -186,6 +190,7 @@ them. A non-default value is unqualified.
 | `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |
 | `dspark_graph_handles_per_rank` | `512` | Graph handles per rank, from 0 to 9223372036854775807; 0 keeps DSpark eager. The total across ranks must fit the platform's count range. |
 | `f32_row_tiles` | `false` | Candidate: Flash TP4 verify steps of 33 to 64 rows run the vocabulary head and the compressor in their measured exact F32 row tiles instead of the cached separate spans; the router keeps its spans. Bitwise lab twins and fixed-batch GPU replays matched; served step-time acceptance remains required before adoption. |
+| `phased_decode_reduce` | `false` | Candidate: Flash TP4 decode and verify all-reduces whose round no HC boundary takes launch the phased F32 rounding entries, over comm state of their own, instead of the F32 reduce-scatter, all-gather and round row. They give the same bits, in the lab at 11 row counts from 1 to 192 and in fixed-batch replays ([decode reductions](lab/decode-reductions.md#fixed-batch-replays)); the deferred pairs and prefill are unchanged. Served step-time acceptance remains required before adoption. |
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit and each reused plan template again and refuse a differing plan. |
@@ -346,7 +351,14 @@ the dense folds, the HC fusion and the queries took a 128-row step from
 193.8 to 182.1 ms and a 192-row step from 225.0 to 214.6 ms. Their HC
 boundaries fell from 12.9 to 2.8 ms and from 13.6 to 3.9 ms, and their
 index queries from 0.7 to under 0.1 ms. Replays at the same five
-configurations matched bitwise. With both changes merged, the five
+configurations matched bitwise. The lab pairs cover the wide entries at 65,
+128, 129, 192 and 256 rows: the index and latent query pairs on their
+fixtures, and the column-block pair against the ordered-chain pair on
+synthesized adversarial inputs (`hc_cols::synthetic_wide`), structural
+coverage that complements those real-data replays. On 2026-10-31 all three
+matched bitwise on GPU, with every mutation control detected, and
+compute-sanitizer found no error in the query pairs. With both changes
+merged, the five
 replays matched bitwise again, and a 128-row step takes 92.2 ms and a
 192-row step 121.9 ms of GPU-busy time per device, against 196.3 and 234.9
 ms without the option; the MoE expert chains take 41.0 and 49.9 ms of them.

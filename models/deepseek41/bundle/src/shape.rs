@@ -27,6 +27,9 @@ pub struct Shape {
     /// Whether Flash TP4 verify steps of 33 to 64 rows run the measured
     /// exact F32 row tiles (the `f32_row_tiles` candidate option).
     pub f32_row_tiles: bool,
+    /// Whether decode and verify steps' complete all-reduces take the phased
+    /// F32 rounding entries (the `phased_decode_reduce` candidate option).
+    pub phased_decode_reduce: bool,
 }
 
 impl Shape {
@@ -40,6 +43,7 @@ impl Shape {
             verify_rows: DECODE_BATCH,
             wide_verify: false,
             f32_row_tiles: false,
+            phased_decode_reduce: false,
         })
     }
 
@@ -61,6 +65,13 @@ impl Shape {
     /// or off (`model_deepseek41_contract::execution_options::F32_ROW_TILES`).
     pub fn with_f32_row_tiles(mut self, enabled: bool) -> Shape {
         self.f32_row_tiles = enabled;
+        self
+    }
+
+    /// This shape with the phased decode reduction on or off
+    /// (`model_deepseek41_contract::execution_options::PHASED_DECODE_REDUCE`).
+    pub fn with_phased_decode_reduce(mut self, enabled: bool) -> Shape {
+        self.phased_decode_reduce = enabled;
         self
     }
 

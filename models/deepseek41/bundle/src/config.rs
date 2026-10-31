@@ -417,6 +417,7 @@ pub(crate) mod tests {
             (DIAGNOSTIC_STEP_LOGS, true.into()),
             (WIDE_VERIFY, true.into()),
             (F32_ROW_TILES, true.into()),
+            (PHASED_DECODE_REDUCE, true.into()),
         ] {
             changed = with_option(changed, name, value);
         }
@@ -430,6 +431,7 @@ pub(crate) mod tests {
                 diagnostic_step_logs: true,
                 wide_verify: true,
                 f32_row_tiles: true,
+                phased_decode_reduce: true,
             }
         );
         for (name, value) in [

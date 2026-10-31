@@ -1456,6 +1456,10 @@ impl Instance {
             self.log(&format!("prefill reduction reset: {error}"));
             return status(error);
         }
+        if let Err(error) = self.quiesce_phased_decode_reduce() {
+            self.log(&format!("phased decode reduction reset: {error}"));
+            return status(error);
+        }
         #[cfg(feature = "diagnostic-taps")]
         if self.config.prefill.chunk > 0
             && self.dspark.is_none()

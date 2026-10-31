@@ -1,6 +1,8 @@
 //! Explicit wide-row query pairs, with upper-row failures and reused graphs.
 use super::*;
-const ROWS: [u32; 8] = [32, 33, 40, 48, 49, 56, 63, 64];
+/// The decode route's widths, then the wide verify buckets' through the
+/// shared parallel query's 256.
+const ROWS: [u32; 13] = [32, 33, 40, 48, 49, 56, 63, 64, 65, 128, 129, 192, 256];
 
 fn check(
     s: &kernel_harness::Session,
@@ -25,11 +27,11 @@ fn check(
         quantizer_status: a.output((rows as usize + 4) * 4)?,
         quantizer_status_row_offset: 2,
     };
-    let mut calls = vec![];
+    let (mut calls, mut scratches) = (vec![], vec![]);
     for parallel in [false, true] {
         let selected = if parallel {
             backend(false)
-                .with_parallel_position_query_rows(64)
+                .with_parallel_position_query_rows(rows.max(64))
                 .map_err(|e| e.to_string())?
         } else {
             backend(false)
@@ -42,7 +44,17 @@ fn check(
             op.launches(&b, scratch, Counts::rows(rows).with_positions(8))
                 .map_err(|e| e.to_string())?,
         );
+        scratches.push(scratch);
     }
+    // Every compared launch starts from poisoned output and scratch, so a
+    // replay that skips a scratch write cannot reuse an earlier result.
+    let poison = |arm: usize| -> LabResult<()> {
+        a.poison(&[b.output])?;
+        if scratches[arm].bytes > 0 {
+            a.poison(&[scratches[arm]])?;
+        }
+        Ok(())
+    };
     assert_eq!(calls[0].len(), 2);
     assert_eq!(calls[1].len(), 1);
     assert!(calls[1][0].symbol.ends_with("_parallel_v1"));
@@ -106,7 +118,7 @@ fn check(
             let mut expected = None;
             for replay in 0..3 {
                 for arm in 0..2 {
-                    a.poison(&[b.output])?;
+                    poison(arm)?;
                     a.write(b.quantizer_status, &flags)?;
                     if replay == 0 {
                         fire(s, module, &a, &calls[arm])?;
@@ -140,7 +152,7 @@ fn check(
                 mutant[0].symbol = mutant[0]
                     .symbol
                     .replace("_parallel_v1", "_parallel_ignore_status_v1");
-                a.poison(&[b.output])?;
+                poison(1)?;
                 a.write(b.quantizer_status, &flags)?;
                 fire(s, module, &a, &mutant)?;
                 assert_ne!(
@@ -174,7 +186,11 @@ fn check(
 #[ignore = "requires the staged pair GPU job"]
 fn gpu_wide_query_parallel() {
     let small = std::env::var("CHOPINFER_INDEX_QUERY_WIDE_MODE").as_deref() == Ok("memcheck");
-    let rows = if small { vec![33, 64] } else { ROWS.to_vec() };
+    let rows = if small {
+        vec![33, 64, 65, 256]
+    } else {
+        ROWS.to_vec()
+    };
     let ran = gpu_test(1 << 30, |s| {
         let root = PathBuf::from(
             std::env::var_os("CHOPINFER_QUERY_CUBINS").ok_or("query cubins required")?,

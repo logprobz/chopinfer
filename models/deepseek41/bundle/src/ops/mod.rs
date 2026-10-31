@@ -153,6 +153,17 @@ impl Ops {
             }
             ops.asked.extend(asks.asked());
         }
+        if reduce::phased_decode_requested(shape) {
+            let asks = Asks::default();
+            if let Some(reduce) = &mut ops.reduce {
+                let backend = Kernels::prefill_reduction_backend(shape);
+                if let Err(error) = reduce.prepare_phased_decode(backend.as_ref(), shape, &asks) {
+                    ops.missing
+                        .push(format!("phased decode reduction: {error}"));
+                }
+            }
+            ops.asked.extend(asks.asked());
+        }
         let gather = ops
             .reduce
             .as_ref()

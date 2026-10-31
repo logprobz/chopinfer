@@ -20,7 +20,7 @@ use model_deepseek41_contract::geometry::{FLASH, Geometry};
 use model_deepseek41_contract::verify_bounds::WIDE;
 
 /// The tuning bucket of the wide sites: the widest wide verify bucket.
-pub(crate) const BUCKET: u32 = WIDE[WIDE.len() - 1];
+pub const BUCKET: u32 = WIDE[WIDE.len() - 1];
 
 /// Whether the wide HC site `op` admits `rows` verify rows.
 pub(crate) fn admitted(op: &str, rows: u32) -> bool {
@@ -55,13 +55,13 @@ pub(crate) fn cols_buckets(widest: u32) -> Vec<finish_split::Bucket> {
 /// The capacity of the wide boundary's entries for verify steps of up to
 /// `widest` rows: the least row bucket that holds them
 /// (`kernels_sm120::row::smallest_bucket`), 256 at the package's 192.
-pub(crate) fn capacity(widest: u32) -> u32 {
+pub fn capacity(widest: u32) -> u32 {
     kernels_sm120::row::smallest_bucket(widest).expect("a row bucket holds the wide verify rows")
 }
 
 /// `g`'s finish norm (`hc_finish_norm::entry`) holding `capacity` rows:
 /// its rounded mixer and cached input norm at that capacity.
-pub(crate) fn finish_entry(g: &Geometry, capacity: u32) -> finish_norm::Entry {
+pub fn finish_entry(g: &Geometry, capacity: u32) -> finish_norm::Entry {
     let served = super::hc_finish_norm::entry(g);
     let norm = rmsnorm_quantize_cached::Entry {
         reference: kernels_sm120::row::rmsnorm_quantize::Entry {
@@ -80,12 +80,10 @@ pub(crate) fn finish_entry(g: &Geometry, capacity: u32) -> finish_norm::Entry {
     }
 }
 
-/// The backend of the wide boundary of verify steps of up to `widest`
-/// rows: `g`'s rounded mixer, input norm, its cached form, finish norm and
-/// column-block pair (`hc_cols`), each holding [`capacity`] rows, at the
-/// wide sites' buckets through `widest` rows.
-pub(crate) fn finish_backend(g: &Geometry, widest: u32) -> Sm120 {
-    let finish = finish_entry(g, capacity(widest));
+/// The column-block producer and split finish (`hc_cols`) over `g`'s
+/// finish norm holding `capacity` rows ([`finish_entry`]).
+pub fn column_pair(g: &Geometry, capacity: u32) -> (round_cols::Entry, finish_split::Entry) {
+    let finish = finish_entry(g, capacity);
     let served_producer = super::hc_cols::producer();
     let producer = round_cols::Entry {
         reference: round_chain_partials::Entry {
@@ -95,15 +93,35 @@ pub(crate) fn finish_backend(g: &Geometry, widest: u32) -> Sm120 {
         ..served_producer
     };
     let split = finish_split::Entry {
-        reference: finish.clone(),
+        reference: finish,
         ..super::hc_cols::finish()
     };
+    (producer, split)
+}
+
+/// `g`'s rounded mixer, input norm, its cached form and finish norm, each
+/// holding `capacity` rows ([`finish_entry`]), with the finish norm at
+/// `rows`: the boundary without the column-block pair.
+pub fn pair_backend(g: &Geometry, capacity: u32, rows: Vec<u32>) -> Sm120 {
+    let finish = finish_entry(g, capacity);
     Sm120::new()
         .with_sinkhorn_round_expand_mix(finish.mixer.clone())
         .with_rmsnorm_quantize(finish.norm.reference.clone())
         .with_rmsnorm_quantize_cached(finish.norm.clone(), super::norm_quantize_cached::buckets())
-        .with_sinkhorn_finish_norm(finish, pair_buckets(widest))
-        .with_sinkhorn_finish_norm_cols(producer, split, cols_buckets(widest))
+        .with_sinkhorn_finish_norm(finish, rows)
+}
+
+/// The backend of the wide boundary of verify steps of up to `widest`
+/// rows: [`pair_backend`] at [`capacity`] and the wide sites' buckets
+/// through `widest` rows, with the [`column_pair`] at those buckets.
+pub fn finish_backend(g: &Geometry, widest: u32) -> Sm120 {
+    let capacity = capacity(widest);
+    let (producer, split) = column_pair(g, capacity);
+    pair_backend(g, capacity, pair_buckets(widest)).with_sinkhorn_finish_norm_cols(
+        producer,
+        split,
+        cols_buckets(widest),
+    )
 }
 
 impl crate::Kernels {

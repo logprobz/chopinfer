@@ -3,8 +3,9 @@
 # unfused-stage exceptions are retired. HC and drafter entries remain separate.
 # `tp4-dspark*` also names tp4-dspark-rows192, the profile at the package's 192
 # verify rows (fake_host_tests/conformance/wide.rs), whose envelope repeats
-# the profile's shapes, and tp4-dspark-rows192-wide, the same override with
-# the `wide_verify` candidate on.
+# the profile's shapes, tp4-dspark-rows192-wide, the same override with
+# the `wide_verify` candidate on, and tp4-dspark-rows192-phased, with the
+# `phased_decode_reduce` candidate on.
 
 [[allow]]
 profiles = ["tp4-ar", "tp4-dspark*"]

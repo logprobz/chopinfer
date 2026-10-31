@@ -121,6 +121,8 @@ pub struct Instance {
     /// DMA issues each peer copy on its source's stream.
     dma_push: bool,
     prefill_reduce_runs: u64,
+    /// Executes since the phased decode reduction's state was last zeroed.
+    phased_decode_runs: u64,
     /// Per-layer gather IDs, reserved before serving KV sizing.
     prefill_engram_inputs: Vec<runtime_bundle_abi::DeviceBufferSpanV1>,
     prefill_engram: Option<prefill_engram::Gathers>,
@@ -624,11 +626,10 @@ impl Instance {
                 })
                 .filter(|cubin| {
                     cubin.name != "comm_rounded_phased_deepseek41_sm120"
-                        || self
-                            .ops
-                            .reduce
-                            .as_ref()
-                            .is_some_and(|ops| ops.prefill_prepared() && !ops.bf16_partials())
+                        || self.ops.reduce.as_ref().is_some_and(|ops| {
+                            ops.prefill_prepared() && !ops.bf16_partials()
+                                || ops.phased_decode_prepared()
+                        })
                 })
                 .filter(|cubin| {
                     cubin.name != "comm_dma_sum_deepseek41_sm120" || !self.dma.is_empty()
@@ -933,7 +934,8 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         .shape
         .with_verify_rows(verify.rows_per_step)
         .with_wide_verify(config.execution.wide_verify)
-        .with_f32_row_tiles(config.execution.f32_row_tiles);
+        .with_f32_row_tiles(config.execution.f32_row_tiles)
+        .with_phased_decode_reduce(config.execution.phased_decode_reduce);
     if verify_rows > 0 && config.kv.storage == model_deepseek41_contract::state::KvStorage::Bf16 {
         log("BF16 KV supports autoregressive serving only; set --speculative-tokens 0");
         return Err(BundleStatusV1::Unsupported.into());
@@ -1066,6 +1068,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         dma: Vec::new(),
         dma_push: false,
         prefill_reduce_runs: 0,
+        phased_decode_runs: 0,
         prefill_engram_inputs: Vec::new(),
         prefill_engram: None,
         ar_engram_inputs: None,
@@ -1090,6 +1093,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         return Err(Failed::releasing(instance, result));
     }
     instance.admit_prefill_reduce();
+    instance.admit_phased_decode_reduce();
     if let Err(error) = instance.admit_bf16_partials() {
         instance.log(&error);
         return Err(Failed::releasing(instance, BundleStatusV1::Unsupported));

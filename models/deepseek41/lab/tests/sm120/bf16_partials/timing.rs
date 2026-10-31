@@ -26,7 +26,11 @@
 //!
 //! Each row count compares `bf16_partials` with the form each served step
 //! of those rows issues; the primary comparison is decode's where decode
-//! has the row count as a graph bucket, else verify's.
+//! has the row count as a graph bucket, else verify's. `f32_phased`, which
+//! gives the served bits (`phased_parity`), is compared the same way, and
+//! with both served forms whatever a step issues: against the complete
+//! form where it would replace it, and against the deferred pair, which
+//! leaves the round to the next HC mix.
 use super::{
     Fixture, Op, Plan, WIDTH, err, every, inputs, manifest, op, reduce, regular, synthetic, views,
 };
@@ -51,9 +55,11 @@ use std::{
     time::Instant,
 };
 
-const ROWS: [u32; 6] = [1, 8, 16, 32, 64, 128];
+const ROWS: [u32; 16] = [1, 2, 4, 5, 6, 8, 12, 16, 24, 31, 32, 48, 64, 96, 128, 192];
 /// The rows every fixture holds: the most timed rows.
-const ROW_CAPACITY: u32 = 128;
+const ROW_CAPACITY: u32 = 192;
+/// An inclusive range `LO-HI` of row counts to time instead of [`ROWS`].
+const ROWS_VARIABLE: &str = "CHOPINFER_DECODE_REDUCTION_ROWS";
 /// The most rows of a frozen capture; larger row counts are synthetic.
 const CAPTURED_ROWS: u32 = 40;
 const CALLS: usize = 32;
@@ -203,7 +209,7 @@ impl Arm {
             Self::Bf16 => "candidate: the phased BF16-partial all-reduce prefill serves",
             Self::Phased => {
                 "same-transport precision reference: the phased F32 rounding entries, \
-                 which no decode or verify step serves"
+                 which give the served form's bits and no decode or verify step serves"
             }
             Self::Round => "the composed form's round alone, for reference",
         }
@@ -608,9 +614,10 @@ fn bench(sessions: &[Session]) -> LabResult<PathBuf> {
         Arm::Bf16 => &bf16,
         Arm::Phased => &phased,
     };
+    let timed = timed_rows(std::env::var(ROWS_VARIABLE).ok().as_deref())?;
     let mut power = Power::start(sessions)?;
     let mut results = Vec::new();
-    for rows in ROWS {
+    for rows in timed {
         let steps = [Step::Decode, Step::Verify]
             .into_iter()
             .filter_map(|step| Some((step, served(step, rows).transpose()?)))
@@ -649,16 +656,17 @@ fn bench(sessions: &[Session]) -> LabResult<PathBuf> {
         let pair = |arm: Arm| [us[&arm][0], us[&arm][1]];
         let control = Paired::new(pair(form.arm()), pair(Arm::Control));
         let bound = control.mean.abs().max(control.spread);
-        let compared = |baseline: Arm, role: &str| {
-            let paired = Paired::new(pair(baseline), pair(Arm::Bf16));
+        let compared_with = |candidate: Arm, baseline: Arm, role: &str| {
+            let paired = Paired::new(pair(baseline), pair(candidate));
             let mut record = paired.json();
             record["baseline"] = json!(baseline.name());
-            record["candidate"] = json!(Arm::Bf16.name());
+            record["candidate"] = json!(candidate.name());
             record["role"] = json!(role);
             record["aa_bound"] = json!(bound);
             record["resolved"] = json!(paired.resolved(bound));
             (paired, record)
         };
+        let compared = |baseline: Arm, role: &str| compared_with(Arm::Bf16, baseline, role);
         let mut record = json!({
             "rows": rows,
             "live_rows": rows,
@@ -675,6 +683,10 @@ fn bench(sessions: &[Session]) -> LabResult<PathBuf> {
             "aa_bound": bound,
             "bf16_vs_f32_phased": compared(Arm::Phased, "same-transport precision reference").1,
             "f32_round_us_per_call": pair(Arm::Round).iter().sum::<f64>() / 2.0,
+            "f32_phased_vs_f32_complete":
+                compared_with(Arm::Phased, Arm::Complete, "where phased replaces the complete form").1,
+            "f32_phased_vs_f32_deferred":
+                compared_with(Arm::Phased, Arm::Deferred, "against the pair the HC mix completes").1,
             "visits": visits,
         });
         for &(step, served_form) in &steps {
@@ -698,6 +710,23 @@ fn bench(sessions: &[Session]) -> LabResult<PathBuf> {
                 started.elapsed().as_secs_f64(),
             );
             record[format!("bf16_vs_served_{}", step.name())] = comparison;
+            let (phased, comparison) = compared_with(Arm::Phased, served_form.arm(), role);
+            eprintln!(
+                "DECODE_REDUCTION_PHASED rows={rows} step={} baseline={} f32_us={:?} \
+                 f32_phased_us={:?} saved_us={:.3} d=[{:.4},{:.4}] mean={:.4} spread={:.4} \
+                 aa_bound={bound:.4} resolved={}",
+                step.name(),
+                served_form.arm().name(),
+                pair(served_form.arm()),
+                pair(Arm::Phased),
+                phased.saved,
+                phased.d[0],
+                phased.d[1],
+                phased.mean,
+                phased.spread,
+                phased.resolved(bound),
+            );
+            record[format!("f32_phased_vs_served_{}", step.name())] = comparison;
         }
         results.push(record);
     }
@@ -753,11 +782,21 @@ fn timed_arms_launch_what_serving_issues() {
     use Form::{Complete, Deferred};
     let expected = [
         (1, Some(Deferred), Complete),
+        (2, Some(Deferred), Complete),
+        (4, Some(Deferred), Deferred),
+        (5, None, Complete),
+        (6, None, Deferred),
         (8, Some(Deferred), Deferred),
+        (12, None, Deferred),
         (16, Some(Deferred), Deferred),
+        (24, None, Complete),
+        (31, None, Complete),
         (32, Some(Deferred), Deferred),
+        (48, None, Deferred),
         (64, None, Deferred),
+        (96, None, Complete),
         (128, None, Complete),
+        (192, None, Complete),
     ];
     assert_eq!(expected.map(|(rows, ..)| rows), ROWS);
     for (rows, decode, verify) in expected {
@@ -921,6 +960,33 @@ fn receipts_stay_outside_the_tree() {
     assert!(external(&outside.join("a/b"), &lab, &tree).is_ok());
     assert!(external(&outside, &lab, &scratch.join("missing")).is_ok());
     std::fs::remove_dir_all(&scratch).unwrap();
+}
+
+/// [`ROWS`], or every row count of an inclusive `LO-HI` range within
+/// [`ROW_CAPACITY`].
+fn timed_rows(range: Option<&str>) -> LabResult<Vec<u32>> {
+    let Some(range) = range else {
+        return Ok(ROWS.to_vec());
+    };
+    let bounds = range
+        .split_once('-')
+        .and_then(|(lo, hi)| Some((lo.parse::<u32>().ok()?, hi.parse::<u32>().ok()?)))
+        .filter(|&(lo, hi)| 1 <= lo && lo <= hi && hi <= ROW_CAPACITY)
+        .ok_or_else(|| format!("{ROWS_VARIABLE} must be LO-HI within 1-{ROW_CAPACITY}"))?;
+    Ok((bounds.0..=bounds.1).collect())
+}
+
+#[test]
+fn timed_rows_take_the_table_or_an_inclusive_range() {
+    assert_eq!(timed_rows(None).unwrap(), ROWS);
+    assert_eq!(
+        timed_rows(Some("1-192")).unwrap(),
+        (1..=192).collect::<Vec<_>>()
+    );
+    assert_eq!(timed_rows(Some("7-7")).unwrap(), [7]);
+    for bad in ["0-4", "5-4", "1-193", "4", "a-b", ""] {
+        assert!(timed_rows(Some(bad)).is_err(), "{bad}");
+    }
 }
 
 #[test]

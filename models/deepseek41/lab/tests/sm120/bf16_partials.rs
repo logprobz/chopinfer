@@ -37,6 +37,8 @@ type Op = Prepared<AllReduceBuffers<View>>;
 type Plan = fn(&Op, &AllReduceBuffers<View>, Counts) -> LabResult<Vec<Launch>>;
 
 // The bundle's all-reduce registration, which decode's served reduction uses.
+#[path = "bf16_partials/phased_parity.rs"]
+mod phased_parity;
 #[path = "../../../bundle/src/sm120/reduce.rs"]
 #[allow(dead_code)]
 mod reduce;

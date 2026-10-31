@@ -65,7 +65,9 @@ impl LogitsRowSinkV1 for ProofSink {
     }
 }
 
-/// The `-wide` lifetimes run the two widest with the `wide_verify` option.
+/// The `-wide` lifetimes run the two widest with the `wide_verify` option,
+/// and the `-phased` ones the first and a 65-row one with the
+/// `phased_decode_reduce` option.
 #[test]
 fn allocated_lifetimes_journal() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
@@ -78,19 +80,20 @@ fn allocated_lifetimes_journal() {
         (32, 192, 5, "-maximum", (343172, 0x423f402926f10c51)),
         (16, 65, 5, "-odd-wide", (191802, 0x64bd42c3caef55c0)),
         (32, 192, 5, "-maximum-wide", (344540, 0x07785bc19d29a6ff)),
+        (4, 16, 5, "-phased", (69358, 0xfdbd662fbe69bdf6)),
+        (16, 65, 5, "-odd-phased", (189194, 0xb6fd29e113df566c)),
     ] {
-        let (host, mut instance) = if suffix.ends_with("-wide") {
-            create_with_options(
-                shape,
-                32,
-                192,
-                &[(
-                    model_deepseek41_contract::execution_options::WIDE_VERIFY,
-                    true.into(),
-                )],
-            )
+        use model_deepseek41_contract::execution_options::{PHASED_DECODE_REDUCE, WIDE_VERIFY};
+        let option = if suffix.ends_with("-wide") {
+            Some(WIDE_VERIFY)
+        } else if suffix.ends_with("-phased") {
+            Some(PHASED_DECODE_REDUCE)
         } else {
-            create_with_limits(shape, 32, 192)
+            None
+        };
+        let (host, mut instance) = match option {
+            Some(option) => create_with_options(shape, 32, 192, &[(option, true.into())]),
+            None => create_with_limits(shape, 32, 192),
         };
         for slot in 0..items {
             execute(

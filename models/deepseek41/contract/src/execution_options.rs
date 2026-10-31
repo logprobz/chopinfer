@@ -13,6 +13,11 @@ pub const DIAGNOSTIC_STEP_LOGS: &str = "diagnostic_step_logs";
 /// Candidate: Flash TP4 verify steps above the 64-row decode route run the
 /// wide verify buckets (`crate::verify_bounds::WIDE`).
 pub const WIDE_VERIFY: &str = "wide_verify";
+/// Candidate, with [`WIDE_VERIFY`]: a Flash TP4 drafter step of more than
+/// twelve drafting items runs them in the fewest forwards the widest wide
+/// verify bucket holds (five block rows an item), on the wide verify
+/// buckets, instead of chunks of at most twelve.
+pub const WIDE_DRAFT: &str = "wide_draft";
 /// Candidate: Flash TP4 steps of 64 rows or fewer run the measured whole-K
 /// exact F32 row tiles of the vocabulary head (`f32.rows.decode` at decode
 /// and verify widths of 32 rows or fewer, `f32.rows.verify` above), the
@@ -47,6 +52,7 @@ pub struct Options {
     pub dspark_graph_handles_per_rank: usize,
     pub diagnostic_step_logs: bool,
     pub wide_verify: bool,
+    pub wide_draft: bool,
     pub f32_row_tiles: bool,
     pub phased_decode_reduce: bool,
     pub moe_direct: MoeDirect,
@@ -61,7 +67,7 @@ pub struct MoeDirect {
     pub loads: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 12] {
+pub fn declarations() -> [ModelOptionV1; 13] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -119,6 +125,7 @@ pub fn declarations() -> [ModelOptionV1; 12] {
                 maximum: i64::from(u32::MAX),
             },
         ),
+        (WIDE_DRAFT, OptionDefinitionV1::Boolean { default: false }),
         (WIDE_VERIFY, OptionDefinitionV1::Boolean { default: false }),
     ]
     .map(|(name, definition)| ModelOptionV1 {
@@ -151,6 +158,11 @@ impl Options {
             usize::try_from(values[name].as_u64().expect("checked integer"))
                 .map_err(|_| format!("model option {name} exceeds the platform's count range"))
         };
+        let wide_verify = flag(WIDE_VERIFY);
+        let wide_draft = flag(WIDE_DRAFT);
+        if wide_draft && !wide_verify {
+            return Err(format!("model option {WIDE_DRAFT} requires {WIDE_VERIFY}"));
+        }
         Ok(Self {
             shared_overlap_max_rows: values[SHARED_OVERLAP_MAX_ROWS]
                 .as_u64()
@@ -163,7 +175,8 @@ impl Options {
             diagnostic_step_logs: values[DIAGNOSTIC_STEP_LOGS]
                 .as_bool()
                 .expect("checked boolean"),
-            wide_verify: flag(WIDE_VERIFY),
+            wide_verify,
+            wide_draft,
             f32_row_tiles: flag(F32_ROW_TILES),
             phased_decode_reduce: flag(PHASED_DECODE_REDUCE),
             moe_direct: MoeDirect {
@@ -231,6 +244,7 @@ mod tests {
             dspark_graph_handles_per_rank: 512,
             diagnostic_step_logs: false,
             wide_verify: false,
+            wide_draft: false,
             f32_row_tiles: false,
             phased_decode_reduce: false,
             moe_direct: MoeDirect::default(),
@@ -250,6 +264,7 @@ mod tests {
             (DSPARK_GRAPH_HANDLES_PER_RANK.into(), "0".into()),
             (DIAGNOSTIC_STEP_LOGS.into(), "true".into()),
             (WIDE_VERIFY.into(), "true".into()),
+            (WIDE_DRAFT.into(), "true".into()),
             (F32_ROW_TILES.into(), "true".into()),
             (PHASED_DECODE_REDUCE.into(), "true".into()),
             (MOE_DIRECT_STREAM.into(), "true".into()),
@@ -267,6 +282,7 @@ mod tests {
                 dspark_graph_handles_per_rank: 0,
                 diagnostic_step_logs: true,
                 wide_verify: true,
+                wide_draft: true,
                 f32_row_tiles: true,
                 phased_decode_reduce: true,
                 moe_direct: MoeDirect {
@@ -307,6 +323,7 @@ mod tests {
             (PREFILL_PLAN_CACHE_VERIFY, "1"),
             (DIAGNOSTIC_STEP_LOGS, "\"true\""),
             (WIDE_VERIFY, "1"),
+            (WIDE_DRAFT, "1"),
             (F32_ROW_TILES, "1"),
             (PHASED_DECODE_REDUCE, "1"),
             (MOE_DIRECT_STREAM, "\"true\""),
@@ -334,5 +351,27 @@ mod tests {
         ] {
             assert!(Options::read(&BTreeMap::from([(name.into(), value.into())])).is_ok());
         }
+    }
+
+    /// The wide drafter forward runs on the wide verify buckets, so the
+    /// option alone is refused.
+    #[test]
+    fn the_wide_draft_requires_the_wide_verify_buckets() {
+        let declaration = declaration();
+        let alone = declaration
+            .resolve(&BTreeMap::from([(WIDE_DRAFT.into(), "true".into())]))
+            .unwrap();
+        assert_eq!(
+            Options::read(&alone).unwrap_err(),
+            "model option wide_draft requires wide_verify"
+        );
+        let both = declaration
+            .resolve(&BTreeMap::from([
+                (WIDE_DRAFT.into(), "true".into()),
+                (WIDE_VERIFY.into(), "true".into()),
+            ]))
+            .unwrap();
+        let options = Options::read(&both).unwrap();
+        assert!(options.wide_draft && options.wide_verify);
     }
 }

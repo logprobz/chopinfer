@@ -24,6 +24,10 @@ pub struct Shape {
     /// Whether verify steps above the 64-row decode route run the wide
     /// verify buckets (the `wide_verify` candidate option).
     pub wide_verify: bool,
+    /// Whether drafter steps of more than twelve drafting items run them in
+    /// the fewest forwards the widest wide verify bucket holds, on the wide
+    /// verify buckets (the `wide_draft` candidate option).
+    pub wide_draft: bool,
     /// Whether Flash TP4 steps of 64 rows or fewer run the measured exact
     /// F32 row tiles (the `f32_row_tiles` candidate option).
     pub f32_row_tiles: bool,
@@ -46,6 +50,7 @@ impl Shape {
             runtime: geometry.runtime_defaults(),
             verify_rows: DECODE_BATCH,
             wide_verify: false,
+            wide_draft: false,
             f32_row_tiles: false,
             phased_decode_reduce: false,
             moe_knobs: Default::default(),
@@ -64,6 +69,24 @@ impl Shape {
     pub fn with_wide_verify(mut self, enabled: bool) -> Shape {
         self.wide_verify = enabled;
         self
+    }
+
+    /// This shape with the wide drafter forwards on or off
+    /// (`model_deepseek41_contract::execution_options::WIDE_DRAFT`).
+    pub fn with_wide_draft(mut self, enabled: bool) -> Shape {
+        self.wide_draft = enabled;
+        self
+    }
+
+    /// The most drafting items one wide drafter forward runs: the widest
+    /// wide verify bucket's rows over the five block rows of an item, at
+    /// most the decode batch. `None` without the `wide_draft` option or a
+    /// wide verify bucket.
+    pub(crate) fn wide_draft_items(&self) -> Option<u32> {
+        use model_deepseek41_contract::serving::MAX_DRAFT_TOKENS;
+        let widest = self.wide_verify_rows().last().copied()?;
+        self.wide_draft
+            .then(|| (widest / MAX_DRAFT_TOKENS).min(DECODE_BATCH))
     }
 
     /// This shape with the exact F32 row tiles of 64 rows or fewer on or
@@ -231,6 +254,37 @@ mod tests {
                 let shape = shape.with_verify_rows(192).with_wide_verify(true);
                 assert!(shape.wide_verify_rows().is_empty());
             }
+        }
+    }
+
+    /// A wide drafter forward holds the items whose five block rows fit
+    /// the widest wide verify bucket, at most the decode batch, and only
+    /// with both options.
+    #[test]
+    fn wide_drafter_forwards_fit_the_widest_bucket() {
+        let flash = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        for (rows, items) in [
+            (64, None),
+            (65, Some(13)),
+            (80, Some(16)),
+            (128, Some(25)),
+            (160, Some(32)),
+            (192, Some(32)),
+        ] {
+            let shape = flash.with_verify_rows(rows).with_wide_verify(true);
+            assert_eq!(shape.wide_draft_items(), None);
+            assert_eq!(
+                shape.with_wide_draft(true).wide_draft_items(),
+                items,
+                "{rows}"
+            );
+            assert_eq!(
+                flash
+                    .with_verify_rows(rows)
+                    .with_wide_draft(true)
+                    .wide_draft_items(),
+                None
+            );
         }
     }
 }

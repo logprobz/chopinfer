@@ -169,7 +169,9 @@ pub(crate) fn prepare_decode(
 /// The drafter's row tiles of its projection of `n` outputs from `k`
 /// inputs with the `f32_row_tiles` option: the decode site's through the
 /// decode bucket, and the verify site's above it to the narrow verify rows
-/// the instance admits.
+/// the instance admits. With the `wide_draft` option its wide forwards take
+/// the verify site's tiles from the 65th row to the widest wide verify
+/// bucket.
 pub(crate) fn prepare_drafter(
     shape: &crate::shape::Shape,
     n: u32,
@@ -179,10 +181,14 @@ pub(crate) fn prepare_drafter(
     let narrow = admitted(shape)
         .filter(|rows| shape.f32_row_tiles && rows[0] == DECODE_BATCH + 1)
         .map(|rows| [rows[0], rows[1].min(VERIFY_DECODE_ROWS)]);
+    let wide = admitted(shape)
+        .filter(|rows| shape.wide_draft && rows[1] > VERIFY_DECODE_ROWS)
+        .map(|rows| [VERIFY_DECODE_ROWS + 1, rows[1]]);
     let mut tiles = Vec::new();
     for (steps, rows) in [
         (Steps::Decode, decode_admitted(shape)),
         (Steps::Verify, narrow),
+        (Steps::Verify, wide),
     ] {
         tiles.extend(prepare_tiles(steps, rows, None, n, k)?);
     }
@@ -455,6 +461,25 @@ mod tests {
                 );
             }
             assert!(prepare_drafter(&shape, 384, 5120).unwrap().is_empty());
+        }
+        // With `wide_draft` the wide forwards take the verify site's tiles
+        // from the 65th row to the widest bucket, with or without the
+        // `f32_row_tiles` option.
+        for (verify_rows, row_tiles, first) in [(128, false, 65), (192, false, 65), (192, true, 1)]
+        {
+            let shape = tp4
+                .with_verify_rows(verify_rows)
+                .with_wide_verify(true)
+                .with_wide_draft(true)
+                .with_f32_row_tiles(row_tiles);
+            let tiles = prepare_drafter(&shape, 32320, 5120).unwrap();
+            for rows in 1..=192 {
+                assert_eq!(
+                    tiles.iter().filter(|t| t.admits(rows)).count(),
+                    usize::from((first..=verify_rows).contains(&rows)),
+                    "rows={rows} verify_rows={verify_rows} row_tiles={row_tiles}"
+                );
+            }
         }
     }
 }

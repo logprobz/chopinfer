@@ -66,8 +66,10 @@ impl LogitsRowSinkV1 for ProofSink {
 }
 
 /// The `-wide` lifetimes run the two widest with the `wide_verify` option,
-/// and the `-phased` ones the first and a 65-row one with the
-/// `phased_decode_reduce` option.
+/// the `-phased` ones the first and a 65-row one with the
+/// `phased_decode_reduce` option, and the `-wide-draft` ones the two widest
+/// with `wide_verify` and `wide_draft`: their 16 and 32 items draft in one
+/// forward each.
 #[test]
 fn allocated_lifetimes_journal() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
@@ -82,18 +84,35 @@ fn allocated_lifetimes_journal() {
         (32, 192, 5, "-maximum-wide", (344540, 0x07785bc19d29a6ff)),
         (4, 16, 5, "-phased", (69358, 0xfdbd662fbe69bdf6)),
         (16, 65, 5, "-odd-phased", (189194, 0xb6fd29e113df566c)),
+        (16, 65, 5, "-odd-wide-draft", (191702, 0x7ec0e494350dc4a8)),
+        (
+            32,
+            192,
+            5,
+            "-maximum-wide-draft",
+            (343532, 0xf9ee11d6af367dda),
+        ),
     ] {
-        use model_deepseek41_contract::execution_options::{PHASED_DECODE_REDUCE, WIDE_VERIFY};
-        let option = if suffix.ends_with("-wide") {
-            Some(WIDE_VERIFY)
-        } else if suffix.ends_with("-phased") {
-            Some(PHASED_DECODE_REDUCE)
-        } else {
-            None
+        use model_deepseek41_contract::execution_options::{
+            PHASED_DECODE_REDUCE, WIDE_DRAFT, WIDE_VERIFY,
         };
-        let (host, mut instance) = match option {
-            Some(option) => create_with_options(shape, 32, 192, &[(option, true.into())]),
-            None => create_with_limits(shape, 32, 192),
+        let options: &[&str] = if suffix.ends_with("-wide") {
+            &[WIDE_VERIFY]
+        } else if suffix.ends_with("-wide-draft") {
+            &[WIDE_VERIFY, WIDE_DRAFT]
+        } else if suffix.ends_with("-phased") {
+            &[PHASED_DECODE_REDUCE]
+        } else {
+            &[]
+        };
+        let (host, mut instance) = if options.is_empty() {
+            create_with_limits(shape, 32, 192)
+        } else {
+            let options = options
+                .iter()
+                .map(|&option| (option, true.into()))
+                .collect::<Vec<_>>();
+            create_with_options(shape, 32, 192, &options)
         };
         for slot in 0..items {
             execute(

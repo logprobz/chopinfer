@@ -39,7 +39,11 @@ impl Instance {
         // Validate the complete batch before any chunk can mutate staging.
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
         crate::lower::dspark::metadata(device.shape.geometry, inputs)?;
-        let chunk_items = device.draft_chunk_items;
+        // The wide drafter forward replaces the chunk option's bound.
+        let chunk_items = device
+            .shape
+            .wide_draft_items()
+            .map_or(device.draft_chunk_items, |items| items as usize);
         if inputs.len() <= chunk_items {
             let positions = if device.shape.geometry.id == FLASH.id
                 && device.shape.ranks() == 4

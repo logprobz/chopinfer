@@ -206,6 +206,7 @@ them. A non-default value is unqualified.
 | `text_config.indexer_mma` | `true` | Use the guarded native Flash index scorer where eligible. |
 | `text_config.indexer_prefill_tile` | `true` | Enable the qualified Flash tiled indexer routes. |
 | `verify_graph_rows` | `64` | Widest graphed verify step; wider admitted steps run eagerly. |
+| `wide_draft` | `false` | Candidate, requires `wide_verify`: a Flash TP4 drafter step of more than twelve drafting items runs them in the fewest forwards the widest wide verify bucket holds (25 items at 128 verify rows, 32 at 192), on the wide dense folds and the head's exact F32 row tiles, instead of chunks of at most twelve. Fixed-batch GPU replays matched the default bitwise; served step-time acceptance remains required before adoption. |
 | `wide_verify` | `false` | Candidate: Flash TP4 eager verify steps of 65 to 192 rows prepare their row-local stages and HC boundaries at the wide verify buckets (128 rows and the verify rows) and launch the decode entries a 64-row step uses, fold their dense projections through wide folds at those buckets, run their routed experts through the wide direct MoE queues, and run the vocabulary head, router and compressor in their measured exact F32 row tiles. Fixed-batch GPU replays and kernel-lab MoE pairs matched the default bitwise; served step-time acceptance remains required before adoption. |
 
 TP4 native-KV single-item DMA prefill overlaps both prepared Engram gathers
@@ -492,6 +493,25 @@ same replays with the robust knob set on (eagerly, with graphs and at
 128-row step from 24.2 to 19.8 ms and of a 192-row step from 35.0 to 29.3
 ms, and the steps from 76.9 to 72.2 ms and from 104.0 to 98.3 ms. This is
 not served step-time acceptance.
+
+The `wide_draft` candidate option, with `wide_verify`, runs a drafter step
+of more than twelve drafting items in the fewest forwards the widest wide
+verify bucket holds, five block rows an item, instead of chunks of at most
+twelve: one forward of 16 items at C16 instead of 8+8, and one of 32 at
+C32 and 192 verify rows instead of 11+11+10. A forward above 64 block rows
+folds its dense projections through the wide folds and projects the
+vocabulary in the head's exact F32 row tiles. Every drafter op keeps
+one-row bits, and attention, the Markov head and the sampling noise are
+per item, so the proposals do not depend on the split. On 2026-10-31,
+fixed-batch GPU replays at the five wide configurations matched the
+previous package bitwise. Under a CUDA trace of a live sampled load at 192
+verify rows, merged with the exact F32 projection work's fix of a rank-1
+head tile stall, the drafter's GPU time fell from 7.61 to 6.91 ms per C16
+step and from 14.14 to 9.47 ms per C32 step, and the step period from 82.8
+to 81.6 ms and from 136.7 to 132.3 ms. Without that fix the single forward
+stalls on rank 1's head tile and is slower than the chunks. See
+[wide drafter forwards](dspark-wide-draft.md). This is not served
+step-time acceptance.
 
 Prefill commit projections are batched across prompts. Undrafted pure
 decode joins status once and submits private sampling before collecting it

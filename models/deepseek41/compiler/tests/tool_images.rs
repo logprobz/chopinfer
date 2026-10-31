@@ -93,6 +93,25 @@ fn tool_images_keep_text_screening_and_other_role_refusals() {
                 .unwrap_err();
         assert_eq!(error.message, "only user messages may contain media");
     }
+    // Their text parts serve: a developer message reads as a system message.
+    for role in ["system", "developer"] {
+        let body = json!({"thinking": {"type": "disabled"}, "messages": [
+            {"role": role, "content": [{"type": "text", "text": "Be brief."}]},
+            {"role": "user", "content": [image("AA==")]}]});
+        let prepared =
+            prepare_chat_request_v1(&frontend, 1 << 20, body.as_object().unwrap().clone(), 1024)
+                .unwrap();
+        let PreparedPrompt::MediaChat { segments, .. } = prepared.prompt else {
+            panic!("the user image must reach media preparation");
+        };
+        let Some(PromptSegmentV1::Text(text)) = segments.first() else {
+            panic!("the prompt starts with text");
+        };
+        assert!(
+            text.ends_with("<｜System｜>Be brief.<｜User｜>"),
+            "{role}: {text}"
+        );
+    }
     for marker in ["<｜deepseek_image｜>", "\u{e000}chopinfer-media:0:\u{e001}"] {
         let mut body = history();
         body["messages"][2]["content"][0]["text"] = marker.into();

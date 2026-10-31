@@ -187,42 +187,52 @@ fn the_wide_router_family_loads_only_with_a_wide_tp4_budget() {
 }
 
 /// An instance loads the wide direct MoE module exactly where it prepares
-/// a wide verify bucket: none in serving yet, and with the lab candidate
-/// only TP4 instances serving verify steps above 64 rows.
+/// a wide verify bucket: TP4 instances with the `wide_verify` option that
+/// serve verify steps above 64 rows, each row count from 65 to its verify
+/// rows.
 #[test]
 fn instances_load_the_wide_direct_family_only_with_a_wide_bucket() {
     let cubin = crate::sm120::moe_direct_wide::CUBIN;
+    let set = model_deepseek41_contract::moe::expert_sets(&FLASH)[0];
     for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
         let shape = Shape::new(&FLASH, ranks).unwrap();
         for rows in [32, 64, 65, 128, 192] {
             let shape = shape.with_verify_rows(rows);
             assert!(!crate::Kernels::loads(cubin, &shape));
+            assert!(crate::sm120::moe_direct::wide_rows(&shape, set).is_empty());
+            let wide = shape.with_wide_verify(true);
+            let enabled = ranks == Ranks::TP4 && rows > 64;
+            assert_eq!(crate::Kernels::loads(cubin, &wide), enabled);
             assert_eq!(
-                crate::sm120::moe_direct::with_wide_candidate(|| crate::Kernels::loads(
-                    cubin, &shape
-                )),
-                ranks == Ranks::TP4 && rows > 64
+                crate::sm120::moe_direct::wide_rows(&wide, set),
+                if enabled {
+                    (65..=rows).collect()
+                } else {
+                    Vec::new()
+                }
             );
         }
     }
 }
 
-/// Verify steps of 65 to 192 rows through the wide direct candidate keep
-/// the served router projection and routes launch for launch, then bind
-/// the pack, the absorbing gate queue and its finisher, the two-strip down
-/// queue and the down finisher at the package's verify rows, each pointer
-/// within its view and every workspace plane within the workspace.
+/// With the `wide_verify` option, verify steps of 65 to 192 rows through
+/// the wide direct queues keep the router projection and routes of the
+/// 8192-row expert chains launch for launch, then bind the pack, the
+/// absorbing gate queue and its finisher, the two-strip down queue and the
+/// down finisher at the package's verify rows, each pointer within its
+/// view and every workspace plane within the workspace, which the wide
+/// buckets do not grow.
 #[test]
 fn every_wide_verify_step_keeps_the_served_routes_and_binds_the_wide_queues() {
     let shape = Shape::new(&FLASH, Ranks::TP4)
         .unwrap()
-        .with_verify_rows(192);
+        .with_verify_rows(192)
+        .with_wide_verify(true);
     let kernels = crate::Kernels::new(&shape).unwrap();
     let set = model_deepseek41_contract::moe::expert_sets(&FLASH)[0];
-    let served = Ops::prepare_set(&kernels, &shape, KvStorage::Native, set);
-    let wide = crate::sm120::moe_direct::with_wide_candidate(|| {
-        Ops::prepare_set(&kernels, &shape, KvStorage::Native, set)
-    });
+    let wide = Ops::prepare_set(&kernels, &shape, KvStorage::Native, set);
+    let mut reference = Ops::prepare_set(&kernels, &shape, KvStorage::Native, set);
+    reference.moe.as_mut().unwrap().retain_reference_in_test();
     let largest = wide
         .moe
         .as_ref()
@@ -234,19 +244,15 @@ fn every_wide_verify_step_keeps_the_served_routes_and_binds_the_wide_queues() {
         .unwrap()
         .info
         .workspace;
-    assert_eq!(wide.workspace(), served.workspace().max(largest));
-    println!(
-        "wide direct workspace: served {} candidate {} (192 rows {largest})",
-        served.workspace(),
-        wide.workspace()
-    );
+    assert!(largest < reference.workspace());
+    assert_eq!(wide.workspace(), reference.workspace());
     let rank = 1;
     let mut b = buffers(&shape, rank);
     b.workspace.length = wide.workspace();
     b.sorted_rows.length = wide.moe.as_ref().unwrap().sorted_rows_bytes();
     assert_eq!(
         b.sorted_rows.length,
-        served.moe.as_ref().unwrap().sorted_rows_bytes()
+        reference.moe.as_ref().unwrap().sorted_rows_bytes()
     );
     for (index, name) in [
         "ffn.gate.weight",
@@ -288,7 +294,7 @@ fn every_wide_verify_step_keeps_the_served_routes_and_binds_the_wide_queues() {
             rows,
             items: rows.div_ceil(6),
         };
-        assert!(served.moe.as_ref().unwrap().direct(phase).is_none());
+        assert!(reference.moe.as_ref().unwrap().direct(phase).is_none());
         let direct = wide.moe.as_ref().unwrap().direct(phase).unwrap();
         assert!(!direct.fuses_router() && !direct.has(crate::ops::moe::direct::Point::Route));
         for width in [1, 2, 4] {
@@ -343,7 +349,7 @@ fn every_wide_verify_step_keeps_the_served_routes_and_binds_the_wide_queues() {
         for stage in [Stage::Project(0, "moe.router"), Stage::Route(0)] {
             assert_eq!(
                 described(&lower(&wide, stage)),
-                described(&lower(&served, stage))
+                described(&lower(&reference, stage))
             );
         }
         let gate = lower(&wide, Stage::ExpertsGateUp(0));

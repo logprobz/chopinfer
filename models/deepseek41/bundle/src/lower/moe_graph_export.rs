@@ -275,25 +275,30 @@ fn export_wide_moe_graphs() {
     );
     assert!(!widths.is_empty() && widths.windows(2).all(|w| w[0] < w[1]));
     let verify_rows = widths.last().copied().unwrap().max(64);
+    // CHOPINFER_MOE_GRAPH_ARM selects the arm: unset, the default package;
+    // `wide`, the `wide_verify` candidate option; `chains`, the option with
+    // the 8192-row expert chains in place of every direct bucket, the
+    // reference that differs from `wide` only in the routed experts.
+    let arm = std::env::var("CHOPINFER_MOE_GRAPH_ARM").ok();
+    let wide_verify = match arm.as_deref() {
+        None => false,
+        Some("wide" | "chains") => true,
+        Some(other) => panic!("unknown MoE graph arm {other}"),
+    };
     let shape = Shape::new(&FLASH, Ranks::TP4)
         .unwrap()
-        .with_verify_rows(verify_rows);
+        .with_verify_rows(verify_rows)
+        .with_wide_verify(wide_verify);
     let kernels = crate::Kernels::new(&shape).unwrap();
-    let prepare = || {
-        Ops::prepare_set(
-            &kernels,
-            &shape,
-            KvStorage::Native,
-            moe::expert_sets(&FLASH)[0],
-        )
-    };
-    // CHOPINFER_MOE_GRAPH_ARM=wide exports the wide direct candidate above
-    // 64 rows; otherwise the served selection.
-    let ops = match std::env::var("CHOPINFER_MOE_GRAPH_ARM").as_deref() {
-        Ok("wide") => crate::sm120::moe_direct::with_wide_candidate(prepare),
-        Ok(other) => panic!("unknown MoE graph arm {other}"),
-        Err(_) => prepare(),
-    };
+    let mut ops = Ops::prepare_set(
+        &kernels,
+        &shape,
+        KvStorage::Native,
+        moe::expert_sets(&FLASH)[0],
+    );
+    if arm.as_deref() == Some("chains") {
+        ops.moe.as_mut().unwrap().retain_reference_in_test();
+    }
     let mut cases = Vec::new();
     for rank in 0..4 {
         for &rows in &widths {

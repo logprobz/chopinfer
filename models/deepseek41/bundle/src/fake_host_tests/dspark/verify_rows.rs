@@ -312,7 +312,6 @@ fn row_bucket(rows: u32) -> (u32, u32, u32) {
 /// the entries of [`CANDIDATE_STAGES`].
 const WIDE_STAGES: &[Stage] = &[
     ("chop_deepseek41_moe_ceil_w5120_cached_v1", 320, per_row),
-    ("chop_deepseek41_moe_ceil_w3456_v1", 160, per_row),
     (
         "chop_deepseek41_shared_swiglu_w576_parallel_v1",
         160,
@@ -460,6 +459,64 @@ fn check_dense_folds(observed: &Grids, rows: u32, enabled: bool, what: &str) {
     assert_eq!(observed[ENGRAM_TILE].values().sum::<usize>(), 8, "{what}");
 }
 
+/// The wide direct MoE queues of a `rows`-row target step with the
+/// `wide_verify` option, at the package's verify rows, with their grids:
+/// the pack, the absorbing gate queue, the gate finisher (one CTA per
+/// routed row and each of five column groups), the two-strip down queue
+/// and the down finisher (one CTA per row and each of 40 column strips).
+fn wide_experts(rows: u32) -> [(&'static str, (u32, u32, u32)); 5] {
+    [
+        ("chop_deepseek41_moe_wide_t192_e384_k6_pack_v1", (1, 1, 1)),
+        (
+            "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_v1",
+            (1504, 1, 1),
+        ),
+        (
+            "chop_deepseek41_moe_bandwidth_direct_t192_e384_k6_gate_finish_v1",
+            (5, 6 * rows, 1),
+        ),
+        (
+            "chop_deepseek41_moe_strip2_t192_e384_k6_down_small_v1",
+            (1504, 1, 1),
+        ),
+        (
+            "chop_deepseek41_moe_floor_t192_e384_k6_down_finish_v1",
+            (40, rows, 1),
+        ),
+    ]
+}
+
+/// The 8192-row expert chains those queues replace: the gate/up chain, its
+/// ceil quantizer (one CTA per row), the down chain and the routed sum.
+const CHAIN_EXPERTS: [&str; 4] = [
+    "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_gateup_e384k6_n1152_k5120_r64_t8192_clamp4120000041200000_lanes_v1",
+    "chop_deepseek41_moe_ceil_w3456_v1",
+    "deepseek41_chop_moe_chain_mxfp4_a8ceil_before_down_e384k6_n5120_k576_r64_t8192_v1",
+    "chop_moe_deepseek41_sum_add_f32_k6_w5120_l384_t8192_v1",
+];
+
+/// The routed experts of a `rows`-row target step, once per layer on every
+/// rank: with the `wide_verify` option the wide direct queues
+/// ([`wide_experts`]) and no chain; without it the chains and no wide
+/// queue.
+fn check_routed_experts(observed: &Grids, rows: u32, enabled: bool, what: &str) {
+    for (symbol, grid) in wide_experts(rows) {
+        let expected = enabled.then(|| [(grid, 160)].into());
+        assert_eq!(observed.get(symbol), expected.as_ref(), "{what}: {symbol}");
+    }
+    for symbol in CHAIN_EXPERTS {
+        let launches = observed.get(symbol).map_or(0, |g| g.values().sum());
+        assert_eq!(launches, if enabled { 0 } else { 160 }, "{what}: {symbol}");
+    }
+    if !enabled {
+        assert_eq!(
+            observed[CHAIN_EXPERTS[1]],
+            [(per_row(rows), 160)].into(),
+            "{what}"
+        );
+    }
+}
+
 /// Widths above the 64-row budget a step of 32 items (and 16 up to its 96
 /// rows) can take: both sides of 64, 96, 128 and 160, and 192.
 const WIDE_STEPS: [(u32, u32); 17] = [
@@ -543,12 +600,9 @@ fn target_programs_lower_above_the_default_verify_rows() {
                     "{symbol} at {count} items and {rows} rows ({enabled})"
                 );
             }
-            check_dense_folds(
-                &observed,
-                rows,
-                enabled,
-                &format!("{count} items and {rows} rows ({enabled})"),
-            );
+            let what = format!("{count} items and {rows} rows ({enabled})");
+            check_dense_folds(&observed, rows, enabled, &what);
+            check_routed_experts(&observed, rows, enabled, &what);
             instance.commit_accepted(&accepted).unwrap();
         }
         for request in 1..=32 {

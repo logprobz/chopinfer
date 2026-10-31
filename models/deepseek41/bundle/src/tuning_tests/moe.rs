@@ -139,6 +139,16 @@ fn domains() -> std::collections::BTreeSet<Key> {
             }
         }
     }
+    // The wide direct verify buckets of the TP4 backbone bank, at the
+    // package's verify rows.
+    let set = moe::expert_sets(&FLASH)[0];
+    add(
+        &mut out,
+        "moe.direct_wide.verify",
+        "mxfp4",
+        &[("experts", set.count), ("ranks", 4), ("top_k", set.top_k)],
+        crate::sm120::moe_direct_wide::CAPACITY,
+    );
     out
 }
 
@@ -226,6 +236,7 @@ const UNTUNED: &[&str] = &[
     "moe.direct_admit.prefill mxfp4 experts=128,top_k=3 t64: 1..=64",
     "moe.direct_admit.prefill mxfp4 experts=384,top_k=6 t64: 1..=64",
     "moe.direct_admit.verify mxfp4 experts=128,top_k=3 t64: 3,7,9..=15,17..=31,33..=47,49..=63",
+    "moe.direct_wide.verify mxfp4 experts=384,ranks=4,top_k=6 t192: 1..=64",
     "moe.gate_finish.decode mxfp4 experts=128 t64: 1..=64",
     "moe.gate_finish.decode mxfp4 experts=384 t64: 2..=7,9..=15,17..=64",
     "moe.gate_finish.prefill mxfp4 experts=128 t64: 1..=64",

@@ -95,6 +95,7 @@ pub(super) fn validate(row: &Row) -> Result<(), TuningError> {
         "moe.compact_down.decode" | "moe.compact_gate_up.decode" => (&["compact"], &[], &[]),
         "moe.direct_admit.decode" => (&["direct"], &["order"], &[]),
         "moe.direct_admit.verify" => (&["direct", "gap", "wide"], &["order"], &[]),
+        "moe.direct_wide.verify" => (&["direct"], &[], &[]),
         "moe.gate_finish.decode" | "moe.gate_finish.verify" => (&["gate_finish"], &[], &[]),
         "moe.gate_grid.decode" | "moe.gate_grid.verify" => (&["gate_grid"], &[], &[]),
         "moe.gate_resident.decode" | "moe.gate_resident.prefill" | "moe.gate_resident.verify" => {

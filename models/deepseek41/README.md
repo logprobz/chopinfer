@@ -195,7 +195,7 @@ them. A non-default value is unqualified.
 | `text_config.indexer_mma` | `true` | Use the guarded native Flash index scorer where eligible. |
 | `text_config.indexer_prefill_tile` | `true` | Enable the qualified Flash tiled indexer routes. |
 | `verify_graph_rows` | `64` | Widest graphed verify step; wider admitted steps run eagerly. |
-| `wide_verify` | `false` | Candidate: Flash TP4 eager verify steps of 65 to 192 rows prepare their row-local stages at the wide verify buckets (128 rows and the verify rows) and launch the decode entries a 64-row step uses. Fixed-batch GPU replays matched the default bitwise; served step-time acceptance remains required before adoption. |
+| `wide_verify` | `false` | Candidate: Flash TP4 eager verify steps of 65 to 192 rows prepare their row-local stages at the wide verify buckets (128 rows and the verify rows) and launch the decode entries a 64-row step uses, and their routed experts run the wide direct MoE queues. Fixed-batch GPU replays and kernel-lab MoE pairs matched the default bitwise; served step-time acceptance remains required before adoption. |
 
 TP4 native-KV single-item DMA prefill overlaps both prepared Engram gathers
 by default at 512-8192 rows. The model joins each layer before its decoder;
@@ -305,13 +305,17 @@ quantizers and the shared SwiGLU at the wide verify buckets
 (`verify_bounds::WIDE`: 128 rows and the package's 192, each capped by the
 verify rows), so they launch the decode entries a 64-row step uses. Without
 it those stages keep their prefill entries. The route sweep
-`tp4-dspark-rows192-wide` serves the override with the option on. The other
-stages of those steps keep their prefill entries either way. The HC fusions,
-the query and row norms, the latent query and selected cache, the index
-query, the cached F32 projections, the dense and Engram folds and the MoE
-need kernel, tuning or shared-limit changes to serve more than 64 rows, and
-the chained MoE's intermediate quantizer is selected inside its 64-row
-chain. On 2026-10-31, fixed-batch GPU replays of the option's stages at
+`tp4-dspark-rows192-wide` serves the override with the option on. With the
+option the routed experts of those steps run the direct MoE queues compiled
+at the package's 192 rows (`bundle/src/sm120/moe_direct_wide.rs`) instead of
+the 8192-row expert chains; kernel-lab pairs matched the chains bitwise at
+every row count from 65 to 192 and were faster in every timed case
+([qualification](lab/moe_direct_wide.md)). The other stages of those steps
+keep their prefill entries either way. The HC fusions, the query and row
+norms, the latent query and selected cache, the index query, the cached F32
+projections and the dense and Engram folds need kernel, tuning or
+shared-limit changes to serve more than 64 rows, and without the option the
+chained MoE's intermediate quantizer is selected inside its 64-row chain. On 2026-10-31, fixed-batch GPU replays of the option's stages at
 verify widths 64 to 192 (concurrency 16 and 32, four to six rows per item,
 verify capacities 80 to 192) matched the previous package bitwise in
 logits, proposals, acceptance and committed state. Under a CUDA trace, the

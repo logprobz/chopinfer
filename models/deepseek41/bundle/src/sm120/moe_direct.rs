@@ -103,7 +103,7 @@ pub(super) fn prepare_set(
             )?,
         ))
     });
-    let wide = wide.map(|rows| {
+    let wide = wide.into_iter().map(|rows| {
         let entry = wide_entry.as_ref().expect("wide direct entry");
         Ok((
             ExecutionPhase::Verify,
@@ -114,56 +114,59 @@ pub(super) fn prepare_set(
     narrow.chain(wide).collect()
 }
 
-/// The verify rows above 64 the backbone bank serves through the direct
-/// queues at the package's verify rows (`moe_direct_wide`), over the
-/// served generic route, with its gate/up bank in quad-lane row tiles.
-/// Unmeasured: only a lab export selects them
-/// (`with_wide_candidate`). An instance loads the wide module exactly where
-/// this range is not empty for its backbone bank.
-pub(crate) fn wide_rows(
-    shape: &crate::shape::Shape,
-    set: Experts,
-) -> std::ops::RangeInclusive<u32> {
+/// The verify rows above the direct buckets that the backbone bank serves
+/// through the direct queues at the package's verify rows
+/// (`moe_direct_wide`), over the served generic route, with its gate/up
+/// bank in quad-lane row tiles: none without the `wide_verify` candidate
+/// option (`Shape::wide_verify_rows`), and otherwise the rows the tuning
+/// table admits, up to the widest wide verify bucket. An instance loads
+/// the wide module exactly where this list is not empty for its backbone
+/// bank.
+// TP4, 250 W, 2026-10-31, paired full graphs against the 8192-row expert
+// chains: bitwise at every row count 65..=192, every scale width and four
+// routing patterns, with poisoned and live-row replays, dropped-join
+// controls and a clean memcheck subset. Complete-layer time fell in all
+// 2,048 timed cases of those row counts, widths and patterns (largest
+// ratio 0.944; models/deepseek41/lab/moe_direct_wide.md).
+pub(crate) fn wide_rows(shape: &crate::shape::Shape, set: Experts) -> Vec<u32> {
     let g = shape.geometry;
-    let eligible = g.id == model_deepseek41_contract::geometry::FLASH.id
-        && shape.ranks() == 4
-        && shape.verify_rows > 64
-        && set == model_deepseek41_contract::moe::expert_sets(g)[0]
-        && super::moe_row_tiles_op::layout(g, shape.ranks(), set)
-            == model_deepseek41_contract::weight_plan::RoutedLayout::Lanes;
-    #[cfg(test)]
-    if eligible && WIDE_CANDIDATE.get() {
-        return 65..=shape.verify_rows.min(super::moe_direct_wide::CAPACITY);
+    let Some(&widest) = shape.wide_verify_rows().last() else {
+        return Vec::new();
+    };
+    if set != model_deepseek41_contract::moe::expert_sets(g)[0]
+        || super::moe_row_tiles_op::layout(g, shape.ranks(), set)
+            != model_deepseek41_contract::weight_plan::RoutedLayout::Lanes
+    {
+        return Vec::new();
     }
-    let _ = eligible;
-    1..=0
-}
-
-#[cfg(test)]
-thread_local! {
-    static WIDE_CANDIDATE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Prepare the wide direct verify buckets inside `f`, for lab exports of
-/// the candidate.
-#[cfg(test)]
-pub(crate) fn with_wide_candidate<T>(f: impl FnOnce() -> T) -> T {
-    struct Restore(bool);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            WIDE_CANDIDATE.set(self.0);
-        }
-    }
-    let _restore = Restore(WIDE_CANDIDATE.replace(true));
-    f()
+    let capacity = super::moe_direct_wide::CAPACITY;
+    let first = model_deepseek41_contract::verify_bounds::MOE_DIRECT + 1;
+    (first..=widest.min(capacity))
+        .filter(|&rows| {
+            super::moe::choice(
+                g,
+                "direct_wide",
+                ExecutionPhase::Verify,
+                &[
+                    ("experts", set.count),
+                    ("ranks", shape.ranks()),
+                    ("top_k", set.top_k),
+                ],
+                capacity,
+                rows,
+            )
+            .is_some_and(|row| row.schedule == "direct")
+        })
+        .collect()
 }
 
 /// A verify step above 64 rows: the generic route's metadata packs into
 /// the queue table (the pack also clears the gate tickets), then the
 /// absorbing gate queue, the direct gate finisher, the two-strip down
 /// queue and the down finisher, each the 64-row entry at the package's
-/// verify rows. The served route and its scale expansion keep their
-/// stage; no route launch is part of this op.
+/// verify rows. The served route keeps its stage; no route launch is part
+/// of this op. Its queues read encoded scale banks in place, so no scale
+/// expansion precedes them.
 fn prepare_wide(wide: &Entry, rows: u32, scaling: u32) -> Result<Prepared, Refused> {
     use kernels_sm120::moe::chained::wide as queues;
     let scratch = wide.workspace_bytes(rows)?;

@@ -1101,6 +1101,15 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         return Err(Failed::releasing(instance, status(error)));
     }
     instance.memory.take("dspark_cycle");
+    // The status packet's events are held resources, which destroy releases
+    // after the prepared Engram gathers: create them before the gathers, as
+    // the host releases newest first.
+    if let Err(error) = instance.prepare_ar_status() {
+        instance.log(&format!(
+            "create failed preparing the AR status packet: {error}"
+        ));
+        return Err(Failed::releasing(instance, status(error)));
+    }
     if let Err(error) = instance.prepare_prefill_engram() {
         instance.log(&format!("create failed preparing prefill Engram: {error}"));
         return Err(Failed::releasing(instance, status(error)));
@@ -1108,12 +1117,6 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
     instance.memory.take("prefill_engram");
     if let Err(error) = instance.prepare_ar_engram() {
         instance.log(&format!("create failed preparing AR Engram: {error}"));
-        return Err(Failed::releasing(instance, status(error)));
-    }
-    if let Err(error) = instance.prepare_ar_status() {
-        instance.log(&format!(
-            "create failed preparing the AR status packet: {error}"
-        ));
         return Err(Failed::releasing(instance, status(error)));
     }
     instance.memory.take("ar_engram");

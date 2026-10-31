@@ -15,7 +15,10 @@ pub(super) fn validate(row: &Row) -> Result<(), TuningError> {
             &["distributed"],
         ),
         "dense_fold.direct.decode" => (&["direct"], &["k_warps", "n_warps"], &[]),
-        "dense_fold.fold.decode" | "dense_fold.split.decode" | "reuse.fold.decode" => (
+        "dense_fold.fold.decode"
+        | "dense_fold.split.decode"
+        | "dense_fold.wide.verify"
+        | "reuse.fold.decode" => (
             &["dense_decode"],
             &["finish", "row_groups", "stages", "tile_n"],
             &["weight_prefetch"],
@@ -177,7 +180,10 @@ fn validate_values(row: &Row) -> Result<(), TuningError> {
         }
     };
     let valid = match row.key.op.as_str() {
-        "dense_fold.fold.decode" | "dense_fold.split.decode" | "reuse.fold.decode" => {
+        "dense_fold.fold.decode"
+        | "dense_fold.split.decode"
+        | "dense_fold.wide.verify"
+        | "reuse.fold.decode" => {
             let merge = count("finish") == 1
                 && count("tile_n") == 16
                 && count("row_groups") == 1
@@ -193,6 +199,8 @@ fn validate_values(row: &Row) -> Result<(), TuningError> {
                 "reuse.fold.decode" => {
                     ticket && count("row_groups") == 2 && [2, 4, 8].contains(&count("folds"))
                 }
+                // Wide entries keep one row group and the ticket finish.
+                "dense_fold.wide.verify" => ticket && count("row_groups") == 1,
                 _ => (merge || ticket) && count("row_groups") == 1,
             }
         }

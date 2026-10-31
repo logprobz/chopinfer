@@ -108,6 +108,12 @@ runtime partition, not a template knob; other rows must omit it and choose
 their partition at launch. `Knobs::from_row` refuses missing, mistyped,
 unknown or unsupported values.
 
+`dense_fold.wide.verify` rows choose the schedule of a wide verify fold,
+the decode template with a 256-row workspace header, for each
+`verify_bounds::WIDE` bucket (128 and 192 rows), keyed by the bucket at
+its widest row. They admit only ticket schedules of one row group; a
+missing row keeps the ticket baseline.
+
 Every schedule retains E4M3 ceil-UE8M0 activations, UE8M0 scales per K32,
 four K32 MMAs per K128 chain and ascending F32 reduction. Those policies
 are numerical identity. They cannot be changed by a tuning row.

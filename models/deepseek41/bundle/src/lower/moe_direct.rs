@@ -555,10 +555,8 @@ mod tests {
             .1;
         assert_eq!(wide.entries.len(), 12);
         for entry in &wide.entries {
-            let tag = crate::sm120::moe_direct::wide_route(
-                &entry.symbol,
-                &(65..=192).collect::<Vec<_>>(),
-            );
+            let tag =
+                crate::ops::moe::wide_direct_route(&entry.symbol, &(65..=192).collect::<Vec<_>>());
             assert!(catalogue.contains(&tag), "{}", entry.symbol);
         }
         let rank = 0;

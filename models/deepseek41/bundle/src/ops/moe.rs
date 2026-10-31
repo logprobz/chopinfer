@@ -68,6 +68,26 @@ fn kind_of(phase: Phase) -> usize {
     }
 }
 
+/// The route of `symbol`, a launch of the wide direct queues: the served
+/// route of the verify rows `rows` (`sm120::moe_direct::wide_rows`) that
+/// run them.
+pub(crate) fn wide_direct_route(symbol: &str, rows: &[u32]) -> kernel_core::route::RouteTag {
+    let mut admitted: Vec<std::ops::RangeInclusive<u32>> = Vec::new();
+    for &row in rows {
+        match admitted.last_mut() {
+            Some(range) if *range.end() + 1 == row => *range = *range.start()..=row,
+            _ => admitted.push(row..=row),
+        }
+    }
+    kernel_core::route::branch(
+        symbol,
+        kernel_core::route::RouteClass::Fast,
+        "moe_direct",
+        "wide-verify",
+        admitted,
+    )
+}
+
 /// One kind's ops: the experts' gate/up and down and each rank's routes,
 /// padded to the gate/up's route tile.
 struct Kind {
@@ -386,7 +406,7 @@ impl MoeOps {
             .map(|(_, rows, _)| *rows)
             .collect();
         rows.sort_unstable();
-        Some(crate::sm120::moe_direct::wide_route(symbol, &rows))
+        Some(wide_direct_route(symbol, &rows))
     }
 
     pub(crate) fn router_route(

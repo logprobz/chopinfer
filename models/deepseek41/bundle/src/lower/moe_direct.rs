@@ -536,7 +536,8 @@ mod tests {
     /// direct queues, above the 64-row direct buckets through the
     /// package's 192 rows, carries their served route, which the route
     /// catalogue registers for every entry of the wide module (its
-    /// encoded-scale entries included). A 64-row step's queues carry none.
+    /// encoded-scale entries included), and none fuses the router. A
+    /// 64-row step's queues carry none.
     #[test]
     fn wide_direct_queues_take_the_route_of_their_rows() {
         let _metadata = kernel_core::route::Metadata::enable();
@@ -623,6 +624,14 @@ mod tests {
                 head_rows: 1,
                 prefill_hc_fusion: true,
             };
+            // Above 64 rows the router projection is not fused into the
+            // wide queues, so it keeps its own producer (the exact F32 row
+            // tiles).
+            if rows > 64 {
+                let op = ops.moe.as_ref().unwrap().direct(phase).unwrap();
+                assert!(!op.fuses_router(), "{rows} rows");
+                assert_eq!(op.router_spans(b.workspace), Ok(None), "{rows} rows");
+            }
             let mut tagged = 0;
             for stage in [
                 Stage::ExpertsGateUp(0),

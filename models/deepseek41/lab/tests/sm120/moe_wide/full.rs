@@ -124,7 +124,7 @@ pub(super) fn expert(row: u32, k: u32, pattern: u32, rank: u32) -> u32 {
         },
         4 => draw(mix(row, rank), 6, &[])[k as usize],
         5 => {
-            let shared = draw(mix(0x8000_0000 | row / 4, rank), 4, &[]);
+            let shared = draw(mix(0x8000_0000 | (row / 4), rank), 4, &[]);
             if k < 4 {
                 shared[k as usize]
             } else {

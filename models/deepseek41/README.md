@@ -402,7 +402,14 @@ layer 8 36 to 53 us against 28 to 43 us for layer 2. The lab's comparisons
 matched the split route bit for bit on every rank's head slice, the four
 routers, both compressors and layer 8's index projections, one of them with
 a weight set below 2^-30, at every boundary row from 1 to 192, and on the
-default operand matrix.
+default operand matrix. Later that day the lab's `real::SLICES` matrix, read
+from the checkpoint, found exactly these five tiles and matched bit for bit
+on all 12 slices at all 56 boundary rows, and the default matrix gained a
+domain-boundary witness: signed operands just below, at and just above
+2^-30 and 2^31 at five K positions put six of every 13 rows and tiles
+outside the domain, and on all five projections at every boundary row the
+reference matched the outputs those operands fix, a cancelling chain whose
+bits show each output's path, and every form matched the reference.
 
 Prefill commit projections are batched across prompts. Undrafted pure
 decode joins status once and submits private sampling before collecting it

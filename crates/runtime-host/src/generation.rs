@@ -6528,6 +6528,8 @@ mod tests {
                 id: 7,
             }],
             prompt_special_tokens: vec!["<pad>".to_owned()],
+            explicit_special_tokens: false,
+            id_only_markers: Vec::new(),
         };
         let mut media = vec![FrontendMediaPartV1 {
             kind: FrontendMediaPartKindV1::Image,
@@ -6731,6 +6733,8 @@ mod tests {
                 id: 7,
             }],
             prompt_special_tokens: vec!["<pad>".to_owned()],
+            explicit_special_tokens: false,
+            id_only_markers: Vec::new(),
         };
         let part = FrontendMediaPartV1 {
             kind: FrontendMediaPartKindV1::Image,

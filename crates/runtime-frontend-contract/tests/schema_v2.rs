@@ -462,6 +462,52 @@ fn end_markers_are_distinct_declared_boundary_tokens() {
     );
 }
 
+/// Explicit special tokens and ID-only markers are optional, and a
+/// declaration without them writes back without them.
+#[test]
+fn explicit_special_tokens_and_id_only_markers_are_opt_in() {
+    let descriptor = read(&declaration()).unwrap();
+    assert!(!descriptor.vocabulary.explicit_special_tokens);
+    assert!(descriptor.vocabulary.id_only_markers.is_empty());
+    let written = serde_json::to_value(&descriptor).unwrap();
+    assert_eq!(written["vocabulary"], declaration()["vocabulary"]);
+    let mut value = declaration();
+    value["vocabulary"]["explicit_special_tokens"] = json!(true);
+    value["vocabulary"]["id_only_markers"] = json!(["</t>", "<c>"]);
+    let descriptor = read(&value).unwrap();
+    assert!(descriptor.vocabulary.explicit_special_tokens);
+    assert_eq!(descriptor.vocabulary.id_only_markers, ["</t>", "<c>"]);
+    let written = serde_json::to_value(&descriptor).unwrap();
+    assert_eq!(written["vocabulary"], value["vocabulary"]);
+    assert_eq!(read(&written).unwrap(), descriptor);
+    refused(
+        |value| value["vocabulary"]["explicit_special_tokens"] = json!("yes"),
+        syntax,
+    );
+    refused(
+        |value| value["vocabulary"]["id_only_markers"] = json!("</t>"),
+        syntax,
+    );
+}
+
+#[test]
+fn id_only_markers_are_distinct_declared_boundary_tokens() {
+    let mut value = declaration();
+    value["vocabulary"]["id_only_markers"] = json!(["[EOS]"]);
+    assert!(read(&value).is_ok());
+    for markers in [
+        json!([""]),
+        json!(["</think>"]),
+        json!(["</t>", "</t>"]),
+        json!(vec!["</t>"; 129]),
+    ] {
+        refused(
+            |value| value["vocabulary"]["id_only_markers"] = markers,
+            invalid,
+        );
+    }
+}
+
 #[test]
 fn the_tool_name_byte_set_is_data() {
     let declared = read(&declaration()).unwrap().tools.name_bytes;

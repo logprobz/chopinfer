@@ -513,11 +513,23 @@ pub struct FrontendVocabularyV1 {
     pub stop_token_ids: Vec<u32>,
     /// Every boundary this vocabulary gives a single identifier.
     pub boundary_tokens: Vec<FrontendBoundaryTokenV1>,
-    /// Exactly the special tokens a rendered prompt may carry.
+    /// Exactly the special tokens a scanned prompt may carry: a raw prompt,
+    /// or a chat render without explicit special tokens.
     ///
     /// Every one of these is also a declared boundary token, so nothing a
     /// prompt is allowed to carry is outside the set a decoder polices.
     pub prompt_special_tokens: Vec<String>,
+    /// Whether a chat render names every special token of its prompt as a
+    /// special segment, so the host encodes all other text as plain text
+    /// and a special token's spelling in client text stays ordinary text.
+    /// Absent, the host scans the rendered text for added tokens.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub explicit_special_tokens: bool,
+    /// The boundary tokens the completion parser reads only from their
+    /// token identifiers, so the same spelling generated as ordinary tokens
+    /// is text.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub id_only_markers: Vec<String>,
 }
 
 /// One file this declaration pins by exact identity.
@@ -1607,6 +1619,30 @@ impl FrontendDescriptorV1 {
             if !texts.contains(token.as_str()) {
                 return Err(invalid(format!(
                     "prompt special token '{token}' is not a declared boundary token"
+                )));
+            }
+        }
+        if vocabulary.id_only_markers.len() > MAX_MARKERS {
+            return Err(invalid(format!(
+                "{} ID-only markers exceed the limit of {MAX_MARKERS}",
+                vocabulary.id_only_markers.len()
+            )));
+        }
+        let mut seen = BTreeSet::new();
+        for marker in &vocabulary.id_only_markers {
+            if marker.is_empty() {
+                return Err(invalid("an ID-only marker cannot be empty"));
+            }
+            bounded_marker(marker, "ID-only marker")?;
+            if !seen.insert(marker.as_str()) {
+                return Err(invalid(format!(
+                    "ID-only marker '{marker}' is declared twice"
+                )));
+            }
+            // A marker read by its identifier needs one to read it by.
+            if !texts.contains(marker.as_str()) {
+                return Err(invalid(format!(
+                    "ID-only marker '{marker}' is not a declared boundary token"
                 )));
             }
         }

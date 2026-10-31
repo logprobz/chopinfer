@@ -654,14 +654,7 @@ impl Tokenizer {
         allowed_special_tokens: &[&str],
         max_input_bytes: usize,
     ) -> Result<Vec<u32>> {
-        if max_input_bytes == 0 || max_input_bytes > MAX_CONFIGURABLE_INPUT_BYTES {
-            return Err(TokenizerError::new("tokenizer input byte limit is invalid"));
-        }
-        if text.len() > max_input_bytes {
-            return Err(TokenizerError::new(
-                "tokenizer input exceeds the byte limit",
-            ));
-        }
+        check_input_limit(text, max_input_bytes)?;
         let mut allowed = BTreeSet::new();
         for token in allowed_special_tokens {
             if !self.added_by_text.contains_key(*token) {
@@ -671,10 +664,7 @@ impl Tokenizer {
             }
             allowed.insert(*token);
         }
-        let mut output = Vec::new();
-        output
-            .try_reserve(text.len().min(self.contract.model_max_length))
-            .map_err(|_| TokenizerError::new("token output allocation failed"))?;
+        let mut output = self.token_output(text)?;
         let bytes = text.as_bytes();
         let mut ordinary_start = 0;
         let mut offset = 0;
@@ -697,6 +687,36 @@ impl Tokenizer {
             }
         }
         self.encode_ordinary(&text[ordinary_start..], &mut output, max_input_bytes)?;
+        self.within_token_limit(output)
+    }
+
+    /// Encodes text as ordinary text under a caller-supplied byte limit, up
+    /// to 64 MiB.
+    ///
+    /// No added token is recognized: a special token's spelling encodes to
+    /// the ordinary pieces that spell it, so this never reports a
+    /// disallowed special token.
+    pub fn encode_plain_with_input_limit(
+        &self,
+        text: &str,
+        max_input_bytes: usize,
+    ) -> Result<Vec<u32>> {
+        check_input_limit(text, max_input_bytes)?;
+        let mut output = self.token_output(text)?;
+        self.encode_ordinary(text, &mut output, max_input_bytes)?;
+        self.within_token_limit(output)
+    }
+
+    /// An empty output with room for the tokens `text` may encode to.
+    fn token_output(&self, text: &str) -> Result<Vec<u32>> {
+        let mut output = Vec::new();
+        output
+            .try_reserve(text.len().min(self.contract.model_max_length))
+            .map_err(|_| TokenizerError::new("token output allocation failed"))?;
+        Ok(output)
+    }
+
+    fn within_token_limit(&self, output: Vec<u32>) -> Result<Vec<u32>> {
         if output.len() > self.contract.model_max_length {
             return Err(TokenizerError::new("encoded input exceeds the token limit"));
         }
@@ -921,6 +941,19 @@ impl Tokenizer {
         }
         best
     }
+}
+
+/// Refuses a caller byte limit outside 1..=64 MiB, and text past it.
+fn check_input_limit(text: &str, max_input_bytes: usize) -> Result<()> {
+    if max_input_bytes == 0 || max_input_bytes > MAX_CONFIGURABLE_INPUT_BYTES {
+        return Err(TokenizerError::new("tokenizer input byte limit is invalid"));
+    }
+    if text.len() > max_input_bytes {
+        return Err(TokenizerError::new(
+            "tokenizer input exceeds the byte limit",
+        ));
+    }
+    Ok(())
 }
 
 fn read_verified(root: &Path, identity: &FileIdentity, limit: u64) -> Result<Vec<u8>> {
@@ -2071,6 +2104,59 @@ mod tests {
             .unwrap();
         assert_eq!(ids.len(), count);
         assert!(ids.iter().all(|id| *id == 0));
+    }
+
+    /// A plain encode reads a special token's spelling as the ordinary
+    /// bytes that spell it, under the limits of a scanning encode.
+    #[test]
+    fn a_plain_encode_spells_special_tokens_as_ordinary_text() {
+        let (definition, configuration, contract) = fixture();
+        let tokenizer =
+            Tokenizer::from_verified_bytes(&definition, &configuration, &contract).unwrap();
+        let text = format!("x{FIXTURE_BOS}y{FIXTURE_PAD}");
+        let ordinary: Vec<u32> = text.bytes().map(|byte| u32::from(byte) + 3).collect();
+        assert_eq!(
+            tokenizer
+                .encode_plain_with_input_limit(&text, text.len())
+                .unwrap(),
+            ordinary
+        );
+        assert!(!ordinary.contains(&0) && !ordinary.contains(&2));
+        // A scan reads the same text as the special tokens it spells.
+        assert_eq!(
+            tokenizer
+                .encode(&text, &[FIXTURE_BOS, FIXTURE_PAD])
+                .unwrap(),
+            [123, 0, 124, 2]
+        );
+        assert!(tokenizer.encode(&text, &[]).is_err());
+        let refused = |text: &str, limit: usize, message: &str| {
+            let error = tokenizer
+                .encode_plain_with_input_limit(text, limit)
+                .unwrap_err();
+            assert_eq!(error.to_string(), message);
+            assert!(error.disallowed_special_token().is_none());
+        };
+        refused(
+            &text,
+            text.len() - 1,
+            "tokenizer input exceeds the byte limit",
+        );
+        refused("", 0, "tokenizer input byte limit is invalid");
+        refused(
+            "",
+            MAX_CONFIGURABLE_INPUT_BYTES + 1,
+            "tokenizer input byte limit is invalid",
+        );
+        let long = "x".repeat(contract.model_max_length + 1);
+        refused(&long, long.len(), "encoded input exceeds the token limit");
+        assert_eq!(
+            tokenizer
+                .encode_plain_with_input_limit(&long[1..], long.len())
+                .unwrap()
+                .len(),
+            contract.model_max_length
+        );
     }
 
     #[test]

@@ -150,7 +150,7 @@ pub mod f32_wide;
 pub mod f32_zero;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod hc;
-mod hc_wide;
+pub mod hc_wide;
 pub mod host_acceptance_entries;
 mod index_query_serving;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]

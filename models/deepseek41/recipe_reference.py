@@ -9,7 +9,8 @@ is. The script reads `{"checkpoint", "cases", "rounds"}` as JSON on stdin and
 writes `{"environment", "cases", "rounds"}` to stdout (`SubprocessOracle` in
 tools/refrun/frontend_corpus.py):
 
-- each case's request, sent as model DeepSeek-V4.1-Flash, converted by
+- each case's request, sent as model DeepSeek-V4.1-Flash in its JSON text,
+  as the recipe's server passes a body, converted by
   `ChatCompletionRequest.convert`, rendered by
   `DeepseekV41Encoding.render_conversation` and encoded with the checkpoint's
   tokenizer, or the refusal conversion raises, with its HTTP status and
@@ -70,13 +71,16 @@ def environment(recipe):
 
 def convert(recipe, options, request):
     """The recipe's conversion of a request and None, or None and the
-    refusal it raises: the HTTP status and the error body's message. A body
-    the request type does not read raises ValueError, which the recipe's
-    server answers with status 400 and the error's text (server-py/main.py
-    `prepare_request`). A conversion error without a client error's 4xx
-    status is the recipe failing, not refusing, and stops the oracle."""
+    refusal it raises: the HTTP status and the error body's message. The
+    request is read from its JSON text, as the recipe's server reads a body
+    (server-py/main.py `prepare_request`), so serde_json reads every number
+    as it reads one sent: an integer beyond u64 as a float. A body the
+    request type does not read raises ValueError, which that server answers
+    with status 400 and the error's text. A conversion error without a
+    client error's 4xx status is the recipe failing, not refusing, and stops
+    the oracle."""
     try:
-        body = recipe.ChatCompletionRequest({**request, "model": MODEL})
+        body = recipe.ChatCompletionRequest(json.dumps({**request, "model": MODEL}, ensure_ascii=False))
     except ValueError as error:
         return None, {"status": 400, "message": str(error)}
     try:

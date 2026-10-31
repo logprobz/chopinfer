@@ -122,7 +122,12 @@ class RecipeOracleHelpers(unittest.TestCase):
             def __init__(self, status_code, body):
                 self.status_code, self.body = status_code, body
 
-        def request(body):
+        def request(text):
+            # The request arrives as its JSON text, as the recipe's server
+            # passes a body, so an integer beyond u64 reads as serde_json
+            # reads one sent.
+            self.assertIsInstance(text, str)
+            body = json.loads(text)
             if body["messages"] == "unreadable":
                 raise ValueError("invalid request body: unknown variant `developer`")
             assert body["model"] == recipe_reference.MODEL

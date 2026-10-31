@@ -17,6 +17,9 @@ use runtime_cuda::GraphExec;
 use std::path::PathBuf;
 
 pub struct Options {
+    /// Also time each routed expert launch of each arm alone
+    /// (`CHOPINFER_MOE_WIDE_LAUNCHES=1`).
+    launches: bool,
     ranks: Vec<u32>,
     widths: Vec<u32>,
     scale_widths: Vec<u32>,
@@ -37,6 +40,7 @@ impl Options {
                 .collect()
         };
         let options = Self {
+            launches: std::env::var("CHOPINFER_MOE_WIDE_LAUNCHES").as_deref() == Ok("1"),
             ranks: list("CHOPINFER_MOE_WIDE_RANKS")?,
             widths: list("CHOPINFER_MOE_WIDE_ROWS")?,
             scale_widths: list("CHOPINFER_MOE_WIDE_SCALE_WIDTHS")?,
@@ -59,7 +63,7 @@ impl Options {
                 .iter()
                 .any(|w| ![0, 1, 2, 4].contains(w))
             || !ordered(&options.patterns)
-            || options.patterns.iter().any(|&p| p > 3)
+            || options.patterns.iter().any(|&p| p >= super::full::PATTERNS)
             || !(5..=200).contains(&options.rounds)
         {
             return Err("invalid timing inventory".into());
@@ -142,9 +146,68 @@ fn paired(
     }))
 }
 
+/// The median of `rounds` timings of `graph` alone, each after the L2
+/// flush.
+fn solo(
+    session: &Session,
+    flush: &runtime_cuda::DeviceBuffer,
+    flush_bytes: usize,
+    graph: &GraphExec,
+    rounds: usize,
+) -> LabResult<f64> {
+    let start = session.context.timed_event().map_err(|e| e.to_string())?;
+    let end = session.context.timed_event().map_err(|e| e.to_string())?;
+    let mut samples = Vec::new();
+    for round in 0..rounds + 2 {
+        flush
+            .zero_at_async(0, flush_bytes, &session.stream)
+            .map_err(|e| e.to_string())?;
+        start.record(&session.stream).map_err(|e| e.to_string())?;
+        graph.launch(&session.stream).map_err(|e| e.to_string())?;
+        end.record(&session.stream).map_err(|e| e.to_string())?;
+        session.stream.synchronize().map_err(|e| e.to_string())?;
+        if round >= 2 {
+            samples.push(f64::from(
+                start.elapsed_ms(&end).map_err(|e| e.to_string())?,
+            ));
+        }
+    }
+    Ok(median(samples))
+}
+
+/// The device copy rate of the flush buffer's halves, read plus write
+/// bytes per second: a reference for the weight-read floor.
+fn copy_rate(
+    session: &Session,
+    flush: &runtime_cuda::DeviceBuffer,
+    flush_bytes: usize,
+) -> LabResult<f64> {
+    let start = session.context.timed_event().map_err(|e| e.to_string())?;
+    let end = session.context.timed_event().map_err(|e| e.to_string())?;
+    let half = flush_bytes / 2;
+    let mut samples = Vec::new();
+    for round in 0..12 {
+        start.record(&session.stream).map_err(|e| e.to_string())?;
+        flush
+            .copy_within_async(0, half, half, &session.stream)
+            .map_err(|e| e.to_string())?;
+        end.record(&session.stream).map_err(|e| e.to_string())?;
+        session.stream.synchronize().map_err(|e| e.to_string())?;
+        if round >= 2 {
+            let ms = f64::from(start.elapsed_ms(&end).map_err(|e| e.to_string())?);
+            samples.push(2. * half as f64 / (ms * 1e-3));
+        }
+    }
+    Ok(median(samples))
+}
+
 pub fn run(session: &Session, options: Options) -> LabResult<()> {
     let flush_bytes = 256 << 20;
     let flush = session.allocate(flush_bytes)?;
+    println!(
+        "MOE_WIDE_COPY {}",
+        serde_json::json!({"bytes_per_second": copy_rate(session, &flush, flush_bytes)?})
+    );
     let mut cases = 0;
     let mut wide_pairs = 0;
     for &rank in &options.ranks {
@@ -185,6 +248,20 @@ pub fn run(session: &Session, options: Options) -> LabResult<()> {
                         Ok((*name, pair))
                     })
                     .collect::<LabResult<Vec<_>>>()?;
+                // Each routed expert launch of each arm alone, by stage.
+                let mut launches = Vec::new();
+                if options.launches {
+                    for (index, arm) in arms.iter().enumerate() {
+                        for stage in ["ExpertsGateUp(0)", "ExpertsDown(0)", "RoutedSum(0)"] {
+                            for call in arm.scope(stage)? {
+                                let graph = session.capture(|s| {
+                                    programs.issue(&pool, std::slice::from_ref(call), s)
+                                })?;
+                                launches.push((index, stage, call.symbol.clone(), graph));
+                            }
+                        }
+                    }
+                }
                 for &pattern in &options.patterns {
                     for arm in &arms {
                         setup(&pool, arm, pattern, rank, 0xa5)?;
@@ -207,6 +284,7 @@ pub fn run(session: &Session, options: Options) -> LabResult<()> {
                         .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
                         .collect::<Vec<_>>();
                     let widest = counts.iter().copied().max().unwrap_or(0);
+                    let unique = counts.iter().filter(|&&c| c > 0).count();
                     let layer = paired(
                         session,
                         &flush,
@@ -217,7 +295,7 @@ pub fn run(session: &Session, options: Options) -> LabResult<()> {
                     let mut record = serde_json::json!({
                         "rank": rank, "rows": rows, "scale_width": width, "pattern": pattern,
                         "active_experts": active, "widest_expert_rows": widest,
-                        "layer": layer,
+                        "unique_experts": unique, "layer": layer,
                     });
                     for (name, pair) in &groups {
                         record[*name] = paired(
@@ -227,6 +305,18 @@ pub fn run(session: &Session, options: Options) -> LabResult<()> {
                             [&pair[0], &pair[1]],
                             options.rounds,
                         )?;
+                    }
+                    if options.launches {
+                        record["launches"] = launches
+                            .iter()
+                            .map(|(arm, stage, symbol, graph)| {
+                                Ok(serde_json::json!({
+                                    "arm": arm, "stage": stage, "symbol": symbol,
+                                    "ms": solo(session, &flush, flush_bytes, graph, options.rounds)?,
+                                }))
+                            })
+                            .collect::<LabResult<Vec<_>>>()?
+                            .into();
                     }
                     // The timed graphs leave the outputs of a complete layer.
                     status(&pool, &arms[0])?;
@@ -241,6 +331,9 @@ pub fn run(session: &Session, options: Options) -> LabResult<()> {
                     for graph in pair {
                         graph.release().map_err(|e| e.to_string())?;
                     }
+                }
+                for (_, _, _, graph) in launches {
+                    graph.release().map_err(|e| e.to_string())?;
                 }
                 graphs.close()?;
                 pool.truncate(mark)?;

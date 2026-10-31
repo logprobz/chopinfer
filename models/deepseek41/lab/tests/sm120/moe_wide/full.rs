@@ -76,8 +76,37 @@ impl Options {
 /// experts; 2 disperses routes over every expert; 3 is seeded and mixed:
 /// one expert takes every row, two take alternate rows and the other four
 /// routes of a row spread over the remaining 381 experts, so one step
-/// fills the wide, middle and small queues.
-const PATTERNS: u32 = 4;
+/// fills the wide, middle and small queues. The last two are seeded like
+/// served steps: 4 draws each row's six experts independently, as rows of
+/// distinct sequences in a decode step do, and 5 groups consecutive rows
+/// into sequences of four, as one item's draft rows in a verify step, that
+/// share four experts and draw two of their own.
+pub(super) const PATTERNS: u32 = 6;
+
+/// A seeded hash of `value` for `rank`.
+fn mix(value: u32, rank: u32) -> u32 {
+    (value ^ (rank << 16))
+        .wrapping_mul(0x9e37_79b1)
+        .rotate_left(13)
+        .wrapping_mul(0x85eb_ca6b)
+}
+
+/// `count` distinct slots outside `taken`, walking the 384 slots from a
+/// seeded start with a seeded stride prime to 384, so every slot is
+/// reachable.
+fn draw(seed: u32, count: usize, taken: &[u32]) -> Vec<u32> {
+    const STRIDES: [u32; 4] = [97, 151, 223, 281];
+    let stride = STRIDES[(seed >> 30) as usize];
+    let mut at = seed % 384;
+    let mut out = Vec::with_capacity(count);
+    while out.len() < count {
+        if !taken.contains(&at) && !out.contains(&at) {
+            out.push(at);
+        }
+        at = (at + stride) % 384;
+    }
+    out
+}
 
 pub(super) fn expert(row: u32, k: u32, pattern: u32, rank: u32) -> u32 {
     let slot = match pattern {
@@ -89,13 +118,19 @@ pub(super) fn expert(row: u32, k: u32, pattern: u32, rank: u32) -> u32 {
             1 => 1 + row % 2,
             // 97 is prime to 381, so a row's four slots are distinct.
             _ => {
-                let seed = (row ^ (rank << 16))
-                    .wrapping_mul(0x9e37_79b1)
-                    .rotate_left(13)
-                    .wrapping_mul(0x85eb_ca6b);
+                let seed = mix(row, rank);
                 3 + (seed % 381 + 97 * (k - 2)) % 381
             }
         },
+        4 => draw(mix(row, rank), 6, &[])[k as usize],
+        5 => {
+            let shared = draw(mix(0x8000_0000 | row / 4, rank), 4, &[]);
+            if k < 4 {
+                shared[k as usize]
+            } else {
+                draw(mix(row, rank) ^ 0x2545_f491, 2, &shared)[k as usize - 4]
+            }
+        }
         _ => unreachable!(),
     };
     (37 * slot + 11 + 17 * rank) % 384

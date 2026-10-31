@@ -244,23 +244,16 @@ case it names to agree with it; one that follows the pinned reference goes
 stale only when every case it names agrees, so it may name a boundary case
 that both render alike. The recipe never runs in `check` or CI.
 
-DeepSeek V4.1's oracle, `models/deepseek41/recipe_reference.py`, runs
-deepseek-recipe 0.2.0. Install it into its own CPU environment, never the GPU
-runner's, whose package set is part of every reference key:
-
-```sh
-python3.12 -m venv "$CHOPINFER_DATA/refrun/venv-deepseek-recipe"
-"$CHOPINFER_DATA/refrun/venv-deepseek-recipe/bin/pip" install -r tools/refrun/requirements-deepseek-recipe.txt
-export CHOPINFER_DEEPSEEK_RECIPE_PYTHON="$CHOPINFER_DATA/refrun/venv-deepseek-recipe/bin/python"
-```
-
-[requirements-deepseek-recipe.txt](requirements-deepseek-recipe.txt) pins
-every 0.2.0 wheel and the sdist by SHA-256. The corpus pins the
-manylinux_2_28 x86_64 wheel: `generate` refuses an environment whose
-installed recipe files differ from that wheel's RECORD (`installed_sha256`),
-such as another platform's wheel or a source build. The sdist's 83 Rust
-sources match commit 93b0fd229c of the recipe repository; nothing shows that
-the published wheels were built from them.
+The pin names the package, its version, the wheel and its SHA-256, the
+digest of the files the wheel installs (`installed_sha256`), the variable
+that names the oracle's interpreter (`python_env`) and the oracle script in
+the model's directory (`oracle`). Install the recipe into its own CPU
+environment, never the GPU runner's, whose package set is part of every
+reference key, so pinning a recipe changes no key. `generate` refuses an
+environment whose installed recipe files differ from the pinned wheel's
+RECORD, such as another platform's wheel or a source build. A model that
+pins a recipe keeps its hash-pinned requirements file and the commands that
+build the environment in its own directory and README.
 
 ## Add an adapter
 

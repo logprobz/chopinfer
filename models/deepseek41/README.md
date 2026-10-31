@@ -345,6 +345,28 @@ generate their own tokenizer, configuration and weights, and never read the
 official weights. Missing vendor sources and missing checkpoint inputs have
 separate skip reasons; missing Python dependencies remain CI failures.
 
+### Recipe oracle
+
+`recipe_reference.py` runs deepseek-recipe 0.2.0 as the frontend corpus's
+second authority ([the recipe oracle](../../tools/refrun/README.md#frontend-corpus-recipe-oracle));
+only `frontend_corpus generate` runs it, under
+`$CHOPINFER_DEEPSEEK_RECIPE_PYTHON`. Install it into its own CPU environment,
+never the GPU runner's, whose package set is part of every reference key:
+
+```sh
+python3.12 -m venv "$CHOPINFER_DATA/refrun/venv-deepseek-recipe"
+"$CHOPINFER_DATA/refrun/venv-deepseek-recipe/bin/pip" install -r models/deepseek41/requirements-recipe.txt
+export CHOPINFER_DEEPSEEK_RECIPE_PYTHON="$CHOPINFER_DATA/refrun/venv-deepseek-recipe/bin/python"
+```
+
+[requirements-recipe.txt](requirements-recipe.txt) pins every 0.2.0 wheel
+and the sdist by SHA-256. The corpus pins the manylinux_2_28 x86_64 wheel:
+`generate` refuses an environment whose installed recipe files differ from
+that wheel's RECORD (`installed_sha256`), such as another platform's wheel or
+a source build. The sdist's 83 Rust sources match commit 93b0fd229c of the
+recipe repository; nothing shows that the published wheels were built from
+them.
+
 ## Qualification
 
 `model.toml` still disables release and both profiles remain experimental.

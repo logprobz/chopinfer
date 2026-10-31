@@ -233,7 +233,7 @@
         "ends:assistant"
       ],
       "outcome": {
-        "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+        "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
         "parameter": "messages"
       },
       "reason": "mapping R4: the encoder ends a final assistant turn with the end-of-sentence token and writes no generation header after it (encoding.py lines 60, 695-706, 710-739), so the prompt leaves nothing to answer; the format refuses it rather than add the recipe's header; the refusal concerns the final turn alone, so the conversation's round trip still runs",
@@ -387,13 +387,15 @@
     {
       "id": "R4-final-assistant-turn",
       "follows": "encoding.py",
-      "rule": "no generation header follows a final assistant turn, which ends with the end-of-sentence token, so such a request is refused (final-assistant-turn) unless continue_final_message renders the turn open; the recipe appends a header after every request. System messages alone render as the encoder renders them: a later system message is followed by the header, so two or more are served and match the encoder, and the recipe serves them too; only a lone system message, after R5 drops empty ones, has no header and is refused",
-      "source": "plan V4; encoding.py lines 60, 695-706, 710-739 (line 731: a system message after the first is followed by the header); deepseek-recipe 8cadfede7 deepseek-recipe-encoding/src/v4/mod.rs lines 245-260 (line 255 appends the header after every request)",
+      "rule": "no generation header follows a final assistant turn, which ends with the end-of-sentence token, so such a request is refused (final-assistant-turn) unless the turn is continued, which renders it without that token: by prefix: true on it, as the recipe asks for a continuation, or by continue_final_message. The transport reads prefix for every model, as continue_final_message, and refuses it on any other message with the recipe's text. In thinking mode a continued turn with no content and no calls leaves its reasoning open, <think>{reasoning} without </think>, as the recipe renders a prefix turn, so the completion continues the reasoning; the encoder closes it, so the corpus reference removes that </think> from the encoder's text. The recipe refuses prefix beside tools or json_object, but the format cannot tell prefix from continue_final_message, so a continuation stays served there. The recipe appends a header after every request but a prefix continuation. System messages alone render as the encoder renders them: a later system message is followed by the header, so two or more are served and match the encoder, and the recipe serves them too; only a lone system message, after R5 drops empty ones, has no header and is refused",
+      "source": "plan V4; encoding.py lines 60, 695-706, 710-739 (line 731: a system message after the first is followed by the header); deepseek-recipe 8cadfede7 deepseek-recipe-encoding/src/v4/mod.rs lines 245-260 (line 255 appends the header after every request); deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 93-102, 232-246, deepseek-recipe-encoding/src/v4/dsv41.rs lines 206-230, 298-306",
       "cases": [
         "final-assistant-turn",
         "continued-final-assistant-turn",
         "system-messages-only",
-        "system-messages-with-empty"
+        "system-messages-with-empty",
+        "prefix-continues-reasoning",
+        "prefix-continues-answer"
       ]
     },
     {

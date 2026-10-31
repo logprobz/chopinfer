@@ -1105,6 +1105,105 @@ async fn chat_forwards_final_message_continuation_to_the_frontend() {
         .await;
 }
 
+/// `prefix: true` on a final assistant message continues it for every
+/// model, as a vendor API asks for a continuation: the frontend sees
+/// `continue_final_message` and no generation prompt. On any other
+/// message, or beside an explicit `continue_final_message: false` or
+/// `add_generation_prompt: true`, it is refused; `prefix: false` and a null
+/// `continue_final_message` change nothing.
+#[tokio::test]
+async fn a_final_assistant_prefix_continues_the_final_message() {
+    let server = InProcessServerV1::full();
+    let user = r#"{"role":"user","content":"x"}"#;
+    let assistant = |prefix: &str| format!(r#"{{"role":"assistant","content":"a"{prefix}}}"#);
+    let prefixed = assistant(r#","prefix":true"#);
+    let body = |messages: String, extra: &str| {
+        chat(&format!(r#""messages":{messages},"max_tokens":1{extra}"#))
+    };
+    for (messages, extra, continued) in [
+        (format!("[{user},{prefixed}]"), "", true),
+        (
+            format!("[{user},{prefixed}]"),
+            r#","continue_final_message":true"#,
+            true,
+        ),
+        (
+            format!("[{user},{prefixed}]"),
+            r#","add_generation_prompt":false"#,
+            true,
+        ),
+        (
+            format!("[{user},{},{user}]", assistant(r#","prefix":false"#)),
+            "",
+            false,
+        ),
+        (
+            format!("[{user},{}]", assistant(r#","prefix":null"#)),
+            r#","continue_final_message":null"#,
+            false,
+        ),
+    ] {
+        let body = body(messages, extra);
+        let response = server.post("/v1/chat/completions", &body).await;
+        assert_eq!(response.status, 200, "{body}: {}", response.body);
+        let requests = server.frontend.requests.lock().unwrap();
+        let request = requests.last().unwrap();
+        assert_eq!(
+            (
+                request.continue_final_message,
+                request.add_generation_prompt
+            ),
+            (continued, !continued),
+            "{body}"
+        );
+    }
+    let not_final = "Invalid completion message: prefix set true with message which is not \
+                     final message or message role is not assistant";
+    for (messages, extra, parameter, message) in [
+        (
+            r#"[{"role":"user","content":"x","prefix":true}]"#.to_owned(),
+            "",
+            "messages",
+            not_final,
+        ),
+        (
+            format!(r#"[{{"role":"system","content":"s","prefix":true}},{user}]"#),
+            "",
+            "messages",
+            not_final,
+        ),
+        (
+            format!("[{user},{prefixed},{user}]"),
+            "",
+            "messages",
+            not_final,
+        ),
+        (
+            format!("[{user},{prefixed},{prefixed}]"),
+            "",
+            "messages",
+            not_final,
+        ),
+        (
+            format!("[{user},{prefixed}]"),
+            r#","continue_final_message":false"#,
+            "continue_final_message",
+            "prefix: true continues the final message, so continue_final_message cannot be false",
+        ),
+        (
+            format!("[{user},{prefixed}]"),
+            r#","add_generation_prompt":true"#,
+            "add_generation_prompt",
+            "continue_final_message and add_generation_prompt cannot both be true",
+        ),
+    ] {
+        let body = body(messages, extra);
+        server.refuses_chat(&body, parameter).await;
+        let response = server.post("/v1/chat/completions", &body).await;
+        assert_eq!(response.json()["error"]["message"], message, "{body}");
+    }
+}
+
 #[tokio::test]
 async fn streamed_chat_returns_prompt_ids_in_its_first_chunk() {
     let server = InProcessServerV1::plain();
@@ -2858,6 +2957,23 @@ async fn a_declared_vendor_mapping_shapes_constraints_choices_and_thinking() {
                 error["message"].as_str().unwrap().starts_with(message),
                 "{mapped}: {body}: {error}"
             );
+        }
+        // A regex value that is not a string, null included, is refused by
+        // its type where the mapping declares the format.
+        for value in ["null", "1", r#"["a"]"#, r#"{"regex":"a"}"#] {
+            let body = format!(
+                r#"{{"messages":[{{"role":"user","content":"hi"}}],"response_format":{{"type":"regex","regex":{value}}}}}"#
+            );
+            let response = server.post("/v1/chat/completions", &body).await;
+            assert_eq!(response.status, 400, "{body}: {}", response.body);
+            let error = &response.json()["error"];
+            assert_eq!(error["param"], "response_format", "{body}");
+            let expected = if mapped {
+                "response_format.regex must be a string"
+            } else {
+                "response_format type 'regex' is not supported"
+            };
+            assert_eq!(error["message"], expected, "{body}");
         }
         // The thinking object switches thinking, overriding the effort and
         // the keywords, which a mapped frontend no longer reads.

@@ -64,9 +64,9 @@
     "frontend_capture": {
       "directory": true,
       "members": {
-        "corpus-coverage.json": "6d365d8fad68b1f068c7e0a1f6fc0d20b3bb069ab6620bc55edba08c90bc2315",
+        "corpus-coverage.json": "026a86a1101f8f47303b0ecf043afff0f3c08fbf3a8d41e8d5aaf1474bf13c1f",
         "corpus-rounds.json": "475b971d6eb16876559f87d9c8c0f89d08c90db0bc4c49fbdb986c51591d8a89",
-        "corpus.json": "a5869526eb5f5afa46f5f0a4b19dd6b544ff5479a97eabb40bbe7bed3328d8a7",
+        "corpus.json": "a52273d3d5ba54dd9292582801e9948c922e607c9d6574f771c2f2db9ca7c6f9",
         "encoder-tests/LICENSE": "f2c6c602815669d292889e5be8c802f2ed950653b77999b1584e8e6aed25d040",
         "encoder-tests/README.md": "d0ed3e2f6258c01a41cc6a73781889293a124250311839adcf659c494cbd584b",
         "encoder-tests/test_input_1.json": "6a5a86694e47169c8f0c9243a7e24cc5db05447be0d3d3a9891034e913c518de",
@@ -365,14 +365,14 @@
     "475b971d6eb16876559f87d9c8c0f89d08c90db0bc4c49fbdb986c51591d8a89": {
       "schema": "legacy-json-array"
     },
-    "6d365d8fad68b1f068c7e0a1f6fc0d20b3bb069ab6620bc55edba08c90bc2315": {
-      "schema": "chop-frontend-corpus-coverage-v1"
-    },
-    "a5869526eb5f5afa46f5f0a4b19dd6b544ff5479a97eabb40bbe7bed3328d8a7": {
-      "schema": "legacy-json-array"
-    },
     "f2b2b332f90469eef8cf93d11fee30947c3abe2f944370c24d5d2662a7d583af": {
       "schema": "chop-frontend-openai-v2"
+    },
+    "026a86a1101f8f47303b0ecf043afff0f3c08fbf3a8d41e8d5aaf1474bf13c1f": {
+      "schema": "chop-frontend-corpus-coverage-v1"
+    },
+    "a52273d3d5ba54dd9292582801e9948c922e607c9d6574f771c2f2db9ca7c6f9": {
+      "schema": "legacy-json-array"
     }
   },
   "schema": "chopinfer-qual-references/v1"

@@ -40,9 +40,13 @@
 //!   tool's does; the constraint still compiles the schema as sent (V7).
 //! - Tool-call arguments reach the encoder as the text sent, which it reads
 //!   as Python's `json.loads` does: a repeated key takes its last value.
-//! - `continue_final_message` renders the final assistant turn without its
-//!   end-of-sentence token (`wo_eos`). The encoder writes the generation
-//!   header itself after a final user or later system message, so
+//! - `continue_final_message`, which the transport also sets for `prefix:
+//!   true` on the final assistant message as the recipe sends it, renders
+//!   that turn without its end-of-sentence token (`wo_eos`). In thinking
+//!   mode a continued turn with no content and no calls leaves its
+//!   reasoning open, as the recipe renders a prefix turn, so the completion
+//!   continues the reasoning. The encoder writes the generation header
+//!   itself after a final user or later system message, so
 //!   `add_generation_prompt` changes nothing. A final assistant turn not
 //!   continued is refused: the encoder ends it with the end-of-sentence
 //!   token and no header follows.
@@ -375,7 +379,15 @@ impl DeepSeekV41Format {
         messages.retain(|message| message.role != Role::System || !joins_empty(message));
         if request.continue_final_message {
             match messages.last_mut() {
-                Some(last) if last.role == Role::Assistant => last.wo_eos = true,
+                Some(last) if last.role == Role::Assistant => {
+                    last.wo_eos = true;
+                    // The recipe closes a prefix turn's reasoning only
+                    // before its content or calls (recipe 0.2.0
+                    // deepseek-recipe-encoding/src/v4/dsv41.rs lines
+                    // 206-230); the encoder closes it always.
+                    last.open_reasoning = last.content.as_deref().unwrap_or_default().is_empty()
+                        && last.tool_calls.is_empty();
+                }
                 _ => {
                     return Err(field_v1(
                         "continue_final_message requires a final assistant message",
@@ -705,7 +717,7 @@ const MESSAGE_TOOLS_UNSERVED: &str = "message tools are not served";
 /// The refusal of a request ending on an assistant turn it does not
 /// continue.
 const FINAL_ASSISTANT_UNSERVED: &str =
-    "a final assistant message is served only with continue_final_message";
+    "a final assistant message is served only with prefix or continue_final_message";
 
 /// The refusal of a request of system messages alone.
 const SYSTEM_ONLY_UNSERVED: &str = "a request of system messages alone has no turn to answer";

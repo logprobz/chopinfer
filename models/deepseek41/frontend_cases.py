@@ -587,7 +587,10 @@ def encoder_render(namespace, messages, tools, add_generation_prompt, continue_f
       as false;
     - a continued final assistant turn renders without its end token
       (`wo_eos`); the encoder writes the generation header itself, so
-      `add_generation_prompt` changes nothing."""
+      `add_generation_prompt` changes nothing; in thinking mode a continued
+      turn with no content and no calls keeps its reasoning open, as recipe
+      0.2.0 renders a prefix turn (dsv41.rs lines 206-230), so the `</think>`
+      the encoder closes it with is removed (`R4-final-assistant-turn`)."""
     mode = "thinking" if thinking(keywords) else "chat"
     effort = keywords.get("reasoning_effort") if mode == "thinking" else None
     effort = EFFORT_ALIASES.get(effort, effort) if isinstance(effort, str) else effort
@@ -625,7 +628,20 @@ def encoder_render(namespace, messages, tools, add_generation_prompt, continue_f
     prompt = namespace["encode_messages"](
         messages, thinking_mode=mode, drop_thinking=not keywords.get("preserve_thinking", False),
         reasoning_effort=effort)
+    if continue_final_message and mode == "thinking" and reasoning_alone(messages[-1]):
+        if not prompt.endswith("</think>"):
+            raise RuntimeError("the encoder did not close the continued turn's reasoning last")
+        prompt = prompt.removesuffix("</think>")
     return prompt + FORCED_PREFILL if forced else prompt
+
+
+def reasoning_alone(message):
+    """Whether an assistant turn has no content, its parts' text joined as
+    the encoder joins it (lines 387-393), and no calls."""
+    content = message.get("content")
+    if isinstance(content, list):
+        content = "\n\n".join(part.get("text", "") for part in content if text_part(part))
+    return not content and not message.get("tool_calls")
 
 
 def turn_arguments(text):
@@ -985,6 +1001,17 @@ def cases(declaration):
     yield "continued-final-assistant-turn", {"messages": [user("q"), {"role": "assistant", "content": "a"}],
                                              "continue_final_message": True, "add_generation_prompt": False}, {
         "fixed:continued-final-assistant-turn", "ends:continue"}
+    # R4: `prefix: true` on the final assistant turn continues it, as the
+    # recipe sends a continuation; in thinking mode a turn of reasoning
+    # alone keeps its reasoning open, and one with content closes it.
+    yield "prefix-continues-reasoning", {"messages": [
+        user("What is 17 times 23?"),
+        {"role": "assistant", "content": "", "reasoning_content": "17 times 23 is", "prefix": True}]}, {
+        "fixed:prefix-continues-reasoning", "ends:prefix"}
+    yield "prefix-continues-answer", {"messages": [
+        user("What is 17 times 23?"),
+        {"role": "assistant", "content": "The answer is", "reasoning_content": "17 times 23 is 391.",
+         "prefix": True}]}, {"fixed:prefix-continues-answer", "ends:prefix"}
     # R5: an empty system message is dropped, leading, later or as empty
     # parts; the one carrying the offered tools is still inserted.
     yield "empty-system-messages-dropped", {"messages": [

@@ -547,6 +547,20 @@ impl Step {
     }
 }
 
+/// The layouts a step's live logits owners match, as `[gathered, owned]`:
+/// every row on rank 0 (the gather arm) or the owner blocks
+/// [`validate_row_owners`] expects of the owned arm. Rows that fit in one
+/// block match both; rows matching neither are refused.
+pub(super) fn row_owner_layouts(rows: &[u32], ranks: usize) -> Result<[bool; 2], String> {
+    match (
+        validate_row_owners(rows, ranks, false),
+        validate_row_owners(rows, ranks, true),
+    ) {
+        (Err(gathered), Err(owned)) => Err(format!("{gathered}; {owned}")),
+        (gathered, owned) => Ok([gathered.is_ok(), owned.is_ok()]),
+    }
+}
+
 /// Validate the live decode/verify logits owners for a replay arm.
 pub(super) fn validate_row_owners(rows: &[u32], ranks: usize, owned: bool) -> Result<(), String> {
     if rows.is_empty() || ranks == 0 {

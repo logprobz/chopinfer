@@ -477,6 +477,32 @@ fn live_row_owners_exclude_graph_padding_and_match_each_row() {
     }
 }
 
+/// A default-owner step matches the gathered layout, the owner blocks, or
+/// both when its rows fit in one block; any other owners are refused.
+#[test]
+fn default_owner_steps_match_the_gathered_or_block_layout() {
+    for (live, block) in [(1, 1), (2, 1), (16, 4), (32, 8), (48, 16)] {
+        let owned = (0..live)
+            .map(|row| (row / block) as u32)
+            .collect::<Vec<_>>();
+        let gathered = vec![0; live];
+        assert_eq!(
+            super::trace::row_owner_layouts(&gathered, 4).unwrap(),
+            [true, live <= block]
+        );
+        assert_eq!(
+            super::trace::row_owner_layouts(&owned, 4).unwrap(),
+            [live <= block, true]
+        );
+        let mut misplaced = owned.clone();
+        misplaced[live - 1] = 3 - misplaced[live - 1].min(3);
+        if live > 1 {
+            assert!(super::trace::row_owner_layouts(&misplaced, 4).is_err());
+        }
+    }
+    assert!(super::trace::row_owner_layouts(&[], 4).is_err());
+}
+
 fn description(root: &std::path::Path) -> Description {
     Description {
         invariants: json!({"host":{"build":"fixture","binary_sha256":"fixture"},"trace":"two-steps",

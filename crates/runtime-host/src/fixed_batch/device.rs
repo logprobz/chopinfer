@@ -114,6 +114,11 @@ struct Config {
     #[serde(default)]
     draft_tokens: Option<usize>,
     owned: bool,
+    /// Plain replays outside the gather/owned A/B take the package's own
+    /// logits owners: every step's rows on rank 0 or in the owner blocks,
+    /// one layout for the whole trace, recorded in the receipt.
+    #[serde(default)]
+    default_owners: bool,
     source: Value,
     #[serde(default)]
     verify_rows_per_item: Option<usize>,
@@ -544,6 +549,16 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
     let transitions = config.transitions;
     if config.allocation.is_some() && !transitions {
         return Err("allocation capture requires a transition replay".into());
+    }
+    if config.default_owners
+        && (config.owned
+            || config.control.is_some()
+            || mixed
+            || transitions
+            || compare_packages
+            || config.prefill_only)
+    {
+        return Err("default logits owners apply to plain replays outside the owned arm".into());
     }
     if transitions
         && (!config.trace_input
@@ -983,6 +998,8 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
     let memory_after_create = memory(&backend)?;
     let mut rank_rows: BTreeMap<u32, usize> = BTreeMap::new();
     let mut boundary_splits = 0;
+    // The owner layouts, `[gathered, owned]`, every default-owner step matched.
+    let mut layouts = [true, true];
     let mut history = transitions.then(|| transition::History::new(&trace));
     let mut lifetime = lifecycle::Lifetimes::default();
     let result = (|| -> Result<()> {
@@ -1120,11 +1137,19 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
             if index > 0 {
                 // Mixed replays run each package's default logits owners.
                 if !compare_packages && !mixed && !transitions {
-                    super::trace::validate_row_owners(
-                        &rows.iter().map(|row| row.rank).collect::<Vec<_>>(),
-                        rank_count,
-                        config.owned,
-                    )?;
+                    let owners = rows.iter().map(|row| row.rank).collect::<Vec<_>>();
+                    if config.default_owners {
+                        let matched = super::trace::row_owner_layouts(&owners, rank_count)?;
+                        layouts = [layouts[0] && matched[0], layouts[1] && matched[1]];
+                        if layouts == [false, false] {
+                            return Err(format!(
+                                "step {index}: logits owners left the layout of earlier steps"
+                            )
+                            .into());
+                        }
+                    } else {
+                        super::trace::validate_row_owners(&owners, rank_count, config.owned)?;
+                    }
                 }
                 boundary_splits += request_ranks
                     .values()
@@ -1286,6 +1311,14 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
         "rank_rows":rank_rows,"owner_boundary_splits":boundary_splits,"live_resources":0});
     if lifetimes {
         receipt["lifecycle_events"] = json!(lifetime.events);
+    }
+    if config.default_owners {
+        receipt["default_owners"] = match layouts {
+            [true, true] => "either",
+            [true, false] => "gathered",
+            _ => "owned",
+        }
+        .into();
     }
     serde_json::to_writer_pretty(create(&config.output.join("receipt.json"))?, &receipt)?;
     golden.publish(

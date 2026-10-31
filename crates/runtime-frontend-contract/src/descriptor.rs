@@ -384,6 +384,11 @@ pub struct FrontendResponseV1 {
     /// Which requests constrain the response.
     #[serde(default, skip_serializing_if = "FrontendConstraintScopeV1::is_default")]
     pub constraint_scope: FrontendConstraintScopeV1,
+    /// Whether a chat `response_format` of `{"type": "regex", "regex": ...}`
+    /// is served, as an explicit regex constraint, for a model whose vendor
+    /// API accepts one. Absent, the transport refuses that type.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub regex_response_format: bool,
 }
 
 /// Which requests the transport constrains decoding for.
@@ -630,6 +635,11 @@ pub struct FrontendMultimodalV1 {
     pub arena: FrontendMediaArenaV1,
     pub encoders: Vec<FrontendMediaEncoderV1>,
     pub modalities: Vec<FrontendMediaModalityV1>,
+    /// System and developer messages may carry media, subject to served
+    /// modalities and the same request limits as user media. Absent, only
+    /// user messages and declared tool results may.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub system_media: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

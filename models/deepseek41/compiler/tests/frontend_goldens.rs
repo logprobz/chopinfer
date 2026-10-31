@@ -316,9 +316,9 @@ fn the_served_format_renders_the_pairs_it_serves() {
     for number in [1, 2] {
         let error = frontend.render_chat(served_request(number)).unwrap_err();
         assert!(
-            error
-                .message
-                .contains("a final assistant message is served only with continue_final_message"),
+            error.message.contains(
+                "a final assistant message is served only with prefix or continue_final_message"
+            ),
             "pair {number}: {}",
             error.message
         );
@@ -333,12 +333,128 @@ fn the_served_format_renders_the_pairs_it_serves() {
         let expected = expected.strip_suffix(EOS).unwrap();
         assert_eq!(rendered.prompt, expected, "pair {number}");
     }
+    // `prefix: true` on pair 2's final turn, which the transport reads as
+    // continue_final_message, renders it open too.
+    let mut messages = case(2).messages;
+    messages.last_mut().unwrap()["prefix"] = true.into();
+    let body = serde_json::json!({"messages": messages, "thinking": {"type": "disabled"}});
+    let prepared = runtime_server::prepare_chat_request_v1(
+        &frontend,
+        1 << 20,
+        body.as_object().unwrap().clone(),
+        1024,
+    )
+    .unwrap_or_else(|error| panic!("pair 2 with prefix: {}", error.message));
+    let runtime_server::PreparedPrompt::RenderedChat(prompt) = prepared.prompt else {
+        panic!("pair 2 renders text");
+    };
+    let expected = String::from_utf8(read("test_output_2.txt")).unwrap();
+    assert_eq!(prompt, expected.strip_suffix(EOS).unwrap());
     // Pair 5's images need a declaration that serves images.
     let error = frontend.render_chat(served_request(5)).unwrap_err();
     assert!(
         error.message.contains("does not support media inputs"),
         "{}",
         error.message
+    );
+}
+
+/// A continued final assistant turn renders without its end-of-sentence
+/// token, asked for by `prefix: true` or by `continue_final_message`
+/// (`R4-final-assistant-turn` in frontend-divergences.json). In thinking
+/// mode a turn of reasoning alone, with no content and no calls, leaves its
+/// reasoning open, as deepseek-recipe 0.2.0 renders a prefix turn
+/// (deepseek-recipe-encoding/src/v4/dsv41.rs lines 206-230), so the
+/// completion continues the reasoning; with content or a call the reasoning
+/// is closed, and in chat mode none is written.
+#[test]
+fn a_continued_turn_of_reasoning_alone_leaves_its_reasoning_open() {
+    let frontend = PairedFrontendV1::chat_format::<DeepSeekV41Format>(descriptor()).unwrap();
+    let render = |assistant: Value, extra: Value| {
+        let mut body =
+            serde_json::json!({"messages": [{"role": "user", "content": "q"}, assistant]});
+        for (key, value) in extra.as_object().unwrap() {
+            body[key] = value.clone();
+        }
+        let prepared = runtime_server::prepare_chat_request_v1(
+            &frontend,
+            1 << 20,
+            body.as_object().unwrap().clone(),
+            1024,
+        )
+        .unwrap_or_else(|error| panic!("{body}: {}", error.message));
+        let runtime_server::PreparedPrompt::RenderedChat(prompt) = prepared.prompt else {
+            panic!("{body} renders text");
+        };
+        let state = runtime_frontend::BundleChatStateV1::from_state(&prepared.chat.unwrap().state)
+            .unwrap()
+            .reasoning_open();
+        (prompt, state)
+    };
+    let thinking = "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher \
+                    the value, the more thorough the reasoning)\n\n<｜User｜>q<｜Assistant｜><think>";
+    let prefix = serde_json::json!({});
+    let continued = serde_json::json!({"continue_final_message": true});
+    for (assistant, extra, expected, open) in [
+        (
+            serde_json::json!({"role": "assistant", "content": "", "reasoning_content": "Let me", "prefix": true}),
+            &prefix,
+            format!("{thinking}Let me"),
+            true,
+        ),
+        (
+            serde_json::json!({"role": "assistant", "content": "", "reasoning_content": "Let me"}),
+            &continued,
+            format!("{thinking}Let me"),
+            true,
+        ),
+        (
+            serde_json::json!({"role": "assistant", "content": null, "prefix": true}),
+            &prefix,
+            thinking.to_owned(),
+            true,
+        ),
+        (
+            serde_json::json!({"role": "assistant", "content": [{"type": "text", "text": ""}],
+                "reasoning_content": "r", "prefix": true}),
+            &prefix,
+            format!("{thinking}r"),
+            true,
+        ),
+        (
+            serde_json::json!({"role": "assistant", "content": "The answer", "reasoning_content": "r",
+                "prefix": true}),
+            &prefix,
+            format!("{thinking}r</think>The answer"),
+            false,
+        ),
+        (
+            serde_json::json!({"role": "assistant", "content": "", "reasoning_content": "r",
+                "prefix": true, "tool_calls": [{"id": "a", "type": "function",
+                "function": {"name": "f", "arguments": "{}"}}]}),
+            &prefix,
+            format!(
+                "{thinking}r</think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"f\">\n\n</｜DSML｜ invoke>\n</｜DSML｜ calls>"
+            ),
+            false,
+        ),
+    ] {
+        assert_eq!(
+            render(assistant.clone(), extra.clone()),
+            (expected, open),
+            "{assistant}"
+        );
+    }
+    let chat = serde_json::json!({"thinking": {"type": "disabled"}});
+    assert_eq!(
+        render(
+            serde_json::json!({"role": "assistant", "content": "", "reasoning_content": "r", "prefix": true}),
+            chat
+        ),
+        (
+            "<｜begin▁of▁sentence｜><｜User｜>q<｜Assistant｜></think>".to_owned(),
+            false
+        )
     );
 }
 
@@ -686,6 +802,10 @@ fn the_transport_maps_requests_as_the_declaration_states() {
             serde_json::json!({"structured_outputs": {"json": schema}}),
             true,
         ),
+        (
+            serde_json::json!({"response_format": {"type": "regex", "regex": "(yes|no)"}}),
+            true,
+        ),
         (serde_json::json!({"tools": weather}), false),
         (
             serde_json::json!({"tools": weather, "tool_choice": "auto"}),
@@ -715,8 +835,8 @@ fn the_transport_maps_requests_as_the_declaration_states() {
         json_object.contains("to reply:\n{\"type\": \"json_object\"}<｜User｜>"),
         "{json_object}"
     );
-    // R3: json_schema renders its schema as sent; text, and a schema Python
-    // reads as false, render nothing and insert no system message.
+    // R3: json_schema renders its schema as sent; text, regex, and a schema
+    // Python reads as false, render nothing and insert no system message.
     let json_schema = prompt(serde_json::json!({"response_format": format(true.into())}));
     assert!(
         json_schema.contains(
@@ -727,6 +847,7 @@ fn the_transport_maps_requests_as_the_declaration_states() {
     let unformatted = prompt(serde_json::json!({}));
     for format in [
         serde_json::json!({"type": "text"}),
+        serde_json::json!({"type": "regex", "regex": "(yes|no)"}),
         serde_json::json!({"type": "json_schema", "json_schema": {"name": "answer", "schema": {}}}),
         serde_json::json!({"type": "json_schema", "json_schema": {"name": "answer", "schema": false}}),
     ] {
@@ -754,6 +875,11 @@ fn the_transport_maps_requests_as_the_declaration_states() {
         ),
         (
             serde_json::json!({"tools": weather, "response_format": {"type": "text"}}),
+            "response_format should not be used with tools",
+            "response_format",
+        ),
+        (
+            serde_json::json!({"tools": weather, "response_format": {"type": "regex", "regex": "a"}}),
             "response_format should not be used with tools",
             "response_format",
         ),

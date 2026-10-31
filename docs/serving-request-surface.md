@@ -86,6 +86,13 @@ a `json_schema` response format with `strict: true`, an explicit
 still renders a `json_object` or non-strict schema response format, and a
 strict tool under `auto`, and leaves their decoding unconstrained.
 
+A model whose declaration sets `response.regex_response_format` (DeepSeek
+V4.1 Flash) also accepts a chat `response_format` of `{"type": "regex",
+"regex": "..."}`. It is an explicit regex constraint under either scope,
+replaces `structured_outputs.regex`, and gives way to a `required` or named
+`tool_choice` as a schema does. Other models, the completions endpoint and
+the Responses API's `text.format` refuse that type.
+
 The JSON Schema subset refuses unsupported assertions, and assertions beside
 `$ref` or combinators, instead of ignoring them. Provably vacuous assertions
 (`uniqueItems: false`, zero minimum counts, an empty `required`) are accepted,
@@ -168,6 +175,20 @@ undeclared function are raw text and still end at the first marker. `include_rea
 usage. Chat accepts `add_generation_prompt`, `continue_final_message` and
 `chat_template_kwargs`; `add_special_tokens` is accepted but does not change
 prompt IDs.
+
+**Prefix continuation.** Chat also accepts `prefix: true` on the final
+message when it is an assistant message, as DeepSeek's API asks for a
+continuation. For every model the server then continues that message as
+`continue_final_message: true` does, with no generation prompt. `prefix:
+true` on any other message is refused with "Invalid completion message:
+prefix set true with message which is not final message or message role is
+not assistant", and beside `continue_final_message: false` or
+`add_generation_prompt: true` it is refused too; `prefix: false` asks for
+nothing. How a continued turn renders is the model's: in thinking mode
+DeepSeek V4.1 Flash leaves the reasoning of a continued turn with no
+content and no calls open, so the completion continues the reasoning, and
+it serves a continuation beside tools or a `json_object` response format,
+which deepseek-recipe refuses.
 
 **Thinking object.** A model whose declaration sets `reasoning.switch` to
 `thinking-object` switches thinking by the top-level `thinking` object:
@@ -358,7 +379,10 @@ Content arrays accept `image_url`, `audio_url`, `video_url` and
 outside the `file` object are refused; other models refuse the `file` type.
 A model that declares images in tool results (DeepSeek V4.1 Flash) accepts
 `image_url` and `file` parts in tool messages, counted and limited as user
-images. Local files need `--allowed-local-media-path DIR`.
+images. A model that declares media in system messages (DeepSeek V4.1 Flash,
+through `multimodal.system_media`) accepts them in system and developer
+messages too, under the same limits; assistant messages never carry media.
+Local files need `--allowed-local-media-path DIR`.
 
 ### Many images
 

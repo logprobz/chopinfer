@@ -759,7 +759,7 @@
   "response_format": {
    "type": "text"
   },
-  "rendered_text": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\nYou are terse.<｜User｜>Look at this \n\n<｜deepseek_image｜>\n\n and say what it is.<｜Assistant｜><think></think>",
+  "rendered_text": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\nYou are terse.<｜User｜>Look at this \n\n<｜deepseek_image｜>\n\n and say what it is.<｜Assistant｜><think>",
   "token_ids": [
    0,
    128799,
@@ -807,8 +807,7 @@
    344,
    16,
    128804,
-   128821,
-   128822
+   128821
   ]
  },
  {
@@ -874,7 +873,7 @@
    }
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -1510,7 +1509,7 @@
    "type": "text"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -1600,7 +1599,7 @@
    "type": "json_object"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -2860,7 +2859,7 @@
    }
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -2932,7 +2931,7 @@
    "type": "text"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -3002,7 +3001,7 @@
    "type": "text"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -3076,7 +3075,7 @@
   },
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -3200,7 +3199,7 @@
    "type": "json_object"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -3301,7 +3300,7 @@
    }
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -3365,7 +3364,7 @@
    }
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -3414,7 +3413,7 @@
    "type": "text"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -4243,7 +4242,7 @@
    }
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -4365,7 +4364,7 @@
    "type": "json_object"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -4399,7 +4398,7 @@
    "type": "text"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -4548,7 +4547,7 @@
    }
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -4599,7 +4598,7 @@
    "type": "text"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -4660,7 +4659,7 @@
    "type": "json_object"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -4818,7 +4817,7 @@
    }
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -4879,7 +4878,7 @@
    "type": "text"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -5028,7 +5027,7 @@
    }
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -5070,7 +5069,7 @@
    "type": "json_object"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -5109,7 +5108,7 @@
    "type": "text"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -7832,7 +7831,7 @@
    "type": "json_object"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -7879,7 +7878,7 @@
    "type": "text"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -7922,7 +7921,7 @@
    "type": "text"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -7961,7 +7960,7 @@
    "type": "text"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -8029,7 +8028,7 @@
    "preserve_thinking": true
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -8099,7 +8098,7 @@
    "type": "text"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -8167,7 +8166,7 @@
    "type": "json_object"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -8238,7 +8237,7 @@
    "type": "text"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -8351,7 +8350,7 @@
    "type": "json_object"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -8464,7 +8463,7 @@
    "type": "json_object"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -8577,7 +8576,7 @@
    "type": "json_object"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -8694,7 +8693,7 @@
    "type": "text"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -9221,7 +9220,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -9264,7 +9263,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -9307,7 +9306,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -9359,7 +9358,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -9400,7 +9399,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -9445,7 +9444,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -9488,7 +9487,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -9531,7 +9530,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -9579,7 +9578,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -9624,7 +9623,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -9667,7 +9666,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -9718,7 +9717,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -9769,7 +9768,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -9821,7 +9820,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -9869,7 +9868,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -9917,7 +9916,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -9965,7 +9964,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -10013,7 +10012,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -10061,7 +10060,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -10109,7 +10108,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -10157,7 +10156,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -10205,7 +10204,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -10253,7 +10252,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -10301,7 +10300,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -10349,7 +10348,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -10397,7 +10396,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -10445,7 +10444,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -10493,7 +10492,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -10541,7 +10540,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -10589,7 +10588,7 @@
   ],
   "add_generation_prompt": false,
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -11771,7 +11770,7 @@
    }
   ],
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -18076,6 +18075,58 @@
   ]
  },
  {
+  "id": "response-format-regex",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": "Answer yes or no."
+   }
+  ],
+  "response_format": {
+   "type": "regex",
+   "regex": "(yes|no)"
+  },
+  "rendered_text": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜User｜>Answer yes or no.<｜Assistant｜><think>",
+  "token_ids": [
+   0,
+   128799,
+   77666,
+   288,
+   9504,
+   482,
+   28,
+   223,
+   2402,
+   343,
+   16801,
+   223,
+   19,
+   15,
+   1457,
+   14,
+   270,
+   4077,
+   270,
+   1990,
+   14,
+   270,
+   850,
+   15146,
+   270,
+   22805,
+   868,
+   128803,
+   7805,
+   14452,
+   469,
+   1119,
+   16,
+   128804,
+   128821
+  ]
+ },
+ {
   "id": "response-format-without-schema",
   "raw": true,
   "messages": [
@@ -18340,7 +18391,7 @@
    }
   ],
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -18358,7 +18409,7 @@
    }
   ],
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -18415,7 +18466,7 @@
    }
   ],
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -18434,7 +18485,7 @@
    }
   ],
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -18455,7 +18506,7 @@
    "type": "json_object"
   },
   "refusal": {
-   "message": "invalid conversation field: a final assistant message is served only with continue_final_message",
+   "message": "invalid conversation field: a final assistant message is served only with prefix or continue_final_message",
    "parameter": "messages"
   }
  },
@@ -18576,6 +18627,137 @@
    128821,
    128822,
    67
+  ]
+ },
+ {
+  "id": "prefix-continues-reasoning",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": "What is 17 times 23?"
+   },
+   {
+    "role": "assistant",
+    "content": "",
+    "reasoning_content": "17 times 23 is",
+    "prefix": true
+   }
+  ],
+  "rendered_text": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜User｜>What is 17 times 23?<｜Assistant｜><think>17 times 23 is",
+  "token_ids": [
+   0,
+   128799,
+   77666,
+   288,
+   9504,
+   482,
+   28,
+   223,
+   2402,
+   343,
+   16801,
+   223,
+   19,
+   15,
+   1457,
+   14,
+   270,
+   4077,
+   270,
+   1990,
+   14,
+   270,
+   850,
+   15146,
+   270,
+   22805,
+   868,
+   128803,
+   3085,
+   344,
+   223,
+   1002,
+   2734,
+   223,
+   1349,
+   33,
+   128804,
+   128821,
+   1002,
+   2734,
+   223,
+   1349,
+   344
+  ]
+ },
+ {
+  "id": "prefix-continues-answer",
+  "raw": true,
+  "messages": [
+   {
+    "role": "user",
+    "content": "What is 17 times 23?"
+   },
+   {
+    "role": "assistant",
+    "content": "The answer is",
+    "reasoning_content": "17 times 23 is 391.",
+    "prefix": true
+   }
+  ],
+  "rendered_text": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜User｜>What is 17 times 23?<｜Assistant｜><think>17 times 23 is 391.</think>The answer is",
+  "token_ids": [
+   0,
+   128799,
+   77666,
+   288,
+   9504,
+   482,
+   28,
+   223,
+   2402,
+   343,
+   16801,
+   223,
+   19,
+   15,
+   1457,
+   14,
+   270,
+   4077,
+   270,
+   1990,
+   14,
+   270,
+   850,
+   15146,
+   270,
+   22805,
+   868,
+   128803,
+   3085,
+   344,
+   223,
+   1002,
+   2734,
+   223,
+   1349,
+   33,
+   128804,
+   128821,
+   1002,
+   2734,
+   223,
+   1349,
+   344,
+   223,
+   23005,
+   16,
+   128822,
+   671,
+   3287,
+   344
   ]
  },
  {
@@ -19243,6 +19425,208 @@
    270,
    22805,
    868,
+   128803,
+   83,
+   128804,
+   128821
+  ]
+ },
+ {
+  "id": "system-image",
+  "raw": true,
+  "messages": [
+   {
+    "role": "system",
+    "content": [
+     {
+      "type": "text",
+      "text": "Describe images briefly."
+     },
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/png;base64,AA=="
+      }
+     }
+    ]
+   },
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/png;base64,AQ=="
+      }
+     },
+     {
+      "type": "text",
+      "text": "What changed?"
+     }
+    ]
+   }
+  ],
+  "rendered_text": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\nDescribe images briefly.\n\n<｜deepseek_image｜><｜User｜><｜deepseek_image｜>\n\nWhat changed?<｜Assistant｜><think>",
+  "token_ids": [
+   0,
+   128799,
+   77666,
+   288,
+   9504,
+   482,
+   28,
+   223,
+   2402,
+   343,
+   16801,
+   223,
+   19,
+   15,
+   1457,
+   14,
+   270,
+   4077,
+   270,
+   1990,
+   14,
+   270,
+   850,
+   15146,
+   270,
+   22805,
+   868,
+   72188,
+   7178,
+   24752,
+   339,
+   129264,
+   128803,
+   129264,
+   271,
+   3085,
+   7956,
+   33,
+   128804,
+   128821
+  ]
+ },
+ {
+  "id": "developer-image-alone",
+  "raw": true,
+  "messages": [
+   {
+    "role": "developer",
+    "content": [
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/png;base64,AA=="
+      }
+     }
+    ]
+   },
+   {
+    "role": "user",
+    "content": "What is this?"
+   }
+  ],
+  "rendered_text": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜deepseek_image｜><｜User｜>What is this?<｜Assistant｜><think>",
+  "token_ids": [
+   0,
+   128799,
+   77666,
+   288,
+   9504,
+   482,
+   28,
+   223,
+   2402,
+   343,
+   16801,
+   223,
+   19,
+   15,
+   1457,
+   14,
+   270,
+   4077,
+   270,
+   1990,
+   14,
+   270,
+   850,
+   15146,
+   270,
+   22805,
+   868,
+   129264,
+   128803,
+   3085,
+   344,
+   566,
+   33,
+   128804,
+   128821
+  ]
+ },
+ {
+  "id": "billing-header-before-system-image",
+  "raw": true,
+  "messages": [
+   {
+    "role": "system",
+    "content": [
+     {
+      "type": "text",
+      "text": "x-anthropic-billing-header: cc_version=2.1.3; cc_entrypoint=cli;"
+     },
+     {
+      "type": "text",
+      "text": " "
+     },
+     {
+      "type": "image_url",
+      "image_url": {
+       "url": "data:image/png;base64,AA=="
+      }
+     }
+    ]
+   },
+   {
+    "role": "user",
+    "content": "q"
+   }
+  ],
+  "rendered_text": "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, the more thorough the reasoning)\n\n<｜deepseek_image｜><｜User｜>q<｜Assistant｜><think>",
+  "token_ids": [
+   0,
+   128799,
+   77666,
+   288,
+   9504,
+   482,
+   28,
+   223,
+   2402,
+   343,
+   16801,
+   223,
+   19,
+   15,
+   1457,
+   14,
+   270,
+   4077,
+   270,
+   1990,
+   14,
+   270,
+   850,
+   15146,
+   270,
+   22805,
+   868,
+   129264,
    128803,
    83,
    128804,

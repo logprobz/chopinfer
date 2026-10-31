@@ -294,9 +294,13 @@ def hf_messages(messages, transport, reasoning_field="reasoning", decode_argumen
     reaches the template as `reasoning_content`. Tool-call arguments become
     objects, unless `decode_arguments` is false (a reference that reads the
     text as sent). Media parts become the template's media items; every
-    other part is kept as sent."""
+    other part is kept as sent. A message's `prefix`, which the transport
+    reads as `continue_final_message` (`hf_input`), does not reach the
+    template."""
     result = []
     for message in copy.deepcopy(messages):
+        if isinstance(message, dict):
+            message.pop("prefix", None)
         if isinstance(message, dict) and message.get("role") == "assistant":
             reasoning = message.pop("reasoning", None)
             fallback = message.pop("reasoning_content", None)
@@ -379,7 +383,11 @@ def hf_input(request, transport, reasoning, reasoning_field="reasoning", decode_
     `thinking_object_switch`): the thinking keywords and the effort in
     `chat_template_kwargs` are dropped, the object's switch is both
     thinking keywords, and an effort of `none` under an enabled object
-    names no effort."""
+    names no effort.
+
+    `prefix: true` on a final assistant message continues it as
+    `continue_final_message` does (runtime-server
+    `final_message_continued`)."""
     keywords = {}
     template = request.get("chat_template_kwargs")
     by_object = reasoning.get("switch") == "thinking-object"
@@ -396,13 +404,20 @@ def hf_input(request, transport, reasoning, reasoning_field="reasoning", decode_
     if effort is not None:
         keywords["reasoning_effort"] = effort
         keywords.setdefault("enable_thinking", effort != reasoning["disable_value"])
-    continued = bool(request.get("continue_final_message"))
+    continued = bool(request.get("continue_final_message")) or prefixed(request["messages"])
     generation = request.get("add_generation_prompt")
     return {"messages": hf_messages(request["messages"], transport, reasoning_field, decode_arguments),
             "tools": hf_tools(request.get("tools"), transport),
             "add_generation_prompt": (not continued) if generation is None else bool(generation),
             "continue_final_message": continued,
             "keywords": keywords}
+
+
+def prefixed(messages):
+    """Whether the final message is an assistant message that sets `prefix:
+    true`, which the transport continues."""
+    last = messages[-1] if messages else None
+    return isinstance(last, dict) and last.get("role") == "assistant" and last.get("prefix") is True
 
 
 def thinking_object(value):
@@ -658,7 +673,7 @@ def round_ineligible(request, transport):
     messages = request["messages"]
     if not messages or messages[-1].get("role") != "assistant":
         return "ends without an assistant turn"
-    if request.get("continue_final_message"):
+    if request.get("continue_final_message") or prefixed(messages):
         return "continues the final message"
     for message in messages:
         if isinstance(message.get("content"), list) and any(

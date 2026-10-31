@@ -6408,6 +6408,7 @@ mod tests {
                 layout: None,
                 formats: None,
             }],
+            system_media: false,
         };
         let vocabulary = FrontendVocabularyV1 {
             size: 256,
@@ -6610,6 +6611,7 @@ mod tests {
                 layout: None,
                 formats: None,
             }],
+            system_media: false,
         };
         let vocabulary = FrontendVocabularyV1 {
             size: 256,

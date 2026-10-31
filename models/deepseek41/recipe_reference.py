@@ -3,7 +3,7 @@
 `python -m tools.refrun.frontend_corpus generate --model deepseek41` runs this
 script under `$CHOPINFER_DEEPSEEK_RECIPE_PYTHON`, an environment holding only
 the package the `RECIPE` pin in frontend_cases.py names, installed from
-tools/refrun/requirements-deepseek-recipe.txt (tools/refrun/README.md). The
+requirements-recipe.txt beside this script (README.md, "Recipe oracle"). The
 reference runner's environment, and with it every reference key, stays as it
 is. The script reads `{"checkpoint", "cases", "rounds"}` as JSON on stdin and
 writes `{"environment", "cases", "rounds"}` to stdout (`SubprocessOracle` in

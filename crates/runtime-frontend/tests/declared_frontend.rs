@@ -204,6 +204,7 @@ fn declared_media_renders_segments_and_refuses_client_pad_text() {
             layout: None,
             formats: None,
         }],
+        system_media: false,
     });
     // A grid position rule needs an image modality whose recipe merges.
     let with_positions = |merge: serde_json::Value, kind| {

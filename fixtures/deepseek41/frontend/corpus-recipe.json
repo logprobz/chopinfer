@@ -5109,6 +5109,11 @@
     ]
    }
   },
+  "response-format-regex": {
+   "request_sha256": "86014c0599bb0f186fcc97dc18c3240d592ee958c35580b75367d651ed154f1a",
+   "agrees": true,
+   "sha256": "bf352a412a47a66a991333602cd844f0048a2f59354134c7ddf9c59f0f487d18"
+  },
   "response-format-without-schema": {
    "request_sha256": "fb7da6a8f5061ce6a8afaf759b3ab4cc39d1166b100dfb606feb1fad014677e5",
    "agrees": true,
@@ -5491,6 +5496,16 @@
     ]
    }
   },
+  "prefix-continues-reasoning": {
+   "request_sha256": "90cccba73f075d8799c5c30bf224ac91b33ee1a0dc7a8fd03d30c835c7c94425",
+   "agrees": true,
+   "sha256": "4a2bfaf99b4d4a9dae5c9e09a25e9fd1077c097db2eadc1d5eeb092f2cb82eda"
+  },
+  "prefix-continues-answer": {
+   "request_sha256": "d59e32b0e58863c94f4dda7b350b7a0c99cc72086fb1db62621ec6bbbb1f0a60",
+   "agrees": true,
+   "sha256": "c066a384fc732b1bc404a0fee6dada8dab1cb7d1afd68b9f5685fefc93310305"
+  },
   "empty-system-messages-dropped": {
    "request_sha256": "342a76036f33a9bb556f107bd7e496c6634f782df734a13432367a4a88d357b3",
    "agrees": true,
@@ -5520,6 +5535,26 @@
    "request_sha256": "d7d4453f6df42df79596e51a623fdee0fdb4ad95585e4cf29d8d2aa78b1421e1",
    "agrees": true,
    "sha256": "74cb1483d05039e3b988dfd07efb34bed49d1b88d07f871f6cb0c3bafd737b46"
+  },
+  "system-image": {
+   "request_sha256": "9c39871d8b7b843a392ae629141d4f4195de71a6f741bcbfe251c2743ff4f319",
+   "agrees": true,
+   "sha256": "78070b3a006c2895c08c8467c3eb603225fa8c1b3048cff0ba1d0b86990e560a"
+  },
+  "developer-image-alone": {
+   "request_sha256": "f368559f06b4da3edb6c2c767a65355fa9c8a85ee3036e6ad665934963d85547",
+   "difference": "refuses",
+   "recipe": {
+    "refusal": {
+     "status": 400,
+     "message": "invalid request body: unknown variant `developer`, expected one of `system`, `user`, `assistant`, `tool`, `latest_reminder`"
+    }
+   }
+  },
+  "billing-header-before-system-image": {
+   "request_sha256": "41adaaf0ab5f1e85253aba51b86354e3554f56fb0175165953afd6365fb1ec46",
+   "agrees": true,
+   "sha256": "66feb52a65d05ee82ec25636c64af887dbcd004bb8cdd4663540ea35611788ba"
   },
   "tool-choice-none": {
    "request_sha256": "2c58aa55952bf13fcb535b76477c4d8d16f558c8223435d3f8c0851a56c036c7",

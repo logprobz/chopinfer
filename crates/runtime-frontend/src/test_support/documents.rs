@@ -120,6 +120,10 @@ impl ServerFrontendV1 for PairedFrontendV1 {
         self.document.tool_result_images()
     }
 
+    fn system_media(&self) -> bool {
+        self.document.system_media()
+    }
+
     fn image_formats(&self) -> Vec<String> {
         self.document.image_formats()
     }
@@ -166,6 +170,10 @@ impl ServerFrontendV1 for PairedFrontendV1 {
 
     fn constrains_strict_only(&self) -> bool {
         self.document.constrains_strict_only()
+    }
+
+    fn regex_response_format(&self) -> bool {
+        self.document.regex_response_format()
     }
 
     fn forced_choice_without_tools_is_auto(&self) -> bool {

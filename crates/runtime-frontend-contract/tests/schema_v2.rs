@@ -163,13 +163,17 @@ fn request_mapping_policies_default_to_the_template_and_every_constraint() {
         descriptor.response.constraint_scope,
         FrontendConstraintScopeV1::Requested
     );
+    assert!(!descriptor.response.regex_response_format);
     let written = serde_json::to_value(&descriptor).unwrap();
     assert!(written["reasoning"].get("switch").is_none());
     assert!(written["response"].get("constraint_scope").is_none());
+    assert!(written["response"].get("regex_response_format").is_none());
     let mut value = declaration();
     value["reasoning"]["switch"] = json!("thinking-object");
     value["response"]["constraint_scope"] = json!("strict-only");
+    value["response"]["regex_response_format"] = json!(true);
     let descriptor = read(&value).unwrap();
+    assert!(descriptor.response.regex_response_format);
     assert_eq!(
         descriptor.reasoning.switch,
         FrontendThinkingSwitchV1::ThinkingObject
@@ -194,6 +198,10 @@ fn request_mapping_policies_default_to_the_template_and_every_constraint() {
     );
     refused(
         |value| value["response"]["constraint_scope"] = json!("strict"),
+        syntax,
+    );
+    refused(
+        |value| value["response"]["regex_response_format"] = json!("yes"),
         syntax,
     );
 }
@@ -451,6 +459,30 @@ fn centered_pad_loads_through_the_complete_descriptor() {
     assert_eq!(
         descriptor.multimodal.unwrap().modalities[0].recipe.tag,
         "image.centered-pad.v1"
+    );
+}
+
+/// Media in system messages are an opt-in of the media section, absent
+/// unless declared and written back only when set.
+#[test]
+fn system_media_are_declared_in_the_media_section() {
+    let descriptor = read(&centered_pad_declaration()).unwrap();
+    assert!(!descriptor.multimodal.as_ref().unwrap().system_media);
+    let written = serde_json::to_value(&descriptor).unwrap();
+    assert!(written["multimodal"].get("system_media").is_none());
+    let mut value = centered_pad_declaration();
+    value["multimodal"]["system_media"] = json!(true);
+    let descriptor = read(&value).unwrap();
+    assert!(descriptor.multimodal.as_ref().unwrap().system_media);
+    let written = serde_json::to_value(&descriptor).unwrap();
+    assert_eq!(written["multimodal"]["system_media"], json!(true));
+    assert_eq!(read(&written).unwrap(), descriptor);
+    refused(
+        |value| {
+            *value = centered_pad_declaration();
+            value["multimodal"]["system_media"] = json!(1);
+        },
+        syntax,
     );
 }
 

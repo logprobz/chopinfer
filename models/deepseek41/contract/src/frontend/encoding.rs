@@ -5,7 +5,8 @@
 //! lines. It works on [`Message`], the dictionaries the vendor reads, with the
 //! fields it reads typed: string content or a list of content blocks, an
 //! assistant turn's reasoning and tool calls, a system message's tools and
-//! response format, and the `task` and `wo_eos` flags. A vendor assertion or
+//! response format, and the `task` and `wo_eos` flags, and one flag of
+//! deepseek-recipe's (`Message::open_reasoning`). A vendor assertion or
 //! exception is an [`EncodingError`] carrying its message.
 //!
 //! Python's semantics the port keeps: `json.dumps(ensure_ascii=False)` with
@@ -154,6 +155,12 @@ pub struct Message {
     pub response_format: Option<FrontendJsonV1>,
     pub task: Option<String>,
     pub wo_eos: bool,
+    /// Not the vendor's: a thinking-mode assistant turn's reasoning is left
+    /// open, without `</think>`, as deepseek-recipe 0.2.0 renders a prefix
+    /// turn of reasoning alone (`deepseek-recipe-encoding/src/v4/dsv41.rs`
+    /// lines 206-230). The served format sets it on a continued turn with
+    /// no content and no calls; `encoding.py` always closes the reasoning.
+    pub open_reasoning: bool,
 }
 
 impl Message {
@@ -170,6 +177,7 @@ impl Message {
             response_format: None,
             task: None,
             wo_eos: false,
+            open_reasoning: false,
         }
     }
 }
@@ -769,7 +777,9 @@ fn render_message(
                 && (!drop_thinking || position > last_user)
             {
                 thinking.push_str(message.reasoning_content.as_deref().unwrap_or_default());
-                thinking.push_str(THINKING_END);
+                if !message.open_reasoning {
+                    thinking.push_str(THINKING_END);
+                }
             }
             prompt.push_str(&thinking);
             prompt.push_str(message.content.as_deref().unwrap_or_default());

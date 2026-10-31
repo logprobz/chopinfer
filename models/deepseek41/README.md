@@ -6,7 +6,8 @@ DeepSeek V4.1 Flash, from the official checkpoint
 `deepseek41.v1` at topology `deepseek41-flash-tp4`. It is not released:
 `model.toml` declares `[release] enabled = false` until it qualifies.
 
-Supports images in tool results through Chat Completions and Responses, in the official encoder's prompt order.
+Supports images in tool results through Chat Completions and Responses, in the official encoder's prompt order,
+and in system and developer messages through Chat Completions, as deepseek-recipe 0.2.0 reads them.
 Images may be PNG, JPEG, GIF (the first frame) or WebP (lossy, lossless,
 with alpha, or the first frame of an animation), decoded as the reference's
 Pillow `Image.open` and `convert("RGB")` read them, and may arrive as
@@ -348,30 +349,43 @@ separate skip reasons; missing Python dependencies remain CI failures.
 ## Recipe oracle
 
 deepseek-recipe 0.2.0 is the frontend corpus's second authority, beside
-the pinned `encoding/encoding.py`. `frontend_cases.py` pins it as `RECIPE`,
-and `recipe_reference.py` runs it when the corpus is generated.
+the pinned `encoding/encoding.py` ([the recipe oracle](../../tools/refrun/README.md#frontend-corpus-recipe-oracle)).
+`frontend_cases.py` pins it as `RECIPE`, and `recipe_reference.py` runs it
+only when `frontend_corpus generate` runs, under
+`$CHOPINFER_DEEPSEEK_RECIPE_PYTHON`.
 `fixtures/deepseek41/frontend/corpus-recipe.json` records the recipe's
 outcome for each committed case and round trip, and
 [frontend-divergences.json](frontend-divergences.json) records each
-difference with the `recipe_when` tags that match it.
+difference with the `recipe_when` tags that match it. Install the recipe
+into its own CPU environment, never the GPU runner's, whose package set is
+part of every reference key:
+
+```sh
+python3.12 -m venv "$CHOPINFER_DATA/refrun/venv-deepseek-recipe"
+"$CHOPINFER_DATA/refrun/venv-deepseek-recipe/bin/pip" install -r models/deepseek41/requirements-recipe.txt
+export CHOPINFER_DEEPSEEK_RECIPE_PYTHON="$CHOPINFER_DATA/refrun/venv-deepseek-recipe/bin/python"
+```
 
 ### Provenance
 
-The corpus pins the PyPI wheel
+[requirements-recipe.txt](requirements-recipe.txt) pins every 0.2.0 wheel
+and the sdist by SHA-256. The corpus pins the PyPI wheel
 `deepseek_recipe-0.2.0-cp310-abi3-manylinux_2_28_x86_64.whl` (SHA-256
-`259812bf382bc82668b672707c5922095cc4f5f60a6c514ff89640bb62a746f7`) and
-the digest of the files it installs (`installed_sha256`
-`84ef54ed1b08cd105614efc36d0722c4f8b741f080ca4268bd90d8898b8856b0`), which
-`corpus-recipe.json` records. The PyPI sdist `deepseek_recipe-0.2.0.tar.gz`
-has SHA-256 `5dfd65dc201004f6382b13c8432a406cd2af7188831944ac5cef22f260111f68`.
+`259812bf382bc82668b672707c5922095cc4f5f60a6c514ff89640bb62a746f7`):
+`generate` refuses an environment whose installed recipe files differ from
+that wheel's RECORD (`installed_sha256`
+`84ef54ed1b08cd105614efc36d0722c4f8b741f080ca4268bd90d8898b8856b0`, which
+`corpus-recipe.json` records), such as another platform's wheel or a source
+build. The PyPI sdist `deepseek_recipe-0.2.0.tar.gz` has SHA-256
+`5dfd65dc201004f6382b13c8432a406cd2af7188831944ac5cef22f260111f68`.
 Compared on 2026-10-30, and again on 2026-10-31, its 83 Rust sources and its
 Python sources are identical to commit
 `93b0fd229cc9ffa6b1a8c63d42b0bf741bbec170` of
 [deepseek-recipe](https://github.com/deepseek-ai/deepseek-recipe); six of
 its `Cargo.toml` files differ from the commit's, only in packaging metadata
-(the workspace members and the readme path). Nothing shows that the wheel
-was built from those sources. The frontend's recipe citations name lines at
-that commit.
+(the workspace members and the readme path). Nothing shows that the
+published wheels were built from those sources. The frontend's recipe
+citations name lines at that commit.
 
 ### Differences the corpus cannot show
 

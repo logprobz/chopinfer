@@ -71,6 +71,7 @@ pub mod split;
 pub mod streamed;
 pub mod streamed_resident;
 pub mod strip2;
+pub mod wide;
 
 /// Threads of a projection CTA: four warps of 16 output columns.
 pub const THREADS: u32 = 128;

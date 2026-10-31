@@ -176,6 +176,7 @@ entries under `configurations`; a variant declaration file's:
 ```sh
 python3 -B -m tools.qual refs status --model mimo26
 python3 -B -m tools.qual refs adopt --model mimo26 [--replace-sha256 OLD_LOCK_DIGEST] [--dry-run]
+python3 -B -m tools.qual refs adopt --model MODEL --entry KEY [--entry KEY ...] [--replace-sha256 OLD_LOCK_DIGEST] [--dry-run]
 python3 -B -m tools.qual refs verify --model mimo26
 ```
 
@@ -192,6 +193,17 @@ keep whole (an unknown section, a configuration holding more than entries
 or pinning a missing object, an entry with its own fields whose path
 changed). A configuration's entries are edited in the model lock;
 `adopt --model MODEL.CONFIG` is refused.
+
+`adopt --entry KEY` refreshes only the named entries and keeps every other
+entry, with the objects it pins, as the lock holds it, so it reads no other
+input; when only the named inputs changed it writes what a full `adopt`
+writes. It needs the current lock and refuses a name the declaration does
+not declare. It also refuses an input a runner proof binds (a reference, a
+workload, a media reference's captures, and the preprocessing and
+mixed-generation proof inputs), which only a full `adopt` repins, and a
+selection that names only some of the entries declaring one path. The lock
+digest and `--dry-run` rules are the same. An external variant's lock is
+adopted whole.
 
 A fresh proof of bytes the lock already holds updates their object's
 record only when entries of the lock pin them and every one of those is

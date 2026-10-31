@@ -17,6 +17,11 @@ LOCK_KEYS = ("schema", "model", "entries", "objects")
 SNAPSHOT_FIELDS = ("path", "directory", "members", "scope")
 # Lock sections adopt keeps as they are: each configuration's own entries.
 KEPT_SECTIONS = ("configurations",)
+# The inputs a runner proof in `snapshot` verifies or reads besides each
+# reference and its workload. Only a full adopt repins them, since a scoped
+# one would pin their bytes without the proof that binds them.
+PROOF_INPUTS = ("media_mixed_generation", "media_mixed_generation_workload", "media_preprocessing_reference",
+                "media_preprocessing_integer_fixture", "media_preprocessing_ab", "media_preprocessing_ab_probes")
 
 
 def digest(path):
@@ -365,7 +370,33 @@ def snapshot(config, root=None, *, previous=None, only=None):
             "entries": entries, "objects": objects}
 
 
-def adoption(config, previous=None, root=None):
+def scoped_entries(config, previous, entries):
+    """The lock keys `adopt --entry` refreshes, checked before any input is
+    read: each of `entries` must be an input `config` declares that no
+    runner proof binds (a reference, a workload, a media reference's
+    captures or one of `PROOF_INPUTS`), every entry declaring the same path
+    as a named one must be named too, and the current lock `previous` must
+    exist."""
+    declared = sources(config)
+    names = set(entries)
+    unknown = sorted(names - set(declared))
+    if unknown:
+        raise ValueError(f"adopt --entry: {', '.join(unknown)}: not a declared lock entry")
+    if previous is None:
+        raise ValueError("adopt --entry: a scoped adopt needs the current lock")
+    proved = sorted(key for key in names if key.startswith(("reference:", "workload:"))
+                    or key in ("media_capture", "media_manifest") or key in PROOF_INPUTS)
+    if proved:
+        raise ValueError(f"adopt --entry: {', '.join(proved)}: a runner proof binds it, so only a full adopt "
+                         f"repins it")
+    shared = sorted(key for key, location in declared.items()
+                    if key not in names and any(location == declared[name] for name in names))
+    if shared:
+        raise ValueError(f"adopt --entry: {', '.join(shared)}: declares the path of a named entry; name it too")
+    return names
+
+
+def adoption(config, previous=None, root=None, entries=None):
     """The lock `adopt` writes: `snapshot` of the inputs `config` declares,
     with everything else `previous` holds kept byte for byte. The snapshot
     replaces the declared entries and the objects only they pinned; the
@@ -377,8 +408,14 @@ def adoption(config, previous=None, root=None):
     (another schema or model, an unknown section, a configuration with more
     than entries or whose object is missing, an entry with its own fields
     whose path changed, an object a kept entry or configuration pins whose
-    record contradicts what adoption proved of its bytes) is refused."""
-    value = snapshot(config, root, previous=previous)
+    record contradicts what adoption proved of its bytes) is refused.
+
+    With `entries` (`adopt --entry`, checked by `scoped_entries`) only those
+    entries are snapshot. Every other entry `previous` holds stays whole,
+    with the objects it pins, so no other input is read, and the lock is a
+    full adoption's whenever only the named inputs changed."""
+    only = None if entries is None else scoped_entries(config, previous, entries)
+    value = snapshot(config, root, previous=previous, only=only)
     if previous is None:
         return value
     if (previous.get("schema"), previous.get("model")) != (value["schema"], value["model"]):
@@ -406,6 +443,13 @@ def adoption(config, previous=None, root=None):
             raise ValueError(f"lock entry {key}: its path changed; adopt cannot carry its "
                              f"{', '.join(sorted(own))} to the new path, so restate them in the lock first")
         entry.update(copy.deepcopy(own))
+    if only is not None:
+        # The entries a scoped adopt does not name stay as the lock holds
+        # them, and so do the objects they pin.
+        for key, entry in previous["entries"].items():
+            if key not in only and not key.startswith("operator:"):
+                value["entries"][key] = copy.deepcopy(entry)
+                pinned.update(entry.get("members", {}).values())
     for section in KEPT_SECTIONS:
         if section in previous:
             value[section] = copy.deepcopy(previous[section])
@@ -635,6 +679,9 @@ def main():
     parser.add_argument("--replace-sha256", help="Required old lock digest when refreshing changed entries")
     parser.add_argument("--dry-run", action="store_true",
                         help="adopt: report what the lock would become; write nothing")
+    parser.add_argument("--entry", action="append", metavar="KEY",
+                        help="adopt: refresh only this lock entry and keep every other as the lock holds it "
+                             "(repeatable)")
     parser.add_argument("--variant-dir", type=Path,
                         help=f"the root of external variants (default ${declaration.VARIANTS_ENV})")
     args = parser.parse_args()
@@ -643,6 +690,11 @@ def main():
         config = declaration.load(declaration.named(args.model))
     except (OSError, ValueError) as error:
         parser.error(str(error))
+    if args.entry and args.action != "adopt":
+        parser.error("--entry selects the entries adopt refreshes; verify and status read every entry")
+    if args.entry and declaration.external(config):
+        parser.error("--entry refreshes a model's or a variant file's lock; an external variant's lock is "
+                     "adopted whole")
     if (args.action == "adopt" and not declaration.external(config)
             and config.get("variant") in declaration.configurations(config["model"])):
         parser.error(f"configuration {config['variant']} is pinned in the model lock's configurations; "
@@ -651,7 +703,8 @@ def main():
     try:
         if args.action == "adopt":
             previous = json.loads(path.read_text()) if path.exists() else None
-            value = external_adoption(config) if declaration.external(config) else adoption(config, previous)
+            value = external_adoption(config) if declaration.external(config) \
+                else adoption(config, previous, entries=args.entry)
             validate_lock(value, config)
             gate_reference_producers(config, value)
             for line in changes(previous, value):

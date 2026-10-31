@@ -844,11 +844,13 @@ impl Sm120 {
         self
     }
 
-    /// Bound an explicitly qualified parallel query selection through 64 rows.
+    /// Bound an explicitly qualified parallel query selection through
+    /// `rows` rows, at most 256. The parallel entry grids one CTA per live
+    /// row, so the bound selects rows and sizes nothing.
     pub fn with_parallel_position_query_rows(mut self, rows: u32) -> Result<Self, Refusal> {
-        if !(1..=64).contains(&rows) {
+        if !(1..=256).contains(&rows) {
             return Err(Refusal(
-                "parallel position query row limit must be in 1..=64",
+                "parallel position query row limit must be in 1..=256",
             ));
         }
         self.parallel_position_query_rows = rows;

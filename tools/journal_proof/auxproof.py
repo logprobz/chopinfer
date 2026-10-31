@@ -292,6 +292,19 @@ def derive(base_events,head_events,rule,replacements=(),layout=None,fixture=None
     return buffers,functions,streams,ids,a,b
 
 
+def release_notes(policy,notes,owner):
+    """The head trace notes of `policy`'s added releases, whose positions
+    index the owner's lines held at `notes`. A position outside the owner
+    stays distinct (strip_additions refuses it)."""
+    out=set()
+    for rule in policy.get('added_releases',[]):
+        need(isinstance(rule,dict) and isinstance(rule.get('positions'),list),'invalid added_releases rule')
+        for position in rule['positions']:
+            inside=type(position) is int and 1<=position<=len(notes)
+            out.add(notes[position-1] if inside else (owner,repr(position)))
+    return out
+
+
 def prove(base,head,fixture,policies,base_aux,head_aux,rule,replacements=(),compare_history=True,layout=None):
     """Prove one fixture: its create, every pinned journal, the rest of its
     device history through the last pinned checkpoint, and the cross-owner
@@ -333,13 +346,6 @@ def prove(base,head,fixture,policies,base_aux,head_aux,rule,replacements=(),comp
         be=bh['events'][:max(b['records'] for b in hb+list(extra['head'].values()))]
         derived=derive(ae,be,rule,replacements,layout,fixture['name'])
         buffers,functions,streams,ids,ai,bi=derived[:6]
-        # Each added load or resolve is released at most once. The create
-        # range is the create journal's prefix, so it is bounded on its own.
-        added_ids=len(set(bi['issued'])-set(ids.values()))
-        releases=lambda policy:sum(r.get('count',0) for r in policy.get('added_releases',[]))
-        require(releases(rule['create_policy'])<=added_ids and
-                sum(releases(policies.get(n,{})) for n in names)+releases(rule.get('history_policy',{}))<=added_ids,
-                'added releases exceed the added IDs')
         pairs={(a['create']['path'],b['create']['path']):(a,b) for a,b in zip(ab,hb)}
         require(len(pairs)==1,'fixture has multiple create generations; an explicit lifetime boundary is required')
         a,b=next(iter(pairs.values()))
@@ -355,6 +361,16 @@ def prove(base,head,fixture,policies,base_aux,head_aux,rule,replacements=(),comp
         owner_b=history.owners(notes_b,dict(zip(names,hb),**extra['head']),b['create'])
         hist_a=[i for i,o in enumerate(owner_a) if o=='history']
         hist_b=[i for i,o in enumerate(owner_b) if o=='history']
+        # Each added load or resolve is released at most once, so the added
+        # releases of the whole head trace may not outnumber the added IDs.
+        # A create release that a pinned journal also holds is one note.
+        added_ids=len(set(bi['issued'])-set(ids.values()))
+        create_notes=[b['create']['start_note']+i for i in range(len(b['create_lines']))]
+        released=release_notes(rule['create_policy'],create_notes,'create')
+        for name,binding in zip(names,hb):
+            released|=release_notes(policies.get(name,{}),binding['positions'],name)
+        released|=release_notes(rule.get('history_policy',{}),hist_b,'history')
+        require(len(released)<=added_ids,f'{len(released)} added releases exceed the {added_ids} added IDs')
         # Fixed handles: every raw a base record names that is not a base
         # allocation (a host buffer such as the weights arena), in any owner.
         # No allocation may map onto one, and no declared added allocation

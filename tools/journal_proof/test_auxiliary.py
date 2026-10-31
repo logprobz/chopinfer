@@ -31,6 +31,8 @@ def trace(bodies,head=False,rank=0,size=64):
         events.append(['note',bodies[CREATE][3]])
         issue(5,'resolve',5,4,'chop_new')
         events.append(['note',bodies[CREATE][4]])
+    # Records that issue nothing (bare releases) before the allocation.
+    events.extend([['note',line] for line in bodies[CREATE][5 if head else 3:-2]])
     allocation=6 if head else 4
     issue(allocation,'allocation',GEN+allocation,rank,size,256,GEN+1)
     events.extend([['note',line] for line in bodies[CREATE][-2:]])
@@ -56,20 +58,23 @@ class AuxiliaryTests(unittest.TestCase):
             added_modules=[dict(name='cubin_new',fnv1a='new_hash',bytes=120,ids=[4],count=1)],
             create_policy=self.spec['journals'][CREATE])}
 
-    def capture(self,label,bodies,head=False,mutate=None):
+    def capture(self,label,bodies,head=False,mutate=None,pinned=None):
+        """A capture of `bodies` on one device that pins the journals of
+        `pinned` (default: all)."""
         root=self.root/label
-        rev=self.repo.commit(bodies)
+        pins={name:bodies[name] for name in pinned or bodies}
+        rev=self.repo.commit(pins)
         events,create_records=trace(bodies,head)
         if mutate:
             mutate(events)
         write_device(root,1,events)
-        for name in bodies:
+        for name in pins:
             checkpoint(root,name,[(1,events,create_records if name==CREATE else len(events))])
-        return rev,seal_capture(root,rev,bodies)
+        return rev,seal_capture(root,rev,pins)
 
-    def check(self,expected,head=None,mutate=None,tamper=None):
-        br,bi=self.capture('base',self.base)
-        hr,hi=self.capture('head',self.head if head is None else head,True,mutate)
+    def check(self,expected,head=None,mutate=None,tamper=None,pinned=None):
+        br,bi=self.capture('base',self.base,pinned=pinned)
+        hr,hi=self.capture('head',self.head if head is None else head,True,mutate,pinned)
         if tamper:
             tamper(hi)
         spec=self.root/'spec.json'
@@ -109,6 +114,49 @@ class AuxiliaryTests(unittest.TestCase):
         self.released(1,1)
         self.spec['journals'][STEP]['added_releases'][0]['positions']=[1]
         self.check(1)
+
+    def create_released(self,count,journal=True):
+        """`count` bare releases in the head create range after the added
+        module and resolve, declared in the create policy and, with
+        `journal`, in the create journal's policy."""
+        create=self.head[CREATE]
+        self.head[CREATE]=create[:5]+['release']*count+create[5:]
+        declared=[dict(count=count,positions=list(range(6,6+count)))]
+        self.spec['auxiliary_rules']['host']['create_policy']=dict(self.spec['journals'][CREATE],added_releases=declared)
+        if journal:
+            self.spec['journals'][CREATE]=dict(self.spec['journals'][CREATE],added_releases=declared)
+
+    def step_only(self):
+        """Pin only the step journal, leaving the create range outside
+        every pinned journal."""
+        self.spec['fixtures']=[dict(name='host',create=STEP,journals=[STEP])]
+        del self.spec['journals'][CREATE]
+        return [STEP]
+
+    def test_create_and_step_releases_within_the_added_ids(self):
+        self.create_released(1,journal=False)
+        pinned=self.step_only()
+        self.released(1,1)
+        self.check(0,pinned=pinned)
+
+    def test_create_and_step_releases_share_one_budget(self):
+        # Two added IDs (one module, one resolve) with two releases in the
+        # create range and two in the step journal.
+        self.create_released(2,journal=False)
+        pinned=self.step_only()
+        self.released(2,2)
+        report=self.check(1,pinned=pinned)
+        self.assertIn('4 added releases exceed the 2 added IDs',json.dumps(report))
+
+    def test_a_create_release_the_create_journal_holds_counts_once(self):
+        self.create_released(2)
+        self.check(0)
+
+    def test_create_journal_releases_count_with_the_step(self):
+        self.create_released(2)
+        self.released(1,1)
+        report=self.check(1)
+        self.assertIn('3 added releases exceed the 2 added IDs',json.dumps(report))
 
     def test_copied_step_rejected_with_authentic_history(self):
         self.head[STEP]=self.base[STEP][:]

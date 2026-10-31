@@ -192,12 +192,38 @@ class ExtensionTests(unittest.TestCase):
         self.expansion()
         self.run_case(0)
 
-    def test_expansion_with_null_pointer_literal(self):
+    def null_pointer_expansion(self,args):
+        """The expansion whose second launch also takes a null pointer, with
+        the head launch passing `args`."""
         self.expansion()
         rule=self.spec['journals'][STEP]['expansions'][0]
         rule['sequence'][1]['args'].append({'literal':'NullDevicePointer'})
-        self.head[STEP][1]=line('chop_mm',[span(GEN+6,length=128),span(GEN+5),'ScalarU32(1)','NullDevicePointer'],1)
+        self.head[STEP][1]=line('chop_mm',args,1)
+
+    def test_expansion_with_null_pointer_literal(self):
+        self.null_pointer_expansion([span(GEN+6,length=128),span(GEN+5),'ScalarU32(1)','NullDevicePointer'])
         self.run_case(0)
+
+    def test_null_pointer_literal_refuses_a_null_pointer_for_a_buffer(self):
+        self.null_pointer_expansion([span(GEN+6,length=128),'NullDevicePointer','ScalarU32(1)','NullDevicePointer'])
+        self.run_case(1)
+
+    def test_null_pointer_literal_refuses_a_buffer_for_the_null_pointer(self):
+        self.null_pointer_expansion([span(GEN+6,length=128),span(GEN+5),'ScalarU32(1)',span(GEN+5)])
+        self.run_case(1)
+
+    def test_null_pointer_literal_refuses_a_changed_argument_count(self):
+        self.null_pointer_expansion([span(GEN+6,length=128),span(GEN+5),'ScalarU32(1)'])
+        self.run_case(1)
+
+    def test_null_pointer_literal_refuses_swapped_arguments(self):
+        self.null_pointer_expansion([span(GEN+6,length=128),span(GEN+5),'NullDevicePointer','ScalarU32(1)'])
+        self.run_case(1)
+
+    def test_null_pointer_literal_refuses_a_second_null_pointer(self):
+        self.null_pointer_expansion([span(GEN+6,length=128),span(GEN+5),'ScalarU32(1)','NullDevicePointer',
+                                     'NullDevicePointer'])
+        self.run_case(1)
 
     def test_expansion_refuses_a_handle_literal(self):
         self.expansion()

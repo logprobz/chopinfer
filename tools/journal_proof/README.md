@@ -231,8 +231,10 @@ Journal policies (`journals`), the auxiliary `create_policy` and
 `added_releases` names the exact positions of bare `release` records the
 head adds. A device releases each issued ID once, and a bare release names
 none, so a fixture's added releases may not outnumber the loads and
-resolves its auxiliary rule adds. The create range, the create journal's
-prefix, is bounded on its own.
+resolves its auxiliary rule adds. The bound counts each release of the
+head trace once, wherever it is declared: create, pinned journal or
+history. A create release that a pinned create journal also holds is one
+release.
 
 `history_policy` also accepts `graph_nodes` and `graph_pieces`.
 

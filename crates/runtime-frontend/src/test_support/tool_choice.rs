@@ -1,10 +1,10 @@
 //! What a tool choice decides for one rendered chat: which functions a
 //! completion may call.
 
-use crate::BundleChatStateV1;
+use crate::{BundleChatStateV1, FrontendDescriptorV1, PromptModeV1};
 use runtime_server::{
-    FrontendChatRequestV1, FrontendJsonV1, FrontendMessageV1, FrontendRoleV1, FrontendToolChoiceV1,
-    FrontendToolV1, ServerFrontendV1,
+    FrontendChatRequestV1, FrontendJsonV1, FrontendMessageV1, FrontendRoleV1, FrontendToolCallV1,
+    FrontendToolChoiceV1, FrontendToolV1, ServerFrontendV1,
 };
 
 fn ping() -> FrontendToolV1 {
@@ -203,4 +203,158 @@ pub fn deep_reference_schemas_cross_the_wire(frontend: &impl ServerFrontendV1, c
             "{label}: {call:?}"
         );
     }
+}
+
+/// A chat whose history holds one assistant call to `lookup` with
+/// `arguments` and its tool result. The tool declares each argument as a
+/// string property when `declared`, and no property otherwise.
+fn history_call(arguments: &serde_json::Value, declared: bool) -> FrontendChatRequestV1 {
+    let properties: serde_json::Map<String, serde_json::Value> = arguments
+        .as_object()
+        .expect("object arguments")
+        .keys()
+        .filter(|_| declared)
+        .map(|name| (name.clone(), serde_json::json!({"type": "string"})))
+        .collect();
+    let lookup = FrontendToolV1 {
+        name: "lookup".to_owned(),
+        description: None,
+        parameters: serde_json::from_value(
+            serde_json::json!({"type": "object", "properties": properties}),
+        )
+        .expect("a schema"),
+        parameters_present: true,
+        strict: None,
+    };
+    let message = |role| FrontendMessageV1 {
+        role,
+        content: None,
+        parts: None,
+        reasoning_content: None,
+        tool_calls: Vec::new(),
+        tool_call_id: None,
+        tools: Vec::new(),
+    };
+    let mut chat = request(vec![lookup], FrontendToolChoiceV1::Auto);
+    chat.messages.push(FrontendMessageV1 {
+        tool_calls: vec![FrontendToolCallV1 {
+            id: "call_1".to_owned(),
+            name: "lookup".to_owned(),
+            arguments: arguments.to_string(),
+        }],
+        ..message(FrontendRoleV1::Assistant)
+    });
+    chat.messages.push(FrontendMessageV1 {
+        content: Some("found".to_owned()),
+        tool_call_id: Some("call_1".to_owned()),
+        ..message(FrontendRoleV1::Tool)
+    });
+    chat
+}
+
+/// An assistant call whose parameters are named outside the declared name
+/// bytes, `user.name` and a CJK name, renders as history with its tool
+/// result, and the call as the prompt writes it parses back through
+/// `descriptor`'s parser to the same arguments: a call a completion returns
+/// can be sent back.
+///
+/// # Panics
+///
+/// When the history is refused, or its call does not parse back.
+pub fn any_parameter_name_round_trips(
+    frontend: &impl ServerFrontendV1,
+    descriptor: &FrontendDescriptorV1,
+) {
+    let arguments = serde_json::json!({"user.name": "Ada", "名前": "x"});
+    let prompt = frontend
+        .render_chat(history_call(&arguments, true))
+        .unwrap_or_else(|error| panic!("the history renders: {error}"))
+        .prompt;
+    assert!(prompt.contains("found"), "{prompt}");
+    // The history call is the last call open in the prompt, after any
+    // example the tool instructions write.
+    let parser = &descriptor.format["parser"];
+    let marker = |field: &str| parser[field].as_str().expect("a declared marker");
+    let (open, close) = (marker("tool_call_open"), marker("tool_call_close").trim());
+    let start = prompt
+        .rfind(open.trim_end())
+        .or_else(|| prompt.rfind(open.trim()))
+        .unwrap_or_else(|| panic!("no call in {prompt}"));
+    let end = start
+        + prompt[start..]
+            .find(close)
+            .unwrap_or_else(|| panic!("no call close in {prompt}"))
+        + close.len();
+    let stop = descriptor
+        .vocabulary
+        .boundary_tokens
+        .iter()
+        .find(|token| token.id == descriptor.vocabulary.stop_token_ids[0])
+        .expect("the stop token has a boundary text");
+    let completion = format!("{}{}", &prompt[start..end], stop.text);
+    let parsed = crate::parse_completion_v1(descriptor, &completion, PromptModeV1::Chat)
+        .unwrap_or_else(|error| panic!("{completion:?} parses: {error}"));
+    assert_eq!(parsed.tool_calls.len(), 1, "{completion:?}");
+    assert_eq!(parsed.tool_calls[0].name, "lookup");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&parsed.tool_calls[0].arguments).expect("JSON arguments");
+    assert_eq!(parsed, arguments, "{completion:?}");
+}
+
+/// An assistant call with a parameter named around a tool-call marker the
+/// parser stops at while it reads a name, a reserved marker or a stop text
+/// is refused as history: the call would not read back as it was sent. Each
+/// bare marker of `descriptor`'s parser section is tried, such as a
+/// key-value grammar's call close, and each declared stop text. The tool
+/// declares no such parameter, so only the call is refused.
+///
+/// # Panics
+///
+/// When such a history renders.
+pub fn a_parameter_name_holding_a_marker_is_refused_as_history(
+    frontend: &impl ServerFrontendV1,
+    descriptor: &FrontendDescriptorV1,
+) {
+    let parser = &descriptor.format["parser"];
+    let vocabulary = &descriptor.vocabulary;
+    let stops = vocabulary
+        .boundary_tokens
+        .iter()
+        .filter(|token| vocabulary.stop_token_ids.contains(&token.id))
+        .map(|token| token.text.as_str());
+    let markers = [
+        "tool_call_open",
+        "tool_call_close",
+        "function_open",
+        "function_name_close",
+        "function_close",
+        "parameter_open",
+        "parameter_name_close",
+        "parameter_json_name_close",
+        "parameter_close",
+    ]
+    .into_iter()
+    .filter_map(|field| parser[field].as_str())
+    .chain(
+        parser["reserved_markers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_str),
+    )
+    .chain(stops)
+    .map(str::trim)
+    .filter(|marker| !marker.is_empty());
+    let mut tried = 0;
+    for marker in markers {
+        let arguments = serde_json::json!({ format!("a{marker}b"): "v" });
+        assert!(
+            frontend
+                .render_chat(history_call(&arguments, false))
+                .is_err(),
+            "{marker:?} is refused"
+        );
+        tried += 1;
+    }
+    assert!(tried > 0, "no marker to try");
 }

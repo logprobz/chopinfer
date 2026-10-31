@@ -10,7 +10,7 @@ use crate::descriptor::{
 };
 use crate::format_decode::completion_calls_v1;
 use crate::request::{FrontendJsonV1, FrontendToolV1};
-use crate::toolkit::{json_to_string_v1, resource_v1, validate_name_v1};
+use crate::toolkit::{json_to_string_v1, resource_v1, validate_parameter_name_v1};
 
 /// The strings a completion is parsed by: the parser declaration's
 /// delimiters without the whitespace the template writes around them.
@@ -90,15 +90,13 @@ impl<'a> ChatMlTerminalsV1<'a> {
 }
 
 /// The call open as a completion is read by, and the whitespace the template
-/// writes after it: the declared marker trimmed, except that the typed
-/// grammar keeps the whitespace written before it.
+/// writes after it: the declared marker trimmed. The typed grammar's calls
+/// block opens after any run of newlines, including none, which the
+/// completion parser reads as part of the open and drops, as that grammar's
+/// reference stream parser does.
 pub(crate) fn call_open_v1(parser: &FrontendParserDeclarationV1) -> (&str, &str) {
     let marker = parser.tool_call_open.as_str();
-    let read = if parser.tool_grammar == FrontendToolGrammarV1::XmlTypedParametersV1 {
-        marker.trim_end()
-    } else {
-        marker.trim()
-    };
+    let read = marker.trim();
     let end = marker.find(read).unwrap_or_default() + read.len();
     (read, &marker[end..])
 }
@@ -167,7 +165,8 @@ pub(crate) struct RegionScanV1 {
 
 /// Walks one tool region the way the reference parser's state machine does.
 ///
-/// `text` starts at the tool or function opener that began the region. Text
+/// `text` starts at the tool or function opener that began the region, or in
+/// the typed grammar at the run of newlines its calls open takes. Text
 /// around the wrappers is ignored, a function may open without its tool
 /// wrapper, and the arguments run to the function close whatever they hold,
 /// except a function close inside a JSON value's string literal (see
@@ -194,10 +193,16 @@ impl RegionScanV1 {
             self.region = scan_key_value_call(terminals, text, tools);
             return &self.region;
         }
-        let opener = terminals.tool_open.len().max(terminals.function_open.len());
+        // A typed calls block begins at the newlines its open takes.
+        let lead = if terminals.grammar == FrontendToolGrammarV1::XmlTypedParametersV1 {
+            text.len() - text.trim_start_matches('\n').len()
+        } else {
+            0
+        };
+        let opener = lead + terminals.tool_open.len().max(terminals.function_open.len());
         let mut cursor = self.settled.unwrap_or_else(|| {
-            let (state, start) = if text.starts_with(terminals.tool_open) {
-                (RegionStateV1::Preamble, terminals.tool_open.len())
+            let (state, start) = if text[lead..].starts_with(terminals.tool_open) {
+                (RegionStateV1::Preamble, lead + terminals.tool_open.len())
             } else {
                 (RegionStateV1::Name, terminals.function_open.len())
             };
@@ -861,7 +866,7 @@ pub(crate) fn call_arguments_v1(
     let schema = tool_parameters_v1(tools, &call.name);
     let mut arguments: Vec<(String, FrontendJsonV1)> = Vec::new();
     for (parameter, value, flagged) in parameters {
-        validate_name_v1(descriptor, parameter, "parsed parameter")?;
+        validate_parameter_name_v1(descriptor, parameter, "parsed parameter")?;
         let Some(value) = value else {
             break;
         };
@@ -944,7 +949,7 @@ fn key_value_arguments_v1(
     let schema = tool_parameters_v1(tools, name);
     let mut arguments: Vec<(String, FrontendJsonV1)> = Vec::new();
     for (parameter, value) in pairs {
-        validate_name_v1(descriptor, parameter, "parsed parameter")?;
+        validate_parameter_name_v1(descriptor, parameter, "parsed parameter")?;
         let value = coerce_parameter(schema.as_ref(), parameter, value);
         insert_argument_v1(descriptor, &mut arguments, parameter, value)?;
     }

@@ -22,7 +22,7 @@ use frontend_format::toolkit::{
     TojsonOptionsV1, append_v1, chat_message_v1, field_v1, json_truthy, media_kind_v1,
     media_placeholder_v1, parse_json_object_v1, preserve_thinking_v1, python_rstrip_v1,
     python_strip_v1, reserved_media_text_v1, resource_v1, screen_media_text_v1, select_mode_v1,
-    split_media_segments_v1, tojson_v1, validate_name_v1,
+    split_media_segments_v1, tojson_v1, validate_name_v1, validate_parameter_name_v1,
 };
 use frontend_format::{
     AssistantTurnV1, ChatFormatV1, ChatMessageV1, ChatRenderV1, FormatDescriptorV1,
@@ -437,7 +437,7 @@ impl Qwen38Format {
         prompt.push(&call.name)?;
         prompt.push(">\n")?;
         for (name, value) in arguments {
-            validate_name_v1(&self.descriptor, &name, "tool parameter")?;
+            validate_parameter_name_v1(&self.descriptor, &name, "tool parameter")?;
             prompt.push("<parameter=")?;
             prompt.push(&name)?;
             prompt.push(">\n")?;

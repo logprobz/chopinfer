@@ -320,6 +320,65 @@ fn every_structural_delimiter_split_matches_the_whole_parse() {
     }
 }
 
+/// A parameter named outside the declared name bytes, such as `user.name`
+/// or a CJK name, streams at every split as the whole parse reads it: the
+/// call it names, with that name as written.
+#[test]
+fn any_parameter_name_streams_as_the_whole_parse_reads_it() {
+    for fixture in fixtures() {
+        for parameter in ["user.name", "名前"] {
+            let whole = format!(
+                "answer{}{}",
+                fixture.tool_block("lookup", parameter, "Ada"),
+                fixture.end()
+            );
+            let expected = parse_completion_v1(&fixture.descriptor, &whole, PromptModeV1::Chat)
+                .unwrap_or_else(|error| panic!("{}: {parameter}: {error}", fixture.name));
+            assert_eq!(expected.tool_calls.len(), 1, "{}", fixture.name);
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&expected.tool_calls[0].arguments)
+                    .unwrap(),
+                json!({ parameter: "Ada" }),
+                "{}",
+                fixture.name
+            );
+            for split in 0..=whole.len() {
+                let updates = feed(
+                    &mut fixture.decoder(PromptModeV1::Chat),
+                    &[&whole.as_bytes()[..split], &whole.as_bytes()[split..]],
+                );
+                let done = finished(&updates)
+                    .unwrap_or_else(|| panic!("{}: no finish at split {split}", fixture.name));
+                assert_eq!(
+                    done.completion.as_ref(),
+                    Some(&expected),
+                    "{}: {parameter}: split {split}",
+                    fixture.name
+                );
+            }
+        }
+    }
+}
+
+/// The fixture format renders a call with any parameter name as history,
+/// and it parses back to the same arguments; a name that holds a marker is
+/// still refused.
+#[test]
+fn any_parameter_name_round_trips_through_history() {
+    use runtime_frontend::test_support::tool_choice;
+    for fixture in fixtures() {
+        let frontend = runtime_frontend::test_support::documents::PairedFrontendV1::chat_format::<
+            frontend_format::test_support::FixtureFormatV1,
+        >((*fixture.descriptor).clone())
+        .unwrap_or_else(|error| panic!("{}: {error}", fixture.name));
+        tool_choice::any_parameter_name_round_trips(&frontend, &fixture.descriptor);
+        tool_choice::a_parameter_name_holding_a_marker_is_refused_as_history(
+            &frontend,
+            &fixture.descriptor,
+        );
+    }
+}
+
 /// The typed grammar's own shapes, streamed in any two pieces and one byte
 /// per token, parse as the whole completion does: two invokes in one calls
 /// block, a raw value that spells a parameter open and a function close,
@@ -394,10 +453,9 @@ fn a_typed_completion_with_full_width_markers_cut_anywhere_leaks_no_markup() {
     cut_anywhere_leaks_no_markup("｜DSML｜", "｜DSML｜");
 }
 
-/// Cuts a typed completion whose tags carry `tag` after their `<` or `</`
-/// at every byte, fed as one token and as one byte per token, with
-/// `reserved` declared a reserved marker.
-fn cut_anywhere_leaks_no_markup(tag: &str, reserved: &str) {
+/// The typed fixture with room for one byte per token, whose tags carry
+/// `tag` after their `<` or `</`, with `reserved` declared a reserved marker.
+fn tagged_typed(tag: &str, reserved: &str) -> FixtureV1 {
     let mut declaration: serde_json::Value = serde_json::from_str(TYPED_PARAMETERS).unwrap();
     declaration["context"]["maximum_total_tokens"] = json!(1024);
     declaration["tokenizer"]["model_max_length"] = json!(1024);
@@ -424,7 +482,110 @@ fn cut_anywhere_leaks_no_markup(tag: &str, reserved: &str) {
         .as_array_mut()
         .unwrap()
         .push(json!(reserved));
-    let fixture = FixtureV1::new("typed-parameters", &declaration.to_string());
+    FixtureV1::new("typed-parameters", &declaration.to_string())
+}
+
+/// `whole` streamed in any two pieces and one byte per token: the finish
+/// each way of streaming it reports, or the first error.
+fn streamed(
+    fixture: &FixtureV1,
+    mode: PromptModeV1,
+    whole: &str,
+) -> Vec<Result<runtime_frontend::CompletedCompletionV1, String>> {
+    let bytes = whole.as_bytes();
+    let mut splits: Vec<Vec<&[u8]>> = (0..=bytes.len())
+        .map(|split| vec![&bytes[..split], &bytes[split..]])
+        .collect();
+    splits.push(bytes.chunks(1).collect());
+    splits
+        .into_iter()
+        .map(|parts| {
+            let mut decoder = fixture.decoder(mode);
+            let mut updates = Vec::new();
+            for (ordinal, part) in parts.iter().filter(|part| !part.is_empty()).enumerate() {
+                updates.extend(decoder.push(GeneratedTokenV1::new(
+                    ordinal as u64,
+                    200,
+                    part.to_vec(),
+                ))?);
+            }
+            if finished(&updates).is_none() {
+                updates.extend(decoder.finish_length()?);
+            }
+            finished(&updates)
+                .cloned()
+                .ok_or_else(|| "no finish".to_owned())
+        })
+        .collect()
+}
+
+/// A typed calls block opens after any run of newlines before its open,
+/// including none, and the open drops them, as the grammar's reference
+/// stream parser reads it: content or reasoning, then the call, at every
+/// split.
+/// Newlines that no open follows are text, and a reserved marker that does
+/// not open the block is still refused.
+#[test]
+fn a_typed_calls_block_opens_after_any_run_of_newlines() {
+    let fixture = tagged_typed("｜DSML｜", "｜DSML｜");
+    let end = fixture.end().to_owned();
+    let block = "<｜DSML｜calls>\n<｜DSML｜invoke name=\"f\">\n\
+                 <｜DSML｜parameter name=\"x\" string=\"true\">v</｜DSML｜parameter>\n\
+                 </｜DSML｜invoke>\n</｜DSML｜calls>";
+    for lead in ["", "\n", "\n\n", "\n\n\n"] {
+        for (mode, text, reasoning, content) in [
+            (PromptModeV1::Chat, "a", None, "a"),
+            (PromptModeV1::Thinking, "r", Some("r"), ""),
+        ] {
+            let whole = format!("{text}{lead}{block}{end}");
+            let expected = parse_completion_v1(&fixture.descriptor, &whole, mode)
+                .unwrap_or_else(|error| panic!("{whole:?}: {error}"));
+            assert_eq!(expected.content, content, "{whole:?}");
+            assert_eq!(
+                expected.reasoning_content.as_deref(),
+                reasoning,
+                "{whole:?}"
+            );
+            assert_eq!(expected.tool_calls.len(), 1, "{whole:?}");
+            assert_eq!(expected.tool_calls[0].arguments, r#"{"x": "v"}"#);
+            for done in streamed(&fixture, mode, &whole) {
+                let done = done.unwrap_or_else(|error| panic!("{whole:?}: {error}"));
+                assert_eq!(done.completion.as_ref(), Some(&expected), "{whole:?}");
+                assert_eq!(done.reason, CompletionFinishV1::ToolCalls, "{whole:?}");
+            }
+        }
+        // Newlines that end the answer, or that text follows, are text.
+        for whole in [format!("a{lead}{end}"), format!("a{lead}b{end}")] {
+            let expected = parse_completion_v1(&fixture.descriptor, &whole, PromptModeV1::Chat)
+                .unwrap_or_else(|error| panic!("{whole:?}: {error}"));
+            assert_eq!(expected.content, whole.strip_suffix(&end).unwrap());
+            for done in streamed(&fixture, PromptModeV1::Chat, &whole) {
+                let done = done.unwrap_or_else(|error| panic!("{whole:?}: {error}"));
+                assert_eq!(done.completion.as_ref(), Some(&expected), "{whole:?}");
+            }
+        }
+        // A reserved marker that does not open the calls block is refused.
+        let invoke = "<｜DSML｜invoke name=\"f\">\n</｜DSML｜invoke>\n";
+        for whole in [
+            format!("a{lead}{invoke}{end}"),
+            format!("a{lead}<｜DSML｜call>\n{invoke}</｜DSML｜calls>{end}"),
+        ] {
+            assert!(
+                parse_completion_v1(&fixture.descriptor, &whole, PromptModeV1::Chat).is_err(),
+                "{whole:?}"
+            );
+            for done in streamed(&fixture, PromptModeV1::Chat, &whole) {
+                assert!(done.is_err(), "{whole:?}: {done:?}");
+            }
+        }
+    }
+}
+
+/// Cuts a typed completion whose tags carry `tag` after their `<` or `</`
+/// at every byte, fed as one token and as one byte per token, with
+/// `reserved` declared a reserved marker.
+fn cut_anywhere_leaks_no_markup(tag: &str, reserved: &str) {
+    let fixture = tagged_typed(tag, reserved);
     let close = format!("</{tag}parameter>");
     let whole = format!(
         "ok\n\n<{tag}calls>\n<{tag}invoke name=\"f\">\n\
@@ -646,6 +807,99 @@ fn a_client_stop_inside_a_pending_argument_delivers_the_complete_ones() {
                 "{}: split {split}",
                 fixture.name
             );
+        }
+    }
+}
+
+/// Generation the token budget ends after or inside a call finishes
+/// `Length`, through the shared parser and through the format's export
+/// alike, at every split, and the call keeps only its complete parameters;
+/// an engine stop there finishes `ToolCalls`, and without a call `Stop`.
+#[test]
+fn a_length_cut_after_or_inside_a_call_finishes_length() {
+    use runtime_frontend::test_support::documents::PairedDecoderV1;
+    for fixture in fixtures() {
+        let parser = &fixture.parser;
+        let after = format!("answer{}", fixture.tool_block("lookup", "city", "Paris"));
+        let inside = format!(
+            "answer{}{}{}city{}{}Pa",
+            fixture.call_open("lookup"),
+            fixture.argument("days", "3"),
+            parser.parameter_open,
+            parser.parameter_name_close,
+            parser.parameter_value_open,
+        );
+        for (source, arguments) in [
+            (after.as_str(), r#"{"city": "Paris"}"#),
+            (inside.as_str(), r#"{"days": "3"}"#),
+            ("answer", ""),
+        ] {
+            for (length, reason) in [
+                (true, CompletionFinishV1::Length),
+                (
+                    false,
+                    if arguments.is_empty() {
+                        CompletionFinishV1::Stop
+                    } else {
+                        CompletionFinishV1::ToolCalls
+                    },
+                ),
+            ] {
+                for split in 0..=source.len() {
+                    let label =
+                        format!("{}: {source:?} length {length} split {split}", fixture.name);
+                    let mut decoder = PairedDecoderV1::new(
+                        Arc::clone(&fixture.descriptor),
+                        PromptModeV1::Chat,
+                        DecoderLimitsV1::declared(&fixture.descriptor),
+                    );
+                    let mut updates = Vec::new();
+                    let bytes = source.as_bytes();
+                    for (ordinal, part) in [&bytes[..split], &bytes[split..]]
+                        .into_iter()
+                        .filter(|part| !part.is_empty())
+                        .enumerate()
+                    {
+                        updates.extend(
+                            decoder
+                                .push(GeneratedTokenV1::new(ordinal as u64, 200, part.to_vec()))
+                                .unwrap_or_else(|error| panic!("{label}: {error}")),
+                        );
+                    }
+                    updates.extend(
+                        if length {
+                            decoder.finish_length()
+                        } else {
+                            decoder.finish_stop()
+                        }
+                        .unwrap_or_else(|error| panic!("{label}: {error}")),
+                    );
+                    let calls: Vec<_> = updates
+                        .iter()
+                        .filter_map(|update| match update {
+                            CompletionUpdateV1::ToolCalls(calls) => Some(calls.calls.clone()),
+                            _ => None,
+                        })
+                        .flatten()
+                        .map(|call| (call.name, call.arguments))
+                        .collect();
+                    let expected: Vec<_> = (!arguments.is_empty())
+                        .then(|| ("lookup".to_owned(), arguments.to_owned()))
+                        .into_iter()
+                        .collect();
+                    assert_eq!(calls, expected, "{label}");
+                    assert_eq!(
+                        text(&updates),
+                        (String::new(), "answer".to_owned()),
+                        "{label}"
+                    );
+                    assert_eq!(
+                        finished(&updates).map(|done| done.reason),
+                        Some(reason),
+                        "{label}"
+                    );
+                }
+            }
         }
     }
 }

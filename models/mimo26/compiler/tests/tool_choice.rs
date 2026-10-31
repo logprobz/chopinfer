@@ -18,6 +18,21 @@ fn tool_references_are_refused() {
     tool_choice::tool_references_are_refused(&frontend());
 }
 
+/// A call with any parameter name renders as history and parses back.
+#[test]
+fn any_parameter_name_round_trips() {
+    tool_choice::any_parameter_name_round_trips(&frontend(), &model_mimo26::frontend::descriptor());
+}
+
+/// A call with a parameter name that holds a marker is refused as history.
+#[test]
+fn a_parameter_name_holding_a_marker_is_refused_as_history() {
+    tool_choice::a_parameter_name_holding_a_marker_is_refused_as_history(
+        &frontend(),
+        &model_mimo26::frontend::descriptor(),
+    );
+}
+
 /// A forced call's enumeration and constant values, which the grammar writes
 /// as they are, read back through this model's own parser declaration,
 /// whose wrappers carry the template's whitespace.

@@ -7,7 +7,7 @@
 //! finished prompt into text and media segments and charges each item's pad.
 
 use crate::chat::{ChatMessageV1, ChatRenderV1};
-use crate::descriptor::{FormatDescriptorV1, FrontendMediaKindV1};
+use crate::descriptor::{FormatDescriptorV1, FrontendMediaKindV1, FrontendToolGrammarV1};
 use crate::request::{
     FrontendContentPartV1, FrontendJsonV1, FrontendMediaPartKindV1, FrontendMediaPartV1,
     FrontendToolV1, PromptSegmentV1,
@@ -50,6 +50,97 @@ pub fn validate_name_v1(
         )));
     }
     Ok(())
+}
+
+/// Checks one parameter name: any text the tool-call parser reads back as
+/// it was written, as `encoding.py` reads any `name="..."`. It is not
+/// empty, fits `maximum_name_bytes`, has no whitespace around it (the parser
+/// trims a name), and holds no reserved marker and none of the bare
+/// tool-call markers. Nor may a marker the parser stops at while it reads a
+/// name begin inside it in the text a name close writes after it
+/// ([`name_stops_v1`]): such a marker would end the name early, or the call.
+/// Unlike a function name, it need not be made of the declared name bytes.
+pub fn validate_parameter_name_v1(
+    descriptor: &FormatDescriptorV1,
+    name: &str,
+    context: &str,
+) -> Result<(), String> {
+    let parser = &descriptor.parser;
+    let maximum = descriptor.limits.maximum_name_bytes;
+    let marked = [
+        &parser.tool_call_open,
+        &parser.tool_call_close,
+        &parser.function_open,
+        &parser.function_name_close,
+        &parser.function_close,
+        &parser.parameter_open,
+        &parser.parameter_name_close,
+        &parser.parameter_json_name_close,
+        &parser.parameter_close,
+    ]
+    .into_iter()
+    .map(|marker| marker.trim())
+    .chain(parser.reserved_markers.iter().map(String::as_str))
+    .any(|marker| !marker.is_empty() && name.contains(marker));
+    let (closes, stops) = name_stops_v1(descriptor);
+    // A stop that begins inside the name, whole in the name and its close or
+    // running past them, is where the parser would end the name instead.
+    let cut = closes.iter().any(|close| {
+        let text = format!("{name}{close}");
+        (0..name.len()).any(|start| {
+            let rest = &text.as_bytes()[start..];
+            stops
+                .iter()
+                .any(|stop| rest.starts_with(stop.as_bytes()) || stop.as_bytes().starts_with(rest))
+        })
+    });
+    if name.is_empty() || name.len() > maximum || name.trim() != name || marked || cut {
+        return Err(field_v1(format!(
+            "{context} name must fit {maximum} bytes, without surrounding whitespace or a \
+             tool-call marker"
+        )));
+    }
+    Ok(())
+}
+
+/// The name closes a parameter name may be written before in `descriptor`'s
+/// tool grammar, as declared, and the markers the parser stops at while it
+/// reads a name: each name close, the marker that ends the call around it
+/// (a function close, or a key-value grammar's call close), bare, and the
+/// declared stop texts.
+fn name_stops_v1(descriptor: &FormatDescriptorV1) -> (Vec<&str>, Vec<&str>) {
+    let parser = &descriptor.parser;
+    let (closes, ends) = match parser.tool_grammar {
+        FrontendToolGrammarV1::XmlFunctionParametersV1 => (
+            vec![parser.parameter_name_close.as_str()],
+            vec![parser.function_close.as_str()],
+        ),
+        FrontendToolGrammarV1::XmlTypedParametersV1 => (
+            vec![
+                parser.parameter_name_close.as_str(),
+                parser.parameter_json_name_close.as_str(),
+            ],
+            vec![parser.function_close.as_str()],
+        ),
+        FrontendToolGrammarV1::XmlKeyValueArgumentsV1 => (
+            vec![parser.parameter_name_close.as_str()],
+            vec![parser.tool_call_close.as_str()],
+        ),
+    };
+    let vocabulary = &descriptor.vocabulary;
+    let terminators = vocabulary
+        .boundary_tokens
+        .iter()
+        .filter(|token| vocabulary.stop_token_ids.contains(&token.id))
+        .map(|token| token.text.as_str());
+    let stops = closes
+        .iter()
+        .chain(&ends)
+        .map(|marker| marker.trim())
+        .chain(terminators)
+        .filter(|marker| !marker.is_empty())
+        .collect();
+    (closes, stops)
 }
 
 /// Checks one function name: a name as [`validate_name_v1`] checks it, or,

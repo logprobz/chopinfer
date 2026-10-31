@@ -57,16 +57,16 @@
     "frontend": {
       "directory": false,
       "members": {
-        ".": "4d79414ef09f655f20667279de6d75e73e3031273bbff11c34fe1c1c8112c621"
+        ".": "f2b2b332f90469eef8cf93d11fee30947c3abe2f944370c24d5d2662a7d583af"
       },
       "path": "models/deepseek41/compiler/src/frontend.json"
     },
     "frontend_capture": {
       "directory": true,
       "members": {
-        "corpus-coverage.json": "0781a080477c56c5b09555038ef7e7e9f5ef94b3ddaa043b7e134f215b93125e",
-        "corpus-rounds.json": "a12c814a2ec083de6cc0f7cd406665cec10f1d3328e957b70c695b369483e222",
-        "corpus.json": "8d71baff45f96252815a3a7ba320193b2dc5d2dcaac27124975cd9cfdbd10560",
+        "corpus-coverage.json": "64e2c5bc2e95608610c9a3d61f9d6afc5b0a3544c28d1a9df339b2d29740783e",
+        "corpus-rounds.json": "cc653739cddaf7ca4484b023ba93feb1730425146cc8dd5520945c798522b6a9",
+        "corpus.json": "69ce2ecf05172c264bb713adbb64294042f041b8d5321281095c8a58c4cc622b",
         "encoder-tests/LICENSE": "f2c6c602815669d292889e5be8c802f2ed950653b77999b1584e8e6aed25d040",
         "encoder-tests/README.md": "d0ed3e2f6258c01a41cc6a73781889293a124250311839adcf659c494cbd584b",
         "encoder-tests/test_input_1.json": "6a5a86694e47169c8f0c9243a7e24cc5db05447be0d3d3a9891034e913c518de",
@@ -80,7 +80,8 @@
         "encoder-tests/test_output_4.txt": "94433b68370dcc69fa61efc5011b5d0e28685e4716fee1ee77fbbfc0c9935b54",
         "encoder-tests/test_output_5.txt": "4d673091746553d1cb2e40a3fc01dc09a7c53c40627096a3e49c97a269a81f64",
         "tokenizer-golden.json": "68ed31564260e7013fa284531dfe74ae449d8a7e2bd2b042687a2f7d2ac96891",
-        "chat-renders.json": "6550c1c3164b56a1215fcd9b1b5c0f0b63ee418eb4d59c617097208a298877c8"
+        "chat-renders.json": "6550c1c3164b56a1215fcd9b1b5c0f0b63ee418eb4d59c617097208a298877c8",
+        "corpus-recipe.json": "9d7b339157f85fa31a5c125927e4498d822b68f67a8b80bf2c9b6b386d976f4e"
       },
       "path": "fixtures/deepseek41/frontend"
     },
@@ -333,9 +334,6 @@
     "9e7a837ae2185511a4a93baf5808a6e4a02fc402bce034da4c8ec59825ede5fc": {
       "schema": "legacy-json-array"
     },
-    "a12c814a2ec083de6cc0f7cd406665cec10f1d3328e957b70c695b369483e222": {
-      "schema": "legacy-json-array"
-    },
     "24d4ec51121f74c9189ce603c4b1ff73db702c4d0a1bbeb2a91677b395b8383c": {
       "schema": "legacy-json-array"
     },
@@ -353,15 +351,6 @@
     "b24212819c84de222cbce240a20edd36fa93ef4e257c6bf7f89b76de4a5c14b5": {
       "schema": "legacy-json-object"
     },
-    "0781a080477c56c5b09555038ef7e7e9f5ef94b3ddaa043b7e134f215b93125e": {
-      "schema": "chop-frontend-corpus-coverage-v1"
-    },
-    "4d79414ef09f655f20667279de6d75e73e3031273bbff11c34fe1c1c8112c621": {
-      "schema": "chop-frontend-openai-v2"
-    },
-    "8d71baff45f96252815a3a7ba320193b2dc5d2dcaac27124975cd9cfdbd10560": {
-      "schema": "legacy-json-array"
-    },
     "b360b5dcf5688c9ca6478249d535b2a814000d1f4589c7616c07ebb2e1d70528": {
       "production": {
         "assembled_fixture_sha256": "a148fc88713ad7d65c654abee94e32c4f2f41c146dd4a056ad7f4d0d8c324f2a",
@@ -373,6 +362,21 @@
     },
     "6550c1c3164b56a1215fcd9b1b5c0f0b63ee418eb4d59c617097208a298877c8": {
       "schema": "legacy-json-array"
+    },
+    "f2b2b332f90469eef8cf93d11fee30947c3abe2f944370c24d5d2662a7d583af": {
+      "schema": "chop-frontend-openai-v2"
+    },
+    "cc653739cddaf7ca4484b023ba93feb1730425146cc8dd5520945c798522b6a9": {
+      "schema": "legacy-json-array"
+    },
+    "64e2c5bc2e95608610c9a3d61f9d6afc5b0a3544c28d1a9df339b2d29740783e": {
+      "schema": "chop-frontend-corpus-coverage-v1"
+    },
+    "69ce2ecf05172c264bb713adbb64294042f041b8d5321281095c8a58c4cc622b": {
+      "schema": "legacy-json-array"
+    },
+    "9d7b339157f85fa31a5c125927e4498d822b68f67a8b80bf2c9b6b386d976f4e": {
+      "schema": "chop-frontend-recipe-v1"
     }
   },
   "schema": "chopinfer-qual-references/v1"

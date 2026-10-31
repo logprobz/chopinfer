@@ -87,10 +87,15 @@ fn entry<'a>(entries: &'a [(String, FrontendJsonV1)], name: &str) -> Option<&'a 
 /// a `json_object` response format, or a JSON schema one without `strict:
 /// true`, is checked and constrains nothing: it neither selects nor
 /// replaces a constraint, so an explicit `structured_outputs` one stands.
+/// With `regex_format` ([`crate::ServerFrontendV1::regex_response_format`])
+/// a `regex` response format is an explicit regex constraint, under either
+/// scope, replacing `structured_outputs.regex`; without it that type is
+/// refused.
 pub(crate) fn requested_constraint(
     structured_outputs: Option<&FrontendJsonV1>,
     response_format: Option<&FrontendJsonV1>,
     strict_only: bool,
+    regex_format: bool,
 ) -> Result<Option<RequestedConstraint>, ApiError> {
     let structured = match structured_outputs {
         None | Some(FrontendJsonV1::Null) => None,
@@ -288,6 +293,17 @@ pub(crate) fn requested_constraint(
                             }
                         }
                     }
+                }
+                "regex" if regex_format => {
+                    let Some(FrontendJsonV1::String(pattern)) = entry(entries, "regex") else {
+                        return Err(invalid(
+                            "response_format.regex must be a string",
+                            RESPONSE_FORMAT,
+                        ));
+                    };
+                    kinds.retain(|(name, _)| *name != "regex");
+                    regex = Some(pattern.clone());
+                    kinds.push(("regex", RESPONSE_FORMAT));
                 }
                 "structural_tag" => {
                     return Err(invalid(

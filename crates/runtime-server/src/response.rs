@@ -2686,6 +2686,8 @@ fn finish_reason_for(
         (Endpoint::Chat, FinishReason::ToolCalls, 0, true) => Err(invalid_backend_event(
             "tool_calls finish reason requires an observed tool call",
         )),
+        // The token budget ended generation, after or inside a call too.
+        (Endpoint::Chat, FinishReason::Length, _, _) => Ok(FinishReason::Length),
         (Endpoint::Chat, _, count, true)
             if count > 0 && chat.is_some_and(|chat| chat.named_tool_choice) =>
         {
@@ -2986,6 +2988,7 @@ fn unix_nanos() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frontend::ChatStateV1;
 
     #[test]
     fn prompt_tokenization_errors_preserve_specific_and_generic_messages() {
@@ -3020,5 +3023,62 @@ mod tests {
         assert_eq!(error.value()["error"]["message"], message);
         let tokenization = admission_error(AdmissionError::InvalidPrompt);
         assert_ne!(error.message, tokenization.message);
+    }
+
+    #[derive(Debug)]
+    struct NoState;
+
+    impl ChatStateV1 for NoState {
+        fn reasoning_enabled(&self) -> bool {
+            false
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    /// A chat finish with an observed call: `length` when the token budget
+    /// ended generation, with or without a named choice; otherwise
+    /// `tool_calls`, or `stop` for a named choice.
+    #[test]
+    fn a_length_finish_after_a_call_stays_length() {
+        for named in [false, true] {
+            let chat = ChatMetadata {
+                include_reasoning: false,
+                allowed_function_names: vec!["f".to_owned()],
+                named_tool_choice: named,
+                state: Arc::new(NoState),
+            };
+            for (reason, expected) in [
+                (FinishReason::Length, FinishReason::Length),
+                (
+                    FinishReason::Stop,
+                    if named {
+                        FinishReason::Stop
+                    } else {
+                        FinishReason::ToolCalls
+                    },
+                ),
+                (
+                    FinishReason::ToolCalls,
+                    if named {
+                        FinishReason::Stop
+                    } else {
+                        FinishReason::ToolCalls
+                    },
+                ),
+            ] {
+                let finished = finish_reason_for(Endpoint::Chat, Some(&chat), reason, 1)
+                    .unwrap_or_else(|error| panic!("{reason:?} named {named}: {}", error.message));
+                assert_eq!(finished, expected, "{reason:?} named {named}");
+            }
+            // Without a call, a length finish is unchanged as well.
+            assert_eq!(
+                finish_reason_for(Endpoint::Chat, Some(&chat), FinishReason::Length, 0)
+                    .map_err(|error| error.message),
+                Ok(FinishReason::Length)
+            );
+        }
     }
 }

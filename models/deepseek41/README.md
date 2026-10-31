@@ -6,13 +6,14 @@ DeepSeek V4.1 Flash, from the official checkpoint
 `deepseek41.v1` at topology `deepseek41-flash-tp4`. It is not released:
 `model.toml` declares `[release] enabled = false` until it qualifies.
 
-Supports images in tool results through Chat Completions and Responses, in the official encoder's prompt order.
+Supports images in tool results through Chat Completions and Responses, in the official encoder's prompt order,
+and in system and developer messages through Chat Completions, as deepseek-recipe 0.2.0 reads them.
 Images may be PNG, JPEG, GIF (the first frame) or WebP (lossy, lossless,
 with alpha, or the first frame of an animation), decoded as the reference's
 Pillow `Image.open` and `convert("RGB")` read them, and may arrive as
 `image_url` parts or OpenAI `file` parts whose `file_data` is an image data
-URL (the deepseek-recipe's mapping in OpenAI's nested shape; its flat shape
-is refused). See [the request surface](../../docs/serving-request-surface.md#media-inputs).
+URL (deepseek-recipe 0.2.0's mapping, read from OpenAI's nested file object;
+the recipe's flat fields are refused). See [the request surface](../../docs/serving-request-surface.md#media-inputs).
 
 | Crate | Directory | Holds |
 |---|---|---|
@@ -467,6 +468,108 @@ leaving the official-checkpoint tests opt-in. Each source must match both
 generate their own tokenizer, configuration and weights, and never read the
 official weights. Missing vendor sources and missing checkpoint inputs have
 separate skip reasons; missing Python dependencies remain CI failures.
+
+## Recipe oracle
+
+deepseek-recipe 0.2.0 is the frontend corpus's second authority, beside
+the pinned `encoding/encoding.py` ([the recipe oracle](../../tools/refrun/README.md#frontend-corpus-recipe-oracle)).
+`frontend_cases.py` pins it as `RECIPE`, and `recipe_reference.py` runs it
+only when `frontend_corpus generate` runs, under
+`$CHOPINFER_DEEPSEEK_RECIPE_PYTHON`.
+`fixtures/deepseek41/frontend/corpus-recipe.json` records the recipe's
+outcome for each committed case and round trip, and
+[frontend-divergences.json](frontend-divergences.json) records each
+difference exactly: a refusal by its entry's feature tags and the recipe's
+refusal message, which names the failed check (`recipe_message`), and any
+other difference by the fingerprint of both outcomes, reviewed for every
+difference of the full generated corpus (`recipe_reviewed`). Install the recipe
+into its own CPU environment, never the GPU runner's, whose package set is
+part of every reference key:
+
+```sh
+python3.12 -m venv "$CHOPINFER_DATA/refrun/venv-deepseek-recipe"
+"$CHOPINFER_DATA/refrun/venv-deepseek-recipe/bin/pip" install -r models/deepseek41/requirements-recipe.txt
+export CHOPINFER_DEEPSEEK_RECIPE_PYTHON="$CHOPINFER_DATA/refrun/venv-deepseek-recipe/bin/python"
+```
+
+### Provenance
+
+[requirements-recipe.txt](requirements-recipe.txt) pins every 0.2.0 wheel
+and the sdist by SHA-256. The corpus pins the PyPI wheel
+`deepseek_recipe-0.2.0-cp310-abi3-manylinux_2_28_x86_64.whl` (SHA-256
+`259812bf382bc82668b672707c5922095cc4f5f60a6c514ff89640bb62a746f7`):
+`generate` refuses an environment whose installed recipe files differ from
+that wheel's RECORD (`installed_sha256`
+`84ef54ed1b08cd105614efc36d0722c4f8b741f080ca4268bd90d8898b8856b0`, which
+`corpus-recipe.json` records), such as another platform's wheel or a source
+build. The PyPI sdist `deepseek_recipe-0.2.0.tar.gz` has SHA-256
+`5dfd65dc201004f6382b13c8432a406cd2af7188831944ac5cef22f260111f68`.
+Compared on 2026-10-30, and again on 2026-10-31, its 83 Rust sources and its
+Python sources are identical to commit
+`93b0fd229cc9ffa6b1a8c63d42b0bf741bbec170` of
+[deepseek-recipe](https://github.com/deepseek-ai/deepseek-recipe); six of
+its `Cargo.toml` files differ from the commit's, only in packaging metadata
+(the workspace members and the readme path). Nothing shows that the
+published wheels were built from those sources. The frontend's recipe
+citations name lines at that commit.
+
+### Differences the corpus cannot show
+
+The corpus compares renders of Chat Completions requests and parses of the
+turns the encoder writes, so these differences have no case and no tagged
+entry. The served behavior is kept.
+
+Output parsing (`deepseek-recipe/src/stream/output_parser.rs`):
+
+- Text after the calls block, and a second block: the recipe drops both
+  (lines 591-593); the served parser returns the text as content and the
+  calls of both blocks.
+- `</think>` in chat-mode answer text: the recipe drops it (lines 450-458);
+  the served parser keeps it as content.
+- `<think>` inside reasoning: the served parser drops it; the recipe keeps
+  it as text.
+- DSML markup under `tool_choice` none or without offered tools: the recipe
+  returns it as content (`chat_completion/request/convert.rs` line 150); the
+  served parser reads it and drops it.
+- A calls block without its `calls` wrapper, or closed in the V4 spelling
+  `</｜DSML｜tool_calls>`: the recipe reads its calls (lines 394-405,
+  480-494); the served parser refuses the completion.
+- Markers: given a completion's token IDs, as the corpus oracle passes
+  them, the recipe matches `</think>` and `｜DSML｜` only as their special
+  tokens, so their spelling in plain tokens is content; given text without
+  token boundaries (`InferenceChunk::Text`), it matches their spelling
+  (lines 74-94). The served parser matches their spelling. This belongs to
+  the special-token spellings follow-up (`special-token-spellings` in the
+  divergence record).
+- Client stop sequences: the recipe matches them in answer text only (lines
+  411-417); the served parser also matches them in reasoning and tool
+  arguments.
+- `string="false"` values: the recipe writes the value text as it is; the
+  served parser reads it as JSON and writes it back Python-style, reads text
+  that is not JSON as a string, keeps a marker inside a JSON string as
+  content, and keeps the last of a repeated parameter.
+- Generation cut by `max_tokens` inside a call: both finish `length`; the
+  recipe returns the partial arguments, the served parser the complete
+  parameters only.
+
+Responses API (`deepseek-recipe/src/protocol/openai/responses/request`):
+
+- Reasoning input items: the recipe reads their `content` text and ignores
+  `encrypted_content` (`convert.rs` lines 492-527); `/v1/responses` reads the
+  content, else the summary, and refuses encrypted reasoning.
+- Tool types: the recipe accepts a client `tool_search` tool and the custom
+  `apply_patch` tool, and drops or refuses `web_search` as its options say
+  (`tools.rs` lines 148-186); `/v1/responses` serves function and namespace
+  tools only.
+
+Sampling and limits: in thinking mode the recipe fixes the temperature at
+1.0 and raises `top_p` to at least 0.95; outside thinking mode it keeps the
+requested temperature and sets V4.1's `top_p` to 1.0
+(`deepseek-recipe/src/request/options.rs` lines 79-92,
+`protocol/openai/chat_completion/request/mod.rs` lines 7-11). It bounds
+`max_tokens` by mode (`options.rs` lines 230-240). The server keeps the
+request's sampling, `top_p` included in either mode, and its limits; the
+sampling and `max_tokens` follow-up decides whether to follow.
 
 ## Qualification
 

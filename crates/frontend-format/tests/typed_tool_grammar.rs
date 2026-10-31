@@ -119,12 +119,16 @@ fn each_close_types_its_value() {
     );
 }
 
+/// The calls block opens after any run of newlines, including none, which
+/// the open drops, as the grammar's reference stream parser reads it.
 #[test]
-fn a_block_open_without_its_blank_line_is_text() {
-    let completion = "Hi<calls>\n</calls>[EOS]";
-    let parsed = parse_completion_v1(&descriptor(), completion, PromptModeV1::Chat).unwrap();
-    assert!(parsed.tool_calls.is_empty());
-    assert_eq!(parsed.content, "Hi<calls>\n</calls>");
+fn a_block_opens_after_any_run_of_newlines() {
+    for lead in ["", "\n", "\n\n\n"] {
+        let completion = format!("Hi{lead}<calls>\n<invoke name=\"f\">\n</invoke>\n</calls>[EOS]");
+        let parsed = parse_completion_v1(&descriptor(), &completion, PromptModeV1::Chat).unwrap();
+        assert_eq!(parsed.content, "Hi", "{completion:?}");
+        assert_eq!(parsed.tool_calls.len(), 1, "{completion:?}");
+    }
 }
 
 /// Whether the grammar `choice` imposes on `tools` admits `text` whole.
@@ -234,29 +238,51 @@ fn block(calls: &[String]) -> String {
 
 #[test]
 fn a_forced_call_writes_only_names_the_parser_reads() {
-    let required = tool(serde_json::json!({
+    // A dotted name is one the parser reads, so it is served and written.
+    let required = [tool(serde_json::json!({
         "type": "object", "properties": {"a.b": {"type": "integer"}},
         "required": ["a.b"], "additionalProperties": false
+    }))];
+    let choice = FrontendToolChoiceV1::Required;
+    assert!(admits(
+        &required,
+        &choice,
+        &block(&[call("f", &[("a.b", true, "1")])])
+    ));
+    // A name that holds the value's close is not.
+    let marked = "a\" string=\"false\">b";
+    let refused = tool(serde_json::json!({
+        "type": "object", "properties": {marked: {"type": "integer"}},
+        "required": [marked], "additionalProperties": false
     }));
-    let error = tool_constraint_v1(&descriptor(), &[required], &FrontendToolChoiceV1::Required)
-        .unwrap_err();
+    let error = tool_constraint_v1(&descriptor(), &[refused], &choice).unwrap_err();
     assert_eq!(error.parameter.as_deref(), Some("tools"));
-    assert!(error.message.contains("\"a.b\""), "{}", error.message);
-    // An optional name the parser cannot read is never written.
+    assert!(
+        error.message.contains("string=\\\"false"),
+        "{}",
+        error.message
+    );
+    // An optional name the parser cannot read is never written; one it
+    // reads is.
     let optional = [tool(serde_json::json!({
-        "type": "object", "properties": {"a.b": {"type": "integer"}, "c": {"type": "integer"}},
+        "type": "object",
+        "properties": {"a.b": {"type": "integer"}, marked: {"type": "integer"}, "c": {"type": "integer"}},
         "required": ["c"], "additionalProperties": false
     }))];
-    let required = FrontendToolChoiceV1::Required;
     assert!(admits(
         &optional,
-        &required,
+        &choice,
         &block(&[call("f", &[("c", true, "1")])])
+    ));
+    assert!(admits(
+        &optional,
+        &choice,
+        &block(&[call("f", &[("a.b", true, "1"), ("c", true, "1")])])
     ));
     assert!(!admits(
         &optional,
-        &required,
-        &block(&[call("f", &[("a.b", true, "1"), ("c", true, "1")])])
+        &choice,
+        &block(&[call("f", &[(marked, true, "1"), ("c", true, "1")])])
     ));
 }
 

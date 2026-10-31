@@ -316,9 +316,9 @@ fn the_served_format_renders_the_pairs_it_serves() {
     for number in [1, 2] {
         let error = frontend.render_chat(served_request(number)).unwrap_err();
         assert!(
-            error
-                .message
-                .contains("a final assistant message is served only with continue_final_message"),
+            error.message.contains(
+                "a final assistant message is served only with prefix or continue_final_message"
+            ),
             "pair {number}: {}",
             error.message
         );
@@ -333,12 +333,128 @@ fn the_served_format_renders_the_pairs_it_serves() {
         let expected = expected.strip_suffix(EOS).unwrap();
         assert_eq!(rendered.prompt, expected, "pair {number}");
     }
+    // `prefix: true` on pair 2's final turn, which the transport reads as
+    // continue_final_message, renders it open too.
+    let mut messages = case(2).messages;
+    messages.last_mut().unwrap()["prefix"] = true.into();
+    let body = serde_json::json!({"messages": messages, "thinking": {"type": "disabled"}});
+    let prepared = runtime_server::prepare_chat_request_v1(
+        &frontend,
+        1 << 20,
+        body.as_object().unwrap().clone(),
+        1024,
+    )
+    .unwrap_or_else(|error| panic!("pair 2 with prefix: {}", error.message));
+    let runtime_server::PreparedPrompt::RenderedChat(prompt) = prepared.prompt else {
+        panic!("pair 2 renders text");
+    };
+    let expected = String::from_utf8(read("test_output_2.txt")).unwrap();
+    assert_eq!(prompt, expected.strip_suffix(EOS).unwrap());
     // Pair 5's images need a declaration that serves images.
     let error = frontend.render_chat(served_request(5)).unwrap_err();
     assert!(
         error.message.contains("does not support media inputs"),
         "{}",
         error.message
+    );
+}
+
+/// A continued final assistant turn renders without its end-of-sentence
+/// token, asked for by `prefix: true` or by `continue_final_message`
+/// (`R4-final-assistant-turn` in frontend-divergences.json). In thinking
+/// mode a turn of reasoning alone, with no content and no calls, leaves its
+/// reasoning open, as deepseek-recipe 0.2.0 renders a prefix turn
+/// (deepseek-recipe-encoding/src/v4/dsv41.rs lines 206-230), so the
+/// completion continues the reasoning; with content or a call the reasoning
+/// is closed, and in chat mode none is written.
+#[test]
+fn a_continued_turn_of_reasoning_alone_leaves_its_reasoning_open() {
+    let frontend = PairedFrontendV1::chat_format::<DeepSeekV41Format>(descriptor()).unwrap();
+    let render = |assistant: Value, extra: Value| {
+        let mut body =
+            serde_json::json!({"messages": [{"role": "user", "content": "q"}, assistant]});
+        for (key, value) in extra.as_object().unwrap() {
+            body[key] = value.clone();
+        }
+        let prepared = runtime_server::prepare_chat_request_v1(
+            &frontend,
+            1 << 20,
+            body.as_object().unwrap().clone(),
+            1024,
+        )
+        .unwrap_or_else(|error| panic!("{body}: {}", error.message));
+        let runtime_server::PreparedPrompt::RenderedChat(prompt) = prepared.prompt else {
+            panic!("{body} renders text");
+        };
+        let state = runtime_frontend::BundleChatStateV1::from_state(&prepared.chat.unwrap().state)
+            .unwrap()
+            .reasoning_open();
+        (prompt, state)
+    };
+    let thinking = "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher \
+                    the value, the more thorough the reasoning)\n\n<｜User｜>q<｜Assistant｜><think>";
+    let prefix = serde_json::json!({});
+    let continued = serde_json::json!({"continue_final_message": true});
+    for (assistant, extra, expected, open) in [
+        (
+            serde_json::json!({"role": "assistant", "content": "", "reasoning_content": "Let me", "prefix": true}),
+            &prefix,
+            format!("{thinking}Let me"),
+            true,
+        ),
+        (
+            serde_json::json!({"role": "assistant", "content": "", "reasoning_content": "Let me"}),
+            &continued,
+            format!("{thinking}Let me"),
+            true,
+        ),
+        (
+            serde_json::json!({"role": "assistant", "content": null, "prefix": true}),
+            &prefix,
+            thinking.to_owned(),
+            true,
+        ),
+        (
+            serde_json::json!({"role": "assistant", "content": [{"type": "text", "text": ""}],
+                "reasoning_content": "r", "prefix": true}),
+            &prefix,
+            format!("{thinking}r"),
+            true,
+        ),
+        (
+            serde_json::json!({"role": "assistant", "content": "The answer", "reasoning_content": "r",
+                "prefix": true}),
+            &prefix,
+            format!("{thinking}r</think>The answer"),
+            false,
+        ),
+        (
+            serde_json::json!({"role": "assistant", "content": "", "reasoning_content": "r",
+                "prefix": true, "tool_calls": [{"id": "a", "type": "function",
+                "function": {"name": "f", "arguments": "{}"}}]}),
+            &prefix,
+            format!(
+                "{thinking}r</think>\n\n<｜DSML｜ calls>\n<｜DSML｜ invoke name=\"f\">\n\n</｜DSML｜ invoke>\n</｜DSML｜ calls>"
+            ),
+            false,
+        ),
+    ] {
+        assert_eq!(
+            render(assistant.clone(), extra.clone()),
+            (expected, open),
+            "{assistant}"
+        );
+    }
+    let chat = serde_json::json!({"thinking": {"type": "disabled"}});
+    assert_eq!(
+        render(
+            serde_json::json!({"role": "assistant", "content": "", "reasoning_content": "r", "prefix": true}),
+            chat
+        ),
+        (
+            "<｜begin▁of▁sentence｜><｜User｜>q<｜Assistant｜></think>".to_owned(),
+            false
+        )
     );
 }
 
@@ -379,14 +495,16 @@ fn the_default_request_thinks_at_high_effort() {
         "<｜begin▁of▁sentence｜><｜System｜>Reasoning Effort: 75 (range 1-100, the higher the \
          value, the more thorough the reasoning)\n\n<｜User｜>question<｜Assistant｜><think>"
     );
-    // The protocol aliases read as deepseek-recipe maps them, top-level
-    // and nested.
+    // The protocol aliases read as deepseek-recipe 0.2.0 maps them
+    // (reasoning.rs lines 37-48, dsv41.rs lines 21-30), top-level and
+    // nested.
     let efforts = [
         ("low", 50),
         ("max", 100),
         ("minimal", 50),
         ("medium", 75),
         ("xhigh", 75),
+        ("ultra", 100),
     ];
     for (effort, budget) in efforts {
         for nested in [false, true] {
@@ -474,6 +592,60 @@ fn the_served_format_reads_tool_objects_and_arguments_as_the_encoder_does() {
         prompt.contains(r#"{"name": "f", "description": "", "parameters": {}}"#),
         "{prompt}"
     );
+    // A strict tool's parameters are the recipe's normalized schema, the
+    // empty object without parameters; a non-strict tool's present
+    // parameters must declare type object, and strict and non-strict tools
+    // are not offered together (R2).
+    let offered = |tools: Vec<FrontendToolV1>| {
+        frontend
+            .render_chat(FrontendChatRequestV1 {
+                tools,
+                ..request(vec![message(FrontendRoleV1::User, "q")])
+            })
+            .map(|rendered| rendered.prompt)
+            .map_err(|error| (error.message, error.parameter))
+    };
+    let tool = |name: &str, parameters: Option<Value>, strict: Option<bool>| FrontendToolV1 {
+        name: name.into(),
+        description: None,
+        parameters: parameters.as_ref().map_or(FrontendJsonV1::Null, json),
+        parameters_present: parameters.is_some(),
+        strict,
+    };
+    let schema = serde_json::json!({"type": "object", "title": "T",
+        "properties": {"city": {"type": "string", "minLength": 1}}});
+    let prompt = offered(vec![
+        tool("f", Some(schema), Some(true)),
+        tool("g", None, Some(true)),
+    ])
+    .unwrap();
+    for function in [
+        r#"{"name": "f", "description": "", "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "additionalProperties": false, "required": ["city"]}}"#,
+        r#"{"name": "g", "description": "", "parameters": {"type": "object", "properties": {}, "additionalProperties": false, "required": []}}"#,
+    ] {
+        assert!(prompt.contains(function), "{prompt}");
+    }
+    let partial = serde_json::json!({"type": "object",
+        "properties": {"a": {"type": "string"}}, "required": []});
+    for (tools, refusal) in [
+        (
+            vec![tool("f", Some(partial), Some(true))],
+            "Required properties must match all properties in the object",
+        ),
+        (
+            vec![tool("f", Some(serde_json::json!({"type": "string"})), None)],
+            r#"Invalid schema for function 'f': schema must be a JSON Schema of 'type: "object"', got 'type: "string"'."#,
+        ),
+        (
+            vec![tool("f", None, Some(true)), tool("g", None, Some(false))],
+            "Cannot use strict tool with non-strict tool in the same request",
+        ),
+    ] {
+        assert_eq!(
+            offered(tools).unwrap_err(),
+            (refusal.to_owned(), Some("tools".to_owned()))
+        );
+    }
     // Argument text the encoder reads itself: spacing kept in a value it
     // reads once, and a repeated key at its first place with its last value.
     let prompt = render(plain.clone(), "[1,  2]").unwrap();
@@ -524,9 +696,11 @@ fn the_served_format_reads_tool_objects_and_arguments_as_the_encoder_does() {
     }
 }
 
-/// The declared tool choice policy, as deepseek-recipe maps a choice: none
-/// renders no tools, a named choice only its tool, and a forced choice
-/// ends the prompt with the calls block's opening, refused in thinking.
+/// The declared tool choice policy, as deepseek-recipe 0.2.0 maps a choice
+/// (chat_completion/request/convert.rs lines 254-283, client_tools.rs lines
+/// 83-104, dsv41.rs lines 307-310): none renders no tools, a named choice
+/// only its tool, and a forced choice ends the prompt with the calls block's
+/// opening, refused in thinking.
 #[test]
 fn a_tool_choice_changes_the_render_as_the_recipe_maps_it() {
     let frontend = PairedFrontendV1::chat_format::<DeepSeekV41Format>(descriptor()).unwrap();
@@ -628,6 +802,10 @@ fn the_transport_maps_requests_as_the_declaration_states() {
             serde_json::json!({"structured_outputs": {"json": schema}}),
             true,
         ),
+        (
+            serde_json::json!({"response_format": {"type": "regex", "regex": "(yes|no)"}}),
+            true,
+        ),
         (serde_json::json!({"tools": weather}), false),
         (
             serde_json::json!({"tools": weather, "tool_choice": "auto"}),
@@ -653,7 +831,109 @@ fn the_transport_maps_requests_as_the_declaration_states() {
         other => panic!("{extra}: {other:?}"),
     };
     let json_object = prompt(serde_json::json!({"response_format": {"type": "json_object"}}));
-    assert!(json_object.contains("json_object"), "{json_object}");
+    assert!(
+        json_object.contains("to reply:\n{\"type\": \"json_object\"}<｜User｜>"),
+        "{json_object}"
+    );
+    // R3: json_schema renders its schema as sent; text, regex, and a schema
+    // Python reads as false, render nothing and insert no system message.
+    let json_schema = prompt(serde_json::json!({"response_format": format(true.into())}));
+    assert!(
+        json_schema.contains(
+            "to reply:\n{\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\"}}}<｜User｜>"
+        ),
+        "{json_schema}"
+    );
+    let unformatted = prompt(serde_json::json!({}));
+    for format in [
+        serde_json::json!({"type": "text"}),
+        serde_json::json!({"type": "regex", "regex": "(yes|no)"}),
+        serde_json::json!({"type": "json_schema", "json_schema": {"name": "answer", "schema": {}}}),
+        serde_json::json!({"type": "json_schema", "json_schema": {"name": "answer", "schema": false}}),
+    ] {
+        let rendered = prompt(serde_json::json!({ "response_format": format }));
+        assert_eq!(rendered, unformatted, "{format}");
+    }
+    // A json_schema needs a schema, a strict one's must normalize (R3), and
+    // strict tools take no response format or non-strict tools beside them
+    // (R2), among the tools a named choice leaves.
+    let clock = serde_json::json!({"type": "function", "function": {
+        "name": "clock", "parameters": {"type": "object"}}});
+    let mixed = serde_json::json!([weather[0], clock]);
+    for (extra, refusal, parameter) in [
+        (
+            serde_json::json!({"response_format": {"type": "json_schema",
+                "json_schema": {"name": "answer"}}}),
+            "response_format.json_schema.schema is required",
+            "response_format",
+        ),
+        (
+            serde_json::json!({"response_format": {"type": "json_schema", "json_schema": {
+                "name": "answer", "strict": true, "schema": {"type": "object"}}}}),
+            "An object with no properties is not allowed.",
+            "response_format",
+        ),
+        (
+            serde_json::json!({"tools": weather, "response_format": {"type": "text"}}),
+            "response_format should not be used with tools",
+            "response_format",
+        ),
+        (
+            serde_json::json!({"tools": weather, "response_format": {"type": "regex", "regex": "a"}}),
+            "response_format should not be used with tools",
+            "response_format",
+        ),
+        (
+            serde_json::json!({"tools": mixed}),
+            "Cannot use strict tool with non-strict tool in the same request",
+            "tools",
+        ),
+    ] {
+        let error = prepare(extra.clone()).unwrap_err();
+        assert_eq!(
+            (error.message.as_str(), error.parameter.as_deref()),
+            (refusal, Some(parameter)),
+            "{extra}"
+        );
+    }
+    let named = prompt(serde_json::json!({"tools": mixed, "thinking": chat,
+        "tool_choice": {"type": "function", "function": {"name": "clock"}}}));
+    assert!(
+        named.contains(r#"{"name": "clock""#) && !named.contains(r#"{"name": "get_weather""#),
+        "{named}"
+    );
+    // The format sees only the tools the policy keeps, so a named choice of
+    // a valid tool renders even when an omitted strict tool's schema is one
+    // the recipe refuses before its named-choice filtering.
+    let invalid = serde_json::json!([{"type": "function", "function": {
+        "name": "f", "strict": true, "parameters": {"type": "string"}}}, clock]);
+    let refused = prepare(serde_json::json!({"tools": invalid, "thinking": chat})).unwrap_err();
+    assert_eq!(
+        refused.message,
+        "The top level of the function parameters schema must be an object."
+    );
+    let named = prompt(serde_json::json!({"tools": invalid, "thinking": chat,
+        "tool_choice": {"type": "function", "function": {"name": "clock"}}}));
+    assert!(
+        named.contains(r#"{"name": "clock""#) && !named.contains(r#"{"name": "f""#),
+        "{named}"
+    );
+    // A developer message is a system message, and a system message's
+    // billing header is removed (`developer-as-system`, R5).
+    for (role, content) in [
+        ("developer", "Be brief."),
+        (
+            "system",
+            "x-anthropic-billing-header: cc_version=2.1.3;\n  Be brief.",
+        ),
+    ] {
+        let rendered = prompt(serde_json::json!({"thinking": chat, "messages": [
+            {"role": role, "content": content}, {"role": "user", "content": "q"}]}));
+        assert!(
+            rendered.ends_with("<｜System｜>Be brief.<｜User｜>q<｜Assistant｜></think>"),
+            "{role}: {rendered}"
+        );
+    }
     // R6: a forced choice without tools is auto, in thinking mode too.
     let plain = prompt(serde_json::json!({}));
     for extra in [
@@ -695,35 +975,90 @@ fn the_transport_maps_requests_as_the_declaration_states() {
     assert_eq!(error.parameter.as_deref(), Some("thinking"));
 }
 
-/// A DSML marker outside a calls block that the blank line opens is
-/// refused, as the vendor parser refuses it in content (encoding.py lines
-/// 981-983); inside one it is the call.
+/// A calls block opens after any run of newlines before its open, including
+/// none, and the open drops them, as deepseek-recipe 0.2.0's stream parser
+/// reads it (output_parser.rs lines 326-334): the content or reasoning
+/// before it, then the call, whole and at every byte split. A DSML marker
+/// that does not open a calls block is refused, as the vendor parser
+/// refuses it in content (encoding.py lines 981-983).
 #[test]
-fn a_dsml_marker_outside_a_calls_block_is_refused() {
-    let descriptor = descriptor();
-    let invoke = "<｜DSML｜ invoke name=\"f\">\n<｜DSML｜ parameter name=\"x\" string=\"true\">v</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n";
-    let parse = |text: String| {
-        runtime_frontend::parse_completion_v1(&descriptor, &text, PromptModeV1::Chat)
+fn a_calls_block_opens_after_any_run_of_newlines() {
+    use runtime_frontend::{
+        CompletionDecoderV1, CompletionFinishV1, CompletionUpdateV1, DecoderLimitsV1,
+        GeneratedTokenV1,
     };
-    let called = parse(format!(
-        "a\n\n<｜DSML｜ calls>\n{invoke}</｜DSML｜ calls>{EOS}"
-    ))
-    .unwrap();
-    assert_eq!(called.content, "a");
-    assert_eq!(called.tool_calls.len(), 1);
-    assert_eq!(called.tool_calls[0].arguments, r#"{"x": "v"}"#);
-    for text in [
-        format!("a{invoke}{EOS}"),
-        format!("a<｜DSML｜ calls>\n{invoke}</｜DSML｜ calls>{EOS}"),
-    ] {
-        assert!(parse(text.clone()).is_err(), "{text:?}");
+    let descriptor = std::sync::Arc::new(descriptor());
+    let invoke = "<｜DSML｜ invoke name=\"f\">\n<｜DSML｜ parameter name=\"x\" string=\"true\">v</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n";
+    let parse = |text: &str, mode| runtime_frontend::parse_completion_v1(&descriptor, text, mode);
+    // Each way of streaming `text`: in two pieces split at every byte, and
+    // one byte per token.
+    let streamed = |text: &str, mode| {
+        let bytes = text.as_bytes();
+        let mut splits: Vec<Vec<&[u8]>> = (0..=bytes.len())
+            .map(|split| vec![&bytes[..split], &bytes[split..]])
+            .collect();
+        splits.push(bytes.chunks(1).collect());
+        splits
+            .into_iter()
+            .map(|parts| {
+                let mut decoder = CompletionDecoderV1::new(
+                    std::sync::Arc::clone(&descriptor),
+                    mode,
+                    DecoderLimitsV1::declared(&descriptor),
+                );
+                let mut updates = Vec::new();
+                for (ordinal, part) in parts.iter().filter(|part| !part.is_empty()).enumerate() {
+                    updates.extend(decoder.push(GeneratedTokenV1::new(
+                        ordinal as u64,
+                        100,
+                        part.to_vec(),
+                    ))?);
+                }
+                updates
+                    .into_iter()
+                    .find_map(|update| match update {
+                        CompletionUpdateV1::Finished(done) => Some(done),
+                        _ => None,
+                    })
+                    .ok_or_else(|| "no finish".to_owned())
+            })
+            .collect::<Vec<_>>()
+    };
+    for lead in ["", "\n", "\n\n", "\n\n\n"] {
+        for (mode, text, reasoning, content) in [
+            (PromptModeV1::Chat, "a", None, "a"),
+            (PromptModeV1::Thinking, "r", Some("r"), ""),
+        ] {
+            let whole = format!("{text}{lead}<｜DSML｜ calls>\n{invoke}</｜DSML｜ calls>{EOS}");
+            let called = parse(&whole, mode).unwrap_or_else(|error| panic!("{whole:?}: {error}"));
+            assert_eq!(called.content, content, "{whole:?}");
+            assert_eq!(called.reasoning_content.as_deref(), reasoning, "{whole:?}");
+            assert_eq!(called.tool_calls.len(), 1, "{whole:?}");
+            assert_eq!(called.tool_calls[0].arguments, r#"{"x": "v"}"#);
+            for done in streamed(&whole, mode) {
+                let done = done.unwrap_or_else(|error| panic!("{whole:?}: {error}"));
+                assert_eq!(done.completion.as_ref(), Some(&called), "{whole:?}");
+                assert_eq!(done.reason, CompletionFinishV1::ToolCalls, "{whole:?}");
+            }
+        }
+        for whole in [
+            format!("a{lead}{invoke}{EOS}"),
+            format!("a{lead}<｜DSML｜ call>\n{invoke}</｜DSML｜ calls>{EOS}"),
+        ] {
+            assert!(parse(&whole, PromptModeV1::Chat).is_err(), "{whole:?}");
+            for done in streamed(&whole, PromptModeV1::Chat) {
+                assert!(done.is_err(), "{whole:?}: {done:?}");
+            }
+        }
     }
 }
 
-/// Generation that ends inside the calls opening: once the DSML marker is
-/// complete the opening is structure, as deepseek-recipe's stream parser
-/// has entered its calls by then and drops the unfinished block; before
-/// that it is text.
+/// Generation that ends inside the calls opening, after any run of
+/// newlines: once the DSML marker is complete the opening and the newlines
+/// before it are structure, as deepseek-recipe 0.2.0's stream parser has
+/// entered its calls by then (output_parser.rs lines 326-334, 480-494) and
+/// drops the unfinished block; before that, and newlines that no opening
+/// follows, are text.
 #[test]
 fn a_cut_calls_opening_is_not_content() {
     use runtime_frontend::{
@@ -733,7 +1068,10 @@ fn a_cut_calls_opening_is_not_content() {
     for (generated, content) in [
         ("ok\n\n<｜DSML｜ calls", "ok"),
         ("ok\n\n<｜DSML｜", "ok"),
+        ("ok\n<｜DSML｜", "ok"),
+        ("ok<｜DSML｜ calls", "ok"),
         ("ok\n\n<｜DS", "ok\n\n<｜DS"),
+        ("ok\n\n", "ok\n\n"),
     ] {
         let mut decoder = CompletionDecoderV1::new(
             std::sync::Arc::clone(&descriptor),
@@ -869,8 +1207,9 @@ fn a_namespaced_tool_is_named_as_the_encoder_names_it() {
             .is_ok()
     );
     assert!(frontend.validate_tool_call("ns::a::f", "{}").is_err());
-    // A qualified name holds two names of the recipe's 128 bytes, past the
-    // declared name length, when rendered, forced, parsed and validated.
+    // A qualified name holds two names of the recipe's 128 bytes
+    // (validation.rs lines 136-142), past the declared name length, when
+    // rendered, forced, parsed and validated.
     let (namespace, name) = ("n".repeat(128), "f".repeat(128));
     let long = format!("{namespace}::{name}");
     let tools = serde_json::json!([{"type": "function", "function": {
@@ -890,4 +1229,43 @@ fn a_namespaced_tool_is_named_as_the_encoder_names_it() {
             .unwrap();
     assert_eq!(parsed.tool_calls[0].name, long);
     assert!(frontend.validate_tool_call(&long, r#"{"x": "v"}"#).is_ok());
+}
+
+/// A call with any parameter name renders as history and parses back, as
+/// `encoding.py` reads any `name="..."`.
+#[test]
+fn any_parameter_name_round_trips() {
+    let frontend = PairedFrontendV1::chat_format::<DeepSeekV41Format>(descriptor()).unwrap();
+    runtime_frontend::test_support::tool_choice::any_parameter_name_round_trips(
+        &frontend,
+        &descriptor(),
+    );
+}
+
+/// A forced call writes a required parameter with any name the parser
+/// reads back, and refuses a tool that requires a name holding the end of
+/// sentence, at which a completion read as text ends before the name does.
+#[test]
+fn a_forced_call_refuses_a_parameter_named_with_the_stop_text() {
+    let frontend = PairedFrontendV1::chat_format::<DeepSeekV41Format>(descriptor()).unwrap();
+    let requiring = |name: &str| FrontendToolV1 {
+        name: "f".to_owned(),
+        description: None,
+        parameters: json(&serde_json::json!({
+            "type": "object", "properties": {name: {"type": "string"}}, "required": [name]
+        })),
+        parameters_present: true,
+        strict: None,
+    };
+    let choice = FrontendToolChoiceV1::Required;
+    assert!(
+        frontend
+            .tool_constraint(&[requiring("user.name")], &choice)
+            .unwrap()
+            .is_some()
+    );
+    let error = frontend
+        .tool_constraint(&[requiring(&format!("a{EOS}b"))], &choice)
+        .unwrap_err();
+    assert_eq!(error.parameter.as_deref(), Some("tools"));
 }

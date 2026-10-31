@@ -162,6 +162,42 @@ async fn tool_arguments_stream_and_round_trip_to_chat_history() {
         matches!(&backend.prompts()[1].prompt,PreparedPrompt::RenderedChat(text) if text.contains("assistant:") && text.contains("tool:result"))
     );
 }
+/// A generation the token budget ends after a call is incomplete at
+/// `max_output_tokens` and keeps the call, streamed and whole.
+#[tokio::test]
+async fn a_length_cut_after_a_call_is_incomplete_and_keeps_the_call() {
+    for stream in [false, true] {
+        let mut cut = tool_events();
+        let Some(GenerationEvent::Finished { reason, .. }) = cut.last_mut() else {
+            panic!("the tool events finish");
+        };
+        *reason = FinishReason::Length;
+        let server = TestServerV1::start(ScriptedBackendV1::new(cut)).await;
+        let response = create(
+            &server,
+            json!({"input":"x","max_output_tokens":1,"stream":stream,"tools":[tool()]}),
+        )
+        .await;
+        let result = if stream {
+            let values = events(&response);
+            let last = values.last().unwrap().clone();
+            assert_eq!(last["type"], "response.completed");
+            last["response"].clone()
+        } else {
+            assert_eq!(response.status, 200, "{}", response.body);
+            response.json()
+        };
+        assert_eq!(result["status"], "incomplete", "{result}");
+        assert_eq!(
+            result["incomplete_details"]["reason"], "max_output_tokens",
+            "{result}"
+        );
+        let call = &result["output"][0];
+        assert_eq!(call["type"], "function_call", "{result}");
+        assert_eq!(call["name"], "fixture.lookup", "{result}");
+        assert_eq!(call["arguments"], "{}", "{result}");
+    }
+}
 #[tokio::test]
 async fn reasoning_items_use_declared_field_and_are_counted_when_hidden() {
     for field in ["reasoning", "reasoning_content"] {

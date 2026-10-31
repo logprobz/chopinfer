@@ -260,9 +260,16 @@ fn malformed_arguments_keep_only_complete_pairs() {
         )
         .is_empty()
     );
-    // A key the name rule refuses fails the completion.
+    // A key outside the name bytes is read as written.
+    assert_eq!(
+        arguments(
+            "</t><tool_call>ping<arg_key>a b</arg_key><arg_value>1</arg_value></tool_call>[EOS]"
+        ),
+        [r#"ping{"a b": "1"}"#]
+    );
+    // A key that holds a marker fails the completion.
     let d = Arc::new(descriptor());
-    let bad = "</t><tool_call>ping<arg_key>a b</arg_key><arg_value>1</arg_value></tool_call>[EOS]";
+    let bad = "</t><tool_call>ping<arg_key>a<arg_key>b</arg_key><arg_value>1</arg_value></tool_call>[EOS]";
     assert!(decode(&d, &[bad.as_bytes()], false).is_err());
 }
 

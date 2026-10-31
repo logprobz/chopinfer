@@ -240,14 +240,14 @@ impl DeclaredParserV1 {
     /// Where held text that a generation ended in begins an unfinished call
     /// opening, for the typed grammar: the longest tail of the pending text
     /// that is a proper prefix of the tool call open and already spells a
-    /// reserved marker, which text may not carry. The vendor's stream
-    /// parser has entered its calls by then and drops the unfinished block,
-    /// so it is not text; a shorter tail is.
+    /// reserved marker, which text may not carry, with the newlines before
+    /// it. The vendor's stream parser has entered its calls by then and
+    /// drops the unfinished block, so it is not text; a shorter tail is.
     fn unfinished_open(&self, end: usize) -> Option<usize> {
         if self.parser.tool_grammar != FrontendToolGrammarV1::XmlTypedParametersV1 {
             return None;
         }
-        let open = self.parser.tool_call_open.as_bytes();
+        let open = ChatMlTerminalsV1::new(&self.parser).tool_open.as_bytes();
         let pending = &self.bytes[self.cursor..end];
         (1..open.len().min(pending.len() + 1))
             .rev()
@@ -260,10 +260,30 @@ impl DeclaredParserV1 {
                         .iter()
                         .any(|marker| find_bytes_v1(prefix, marker.as_bytes()).is_some())
             })
-            .map(|length| end - length)
+            .map(|length| self.open_lead(end - length))
     }
 
-    /// Reads the last bytes, and ends the completion where generation ended.
+    /// Where a calls open at `position` begins with the newlines it takes:
+    /// in the typed grammar, the run of newlines before it in the pending
+    /// text, which the open drops as the grammar's reference stream parser
+    /// does.
+    /// The other grammars trim the whitespace around their open themselves.
+    fn open_lead(&self, position: usize) -> usize {
+        if self.parser.tool_grammar != FrontendToolGrammarV1::XmlTypedParametersV1 {
+            return position;
+        }
+        position
+            - self.bytes[self.cursor..position]
+                .iter()
+                .rev()
+                .take_while(|byte| **byte == b'\n')
+                .count()
+    }
+
+    /// Reads the last bytes, and ends the completion where generation ended:
+    /// at the token budget, after or inside a call too, whose complete
+    /// parameters are delivered. A host that stopped generation there reports
+    /// the stop instead.
     fn finish(&mut self, valid_end: usize) -> Result<Vec<FormatEventV1>, String> {
         let mut updates = self.advance_text(valid_end)?;
         if self.state == TextStateV1::Complete {
@@ -289,7 +309,7 @@ impl DeclaredParserV1 {
         self.cursor = self.bytes.len();
         self.state = TextStateV1::Complete;
         updates.push(FormatEventV1::Finish {
-            reason: self.finish_reason(CompletionFinishV1::Length),
+            reason: CompletionFinishV1::Length,
             completion: None,
         });
         Ok(updates)
@@ -300,7 +320,8 @@ impl DeclaredParserV1 {
         !self.held && end == self.bytes.len()
     }
 
-    /// Why this generation ended: after a delivered call, because of it.
+    /// Why a generation that an end marker stopped ended: after a delivered
+    /// call, because of it.
     fn finish_reason(&self, otherwise: CompletionFinishV1) -> CompletionFinishV1 {
         if self.calls.is_empty() {
             otherwise
@@ -739,7 +760,14 @@ impl DeclaredParserV1 {
             }
             consider(reserved.as_bytes(), MarkerV1::Forbidden);
         }
-        best
+        // A calls open takes the newlines before it.
+        best.map(|(position, marker, length)| match marker {
+            MarkerV1::ToolStart => {
+                let start = self.open_lead(position);
+                (start, marker, length + position - start)
+            }
+            _ => (position, marker, length),
+        })
     }
 
     /// The function open that begins a call without its tool wrapper in
@@ -780,20 +808,22 @@ impl DeclaredParserV1 {
         expected
     }
 
-    /// How many trailing bytes could still turn out to start a marker.
+    /// How many trailing bytes could still turn out to start a marker,
+    /// including the newlines a calls open would take.
     fn longest_marker_prefix(&self, valid_end: usize) -> usize {
         let terminals = ChatMlTerminalsV1::new(&self.parser);
         let haystack = &self.bytes[self.cursor..valid_end];
         let mut longest = 0;
         let mut consider = |needle: &[u8]| {
             let maximum = needle.len().min(haystack.len());
-            for length in (1..=maximum).rev() {
-                if haystack.ends_with(&needle[..length]) {
-                    longest = longest.max(length);
-                    break;
-                }
-            }
+            let length = (1..=maximum)
+                .rev()
+                .find(|&length| haystack.ends_with(&needle[..length]))
+                .unwrap_or_default();
+            longest = longest.max(length);
+            length
         };
+        let mut open = 0;
         if !self.raw && matches!(self.state, TextStateV1::Reasoning | TextStateV1::Content) {
             if self.state == TextStateV1::Reasoning {
                 consider(terminals.reasoning_open.as_bytes());
@@ -801,7 +831,10 @@ impl DeclaredParserV1 {
             if self.mode == PromptModeV1::Thinking {
                 consider(terminals.reasoning_close.as_bytes());
             }
-            consider(terminals.tool_open.as_bytes());
+            // A calls open takes the newlines before it, so they are held
+            // with any start of it.
+            let prefix = consider(terminals.tool_open.as_bytes());
+            open = valid_end - self.open_lead(valid_end - prefix);
             if self.state == TextStateV1::Content {
                 consider(self.bare_function_open().as_bytes());
             }
@@ -809,7 +842,7 @@ impl DeclaredParserV1 {
                 consider(terminator.as_bytes());
             }
         }
-        longest
+        longest.max(open)
     }
 
     // A buffered tool region may still contain a marker from before the

@@ -224,6 +224,53 @@ and each floating stage within twice that stage's F32/F64 reference spread
 `media_preprocessing_reference` input with `tools.qual.refs adopt` before it
 gates; a `--reference` override is reported unbound and cannot pass.
 
+### Frontend corpus recipe oracle
+
+A model's frontend cases module may pin a published recipe package as a
+second authority for its request mapping and output parser (`RECIPE`;
+[frontend_corpus.py](frontend_corpus.py)). `frontend_corpus generate` then
+runs the model's oracle script under the interpreter the pin names, on every
+case and round trip, and writes `corpus-recipe.json` beside the corpus: the
+recipe it ran and where its render or parse differs from the corpus. A
+refusal must carry a client error's 4xx status; any other failure of the
+recipe stops generation. `minimize` refuses a difference that matches no
+divergence entry or several, and keeps a case of each entry. `check`
+verifies the record against the committed corpus offline: each row must have
+been computed from its case's request, or its round trip's request and token
+IDs, which the row fingerprints. It requires exactly one entry to explain
+each difference, among inputs, mapping and parser entries whose ids are
+distinct, and each entry to explain a committed difference. Attribution is
+exact. An entry's `recipe_when` tags are preconditions and documentation
+and never explain a difference alone. A refusal (the recipe refuses a case
+the corpus renders, or a round trip's request) must also match the entry's
+`recipe_message`, a regular expression narrow enough to name the failed
+check, and the entry needs at least one feature tag besides `recipe:`,
+`parse:`, `case:` and `mode:` tags. A recipe refuses a request for the
+first failure its checks find, so the message names the cause where a
+request holds several. Every other difference (a render, its token IDs, a
+parsed field, a parser error, or a render where the corpus refuses) is
+explained only by `recipe_reviewed`, which binds a reviewed case or round
+trip id to the fingerprint of the difference, covering the recipe's row and
+the corpus's own outcome. Review every difference of the full corpus, not
+only the committed ones, since `minimize` needs each explained. `generate`
+lists each unexplained difference with its fingerprint, and `check` and
+`minimize` fail a review whose difference has changed. A mapping entry that
+follows the recipe needs every
+case it names to agree with it; one that follows the pinned reference goes
+stale only when every case it names agrees, so it may name a boundary case
+that both render alike. The recipe never runs in `check` or CI.
+
+The pin names the package, its version, the wheel and its SHA-256, the
+digest of the files the wheel installs (`installed_sha256`), the variable
+that names the oracle's interpreter (`python_env`) and the oracle script in
+the model's directory (`oracle`). Install the recipe into its own CPU
+environment, never the GPU runner's, whose package set is part of every
+reference key, so pinning a recipe changes no key. `generate` refuses an
+environment whose installed recipe files differ from the pinned wheel's
+RECORD, such as another platform's wheel or a source build. A model that
+pins a recipe keeps its hash-pinned requirements file and the commands that
+build the environment in its own directory and README.
+
 ## Add an adapter
 
 Start from [adapter.py](adapter.py), the two model adapters

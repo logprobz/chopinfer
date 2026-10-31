@@ -278,6 +278,9 @@ struct MessageInput {
     tool_calls: Option<Vec<HistoricalCall>>,
     tool_call_id: Option<String>,
     tools: Option<Vec<FrontendJsonV1>>,
+    /// Whether this final assistant message is continued
+    /// ([`final_message_continued`]).
+    prefix: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -370,8 +373,7 @@ struct ChatRequest {
     structured_outputs: Option<FrontendJsonV1>,
     reasoning_effort: Option<String>,
     chat_template_kwargs: Option<TemplateKwargsInput>,
-    #[serde(default)]
-    continue_final_message: bool,
+    continue_final_message: Option<bool>,
     add_generation_prompt: Option<bool>,
     include_reasoning: Option<bool>,
     cache_salt: Option<String>,
@@ -905,6 +907,7 @@ fn prepare_completion(
         request.response_format.as_ref(),
         max_string_bytes,
         false,
+        false,
     )?
     .map(|requested| requested.grammar())
     .transpose()?;
@@ -1044,7 +1047,9 @@ fn prepare_chat(
             Some("prompt_logprobs"),
         ));
     }
-    if request.continue_final_message && request.add_generation_prompt == Some(true) {
+    let continue_final_message =
+        final_message_continued(&request.messages, request.continue_final_message)?;
+    if continue_final_message && request.add_generation_prompt == Some(true) {
         return Err(ApiError::invalid(
             "continue_final_message and add_generation_prompt cannot both be true",
             Some("add_generation_prompt"),
@@ -1077,6 +1082,7 @@ fn prepare_chat(
         request.response_format.as_ref(),
         max_string_bytes,
         strict_only,
+        frontend.regex_response_format(),
     )?;
     if matches!(tool_choice, FrontendToolChoiceV1::Named(_))
         && requested
@@ -1186,10 +1192,10 @@ fn prepare_chat(
     let rendered = frontend
         .render_chat(FrontendChatRequestV1 {
             messages,
-            continue_final_message: request.continue_final_message,
+            continue_final_message,
             add_generation_prompt: request
                 .add_generation_prompt
-                .unwrap_or(!request.continue_final_message),
+                .unwrap_or(!continue_final_message),
             tools,
             tool_choice,
             response_format: request.response_format,
@@ -1313,6 +1319,42 @@ fn prepare_chat(
     })
 }
 
+/// The refusal of `prefix: true` on a message other than a final assistant
+/// one, worded as the vendor API that defines the field words it.
+const PREFIX_NOT_FINAL_ASSISTANT: &str = "Invalid completion message: prefix set true with message \
+     which is not final message or message role is not assistant";
+
+/// Whether a chat request continues its final message: by
+/// `continue_final_message`, or by `prefix: true` on a final assistant
+/// message, the field a vendor API continues a message by, for every model.
+/// `prefix: true` on any other message, or beside an explicit
+/// `continue_final_message: false`, is refused; `prefix: false` asks for
+/// nothing.
+fn final_message_continued(
+    messages: &[MessageInput],
+    continue_final_message: Option<bool>,
+) -> Result<bool, ApiError> {
+    let Some(index) = messages
+        .iter()
+        .position(|message| message.prefix == Some(true))
+    else {
+        return Ok(continue_final_message.unwrap_or(false));
+    };
+    if index + 1 != messages.len() || messages[index].role != "assistant" {
+        return Err(ApiError::invalid(
+            PREFIX_NOT_FINAL_ASSISTANT,
+            Some("messages"),
+        ));
+    }
+    if continue_final_message == Some(false) {
+        return Err(ApiError::invalid(
+            "prefix: true continues the final message, so continue_final_message cannot be false",
+            Some("continue_final_message"),
+        ));
+    }
+    Ok(true)
+}
+
 /// Converts one request's messages into the frontend's neutral shape.
 ///
 /// Only what any chat transport can check happens here: the count, the field
@@ -1350,6 +1392,7 @@ fn convert_message(
         tool_calls,
         tool_call_id,
         tools,
+        prefix: _,
     } = message;
     // Either reasoning field as sent, before the selected one is read.
     let sent_reasoning = reasoning.is_some() || reasoning_content.is_some();
@@ -1556,7 +1599,9 @@ fn convert_content_parts(
                     if kind != "file" || frontend.image_file_parts() =>
                 {
                     let image = matches!(kind.as_str(), "image_url" | "file");
-                    if role != "user" && !(role == "tool" && image && frontend.tool_result_images())
+                    if role != "user"
+                        && !(role == "tool" && image && frontend.tool_result_images())
+                        && !(matches!(role, "system" | "developer") && frontend.system_media())
                     {
                         return Err(ApiError::invalid(
                             "only user messages may contain media",
@@ -2193,6 +2238,7 @@ fn requested_output_constraint(
     response_format: Option<&FrontendJsonV1>,
     max_string_bytes: usize,
     strict_only: bool,
+    regex_format: bool,
 ) -> Result<Option<RequestedConstraint>, ApiError> {
     if let Some(format) = response_format {
         validate_json_strings(format, "response_format", max_string_bytes)?;
@@ -2200,7 +2246,12 @@ fn requested_output_constraint(
     if let Some(outputs) = structured_outputs {
         validate_json_strings(outputs, "structured_outputs", max_string_bytes)?;
     }
-    requested_constraint(structured_outputs, response_format, strict_only)
+    requested_constraint(
+        structured_outputs,
+        response_format,
+        strict_only,
+        regex_format,
+    )
 }
 
 fn frontend_error(error: FrontendErrorV1, fallback: &'static str) -> ApiError {

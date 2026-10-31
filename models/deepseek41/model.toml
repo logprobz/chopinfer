@@ -35,4 +35,4 @@ architecture = "DeepseekV41GeometryRecipeForCausalLM"
 contract_tests = ["kernel_compressor", "kernel_latent", "kernel_moe", "kernel_mxfp8_fold"]
 
 [checks]
-reference_tests = ["test_reference.py", "test_reference_kernel.py", "test_reference_workloads.py"]
+reference_tests = ["test_reference.py", "test_reference_kernel.py", "test_reference_workloads.py", "test_frontend_corpus.py"]

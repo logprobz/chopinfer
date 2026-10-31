@@ -215,6 +215,8 @@ pub struct CompletionDecoderV1 {
     /// The format parser, opened from the settings above when the first
     /// token or finish reaches it. Its settings are fixed from then on.
     parser: Option<Box<dyn FormatParserV1>>,
+    /// Whether the parser delivered a tool call.
+    called: bool,
 }
 
 impl CompletionDecoderV1 {
@@ -246,6 +248,7 @@ impl CompletionDecoderV1 {
             reasoning_open: None,
             source: None,
             parser: None,
+            called: false,
         }
     }
 
@@ -528,16 +531,25 @@ impl CompletionDecoderV1 {
 
     /// Flushes a stop confirmed by the engine, including grammar termination
     /// before the minimum token count. Token accounting is already complete.
+    /// A stop after a delivered call, including one inside a call, ends the
+    /// completion because of it.
     pub fn finish_stop(&mut self) -> Result<Vec<CompletionUpdateV1>, String> {
         let mut updates = self.finish_length()?;
         if let Some(CompletionUpdateV1::Finished(done)) = updates.last_mut()
             && done.reason == CompletionFinishV1::Length
         {
-            done.reason = CompletionFinishV1::Stop;
+            done.reason = if self.called {
+                CompletionFinishV1::ToolCalls
+            } else {
+                CompletionFinishV1::Stop
+            };
         }
         Ok(updates)
     }
 
+    /// Flushes the end of generation at the token budget, which finishes
+    /// `Length` even after or inside a delivered call; the call keeps only its
+    /// complete parameters.
     pub fn finish_length(&mut self) -> Result<Vec<CompletionUpdateV1>, String> {
         self.guard_decode(Self::finish_length_inner)
     }
@@ -627,6 +639,7 @@ impl CompletionDecoderV1 {
             FormatEventV1::Reasoning(range) => CompletionUpdateV1::Reasoning(self.text(range)),
             FormatEventV1::Content(range) => CompletionUpdateV1::Content(self.text(range)),
             FormatEventV1::ToolCalls { calls, range } => {
+                self.called = true;
                 CompletionUpdateV1::ToolCalls(IncrementalToolCallsV1 {
                     calls,
                     contributions: self.contributions(range.start, range.end),

@@ -8,47 +8,69 @@
 //! the messages the encoder reads and returns the encoder's prompt. No Jinja
 //! and no Python runs at serving time.
 //!
-//! The request reaches the encoder as deepseek-recipe (commit 8cadfede)
-//! maps an OpenAI request into messages, and the encoder renders those
-//! messages (plan V4 and V7; each rule, its source and its corpus cases are
-//! in `models/deepseek41/frontend-divergences.json`, section `mapping`). The
+//! The request reaches the encoder as deepseek-recipe 0.2.0 (commit
+//! 93b0fd229c) maps an OpenAI request into messages, and the encoder renders
+//! those messages (plan V4 and V7; each rule, its source and its corpus cases
+//! are in `models/deepseek41/frontend-divergences.json`, section `mapping`,
+//! with where the recipe differs and why). The
 //! corpus reference in `models/deepseek41/frontend_cases.py` maps its HF
 //! input the same way:
 //! - Thinking mode and the effort come from the declared reasoning controls
 //!   (`select_mode_v1`). The effort is passed in thinking mode only, where
 //!   the encoder writes it. The protocol efforts the encoder does not name
-//!   read as the recipe maps them: minimal as low, medium and xhigh as high.
+//!   read as the recipe maps them: minimal as low, medium as high, ultra as
+//!   max, and xhigh, which the recipe renders at high's budget, as high.
 //! - Each offered tool becomes the recipe's function object: its name, its
-//!   description or "", and its parameters or `{}`.
-//! - An empty system message is dropped, as the recipe drops it.
+//!   description or "", and its parameters or `{}`. A strict tool's
+//!   parameters are the recipe's normalized schema ([`strict_schema`]), and
+//!   a non-strict tool's present parameters must declare `type: "object"`.
+//!   Strict and non-strict tools together, and a `response_format` beside
+//!   strict tools, are refused, among the tools the host's tool choice
+//!   policy leaves.
+//! - A developer message is a system message, as the recipe maps a
+//!   Responses developer message for V4.1. A system message's leading
+//!   `x-anthropic-billing-header` line is removed, and a system message left
+//!   without text or images is dropped, as the recipe drops it.
 //! - The offered tools and `response_format` belong to the leading system
 //!   message, where the encoder renders them (vendor README, "Tools are
 //!   defined on the `system` message"). A request without one gets an empty
-//!   leading system message to carry them, as the recipe inserts one. Every
-//!   `response_format` renders as the encoder renders it (V7).
+//!   leading system message to carry them, as the recipe inserts one. A
+//!   `response_format` renders as the recipe renders it: json_object as
+//!   `{"type": "json_object"}`, json_schema as its schema, and text
+//!   nothing. A strict json_schema's schema must normalize as a strict
+//!   tool's does; the constraint still compiles the schema as sent (V7).
 //! - Tool-call arguments reach the encoder as the text sent, which it reads
 //!   as Python's `json.loads` does: a repeated key takes its last value.
-//! - `continue_final_message` renders the final assistant turn without its
-//!   end-of-sentence token (`wo_eos`). The encoder writes the generation
-//!   header itself after a final user or later system message, so
+//! - `continue_final_message`, which the transport also sets for `prefix:
+//!   true` on the final assistant message as the recipe sends it, renders
+//!   that turn without its end-of-sentence token (`wo_eos`). In thinking
+//!   mode a continued turn with no content and no calls leaves its
+//!   reasoning open, as the recipe renders a prefix turn, so the completion
+//!   continues the reasoning. The encoder writes the generation header
+//!   itself after a final user or later system message, so
 //!   `add_generation_prompt` changes nothing. A final assistant turn not
 //!   continued is refused: the encoder ends it with the end-of-sentence
 //!   token and no header follows.
 //! - `preserve_thinking` turns off `drop_thinking`, which the encoder also
 //!   turns off whenever tools are declared.
-//! - A user's media parts are image blocks; images are served only when the
+//! - A user's media parts are image blocks, as are a tool result's and a
+//!   system or developer message's where the declaration admits them, as
+//!   the recipe reads V4.1 images; images are served only when the
 //!   declaration declares them, with the encoder's placeholder as the pad.
 //!
 //! The roles the encoder reads that the transport carries are system, user,
-//! assistant and tool. A developer message, a message's own tools, media
-//! outside a user message and a function object that names a namespace are
-//! refused (see `models/deepseek41/frontend-divergences.json`). The
-//! encoder's `latest_reminder` role and `task` flag are not served.
+//! assistant and tool, and a developer message reads as a system message. A
+//! message's own tools, media in an assistant turn or anywhere the
+//! declaration does not admit them, and a function object that names a
+//! namespace are refused (see
+//! `models/deepseek41/frontend-divergences.json`). The encoder's
+//! `latest_reminder` role and `task` flag are not served.
 
 pub mod encoding;
+pub mod strict_schema;
 
 use frontend_format::toolkit::{
-    field_v1, media_kind_v1, media_placeholder_v1, resource_v1, screen_media_text_v1,
+    field_v1, json_truthy, media_kind_v1, media_placeholder_v1, resource_v1, screen_media_text_v1,
     select_mode_v1, split_media_segments_v1, validate_function_name_v1,
 };
 use frontend_format::{
@@ -64,10 +86,16 @@ use encoding::{Block, Message, ReasoningEffort, Role, ThinkingMode, ToolCall};
 const EFFORTS: [&str; 3] = ["low", "high", "max"];
 
 /// The protocol efforts the encoder does not name, each read as the effort
-/// deepseek-recipe maps it to (`ReasoningEffort`, recipe commit 8cadfede):
-/// minimal as low (50), medium and xhigh as high (75).
-const EFFORT_ALIASES: [(&str, &str); 3] =
-    [("minimal", "low"), ("medium", "high"), ("xhigh", "high")];
+/// deepseek-recipe 0.2.0 renders it at (commit 93b0fd229c,
+/// `deepseek-recipe/src/protocol/reasoning.rs` lines 37-48,
+/// `deepseek-recipe-encoding/src/v4/dsv41.rs` line 24): minimal as low (50),
+/// medium and xhigh as high (75), and ultra as max (100).
+const EFFORT_ALIASES: [(&str, &str); 4] = [
+    ("minimal", "low"),
+    ("medium", "high"),
+    ("xhigh", "high"),
+    ("ultra", "max"),
+];
 
 /// `effort` with a protocol alias read as the effort it names.
 fn effort_alias(effort: Option<String>) -> Option<String> {
@@ -89,9 +117,11 @@ const THINKING_KEYWORDS: [&str; 2] = ["enable_thinking", "thinking"];
 /// parameters carry `string="true"` for a string written raw and
 /// `string="false"` for any other value written as JSON. The shared typed
 /// tool grammar reads exactly that, as `parse_message_from_completion_text`
-/// (lines 897-990) does. The DSML marker is reserved outside the calls
-/// block the blank line opens, as that parser refuses it in content or
-/// reasoning (lines 981-983).
+/// (lines 897-990) does. The calls block opens after any run of newlines
+/// before it, including none, and drops them, as deepseek-recipe 0.2.0's
+/// stream parser reads it; the encoder's blank line is one such run. The
+/// DSML marker is reserved outside a calls block, as that parser refuses it
+/// in content or reasoning (lines 981-983).
 #[must_use]
 pub fn parser_declaration() -> FrontendParserDeclarationV1 {
     let text = |value: &str| value.to_owned();
@@ -248,7 +278,8 @@ impl ChatFormatV1 for DeepSeekV41Format {
             (mode == PromptModeV1::Thinking).then(|| ReasoningEffort::Named(effort_name.clone()));
         let drop_thinking = !request.preserve_thinking.unwrap_or(false);
         let mut media = Vec::new();
-        let messages = self.messages(&request, &mut media).map_err(refuse)?;
+        let mut messages = self.messages(&request, &mut media).map_err(refuse)?;
+        offer(&request, &mut messages)?;
         let (prompt, order) = encoding::encode_messages(
             &messages,
             thinking_mode,
@@ -332,18 +363,34 @@ impl DeepSeekV41Format {
             .iter()
             .map(|message| self.message(message, media))
             .collect::<Result<Vec<_>, _>>()?;
-        // The recipe drops an empty system message (convert.rs lines
-        // 343-347); one carrying the offered tools is inserted below.
-        messages.retain(|message| {
-            message.role != Role::System
-                || message
-                    .content
-                    .as_deref()
-                    .is_some_and(|text| !text.is_empty())
-        });
+        // The recipe drops an empty system message, once its billing header
+        // is removed (recipe 0.2.0 chat_completion/request/convert.rs lines
+        // 428-440), its images counting as text; one carrying the offered
+        // tools is inserted by `offer`.
+        for message in &mut messages {
+            if message.role == Role::System {
+                match &mut message.blocks {
+                    Some(blocks) => strip_billing_header_blocks(blocks),
+                    None => {
+                        if let Some(content) = &mut message.content {
+                            strip_billing_header(content);
+                        }
+                    }
+                }
+            }
+        }
+        messages.retain(|message| message.role != Role::System || !joins_empty(message));
         if request.continue_final_message {
             match messages.last_mut() {
-                Some(last) if last.role == Role::Assistant => last.wo_eos = true,
+                Some(last) if last.role == Role::Assistant => {
+                    last.wo_eos = true;
+                    // The recipe closes a prefix turn's reasoning only
+                    // before its content or calls (recipe 0.2.0
+                    // deepseek-recipe-encoding/src/v4/dsv41.rs lines
+                    // 206-230); the encoder closes it always.
+                    last.open_reasoning = last.content.as_deref().unwrap_or_default().is_empty()
+                        && last.tool_calls.is_empty();
+                }
                 _ => {
                     return Err(field_v1(
                         "continue_final_message requires a final assistant message",
@@ -363,22 +410,6 @@ impl DeepSeekV41Format {
             // only empty system messages were sent.
             return Err(field_v1(SYSTEM_ONLY_UNSERVED));
         }
-        let tools = tool_objects(request.tools, &request.tool_objects)?;
-        if !tools.is_empty() || request.response_format.is_some() {
-            if messages[0].role != Role::System {
-                messages.insert(0, Message::new(Role::System, Some(String::new())));
-            }
-            let system = &mut messages[0];
-            if !tools.is_empty() {
-                if !system.tools.is_empty() {
-                    return Err(field_v1(
-                        "tools are offered both by the request and by its system message",
-                    ));
-                }
-                system.tools = tools;
-            }
-            system.response_format = request.response_format.clone();
-        }
         Ok(messages)
     }
 
@@ -391,19 +422,28 @@ impl DeepSeekV41Format {
         let descriptor = &self.descriptor;
         let limits = descriptor.limits;
         let role = match message.role {
-            FrontendRoleV1::System => Role::System,
+            // The recipe maps a Responses developer message to a system
+            // message for V4.1 (recipe 0.2.0 responses/request/convert.rs
+            // lines 421-446); a Chat Completions one reads the same.
+            FrontendRoleV1::System | FrontendRoleV1::Developer => Role::System,
             FrontendRoleV1::User => Role::User,
             FrontendRoleV1::Assistant => Role::Assistant,
             FrontendRoleV1::Tool => Role::Tool,
-            FrontendRoleV1::Developer => {
-                return Err(field_v1("developer role is not declared"));
-            }
         };
         if !message.tools.is_empty() {
-            // The recipe's request messages carry no tools (schema.rs lines
-            // 52-71), so a message's own tools never reach its encoder.
+            // The recipe's request messages carry no tools (recipe 0.2.0
+            // chat_completion/request/schema.rs lines 62-90), so a message's
+            // own tools never reach its encoder.
             return Err(field_v1(MESSAGE_TOOLS_UNSERVED));
         }
+        // The recipe reads a V4.1 system message's images as a user's
+        // (recipe 0.2.0 chat_completion/request/convert.rs lines 428-441,
+        // deepseek-recipe-encoding/src/v4/mod.rs lines 107-121), where the
+        // declaration admits them.
+        let system_media = descriptor
+            .multimodal
+            .as_ref()
+            .is_some_and(|multimodal| multimodal.system_media);
         let mut result = Message::new(role, message.content.clone());
         if let Some(parts) = &message.parts {
             let mut blocks = Vec::new();
@@ -412,26 +452,31 @@ impl DeepSeekV41Format {
                     FrontendContentPartV1::Text(text) => blocks.push(Block::Text(text.clone())),
                     FrontendContentPartV1::Media(item)
                         if role == Role::User
-                            || (role == Role::Tool && descriptor.tools.image_results) =>
+                            || (role == Role::Tool && descriptor.tools.image_results)
+                            || (role == Role::System && system_media) =>
                     {
                         media_kind_v1(descriptor, item)?;
                         blocks.push(Block::Image(media.len()));
                         media.push(item.clone());
                     }
                     FrontendContentPartV1::Media(_) => {
-                        return Err(field_v1("media parts are served in user messages only"));
+                        return Err(field_v1(
+                            "media parts are served in user messages and where declared",
+                        ));
                     }
                     FrontendContentPartV1::ToolReference { .. } => {
                         return Err(frontend_format::TOOL_REFERENCES_UNSUPPORTED_V1.into());
                     }
                 }
             }
-            if role == Role::User || role == Role::Tool {
+            if role != Role::Assistant {
+                // The encoder places each image block where it stands, and
+                // joins a list content's text blocks (lines 323-396).
                 result.blocks = Some(blocks);
                 result.content = None;
             } else {
-                // Lines 387-393: another role's list content is its text
-                // blocks joined.
+                // Lines 387-393: an assistant turn's list content is its
+                // text blocks joined.
                 let texts: Vec<String> = blocks
                     .into_iter()
                     .map(|block| match block {
@@ -468,8 +513,70 @@ impl DeepSeekV41Format {
     }
 }
 
-/// The offered tools as the recipe maps them (convert.rs lines 178-192,
-/// v4/mod.rs lines 284-293): each a tool object around its name, its
+/// Puts the offered tools and the response format on the leading system
+/// message, inserting an empty one when they render something and the
+/// request has none (recipe 0.2.0 `deepseek-recipe-encoding/src/v4/dsv41.rs`
+/// lines 250-273). Strict and non-strict tools together, and any
+/// `response_format` beside strict tools, are refused after each tool's and
+/// the format's schema is read (`deepseek-recipe/src/protocol/
+/// output_constraint.rs` lines 34-46). The tools are those the host's tool
+/// choice policy leaves, as the recipe checks after its named-choice
+/// filtering.
+fn offer(
+    request: &FormatRenderRequestV1<'_>,
+    messages: &mut Vec<Message>,
+) -> Result<(), FrontendErrorV1> {
+    let refuse = |message: String, parameter: &str| FrontendErrorV1::new(message, Some(parameter));
+    // Only the tools the host's tool choice policy keeps reach the format
+    // (runtime-frontend serve.rs), so a named choice checks only its own
+    // tool's schema here. The recipe checks every declared tool's schema
+    // before its named-choice filtering (recipe 0.2.0 client_tools.rs lines
+    // 70-88); checking the omitted ones would need the host to pass them,
+    // which is host and ABI work, so a schema only an omitted tool holds is
+    // not refused.
+    let tools = tool_objects(request.tools, &request.tool_objects)?;
+    let format = rendered_format(request.response_format.as_ref())
+        .map_err(|message| refuse(message, "response_format"))?;
+    let strict = |tool: &FrontendToolV1| tool.strict == Some(true);
+    if request.tools.iter().any(strict) {
+        if !request.tools.iter().all(strict) {
+            return Err(refuse(STRICT_WITH_NON_STRICT.into(), "tools"));
+        }
+        if request
+            .response_format
+            .as_ref()
+            .is_some_and(|format| *format != FrontendJsonV1::Null)
+        {
+            return Err(refuse(FORMAT_WITH_STRICT_TOOLS.into(), "response_format"));
+        }
+    }
+    // The encoder renders a response format only when Python reads it as
+    // true (encoding.py line 628), so a schema of `{}` or `false` needs no
+    // system message (`falsy-json-schema` in frontend-divergences.json).
+    let format = format.filter(json_truthy);
+    if tools.is_empty() && format.is_none() {
+        return Ok(());
+    }
+    if messages[0].role != Role::System {
+        messages.insert(0, Message::new(Role::System, Some(String::new())));
+    }
+    let system = &mut messages[0];
+    if !tools.is_empty() {
+        if !system.tools.is_empty() {
+            return Err(refuse(
+                field_v1("tools are offered both by the request and by its system message"),
+                "messages",
+            ));
+        }
+        system.tools = tools;
+    }
+    system.response_format = format;
+    Ok(())
+}
+
+/// The offered tools as the recipe maps them (recipe 0.2.0
+/// chat_completion/request/convert.rs lines 265-274, client_tools.rs lines
+/// 24-37, v4/mod.rs lines 45-52): each a tool object around its name, its
 /// description or "", and its parameters or `{}`; every other field of the
 /// client's function object is dropped. The transport has already named a
 /// tool in a namespace `namespace::name`, as the encoder names it (lines
@@ -478,14 +585,134 @@ impl DeepSeekV41Format {
 fn tool_objects(
     tools: &[FrontendToolV1],
     objects: &[FrontendJsonV1],
-) -> Result<Vec<FrontendJsonV1>, String> {
+) -> Result<Vec<FrontendJsonV1>, FrontendErrorV1> {
     if objects.iter().any(namespaced) {
-        return Err(field_v1(NAMESPACES_UNSERVED));
+        return Err(FrontendErrorV1::new(
+            field_v1(NAMESPACES_UNSERVED),
+            Some("messages"),
+        ));
     }
-    Ok(tools
+    tools
         .iter()
-        .map(|tool| wrap_function(FrontendJsonV1::Object(declared_function(tool))))
-        .collect())
+        .map(|tool| {
+            declared_function(tool)
+                .map(|function| wrap_function(FrontendJsonV1::Object(function)))
+                .map_err(|message| FrontendErrorV1::new(message, Some("tools")))
+        })
+        .collect()
+}
+
+/// The refusal of strict and non-strict tools in one request.
+const STRICT_WITH_NON_STRICT: &str =
+    "Cannot use strict tool with non-strict tool in the same request";
+
+/// The refusal of a response format beside strict tools.
+const FORMAT_WITH_STRICT_TOOLS: &str = "response_format should not be used with tools";
+
+/// The refusal of a json_schema response format without a schema, which the
+/// recipe's request schema requires.
+const SCHEMA_REQUIRED: &str = "response_format.json_schema.schema is required";
+
+/// What the recipe renders for a response format (dsv41.rs lines 253-257):
+/// json_object as `{"type": "json_object"}`, json_schema as its schema, and
+/// nothing for text. A strict json_schema's schema must normalize as the
+/// recipe checks it (`validation.rs` lines 249-264); the schema renders as
+/// sent. A null field is absent.
+fn rendered_format(format: Option<&FrontendJsonV1>) -> Result<Option<FrontendJsonV1>, String> {
+    let entry = |entries: &[(String, FrontendJsonV1)], name: &str| {
+        entries
+            .iter()
+            .find(|(key, value)| key == name && *value != FrontendJsonV1::Null)
+            .map(|(_, value)| value.clone())
+    };
+    let Some(FrontendJsonV1::Object(entries)) = format else {
+        return Ok(None);
+    };
+    match entry(entries, "type") {
+        Some(FrontendJsonV1::String(kind)) if kind == "json_object" => Ok(Some(
+            FrontendJsonV1::Object(vec![("type".into(), FrontendJsonV1::String(kind))]),
+        )),
+        Some(FrontendJsonV1::String(kind)) if kind == "json_schema" => {
+            let fields = match entry(entries, "json_schema") {
+                Some(FrontendJsonV1::Object(fields)) => fields,
+                _ => Vec::new(),
+            };
+            let schema = entry(&fields, "schema").ok_or(SCHEMA_REQUIRED)?;
+            if entry(&fields, "strict") == Some(FrontendJsonV1::Bool(true)) {
+                strict_schema::response_schema(&schema)?;
+            }
+            Ok(Some(schema))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// The text that starts a system message the recipe strips.
+const BILLING_HEADER: &str = "x-anthropic-billing-header";
+
+/// Removes an Anthropic billing header from system text, as the recipe does
+/// (recipe 0.2.0 chat_completion/request/convert.rs lines 373-394): text
+/// that starts with `x-anthropic-billing-header` keeps what follows the
+/// first newline or `You are`, whichever comes first, without leading
+/// whitespace, and becomes empty without either.
+fn strip_billing_header(text: &mut String) {
+    if !text.starts_with(BILLING_HEADER) {
+        return;
+    }
+    let start = ["\n", "You are"]
+        .iter()
+        .filter_map(|pattern| text.find(pattern))
+        .min();
+    match start {
+        Some(start) => {
+            let start = text.len() - text[start..].trim_start().len();
+            text.drain(..start);
+        }
+        None => text.clear(),
+    }
+}
+
+/// [`strip_billing_header`] over a system message's blocks, as the recipe
+/// strips their text joined with blank lines, each image its token
+/// (convert.rs lines 291-357). The cut falls in the first block when it
+/// holds a newline or `You are`, else at the blank line after it; the
+/// whitespace after the cut runs through blank lines and blank text blocks
+/// up to the next text or image.
+fn strip_billing_header_blocks(blocks: &mut Vec<Block>) {
+    let Some(Block::Text(first)) = blocks.first() else {
+        return;
+    };
+    if !first.starts_with(BILLING_HEADER) {
+        return;
+    }
+    let mut kept = first.clone();
+    strip_billing_header(&mut kept);
+    if !kept.is_empty() || blocks.len() == 1 {
+        blocks[0] = Block::Text(kept);
+        return;
+    }
+    // Nothing of the first block is left, so the blank line after it is
+    // whitespace after the cut.
+    blocks.remove(0);
+    while let Some(Block::Text(text)) = blocks.first_mut() {
+        let rest = text.trim_start();
+        if !rest.is_empty() {
+            *text = rest.to_owned();
+            return;
+        }
+        blocks.remove(0);
+    }
+}
+
+/// Whether a message's text is empty: its content, or its blocks joined
+/// with blank lines (lines 387-393), an image counting as its placeholder.
+fn joins_empty(message: &Message) -> bool {
+    match &message.blocks {
+        Some(blocks) => {
+            blocks.is_empty() || matches!(&blocks[..], [Block::Text(text)] if text.is_empty())
+        }
+        None => message.content.as_deref().is_none_or(str::is_empty),
+    }
 }
 
 /// The refusal of a message's own tools, which the recipe's request
@@ -495,7 +722,7 @@ const MESSAGE_TOOLS_UNSERVED: &str = "message tools are not served";
 /// The refusal of a request ending on an assistant turn it does not
 /// continue.
 const FINAL_ASSISTANT_UNSERVED: &str =
-    "a final assistant message is served only with continue_final_message";
+    "a final assistant message is served only with prefix or continue_final_message";
 
 /// The refusal of a request of system messages alone.
 const SYSTEM_ONLY_UNSERVED: &str = "a request of system messages alone has no turn to answer";
@@ -519,21 +746,43 @@ fn wrap_function(function: FrontendJsonV1) -> FrontendJsonV1 {
 
 /// A tool's function object as the recipe writes it: the name, the
 /// description or "", and the parameters or `{}`, a null field read as an
-/// absent one.
-fn declared_function(tool: &FrontendToolV1) -> Vec<(String, FrontendJsonV1)> {
-    let parameters = if tool.parameters_present {
-        tool.parameters.clone()
+/// absent one. A strict tool's parameters are normalized, a missing schema
+/// being the empty object that accepts no properties; a non-strict tool's
+/// present parameters must declare `type: "object"` (recipe 0.2.0
+/// `deepseek-recipe/src/protocol/validation.rs` lines 209-240).
+fn declared_function(tool: &FrontendToolV1) -> Result<Vec<(String, FrontendJsonV1)>, String> {
+    let present = tool.parameters_present.then_some(&tool.parameters);
+    let parameters = if tool.strict == Some(true) {
+        strict_schema::tool_parameters(present)?
+    } else if let Some(parameters) = present {
+        let kind = match parameters {
+            FrontendJsonV1::Object(entries) => entries
+                .iter()
+                .find(|(key, _)| key == "type")
+                .map(|(_, kind)| kind.clone()),
+            _ => None,
+        }
+        .unwrap_or(FrontendJsonV1::Null);
+        if kind != FrontendJsonV1::String("object".into()) {
+            return Err(format!(
+                "Invalid schema for function '{}': schema must be a JSON Schema of 'type: \
+                 \"object\"', got 'type: {}'.",
+                tool.name,
+                kind.to_json_value()
+            ));
+        }
+        parameters.clone()
     } else {
         FrontendJsonV1::Object(Vec::new())
     };
-    vec![
+    Ok(vec![
         ("name".to_owned(), FrontendJsonV1::String(tool.name.clone())),
         (
             "description".to_owned(),
             FrontendJsonV1::String(tool.description.clone().unwrap_or_default()),
         ),
         ("parameters".to_owned(), parameters),
-    ]
+    ])
 }
 
 #[cfg(test)]
@@ -548,5 +797,85 @@ mod tests {
              reasoning)"
         );
         assert_eq!(effort_preamble("medium"), None);
+    }
+
+    /// The recipe's own cases (recipe 0.2.0 chat_completion/request/
+    /// convert.rs lines 593-610).
+    #[test]
+    fn billing_headers_are_stripped_from_system_content() {
+        let strip = |text: &str| {
+            let mut text = text.to_owned();
+            strip_billing_header(&mut text);
+            text
+        };
+        assert_eq!(
+            strip("x-anthropic-billing-header: a\n  You are b"),
+            "You are b"
+        );
+        assert_eq!(
+            strip("x-anthropic-billing-header: aYou are b\nc"),
+            "You are b\nc"
+        );
+        assert_eq!(strip("x-anthropic-billing-header: a"), "");
+        assert_eq!(strip("system"), "system");
+    }
+
+    /// Blocks keep what their joined text keeps, an image standing for
+    /// non-blank text.
+    #[test]
+    fn billing_headers_are_stripped_from_system_blocks() {
+        let text = |value: &str| Block::Text(value.to_owned());
+        let strip = |mut blocks: Vec<Block>| {
+            strip_billing_header_blocks(&mut blocks);
+            blocks
+        };
+        let joined = |blocks: &[Block]| {
+            blocks
+                .iter()
+                .map(|block| match block {
+                    Block::Text(text) => text.clone(),
+                    _ => "[image]".to_owned(),
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        };
+        let header = "x-anthropic-billing-header: a";
+        for (blocks, expected) in [
+            (vec![text(header), Block::Image(0)], vec![Block::Image(0)]),
+            (
+                vec![text(&format!("{header}\n You are b")), Block::Image(0)],
+                vec![text("You are b"), Block::Image(0)],
+            ),
+            (
+                vec![text(&format!("{header}You are b")), text("c")],
+                vec![text("You are b"), text("c")],
+            ),
+            (
+                vec![
+                    text(header),
+                    text(" \n"),
+                    text(""),
+                    text("  c "),
+                    Block::Image(0),
+                ],
+                vec![text("c "), Block::Image(0)],
+            ),
+            (vec![text(header), text(" ")], vec![]),
+            (vec![text(header)], vec![text("")]),
+            (
+                vec![Block::Image(0), text(header)],
+                vec![Block::Image(0), text(header)],
+            ),
+            (
+                vec![text(" x-anthropic-billing-header")],
+                vec![text(" x-anthropic-billing-header")],
+            ),
+        ] {
+            let mut sent = joined(&blocks);
+            strip_billing_header(&mut sent);
+            let stripped = strip(blocks);
+            assert_eq!(joined(&stripped), sent);
+            assert_eq!(stripped, expected);
+        }
     }
 }

@@ -693,3 +693,22 @@ fn deep_reference_schemas_cross_the_wire() {
         &call,
     );
 }
+
+/// A call with any parameter name renders as history and parses back.
+#[test]
+fn any_parameter_name_round_trips() {
+    runtime_frontend::test_support::tool_choice::any_parameter_name_round_trips(
+        &frontend(descriptor()),
+        &descriptor(),
+    );
+}
+
+/// A call with a parameter name that holds a marker, such as `</tool_call>`
+/// which ends a key, is refused as history.
+#[test]
+fn a_parameter_name_holding_a_marker_is_refused_as_history() {
+    runtime_frontend::test_support::tool_choice::a_parameter_name_holding_a_marker_is_refused_as_history(
+        &frontend(descriptor()),
+        &descriptor(),
+    );
+}

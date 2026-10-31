@@ -167,7 +167,9 @@ pub fn assert_call_splits(
     }
 }
 
-/// Check every declared completion case in both streaming modes.
+/// Check every declared completion case in both streaming modes, ended at
+/// the token budget, by an engine stop and by the end token: a delivered
+/// call finishes `ToolCalls` after a stop and `Length` at the budget.
 pub fn assert_call_endings(
     descriptor: FrontendDescriptorV1,
     cases: &[(&str, Calls<'_>)],
@@ -202,7 +204,7 @@ pub fn assert_call_endings(
                     assert_eq!(delivered.streamed, expected, "{label}");
                 }
                 assert_eq!(delivered.content, "", "{label}");
-                let reason = if expected.is_empty() {
+                let reason = if expected.is_empty() || matches!(end, End::Length) {
                     base
                 } else {
                     CompletionFinishV1::ToolCalls

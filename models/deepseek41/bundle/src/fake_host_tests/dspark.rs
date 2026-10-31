@@ -15,6 +15,7 @@ mod graph_budget;
 pub(super) mod host;
 mod item_keys;
 mod layers;
+mod merge_ceil;
 #[cfg(test)]
 mod native_package;
 mod phased_reduce;

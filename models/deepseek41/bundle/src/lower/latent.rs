@@ -520,9 +520,10 @@ impl Lowering<'_> {
             selected_cache: scratch.selected_cache,
             live_rows: self.inputs.live_tokens,
         };
-        ops.attend(Kind::from(phase), phase.rows(), &views)
-            .map(Some)
-            .map_err(|refusal| format!("attention of layer {layer}: {refusal}"))
+        let attention = ops
+            .attend(Kind::from(phase), phase.rows(), &views)
+            .map_err(|refusal| format!("attention of layer {layer}: {refusal}"))?;
+        self.with_merge_ceil(phase, layer, attention).map(Some)
     }
 }
 

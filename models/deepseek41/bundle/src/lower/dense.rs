@@ -9,6 +9,56 @@ use crate::ops::{GemmViews, Lowered};
 use crate::program::Phase;
 
 impl Lowering<'_> {
+    /// Whether projection `id` of `layer` runs as a status fold at `phase`
+    /// (`sm120::fold_fused`): the sliced quantizer, WO_a quantizing WO_b's
+    /// input in its merge, then WO_b over those codes. The two fuse at the
+    /// same buckets and layers.
+    fn status_fold(&self, id: &str, phase: Phase, layer: u32) -> bool {
+        self.ops
+            .dense
+            .as_ref()
+            .is_some_and(|ops| self.fold_layer(id, phase, layer) && ops.fuses(id, phase))
+    }
+
+    /// Whether `layer` may run `id`'s status or local folds at `phase`: a
+    /// backbone layer, or a drafter block at its measured rows.
+    fn fold_layer(&self, id: &str, phase: Phase, layer: u32) -> bool {
+        let g = self.shape.geometry;
+        layer < g.layers()
+            || (layer < g.layers() + g.dspark_stages()
+                && crate::Kernels::drafter_status_fold(self.shape, id, phase.rows()))
+    }
+
+    /// Whether `layer`'s attention merge at `phase` quantizes WO_a's input
+    /// in place of WO_a's sliced quantizer (the `attention_merge_ceil`
+    /// candidate option), which holds wherever WO_a is a status fold.
+    pub(super) fn merge_ceil(&self, phase: Phase, layer: u32) -> bool {
+        crate::Kernels::merge_ceil_serves(self.shape)
+            && self.status_fold("attention.o-a", phase, layer)
+    }
+
+    /// `attention`, `layer`'s attention launches at `phase`, with the merge
+    /// quantizing WO_a's input into the views its sliced quantizer writes
+    /// where [`Self::merge_ceil`] holds; unchanged elsewhere.
+    pub(super) fn with_merge_ceil(
+        &self,
+        phase: Phase,
+        layer: u32,
+        attention: Vec<Lowered>,
+    ) -> Result<Vec<Lowered>, String> {
+        if !self.merge_ceil(phase, layer) {
+            return Ok(attention);
+        }
+        let s = &self.buffers.scratch;
+        crate::Kernels::merge_ceil_launch(
+            attention,
+            rows(s.attention_codes, phase.rows()),
+            rows(s.attention_scales, phase.rows()),
+            self.carried(phase, s.row_status)?,
+        )
+        .map_err(|refusal| format!("quantizing attention merge of layer {layer}: {refusal}"))
+    }
+
     /// Projection `id` of layer `layer` if it is a dense FP8 projection:
     /// its input quantized unless the sublayer did, then its fold GEMM.
     /// `None` for any other projection, or while the dense ops are absent.
@@ -36,13 +86,8 @@ impl Lowering<'_> {
         let rows_of = |span| rows(span, phase.rows());
         let error = |refusal| format!("{id} of layer {layer}: {refusal}");
         let mut launches = Vec::new();
-        // WO_a and WO_b as status folds (`sm120::fold_fused`): the sliced
-        // quantizer, WO_a quantizing WO_b's input in its merge, then WO_b
-        // over those codes. The two fuse at the same buckets and layers.
-        let qualified_layer = layer < self.shape.geometry.layers()
-            || (layer < self.shape.geometry.layers() + self.shape.geometry.dspark_stages()
-                && crate::Kernels::drafter_status_fold(self.shape, id, phase.rows()));
-        let fused = qualified_layer && ops.fuses(id, phase);
+        let qualified_layer = self.fold_layer(id, phase, layer);
+        let fused = self.status_fold(id, phase, layer);
         let quantized = |input: DeviceBufferSpanV1,
                          codes: DeviceBufferSpanV1,
                          scales: DeviceBufferSpanV1,
@@ -96,7 +141,10 @@ impl Lowering<'_> {
                     live_rows: self.inputs.live_tokens,
                     status: self.carried(phase, scratch.row_status)?,
                 };
-                launches.extend(ops.quantize_sliced(phase, &views).map_err(error)?);
+                // The quantizing attention merge already wrote them.
+                if !self.merge_ceil(phase, layer) {
+                    launches.extend(ops.quantize_sliced(phase, &views).map_err(error)?);
+                }
                 (views.codes, views.scales)
             }
             // WO_a's status fold quantized them in its merge.

@@ -387,6 +387,7 @@ fn the_default_request_thinks_at_high_effort() {
         ("minimal", 50),
         ("medium", 75),
         ("xhigh", 75),
+        ("ultra", 100),
     ];
     for (effort, budget) in efforts {
         for nested in [false, true] {
@@ -474,6 +475,60 @@ fn the_served_format_reads_tool_objects_and_arguments_as_the_encoder_does() {
         prompt.contains(r#"{"name": "f", "description": "", "parameters": {}}"#),
         "{prompt}"
     );
+    // A strict tool's parameters are the recipe's normalized schema, the
+    // empty object without parameters; a non-strict tool's present
+    // parameters must declare type object, and strict and non-strict tools
+    // are not offered together (R2).
+    let offered = |tools: Vec<FrontendToolV1>| {
+        frontend
+            .render_chat(FrontendChatRequestV1 {
+                tools,
+                ..request(vec![message(FrontendRoleV1::User, "q")])
+            })
+            .map(|rendered| rendered.prompt)
+            .map_err(|error| (error.message, error.parameter))
+    };
+    let tool = |name: &str, parameters: Option<Value>, strict: Option<bool>| FrontendToolV1 {
+        name: name.into(),
+        description: None,
+        parameters: parameters.as_ref().map_or(FrontendJsonV1::Null, json),
+        parameters_present: parameters.is_some(),
+        strict,
+    };
+    let schema = serde_json::json!({"type": "object", "title": "T",
+        "properties": {"city": {"type": "string", "minLength": 1}}});
+    let prompt = offered(vec![
+        tool("f", Some(schema), Some(true)),
+        tool("g", None, Some(true)),
+    ])
+    .unwrap();
+    for function in [
+        r#"{"name": "f", "description": "", "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "additionalProperties": false, "required": ["city"]}}"#,
+        r#"{"name": "g", "description": "", "parameters": {"type": "object", "properties": {}, "additionalProperties": false, "required": []}}"#,
+    ] {
+        assert!(prompt.contains(function), "{prompt}");
+    }
+    let partial = serde_json::json!({"type": "object",
+        "properties": {"a": {"type": "string"}}, "required": []});
+    for (tools, refusal) in [
+        (
+            vec![tool("f", Some(partial), Some(true))],
+            "Required properties must match all properties in the object",
+        ),
+        (
+            vec![tool("f", Some(serde_json::json!({"type": "string"})), None)],
+            r#"Invalid schema for function 'f': schema must be a JSON Schema of 'type: "object"', got 'type: "string"'."#,
+        ),
+        (
+            vec![tool("f", None, Some(true)), tool("g", None, Some(false))],
+            "Cannot use strict tool with non-strict tool in the same request",
+        ),
+    ] {
+        assert_eq!(
+            offered(tools).unwrap_err(),
+            (refusal.to_owned(), Some("tools".to_owned()))
+        );
+    }
     // Argument text the encoder reads itself: spacing kept in a value it
     // reads once, and a repeated key at its first place with its last value.
     let prompt = render(plain.clone(), "[1,  2]").unwrap();
@@ -653,7 +708,103 @@ fn the_transport_maps_requests_as_the_declaration_states() {
         other => panic!("{extra}: {other:?}"),
     };
     let json_object = prompt(serde_json::json!({"response_format": {"type": "json_object"}}));
-    assert!(json_object.contains("json_object"), "{json_object}");
+    assert!(
+        json_object.contains("to reply:\n{\"type\": \"json_object\"}<｜User｜>"),
+        "{json_object}"
+    );
+    // R3: json_schema renders its schema as sent; text, and a schema Python
+    // reads as false, render nothing and insert no system message.
+    let json_schema = prompt(serde_json::json!({"response_format": format(true.into())}));
+    assert!(
+        json_schema.contains(
+            "to reply:\n{\"type\": \"object\", \"properties\": {\"city\": {\"type\": \"string\"}}}<｜User｜>"
+        ),
+        "{json_schema}"
+    );
+    let unformatted = prompt(serde_json::json!({}));
+    for format in [
+        serde_json::json!({"type": "text"}),
+        serde_json::json!({"type": "json_schema", "json_schema": {"name": "answer", "schema": {}}}),
+        serde_json::json!({"type": "json_schema", "json_schema": {"name": "answer", "schema": false}}),
+    ] {
+        let rendered = prompt(serde_json::json!({ "response_format": format }));
+        assert_eq!(rendered, unformatted, "{format}");
+    }
+    // A json_schema needs a schema, a strict one's must normalize (R3), and
+    // strict tools take no response format or non-strict tools beside them
+    // (R2), among the tools a named choice leaves.
+    let clock = serde_json::json!({"type": "function", "function": {
+        "name": "clock", "parameters": {"type": "object"}}});
+    let mixed = serde_json::json!([weather[0], clock]);
+    for (extra, refusal, parameter) in [
+        (
+            serde_json::json!({"response_format": {"type": "json_schema",
+                "json_schema": {"name": "answer"}}}),
+            "response_format.json_schema.schema is required",
+            "response_format",
+        ),
+        (
+            serde_json::json!({"response_format": {"type": "json_schema", "json_schema": {
+                "name": "answer", "strict": true, "schema": {"type": "object"}}}}),
+            "An object with no properties is not allowed.",
+            "response_format",
+        ),
+        (
+            serde_json::json!({"tools": weather, "response_format": {"type": "text"}}),
+            "response_format should not be used with tools",
+            "response_format",
+        ),
+        (
+            serde_json::json!({"tools": mixed}),
+            "Cannot use strict tool with non-strict tool in the same request",
+            "tools",
+        ),
+    ] {
+        let error = prepare(extra.clone()).unwrap_err();
+        assert_eq!(
+            (error.message.as_str(), error.parameter.as_deref()),
+            (refusal, Some(parameter)),
+            "{extra}"
+        );
+    }
+    let named = prompt(serde_json::json!({"tools": mixed, "thinking": chat,
+        "tool_choice": {"type": "function", "function": {"name": "clock"}}}));
+    assert!(
+        named.contains(r#"{"name": "clock""#) && !named.contains(r#"{"name": "get_weather""#),
+        "{named}"
+    );
+    // The format sees only the tools the policy keeps, so a named choice of
+    // a valid tool renders even when an omitted strict tool's schema is one
+    // the recipe refuses before its named-choice filtering.
+    let invalid = serde_json::json!([{"type": "function", "function": {
+        "name": "f", "strict": true, "parameters": {"type": "string"}}}, clock]);
+    let refused = prepare(serde_json::json!({"tools": invalid, "thinking": chat})).unwrap_err();
+    assert_eq!(
+        refused.message,
+        "The top level of the function parameters schema must be an object."
+    );
+    let named = prompt(serde_json::json!({"tools": invalid, "thinking": chat,
+        "tool_choice": {"type": "function", "function": {"name": "clock"}}}));
+    assert!(
+        named.contains(r#"{"name": "clock""#) && !named.contains(r#"{"name": "f""#),
+        "{named}"
+    );
+    // A developer message is a system message, and a system message's
+    // billing header is removed (`developer-as-system`, R5).
+    for (role, content) in [
+        ("developer", "Be brief."),
+        (
+            "system",
+            "x-anthropic-billing-header: cc_version=2.1.3;\n  Be brief.",
+        ),
+    ] {
+        let rendered = prompt(serde_json::json!({"thinking": chat, "messages": [
+            {"role": role, "content": content}, {"role": "user", "content": "q"}]}));
+        assert!(
+            rendered.ends_with("<｜System｜>Be brief.<｜User｜>q<｜Assistant｜></think>"),
+            "{role}: {rendered}"
+        );
+    }
     // R6: a forced choice without tools is auto, in thinking mode too.
     let plain = prompt(serde_json::json!({}));
     for extra in [

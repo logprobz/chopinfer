@@ -114,6 +114,27 @@ the decode template with a 256-row workspace header, for each
 its widest row. They admit only ticket schedules of one row group; a
 missing row keeps the ticket baseline.
 
+The 2026-10-31 wide fold evaluation (the `fold_core` lab test
+`dense_wide::gpu_wide_schedules`, synthetic inputs, one GPU per shard)
+compared all four admitted schedules of every key with the served ticket
+at every row each bucket serves, 65 to 128 and 129 to 192: 1024 cases,
+all bitwise equal through eager and graph replays with live and rejected
+rows, and every changed-activation control detected. Timed at the middle
+and widest row of each bucket (15 samples per arm, the ticket symbol
+loaded twice as an A/A arm), weight prefetch at the ticket's column tile
+was faster cold and warm in every key. A row takes it where its cold
+gain exceeded 2% and twice the A/A difference at both timed rows: 13 of
+the 16 keys, 3.9% to 20.7% faster cold. N4096/K1280 keeps the ticket in
+both buckets: at three of its four timed rows the gain (4.9% to 6.8%)
+was within twice the A/A difference (3.9% to 4.4%). N1280/K5120 in the
+128-row bucket missed the rule only at 96 rows (13.6% against twice a
+7.2% A/A difference; 14.5% at 128 rows against 3.8%) and takes prefetch
+too, so each shape keeps one wide schedule and the module change stays
+an exact rename of its entries. The other
+column tile is not adopted; against prefetch at the ticket's tile it was
+mixed and mostly within twice the A/A difference. Served step-time
+acceptance remains required.
+
 Every schedule retains E4M3 ceil-UE8M0 activations, UE8M0 scales per K32,
 four K32 MMAs per K128 chain and ascending F32 reduction. Those policies
 are numerical identity. They cannot be changed by a tuning row.

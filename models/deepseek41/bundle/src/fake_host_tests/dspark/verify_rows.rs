@@ -464,19 +464,19 @@ const CANDIDATE_STAGES: &[(&str, &str)] = &[
 ];
 
 /// The wide verify folds of a target step above the 64-row budget with the
-/// `wide_verify` option, as (projection shape, output-column tile,
-/// launches of each of its admission and compute entries in one step):
-/// every backbone projection on every layer and rank (the shared gate and
-/// up share one entry), and the indexer query on its layers.
-const WIDE_FOLDS: &[(&str, u32, usize)] = &[
-    ("n1280_k5120_g1_single", 32, 160),
-    ("n8192_k1280_g1_single", 64, 160),
-    ("n4096_k1280_g1_single", 64, 32),
-    ("n512_k5120_g1_single", 32, 160),
-    ("n1024_k4096_g2_single", 32, 160),
-    ("n5120_k2048_g1_single", 64, 160),
-    ("n576_k5120_g1_single", 32, 320),
-    ("n5120_k576_g1_single", 64, 160),
+/// `wide_verify` option, as (projection shape, launches of each of its
+/// admission and compute entries in one step): every backbone projection
+/// on every layer and rank (the shared gate and up share one entry), and
+/// the indexer query on its layers.
+const WIDE_FOLDS: &[(&str, usize)] = &[
+    ("n1280_k5120_g1_single", 160),
+    ("n8192_k1280_g1_single", 160),
+    ("n4096_k1280_g1_single", 32),
+    ("n512_k5120_g1_single", 160),
+    ("n1024_k4096_g2_single", 160),
+    ("n5120_k2048_g1_single", 160),
+    ("n576_k5120_g1_single", 320),
+    ("n5120_k576_g1_single", 160),
 ];
 
 /// The Engram projection's matrix tile, which serves its verify rows above
@@ -504,9 +504,24 @@ fn check_dense_folds(observed: &Grids, rows: u32, enabled: bool, what: &str) {
     }
     assert!(folds.is_empty(), "{what}: {folds:?}");
     assert_eq!(wide.len(), 2 * WIDE_FOLDS.len(), "{what}: {wide:?}");
-    for &(shape, tile, launches) in WIDE_FOLDS {
-        let entry = format!(
-            "chop_deepseek41_dense_decode_{shape}_rows256_e4m3_ue8m0_k32x4_f32_f32_n{tile}r1s3w0f0_v1"
+    // The schedule of the narrowest wide bucket holding the step's rows.
+    let bucket = model_deepseek41_contract::verify_bounds::WIDE
+        .into_iter()
+        .find(|&bucket| rows <= bucket)
+        .expect("a wide verify bucket");
+    let bases = crate::sm120::mxfp8_fold::wide_bases(&FLASH, 4).unwrap();
+    for &(shape, launches) in WIDE_FOLDS {
+        let stem = format!("chop_deepseek41_dense_decode_{shape}");
+        let base = bases
+            .iter()
+            .find(|base| base.symbol.starts_with(&format!("{stem}_")))
+            .unwrap_or_else(|| panic!("{what}: no wide base {stem}"));
+        let entry = crate::sm120::mxfp8_fold::wide_entry(&FLASH, base, bucket, bucket)
+            .unwrap()
+            .symbol;
+        assert!(
+            entry.starts_with(&format!("{stem}_rows256_")),
+            "{what}: {entry}"
         );
         let admit = &observed[&format!("{entry}_admit_v1")];
         assert_eq!(admit, &[((rows, 1, 1), launches)].into(), "{what}: {entry}");

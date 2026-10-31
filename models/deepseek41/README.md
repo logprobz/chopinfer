@@ -298,6 +298,25 @@ The route sweep `tp4-dspark-rows192` serves the profile at the package's
 192 verify rows (`--speculative-rows 192`), so its envelope adds every eager
 verify width from 65 to 192 rows.
 
+Eager verify steps of 65 to 192 rows prepare the MoE input, dense input and
+latent window-write ceil quantizers and the shared SwiGLU at the wide verify
+buckets (`verify_bounds::WIDE`: 128 rows and the package's 192, each capped
+by the verify rows), so they launch the decode entries a 64-row step uses.
+The other stages of those steps keep their prefill entries. The HC fusions,
+the query and row norms, the latent query and selected cache, the index
+query, the cached F32 projections, the dense and Engram folds and the MoE
+need kernel, tuning or shared-limit changes to serve more than 64 rows,
+and the chained MoE's intermediate quantizer is selected inside its 64-row
+chain. On 2026-10-31,
+fixed-batch GPU replays at verify widths 64 to 192 (concurrency 16 and 32,
+four to six rows per item, verify capacities 80 to 192) matched the
+previous package bitwise in logits, proposals, acceptance and committed
+state. Under a CUDA trace, the quantizer stages of a 128-row step fell from
+12.6 to 1.2 ms of GPU-busy time per device. The projections after them had
+overlapped those stages and now expose most of that time, so the step fell
+only from 196.3 to 193.9 ms, and a 96-row step from 175.6 to 169.6 ms. This
+is not served step-time acceptance.
+
 Prefill commit projections are batched across prompts. Undrafted pure
 decode joins status once and submits private sampling before collecting it
 on the native result path. Verify and undrafted commits with at least eight

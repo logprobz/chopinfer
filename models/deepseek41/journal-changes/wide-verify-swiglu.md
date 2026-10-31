@@ -20,3 +20,7 @@ device history is identical. Both forms compute each group with the same
 SwiGLU product and ceil arithmetic (the parallel header's group body
 differs only in lane indexing), so codes, scales and row status are
 unchanged.
+
+On 2026-10-31 the journal proof of the SwiGLU commit against the ceil
+quantizer commit was PROVEN with full history coverage: 21 journals
+identical, 2 proven, 23 of 23 fixture histories compared.

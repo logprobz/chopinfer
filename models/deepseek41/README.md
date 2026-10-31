@@ -352,6 +352,32 @@ Fixed-batch GPU replays with both options on, at verify widths 32 to 64
 (concurrency 16 and 32, two to four rows per item, against captures of the
 previous package) and at the five wide configurations, matched bitwise.
 
+The option also runs the head at every decode and verify width of 32 rows
+or fewer in its decode tiles (tuning site `f32.rows.decode`, a module of its
+own so the verify module keeps its bytes): 96 features by 8 rows through 8
+rows, 96 by 16 through 16 and 256 by 32 through 32, each a wave of CTAs that
+streams its features over every chain. The DSpark drafter's head runs the
+head's tiles at its own rows, the decode tiles through 32 rows and the
+verify tile above to the instance's narrow verify rows, in place of its
+bounded reuse, so its proposals keep their bits. The index weights at 33 to
+64 verify rows keep the split route instead of the cached spans. On
+2026-10-31, the kernel lab (one GPU at its 250 W enforced limit, in-job A/A
+controls within 2.5%) measured the head at 240 to 244 us from 2 to 8 rows
+against 262 to 277 us on the served route, 256 to 258 us from 9 to 16 rows
+against 346 to 399 us and 262 to 266 us from 17 to 32 rows against 492 to
+688 us. At one row it took 240 us against 246 to 250 us in three runs, a
+gain near that row's A/A spread. The drafter's head took 0.40 to 0.43 ms at
+35 to 60 rows against 0.89 to 1.35 ms on the bounded reuse, and the index
+weights 14.6 to 14.9 us at 33 to 64 rows against 18.3 to 18.4 us on the
+spans. The lab's comparisons matched the split route bit for bit at every
+tile boundary and at the decode, small verify and drafter head widths from 1
+to 64 rows, on every operand witness, for the lab's tiles and the packaged
+ones. Fixed-batch GPU replays with the option on at verify
+widths 4 to 64 (concurrency 1, 16 and 32, two to six rows per item, against
+captures of the previous package) matched bitwise in logits, proposals,
+acceptance and committed state. The route sweep `tp4-dspark-tiles` serves
+the profile with the option on. This is not served step-time acceptance.
+
 Prefill commit projections are batched across prompts. Undrafted pure
 decode joins status once and submits private sampling before collecting it
 on the native result path. Verify and undrafted commits with at least eight

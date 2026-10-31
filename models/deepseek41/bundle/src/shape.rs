@@ -34,6 +34,10 @@ pub struct Shape {
     /// row fusions, and the drafter's small window writes the parallel
     /// decode ceil entry (the `verify_row_fusions` candidate option).
     pub verify_row_fusions: bool,
+    /// Whether decode and verify steps whose WO_a runs as a status fold
+    /// merge the attention heads and quantize WO_a's input in one launch
+    /// (the `attention_merge_ceil` candidate option).
+    pub attention_merge_ceil: bool,
 }
 
 impl Shape {
@@ -49,6 +53,7 @@ impl Shape {
             f32_row_tiles: false,
             phased_decode_reduce: false,
             verify_row_fusions: false,
+            attention_merge_ceil: false,
         })
     }
 
@@ -85,6 +90,13 @@ impl Shape {
     /// (`model_deepseek41_contract::execution_options::VERIFY_ROW_FUSIONS`).
     pub fn with_verify_row_fusions(mut self, enabled: bool) -> Shape {
         self.verify_row_fusions = enabled;
+        self
+    }
+
+    /// This shape with the quantizing attention merges on or off
+    /// (`model_deepseek41_contract::execution_options::ATTENTION_MERGE_CEIL`).
+    pub fn with_attention_merge_ceil(mut self, enabled: bool) -> Shape {
+        self.attention_merge_ceil = enabled;
         self
     }
 

@@ -25,6 +25,10 @@ pub const PHASED_DECODE_REDUCE: &str = "phased_decode_reduce";
 /// ceil and store, and the drafter's window writes of at most its draft
 /// rows quantize with the parallel decode ceil entry.
 pub const VERIFY_ROW_FUSIONS: &str = "verify_row_fusions";
+/// Candidate: Flash TP4 decode and verify steps whose WO_a runs as a status
+/// fold merge each layer's attention heads and quantize WO_a's input in one
+/// launch, in place of the merge and the row-sliced quantizer.
+pub const ATTENTION_MERGE_CEIL: &str = "attention_merge_ceil";
 pub const DEFAULT_PLANS: usize = 16;
 pub const MAX_PLANS: usize = 64;
 /// The served warmup fits within 512 graph handles per rank, leaving room
@@ -41,10 +45,15 @@ pub struct Options {
     pub f32_row_tiles: bool,
     pub phased_decode_reduce: bool,
     pub verify_row_fusions: bool,
+    pub attention_merge_ceil: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 9] {
+pub fn declarations() -> [ModelOptionV1; 10] {
     [
+        (
+            ATTENTION_MERGE_CEIL,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
         (
             DIAGNOSTIC_STEP_LOGS,
             OptionDefinitionV1::Boolean { default: false },
@@ -140,6 +149,9 @@ impl Options {
             verify_row_fusions: values[VERIFY_ROW_FUSIONS]
                 .as_bool()
                 .expect("checked boolean"),
+            attention_merge_ceil: values[ATTENTION_MERGE_CEIL]
+                .as_bool()
+                .expect("checked boolean"),
         })
     }
 }
@@ -202,6 +214,7 @@ mod tests {
             f32_row_tiles: false,
             phased_decode_reduce: false,
             verify_row_fusions: false,
+            attention_merge_ceil: false,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -221,6 +234,7 @@ mod tests {
             (F32_ROW_TILES.into(), "true".into()),
             (PHASED_DECODE_REDUCE.into(), "true".into()),
             (VERIFY_ROW_FUSIONS.into(), "true".into()),
+            (ATTENTION_MERGE_CEIL.into(), "true".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -235,6 +249,7 @@ mod tests {
                 f32_row_tiles: true,
                 phased_decode_reduce: true,
                 verify_row_fusions: true,
+                attention_merge_ceil: true,
             }
         );
         assert!(!declaration.is_qualified(&resolved));
@@ -255,6 +270,7 @@ mod tests {
             (F32_ROW_TILES, "1"),
             (PHASED_DECODE_REDUCE, "1"),
             (VERIFY_ROW_FUSIONS, "1"),
+            (ATTENTION_MERGE_CEIL, "1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),
         ] {

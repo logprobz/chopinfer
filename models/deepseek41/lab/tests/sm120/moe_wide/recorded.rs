@@ -117,6 +117,8 @@ pub struct Arm {
     pub prefix: Vec<Launch>,
     pub calls: Vec<Launch>,
     pub units: Vec<Unit>,
+    /// Each lowered stage's calls, by stage name (`Route(0)`, ...).
+    pub scopes: Vec<(String, std::ops::Range<usize>)>,
     pub roles: BTreeMap<String, View>,
     pub mutable: Vec<View>,
 }
@@ -263,10 +265,13 @@ impl Arm {
         let prefix = decode(&doc["prefix"])?;
         let calls = decode(&doc["calls"])?;
         // Legacy route storage includes a spare count and a prefill-sized
-        // sorted tail. Both algorithms publish this same bounded metadata.
+        // sorted tail. Both algorithms publish this same bounded metadata:
+        // a 64-row tile per active expert through 64 rows, and above them
+        // the routes plus each expert's padding to whole tiles.
+        let sorted = (rows * 6 + 384 * 63).next_multiple_of(64).max(384 * 64);
         for (name, bytes) in [
             ("scratch.route_counts", 384 * 4),
-            ("sorted_rows", 384 * 64 * 4),
+            ("sorted_rows", u64::from(sorted) * 4),
         ] {
             let view = *roles.get(name).ok_or("missing routed metadata")?;
             roles.insert(name.into(), pool.subspan(view, 0, bytes)?);
@@ -306,14 +311,50 @@ impl Arm {
         if prefix.is_empty() || fork != 1 || join != 1 || coverage.iter().any(|&n| n != 1) {
             return Err("graph does not cover one complete fork/join MoE".into());
         }
+        let scopes = array(&doc["scopes"])?
+            .iter()
+            .map(|scope| {
+                let start = number(&scope["start"])? as usize;
+                let end = number(&scope["end"])? as usize;
+                if start > end || end > calls.len() {
+                    return Err("invalid stage scope".into());
+                }
+                Ok((string(&scope["stage"])?.to_owned(), start..end))
+            })
+            .collect::<LabResult<Vec<_>>>()?;
+        if scopes.iter().map(|(_, r)| r.len()).sum::<usize>() != calls.len() {
+            return Err("stage scopes do not cover the calls once".into());
+        }
         Ok(Self {
             rows,
             prefix,
             calls,
             units,
+            scopes,
             roles,
             mutable,
         })
+    }
+    /// The calls of the stage named `stage`.
+    pub fn scope(&self, stage: &str) -> LabResult<&[Launch]> {
+        self.scopes
+            .iter()
+            .find(|(name, _)| name == stage)
+            .map(|(_, range)| &self.calls[range.clone()])
+            .ok_or_else(|| format!("missing stage scope {stage}"))
+    }
+    /// The symbols each routed expert stage launches, in stage order.
+    pub fn expert_symbols(&self) -> LabResult<Vec<Vec<&str>>> {
+        EXPERT_STAGES
+            .iter()
+            .map(|stage| {
+                Ok(self
+                    .scope(stage)?
+                    .iter()
+                    .map(|c| c.symbol.as_str())
+                    .collect())
+            })
+            .collect()
     }
     pub fn role(&self, name: &str) -> LabResult<View> {
         self.roles
@@ -321,4 +362,76 @@ impl Arm {
             .copied()
             .ok_or_else(|| format!("missing semantic role {name}"))
     }
+}
+
+/// The routed expert stages: gate/up, down and the routed sum.
+const EXPERT_STAGES: [&str; 3] = ["ExpertsGateUp(0)", "ExpertsDown(0)", "RoutedSum(0)"];
+
+/// Above 64 rows a pair must compare the 8192-row expert chains (the
+/// reference: gate/up chain and its ceil quantizer, down chain, routed sum)
+/// with the backbone bank's wide direct queues (the candidate: pack,
+/// absorbing gate queue and finisher, two-strip down queue, down finisher,
+/// all compiled at one capacity of at least `rows`). Two exports of the
+/// same selection would otherwise compare a path with itself. Pairs of 64
+/// rows or fewer compare revisions and are not checked here.
+pub fn check_wide_pair(
+    rows: u32,
+    reference: &[Vec<&str>],
+    candidate: &[Vec<&str>],
+) -> LabResult<()> {
+    if rows <= 64 {
+        return Ok(());
+    }
+    let chain = match reference {
+        [gate, down, sum] => {
+            let chain = |s: &str, kind: &str| {
+                s.starts_with("deepseek41_chop_moe_chain_mxfp4_a8ceil_before_")
+                    && s.contains(kind)
+                    && s.contains("_e384k6_")
+                    && s.contains("_t8192_")
+            };
+            matches!(gate.as_slice(), [g, q] if chain(g, "_gateup_")
+                && q.starts_with("chop_deepseek41_moe_ceil_w"))
+                && matches!(down.as_slice(), [d] if chain(d, "_down_"))
+                && matches!(sum.as_slice(), [s] if s.starts_with("chop_moe_deepseek41_sum_add_")
+                    && s.contains("_l384_t8192_"))
+        }
+        _ => false,
+    };
+    if !chain {
+        return Err(format!(
+            "{rows} rows: the reference does not run the 8192-row expert chains: {reference:?}"
+        ));
+    }
+    let capacity = match candidate {
+        [gate, ..] => gate
+            .first()
+            .and_then(|s| s.strip_prefix("chop_deepseek41_moe_wide_t"))
+            .and_then(|s| s.strip_suffix("_e384_k6_pack_v1"))
+            .and_then(|t| t.parse::<u32>().ok()),
+        _ => None,
+    };
+    let wide = capacity.is_some_and(|t| {
+        let bank = format!("t{t}_e384_k6_");
+        let named = |s: &str, prefix: &str, stage: &str| {
+            s.strip_prefix(prefix)
+                .and_then(|s| s.strip_prefix(bank.as_str()))
+                .is_some_and(|s| s.starts_with(stage))
+        };
+        t >= rows
+            && matches!(candidate, [gate, down, sum]
+                if matches!(gate.as_slice(), [_, g, f]
+                    if named(g, "chop_deepseek41_moe_absorb_lanes_", "gate_small")
+                        && named(f, "chop_deepseek41_moe_bandwidth_direct_", "gate_finish"))
+                && matches!(down.as_slice(), [d]
+                    if named(d, "chop_deepseek41_moe_strip2_", "down_small"))
+                && matches!(sum.as_slice(), [s]
+                    if named(s, "chop_deepseek41_moe_floor_", "down_finish")))
+    });
+    if !wide {
+        return Err(format!(
+            "{rows} rows: the candidate does not run the wide direct queues: {candidate:?}"
+        ));
+    }
+    Ok(())
 }

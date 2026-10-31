@@ -98,6 +98,11 @@ impl<'a> Graphs<'a> {
             .map_err(|e| e.to_string())?;
         self.session.stream.synchronize().map_err(|e| e.to_string())
     }
+    /// Graph `index`: serial reference and candidate (0, 1), overlapped
+    /// (2, 3), and the candidate with its shared join dropped (4).
+    pub fn graph(&self, index: usize) -> &GraphExec {
+        &self.graphs[index]
+    }
     pub fn close(mut self) -> LabResult<usize> {
         self.session
             .context

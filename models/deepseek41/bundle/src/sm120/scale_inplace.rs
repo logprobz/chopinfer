@@ -99,13 +99,24 @@ pub fn cubins() -> Result<Vec<(&'static str, CubinSpec)>, String> {
 
 /// Each encoded consumer declares its exact raw counterpart and width.
 /// This closed map is also the scale-layout declaration used at binding.
+/// The wide direct queues' encoded entries share their module with their
+/// raw twins (`moe_direct_wide`).
 fn variants() -> &'static BTreeMap<(String, u32), String> {
     static MAP: LazyLock<BTreeMap<(String, u32), String>> = LazyLock::new(|| {
         let mut map = BTreeMap::new();
-        for (family, spec) in cubins().expect("Flash scale consumer catalog") {
-            if !matches!(family, GATE_FAMILY | DOWN_FAMILY) {
-                continue;
-            }
+        let wide = super::moe_direct_wide::cubins(&[FLASH])
+            .expect("Flash wide direct MoE catalog")
+            .into_iter()
+            .map(|(_, mut spec)| {
+                spec.entries.retain(|e| e.symbol.contains("_scale_tiles_w"));
+                spec
+            });
+        let served = cubins()
+            .expect("Flash scale consumer catalog")
+            .into_iter()
+            .filter(|(family, _)| matches!(*family, GATE_FAMILY | DOWN_FAMILY))
+            .map(|(_, spec)| spec);
+        for spec in served.chain(wide) {
             for entry in spec.entries {
                 let (base, width) = entry
                     .symbol

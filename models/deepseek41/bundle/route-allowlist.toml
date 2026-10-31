@@ -1309,7 +1309,7 @@ family = "moe_router_finish"
 entry = "moe_router_finish/unfused/chop_moe_sqrt_softplus_row_bias_route_count_e384l384k6_t8192_p64_v1"
 symbol = "chop_moe_sqrt_softplus_row_bias_route_count_e384l384k6_t8192_p64_v1"
 rows = [[65, 192]]
-reason = "Direct MoE buckets fuse the router finish through 64 verify rows; eager verify steps of 65 to 192 rows at the package's verify rows run the unfused router before the 8192-row expert chains"
+reason = "Direct MoE buckets fuse the router finish through 64 verify rows; eager verify steps of 65 to 192 rows at the package's verify rows run the unfused router before the 8192-row expert chains, or before the wide direct expert queues with the wide_verify option"
 task = "WIDE-VERIFY-moe"
 
 [[allow]]
@@ -1319,7 +1319,7 @@ family = "moe_router_finish"
 entry = "moe_router_finish/unfused/chop_moe_sqrt_softplus_row_bias_route_scatter_e384l384k6_t8192_p64_v1"
 symbol = "chop_moe_sqrt_softplus_row_bias_route_scatter_e384l384k6_t8192_p64_v1"
 rows = [[65, 192]]
-reason = "Direct MoE buckets fuse the router finish through 64 verify rows; eager verify steps of 65 to 192 rows at the package's verify rows run the unfused router before the 8192-row expert chains"
+reason = "Direct MoE buckets fuse the router finish through 64 verify rows; eager verify steps of 65 to 192 rows at the package's verify rows run the unfused router before the 8192-row expert chains, or before the wide direct expert queues with the wide_verify option"
 task = "WIDE-VERIFY-moe"
 
 [[allow]]
@@ -1329,7 +1329,7 @@ family = "moe_router_finish"
 entry = "moe_router_finish/unfused/chop_moe_sqrt_softplus_row_bias_route_select_e384l384k6_t8192_p64_v1"
 symbol = "chop_moe_sqrt_softplus_row_bias_route_select_e384l384k6_t8192_p64_v1"
 rows = [[65, 192]]
-reason = "Direct MoE buckets fuse the router finish through 64 verify rows; eager verify steps of 65 to 192 rows at the package's verify rows run the unfused router before the 8192-row expert chains"
+reason = "Direct MoE buckets fuse the router finish through 64 verify rows; eager verify steps of 65 to 192 rows at the package's verify rows run the unfused router before the 8192-row expert chains, or before the wide direct expert queues with the wide_verify option"
 task = "WIDE-VERIFY-moe"
 
 [[allow]]

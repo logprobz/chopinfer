@@ -185,3 +185,243 @@ fn the_wide_router_family_loads_only_with_a_wide_tp4_budget() {
     assert_eq!(specs.len(), 1);
     assert_eq!(specs[0].1.entries.len(), 2);
 }
+
+/// An instance loads the wide direct MoE module exactly where it prepares
+/// a wide verify bucket: TP4 instances with the `wide_verify` option that
+/// serve verify steps above 64 rows, each row count from 65 to its verify
+/// rows.
+#[test]
+fn instances_load_the_wide_direct_family_only_with_a_wide_bucket() {
+    let cubin = crate::sm120::moe_direct_wide::CUBIN;
+    let set = model_deepseek41_contract::moe::expert_sets(&FLASH)[0];
+    for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
+        let shape = Shape::new(&FLASH, ranks).unwrap();
+        for rows in [32, 64, 65, 128, 192] {
+            let shape = shape.with_verify_rows(rows);
+            assert!(!crate::Kernels::loads(cubin, &shape));
+            assert!(crate::sm120::moe_direct::wide_rows(&shape, set).is_empty());
+            let wide = shape.with_wide_verify(true);
+            let enabled = ranks == Ranks::TP4 && rows > 64;
+            assert_eq!(crate::Kernels::loads(cubin, &wide), enabled);
+            assert_eq!(
+                crate::sm120::moe_direct::wide_rows(&wide, set),
+                if enabled {
+                    (65..=rows).collect()
+                } else {
+                    Vec::new()
+                }
+            );
+        }
+    }
+}
+
+/// With the `wide_verify` option, verify steps of 65 to 192 rows through
+/// the wide direct queues keep the router projection and routes of the
+/// 8192-row expert chains launch for launch, then bind the pack, the
+/// absorbing gate queue and its finisher, the two-strip down queue and the
+/// down finisher at the package's verify rows, each pointer within its
+/// view and every workspace plane within the workspace, which the wide
+/// buckets do not grow.
+#[test]
+fn every_wide_verify_step_keeps_the_served_routes_and_binds_the_wide_queues() {
+    let shape = Shape::new(&FLASH, Ranks::TP4)
+        .unwrap()
+        .with_verify_rows(192)
+        .with_wide_verify(true);
+    let kernels = crate::Kernels::new(&shape).unwrap();
+    let set = model_deepseek41_contract::moe::expert_sets(&FLASH)[0];
+    let wide = Ops::prepare_set(&kernels, &shape, KvStorage::Native, set);
+    let mut reference = Ops::prepare_set(&kernels, &shape, KvStorage::Native, set);
+    reference.moe.as_mut().unwrap().retain_reference_in_test();
+    let largest = wide
+        .moe
+        .as_ref()
+        .unwrap()
+        .direct(Phase::Verify {
+            rows: 192,
+            items: 32,
+        })
+        .unwrap()
+        .info
+        .workspace;
+    assert!(largest < reference.workspace());
+    assert_eq!(wide.workspace(), reference.workspace());
+    let rank = 1;
+    let mut b = buffers(&shape, rank);
+    b.workspace.length = wide.workspace();
+    b.sorted_rows.length = wide.moe.as_ref().unwrap().sorted_rows_bytes();
+    assert_eq!(
+        b.sorted_rows.length,
+        reference.moe.as_ref().unwrap().sorted_rows_bytes()
+    );
+    for (index, name) in [
+        "ffn.gate.weight",
+        "ffn.gate.weight.f32_domain",
+        "ffn.gate.bias",
+        "ffn.gate.bias_vl",
+        "ffn.experts.gate_up.weight",
+        "ffn.experts.gate_up.scale",
+        "ffn.experts.down.weight",
+        "ffn.experts.down.scale",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        b.views.insert(
+            layer_view(0, name),
+            DeviceBufferSpanV1::new(
+                BundleDeviceBufferHandleV1::from_parts(10000 + index as u32, rank + 1),
+                0,
+                1 << 32,
+            ),
+        );
+    }
+    let live = DeviceBufferSpanV1::new(BundleDeviceBufferHandleV1::from_parts(999, rank + 1), 0, 4);
+    let inputs = DeviceInputs {
+        live_tokens: live,
+        ..DeviceInputs::within(
+            PhaseArena {
+                arena: live,
+                block_tables: live,
+            },
+            &InputLayout::decode_within(Items::new(1).unwrap()),
+        )
+    };
+    let peers = [b.clone()];
+    let entry = crate::sm120::moe_direct_wide::entry(&FLASH).unwrap();
+    for rows in 65..=192 {
+        let phase = Phase::Verify {
+            rows,
+            items: rows.div_ceil(6),
+        };
+        assert!(reference.moe.as_ref().unwrap().direct(phase).is_none());
+        let direct = wide.moe.as_ref().unwrap().direct(phase).unwrap();
+        assert!(!direct.fuses_router() && !direct.has(crate::ops::moe::direct::Point::Route));
+        for width in [1, 2, 4] {
+            assert!(direct.inplace_scales(true, width));
+            assert!(direct.inplace_scales(false, width));
+        }
+        let lower = |ops: &Ops, stage| {
+            let lowering = Lowering {
+                prefill_row_origin: None,
+                shape: &shape,
+                ops,
+                buffers: &b,
+                peers: &peers,
+                inputs: &inputs,
+                rank,
+                kv: KvExtent {
+                    storage: KvStorage::Native,
+                    pages: 1,
+                    extent: Extent {
+                        served: 1,
+                        bucket: 32,
+                        verify_rows: rows,
+                    },
+                    sequences: 1,
+                    max_pages: 1,
+                },
+                head_rows: 1,
+                prefill_hc_fusion: true,
+            };
+            lowering.stage(phase, stage).unwrap().unwrap()
+        };
+        let described = |calls: &[Lowered]| {
+            calls
+                .iter()
+                .map(|c| {
+                    let arguments = c
+                        .launch
+                        .arguments
+                        .0
+                        .iter()
+                        .map(|a| match a {
+                            Argument::DeviceBuffer(h) => {
+                                format!("{:?}", c.launch.bindings.get(*h).unwrap())
+                            }
+                            other => format!("{other:?}"),
+                        })
+                        .collect::<Vec<_>>();
+                    (c.launch.symbol.clone(), c.launch.plan, arguments)
+                })
+                .collect::<Vec<_>>()
+        };
+        for stage in [Stage::Project(0, "moe.router"), Stage::Route(0)] {
+            assert_eq!(
+                described(&lower(&wide, stage)),
+                described(&lower(&reference, stage))
+            );
+        }
+        let gate = lower(&wide, Stage::ExpertsGateUp(0));
+        let symbols = gate
+            .iter()
+            .map(|c| c.launch.symbol.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            symbols,
+            [
+                "chop_deepseek41_moe_wide_t192_e384_k6_pack_v1",
+                "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_v1",
+                "chop_deepseek41_moe_bandwidth_direct_t192_e384_k6_gate_finish_v1",
+            ]
+        );
+        let down = lower(&wide, Stage::ExpertsDown(0));
+        assert_eq!(down.len(), 1);
+        assert_eq!(
+            down[0].launch.symbol,
+            "chop_deepseek41_moe_strip2_t192_e384_k6_down_small_v1"
+        );
+        let sum = lower(&wide, Stage::RoutedSum(0));
+        assert_eq!(sum.len(), 1);
+        assert_eq!(
+            sum[0].launch.symbol,
+            "chop_deepseek41_moe_floor_t192_e384_k6_down_finish_v1"
+        );
+        let scratch = argument(&gate[0], 3);
+        let tickets = argument(&gate[0], 4);
+        assert_eq!(
+            scratch,
+            DeviceBufferSpanV1::new(
+                b.workspace.buffer,
+                b.workspace.offset,
+                entry.workspace_bytes(rows).unwrap()
+            )
+        );
+        assert_eq!(tickets, argument(&gate[2], 7));
+        assert_eq!(tickets.length, 768);
+        assert_eq!(
+            tickets.offset,
+            scratch.offset + scratch.length.next_multiple_of(256)
+        );
+        assert!(tickets.offset + tickets.length <= b.workspace.offset + b.workspace.length);
+        let prefix = |span: DeviceBufferSpanV1, length| DeviceBufferSpanV1 { length, ..span };
+        assert_eq!(
+            argument(&gate[0], 0),
+            prefix(b.scratch.route_counts, 384 * 4)
+        );
+        assert_eq!(
+            argument(&gate[0], 1),
+            prefix(b.scratch.active_experts, 385 * 4)
+        );
+        let sorted = argument(&gate[1], 5);
+        assert_eq!(
+            sorted.length,
+            u64::from((rows * 6 + 384 * 63).next_multiple_of(64)) * 4
+        );
+        assert_eq!(sorted.offset, b.sorted_rows.offset);
+        for call in gate.iter().chain(&down).chain(&sum) {
+            assert_eq!(call.launch.rows, rows);
+            for (index, arg) in call.launch.arguments.0.iter().enumerate() {
+                if let Argument::DeviceBuffer(h) = arg {
+                    let span = call.launch.bindings.get(*h).unwrap();
+                    if span.buffer == b.workspace.buffer {
+                        assert!(span.offset >= b.workspace.offset, "{index}");
+                        assert!(
+                            span.offset + span.length <= b.workspace.offset + b.workspace.length
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

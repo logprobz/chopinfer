@@ -183,9 +183,10 @@ mod latent_window_bf16;
 mod latent_window_stage;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 pub(crate) mod moe;
-mod moe_direct;
+pub(crate) mod moe_direct;
 #[allow(dead_code, reason = "the build script compiles the locked entries")]
 pub(crate) mod moe_direct_kernels;
+pub(crate) mod moe_direct_wide;
 #[allow(dead_code, reason = "the build script uses the entry declarations")]
 mod moe_grouped_entries;
 pub mod moe_grouped_prefill;
@@ -1042,6 +1043,12 @@ impl crate::Kernels {
                     && shape.ranks() == 4))
             && (cubin != moe_router64::CUBIN
                 || moe_router64::enabled(shape.geometry, shape.ranks(), shape.verify_rows))
+            && (cubin != moe_direct_wide::CUBIN
+                || !moe_direct::wide_rows(
+                    shape,
+                    model_deepseek41_contract::moe::expert_sets(shape.geometry)[0],
+                )
+                .is_empty())
             && (cubin != f32_verify::CUBIN
                 || f32_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows))
             && (!ceil_split::is_cubin(cubin) || ceil_split::serves(shape.geometry, shape.ranks()))

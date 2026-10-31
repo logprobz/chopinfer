@@ -15,10 +15,15 @@ namespace chop::moe::streamed {
 constexpr int Threads = 128, Columns = 64, Stride = 136;
 struct RawScales { static constexpr bool staged = false; };
 
+// An expert takes at most one route per token, so at most the capacity's
+// rows (`expert_rows`). The 64-row wide queue holds an expert's rows in one
+// pass and traps above 64; the absorbing queues take any count, eight rows
+// at a time, so a capacity above 64 is served by them alone.
 template<class C> struct Layout {
   static constexpr int blocks = C::loop_k / 128;
   static constexpr int header_bytes = ((2 + 4 * C::experts) * 4 + 255) / 256 * 256;
-  static_assert(C::row_tile == 64 && C::tokens_capacity <= 64);
+  static constexpr int expert_rows = C::tokens_capacity;
+  static_assert(C::row_tile == 64 && C::tokens_capacity > 0);
 };
 
 template<class C>

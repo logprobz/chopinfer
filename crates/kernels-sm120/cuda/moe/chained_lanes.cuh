@@ -278,7 +278,7 @@ __device__ void absorbing(const uint8_t* input, const uint8_t* weight,
     const int at = is_wide ? 2 + 2 * C::experts + 2 * slot : 2 + 2 * (slot - wide);
     const int expert = table[at], count = table[at + 1];
     if (expert < 0 || expert >= C::experts || count <= 0 || count > live ||
-        (is_wide ? count <= 8 || count > 64 : count > 8)) __trap();
+        (is_wide ? count <= 8 || count > L::expert_rows : count > 8)) __trap();
     const int first = offsets[expert];
     if (first < 0 || first % 64 || first + count > padded) __trap();
     const uint8_t* item_scales = Scales::template prepare<C>(weight_scales, expert, column, block);

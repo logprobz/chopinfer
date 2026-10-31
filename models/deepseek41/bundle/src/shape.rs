@@ -25,8 +25,9 @@ pub struct Shape {
     /// verify buckets (the `wide_verify` candidate option).
     pub wide_verify: bool,
     /// The direct MoE candidate knobs (the `moe_direct_*` options); none
-    /// serves the qualified path.
-    pub moe_knobs: kernels_sm120::moe::chained::knobs::Knobs,
+    /// serves the qualified path. `sm120::moe_direct` turns them into
+    /// kernel knobs.
+    pub moe_knobs: model_deepseek41_contract::execution_options::MoeDirect,
 }
 
 impl Shape {
@@ -63,12 +64,7 @@ impl Shape {
         mut self,
         options: model_deepseek41_contract::execution_options::MoeDirect,
     ) -> Shape {
-        self.moe_knobs = kernels_sm120::moe::chained::knobs::Knobs {
-            stream: options.stream,
-            keep: options.keep,
-            retire: options.retire,
-            loads: options.loads,
-        };
+        self.moe_knobs = options;
         self
     }
 

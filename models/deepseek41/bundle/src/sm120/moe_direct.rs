@@ -126,7 +126,13 @@ fn knobs_of(shape: &crate::shape::Shape, set: Experts) -> Knobs {
         && super::moe_row_tiles_op::layout(g, shape.ranks(), set)
             == model_deepseek41_contract::weight_plan::RoutedLayout::Lanes
     {
-        shape.moe_knobs
+        let options = shape.moe_knobs;
+        Knobs {
+            stream: options.stream,
+            keep: options.keep,
+            retire: options.retire,
+            loads: options.loads,
+        }
     } else {
         Knobs::default()
     }

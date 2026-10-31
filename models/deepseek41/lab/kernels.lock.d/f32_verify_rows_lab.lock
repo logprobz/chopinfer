@@ -2472,7 +2472,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "6a9c1b1a1d927759202806b245a5c6d0d29f22d2d033304683da18c9faccc4a2",
+    "cubin_sha256": "cf4a1ae08e5c933ae569005c452b2f1a2cd4bba3c1d3223c40ce4a454bd43b42",
     "resources": [
       {
         "symbol": "chop_lab_verify_f32_n32320_k5120_rows_prepare_v1",
@@ -2485,7 +2485,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n32320_k5120_rows_f128_r64_w32x32_s2_k64_v1",
-        "registers": 244,
+        "registers": 246,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2494,7 +2494,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n32320_k5120_rows_f128_r64_w32x32_s4_k32_v1",
-        "registers": 238,
+        "registers": 240,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2503,7 +2503,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n32320_k5120_rows_f128_r64_w32x32_s3_k32_v1",
-        "registers": 217,
+        "registers": 218,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2521,7 +2521,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n32320_k5120_rows_f64_r64_w32x32_s5_k32_v1",
-        "registers": 231,
+        "registers": 234,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2548,7 +2548,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n32320_k5120_rows_f64_r96_w32x32_s3_k32_v1",
-        "registers": 223,
+        "registers": 226,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2557,7 +2557,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n32320_k5120_rows_f128_r64_w16x64_s2_k64_v1",
-        "registers": 203,
+        "registers": 204,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2566,7 +2566,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n32320_k5120_rows_f96_r8_w32x8_s3_k64_v1",
-        "registers": 137,
+        "registers": 138,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2575,7 +2575,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n32320_k5120_rows_f64_r8_w16x8_s5_k32_v1",
-        "registers": 64,
+        "registers": 68,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2584,7 +2584,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n32320_k5120_rows_f48_r8_w16x8_s5_k32_v1",
-        "registers": 64,
+        "registers": 68,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2611,7 +2611,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n32320_k5120_rows_f96_r16_w32x16_s2_k64_v1",
-        "registers": 176,
+        "registers": 178,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2629,7 +2629,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n32320_k5120_rows_f96_r32_w32x32_s3_k32_v1",
-        "registers": 224,
+        "registers": 225,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2719,7 +2719,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n384_k5120_rows_f32_r64_w16x32_s3_k64_z8_v1",
-        "registers": 202,
+        "registers": 200,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2737,7 +2737,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n384_k5120_rows_f64_r64_w32x16_s2_k64_z10_v1",
-        "registers": 176,
+        "registers": 177,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2746,7 +2746,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n384_k5120_rows_f32_r32_w16x16_s3_k128_z8_v1",
-        "registers": 224,
+        "registers": 222,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2827,7 +2827,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n512_k5120_rows_f32_r64_w16x32_s3_k64_z8_v1",
-        "registers": 202,
+        "registers": 200,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2845,7 +2845,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n512_k5120_rows_f64_r64_w32x16_s2_k64_z10_v1",
-        "registers": 176,
+        "registers": 177,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2854,7 +2854,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n512_k5120_rows_f32_r32_w16x16_s3_k128_z8_v1",
-        "registers": 224,
+        "registers": 222,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2935,7 +2935,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n32_k5120_rows_f32_r64_w16x32_s3_k64_z8_v1",
-        "registers": 202,
+        "registers": 200,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2953,7 +2953,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n32_k5120_rows_f64_r64_w32x16_s2_k64_z10_v1",
-        "registers": 182,
+        "registers": 184,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2962,7 +2962,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n32_k5120_rows_f32_r32_w16x16_s3_k128_z8_v1",
-        "registers": 224,
+        "registers": 222,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -2989,7 +2989,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n128_k512_rows_f16_r16_w16x8_s4_k64_z4_v1",
-        "registers": 66,
+        "registers": 67,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -3007,7 +3007,7 @@
       },
       {
         "symbol": "chop_lab_verify_f32_n128_k512_rows_f32_r32_w16x16_s4_k64_z4_v1",
-        "registers": 69,
+        "registers": 70,
         "shared_static_bytes": 1024,
         "local_bytes": 0,
         "stack_bytes": 0,

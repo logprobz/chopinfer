@@ -44,6 +44,23 @@ __device__ __forceinline__ int swizzle(int line, int k) {
   return line*PlaneK + ((((k/8)^rotate)&Mask) | ((k/8)&~Mask))*8 + k%8;
 }
 
+// The position of set bit `n` (from 0) of `mask`, lowest first.
+__device__ __forceinline__ int nth_bit(uint32_t mask, int n) {
+  return __fns(mask, 0, n + 1);
+}
+template<int Words>
+__device__ __forceinline__ int nth_bit(const uint32_t (&mask)[Words], int n) {
+  int base = 0;
+#pragma unroll
+  for (int w = 0; w < Words; ++w) {
+    const int count = __popc(mask[w]);
+    if (n < count) return base + __fns(mask[w], 0, n + 1);
+    n -= count;
+    base += 32;
+  }
+  return base;
+}
+
 // The chain planes of a sliced projection follow the preparation's row
 // domain and components in the workspace, 16-byte aligned:
 // partial[(chain*rows + row)*N + feature], the cached reducer's layout.
@@ -218,21 +235,50 @@ __device__ void run(const float* activation, const uint16_t* weight, void* works
       }
   // A row or weight tile outside the tensor domain keeps the original
   // SIMT chains: FMAs from +0 in K order within each 128-K chain, added
-  // into the output from +0 in chain order.
+  // into the output from +0 in chain order. Every thread takes an equal
+  // share of those outputs wherever they lie: first each tile outside the
+  // weight domain at every live row, then each live row outside the row
+  // domain at the other tiles' features. The unrolled chain issues its
+  // loads ahead of its FMAs without reordering them.
   if (__syncthreads_or(simt)) {
+    static_assert(Features <= 32*16);
+    constexpr int RowWords = (Rows + 31)/32;
+    uint32_t outside = 0, inside = 0, rows_outside[RowWords]{};
+#pragma unroll
+    for (int g = 0; g < Features/16; ++g)
+      if (feature0 + g*16 < N) {
+        if (weight_domain[(feature0 + g*16)/16]) inside |= 1u << g;
+        else outside |= 1u << g;
+      }
+    const int span = min(uint32_t(Rows), live - row0);
+    int lost_rows = 0;
+#pragma unroll
+    for (int w = 0; w < RowWords; ++w) {
+      for (int r = w*32; r < min(span, w*32 + 32); ++r)
+        if (!work.domain[row0 + r]) rows_outside[w] |= 1u << (r - w*32);
+      lost_rows += __popc(rows_outside[w]);
+    }
+    const int tiles = __popc(outside)*16*span, total = tiles + lost_rows*__popc(inside)*16;
 #pragma unroll 1
-    for (int at = thread; at < Features*Rows; at += T::Threads) {
-      const uint32_t row = row0 + at/Features, feature = feature0 + at%Features;
-      if (row >= live || feature >= N || (weight_domain[feature/16] && work.domain[row]))
-        continue;
+    for (int at = thread; at < total; at += T::Threads) {
+      uint32_t row, feature;
+      if (at < tiles) {
+        row = row0 + at%(16*span)/16;
+        feature = feature0 + nth_bit(outside, at/(16*span))*16 + at%16;
+      } else {
+        const int b = at - tiles, width = __popc(inside)*16;
+        row = row0 + nth_bit(rows_outside, b/width);
+        feature = feature0 + nth_bit(inside, b%width/16)*16 + b%16;
+      }
+      const float* a = activation + uint64_t(row)*K;
+      const uint16_t* w = weight + uint64_t(feature)*K;
       float result = 0.f;
 #pragma unroll 1
       for (int base = k0; base < k0+SliceK; base += 128) {
         float partial = 0.f;
-#pragma unroll 1
+#pragma unroll 16
         for (int k = base; k < base+128; ++k)
-          partial = __fmaf_rn(activation[uint64_t(row)*K + k],
-              widen(weight[uint64_t(feature)*K + k]), partial);
+          partial = __fmaf_rn(a[k], widen(w[k]), partial);
         if constexpr (Slices == 1)
           result = __fadd_rn(result, partial);
         else

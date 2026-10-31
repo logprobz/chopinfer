@@ -773,6 +773,22 @@ fn the_transport_maps_requests_as_the_declaration_states() {
         named.contains(r#"{"name": "clock""#) && !named.contains(r#"{"name": "get_weather""#),
         "{named}"
     );
+    // The format sees only the tools the policy keeps, so a named choice of
+    // a valid tool renders even when an omitted strict tool's schema is one
+    // the recipe refuses before its named-choice filtering.
+    let invalid = serde_json::json!([{"type": "function", "function": {
+        "name": "f", "strict": true, "parameters": {"type": "string"}}}, clock]);
+    let refused = prepare(serde_json::json!({"tools": invalid, "thinking": chat})).unwrap_err();
+    assert_eq!(
+        refused.message,
+        "The top level of the function parameters schema must be an object."
+    );
+    let named = prompt(serde_json::json!({"tools": invalid, "thinking": chat,
+        "tool_choice": {"type": "function", "function": {"name": "clock"}}}));
+    assert!(
+        named.contains(r#"{"name": "clock""#) && !named.contains(r#"{"name": "f""#),
+        "{named}"
+    );
     // A developer message is a system message, and a system message's
     // billing header is removed (`developer-as-system`, R5).
     for (role, content) in [

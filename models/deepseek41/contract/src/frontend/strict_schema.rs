@@ -427,15 +427,48 @@ fn invalid_type(value: &FrontendJsonV1, expected: &str) -> String {
     format!("invalid type: {unexpected}, expected {expected}")
 }
 
-/// A float as the recipe's serde_json writes it in a refusal: the shortest
-/// digits that read back, with a signed exponent below 1e-4 and from 1e16.
+/// A float as the recipe's serde_json writes it in a refusal (the `zmij`
+/// crate's format): the shortest digits that read back, in fixed notation
+/// with at least one fraction digit when the decimal exponent is from -5
+/// through 15 (`0.00001`, `100.0`), else in exponent notation with a signed
+/// exponent (`1e-6`, `1.5e+16`).
 fn float_text(float: f64) -> String {
-    let text = format!("{float:?}");
-    match text.split_once('e') {
-        Some((mantissa, exponent)) if !exponent.starts_with('-') => {
-            format!("{mantissa}e+{exponent}")
-        }
-        _ => text,
+    if !float.is_finite() {
+        return float.to_string();
+    }
+    // The shortest digits and the decimal exponent of the first one.
+    let scientific = format!("{:e}", float.abs());
+    let (mantissa, exponent) = scientific
+        .split_once('e')
+        .expect("LowerExp writes an exponent");
+    let exponent: i32 = exponent
+        .parse()
+        .expect("LowerExp writes a decimal exponent");
+    let digits = mantissa.replace('.', "");
+    let sign = if float.is_sign_negative() { "-" } else { "" };
+    if !(-5..=15).contains(&exponent) {
+        let sign_of_exponent = if exponent < 0 { '-' } else { '+' };
+        let fraction = match &digits[1..] {
+            "" => String::new(),
+            rest => format!(".{rest}"),
+        };
+        return format!(
+            "{sign}{}{fraction}e{sign_of_exponent}{}",
+            &digits[..1],
+            exponent.abs()
+        );
+    }
+    if exponent < 0 {
+        // The zeros between the point and the first digit.
+        let zeros = exponent.unsigned_abs() as usize - 1;
+        return format!("{sign}0.{}{digits}", "0".repeat(zeros));
+    }
+    // The digits before the point.
+    let whole = exponent.unsigned_abs() as usize + 1;
+    if whole >= digits.len() {
+        format!("{sign}{digits}{}.0", "0".repeat(whole - digits.len()))
+    } else {
+        format!("{sign}{}.{}", &digits[..whole], &digits[whole..])
     }
 }
 
@@ -1031,5 +1064,146 @@ mod tests {
                 "required": ["a"]})),
             r#"{"type":"object","properties":{"a":{"type":"string"}},"additionalProperties":false,"required":["a"]}"#
         );
+    }
+
+    fn property_refusal(property: &str) -> String {
+        let schema = format!(r#"{{"type": "object", "properties": {{"x": {property}}}}}"#);
+        refused(serde_json::from_str(&schema).unwrap())
+    }
+
+    /// A float in a refusal is spelled as the recipe's serde_json spells
+    /// it: each pair is what the deepseek-recipe 0.2.0 wheel writes for the
+    /// value as an integer's minimum.
+    #[test]
+    fn refusal_floats_are_spelled_as_the_recipe_spells_them() {
+        for (sent, written) in [
+            ("1e-5", "0.00001"),
+            ("1.5e-5", "0.000015"),
+            ("1e-6", "1e-6"),
+            ("-2.5e-6", "-2.5e-6"),
+            ("0.0001", "0.0001"),
+            ("0.1", "0.1"),
+            ("1e15", "1000000000000000.0"),
+            ("9.999e15", "9999000000000000.0"),
+            ("1e16", "1e+16"),
+            ("1.5e16", "1.5e+16"),
+            ("1.2345678901234568e17", "1.2345678901234568e+17"),
+            ("100.0", "100.0"),
+            ("-0.0", "-0.0"),
+            ("123.456", "123.456"),
+            ("1e300", "1e+300"),
+            ("5e-324", "5e-324"),
+            ("18446744073709551616", "1.8446744073709552e+19"),
+        ] {
+            assert_eq!(
+                property_refusal(&format!(r#"{{"type": "integer", "minimum": {sent}}}"#)),
+                format!("invalid type: floating point `{written}`, expected i64"),
+                "{sent}"
+            );
+        }
+    }
+
+    /// A string in a refusal is quoted as Rust's `Debug` quotes it, as the
+    /// wheel quotes it: U+1C89, new in Unicode 16, and an emoji stay as
+    /// they are, while a combining mark, an unassigned code point and
+    /// format characters are escaped.
+    #[test]
+    fn refusal_strings_are_quoted_as_the_recipe_quotes_them() {
+        for (sent, written) in [
+            ("\u{1c89}", "\"\u{1c89}\""),
+            ("\u{1f600}", "\"\u{1f600}\""),
+            ("x'y\"\n", r#""x'y\"\n""#),
+            ("a\u{301}", r#""a\u{301}""#),
+            ("\u{378}", r#""\u{378}""#),
+            ("\u{200b}\u{feff}", r#""\u{200b}\u{feff}""#),
+        ] {
+            let schema = serde_json::json!({"type": "object",
+                "properties": {"x": {"type": "number", "minimum": sent}}});
+            assert_eq!(
+                refused(schema),
+                format!("invalid type: string {written}, expected a JSON number"),
+                "{sent:?}"
+            );
+        }
+    }
+
+    /// A number keeps the digits sent. The recipe's serde_json, without
+    /// arbitrary precision, rounds one beyond u64 to a float
+    /// (`1.8446744073709552e+19`); rounding a client's constant would
+    /// change its schema, so this is a deliberate divergence.
+    #[test]
+    fn numbers_keep_the_digits_sent() {
+        let schema = r#"{"type": "object", "properties": {"x": {"type": "number",
+            "const": 18446744073709551617, "minimum": 1e2}}}"#;
+        let normalized = normalized(serde_json::from_str(schema).unwrap()).unwrap();
+        assert_eq!(
+            normalized["properties"]["x"].to_string(),
+            r#"{"type":"number","const":18446744073709551617,"minimum":1e2}"#
+        );
+    }
+
+    /// A sequence where the recipe reads one single-type node is refused
+    /// once its tag is read; serde would read the rest of it by position.
+    /// The accepted schema language stays narrower, a deliberate
+    /// divergence.
+    #[test]
+    fn positional_nodes_are_refused() {
+        for (node, refusal) in [
+            (
+                r#"["string", null, null, null, null]"#,
+                "invalid type: sequence, expected internally tagged enum JsonSchemaType",
+            ),
+            (
+                r#"["object", {"a": {"type": "string"}}, false, ["a"], null, null]"#,
+                "invalid type: sequence, expected internally tagged enum JsonSchemaType",
+            ),
+            (
+                r#"["date"]"#,
+                "unknown variant `date`, expected one of `object`, `string`, `number`, \
+                 `integer`, `boolean`, `array`, `null`",
+            ),
+            ("[]", "missing field `type`"),
+        ] {
+            assert_eq!(
+                property_refusal(&format!(r#"{{"anyOf": [{node}]}}"#)),
+                format!("field `anyOf`: {refusal}"),
+                "{node}"
+            );
+        }
+    }
+
+    /// The corpus reference quotes strings as these refusals do:
+    /// `RUST_DEBUG_ESCAPES` in `models/deepseek41/frontend_cases.py` lists
+    /// exactly the code points this toolchain's `Debug` writes as
+    /// `\u{...}` besides its named escapes.
+    #[test]
+    fn the_reference_escapes_what_debug_escapes() {
+        let source =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../frontend_cases.py"))
+                .unwrap();
+        let (_, table) = source.split_once("RUST_DEBUG_ESCAPES = \"\"\"").unwrap();
+        let (table, _) = table.split_once("\"\"\"").unwrap();
+        let code = |text: &str| u32::from_str_radix(text, 16).unwrap();
+        let listed: Vec<(u32, u32)> = table
+            .split_whitespace()
+            .map(|range| {
+                let (start, end) = range.split_once('-').unwrap_or((range, range));
+                (code(start), code(end))
+            })
+            .collect();
+        let mut escaped: Vec<(u32, u32)> = Vec::new();
+        for character in (0..=char::MAX as u32).filter_map(char::from_u32) {
+            let text = character.to_string();
+            let named = matches!(character, '\0' | '\t' | '\r' | '\n' | '\\' | '"');
+            if named || format!("{text:?}") == format!("\"{text}\"") {
+                continue;
+            }
+            let point = character as u32;
+            match escaped.last_mut() {
+                Some((_, end)) if *end + 1 == point => *end = point,
+                _ => escaped.push((point, point)),
+            }
+        }
+        assert_eq!(listed, escaped);
     }
 }

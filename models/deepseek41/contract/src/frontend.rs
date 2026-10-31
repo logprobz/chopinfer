@@ -495,6 +495,13 @@ fn offer(
     messages: &mut Vec<Message>,
 ) -> Result<(), FrontendErrorV1> {
     let refuse = |message: String, parameter: &str| FrontendErrorV1::new(message, Some(parameter));
+    // Only the tools the host's tool choice policy keeps reach the format
+    // (runtime-frontend serve.rs), so a named choice checks only its own
+    // tool's schema here. The recipe checks every declared tool's schema
+    // before its named-choice filtering (recipe 0.2.0 client_tools.rs lines
+    // 70-88); checking the omitted ones would need the host to pass them,
+    // which is host and ABI work, so a schema only an omitted tool holds is
+    // not refused.
     let tools = tool_objects(request.tools, &request.tool_objects)?;
     let format = rendered_format(request.response_format.as_ref())
         .map_err(|message| refuse(message, "response_format"))?;

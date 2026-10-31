@@ -337,10 +337,15 @@ impl Arm {
     }
     /// The calls of the stage named `stage`.
     pub fn scope(&self, stage: &str) -> LabResult<&[Launch]> {
+        Ok(&self.calls[self.scope_range(stage)?])
+    }
+
+    /// The indices in `calls` of a lowered stage's calls.
+    pub fn scope_range(&self, stage: &str) -> LabResult<std::ops::Range<usize>> {
         self.scopes
             .iter()
             .find(|(name, _)| name == stage)
-            .map(|(_, range)| &self.calls[range.clone()])
+            .map(|(_, range)| range.clone())
             .ok_or_else(|| format!("missing stage scope {stage}"))
     }
     /// The symbols each routed expert stage launches, in stage order.

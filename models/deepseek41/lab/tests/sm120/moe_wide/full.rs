@@ -223,6 +223,14 @@ const SEMANTIC: &[&str] = &[
     "scratch.shared_row_status",
 ];
 
+/// Each semantic role of `arm`, by name.
+pub(super) fn snapshot(pool: &Pool<'_>, arm: &Arm) -> LabResult<Vec<(&'static str, Vec<u8>)>> {
+    SEMANTIC
+        .iter()
+        .map(|&name| Ok((name, pool.read(arm.role(name)?)?)))
+        .collect()
+}
+
 fn same(label: &str, a: &[u8], b: &[u8]) -> LabResult<()> {
     if a != b {
         let at = a.iter().zip(b).position(|(a, b)| a != b);

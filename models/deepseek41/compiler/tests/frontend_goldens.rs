@@ -18,7 +18,7 @@ use runtime_frontend::{BundleChatStateV1, PromptModeV1};
 use runtime_server::{
     FrontendChatRequestV1, FrontendContentPartV1, FrontendJsonV1, FrontendMediaPartKindV1,
     FrontendMediaPartV1, FrontendMessageV1, FrontendRoleV1, FrontendToolCallV1,
-    FrontendToolChoiceV1, FrontendToolV1, ServerFrontendV1,
+    FrontendToolChoiceV1, FrontendToolV1, PromptSegmentV1, ServerFrontendV1,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -203,9 +203,25 @@ fn the_port_reproduces_every_vendor_pair_byte_for_byte() {
             })
             .unwrap_or_else(|error| panic!("pair {number}: {error}"));
         let expected = String::from_utf8(read(&format!("test_output_{number}.txt"))).unwrap();
-        assert_eq!(prompt, expected, "pair {number}");
+        assert_eq!(prompt.text(), expected, "pair {number}");
         assert_eq!(order, (0..images).collect::<Vec<_>>(), "pair {number}");
     }
+}
+
+/// The text of a prepared chat without media: its segments joined, special
+/// segments included. The declaration names its special tokens, so the
+/// transport hands the backend the render's segments.
+fn prepared_text(prompt: runtime_server::PreparedPrompt) -> String {
+    let runtime_server::PreparedPrompt::SegmentedChat(segments) = prompt else {
+        panic!("a chat without media is prepared as segments: {prompt:?}");
+    };
+    segments
+        .into_iter()
+        .map(|segment| match segment {
+            PromptSegmentV1::Text(text) | PromptSegmentV1::Special(text) => text,
+            PromptSegmentV1::Media(_) => panic!("a chat without media has no media segment"),
+        })
+        .collect()
 }
 
 fn request(messages: Vec<FrontendMessageV1>) -> FrontendChatRequestV1 {
@@ -346,11 +362,11 @@ fn the_served_format_renders_the_pairs_it_serves() {
         1024,
     )
     .unwrap_or_else(|error| panic!("pair 2 with prefix: {}", error.message));
-    let runtime_server::PreparedPrompt::RenderedChat(prompt) = prepared.prompt else {
-        panic!("pair 2 renders text");
-    };
     let expected = String::from_utf8(read("test_output_2.txt")).unwrap();
-    assert_eq!(prompt, expected.strip_suffix(EOS).unwrap());
+    assert_eq!(
+        prepared_text(prepared.prompt),
+        expected.strip_suffix(EOS).unwrap()
+    );
     // Pair 5's images need a declaration that serves images.
     let error = frontend.render_chat(served_request(5)).unwrap_err();
     assert!(
@@ -384,9 +400,7 @@ fn a_continued_turn_of_reasoning_alone_leaves_its_reasoning_open() {
             1024,
         )
         .unwrap_or_else(|error| panic!("{body}: {}", error.message));
-        let runtime_server::PreparedPrompt::RenderedChat(prompt) = prepared.prompt else {
-            panic!("{body} renders text");
-        };
+        let prompt = prepared_text(prepared.prompt);
         let state = runtime_frontend::BundleChatStateV1::from_state(&prepared.chat.unwrap().state)
             .unwrap()
             .reasoning_open();
@@ -828,7 +842,7 @@ fn the_transport_maps_requests_as_the_declaration_states() {
         .unwrap_or_else(|error| panic!("{extra}: {}", error.message))
         .prompt
     {
-        runtime_server::PreparedPrompt::RenderedChat(prompt) => prompt,
+        prompt @ runtime_server::PreparedPrompt::SegmentedChat(_) => prepared_text(prompt),
         other => panic!("{extra}: {other:?}"),
     };
     let json_object = prompt(serde_json::json!({"response_format": {"type": "json_object"}}));
@@ -976,12 +990,60 @@ fn the_transport_maps_requests_as_the_declaration_states() {
     assert_eq!(error.parameter.as_deref(), Some("thinking"));
 }
 
+/// An ordinary token's ID in [`generated`].
+const ORDINARY_ID: u32 = 100;
+
+/// The tokens a model generates `text` as: each ID-only marker it spells
+/// (`<think>`, `</think>`, `｜DSML｜`) one token of that marker's ID, and
+/// the bytes between them ordinary tokens, cut after each byte offset in
+/// `cuts`.
+fn generated(
+    descriptor: &runtime_frontend::FrontendDescriptorV1,
+    text: &str,
+    cuts: &[usize],
+) -> Vec<(u32, Vec<u8>)> {
+    let vocabulary = &descriptor.vocabulary;
+    let markers: Vec<(&str, u32)> = vocabulary
+        .boundary_tokens
+        .iter()
+        .filter(|token| vocabulary.id_only_markers.contains(&token.text))
+        .map(|token| (token.text.as_str(), token.id))
+        .collect();
+    let bytes = text.as_bytes();
+    let (mut tokens, mut ordinary, mut at) = (Vec::new(), Vec::new(), 0);
+    while at < bytes.len() {
+        if let Some((marker, id)) = markers
+            .iter()
+            .find(|(marker, _)| bytes[at..].starts_with(marker.as_bytes()))
+        {
+            if !ordinary.is_empty() {
+                tokens.push((ORDINARY_ID, std::mem::take(&mut ordinary)));
+            }
+            tokens.push((*id, marker.as_bytes().to_vec()));
+            at += marker.len();
+            continue;
+        }
+        ordinary.push(bytes[at]);
+        at += 1;
+        if cuts.contains(&at) {
+            tokens.push((ORDINARY_ID, std::mem::take(&mut ordinary)));
+        }
+    }
+    if !ordinary.is_empty() {
+        tokens.push((ORDINARY_ID, ordinary));
+    }
+    tokens
+}
+
 /// A calls block opens after any run of newlines before its open, including
 /// none, and the open drops them, as deepseek-recipe 0.2.0's stream parser
 /// reads it (output_parser.rs lines 326-334): the content or reasoning
-/// before it, then the call, whole and at every byte split. A DSML marker
-/// that does not open a calls block is refused, as the vendor parser
-/// refuses it in content (encoding.py lines 981-983).
+/// before it, then the call, whole and at every byte split of the ordinary
+/// tokens between the DSML tokens. A DSML marker that does not open a calls
+/// block is refused, as the vendor parser refuses it in content (encoding.py
+/// lines 981-983). The parser reads DSML only from its token ID, as the
+/// recipe matches it (output_parser.rs lines 74-94), so the same text
+/// generated as ordinary tokens is content.
 #[test]
 fn a_calls_block_opens_after_any_run_of_newlines() {
     use runtime_frontend::{
@@ -991,38 +1053,31 @@ fn a_calls_block_opens_after_any_run_of_newlines() {
     let descriptor = std::sync::Arc::new(descriptor());
     let invoke = "<｜DSML｜ invoke name=\"f\">\n<｜DSML｜ parameter name=\"x\" string=\"true\">v</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n";
     let parse = |text: &str, mode| runtime_frontend::parse_completion_v1(&descriptor, text, mode);
-    // Each way of streaming `text`: in two pieces split at every byte, and
-    // one byte per token.
-    let streamed = |text: &str, mode| {
-        let bytes = text.as_bytes();
-        let mut splits: Vec<Vec<&[u8]>> = (0..=bytes.len())
-            .map(|split| vec![&bytes[..split], &bytes[split..]])
-            .collect();
-        splits.push(bytes.chunks(1).collect());
-        splits
+    let decode = |tokens: Vec<(u32, Vec<u8>)>, mode| {
+        let mut decoder = CompletionDecoderV1::new(
+            std::sync::Arc::clone(&descriptor),
+            mode,
+            DecoderLimitsV1::declared(&descriptor),
+        );
+        let mut updates = Vec::new();
+        for (ordinal, (id, bytes)) in tokens.into_iter().enumerate() {
+            updates.extend(decoder.push(GeneratedTokenV1::new(ordinal as u64, id, bytes))?);
+        }
+        updates
             .into_iter()
-            .map(|parts| {
-                let mut decoder = CompletionDecoderV1::new(
-                    std::sync::Arc::clone(&descriptor),
-                    mode,
-                    DecoderLimitsV1::declared(&descriptor),
-                );
-                let mut updates = Vec::new();
-                for (ordinal, part) in parts.iter().filter(|part| !part.is_empty()).enumerate() {
-                    updates.extend(decoder.push(GeneratedTokenV1::new(
-                        ordinal as u64,
-                        100,
-                        part.to_vec(),
-                    ))?);
-                }
-                updates
-                    .into_iter()
-                    .find_map(|update| match update {
-                        CompletionUpdateV1::Finished(done) => Some(done),
-                        _ => None,
-                    })
-                    .ok_or_else(|| "no finish".to_owned())
+            .find_map(|update| match update {
+                CompletionUpdateV1::Finished(done) => Some(done),
+                _ => None,
             })
+            .ok_or_else(|| "no finish".to_owned())
+    };
+    // Each way of streaming `text`: its ordinary bytes in two pieces split
+    // at every byte, and one byte per token.
+    let streamed = |text: &str, mode| {
+        let mut cuts: Vec<Vec<usize>> = (0..=text.len()).map(|split| vec![split]).collect();
+        cuts.push((1..=text.len()).collect());
+        cuts.into_iter()
+            .map(|cuts| decode(generated(&descriptor, text, &cuts), mode))
             .collect::<Vec<_>>()
     };
     for lead in ["", "\n", "\n\n", "\n\n\n"] {
@@ -1041,6 +1096,17 @@ fn a_calls_block_opens_after_any_run_of_newlines() {
                 assert_eq!(done.completion.as_ref(), Some(&called), "{whole:?}");
                 assert_eq!(done.reason, CompletionFinishV1::ToolCalls, "{whole:?}");
             }
+            // Generated as ordinary tokens, the calls block is text.
+            let done = decode(vec![(ORDINARY_ID, whole.as_bytes().to_vec())], mode)
+                .unwrap_or_else(|error| panic!("{whole:?}: {error}"));
+            assert_eq!(done.reason, CompletionFinishV1::Stop, "{whole:?}");
+            let completion = done.completion.unwrap();
+            assert!(completion.tool_calls.is_empty(), "{whole:?}");
+            assert_eq!(
+                completion.reasoning_content.unwrap_or_default() + &completion.content,
+                whole.strip_suffix(EOS).unwrap(),
+                "{whole:?}"
+            );
         }
         for whole in [
             format!("a{lead}{invoke}{EOS}"),
@@ -1055,7 +1121,7 @@ fn a_calls_block_opens_after_any_run_of_newlines() {
 }
 
 /// Generation that ends inside the calls opening, after any run of
-/// newlines: once the DSML marker is complete the opening and the newlines
+/// newlines: once the DSML token is generated the opening and the newlines
 /// before it are structure, as deepseek-recipe 0.2.0's stream parser has
 /// entered its calls by then (output_parser.rs lines 326-334, 480-494) and
 /// drops the unfinished block; before that, and newlines that no opening
@@ -1066,7 +1132,7 @@ fn a_cut_calls_opening_is_not_content() {
         CompletionDecoderV1, CompletionUpdateV1, DecoderLimitsV1, GeneratedTokenV1,
     };
     let descriptor = std::sync::Arc::new(descriptor());
-    for (generated, content) in [
+    for (text, content) in [
         ("ok\n\n<｜DSML｜ calls", "ok"),
         ("ok\n\n<｜DSML｜", "ok"),
         ("ok\n<｜DSML｜", "ok"),
@@ -1079,18 +1145,23 @@ fn a_cut_calls_opening_is_not_content() {
             PromptModeV1::Chat,
             DecoderLimitsV1::declared(&descriptor),
         );
-        let mut updates = decoder
-            .push(GeneratedTokenV1::new(0, 100, generated.as_bytes().to_vec()))
-            .unwrap();
+        let mut updates = Vec::new();
+        for (ordinal, (id, bytes)) in generated(&descriptor, text, &[]).into_iter().enumerate() {
+            updates.extend(
+                decoder
+                    .push(GeneratedTokenV1::new(ordinal as u64, id, bytes))
+                    .unwrap(),
+            );
+        }
         updates.extend(decoder.finish_length().unwrap());
-        let text: String = updates
+        let streamed: String = updates
             .iter()
             .filter_map(|update| match update {
                 CompletionUpdateV1::Content(part) => Some(part.text.as_str()),
                 _ => None,
             })
             .collect();
-        assert_eq!(text, content, "{generated:?}");
+        assert_eq!(streamed, content, "{text:?}");
     }
 }
 
@@ -1118,7 +1189,7 @@ fn a_namespaced_tool_is_named_as_the_encoder_names_it() {
         .unwrap_or_else(|error| panic!("{extra}: {}", error.message))
         .prompt
     {
-        runtime_server::PreparedPrompt::RenderedChat(prompt) => prompt,
+        prompt @ runtime_server::PreparedPrompt::SegmentedChat(_) => prepared_text(prompt),
         other => panic!("{extra}: {other:?}"),
     };
     let parameters = serde_json::json!({"type": "object", "properties": {"x": {"type": "string"}}});

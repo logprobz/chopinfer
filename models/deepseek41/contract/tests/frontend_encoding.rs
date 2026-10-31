@@ -2,7 +2,8 @@
 //! or an exact refusal, run against the port.
 use frontend_format::FrontendJsonV1;
 use model_deepseek41_contract::frontend::encoding::{
-    IMAGE_PLACEHOLDER, Message, ReasoningEffort, Role, ThinkingMode, ToolCall, encode_messages,
+    Block, IMAGE_PLACEHOLDER, Message, ReasoningEffort, Role, ThinkingMode, ToolCall,
+    encode_messages,
 };
 
 const EFFORT_75: &str = "<｜System｜>Reasoning Effort: 75 (range 1-100, the higher the value, \
@@ -27,7 +28,7 @@ fn encode(
     encode_messages(messages, mode, true, effort.as_ref(), &|_| {
         IMAGE_PLACEHOLDER.to_owned()
     })
-    .map(|(prompt, _)| prompt)
+    .map(|(prompt, _)| prompt.text().to_owned())
     .map_err(|error| error.0)
 }
 
@@ -253,12 +254,28 @@ fn reasoning_before_the_last_user_turn_drops_without_tools() {
     assert!(next.ends_with("q3<｜Assistant｜><think>"));
 }
 
+/// Not the vendor's: lines 107-114 refuse an image placeholder spelled in
+/// text, which the port renders as plain text, as deepseek-recipe 0.2.0
+/// does (`explicit-special-tokens` in
+/// `models/deepseek41/frontend-divergences.json`, section `mapping`).
 #[test]
-fn image_placeholders_in_text_refuse() {
-    // Lines 107-114.
-    for role in [Role::User, Role::Tool] {
-        let message = text(role, &format!("hi {IMAGE_PLACEHOLDER}"));
-        assert!(encode(&[message], ThinkingMode::Chat, None).is_err());
+fn image_placeholders_in_text_are_plain_text() {
+    let spelled = format!("hi {IMAGE_PLACEHOLDER}");
+    let mut user = text(Role::User, &spelled);
+    user.blocks = Some(vec![Block::Text(spelled.clone())]);
+    for message in [text(Role::User, &spelled), text(Role::Tool, &spelled), user] {
+        let (prompt, images) = encode_messages(&[message], ThinkingMode::Chat, true, None, &|_| {
+            IMAGE_PLACEHOLDER.to_owned()
+        })
+        .unwrap();
+        assert!(prompt.text().contains(&spelled), "{}", prompt.text());
+        assert!(images.is_empty());
+        assert!(
+            prompt
+                .specials()
+                .iter()
+                .all(|range| &prompt.text()[range.clone()] != IMAGE_PLACEHOLDER)
+        );
     }
 }
 

@@ -123,6 +123,38 @@
       {
         "text": "<｜deepseek_image｜>",
         "id": 129264
+      },
+      {
+        "text": "<｜ref｜>",
+        "id": 129278
+      },
+      {
+        "text": "<｜/ref｜>",
+        "id": 129277
+      },
+      {
+        "text": "<｜box｜>",
+        "id": 129276
+      },
+      {
+        "text": "<｜/box｜>",
+        "id": 129275
+      },
+      {
+        "text": "<｜point｜>",
+        "id": 129274
+      },
+      {
+        "text": "<｜/point｜>",
+        "id": 129273
+      },
+      {
+        "text": "<｜polygon｜>",
+        "id": 129272
+      },
+      {
+        "text": "<｜/polygon｜>",
+        "id": 129271
       }
     ],
     "prompt_special_tokens": [
@@ -136,6 +168,12 @@
       "｜DSML｜",
       "<｜latest_reminder｜>",
       "<｜deepseek_image｜>"
+    ],
+    "explicit_special_tokens": true,
+    "id_only_markers": [
+      "<think>",
+      "</think>",
+      "｜DSML｜"
     ]
   }
 }

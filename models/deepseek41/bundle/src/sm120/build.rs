@@ -121,6 +121,7 @@ mod retain_rows_cubin;
 mod retain_rows_entries;
 mod ring_gather_cubin;
 mod ring_gather_entries;
+mod router_classified;
 mod single_entry_cubin;
 #[allow(dead_code)]
 mod window_fused;
@@ -554,6 +555,7 @@ pub fn selection(
             owners.push((dense_dual::CUBIN.into(), geometry.id));
             owners.push((query_window::CUBIN.into(), geometry.id));
             owners.push((latent_merge_ceil::CUBIN.into(), geometry.id));
+            owners.push((router_classified::CUBIN.into(), geometry.id));
         }
         owners.push((f32_split::cubin_name(geometry), geometry.id));
         for features in f32_prefill::TILE_FEATURES {
@@ -648,6 +650,7 @@ pub fn selection(
     ));
     specs.extend(query_window::cubins(geometries).expect("query window twin cubin"));
     specs.extend(latent_merge_ceil::cubins(geometries).expect("quantizing merge cubin"));
+    specs.extend(router_classified::cubins(geometries).expect("classifying router cubin"));
     specs.extend(ceil_parallel::cubins(geometries).expect("parallel ceil cubins"));
     specs.extend(ceil_cached::cubins(geometries).expect("cached ceil cubins"));
     specs.extend(ceil_prefill::cubins(geometries).expect("prefill ceil cubins"));

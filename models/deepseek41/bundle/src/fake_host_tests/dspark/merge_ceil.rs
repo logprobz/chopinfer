@@ -53,7 +53,7 @@ fn twinned(served: &[String]) -> (Vec<String>, usize) {
 /// `lines` with each stream and buffer handle renamed by its first
 /// appearance: the instance with the option loads more functions, which
 /// shifts the handles of streams and buffers created after them.
-fn renamed(lines: &[String]) -> Vec<String> {
+pub(super) fn renamed(lines: &[String]) -> Vec<String> {
     const RAW: &str = "raw: ";
     let mut names = std::collections::HashMap::new();
     let mut streams = std::collections::HashMap::new();
@@ -90,7 +90,7 @@ fn renamed(lines: &[String]) -> Vec<String> {
 
 /// Asserts `actual` is `expected` up to buffer handle names, naming the
 /// first launch that differs.
-fn same(expected: &[String], actual: &[String], case: &str) {
+pub(super) fn same(expected: &[String], actual: &[String], case: &str) {
     let (expected, actual) = (renamed(expected), renamed(actual));
     if let Some(at) = (0..expected.len().min(actual.len())).find(|&i| expected[i] != actual[i]) {
         panic!(

@@ -27,15 +27,19 @@ pub(crate) fn admitted(op: &str, rows: u32) -> bool {
     super::hc_finish_norm::choice(&FLASH, op, BUCKET, rows).is_some()
 }
 
-/// The rows of the wide finish norm (`hc.finish_pair.verify`).
-pub(crate) fn pair_buckets() -> Vec<u32> {
+/// The rows of the wide finish norm (`hc.finish_pair.verify`) through
+/// `widest` rows.
+pub(crate) fn pair_buckets(widest: u32) -> Vec<u32> {
     super::hc_finish_norm::selected_rows("hc.finish_pair.verify", BUCKET)
+        .into_iter()
+        .filter(|&rows| rows <= widest)
+        .collect()
 }
 
 /// The wide column-block pair's rows, tiles and warps
-/// (`hc.finish_cols.verify`).
-pub(crate) fn cols_buckets() -> Vec<finish_split::Bucket> {
-    (1..=BUCKET)
+/// (`hc.finish_cols.verify`) through `widest` rows.
+pub(crate) fn cols_buckets(widest: u32) -> Vec<finish_split::Bucket> {
+    (1..=BUCKET.min(widest))
         .filter_map(|rows| {
             let row = super::hc_finish_norm::choice(&FLASH, "hc.finish_cols.verify", BUCKET, rows)?;
             Some(finish_split::Bucket {
@@ -79,7 +83,7 @@ pub(crate) fn finish_entry(g: &Geometry, capacity: u32) -> finish_norm::Entry {
 /// The backend of the wide boundary of verify steps of up to `widest`
 /// rows: `g`'s rounded mixer, input norm, its cached form, finish norm and
 /// column-block pair (`hc_cols`), each holding [`capacity`] rows, at the
-/// wide sites' buckets.
+/// wide sites' buckets through `widest` rows.
 pub(crate) fn finish_backend(g: &Geometry, widest: u32) -> Sm120 {
     let finish = finish_entry(g, capacity(widest));
     let served_producer = super::hc_cols::producer();
@@ -98,8 +102,8 @@ pub(crate) fn finish_backend(g: &Geometry, widest: u32) -> Sm120 {
         .with_sinkhorn_round_expand_mix(finish.mixer.clone())
         .with_rmsnorm_quantize(finish.norm.reference.clone())
         .with_rmsnorm_quantize_cached(finish.norm.clone(), super::norm_quantize_cached::buckets())
-        .with_sinkhorn_finish_norm(finish, pair_buckets())
-        .with_sinkhorn_finish_norm_cols(producer, split, cols_buckets())
+        .with_sinkhorn_finish_norm(finish, pair_buckets(widest))
+        .with_sinkhorn_finish_norm_cols(producer, split, cols_buckets(widest))
 }
 
 impl crate::Kernels {
@@ -124,17 +128,19 @@ mod tests {
     /// the column pair of 33 to 64 rows, and no row it serves.
     #[test]
     fn wide_sites_take_the_served_column_pair_above_the_decode_route() {
-        let rows: Vec<u32> = (65..=BUCKET).collect();
-        assert_eq!(pair_buckets(), rows);
         let served = super::super::hc_cols::buckets();
         let at_64 = served.iter().find(|b| b.rows == 64).unwrap();
-        let wide = cols_buckets();
-        assert_eq!(wide.iter().map(|b| b.rows).collect::<Vec<_>>(), rows);
-        for b in &wide {
-            assert_eq!(
-                (b.tile, b.transposed, b.warps),
-                (at_64.tile, at_64.transposed, at_64.warps)
-            );
+        for widest in [128, BUCKET] {
+            let rows: Vec<u32> = (65..=widest).collect();
+            assert_eq!(pair_buckets(widest), rows);
+            let wide = cols_buckets(widest);
+            assert_eq!(wide.iter().map(|b| b.rows).collect::<Vec<_>>(), rows);
+            for b in &wide {
+                assert_eq!(
+                    (b.tile, b.transposed, b.warps),
+                    (at_64.tile, at_64.transposed, at_64.warps)
+                );
+            }
         }
         for rows in 1..=BUCKET {
             assert_eq!(admitted("hc.finish_admit.verify", rows), rows > 64);

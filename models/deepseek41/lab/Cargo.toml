@@ -61,6 +61,10 @@ name = "query_window"
 path = "tests/sm120/query_window/main.rs"
 
 [[test]]
+name = "merge_ceil"
+path = "tests/sm120/merge_ceil/main.rs"
+
+[[test]]
 name = "norm_query_cached"
 path = "tests/sm120/norm_query_cached/main.rs"
 

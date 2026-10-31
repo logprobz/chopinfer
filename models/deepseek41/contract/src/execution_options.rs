@@ -30,6 +30,11 @@ pub const DSPARK_MARKOV_STAGED: &str = "dspark_markov_staged";
 /// expansion, next mixer and input norm where the measured finish route
 /// admits the forward's rows, as the backbone's do.
 pub const DSPARK_HC_FUSION: &str = "dspark_hc_fusion";
+/// Candidate: DSpark drafter confidence heads load each thread's weight
+/// chain into registers before the dependency wait and stage each row's
+/// operands in shared memory with coalesced loads, keeping every chain,
+/// fold and score.
+pub const DSPARK_CONFIDENCE_STAGED: &str = "dspark_confidence_staged";
 pub const DEFAULT_PLANS: usize = 16;
 pub const MAX_PLANS: usize = 64;
 /// The served warmup fits within 512 graph handles per rank, leaving room
@@ -47,12 +52,17 @@ pub struct Options {
     pub phased_decode_reduce: bool,
     pub dspark_markov_staged: bool,
     pub dspark_hc_fusion: bool,
+    pub dspark_confidence_staged: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 10] {
+pub fn declarations() -> [ModelOptionV1; 11] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            DSPARK_CONFIDENCE_STAGED,
             OptionDefinitionV1::Boolean { default: false },
         ),
         (
@@ -147,6 +157,9 @@ impl Options {
             phased_decode_reduce: values[PHASED_DECODE_REDUCE]
                 .as_bool()
                 .expect("checked boolean"),
+            dspark_confidence_staged: values[DSPARK_CONFIDENCE_STAGED]
+                .as_bool()
+                .expect("checked boolean"),
             dspark_hc_fusion: values[DSPARK_HC_FUSION].as_bool().expect("checked boolean"),
             dspark_markov_staged: values[DSPARK_MARKOV_STAGED]
                 .as_bool()
@@ -212,6 +225,7 @@ mod tests {
             wide_verify: false,
             f32_row_tiles: false,
             phased_decode_reduce: false,
+            dspark_confidence_staged: false,
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
         };
@@ -232,6 +246,7 @@ mod tests {
             (WIDE_VERIFY.into(), "true".into()),
             (F32_ROW_TILES.into(), "true".into()),
             (PHASED_DECODE_REDUCE.into(), "true".into()),
+            (DSPARK_CONFIDENCE_STAGED.into(), "true".into()),
             (DSPARK_HC_FUSION.into(), "true".into()),
             (DSPARK_MARKOV_STAGED.into(), "true".into()),
         ]);
@@ -247,6 +262,7 @@ mod tests {
                 wide_verify: true,
                 f32_row_tiles: true,
                 phased_decode_reduce: true,
+                dspark_confidence_staged: true,
                 dspark_hc_fusion: true,
                 dspark_markov_staged: true,
             }
@@ -268,6 +284,7 @@ mod tests {
             (WIDE_VERIFY, "1"),
             (F32_ROW_TILES, "1"),
             (PHASED_DECODE_REDUCE, "1"),
+            (DSPARK_CONFIDENCE_STAGED, "1"),
             (DSPARK_HC_FUSION, "1"),
             (DSPARK_MARKOV_STAGED, "1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),

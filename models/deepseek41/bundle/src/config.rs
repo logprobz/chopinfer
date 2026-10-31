@@ -418,6 +418,7 @@ pub(crate) mod tests {
             (WIDE_VERIFY, true.into()),
             (F32_ROW_TILES, true.into()),
             (PHASED_DECODE_REDUCE, true.into()),
+            (DSPARK_CONFIDENCE_STAGED, true.into()),
             (DSPARK_HC_FUSION, true.into()),
             (DSPARK_MARKOV_STAGED, true.into()),
         ] {
@@ -434,6 +435,7 @@ pub(crate) mod tests {
                 wide_verify: true,
                 f32_row_tiles: true,
                 phased_decode_reduce: true,
+                dspark_confidence_staged: true,
                 dspark_hc_fusion: true,
                 dspark_markov_staged: true,
             }

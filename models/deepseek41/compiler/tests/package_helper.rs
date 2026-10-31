@@ -340,6 +340,8 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
                 "schema": "chop.model-options.v1",
                 "options": [{"name": "diagnostic_step_logs", "default_is_qualified": true,
                          "definition": {"type": "boolean", "default": false}},
+                        {"name": "dspark_confidence_staged", "default_is_qualified": true,
+                         "definition": {"type": "boolean", "default": false}},
                         {"name": "dspark_coupled_drafts", "default_is_qualified": true,
                          "definition": {"type": "boolean", "default": true}},
                         {"name": "dspark_draft_chunk_items", "default_is_qualified": true,
@@ -391,6 +393,7 @@ fn serve_lists_flash_checkpoint_options_without_loading_weights() {
                 .unwrap();
             let expected = serde_json::json!({
                 "diagnostic_step_logs": false,
+                "dspark_confidence_staged": false,
                 "dspark_coupled_drafts": true,
                 "dspark_draft_chunk_items": 12,
                 "dspark_graph_handles_per_rank": 512,

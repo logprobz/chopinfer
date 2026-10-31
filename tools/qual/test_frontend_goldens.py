@@ -382,6 +382,7 @@ class FrontendContracts(unittest.TestCase):
         self.assertFalse(frontend_goldens.api(sample, expected)["agrees"])
         self.assertFalse(frontend_goldens.api(sample, expected, {"tools-cut": frontend_goldens.token_limit({})})["agrees"])
         self.assertEqual(frontend_goldens.token_limit({"max_completion_tokens": 8, "max_tokens": 3}), 8)
+        self.assertEqual(frontend_goldens.token_limit({"max_completion_tokens": None, "max_tokens": 8}), 8)
         # Only a length finish with the same calls stands for tool_calls.
         choice["finish_reason"] = "stop"
         self.assertFalse(frontend_goldens.api(sample, expected, limits)["agrees"])

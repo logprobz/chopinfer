@@ -239,8 +239,11 @@ def shape(sample):
 
 
 def token_limit(body):
-    """The completion token limit a request body sets, or None."""
-    limit = body.get("max_completion_tokens", body.get("max_tokens"))
+    """The completion token limit a request body sets, or None. A null
+    max_completion_tokens is absent, as the transport reads it."""
+    limit = body.get("max_completion_tokens")
+    if limit is None:
+        limit = body.get("max_tokens")
     return limit if type(limit) is int and limit > 0 else None
 
 

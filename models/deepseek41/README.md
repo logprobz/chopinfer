@@ -185,6 +185,7 @@ them. A non-default value is unqualified.
 | `dspark_coupled_drafts` | `true` | Couple sampled drafts to the target sampler's noise. |
 | `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |
 | `dspark_graph_handles_per_rank` | `512` | Graph handles per rank, from 0 to 9223372036854775807; 0 keeps DSpark eager. The total across ranks must fit the platform's count range. |
+| `f32_row_tiles` | `false` | Candidate: Flash TP4 verify steps of 33 to 64 rows run the vocabulary head and the compressor in their measured exact F32 row tiles instead of the cached separate spans; the router keeps its spans. Bitwise lab twins and fixed-batch GPU replays matched; served step-time acceptance remains required before adoption. |
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit and each reused plan template again and refuse a differing plan. |
@@ -195,7 +196,7 @@ them. A non-default value is unqualified.
 | `text_config.indexer_mma` | `true` | Use the guarded native Flash index scorer where eligible. |
 | `text_config.indexer_prefill_tile` | `true` | Enable the qualified Flash tiled indexer routes. |
 | `verify_graph_rows` | `64` | Widest graphed verify step; wider admitted steps run eagerly. |
-| `wide_verify` | `false` | Candidate: Flash TP4 eager verify steps of 65 to 192 rows prepare their row-local stages and HC boundaries at the wide verify buckets (128 rows and the verify rows) and launch the decode entries a 64-row step uses, fold their dense projections through wide folds at those buckets, and run their routed experts through the wide direct MoE queues. Fixed-batch GPU replays and kernel-lab MoE pairs matched the default bitwise; served step-time acceptance remains required before adoption. |
+| `wide_verify` | `false` | Candidate: Flash TP4 eager verify steps of 65 to 192 rows prepare their row-local stages and HC boundaries at the wide verify buckets (128 rows and the verify rows) and launch the decode entries a 64-row step uses, fold their dense projections through wide folds at those buckets, run their routed experts through the wide direct MoE queues, and run the vocabulary head, router and compressor in their measured exact F32 row tiles. Fixed-batch GPU replays and kernel-lab MoE pairs matched the default bitwise; served step-time acceptance remains required before adoption. |
 
 TP4 native-KV single-item DMA prefill overlaps both prepared Engram gathers
 by default at 512-8192 rows. The model joins each layer before its decoder;
@@ -325,9 +326,9 @@ the boundaries stay unfused. The route sweep `tp4-dspark-rows192-wide`
 serves the override with the option on. The query norm, the latent window
 rotation and the remaining row norms and rounding rows launch the 64-row
 entries either way, and the other stages keep their prefill entries. The
-latent selected cache and the cached F32 projections need kernel, tuning or
-shared-limit changes to serve more than 64 rows, and without the option the
-chained MoE's intermediate quantizer is selected inside its 64-row chain. On 2026-10-31, fixed-batch GPU replays of the option's stages at
+latent selected cache needs kernel, tuning or shared-limit changes to serve
+more than 64 rows, and without the option the chained MoE's intermediate
+quantizer is selected inside its 64-row chain. On 2026-10-31, fixed-batch GPU replays of the option's stages at
 verify widths 64 to 192 (concurrency 16 and 32, four to six rows per item,
 verify capacities 80 to 192) matched the previous package bitwise in
 logits, proposals, acceptance and committed state. Under a CUDA trace, the
@@ -357,6 +358,37 @@ those of a 192-row step from 17.3 to 16.2 ms (121.9 to 120.9 ms). The selected c
 takes 2.1 ms, against 3.4 ms for the direct sources of an 80-row step, 5.0
 ms at 128 rows and 6.9 ms at 192. Its 192-row arena would add 84 MB per
 rank. This is not served step-time acceptance.
+
+With the option, the same steps run the vocabulary head, the MoE router and
+the compressor projections in the measured whole-K exact F32 row tiles
+(`sm120::f32_verify_rows`, tuning site `f32.rows.verify`) instead of the
+ordered split route. A CTA owns a tile of outputs over every 128-K chain,
+or over a K slice whose chain values an ordered reduction adds, and keeps
+the split route's components, chains and order, so every output keeps its
+bits. The index weights and index keys keep the split route, which the lab
+measured as fast. On 2026-10-31, the kernel lab's verify-row timing (one
+GPU at its 250 W enforced limit, in-job A/A controls within 2%) measured
+the head at 0.59, 0.62, 0.81 and 0.99 ms at 96, 128, 160 and 192 rows
+against 3.44, 4.69, 6.00 and 6.85 ms on the split route (a cold read of its
+weights takes 0.23 ms), the router at 30 to 32 us against 53 to 93 us, and
+each compressor projection at 30 to 43 us against 68 to 120 us. The lab's
+comparisons matched the split route bit for bit at every tile boundary
+from 1 to 192 rows and on every operand witness, for the lab's tiles and
+the packaged ones. Fixed-batch GPU replays with the option at the five
+configurations above matched the previous package bitwise in logits,
+proposals, acceptance and committed state. This is not served step-time
+acceptance.
+
+The `f32_row_tiles` candidate option runs the same tiles at 33 to 64 verify
+rows, a range the decode route serves through the cached separate spans:
+the head's tile at every width and the compressor's eight K slices of 64
+by 32. The router keeps its spans, which the tiles only matched there, and
+which the direct MoE's fused router consumes. In the same lab run the head
+took 0.40 and 0.41 ms at 48 and 64 rows against 1.08 and 1.37 ms on the
+spans, and each compressor projection 28 us against 33 and 38 us.
+Fixed-batch GPU replays with both options on, at verify widths 32 to 64
+(concurrency 16 and 32, two to four rows per item, against captures of the
+previous package) and at the five wide configurations, matched bitwise.
 
 Prefill commit projections are batched across prompts. Undrafted pure
 decode joins status once and submits private sampling before collecting it

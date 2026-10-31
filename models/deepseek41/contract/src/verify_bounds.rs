@@ -37,6 +37,9 @@ pub const F32_CACHED: u32 = VERIFY_DECODE_ROWS;
 pub const DENSE_FOLD: u32 = VERIFY_DECODE_ROWS;
 /// Engram's wide verify matrix fold.
 pub const ENGRAM_FOLD: u32 = VERIFY_DECODE_ROWS;
+/// The whole-K exact F32 row tiles of verify steps: their registered
+/// capacity and the bucket of their tuning keys, the package's verify rows.
+pub const F32_ROWS: u32 = WIDE[1];
 /// The direct MoE buckets and their router finish.
 pub const MOE_DIRECT: u32 = VERIFY_DECODE_ROWS;
 /// The streamed MoE tuning keys.

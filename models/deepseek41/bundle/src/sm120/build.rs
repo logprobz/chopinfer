@@ -149,6 +149,8 @@ mod f32_prefill;
 mod f32_split;
 #[allow(dead_code)]
 mod f32_verify;
+#[allow(dead_code)]
+mod f32_verify_rows;
 mod f32_wide;
 #[allow(dead_code)]
 mod f32_zero;
@@ -542,6 +544,7 @@ pub fn selection(
             owners.push((fold_verify::CUBIN.into(), geometry.id));
             owners.push((fold_verify_local::CUBIN.into(), geometry.id));
             owners.push((f32_verify::CUBIN.into(), geometry.id));
+            owners.push((f32_verify_rows::CUBIN.into(), geometry.id));
             owners.push((moe_router64::CUBIN.into(), geometry.id));
             owners.push((moe_direct_wide::CUBIN.into(), geometry.id));
             owners.push((head_last::CUBIN.into(), geometry.id));
@@ -689,6 +692,7 @@ pub fn selection(
     specs.extend(f32_dense::cubins(geometries).expect("deepseek41 F32 dense cubins"));
     specs.extend(f32_decode::cubins(geometries).expect("cached F32 cubins"));
     specs.extend(f32_verify::cubins(geometries).expect("separate-span F32 cubins"));
+    specs.extend(f32_verify_rows::cubins(geometries).expect("whole-K F32 row tile cubins"));
     specs.extend(projection_reuse::cubins(geometries).expect("qualified projection reuse cubins"));
     specs.extend(dspark_projection::cubins(geometries).expect("bounded drafter projection cubins"));
     specs.extend(prefill_matrix::cubins(geometries).expect("qualified prefill matrix cubin"));

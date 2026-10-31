@@ -143,6 +143,8 @@ pub mod f32_head;
 pub mod f32_prefill;
 pub mod f32_split;
 pub mod f32_verify;
+pub mod f32_verify_rows;
+mod f32_verify_rows_serving;
 #[allow(dead_code, reason = "wide consumers follow paired qualification")]
 mod f32_verify_serving;
 pub mod f32_wide;
@@ -1024,7 +1026,8 @@ impl crate::Kernels {
     /// Whether an instance loads `cubin` with the program's cubins: every
     /// cubin but the unwired acceptance reducer, the allocated verify steps' (loaded
     /// apart, `allocation_cubin`), and the
-    /// vision encoder's, which only an encoder instance loads.
+    /// vision encoder's, which only an encoder instance loads. The exact F32
+    /// row tiles load only where an instance admits them.
     /// Streamed MoE modules load only for the qualified topology.
     pub fn loads(cubin: &str, shape: &crate::shape::Shape) -> bool {
         (![
@@ -1052,6 +1055,8 @@ impl crate::Kernels {
                 .is_empty())
             && (cubin != f32_verify::CUBIN
                 || f32_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows))
+            && (cubin != f32_verify_rows::CUBIN
+                || crate::ops::exact_f32::rows::admitted(shape).is_some())
             && (!ceil_split::is_cubin(cubin) || ceil_split::serves(shape.geometry, shape.ranks()))
             && (cubin != query_window::CUBIN || query_window::serves(shape.geometry, shape.ranks()))
             && cubin != acceptance_entries::CUBIN

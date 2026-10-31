@@ -416,6 +416,7 @@ pub(crate) mod tests {
             (DSPARK_GRAPH_HANDLES_PER_RANK, 32.into()),
             (DIAGNOSTIC_STEP_LOGS, true.into()),
             (WIDE_VERIFY, true.into()),
+            (F32_ROW_TILES, true.into()),
         ] {
             changed = with_option(changed, name, value);
         }
@@ -428,6 +429,7 @@ pub(crate) mod tests {
                 dspark_graph_handles_per_rank: 32,
                 diagnostic_step_logs: true,
                 wide_verify: true,
+                f32_row_tiles: true,
             }
         );
         for (name, value) in [

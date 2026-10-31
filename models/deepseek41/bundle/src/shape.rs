@@ -24,6 +24,9 @@ pub struct Shape {
     /// Whether verify steps above the 64-row decode route run the wide
     /// verify buckets (the `wide_verify` candidate option).
     pub wide_verify: bool,
+    /// Whether Flash TP4 verify steps of 33 to 64 rows run the measured
+    /// exact F32 row tiles (the `f32_row_tiles` candidate option).
+    pub f32_row_tiles: bool,
 }
 
 impl Shape {
@@ -36,6 +39,7 @@ impl Shape {
             runtime: geometry.runtime_defaults(),
             verify_rows: DECODE_BATCH,
             wide_verify: false,
+            f32_row_tiles: false,
         })
     }
 
@@ -50,6 +54,13 @@ impl Shape {
     /// (`model_deepseek41_contract::execution_options::WIDE_VERIFY`).
     pub fn with_wide_verify(mut self, enabled: bool) -> Shape {
         self.wide_verify = enabled;
+        self
+    }
+
+    /// This shape with the exact F32 row tiles of 33 to 64 verify rows on
+    /// or off (`model_deepseek41_contract::execution_options::F32_ROW_TILES`).
+    pub fn with_f32_row_tiles(mut self, enabled: bool) -> Shape {
+        self.f32_row_tiles = enabled;
         self
     }
 

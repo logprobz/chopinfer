@@ -163,6 +163,61 @@ fn target_programs_lower_at_wide_verify_rows() {
     assert_eq!(host.acquired.get(), host.released.get());
 }
 
+/// With the `f32_row_tiles` option, verify steps of 33 to 64 rows run the
+/// head's and the compressor's measured row tiles in place of their cached
+/// separate spans; the router and the index weights keep their spans.
+#[test]
+fn row_tile_option_replaces_the_head_and_compressor_spans() {
+    use model_deepseek41_contract::execution_options::F32_ROW_TILES;
+    let (host, mut instance) = create_with_options(
+        Shape::new(&FLASH, Ranks::TP4).unwrap(),
+        16,
+        128,
+        &[
+            (DSPARK_GRAPH_HANDLES_PER_RANK, 0.into()),
+            (F32_ROW_TILES, true.into()),
+        ],
+    );
+    for slot in 0..16 {
+        execute(
+            &mut instance,
+            &host,
+            &super::super::prompt(slot + 1, slot, 0, 3, true),
+        );
+        instance.commit().unwrap();
+    }
+    let spans = |n| {
+        format!("chop_deepseek41_verify_f32_n{n}_k5120_v1_cached_decode_v1_spans_m64_compute_v1")
+    };
+    for rows in [33_u32, 40, 48, 63, 64] {
+        let (target, _, accepted) = verify_step(&mut instance, &host, 16, rows);
+        let observed = grids(&target);
+        let launched =
+            |symbol: &str| -> usize { observed.get(symbol).map_or(0, |g| g.values().sum()) };
+        assert_eq!(
+            observed.get("chop_deepseek41_verify_f32_n32320_k5120_rows_f256_r32_w32x32_s2_k64_v1"),
+            Some(&[((rows.div_ceil(32), 127, 1), 4)].into()),
+            "head at {rows} rows"
+        );
+        assert_eq!(
+            observed.get("chop_deepseek41_verify_f32_n512_k5120_rows_f64_r32_w32x16_s3_k64_z8_v1"),
+            Some(&[((rows.div_ceil(32), 8, 8), 7 * 4)].into()),
+            "compressor at {rows} rows"
+        );
+        assert_eq!(launched(&spans(32320)), 0);
+        assert_eq!(launched(&spans(512)), 0);
+        assert_eq!(launched(&spans(384)), 40 * 4);
+        assert_eq!(launched(&spans(32)), 8 * 4);
+        assert!(!observed.keys().any(|s| s.contains("n384_k5120_rows")));
+        instance.commit_accepted(&accepted).unwrap();
+    }
+    for request in 1..=16 {
+        instance.retire_request(request).unwrap();
+    }
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+}
+
 /// `CHOPINFER_VERIFY_ROW_JOURNALS`, a directory outside the repository that
 /// receives each exported step's journals.
 fn journal_directory() -> Option<std::path::PathBuf> {
@@ -592,6 +647,39 @@ fn check_routed_experts(observed: &Grids, rows: u32, enabled: bool, what: &str) 
     }
 }
 
+/// An exact F32 projection the `wide_verify` option moves to its measured
+/// row tile (`sm120::f32_verify_rows`): the tile's compute, the split
+/// route it replaces, its launches in one step and the tile's grid.
+type F32Stage = (
+    &'static str,
+    &'static str,
+    usize,
+    fn(u32) -> (u32, u32, u32),
+);
+
+/// The head on every rank, the router of every MoE layer and each
+/// compressor projection. Without the option each keeps the split route.
+const F32_STAGES: &[F32Stage] = &[
+    (
+        "chop_deepseek41_verify_f32_n32320_k5120_rows_f256_r32_w32x32_s2_k64_v1",
+        "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_split_v2",
+        4,
+        |rows| (rows.div_ceil(32), 127, 1),
+    ),
+    (
+        "chop_deepseek41_verify_f32_n384_k5120_rows_f64_r64_w32x16_s2_k64_z10_v1",
+        "chop_deepseek41_dense_f32_m8192_n384_k5120_v1_split_v2",
+        160,
+        |rows| (rows.div_ceil(64), 6, 10),
+    ),
+    (
+        "chop_deepseek41_verify_f32_n512_k5120_rows_f64_r64_w32x16_s2_k64_z10_v1",
+        "chop_deepseek41_dense_f32_m8192_n512_k5120_v1_split_v2",
+        28,
+        |rows| (rows.div_ceil(64), 8, 10),
+    ),
+];
+
 /// Widths above the 64-row budget a step of 32 items (and 16 up to its 96
 /// rows) can take: both sides of 64, 96, 128 and 160, and 192.
 const WIDE_STEPS: [(u32, u32); 17] = [
@@ -698,6 +786,30 @@ fn target_programs_lower_above_the_default_verify_rows() {
             let what = format!("{count} items and {rows} rows ({enabled})");
             check_dense_folds(&observed, rows, enabled, &what);
             check_routed_experts(&observed, rows, enabled, &what);
+            for &(tiles, split, launches, grid) in F32_STAGES {
+                let (served, other) = if enabled {
+                    (tiles, split)
+                } else {
+                    (split, tiles)
+                };
+                let launched: Option<usize> = observed.get(served).map(|g| g.values().sum());
+                assert_eq!(
+                    launched,
+                    Some(launches),
+                    "{served} at {count} items and {rows} rows ({enabled})"
+                );
+                if enabled {
+                    assert_eq!(
+                        observed.get(tiles),
+                        Some(&[(grid(rows), launches)].into()),
+                        "{tiles} at {count} items and {rows} rows"
+                    );
+                }
+                assert!(
+                    !observed.contains_key(other),
+                    "{other} at {count} items and {rows} rows ({enabled})"
+                );
+            }
             instance.commit_accepted(&accepted).unwrap();
         }
         for request in 1..=32 {

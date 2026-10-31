@@ -36,6 +36,18 @@ fn pin_untuned_served_keys() {
                 8192,
             ));
         }
+        // The row tiles serve Flash TP4's head, router and compressor.
+        if ranks == 4 {
+            let s = &FLASH.shape;
+            for n in [s.vocab / 4, s.moe.experts, s.attention.head_dim] {
+                domain.insert(key(
+                    "f32.rows.verify",
+                    "bf16",
+                    &[("n", n), ("k", s.hidden), ("ranks", ranks)],
+                    model_deepseek41_contract::verify_bounds::F32_ROWS,
+                ));
+            }
+        }
         for candidate in crate::sm120::f32_verify::entries().unwrap() {
             let q = candidate.entry().query();
             for capacity in 32..=64 {
@@ -48,7 +60,7 @@ fn pin_untuned_served_keys() {
             }
         }
     }
-    assert_eq!(domain.len(), 569);
+    assert_eq!(domain.len(), 572);
     assert_untuned(
         Family::F32,
         domain,
@@ -62,6 +74,18 @@ fn pin_untuned_served_keys() {
             ("cached", &[]),
             ("zero", &[]),
             ("certified", &[]),
+            (
+                "rows",
+                &[
+                    "features",
+                    "plane_k",
+                    "rows",
+                    "slices",
+                    "stages",
+                    "warp_features",
+                    "warp_rows",
+                ],
+            ),
         ],
     );
 }
@@ -153,6 +177,9 @@ const UNTUNED: &[&str] = &[
     "f32.router_zero.prefill bf16 experts=384,ranks=1 buckets=8192 rows=all",
     "f32.router_zero.prefill bf16 experts=384,ranks=2 buckets=8192 rows=all",
     "f32.router_zero.prefill bf16 experts=384,ranks=4 buckets=8192 rows=1..319",
+    "f32.rows.verify bf16 k=5120,n=32320,ranks=4 buckets=192 rows=1..32",
+    "f32.rows.verify bf16 k=5120,n=384,ranks=4 buckets=192 rows=1..64",
+    "f32.rows.verify bf16 k=5120,n=512,ranks=4 buckets=192 rows=1..32",
     "f32.wide.prefill bf16 k=512,n=128 buckets=8192 rows=all",
     "f32.wide.prefill bf16 k=5120,n=128 buckets=8192 rows=1..8191",
     "f32.wide.prefill bf16 k=5120,n=129280 buckets=8192 rows=all",

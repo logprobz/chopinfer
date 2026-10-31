@@ -22,6 +22,7 @@
 
 #[allow(dead_code, reason = "wide consumers follow paired qualification")]
 pub(crate) mod cached;
+pub(crate) mod rows;
 
 use kernel_core::backend::{Backend, Counts, OpInfo, Prepared, Refused, View};
 use kernel_core::contract::{
@@ -303,6 +304,8 @@ pub(crate) struct ExactF32Ops {
     cached_router: Option<cached::Wide>,
     cached_compressor: Option<cached::Wide>,
     cached_index_weights: Option<cached::Wide>,
+    rows_router: Option<rows::Rows>,
+    rows_compressor: Option<rows::Rows>,
 }
 
 /// A step's spans of the normed rows' widening.
@@ -387,12 +390,30 @@ impl ExactF32Ops {
             shape.dims().hidden,
             target && !shape.geometry.shape.csa.index_sources.is_empty(),
         )?;
+        let rows_router = rows::prepare(
+            shape,
+            asks,
+            "f32.moe.router rows verify",
+            experts,
+            shape.dims().hidden,
+            target,
+        )?;
+        let rows_compressor = rows::prepare(
+            shape,
+            asks,
+            "f32.compressor rows verify",
+            shape.geometry.shape.attention.head_dim,
+            shape.dims().hidden,
+            target && !shape.geometry.shape.csa.kv_sources.is_empty(),
+        )?;
         Ok(ExactF32Ops {
             widen,
             projections,
             cached_router,
             cached_compressor,
             cached_index_weights,
+            rows_router,
+            rows_compressor,
         })
     }
 
@@ -409,6 +430,20 @@ impl ExactF32Ops {
             "moe.router" => self.cached_router(phase),
             "compressor.kv" | "compressor.gate" => self.cached_compressor.as_ref(),
             "indexer.weights" => self.cached_index_weights.as_ref(),
+            _ => None,
+        }
+        .filter(|op| op.for_phase(phase))
+    }
+
+    /// The row tiles of projection `id` at `phase`, where they serve it.
+    pub(crate) fn rows_projection(
+        &self,
+        id: &str,
+        phase: crate::program::Phase,
+    ) -> Option<&rows::Rows> {
+        match id {
+            "moe.router" => self.rows_router.as_ref(),
+            "compressor.kv" | "compressor.gate" => self.rows_compressor.as_ref(),
             _ => None,
         }
         .filter(|op| op.for_phase(phase))

@@ -87,6 +87,37 @@ words remain untouched. Larger launches route to the original locked entry. At 2
 projections; 32 is the largest measured winning split bucket. The original
 header, entries, and locks remain unchanged.
 
+## Exact F32 whole-K row tiles
+
+`exact_f32_rows.cuh` (`f32_projection::rows`) computes a CTA's whole
+feature by row tile over every 128-K chain of its K slice. The prefill
+preparation (`prefill::prepare`) writes each row's domain flag and BF16
+components once; the CTA streams weight lines and component lines through a
+ring of swizzled planes (`plane_k` of 32, 64 or 128 K) and reads its
+fragments with `ldmatrix`. Each warp owns a `warp_features` by `warp_rows`
+tile, up to 32 by 32, so one weight fragment feeds every row fragment and
+one component fragment feeds every feature fragment of the warp. Row tiles
+are the grid's fastest axis, so the CTAs that read one weight tile run
+together and share it in L2.
+
+The arithmetic is the original entry's at every output: each chain's hi,
+mid and lo components run from +0 through the same eight k16 MMAs with
+weights as A, merge in that order, and the chains add from +0 in K order.
+With one slice a CTA adds them into its output itself and nothing else is
+written; with several, each chain's value goes to its own plane in the
+cached partial layout and the cached reducer adds them. Rows and weight
+tiles outside the tensor domain take the original SIMT chains; rows past
+the live count are not written.
+
+The split, cached and prefill tile entries give each warp one chain of 16
+features by 8 or 32 rows, or stage 16-feature warps with scalar packed
+loads, so a verify step of 33 to 192 rows rereads each weight tile once per
+row group and writes and rereads a partial plane per chain. A larger warp
+tile needs `ldmatrix` fragments, a deeper ring and a row-major grid, which
+the existing templates' staging and thread layouts cannot express without
+changing their locked cubins, so the structure is its own header in the
+exact F32 family.
+
 ## Fragment decode
 
 Decode-bound BF16 and FP8 block weights use the fragment-major layout from
@@ -175,7 +206,7 @@ tiles', so outputs are bitwise theirs and the one-split entry's. Kernel-lab
 `tiled_chain_splits` sweeps it (`decoded_tile_shapes.rs`) and its lab-only
 `DecodedMutation` instances (no or a late wait, 256-K chains);
 `projection_latency` `decoded_tile_latency` measured it 1.4-2.8 times faster
-than warp tiles from 64 to 8,192 rows (PERF-B18 probe, 2026-10-09).
+than warp tiles from 64 to 8,192 rows (kernel probe, 2026-10-09).
 
 Strip-chain decode (`DenseKernel::StripChains { strips, splits }`,
 `strip_chains.cuh`, `run_a16_strips`, BF16 weights and activations, at most

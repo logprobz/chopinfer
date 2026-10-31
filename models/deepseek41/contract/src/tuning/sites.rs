@@ -51,6 +51,19 @@ pub(super) fn validate(row: &Row) -> Result<(), TuningError> {
         | "norm.ceil_cached_f32.decode" => (&["cached"], &[], &[]),
         "f32.head_last.decode" => (&["last"], &[], &[]),
         "f32.router_norm.prefill" => (&["certified"], &[], &[]),
+        "f32.rows.verify" => (
+            &["rows"],
+            &[
+                "features",
+                "plane_k",
+                "rows",
+                "slices",
+                "stages",
+                "warp_features",
+                "warp_rows",
+            ],
+            &[],
+        ),
         "f32.router_zero.prefill" => (&["zero"], &[], &[]),
         "f32.wide.prefill" => (&["wide"], &["tile"], &[]),
         "hc.decode_mix.decode"
@@ -232,6 +245,15 @@ fn validate_values(row: &Row) -> Result<(), TuningError> {
         "f32.band.prefill" | "f32.exact.prefill" => [32, 64].contains(&count("tile")),
         "f32.blocked.prefill" => count("tile") == 32,
         "f32.wide.prefill" => count("tile") == 64,
+        // Above the decode bucket, at the bound itself; each tile holds
+        // whole 128-K chains and a ring of at least two planes.
+        "f32.rows.verify" => {
+            row.key.bucket == crate::verify_bounds::F32_ROWS
+                && first > crate::serving::DECODE_BATCH
+                && [32, 64, 128].contains(&count("plane_k"))
+                && count("stages") >= 2
+                && count("slices") >= 1
+        }
         "hc.expand_mix.prefill" => matches!((count("tile"), count("chains")), (4, 4) | (8, 8)),
         "hc.lagged_mix.prefill" => count("tile") == 8 && [4, 8].contains(&count("chains")),
         "hc.finish_chain.verify" | "hc.round_chain.decode" => [4, 8].contains(&count("warps")),

@@ -70,6 +70,7 @@ impl MediaHost {
             pull_only: Cell::new(false),
             fail_upload: Default::default(),
             release_order: RefCell::new(Vec::new()),
+            references: RefCell::new(Vec::new()),
         };
         Rc::new(Backend::new(MediaHost {
             host,

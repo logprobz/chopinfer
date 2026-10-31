@@ -328,7 +328,14 @@ ms, and a 96-row step from 175.6 to 169.6 ms. With the HC fusion and the
 queries, a 128-row step fell from 193.8 to 182.1 ms and a 192-row step from
 225.0 to 214.6 ms. Their HC boundaries fell from 12.9 to 2.8 ms and from
 13.6 to 3.9 ms, and their index queries from 0.7 to under 0.1 ms. Replays
-at the same five configurations matched bitwise. The selected cache would
+at the same five configurations matched bitwise. The lab pairs cover the
+wide entries at 65, 128, 129, 192 and 256 rows: the index and latent query
+pairs on their fixtures, and the column-block pair against the
+ordered-chain pair on synthesized adversarial inputs
+(`hc_cols::synthetic_wide`), structural coverage that complements those
+real-data replays. On 2026-10-31 all three matched bitwise on GPU, with
+every mutation control detected, and compute-sanitizer found no error in
+the query pairs. The selected cache would
 save about 0.6 to 0.8 ms of such a step, assuming its cost grows with the
 rows. At 64 rows it takes 2.1 ms, against 3.4 ms for the direct sources of
 an 80-row step, 5.0 ms at 128 rows and 6.9 ms at 192. Its 192-row arena

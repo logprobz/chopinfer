@@ -356,7 +356,6 @@ impl Instance {
         let mut comm = Vec::new();
         let mut logits_comm = Vec::new();
         let mut mix_scratch = Vec::new();
-        let mut moe_tickets = Vec::new();
         let mut op_spans = Vec::new();
         // The one-hot `pre` the first sublayer collapses with, on every
         // row; held until the uploads complete.
@@ -459,23 +458,6 @@ impl Instance {
             };
             mix_scratch.push((partials, tickets));
             memory.take("mix");
-            // The direct MoE gate queues' strip tickets, zeroed: each queue
-            // that finishes its strips leaves them zero.
-            let strip_tickets = match self
-                .ops
-                .moe
-                .as_ref()
-                .and_then(|ops| ops.strip_ticket_bytes())
-            {
-                Some(bytes) => {
-                    let span = allocate_span(services, pool, stream, bytes, held)?;
-                    services.zero_device_buffer(stream, span)?;
-                    Some(span)
-                }
-                None => None,
-            };
-            moe_tickets.push(strip_tickets);
-            memory.take("moe_tickets");
             // The spans the ops size: the sorted routed rows and the
             // backend workspace (at least one byte, so every rank binds a
             // span), and the routes' bias choice, zeroed: text rows.
@@ -867,10 +849,7 @@ impl Instance {
                 ((((scratch, encoded_scales), views), (kv_pool, state)), (comm, logits)),
                 (mix_partials, mix_tickets),
             ),
-            (
-                (sorted_rows, workspace, rope_compressed, shared_workspace, prefill_cache),
-                moe_strip_tickets,
-            ),
+            (sorted_rows, workspace, rope_compressed, shared_workspace, prefill_cache),
         ) in scratch
             .into_iter()
             .zip(encoded_scales)
@@ -878,7 +857,7 @@ impl Instance {
             .zip(pools.into_iter().zip(state_views))
             .zip(comm.into_iter().zip(logits_comm))
             .zip(mix_scratch)
-            .zip(op_spans.into_iter().zip(moe_tickets))
+            .zip(op_spans)
         {
             self.buffers.push(RankBuffers {
                 scratch,
@@ -893,7 +872,6 @@ impl Instance {
                 prefill_cache,
                 mix_partials,
                 mix_tickets,
-                moe_strip_tickets,
                 rope_compressed,
                 encoded_scales,
             });

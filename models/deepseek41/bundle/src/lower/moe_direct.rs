@@ -108,10 +108,6 @@ impl Lowering<'_> {
                 "routed" => s.routed,
                 "shared" => s.shared_partial,
                 "output" => s.partial,
-                "strip_tickets" => self
-                    .buffers
-                    .moe_strip_tickets
-                    .ok_or("the direct MoE strip tickets are not allocated")?,
                 _ => return Err(format!("unbound MoE pipeline role {role}")),
             })
         })?;

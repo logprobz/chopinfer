@@ -318,21 +318,9 @@ pub(super) fn compare(
     }
     for arm in arms {
         metadata(pool, arm, live, pattern, rank)?;
-        tickets_clear(pool, arm)?;
     }
     pool.guards()?;
     Ok(output)
-}
-
-/// Every complete launch of the gate queue that finishes its strips leaves
-/// each strip ticket zero.
-fn tickets_clear(pool: &Pool<'_>, arm: &Arm) -> LabResult<()> {
-    match arm.strip_tickets {
-        Some(view) if pool.read(view)?.iter().any(|&b| b != 0) => {
-            Err("the gate queue left a strip ticket nonzero".into())
-        }
-        _ => Ok(()),
-    }
 }
 
 pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
@@ -344,7 +332,6 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
     let mut peak = 0;
     let mut wide_pairs = 0;
     let mut swapped = 0;
-    let mut ticket_controls = 0;
     for &rank in &options.ranks {
         let mut pool = Pool::new(session);
         let weights = Weights::load(&mut pool, &options.weights, rank)?;
@@ -484,74 +471,6 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
                                 expected,
                                 &pool.read(candidate.role("scratch.partial")?)?,
                             )?;
-                            if let Some(view) = candidate.strip_tickets {
-                                // A stale arrival on a strip of an expert
-                                // the live rows do not route: the queue must
-                                // leave it alone, end every routed strip at
-                                // zero and keep the output, and the zero
-                                // check must report it. (A stale arrival on
-                                // a routed strip is corrupted state: an
-                                // arrival can then count past the block
-                                // count and trap, which ends the context.)
-                                let (live, unrouted) = [rows, rows / 2, 1]
-                                    .into_iter()
-                                    .find_map(|live| {
-                                        (0..384)
-                                            .find(|&e| {
-                                                (0..live).all(|row| {
-                                                    (0..6)
-                                                        .all(|k| expert(row, k, pattern, rank) != e)
-                                                })
-                                            })
-                                            .map(|e| (live, e))
-                                    })
-                                    .ok_or("every expert is routed at one live row")?;
-                                let at = (unrouted as usize * 9 + pattern as usize % 9) * 4;
-                                setup(&pool, candidate, pattern, rank, 0x5a)?;
-                                pool.write(candidate.role("live")?, &live.to_le_bytes())?;
-                                graphs.as_ref().unwrap().run(3)?;
-                                let clean = pool.read(candidate.role("scratch.partial")?)?;
-                                tickets_clear(&pool, candidate)?;
-                                if let Some(reference) = raw_outputs.get(&(rows, pattern, live)) {
-                                    same(
-                                        "strip ticket control reference",
-                                        reference,
-                                        &clean[..live as usize * 5120 * 4],
-                                    )?;
-                                }
-                                let mut stale = vec![0; view.bytes as usize];
-                                stale[at] = 1;
-                                setup(&pool, candidate, pattern, rank, 0x5a)?;
-                                pool.write(candidate.role("live")?, &live.to_le_bytes())?;
-                                pool.write(view, &stale)?;
-                                graphs.as_ref().unwrap().run(3)?;
-                                if tickets_clear(&pool, candidate).is_ok() {
-                                    return Err(
-                                        "stale strip ticket control was not detected".into()
-                                    );
-                                }
-                                if pool.read(view)? != stale {
-                                    return Err(
-                                        "the gate queue touched an unrouted strip ticket".into()
-                                    );
-                                }
-                                same(
-                                    "output beside a stale unrouted strip ticket",
-                                    &clean,
-                                    &pool.read(candidate.role("scratch.partial")?)?,
-                                )?;
-                                pool.fill(view, 0)?;
-                                setup(&pool, candidate, pattern, rank, 0x5a)?;
-                                pool.write(candidate.role("live")?, &rows.to_le_bytes())?;
-                                graphs.as_ref().unwrap().run(3)?;
-                                same(
-                                    "restored strip tickets",
-                                    expected,
-                                    &pool.read(candidate.role("scratch.partial")?)?,
-                                )?;
-                                tickets_clear(&pool, candidate)?;
-                                ticket_controls += 1;
-                            }
                             pool.guards()?;
                         }
                         negatives += 1;
@@ -600,7 +519,7 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
         return Err(format!("knob set {tag} replaced no served launch"));
     }
     println!(
-        "MOE_FULL_COMPLETE worker={} checked={} compact={} dry={dry} cases={cases} replays={replays} negatives={negatives} ticket_controls={ticket_controls} graphs_destroyed={destroyed} wide_pairs_checked={wide_pairs} lab_twins={swapped} allocated_peak={peak} PASS",
+        "MOE_FULL_COMPLETE worker={} checked={} compact={} dry={dry} cases={cases} replays={replays} negatives={negatives} graphs_destroyed={destroyed} wide_pairs_checked={wide_pairs} lab_twins={swapped} allocated_peak={peak} PASS",
         options.worker, options.checked, options.compact
     );
     Ok(())

@@ -114,16 +114,6 @@ impl Prepared {
                 .all(|c| crate::Kernels::moe_scale_variant(&c.launch.symbol, width).is_some())
     }
 
-    /// The bytes its calls bind of view `role`, or `None` when none binds it.
-    pub(crate) fn view_bytes(&self, role: &str) -> Option<u64> {
-        self.calls
-            .iter()
-            .flat_map(|c| &c.pointers)
-            .filter(|p| matches!(&p.source, Source::View(r) if r == role))
-            .map(|p| p.bytes)
-            .max()
-    }
-
     pub(crate) fn fuses_router(&self) -> bool {
         self.calls.iter().any(|c| c.point == Point::RouterPrepare)
     }

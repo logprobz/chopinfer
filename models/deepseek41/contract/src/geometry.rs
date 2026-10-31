@@ -376,8 +376,8 @@ mod tests {
             let values = resolve(top_k, blocks).unwrap();
             assert_eq!(values.candidate_topk_blocks, blocks);
             let options = FLASH.model_options(values);
-            assert_eq!(options[14].name, "text_config.candidate_topk_blocks");
-            assert_eq!(options[14].default_is_qualified, blocks == 2048);
+            assert_eq!(options[13].name, "text_config.candidate_topk_blocks");
+            assert_eq!(options[13].default_is_qualified, blocks == 2048);
         }
         for (top_k, blocks) in [(2, 1), (10, 2), (256, 32), (512, 64)] {
             let error = resolve(top_k, blocks).unwrap_err();
@@ -517,16 +517,15 @@ mod tests {
         let checkpoint = FLASH.check_runtime(&config).unwrap();
         assert_eq!(checkpoint.index_topk, 512);
         let options = FLASH.model_options(checkpoint);
-        assert_eq!(options.len(), 20);
+        assert_eq!(options.len(), 19);
         assert_eq!(options[0].name, "diagnostic_step_logs");
         assert_eq!(options[1].name, "dspark_coupled_drafts");
         assert_eq!(options[2].name, "dspark_draft_chunk_items");
-        assert_eq!(options[14].name, "text_config.candidate_topk_blocks");
-        assert_eq!(options[15].name, "text_config.index_topk");
-        assert_eq!(options[16].name, "text_config.indexer_mma");
-        assert_eq!(options[19].name, "wide_verify");
+        assert_eq!(options[13].name, "text_config.candidate_topk_blocks");
+        assert_eq!(options[14].name, "text_config.index_topk");
+        assert_eq!(options[15].name, "text_config.indexer_mma");
+        assert_eq!(options[18].name, "wide_verify");
         for name in [
-            "moe_direct_gate_tickets",
             "moe_direct_keep",
             "moe_direct_loads",
             "moe_direct_retire",
@@ -539,14 +538,14 @@ mod tests {
             );
         }
         assert_eq!(
-            options[15].definition,
+            options[14].definition,
             OptionDefinitionV1::Integer {
                 default: 512,
                 minimum: 1,
                 maximum: 512
             }
         );
-        assert!(options[14].default_is_qualified);
+        assert!(options[13].default_is_qualified);
         assert_eq!(
             FLASH
                 .resolve_model_options(checkpoint, &BTreeMap::new())
@@ -565,7 +564,7 @@ mod tests {
             config["text_config"]["index_topk"] = top_k.into();
             let runtime = FLASH.check_runtime(&config).unwrap();
             assert_eq!(
-                FLASH.model_options(runtime)[15].default_is_qualified,
+                FLASH.model_options(runtime)[14].default_is_qualified,
                 top_k == 512
             );
         }

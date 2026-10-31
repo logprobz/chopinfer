@@ -64,7 +64,6 @@ impl Shape {
         options: model_deepseek41_contract::execution_options::MoeDirect,
     ) -> Shape {
         self.moe_knobs = kernels_sm120::moe::chained::knobs::Knobs {
-            tickets: options.gate_tickets,
             stream: options.stream,
             keep: options.keep,
             retire: options.retire,

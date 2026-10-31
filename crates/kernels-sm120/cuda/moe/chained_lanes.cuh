@@ -245,18 +245,12 @@ __device__ void compute(const uint8_t* input, const uint8_t* weight,
   }
 }
 
-// No work after an item; `absorbing_finish` passes its strip finisher.
-struct NoFinish {
-  __device__ __forceinline__ void strip(const float*, int, int, int, int, const int32_t*) const {}
-};
-
-// absorb::compute<C, true> over the quad-lane bank. With K::finish, after
-// each item's last pass `finish.strip` runs (chained_gate_tickets.cuh).
-template<class C, class Scales = RawScales, class K = knobs::Served, class Finish = NoFinish>
+// absorb::compute<C, true> over the quad-lane bank.
+template<class C, class Scales = RawScales, class K = knobs::Served>
 __device__ void absorbing(const uint8_t* input, const uint8_t* weight,
     const uint8_t* weight_scales, const uint8_t* activation_scales,
     const int32_t* offsets, const int32_t* sorted_rows, const int32_t* padded_rows,
-    const int32_t* live_tokens, void* scratch, const Finish& finish = Finish{}) {
+    const int32_t* live_tokens, void* scratch) {
   using L = Layout<C>;
   constexpr int H = C::halves, Rows = ::chop::moe::absorb::Rows;
   static_assert(C::k % 128 == 0 && C::loop_k == C::k && C::n % 64 == 0 &&
@@ -316,7 +310,6 @@ __device__ void absorbing(const uint8_t* input, const uint8_t* weight,
       }
       __syncthreads();
     }
-    if constexpr (K::finish) finish.strip(out, expert, column, count, first, sorted_rows);
   }
 }
 } // namespace chop::moe::lanes

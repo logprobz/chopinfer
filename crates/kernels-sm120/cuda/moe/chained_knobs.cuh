@@ -10,12 +10,10 @@
 // - Retire: whoever folds a partial line discards it once its warp has read
 //   it (`discard.global.L2`), so the dead line is never written back. Each
 //   line is written by one queue item and read by one warp of one step.
-// - Finish: the gate queue finishes each expert strip itself once the last
-//   of its K-block items arrives (`lanes::absorbing_finish`).
 namespace chop::moe::knobs {
-template<bool Stream, bool Keep, bool Retire, bool Finish = false>
+template<bool Stream, bool Keep, bool Retire>
 struct Set {
-  static constexpr bool stream = Stream, keep = Keep, retire = Retire, finish = Finish;
+  static constexpr bool stream = Stream, keep = Keep, retire = Retire;
 };
 using Served = Set<false, false, false>;
 

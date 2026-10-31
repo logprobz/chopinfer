@@ -90,9 +90,6 @@ fn rank_buffers(shape: &Shape, ops: &Ops, rank: u32) -> RankBuffers {
             }
         }
     }
-    b.moe_strip_tickets = moe
-        .strip_ticket_bytes()
-        .map(|bytes| span(next + 1, rank, bytes));
     b
 }
 

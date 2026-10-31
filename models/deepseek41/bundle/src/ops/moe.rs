@@ -506,16 +506,6 @@ impl MoeOps {
         Ok(bind.lowered(launch))
     }
 
-    /// The strip tickets of the direct gate queues that finish their own
-    /// strips (`moe_direct_gate_tickets`): the most any bucket binds, or
-    /// `None` when none does.
-    pub(crate) fn strip_ticket_bytes(&self) -> Option<u64> {
-        self.direct
-            .iter()
-            .filter_map(|(_, _, op)| op.view_bytes("strip_tickets"))
-            .max()
-    }
-
     /// The sorted routed rows' bytes: the most any kind's routes write or
     /// its expert projections read (`OpInfo::bytes`), as a projection pads
     /// each expert's rows to its tile.

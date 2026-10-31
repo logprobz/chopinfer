@@ -1,9 +1,8 @@
 //! Cache-policy and schedule knobs of the direct queues and finishers of
 //! the absorbing path (the 32- to 64-row buckets and the wide verify
 //! steps: [`lanes`], [`strip2`], [`down_scale_tiles`], [`bandwidth`],
-//! [`floor`]), and the absorbing gate queue that finishes its own strips
-//! (`chained_gate_tickets.cuh`). Every knob keeps each loaded value,
-//! product, add and stored output of its body (`chained_knobs.cuh`):
+//! [`floor`]). Every knob keeps each loaded value, product, add and stored
+//! output of its body (`chained_knobs.cuh`):
 //!
 //! - stream: the queues' weight code loads skip L1 and carry an L2
 //!   evict_first policy.
@@ -13,10 +12,6 @@
 //! - loads: the gate finisher issues every partial load before its first
 //!   add, the served all-loads-first finisher
 //!   ([`bandwidth::finish_loads_entry`]).
-//! - tickets: the gate queue finishes each expert strip once the last of
-//!   its K-block items arrives, and no gate finisher runs. The queue takes
-//!   the finisher's outputs and tickets and one ticket word per expert and
-//!   strip ([`strip_ticket_bytes`]), zeroed at create.
 //!
 //! No knob is the served set. Each entry here keeps the parameters, launch
 //! bounds and launch of the served entry it is built from; an entry a knob
@@ -28,7 +23,6 @@ use super::{
     floor::{Entry, Stage},
     lanes, strip2,
 };
-use crate::moe::ptr;
 use kernel_build::{CubinSpec, EntrySpec};
 use kernel_core::contract::Refusal;
 
@@ -40,7 +34,6 @@ pub const SCALE_WIDTHS: [u32; 1] = [1];
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Knobs {
-    pub tickets: bool,
     pub stream: bool,
     pub keep: bool,
     pub retire: bool,
@@ -55,19 +48,18 @@ impl Knobs {
 
     /// Every knob set, the served one first.
     pub fn all() -> impl Iterator<Item = Knobs> {
-        (0..32u32).map(|bits| Knobs {
-            tickets: bits & 1 != 0,
-            stream: bits & 2 != 0,
-            keep: bits & 4 != 0,
-            retire: bits & 8 != 0,
-            loads: bits & 16 != 0,
+        (0..16u32).map(|bits| Knobs {
+            stream: bits & 1 != 0,
+            keep: bits & 2 != 0,
+            retire: bits & 4 != 0,
+            loads: bits & 8 != 0,
         })
     }
 
-    fn set(self, retire: bool, finish: bool) -> String {
+    fn set(self, retire: bool) -> String {
         format!(
-            "chop::moe::knobs::Set<{},{},{},{finish}>",
-            self.stream, self.keep, retire
+            "chop::moe::knobs::Set<{},{},{retire}>",
+            self.stream, self.keep
         )
     }
 
@@ -119,65 +111,28 @@ const GATE_ENCODED: &str = "chop::moe::lanes::EncodedScales";
 const DOWN_RAW: &str = "chop::moe::streamed::RawScales";
 const DOWN_ENCODED: &str = "chop::moe::encoded_down::Scales";
 
-/// The absorbing gate queue under `k`, with raw scale tiles (`None`) or a
-/// tile-order encoded scale bank of `Some(width)`: with tickets, the queue
-/// that finishes its strips; else with stream or keep, the queue under
-/// those policies; else the served queue.
+/// The absorbing gate queue under `k`'s stream and keep, with raw scale
+/// tiles (`None`) or a tile-order encoded scale bank of `Some(width)`.
 pub fn gate_entry(e: &Entry, k: Knobs, width: Option<u32>) -> Result<EntrySpec, Refusal> {
-    if !k.tickets && !k.stream && !k.keep {
+    if !k.stream && !k.keep {
         return match width {
             None => lanes::absorb_entry(e),
             Some(width) => lanes::absorb_scale_tiles_entry(e, width),
         };
     }
     let mut spec = lanes::absorb_entry(e)?;
-    if k.tickets {
-        spec.symbol = tagged(&spec.symbol, &format!("tickets{}", k.letters(k.retire)));
-        spec.body = replace_once(
-            &spec.body,
-            "chop::moe::lanes::absorbing<",
-            "chop::moe::lanes::absorbing_finish<",
-        );
-        spec.body = replace_once(
-            &spec.body,
-            ">(input,",
-            &format!(
-                ",{GATE_RAW},{}u,{}>(input,",
-                e.floor_bits,
-                k.set(k.retire, true)
-            ),
-        );
-        spec.body = replace_once(
-            &spec.body,
-            ",scratch);",
-            ",scratch,weights,intermediate,codes,code_scales,status,tickets,strip_tickets);",
-        );
-        spec.params.extend([
-            ptr("weights", "const float"),
-            ptr("intermediate", "uint16_t"),
-            ptr("codes", "uint8_t"),
-            ptr("code_scales", "uint8_t"),
-            ptr("status", "uint32_t"),
-            ptr("tickets", "uint32_t"),
-            ptr("strip_tickets", "uint32_t"),
-        ]);
-    } else {
-        spec.symbol = tagged(&spec.symbol, &format!("policy_{}", k.letters(false)));
-        spec.body = replace_once(
-            &spec.body,
-            ">(input,",
-            &format!(",{GATE_RAW},{}>(input,", k.set(false, false)),
-        );
-    }
+    spec.symbol = tagged(&spec.symbol, &format!("policy_{}", k.letters(false)));
+    spec.body = replace_once(
+        &spec.body,
+        ">(input,",
+        &format!(",{GATE_RAW},{}>(input,", k.set(false)),
+    );
     encoded(spec, GATE_RAW, GATE_ENCODED, width)
 }
 
-/// The gate finisher under `k`: none with tickets; else the served
-/// bandwidth or all-loads-first finisher by loads, under retire.
-pub fn gate_finish_entry(e: &Entry, k: Knobs) -> Option<EntrySpec> {
-    if k.tickets {
-        return None;
-    }
+/// The gate finisher under `k`: the served bandwidth or all-loads-first
+/// finisher by loads, under retire.
+pub fn gate_finish_entry(e: &Entry, k: Knobs) -> EntrySpec {
     let mut spec = if k.loads {
         bandwidth::finish_loads_entry(e)
     } else {
@@ -200,10 +155,10 @@ pub fn gate_finish_entry(e: &Entry, k: Knobs) -> Option<EntrySpec> {
         spec.body = replace_once(
             &spec.body,
             "u>(scratch,",
-            &format!("u,{}>(scratch,", k.set(true, false)),
+            &format!("u,{}>(scratch,", k.set(true)),
         );
     }
-    Some(spec)
+    spec
 }
 
 /// The two-strip down queue under `k`'s stream and keep, with raw scales
@@ -220,7 +175,7 @@ pub fn down_entry(e: &Entry, k: Knobs, width: Option<u32>) -> Result<EntrySpec, 
     spec.body = replace_once(
         &spec.body,
         ">(input,",
-        &format!(",{DOWN_RAW},{}>(input,", k.set(false, false)),
+        &format!(",{DOWN_RAW},{}>(input,", k.set(false)),
     );
     encoded(spec, DOWN_RAW, DOWN_ENCODED, width)
 }
@@ -238,22 +193,16 @@ pub fn down_finish_entry(e: &Entry, k: Knobs) -> EntrySpec {
         spec.body = replace_once(
             &spec.body,
             ",false>(scratch,",
-            &format!(",{}>(scratch,", k.set(true, false)),
+            &format!(",{}>(scratch,", k.set(true)),
         );
     }
     spec
 }
 
-/// The strip tickets of the gate queue with tickets: one word per expert
-/// and 64-column strip, in whole 256-byte blocks.
-pub fn strip_ticket_bytes(e: &Entry) -> u64 {
-    (4 * u64::from(e.experts()) * u64::from(e.intermediate() / 64)).next_multiple_of(256)
-}
-
 /// Whether `symbol` is an entry of this module: one some knob set takes in
 /// place of a served entry.
 pub fn owns(symbol: &str) -> bool {
-    symbol.contains("_policy_") || symbol.contains("_gate_small_tickets")
+    symbol.contains("_policy_")
 }
 
 /// Every entry of `e` that some knob set takes and no served module has,
@@ -267,7 +216,7 @@ pub fn entries(e: &Entry) -> Result<Vec<EntrySpec>, Refusal> {
             specs.push(gate_entry(e, k, width)?);
             specs.push(down_entry(e, k, width)?);
         }
-        specs.extend(gate_finish_entry(e, k));
+        specs.push(gate_finish_entry(e, k));
         specs.push(down_finish_entry(e, k));
         for spec in specs {
             if owns(&spec.symbol) && !out.iter().any(|s| s.symbol == spec.symbol) {
@@ -294,9 +243,9 @@ mod tests {
 
     const WIDTHS: [Option<u32>; 2] = [None, Some(1)];
 
-    /// Each knob entry is the served entry it replaces with only its symbol,
-    /// the device function's knob set and, with tickets, the finisher's
-    /// trailing operands changed; the served knob set changes nothing.
+    /// Each knob entry is the served entry it replaces with only its symbol
+    /// and the device function's knob set changed; the served knob set
+    /// changes nothing.
     #[test]
     fn knob_entries_keep_the_served_abi() {
         for capacity in [64, 192] {
@@ -317,37 +266,9 @@ mod tests {
                         (gate.max_threads, gate.min_blocks),
                         (served.max_threads, served.min_blocks)
                     );
-                    if k.tickets {
-                        assert_eq!(gate.params[..served.params.len()], served.params[..]);
-                        let extra = gate.params[served.params.len()..]
-                            .iter()
-                            .map(|p| match p {
-                                kernel_build::EntryParam::DevicePointer { name, .. } => {
-                                    name.as_str()
-                                }
-                                _ => unreachable!(),
-                            })
-                            .collect::<Vec<_>>();
-                        assert_eq!(
-                            extra,
-                            [
-                                "weights",
-                                "intermediate",
-                                "codes",
-                                "code_scales",
-                                "status",
-                                "tickets",
-                                "strip_tickets"
-                            ]
-                        );
-                        assert!(gate.body.contains(&format!(
-                            "{}u,chop::moe::knobs::Set<{},{},{},true>>(input,",
-                            e.floor_bits, k.stream, k.keep, k.retire
-                        )));
-                    } else if k.stream || k.keep {
+                    if k.stream || k.keep {
                         assert_eq!(gate.params, served.params);
-                        let set =
-                            format!("chop::moe::knobs::Set<{},{},false,false>", k.stream, k.keep);
+                        let set = format!("chop::moe::knobs::Set<{},{},false>", k.stream, k.keep);
                         let scales = match width {
                             None => GATE_RAW.to_string(),
                             Some(w) => format!("{GATE_ENCODED}<{w}>"),
@@ -375,25 +296,22 @@ mod tests {
                         assert!(same(&down, &served));
                     }
                     for spec in [&gate, &down] {
-                        assert_eq!(owns(&spec.symbol), !gate_or_down_served(k, spec));
+                        assert_eq!(owns(&spec.symbol), k.stream || k.keep);
                         assert_eq!(spec.symbol.contains("_scale_tiles_w1_v1"), width.is_some());
                     }
                 }
                 let finish = gate_finish_entry(&e, k);
-                assert_eq!(finish.is_none(), k.tickets);
-                if let Some(finish) = finish {
-                    let served = bandwidth::entry(&e, Stage::GateFinish, bandwidth::Loads::Direct);
-                    assert_eq!(
-                        (&finish.params, finish.max_threads, finish.min_blocks),
-                        (&served.params, served.max_threads, served.min_blocks)
-                    );
-                    assert_eq!(owns(&finish.symbol), k.retire);
-                    assert_eq!(
-                        finish.body.contains("bandwidth_loads::gate_finish<")
-                            || finish.body.contains("knobs::gate_finish_loads<"),
-                        k.loads
-                    );
-                }
+                let served = bandwidth::entry(&e, Stage::GateFinish, bandwidth::Loads::Direct);
+                assert_eq!(
+                    (&finish.params, finish.max_threads, finish.min_blocks),
+                    (&served.params, served.max_threads, served.min_blocks)
+                );
+                assert_eq!(owns(&finish.symbol), k.retire);
+                assert_eq!(
+                    finish.body.contains("bandwidth_loads::gate_finish<")
+                        || finish.body.contains("knobs::gate_finish_loads<"),
+                    k.loads
+                );
                 let down_finish = down_finish_entry(&e, k);
                 let served = e.entry(Stage::DownFinish);
                 assert_eq!(
@@ -408,29 +326,14 @@ mod tests {
                 assert_eq!(same(&down_finish, &served), !k.retire);
             }
             let all = entries(&e).unwrap();
-            assert_eq!(all.len(), 31);
+            assert_eq!(all.len(), 15);
             assert!(all.iter().all(|s| owns(&s.symbol)));
-            assert_eq!(
-                all.iter()
-                    .filter(|s| s.symbol.contains("_gate_small_tickets"))
-                    .count(),
-                16
-            );
-            assert_eq!(strip_ticket_bytes(&e), 384 * 9 * 4);
         }
     }
 
     fn same(a: &EntrySpec, b: &EntrySpec) -> bool {
         (&a.symbol, &a.body, &a.params, a.max_threads, a.min_blocks)
             == (&b.symbol, &b.body, &b.params, b.max_threads, b.min_blocks)
-    }
-
-    fn gate_or_down_served(k: Knobs, spec: &EntrySpec) -> bool {
-        if spec.symbol.contains("_strip2_") {
-            !k.stream && !k.keep
-        } else {
-            !k.tickets && !k.stream && !k.keep
-        }
     }
 
     /// The encoded entries pair with their raw twins as the served encoded
@@ -459,7 +362,7 @@ mod tests {
             all.iter()
                 .filter(|s| s.symbol.contains("_scale_tiles_w"))
                 .count(),
-            14
+            6
         );
     }
 }

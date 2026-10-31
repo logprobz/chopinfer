@@ -172,32 +172,33 @@ reading partials that stayed in L2; the queues' own times do not change.
    64-byte runs. This changes the prepared weight format (below), so it
    is planned, not built.
 3. Finish each (expert, strip) in the gate queue once its 40 K-block
-   items have arrived, using a per-strip ticket. Built as an option
-   (below); it is slower than the same knobs without it in every case
-   measured.
+   items have arrived, using a per-strip ticket. Built, paired and timed
+   (below); it was slower than the same knobs without it in every case
+   measured, so the option and its kernels were removed.
 
 ## Served-body candidates
 
-Five model options, all off by default, select the candidate kernels for
+Four model options, all off by default, select the candidate kernels for
 the backbone bank's 32- to 64-row buckets and the wide verify buckets of
 65 to 192 rows on Flash TP4 (`bundle/src/sm120/moe_direct.rs`), from two
 knob modules (`routed_moe_direct_knobs`): `moe_direct_stream`,
 `moe_direct_keep`, `moe_direct_retire` and `moe_direct_loads` are the
-knobs above on the served bodies (`cuda/moe/chained_knobs.cuh`), and
-`moe_direct_gate_tickets` is Proposal 3. Off, the package prepares and
-launches the served entries, whose cubins did not change. Only the
+knobs above on the served bodies (`cuda/moe/chained_knobs.cuh`). Off, the
+package prepares and launches the served entries, whose cubins did not
+change. The four go to served step-time acceptance. Only the
 raw and width-1 tile-scale entries exist; with a bank of width 2 or 4 the
 candidates expand its scales first and launch the raw entries.
 
-With `moe_direct_gate_tickets` the gate queue takes the gate finisher's
-outputs and a per-rank array of strip tickets (one word per expert and
+Proposal 3 was measured as a fifth option, `moe_direct_gate_tickets`,
+since removed: the gate queue took the gate finisher's outputs and a
+per-rank array of strip tickets (one word per expert and
 64-column strip, 13,824 bytes, zeroed at create). After each item's last
 pass its CTA arrives on the strip's ticket with a release; the arrival
-that completes the strip's 40 K blocks acquires, resets the ticket and
-finishes the strip: one route per warp, each lane folding its four
+that completed the strip's 40 K blocks acquired, reset the ticket and
+finished the strip: one route per warp, each lane folding its four
 columns of the gate or up chain by ascending K block from +0 with the
 finisher's adds, then the finisher's epilogue, rounding, quantizer,
-status flags and per-token tickets. A count past the block count traps.
+status flags and per-token tickets. A count past the block count trapped.
 
 ### Bitwise twins
 
@@ -213,15 +214,16 @@ one logical rank, on 2026-10-31.
 | Tickets | 864 | 25,920 | 864 dropped joins, 768 stale tickets | bitwise equal |
 | Tickets with Stream, Keep, Retire | 864 | 25,920 | 864 dropped joins, 768 stale tickets | bitwise equal |
 
-Every case compared every semantic buffer and the strip tickets, which
-must end each launch at zero (16 rows do not take the absorbing path, so
-they have no ticket controls). The ticket controls plant a stale arrival
-on a strip of an expert the live rows do not route: the queue must leave
-it, keep the output bitwise and end every routed strip at zero, and the
-zero check must report it. A stale arrival on a routed strip lets a later
-arrival count past the block count, which traps by design and ends the
-context; an earlier control did that and was replaced. No run raised an
-Xid.
+Every case compared every semantic buffer and, for the ticket
+candidates, the strip tickets, which had to end each launch at zero (16
+rows do not take the absorbing path, so they had no ticket controls).
+The ticket controls planted a stale arrival on a strip of an expert the
+live rows do not route: the queue had to leave it, keep the output
+bitwise and end every routed strip at zero, and the zero check had to
+report it. A stale arrival on a routed strip lets a later arrival count
+past the block count, which traps by design and ends the context. No run
+raised an Xid. The ticket candidates, their strip tickets and these
+controls were removed with the option.
 
 ### Timing
 
@@ -280,9 +282,9 @@ item, and split each route's K blocks across the four warps with a
 barrier per warp: it took 420 us there and 1.15 times the served routed
 time with dispersed routing. Finishing in the queue can save at most the
 in-graph finisher time, a few percent of the routed experts, so the
-option is not worth served acceptance.
+option was removed rather than taken to served acceptance.
 
-### Down bank tiles (Proposal 2)
+### Down bank tiles (Proposal 2, deferred)
 
 The down bank's K per rank is 576, four and a half 128-K blocks, and the
 row-tiled layouts require K to be a multiple of 128 (`kernel-core`
@@ -302,7 +304,7 @@ layout behind a package option so the default package is unchanged;
 build the tiled down queues as twins and pair them in the lab; then
 re-prepare the package and relock in one adoption series. The prepared
 plan cache re-keys on the layout id; the drafter bank is separate and
-unchanged.
+unchanged. Deferred as a package-format change.
 
 ## Rerunning
 
@@ -316,5 +318,5 @@ the lab cubin with `build_family lab/moe_small_l2 $OUT`. Then
 `CHOPINFER_MOE_WIDE_FLUSH=read` and `CHOPINFER_MOE_WIDE_LAUNCHES=1`, with
 the same served export as both reference and candidate. The option
 candidates export with `CHOPINFER_MOE_GRAPH_KNOBS`, a comma list of
-`tickets`, `stream`, `keep`, `retire` and `loads`, and pair against the
-served export.
+`stream`, `keep`, `retire` and `loads`, and pair against the served
+export.

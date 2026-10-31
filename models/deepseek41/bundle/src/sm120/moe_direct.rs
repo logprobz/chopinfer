@@ -140,9 +140,7 @@ pub(crate) fn takes_knobs(shape: &crate::shape::Shape, wide: bool) -> bool {
     let g = shape.geometry;
     let set = model_deepseek41_contract::moe::expert_sets(g)[0];
     let k = knobs_of(shape, set);
-    if !(k.tickets || k.stream || k.keep || k.retire)
-        || !super::moe::streamed_qualified(g, shape.ranks())
-    {
+    if !(k.stream || k.keep || k.retire) || !super::moe::streamed_qualified(g, shape.ranks()) {
         return false;
     }
     if wide {
@@ -224,8 +222,7 @@ pub(crate) fn wide_rows(shape: &crate::shape::Shape, set: Experts) -> Vec<u32> {
 /// expansion precedes them.
 ///
 /// Under knobs (`knobs_of`) each launch is its knob candidate
-/// (`kernels_sm120::moe::chained::knobs`); with tickets the gate queue
-/// finishes its strips and no gate finisher runs.
+/// (`kernels_sm120::moe::chained::knobs`).
 fn prepare_wide(wide: &Entry, rows: u32, scaling: u32, k: Knobs) -> Result<Prepared, Refused> {
     use kernels_sm120::moe::chained::wide as queues;
     let scratch = wide.workspace_bytes(rows)?;
@@ -237,7 +234,7 @@ fn prepare_wide(wide: &Entry, rows: u32, scaling: u32, k: Knobs) -> Result<Prepa
         Vec::new(),
     );
     info.workspace = ticket_offset + tickets;
-    let mut stages = vec![
+    let stages = [
         (
             Point::Gate,
             None,
@@ -250,16 +247,12 @@ fn prepare_wide(wide: &Entry, rows: u32, scaling: u32, k: Knobs) -> Result<Prepa
             knobs::gate_entry(wide, k, None)?,
             queues::gate_plan(wide, rows)?,
         ),
-    ];
-    if let Some(finish) = knobs::gate_finish_entry(wide, k) {
-        stages.push((
+        (
             Point::Gate,
             Some(Stage::GateFinish),
-            finish,
+            knobs::gate_finish_entry(wide, k),
             queues::gate_finish_plan(wide, rows)?,
-        ));
-    }
-    stages.extend([
+        ),
         (
             Point::Down,
             Some(Stage::DownSmall),
@@ -272,7 +265,7 @@ fn prepare_wide(wide: &Entry, rows: u32, scaling: u32, k: Knobs) -> Result<Prepa
             knobs::down_finish_entry(wide, k),
             queues::down_finish_plan(wide, rows)?,
         ),
-    ]);
+    ];
     let mut calls = Vec::new();
     for (point, stage, spec, plan) in stages {
         info.symbols
@@ -504,8 +497,7 @@ fn prepare(
                 spec.symbol
             )));
         }
-        // Each knob candidate keeps its served launch's plan; with tickets
-        // the gate queue finishes its strips and no gate finisher runs.
+        // Each knob candidate keeps its served launch's plan.
         if !knobs.served() {
             match stage {
                 Some(Stage::GateSmall) => {
@@ -521,10 +513,7 @@ fn prepare(
                     // The served all-loads-first finisher keeps its loads.
                     let loads =
                         knobs.loads || stage_selected("gate_finish", entry.experts(), phase, rows);
-                    match knobs::gate_finish_entry(entry, Knobs { loads, ..knobs }) {
-                        Some(finish) => spec = finish,
-                        None => continue,
-                    }
+                    spec = knobs::gate_finish_entry(entry, Knobs { loads, ..knobs });
                 }
                 Some(Stage::DownSmall) => spec = knobs::down_entry(entry, knobs, None)?,
                 Some(Stage::DownFinish) => spec = knobs::down_finish_entry(entry, knobs),
@@ -626,8 +615,6 @@ fn role(stage: Option<Stage>, name: &str) -> &str {
         (Some(Stage::GateSmall | Stage::GateWide), "scales") => "input_scales",
         (Some(Stage::GateSmall | Stage::GateWide), "weight") => "gate_weight",
         (Some(Stage::GateSmall | Stage::GateWide), "weight_scales") => "gate_scales",
-        // The gate queue that finishes its strips stores the codes' scales.
-        (Some(Stage::GateSmall), "code_scales") => "scales",
         (Some(Stage::DownSmall | Stage::DownWide), "input") => "codes",
         (Some(Stage::DownSmall | Stage::DownWide), "weight") => "down_weight",
         (Some(Stage::DownSmall | Stage::DownWide), "weight_scales") => "down_scales",
@@ -690,8 +677,6 @@ fn bytes(e: &Entry, s: Option<Stage>, name: &str, rows: u32) -> u64 {
         "codes" => r * k * i,
         "shared" | "output" => r * h * 4,
         "routed" => r * k * h * 4,
-        "code_scales" => r * k * i / 32,
-        "strip_tickets" => knobs::strip_ticket_bytes(e),
         _ => unreachable!("unknown direct MoE argument {name}"),
     }
 }
@@ -706,9 +691,7 @@ mod tests {
     /// Each knob set replaces only the absorbing path's launches (the
     /// backbone's 32- to 64-row buckets and the wide verify buckets) with
     /// its candidates, each with its served launch's plan and bindings;
-    /// every other launch and bucket stays served. With tickets no gate
-    /// finisher runs, and the gate queue binds the finisher's views after
-    /// its own, then the strip tickets.
+    /// every other launch and bucket stays served.
     #[test]
     fn knob_options_replace_only_the_absorbing_launches() {
         use kernel_core::contract::Argument;
@@ -762,13 +745,12 @@ mod tests {
         for set in model_deepseek41_contract::moe::expert_sets(&FLASH) {
             let served = prepare_set(&base, set).unwrap();
             let mut absorbing = 0;
-            for bits in 1..32u32 {
+            for bits in 1..16u32 {
                 let option = MoeDirect {
-                    gate_tickets: bits & 1 != 0,
-                    stream: bits & 2 != 0,
-                    keep: bits & 4 != 0,
-                    retire: bits & 8 != 0,
-                    loads: bits & 16 != 0,
+                    stream: bits & 1 != 0,
+                    keep: bits & 2 != 0,
+                    retire: bits & 4 != 0,
+                    loads: bits & 8 != 0,
                 };
                 let ops = prepare_set(&base.with_moe_knobs(option), set).unwrap();
                 assert_eq!(ops.len(), served.len());
@@ -787,49 +769,28 @@ mod tests {
                     );
                     if !path {
                         assert_eq!(new, old);
-                        assert_eq!(op.view_bytes("strip_tickets"), None);
                         continue;
                     }
                     absorbing += 1;
-                    let finish = old
-                        .iter()
-                        .position(|(s, ..)| s.contains("_gate_finish"))
-                        .unwrap();
-                    let mut expected = old.clone();
-                    if option.gate_tickets {
-                        expected.remove(finish);
-                    }
-                    assert_eq!(new.len(), expected.len());
+                    assert_eq!(new.len(), old.len());
                     for ((symbol, plan, args), (old_symbol, old_plan, old_args)) in
-                        new.iter().zip(&expected)
+                        new.iter().zip(&old)
                     {
                         assert_eq!(plan, old_plan, "{symbol}");
-                        assert_eq!(args[..old_args.len()], old_args[..], "{symbol}");
+                        assert_eq!(args, old_args, "{symbol}");
                         let gate = old_symbol.ends_with("_gate_small_v1");
                         let down = old_symbol.contains("_strip2_");
                         let gate_finish = old_symbol.contains("_gate_finish");
                         let down_finish = old_symbol.contains("_down_finish");
-                        let changed = (gate
-                            && (option.gate_tickets || option.stream || option.keep))
-                            || (down && (option.stream || option.keep))
+                        let changed = ((gate || down) && (option.stream || option.keep))
                             || (gate_finish && (option.retire || option.loads))
                             || (down_finish && option.retire);
                         assert_eq!(symbol != old_symbol, changed, "{symbol}");
-                        if gate && option.gate_tickets {
-                            assert!(symbol.contains("_gate_small_tickets"));
-                            assert_eq!(args[old_args.len()..args.len() - 1], old[finish].2[2..]);
-                        } else {
-                            assert_eq!(args.len(), old_args.len());
-                        }
                         if gate_finish {
                             assert_eq!(symbol.contains("_gate_finish_loads"), option.loads);
                             assert_eq!(symbol.ends_with("_policy_r_v1"), option.retire);
                         }
                     }
-                    assert_eq!(
-                        op.view_bytes("strip_tickets"),
-                        option.gate_tickets.then_some(384 * 9 * 4)
-                    );
                 }
             }
             // 32, 48 and 64 rows of both phases and the wide verify rows.

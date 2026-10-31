@@ -244,10 +244,6 @@ fn export(shape: &Shape, ops: &Ops, rank: u32, rows: u32, width: u32) -> Value {
     ] {
         add(name.into(), span);
     }
-    // Zeroed at create and left zero by every launch that binds it.
-    if let Some(span) = b.moe_strip_tickets {
-        add("moe_strip_tickets".into(), span);
-    }
     assert!(roles.contains_key("scratch.shared_row_status"));
     assert!(roles.contains_key("scratch.partial"));
     json!({"schema":"chopinfer.moe-wide-graph.v1","rows":rows,"rank":rank,"scale_width":width,"bounded_row_views":true,
@@ -290,7 +286,7 @@ fn export_wide_moe_graphs() {
         Some(other) => panic!("unknown MoE graph arm {other}"),
     };
     // CHOPINFER_MOE_GRAPH_KNOBS optionally lists the direct MoE candidate
-    // knobs to set (`tickets`, `stream`, `keep`, `retire`, `loads`).
+    // knobs to set (`stream`, `keep`, `retire`, `loads`).
     let mut knobs = model_deepseek41_contract::execution_options::MoeDirect::default();
     for knob in std::env::var("CHOPINFER_MOE_GRAPH_KNOBS")
         .unwrap_or_default()
@@ -298,7 +294,6 @@ fn export_wide_moe_graphs() {
         .filter(|k| !k.is_empty())
     {
         *match knob {
-            "tickets" => &mut knobs.gate_tickets,
             "stream" => &mut knobs.stream,
             "keep" => &mut knobs.keep,
             "retire" => &mut knobs.retire,

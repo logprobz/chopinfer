@@ -377,7 +377,8 @@ const EXPERT_STAGES: [&str; 3] = ["ExpertsGateUp(0)", "ExpertsDown(0)", "RoutedS
 /// with the backbone bank's wide direct queues (the candidate: pack,
 /// absorbing gate queue and finisher, two-strip down queue, down finisher,
 /// all compiled at one capacity of at least `rows`), or the wide direct
-/// queues with the direct MoE knob candidates against either reference. Two
+/// queues with the direct MoE knob candidates (a cache policy tag, or loads
+/// alone: the all-loads-first gate finisher) against either reference. Two
 /// exports of the same selection would otherwise compare a path with
 /// itself. Pairs of 64 rows or fewer compare revisions and are not checked
 /// here.
@@ -420,7 +421,9 @@ pub fn check_wide_pair(
 }
 
 /// Whether `stages` run the wide direct queues at a capacity of at least
-/// `rows`: `Some(true)` with knob candidates, `Some(false)` without.
+/// `rows`: `Some(true)` with knob candidates, `Some(false)` without. No
+/// wide step serves the all-loads-first gate finisher, so it marks the
+/// loads knob alone.
 fn wide_direct(rows: u32, stages: &[Vec<&str>]) -> Option<bool> {
     let t = match stages {
         [gate, ..] => gate
@@ -445,5 +448,14 @@ fn wide_direct(rows: u32, stages: &[Vec<&str>]) -> Option<bool> {
                 if named(d, "chop_deepseek41_moe_strip2_", "down_small"))
             && matches!(sum.as_slice(), [s]
                 if named(s, "chop_deepseek41_moe_floor_", "down_finish")));
-    queues.then(|| stages.iter().flatten().any(|s| s.contains("_policy_")))
+    queues.then(|| {
+        stages.iter().flatten().any(|s| {
+            s.contains("_policy_")
+                || named(
+                    s,
+                    "chop_deepseek41_moe_bandwidth_direct_",
+                    "gate_finish_loads_v1",
+                )
+        })
+    })
 }

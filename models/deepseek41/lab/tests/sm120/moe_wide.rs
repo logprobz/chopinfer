@@ -85,6 +85,13 @@ fn wide_pair_rejects_a_served_candidate() {
         "chop_deepseek41_moe_bandwidth_direct_t192_e384_k6_gate_finish_loads_policy_r_v1";
     let mut unfinished = policy.clone();
     unfinished[0].pop();
+    // Loads alone changes only the gate finisher, untagged.
+    let loads = |stages: &Vec<Vec<&'static str>>| {
+        let mut stages = stages.clone();
+        stages[0][2] = "chop_deepseek41_moe_bandwidth_direct_t192_e384_k6_gate_finish_loads_v1";
+        stages
+    };
+    let (raw_loads, encoded_loads) = (loads(&raw), loads(&encoded));
     for rows in [65, 128, 192] {
         check(rows, &chain, &policy).unwrap();
         check(rows, &raw, &policy).unwrap();
@@ -93,6 +100,14 @@ fn wide_pair_rejects_a_served_candidate() {
         assert!(check(rows, &policy, &raw).is_err());
         assert!(check(rows, &raw, &encoded).is_err());
         assert!(check(rows, &chain, &unfinished).is_err());
+        for candidate in [&raw_loads, &encoded_loads] {
+            check(rows, &chain, candidate).unwrap();
+            check(rows, &raw, candidate).unwrap();
+            check(rows, &encoded, candidate).unwrap();
+            assert!(check(rows, candidate, candidate).is_err());
+            assert!(check(rows, candidate, &raw).is_err());
+            assert!(check(rows, &raw_loads, candidate).is_err());
+        }
     }
 }
 

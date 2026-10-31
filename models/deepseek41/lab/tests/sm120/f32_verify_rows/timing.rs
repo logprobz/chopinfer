@@ -8,7 +8,8 @@
 //! end, never set; a job whose limit changes is void.
 use super::catalog::{self, Shape};
 use super::fixture::{self, Form, Modules, Step, Weights, err};
-use kernel_harness::kit::cases::f32_projection::Witness;
+use kernel_core::contract::WeightFormat;
+use kernel_harness::kit::cases::f32_projection::{self as cases, Witness};
 use kernel_harness::{LabResult, Session, eviction::EvictionMode, launch};
 use runtime_cuda::{DeviceBuffer, KernelArgument, LaunchConfig};
 use serde_json::{Value, json};
@@ -43,6 +44,37 @@ pub fn rows_or(rows: &[u32]) -> Vec<u32> {
 
 pub fn selected_rows() -> Vec<u32> {
     rows_or(&ROWS)
+}
+
+/// A rank's real weights of the one selected shape, when
+/// `CHOPINFER_F32_ROWS_WEIGHTS` names their raw file (row-major N x K
+/// little-endian BF16 codes, outside the repository): the file's stem,
+/// the widened weights and the 16-feature tiles outside the tensor domain.
+pub fn real_weights(shape: Shape) -> Option<(String, Vec<f32>, Vec<usize>)> {
+    let path = std::path::PathBuf::from(std::env::var_os("CHOPINFER_F32_ROWS_WEIGHTS")?);
+    assert_eq!(
+        selected_shapes(),
+        [shape],
+        "CHOPINFER_F32_ROWS_WEIGHTS holds one shape's weights"
+    );
+    let bytes = std::fs::read(&path).expect("readable weights");
+    assert_eq!(
+        bytes.len() as u64,
+        u64::from(shape.n) * u64::from(shape.k) * 2,
+        "{}: weights of another shape",
+        shape.name
+    );
+    let b: Vec<f32> = bytes
+        .chunks_exact(2)
+        .map(|c| f32::from_bits(u32::from(u16::from_le_bytes([c[0], c[1]])) << 16))
+        .collect();
+    let outside = cases::weight_domains(&b, shape.k as usize, WeightFormat::Bf16)
+        .iter()
+        .enumerate()
+        .filter_map(|(tile, &tensor)| (tensor == 0).then_some(tile))
+        .collect();
+    let stem = path.file_stem().expect("weights file").to_string_lossy();
+    Some((stem.into_owned(), b, outside))
 }
 
 /// The enforced power limit and SM clock of this session's GPU.
@@ -213,7 +245,15 @@ pub fn bench(s: &Session, lab: &'static [u8]) -> LabResult<BTreeMap<String, Valu
     for shape in selected_shapes() {
         let modules = Modules::load(s, lab, shape)?;
         let (a, b) = fixture::operands(shape, Witness::General);
+        let (source, b, outside) = real_weights(shape).unwrap_or(("general".into(), b, Vec::new()));
         let weights = Weights::new(s, &modules, shape, &b)?;
+        if weights.outside != outside {
+            return Err(format!("{}: device weight domain differs", shape.name));
+        }
+        println!(
+            "F32_ROWS_WEIGHTS {}",
+            json!({"shape": shape.name, "weights": source, "outside_tiles": outside})
+        );
         let extra = (1..copies(shape))
             .map(|_| s.allocate(weights.weight.byte_len()))
             .collect::<LabResult<Vec<_>>>()?;
@@ -262,6 +302,7 @@ pub fn bench(s: &Session, lab: &'static [u8]) -> LabResult<BTreeMap<String, Valu
                 let flops = 6. * f64::from(rows) * f64::from(shape.n) * f64::from(shape.k);
                 let record = json!({
                     "shape": shape.name, "n": shape.n, "k": shape.k, "rows": rows,
+                    "weights": source,
                     "calls_per_graph": copies.len(),
                     "baseline": step.forms[0].name(), "form": step.forms[f].name(),
                     "control": f == 1,
@@ -277,10 +318,13 @@ pub fn bench(s: &Session, lab: &'static [u8]) -> LabResult<BTreeMap<String, Valu
                 println!("F32_ROWS_TIME {record}");
                 timed.push(record);
             }
-            results.push(json!({"shape": shape.name, "rows": rows, "aa_ratio": aa,
-                "aa_spread": (aa - 1.).abs(), "timed": timed}));
+            results.push(json!({"shape": shape.name, "weights": source, "rows": rows,
+                "aa_ratio": aa, "aa_spread": (aa - 1.).abs(), "timed": timed}));
         }
-        results.push(json!({"shape": shape.name, "floor": floor}));
+        results.push(
+            json!({"shape": shape.name, "weights": source, "outside_tiles": outside,
+            "floor": floor}),
+        );
     }
     power.sample(s, "end")?;
     let void = !power.changes.is_empty();
@@ -294,7 +338,8 @@ pub fn bench(s: &Session, lab: &'static [u8]) -> LabResult<BTreeMap<String, Valu
         json!(
             "Single-GPU CUDA event medians of one graph per form, AB/BA with a 256 MiB write \
             eviction before each sample, 15 pairs after 2 warmups; arm A is the form a verify \
-            step serves today and the first pairing is its A/A control. General witness operands. \
+            step serves today and the first pairing is its A/A control. General witness operands, \
+            or a rank's real weights (`weights` names their file) with the General activation. \
             The floor is one cold 16-byte-load pass over the weight bytes. Pair-lab timings \
             locate work and never decide adoption."
         ),

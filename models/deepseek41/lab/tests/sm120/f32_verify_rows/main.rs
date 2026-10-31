@@ -6,7 +6,11 @@
 //! every form bit for bit with the split route and time them under the
 //! pair-lab rules. Each needs the lab cubin that `cpu_build_verify_rows`
 //! stages in `CHOPINFER_F32_ROWS_CUBINS` (outside the repository), and runs
-//! only when `CHOPINFER_KERNEL_GPU` names an idle GPU.
+//! only when `CHOPINFER_KERNEL_GPU` names an idle GPU. With
+//! `CHOPINFER_F32_ROWS_WEIGHTS` naming a rank's raw BF16 weights of the one
+//! shape `CHOPINFER_F32_ROWS_SHAPES` selects (outside the repository), both
+//! tests run those weights: the bitwise test under the mixed activation,
+//! the timing under the General one.
 mod catalog;
 mod fixture;
 mod timing;
@@ -127,20 +131,40 @@ fn gpu_verify_rows_bitwise() {
         let mut compared = 0;
         for shape in timing::selected_shapes() {
             let modules = Modules::load(s, lab_bytes(), shape)?;
-            let mut cases: Vec<Case> = vec![(
-                "mixed".into(),
-                fixture::mixed(shape),
-                timing::rows_or(&BOUNDARY_ROWS),
-            )];
-            for witness in WITNESSES {
+            let mut cases: Vec<Case> = Vec::new();
+            let mut real_outside = None;
+            if let Some((source, b, outside)) = timing::real_weights(shape) {
+                // A rank's real weights under the mixed activation, whose
+                // subnormal also sends one row to the SIMT chains.
+                println!(
+                    "F32_ROWS_WEIGHTS shape={} weights={source} outside_tiles={outside:?}",
+                    shape.name
+                );
+                real_outside = Some(outside);
                 cases.push((
-                    format!("{witness:?}"),
-                    fixture::operands(shape, witness),
-                    timing::rows_or(&WITNESS_ROWS),
+                    format!("real:{source}"),
+                    (fixture::mixed(shape).0, b),
+                    timing::rows_or(&BOUNDARY_ROWS),
                 ));
+            } else {
+                cases.push((
+                    "mixed".into(),
+                    fixture::mixed(shape),
+                    timing::rows_or(&BOUNDARY_ROWS),
+                ));
+                for witness in WITNESSES {
+                    cases.push((
+                        format!("{witness:?}"),
+                        fixture::operands(shape, witness),
+                        timing::rows_or(&WITNESS_ROWS),
+                    ));
+                }
             }
             for (label, (a, b), rows) in cases {
                 let weights = Weights::new(s, &modules, shape, &b)?;
+                if real_outside.as_ref().is_some_and(|o| *o != weights.outside) {
+                    return Err(format!("{}: device weight domain differs", shape.name));
+                }
                 drop(b);
                 for rows in rows {
                     let step = Step::new(s, &weights, rows, &a, every_form(shape, rows))?;

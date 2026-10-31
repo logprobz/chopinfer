@@ -200,11 +200,13 @@ fn bounded_at(s: Shape, rows: u32) -> Entry {
 }
 
 /// A shape's immutable operands: BF16 weights and their cached domain
-/// table, classified once by the split route's create-time stage.
+/// table, classified once by the split route's create-time stage, with
+/// the 16-feature tiles it puts outside the tensor domain.
 pub struct Weights {
     pub shape: Shape,
     pub weight: DeviceBuffer,
     pub domain: DeviceBuffer,
+    pub outside: Vec<usize>,
 }
 impl Weights {
     pub fn new(s: &Session, modules: &Modules, shape: Shape, b: &[f32]) -> LabResult<Self> {
@@ -225,7 +227,13 @@ impl Weights {
         s.stream.synchronize().map_err(err)?;
         let flags = poison::read(s, &domain)?;
         let tiles = b.len() / (shape.k as usize * 16);
-        for tile in [0, tiles / 2, tiles - 1] {
+        let outside: Vec<usize> = (0..tiles)
+            .filter(|t| flags[t * 4..t * 4 + 4] == [0; 4])
+            .collect();
+        for tile in [0, tiles / 2, tiles - 1]
+            .into_iter()
+            .chain(outside.iter().copied())
+        {
             let expected = cases::weight_domains(
                 &b[tile * shape.k as usize * 16..(tile + 1) * shape.k as usize * 16],
                 shape.k as usize,
@@ -243,6 +251,7 @@ impl Weights {
             shape,
             weight,
             domain,
+            outside,
         })
     }
 }

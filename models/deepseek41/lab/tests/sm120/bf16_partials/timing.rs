@@ -58,6 +58,8 @@ const CAPTURED_ROWS: u32 = 40;
 const CALLS: usize = 32;
 const WARMUP: usize = 3;
 const REPLAYS: usize = 25;
+/// The receipt kind: the harness writes under `receipt_root()/RECEIPT_KIND`.
+const RECEIPT_KIND: &str = "deepseek41-decode-reductions";
 const PROBE_SYMBOLS: &[&str] = &[
     "chop_probe_gate_v1",
     "chop_probe_gate_release_v1",
@@ -327,6 +329,16 @@ fn external(root: &Path, cwd: &Path, tree: &Path) -> LabResult<PathBuf> {
             absolute.display()
         ));
     }
+    // A missing component that still has an entry is a dangling symlink,
+    // which could later resolve anywhere.
+    if let Some(first) = rest.components().next()
+        && base.join(first).symlink_metadata().is_ok()
+    {
+        return Err(format!(
+            "receipt directory {} passes through a dangling symlink",
+            absolute.display()
+        ));
+    }
     let resolved = base.join(rest);
     if let Ok(tree) = tree.canonicalize()
         && resolved.starts_with(&tree)
@@ -338,6 +350,17 @@ fn external(root: &Path, cwd: &Path, tree: &Path) -> LabResult<PathBuf> {
         ));
     }
     Ok(resolved)
+}
+
+/// The directory this bench's receipts land in: the harness's `root`
+/// joined with [`RECEIPT_KIND`], resolved by [`external`].
+fn destination(root: &Path, cwd: &Path, tree: &Path) -> LabResult<PathBuf> {
+    external(&root.join(RECEIPT_KIND), cwd, tree)
+}
+/// [`destination`] of the harness's receipt root from this process.
+fn receipts() -> LabResult<PathBuf> {
+    let cwd = std::env::current_dir().map_err(err)?;
+    destination(&kernel_harness::receipt_root(), &cwd, &tree())
 }
 
 /// Each rank's rows: a frozen capture's first rows when `cases` has one of
@@ -677,8 +700,10 @@ fn bench(sessions: &[Session]) -> LabResult<PathBuf> {
         results.push(record);
     }
     power.sample("end")?;
+    // Again just before writing, in case the directory changed meanwhile.
+    receipts()?;
     let path = sessions[0].receipt(
-        "deepseek41-decode-reductions",
+        RECEIPT_KIND,
         BTreeMap::from([
             ("case".into(), json!("decode_reduction_timing")),
             ("geometry".into(), json!(FLASH.id)),
@@ -741,9 +766,31 @@ fn timed_arms_launch_what_serving_issues() {
             "verify {rows}"
         );
     }
+    // Decode runs at six graph buckets and defers at each; no other row
+    // count is a decode step.
+    let buckets = [1, 2, 4, 8, 16, 32];
+    assert_eq!(DECODE_BUCKETS, buckets);
+    let most = DECODE_BATCH * MAX_VERIFY_ROWS;
+    for rows in 0..=most + 1 {
+        let form = buckets.contains(&rows).then_some(Deferred);
+        assert_eq!(served(Step::Decode, rows).unwrap(), form, "decode {rows}");
+    }
+    for (rows, form) in [
+        (1, Deferred),
+        (2, Deferred),
+        (4, Deferred),
+        (8, Deferred),
+        (16, Deferred),
+        (32, Deferred),
+    ] {
+        assert_eq!(
+            served(Step::Decode, rows).unwrap(),
+            Some(form),
+            "decode {rows}"
+        );
+    }
     // Verify defers at 4, 6, 8, 12 and 16 rows and at 32 to 64; every other
     // width up to the verify graphs' 192 rows issues the complete form.
-    let most = DECODE_BATCH * MAX_VERIFY_ROWS;
     for rows in 0..=most + 1 {
         let form = (1..=most).contains(&rows).then_some(
             if [4, 6, 8, 12, 16].contains(&rows) || (32..=64).contains(&rows) {
@@ -855,6 +902,20 @@ fn receipts_stay_outside_the_tree() {
     }
     let resolved = external(Path::new("receipts"), &outside, &tree).unwrap();
     assert_eq!(resolved, outside.canonicalize().unwrap().join("receipts"));
+    // The kind subdirectory the harness appends, as a symlink into the tree
+    // or a dangling one, is refused although its root alone is outside.
+    let root = outside.join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    assert_eq!(
+        destination(&root, &lab, &tree).unwrap(),
+        root.canonicalize().unwrap().join(RECEIPT_KIND)
+    );
+    std::os::unix::fs::symlink(&lab, root.join(RECEIPT_KIND)).unwrap();
+    assert!(external(&root, &lab, &tree).is_ok());
+    assert!(destination(&root, &lab, &tree).is_err());
+    std::fs::remove_file(root.join(RECEIPT_KIND)).unwrap();
+    std::os::unix::fs::symlink(tree.join("later"), root.join(RECEIPT_KIND)).unwrap();
+    assert!(destination(&root, &lab, &tree).is_err());
     assert!(external(&outside.join("a/b"), &lab, &tree).is_ok());
     assert!(external(&outside, &lab, &scratch.join("missing")).is_ok());
     std::fs::remove_dir_all(&scratch).unwrap();
@@ -876,14 +937,9 @@ fn decode_reduction_timing() {
         .unwrap();
         return;
     }
-    // The harness writes under this root; refuse the tree before any GPU work.
-    let receipts = external(
-        &kernel_harness::receipt_root(),
-        &std::env::current_dir().unwrap(),
-        &tree(),
-    )
-    .unwrap();
-    eprintln!("DECODE_REDUCTION receipts under {}", receipts.display());
+    // Refuse a receipt directory inside the tree before any GPU work.
+    let receipts = receipts().unwrap();
+    eprintln!("DECODE_REDUCTION receipts in {}", receipts.display());
     let result = kernel_harness::gpu_test_multi_with(probe().unwrap(), 2 << 30, bench).unwrap();
     assert!(result.is_some(), "the timing must run on four GPUs");
 }

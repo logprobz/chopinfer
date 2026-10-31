@@ -116,9 +116,11 @@ cargo test --locked --offline -p model-deepseek41-lab --test bf16_partials \
   timing::decode_reduction_timing -- --nocapture
 ```
 
-Without the first two it prints a skip notice. Receipts go to
-`CHOPINFER_KERNEL_RECEIPTS`, else `$CHOPINFER_DATA/kernel-lab`, else the
-system temporary directory. Before opening a GPU the bench resolves that
-directory, a relative one against the working directory and through any
-symlinks, and refuses one inside the checkout. These are pair-lab timings:
-they locate work and never decide adoption.
+Without the first two it prints a skip notice. Receipts go to the
+`deepseek41-decode-reductions` subdirectory of `CHOPINFER_KERNEL_RECEIPTS`,
+else of `$CHOPINFER_DATA/kernel-lab`, else of the system temporary
+directory. Before opening a GPU, and again just before writing, the bench
+resolves that final directory, a relative one against the working
+directory and through any symlinks, the subdirectory included. It refuses
+one inside the checkout or one that passes through a dangling symlink.
+These are pair-lab timings: they locate work and never decide adoption.

@@ -39,10 +39,20 @@ the Unicode version), which `check` warns about when its own differs. A full
 corpus also holds `reference.json` (each case's HF outcome) and
 `rounds-report.json` (why a case has no round-trip vector). CPU only; no
 weights are loaded.
+
+A cases module may pin a second authority, a published recipe package, as
+`RECIPE` (`RECIPE_KEYS`). `generate` then runs the recipe's oracle script
+under its own interpreter (`SubprocessOracle`) on every case and round trip
+and writes `corpus-recipe.json`: the recipe it ran, and where the recipe's
+render or parse differs from the corpus. `minimize` refuses a difference that
+matches no divergence entry or several by its `recipe_when` tags and keeps a
+case of each entry, and `check` requires each committed difference to match
+exactly one (`check_recipe`).
 """
 
 import argparse
 import copy
+from decimal import Decimal
 import hashlib
 import importlib.metadata
 import importlib.util
@@ -50,6 +60,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import subprocess
 import sys
 import unicodedata
 import unittest
@@ -65,6 +76,12 @@ DIVERGENCES_SCHEMA = "chop-frontend-divergences-v1"
 # where a model has a second authority for that mapping: the rule, the
 # authority it follows, its source, and the committed cases that show it.
 MAPPING_KEYS = ("id", "follows", "rule", "source", "cases")
+# A parser entry records where the served parser reads a completion other
+# than the pinned recipe's parser: its id, the recipe_when tags of the round
+# trips it explains, and why.
+PARSER_KEYS = ("id", "recipe_when", "reason")
+# The sections whose entries may carry recipe_when tags.
+RECIPE_SECTIONS = ("inputs", "mapping", "parser")
 # The request fields a render vector may carry besides `messages`
 # (crates/runtime-host/src/frontend_check.rs REQUEST_FIELDS_V1).
 REQUEST_FIELDS = ("tools", "tool_choice", "chat_template_kwargs", "reasoning_effort", "thinking",
@@ -109,10 +126,18 @@ class Model:
         missing = [key for key in TRANSPORT_KEYS if key not in self.cases.TRANSPORT]
         if missing:
             raise CorpusError(f"{name}: TRANSPORT lacks {', '.join(missing)}")
+        missing = [key for key in RECIPE_KEYS if self.recipe is not None and not self.recipe.get(key)]
+        if missing:
+            raise CorpusError(f"{name}: RECIPE lacks {', '.join(missing)}")
 
     @property
     def pin(self):
         return self.cases.PIN
+
+    @property
+    def recipe(self):
+        """The cases module's `RECIPE` pin (`RECIPE_KEYS`), or None."""
+        return getattr(self.cases, "RECIPE", None)
 
     @property
     def transport(self):
@@ -188,7 +213,7 @@ def load_module(path):
 def read_divergences(path):
     """A divergence table, or an empty one when the model has none yet."""
     if path is None or not Path(path).exists():
-        return {"schema": DIVERGENCES_SCHEMA, "lines": [], "inputs": [], "mapping": []}
+        return {"schema": DIVERGENCES_SCHEMA, "lines": [], "inputs": [], "mapping": [], "parser": []}
     table = json.loads(Path(path).read_text())
     if table.get("schema") != DIVERGENCES_SCHEMA:
         raise CorpusError(f"{path}: schema must be {DIVERGENCES_SCHEMA}")
@@ -203,9 +228,27 @@ def read_divergences(path):
         missing = [key for key in MAPPING_KEYS if not entry.get(key)]
         if missing:
             raise CorpusError(f"{path}: mapping entry {entry.get('id')} needs {', '.join(missing)}")
+    for entry in table.get("parser", []):
+        missing = [key for key in PARSER_KEYS if not entry.get(key)]
+        if missing:
+            raise CorpusError(f"{path}: parser entry {entry.get('id')} needs {', '.join(missing)}")
+    for section in RECIPE_SECTIONS:
+        for entry in table.get(section, []):
+            tags = entry.get("recipe_when")
+            if tags is not None and not (isinstance(tags, list) and tags
+                                         and all(isinstance(tag, str) and tag for tag in tags)):
+                raise CorpusError(f"{path}: {section} entry {entry.get('id')} has a recipe_when that is not "
+                                  "a list of tags")
+    # A difference names the entry that explains it by id, so the ids of
+    # every section a difference can match must be distinct.
+    ids = [entry.get("id") for section in RECIPE_SECTIONS for entry in table.get(section, [])]
+    shared = sorted({str(identifier) for identifier in ids if ids.count(identifier) > 1})
+    if shared:
+        raise CorpusError(f"{path}: inputs, mapping and parser entries share the id {', '.join(shared)}")
     table.setdefault("lines", [])
     table.setdefault("inputs", [])
     table.setdefault("mapping", [])
+    table.setdefault("parser", [])
     return table
 
 
@@ -907,6 +950,340 @@ def check_continuation(model, reference, request, rendered, base, endings):
                           f"which begins with none of its endings {endings}")
 
 
+# The recipe oracle -----------------------------------------------------------------------
+
+RECIPE_FILE = "corpus-recipe.json"
+RECIPE_SCHEMA = "chop-frontend-recipe-v1"
+# What a cases module's RECIPE pin names: the package and its version, the
+# wheel installed and its digest, the digest of the files it installs as its
+# RECORD lists them (`installed_sha256`, which the oracle reports), the
+# variable naming the interpreter it is installed in, and the oracle script in
+# the model's directory.
+RECIPE_KEYS = ("package", "version", "wheel", "wheel_sha256", "installed_sha256", "python_env", "oracle")
+# The pin fields corpus-recipe.json records, with the oracle's Python version.
+RECIPE_RECORDED = ("package", "version", "wheel", "wheel_sha256", "installed_sha256")
+# The installed recipe the oracle must report, field for field.
+RECIPE_INSTALLED = ("package", "version", "installed_sha256")
+# The fields of a turn a round trip's parse is compared on.
+TURN_FIELDS = ("reasoning", "content", "tool_calls", "finish_reason")
+
+
+class SubprocessOracle:
+    """A model's recipe oracle: the script its RECIPE pin names (`oracle`, in
+    the model's directory), run under the interpreter the pin's `python_env`
+    names. It runs outside the reference runner's environment, whose package
+    set is part of every reference key (`keys.py`), so pinning a recipe
+    changes no key.
+
+    `run(cases, rounds)` sends `{"checkpoint", "cases", "rounds"}` as JSON on
+    the script's stdin: the directory of the tokenizer files, each case's
+    `{"id", "request"}` and each round trip's `{"id", "request", "token_ids"}`.
+    The script writes `{"environment", "cases", "rounds"}` to stdout: the
+    recipe it ran (`package`, `version`, `installed_sha256` and `python`), each
+    case's outcome (`rendered_text` and `token_ids`, or a `refusal`) and each
+    round trip's parse (`reasoning`, `content`, `tool_calls` and
+    `finish_reason`, or a `refusal` of its request, or the parser's
+    `error`). A refusal is a client error: its `status` is 4xx, with its
+    `message` (`internal_failure`)."""
+
+    def __init__(self, model):
+        self.model = model
+
+    def run(self, cases, rounds):
+        recipe = self.model.recipe
+        python = os.environ.get(recipe["python_env"])
+        if not python:
+            raise CorpusError(f"{recipe['python_env']} is unset: the {recipe['package']} oracle runs under it "
+                              "(tools/refrun/README.md)")
+        script = self.model.directory / recipe["oracle"]
+        payload = {"checkpoint": str(self.model.checkpoint()), "cases": cases, "rounds": rounds}
+        done = subprocess.run([python, "-I", "-B", str(script)], input=json.dumps(payload, ensure_ascii=False),
+                              capture_output=True, text=True, encoding="utf-8")
+        if done.returncode:
+            raise CorpusError(f"{script.name} failed under {recipe['python_env']}: {done.stderr.strip()[-2000:]}")
+        return json.loads(done.stdout)
+
+
+def recipe_record(model, oracle, vectors, rounds):
+    """The contents of corpus-recipe.json: the pinned recipe and the Python the
+    oracle ran it with, and per case and round trip whether the recipe agrees
+    with the corpus (`case_row`, `round_row`). Refuses an oracle that reports
+    another installed recipe than the cases module pins."""
+    pin = model.recipe
+    result = oracle.run([{"id": vector["id"], "request": request_of(vector)} for vector in vectors],
+                        [{"id": vector["id"], "request": vector["request"], "token_ids": vector["token_ids"]}
+                         for vector in rounds])
+    environment = result["environment"]
+    for key in RECIPE_INSTALLED:
+        if environment.get(key) != pin[key]:
+            raise CorpusError(f"{pin['python_env']} has {key} {environment.get(key)!r} installed, not the pinned "
+                              f"{pin[key]!r} (tools/refrun/README.md)")
+    missing = [vector["id"] for vector in vectors if vector["id"] not in result["cases"]]
+    missing += [vector["id"] for vector in rounds if vector["id"] not in result["rounds"]]
+    if missing:
+        raise CorpusError("the recipe oracle gives no outcome for " + ", ".join(missing))
+    failed = [f"{kind} {key} ({outcome['refusal']})" for kind, outcomes in (("case", result["cases"]),
+                                                                          ("round trip", result["rounds"]))
+              for key, outcome in outcomes.items() if internal_failure(outcome)]
+    if failed:
+        raise CorpusError("the recipe fails internally, not with a client error, on " + "; ".join(failed))
+    return {"schema": RECIPE_SCHEMA, "model": model.name,
+            "recipe": {**{key: pin[key] for key in RECIPE_RECORDED}, "python": environment["python"]},
+            "cases": {vector["id"]: case_row(vector, result["cases"][vector["id"]]) for vector in vectors},
+            "rounds": {vector["id"]: round_row(vector, result["rounds"][vector["id"]]) for vector in rounds}}
+
+
+def render_difference(vector, outcome):
+    """How the recipe's outcome of a case differs from its render vector, or
+    None: `refuses` (the recipe refuses what the corpus renders), `accepts`
+    (it renders what the corpus refuses), `render` (other text) or `tokens`
+    (the same text as other ids). Both refusing is agreement, whatever each
+    says."""
+    if "refusal" in outcome or "refusal" in vector:
+        if ("refusal" in outcome) == ("refusal" in vector):
+            return None
+        return "refuses" if "refusal" in outcome else "accepts"
+    if outcome["rendered_text"] != vector["rendered_text"]:
+        return "render"
+    return "tokens" if outcome["token_ids"] != vector["token_ids"] else None
+
+
+def internal_failure(outcome):
+    """Whether an oracle outcome is a refusal without a client error's 4xx
+    status: the recipe failing, which compares with nothing, rather than
+    refusing the request."""
+    if "refusal" not in outcome:
+        return False
+    status = outcome["refusal"].get("status") if isinstance(outcome["refusal"], dict) else None
+    return not (isinstance(status, int) and 400 <= status < 500)
+
+
+def render_digest(outcome):
+    return hashlib.sha256(json.dumps([outcome["rendered_text"], outcome["token_ids"]],
+                                     ensure_ascii=False).encode()).hexdigest()
+
+
+def request_digest(vector):
+    """The fingerprint of the request a case row was computed from, as the
+    oracle received it: its JSON text, key order kept. A request field the
+    reference never reads changes it, so an old row cannot stand for it."""
+    return hashlib.sha256(json.dumps(request_of(vector), ensure_ascii=False).encode()).hexdigest()
+
+
+def round_input_digest(vector):
+    """The fingerprint of a round trip's request and completion token ids."""
+    return hashlib.sha256(json.dumps([vector["request"], vector["token_ids"]],
+                                     ensure_ascii=False).encode()).hexdigest()
+
+
+def case_row(vector, outcome):
+    """A case's row: the fingerprint of its request, then agreement, with the
+    recipe's refusal or the digest of the render both give, or the difference
+    and the recipe's whole outcome."""
+    row = {"request_sha256": request_digest(vector)}
+    difference = render_difference(vector, outcome)
+    if difference is not None:
+        return {**row, "difference": difference, "recipe": outcome}
+    if "refusal" in outcome:
+        return {**row, "agrees": True, "refusal": outcome["refusal"]}
+    return {**row, "agrees": True, "sha256": render_digest(outcome)}
+
+
+def canonical_json(value):
+    """`value`, a decoded JSON value, as text that equal JSON values share:
+    object keys sorted and numbers compared by exact value (1, 1.0 and 1e0
+    alike; `canonical_number`), while true stays distinct from 1."""
+    if isinstance(value, dict):
+        return "{" + ",".join(json.dumps(key, ensure_ascii=False) + ":" + canonical_json(value[key])
+                              for key in sorted(value)) + "}"
+    if isinstance(value, list):
+        return "[" + ",".join(canonical_json(item) for item in value) + "]"
+    if isinstance(value, Decimal):
+        return canonical_number(value)
+    return json.dumps(value, ensure_ascii=False)
+
+
+def canonical_number(value):
+    """A finite JSON number, read exactly as a Decimal, as its sign, its
+    significant digits and their exponent, with no trailing zero. It reads
+    the digits themselves, not a decimal context that rounds them, so every
+    digit of a long literal counts, and every zero is 0."""
+    sign, digits, exponent = value.as_tuple()
+    text = "".join(map(str, digits))
+    significant = text.rstrip("0")
+    if not significant:
+        return "0"
+    return f"{'-' if sign else ''}{significant}e{exponent + len(text) - len(significant)}"
+
+
+def canonical_arguments(text):
+    """A call's arguments compared as the JSON value their text holds, or as
+    the text when it holds none."""
+    try:
+        return ["json", canonical_json(json.loads(text, parse_float=Decimal, parse_int=Decimal))]
+    except ValueError:
+        return ["text", text]
+
+
+def canonical_turn(turn):
+    """A turn as a round trip compares it: absent text read as empty, and
+    each call's arguments as their JSON value (`canonical_arguments`)."""
+    return {"reasoning": turn.get("reasoning") or "", "content": turn.get("content") or "",
+            "tool_calls": [{"name": call["name"], "arguments": canonical_arguments(call["arguments"])}
+                           for call in turn.get("tool_calls") or []],
+            "finish_reason": turn.get("finish_reason")}
+
+
+def turn_digest(turn):
+    return hashlib.sha256(json.dumps(canonical_turn(turn), ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def parse_differences(expect, parse):
+    """Where the recipe's parse of a round trip differs from what the vector
+    expects: `refused` when the recipe refuses its request, `error` when its
+    parser fails, else the `TURN_FIELDS` that differ."""
+    if "refusal" in parse:
+        return ["refused"]
+    if "error" in parse:
+        return ["error"]
+    expected, actual = canonical_turn(expect), canonical_turn(parse)
+    return [field for field in TURN_FIELDS if expected[field] != actual[field]]
+
+
+def round_row(vector, parse):
+    """A round trip's row: the fingerprint of its request and token ids, then
+    agreement with the digest of the turn both read, or the fields that
+    differ and the recipe's whole parse."""
+    row = {"input_sha256": round_input_digest(vector)}
+    differences = parse_differences(vector["expect"], parse)
+    if differences:
+        return {**row, "differences": differences, "recipe": parse}
+    return {**row, "agrees": True, "sha256": turn_digest(vector["expect"])}
+
+
+def read_recipe(directory):
+    path = Path(directory) / RECIPE_FILE
+    if not path.exists():
+        return None
+    record = json.loads(path.read_text())
+    if record.get("schema") != RECIPE_SCHEMA:
+        raise CorpusError(f"{path}: schema must be {RECIPE_SCHEMA}")
+    return record
+
+
+class RecipeDifference:
+    """One difference a recipe record holds: the `case` it belongs to and,
+    for a parse, its `round` trip; the `tags` entries match it by and the
+    `section` they come from. A case's tags are its features,
+    `recipe:<difference>` and `case:fixed` or `case:generated` (`is_fixed`),
+    and an inputs or mapping entry explains it; a round trip's are its
+    case's tags without `recipe:<difference>`, `recipe:parse`,
+    `parse:<field>` for each field that differs and its generation prompt's
+    `mode:<mode>`, and a parser entry explains it. A recipe reports one
+    refusal where a generated case carries several causes, so `case:` lets
+    one entry explain the generated cases' differences without matching a
+    fixed case's own entry."""
+
+    def __init__(self, case, tags, section, detail, round=None):
+        self.case = case
+        self.round = round
+        self.tags = tags
+        self.section = section
+        self.detail = detail
+
+    @property
+    def name(self):
+        return f"round trip {self.round}" if self.round else f"case {self.case}"
+
+
+def recipe_differences(record, coverage):
+    """Every difference a recipe record holds (`RecipeDifference`), cases
+    first, in the record's order."""
+    def case_tags(case):
+        features = coverage["cases"].get(case, {}).get("features", [])
+        return {*features, f"case:{'fixed' if is_fixed(features) else 'generated'}"}
+
+    differences = []
+    for identifier, row in record["cases"].items():
+        if "difference" in row:
+            differences.append(RecipeDifference(identifier, case_tags(identifier) | {f"recipe:{row['difference']}"},
+                                                "render", describe_recipe_case(row)))
+    for identifier, row in record["rounds"].items():
+        if "differences" in row:
+            case = identifier.rsplit("-round-", 1)[0]
+            shape = coverage["rounds"].get(identifier, {}).get("shape", "")
+            tags = case_tags(case) | {"recipe:parse", *(f"parse:{field}" for field in row["differences"]),
+                                      f"mode:{shape.rsplit('/', 1)[-1]}"}
+            differences.append(RecipeDifference(case, tags, "parser",
+                                                f"the recipe's parse differs in {', '.join(row['differences'])}",
+                                                identifier))
+    return differences
+
+
+def describe_recipe_case(row):
+    outcome = row["recipe"]
+    if row["difference"] == "refuses":
+        return f"the recipe refuses it ({outcome['refusal']})"
+    if row["difference"] == "accepts":
+        return "the recipe renders it where the corpus refuses"
+    if row["difference"] == "render":
+        return "the recipe renders other text"
+    return "the recipe gives other token ids"
+
+
+def recipe_candidates(table, section):
+    """The entries a difference of `section` (`render` or `parser`) may match:
+    those carrying recipe_when tags."""
+    sections = ("parser",) if section == "parser" else ("inputs", "mapping")
+    return [entry for name in sections for entry in table[name] if entry.get("recipe_when")]
+
+
+def attribute(table, differences):
+    """Each difference with its matching entries, by recipe_when tags as
+    `when` matches features."""
+    return [(difference, [entry for entry in recipe_candidates(table, difference.section)
+                          if set(entry["recipe_when"]) <= difference.tags]) for difference in differences]
+
+
+def describe_match(difference, entries):
+    kind = "parser" if difference.section == "parser" else "inputs or mapping"
+    found = f"several entries ({', '.join(entry['id'] for entry in entries)})" if entries else f"no {kind} entry"
+    return f"{difference.name}: {difference.detail}, and its recipe_when tags match {found}"
+
+
+def recipe_representatives(record, coverage, table):
+    """What minimization keeps of a full corpus's recipe differences: for
+    each entry that explains one, the first case and round trip it explains,
+    so no entry goes stale. Refuses a difference that matches no entry or
+    several, which a committed corpus would otherwise drop unexplained."""
+    attributed = attribute(table, recipe_differences(record, coverage))
+    unexplained = [describe_match(difference, entries) for difference, entries in attributed if len(entries) != 1]
+    if unexplained:
+        raise CorpusError("differences from the recipe match no entry or several: " + "; ".join(unexplained))
+    cases, rounds, seen = set(), set(), set()
+    for difference, (entry,) in attributed:
+        if entry["id"] not in seen:
+            seen.add(entry["id"])
+            cases.add(difference.case)
+            if difference.round:
+                rounds.add(difference.round)
+    return cases, rounds
+
+
+def recipe_summary(record, coverage, table):
+    """What generate reports of a recipe record: agreements, differences by
+    class, and the differences that match no entry or several."""
+    differences = recipe_differences(record, coverage)
+    classes = {}
+    for difference in differences:
+        for tag in sorted(tag for tag in difference.tags if tag.startswith(("recipe:", "parse:"))):
+            classes[tag] = classes.get(tag, 0) + 1
+    rows = len(record["cases"]) + len(record["rounds"])
+    return {"recipe_agreements": rows - len(differences), "recipe_differences": classes,
+            "recipe_unattributed": [difference.name for difference, entries in attribute(table, differences)
+                                    if len(entries) != 1]}
+
+
 # generate ---------------------------------------------------------------------------------
 
 def template_source(model, template=None):
@@ -985,7 +1362,12 @@ def write_json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=1) + "\n")
 
 
-def generate(model, output, seed=0, divergences=None, template=None, refusals=None, reference=None):
+def generate(model, output, seed=0, divergences=None, template=None, refusals=None, reference=None, oracle=None):
+    """Writes the full corpus to `output`. A model whose cases module pins a
+    RECIPE also gets corpus-recipe.json from `oracle`, by default its
+    `SubprocessOracle`."""
+    if oracle is not None and model.recipe is None:
+        raise CorpusError(f"{model.name}: a recipe oracle needs the cases module's RECIPE pin")
     source, digest = template_source(model, template)
     if reference is None:
         reference = model_reference(model, source)
@@ -993,17 +1375,26 @@ def generate(model, output, seed=0, divergences=None, template=None, refusals=No
     table = read_divergences(divergences if divergences is not None else model.divergences_path)
     cases = model.full_cases(seed)
     corpus = build_corpus(model, reference, cases, table, refusals)
+    document = coverage_document(model, reference, digest, seed, len(cases), corpus["cases"],
+                                 {key: {"shape": info["shape"], "ending": info["ending"]}
+                                  for key, info in corpus["round_infos"].items()})
+    record = None
+    if model.recipe is not None:
+        record = recipe_record(model, oracle or SubprocessOracle(model), corpus["vectors"], corpus["rounds"])
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     write_json(output / "corpus.json", corpus["vectors"])
     write_json(output / "corpus-rounds.json", corpus["rounds"])
-    document = coverage_document(model, reference, digest, seed, len(cases), corpus["cases"],
-                                 {key: {"shape": info["shape"], "ending": info["ending"]}
-                                  for key, info in corpus["round_infos"].items()})
     write_json(output / "corpus-coverage.json", document)
     write_json(output / "reference.json", corpus["outcomes"])
     write_json(output / "rounds-report.json", {"rounds": corpus["round_infos"], "cases": corpus["report"]})
-    return summary(document, corpus)
+    result = summary(document, corpus)
+    if record is not None:
+        write_json(output / RECIPE_FILE, record)
+        result.update(recipe_summary(record, document, table))
+    else:
+        (output / RECIPE_FILE).unlink(missing_ok=True)
+    return result
 
 
 def summary(document, corpus=None):
@@ -1037,12 +1428,13 @@ def read_corpus(directory):
     return vectors, rounds, coverage, outcomes
 
 
-def minimize_selection(coverage, outcomes):
+def minimize_selection(coverage, outcomes, required=()):
     """The ids of a subset of the full corpus that keeps every template line
-    and feature tag, every reference-refusal class, every divergence case and
-    one round-trip vector per shape and ending. A case that matches several
-    inputs entries has no declared outcome, so the corpus is refused until the
-    entries' `when` lists tell its divergences apart."""
+    and feature tag, every reference-refusal class, every divergence case,
+    every `required` case and one round-trip vector per shape and ending. A
+    case that matches several inputs entries has no declared outcome, so the
+    corpus is refused until the entries' `when` lists tell its divergences
+    apart."""
     cases = coverage["cases"]
     ambiguous = [key for key, case in cases.items() if isinstance(case["divergence"], list)]
     if ambiguous:
@@ -1056,7 +1448,7 @@ def minimize_selection(coverage, outcomes):
             chosen.append(key)
 
     for key in eligible:
-        if cases[key]["divergence"] is not None:
+        if cases[key]["divergence"] is not None or key in required:
             choose(key)
     classes = {}
     for key in eligible:
@@ -1097,7 +1489,7 @@ def is_fixed(features):
     return any(tag.startswith("fixed:") for tag in features)
 
 
-def minimize(model, corpus, output):
+def minimize(model, corpus, output, divergences=None):
     vectors, rounds, coverage, outcomes = read_corpus(corpus)
     if outcomes is None:
         raise CorpusError(f"{corpus}: minimize needs a full corpus with reference.json")
@@ -1110,13 +1502,21 @@ def minimize(model, corpus, output):
     if undeclared:
         raise CorpusError("round trips fail without a no-round-trip entry: " + ", ".join(
             f"{key} ({report[key]['failure']})" for key in undeclared))
-    chosen = minimize_selection(coverage, outcomes)
+    record = read_recipe(corpus) if model.recipe is not None else None
+    if record is None and model.recipe is not None:
+        raise CorpusError(f"{corpus}: the cases module pins RECIPE, so minimize needs the full corpus's {RECIPE_FILE}")
+    required, required_rounds = set(), set()
+    if record is not None:
+        table = read_divergences(divergences if divergences is not None else model.divergences_path)
+        required, required_rounds = recipe_representatives(record, coverage, table)
+    chosen = minimize_selection(coverage, outcomes, required)
     keep = set(chosen)
     fixed = {key for key in keep if is_fixed(coverage["cases"][key]["features"])}
     shapes, selected_rounds = set(), []
     for vector in (vector for vector in rounds if vector["id"].rsplit("-round-", 1)[0] in keep):
         info = coverage["rounds"][vector["id"]]
-        if (info["shape"], info["ending"]) not in shapes or vector["id"].rsplit("-round-", 1)[0] in fixed:
+        if ((info["shape"], info["ending"]) not in shapes or vector["id"].rsplit("-round-", 1)[0] in fixed
+                or vector["id"] in required_rounds):
             shapes.add((info["shape"], info["ending"]))
             selected_rounds.append(vector)
     round_ids = {vector["id"] for vector in selected_rounds}
@@ -1130,6 +1530,10 @@ def minimize(model, corpus, output):
     write_json(output / "corpus.json", [vector for vector in vectors if vector["id"] in keep])
     write_json(output / "corpus-rounds.json", selected_rounds)
     write_json(output / "corpus-coverage.json", document)
+    if record is not None:
+        write_json(output / RECIPE_FILE, {
+            **record, "cases": {key: row for key, row in record["cases"].items() if key in keep},
+            "rounds": {key: row for key, row in record["rounds"].items() if key in round_ids}})
     return summary(document)
 
 
@@ -1228,6 +1632,7 @@ def check(model, fixtures=None, divergences=None, reference=None, template=None)
         if recorded != expected:
             errors.append(f"case {identifier}: corpus-coverage.json records divergence {recorded!r}, not {expected!r}")
     errors += check_features(model, coverage, table)
+    errors += check_recipe(model, fixtures, vectors, rounds, coverage, table)
     return errors
 
 
@@ -1364,6 +1769,117 @@ def check_features(model, coverage, table):
     return errors
 
 
+def check_recipe(model, fixtures, vectors, rounds, coverage, table):
+    """The recipe gate, offline, for a model whose cases module pins a RECIPE.
+
+    corpus-recipe.json records the pinned recipe and a row for every
+    committed case and round trip, and each row still holds against the
+    committed vector: it was computed from the vector's request (and a round
+    trip's token ids), it holds no internal recipe failure as a refusal, a
+    recorded difference recomputes from the recipe's outcome, and an
+    agreement's digest is the vector's. Each difference
+    matches exactly one entry by its recipe_when tags (`recipe_differences`),
+    and an entry whose tags match none is stale. A mapping entry that
+    follows the recipe needs every case it names to agree with it; one that
+    follows the pinned reference (the pin's source file, or the chat
+    template) is stale when every case it names agrees, as an inputs entry is
+    when its cases match the reference: it may name a case at its boundary
+    that both render alike."""
+    record = read_recipe(fixtures)
+    tagged = [(section, entry) for section in RECIPE_SECTIONS for entry in table[section] if entry.get("recipe_when")]
+    pin = model.recipe
+    if pin is None:
+        errors = [f"{RECIPE_FILE} is committed, but the cases module pins no RECIPE"] if record else []
+        return errors + [f"{section} entry {entry['id']} sets recipe_when, but the cases module pins no RECIPE"
+                         for section, entry in tagged]
+    if record is None:
+        return [f"the cases module pins {pin['package']} {pin['version']}, but the corpus has no {RECIPE_FILE}"]
+    errors = [f"{RECIPE_FILE} records {key} {record['recipe'].get(key)!r}, not the pinned {pin[key]!r}"
+              for key in RECIPE_RECORDED if record["recipe"].get(key) != pin[key]]
+    if set(record["cases"]) != {vector["id"] for vector in vectors}:
+        errors.append(f"{RECIPE_FILE} and corpus.json name different cases")
+    if set(record["rounds"]) != {vector["id"] for vector in rounds}:
+        errors.append(f"{RECIPE_FILE} and corpus-rounds.json name different round trips")
+    agrees = {}
+    for vector in vectors:
+        row = record["cases"].get(vector["id"])
+        if row is not None:
+            problem = case_row_problem(vector, row)
+            if problem:
+                errors.append(f"case {vector['id']}: {RECIPE_FILE} {problem}")
+            agrees[vector["id"]] = "difference" not in row
+    for vector in rounds:
+        row = record["rounds"].get(vector["id"])
+        problem = round_row_problem(vector, row) if row is not None else None
+        if problem:
+            errors.append(f"round trip {vector['id']}: {RECIPE_FILE} {problem}")
+    matched = set()
+    for difference, entries in attribute(table, recipe_differences(record, coverage)):
+        if len(entries) == 1:
+            matched.add(entries[0]["id"])
+        else:
+            errors.append(describe_match(difference, entries))
+    errors += [f"{section} entry {entry['id']} is stale: no committed difference from the recipe matches its "
+               "recipe_when" for section, entry in tagged if entry["id"] not in matched]
+    reference = Path(model.pin.get("source", "chat_template.jinja")).name
+    # An entry that follows the recipe needs every case it names to agree.
+    # One that follows the pinned reference goes stale only when every case
+    # it names agrees, as an inputs entry does when all its cases match the
+    # reference: it may name a case at its boundary that both render alike.
+    for entry in table["mapping"]:
+        held = [case for case in entry["cases"] if case in agrees]
+        if entry["follows"] == "recipe":
+            errors += [f"mapping entry {entry['id']} follows the recipe, but its case {case} differs from it"
+                       for case in held if not agrees[case]]
+        elif entry["follows"] == reference and held and all(agrees[case] for case in held):
+            errors.append(f"mapping entry {entry['id']} follows {reference} where the recipe differs, but every "
+                          "case it names agrees with the recipe")
+    return errors
+
+
+def case_row_problem(vector, row):
+    """Why a case's recipe row does not hold against its vector, or None:
+    first whether the row was computed from the vector's request at all."""
+    if row.get("request_sha256") != request_digest(vector):
+        return "was computed from another request than the corpus's"
+    refusal = row["recipe"] if "difference" in row else row
+    if internal_failure(refusal):
+        return "records an internal recipe failure as its refusal"
+    if "difference" in row:
+        found = render_difference(vector, row["recipe"])
+        if found != row["difference"]:
+            return f"records the difference {row['difference']!r}, but the recipe's outcome gives {found!r}"
+        return None
+    if row.get("agrees") is not True:
+        return "records neither agreement nor a difference"
+    if ("refusal" in row) != ("refusal" in vector):
+        return ("records the recipe's refusal, but the corpus renders" if "refusal" in row else
+                "records the recipe's render, but the corpus refuses")
+    if "refusal" not in row and row.get("sha256") != render_digest(vector):
+        return "records another render than the corpus's"
+    return None
+
+
+def round_row_problem(vector, row):
+    """Why a round trip's recipe row does not hold against its vector, or
+    None: first whether the row was computed from the vector's request and
+    token ids at all."""
+    if row.get("input_sha256") != round_input_digest(vector):
+        return "was computed from another request or other token ids than the round trip's"
+    if "differences" in row and internal_failure(row["recipe"]):
+        return "records an internal recipe failure as its refusal"
+    if "differences" in row:
+        found = parse_differences(vector["expect"], row["recipe"])
+        if not found or found != row["differences"]:
+            return f"records the differences {row['differences']}, but the recipe's parse gives {found}"
+        return None
+    if row.get("agrees") is not True:
+        return "records neither agreement nor a difference"
+    if row.get("sha256") != turn_digest(vector["expect"]):
+        return "records another parse than the turn the vector expects"
+    return None
+
+
 # The model reference test ----------------------------------------------------------
 
 def corpus_test_case(model_name, root=ROOT):
@@ -1421,7 +1937,7 @@ def main(argv=None):
             result = generate(model, args.output or default_output(args.model), args.seed, args.divergences,
                               args.template, refusals)
         elif args.command == "minimize":
-            result = minimize(model, args.corpus, args.output)
+            result = minimize(model, args.corpus, args.output, args.divergences)
         elif args.command == "rounds":
             result = recompute_rounds(model, args.corpus, args.divergences, args.template)
         else:

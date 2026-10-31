@@ -1,0 +1,13 @@
+# deepseek-recipe 0.2.0 alone, the DeepSeek frontend corpus oracle
+# (models/deepseek41/recipe_reference.py); never install it into the GPU
+# runner environment. Hashes, in order: the cp310-abi3 wheels for macOS
+# arm64, macOS x86_64, manylinux_2_28 aarch64, manylinux_2_28 x86_64 (the
+# one the corpus pins) and manylinux_2_39 riscv64, then the sdist.
+--require-hashes
+deepseek-recipe==0.2.0 \
+    --hash=sha256:624bb4d0fb3ed541b9e34d2ef96ff66057026ded7d6708b0b9088cc6d6723999 \
+    --hash=sha256:fb0d02291c43ef1ab10c2abcb7191e8326a71ea3e76cd01c6b2e79b75e6ce73f \
+    --hash=sha256:7c31fa6ed6ff8319670fa6efdf682e724f4e78f76218f6d08dfc4c0d6f47a071 \
+    --hash=sha256:259812bf382bc82668b672707c5922095cc4f5f60a6c514ff89640bb62a746f7 \
+    --hash=sha256:622e222aa6290be1bea38f021549a05eddb0c84096663e5424acff0a9d528c9d \
+    --hash=sha256:5dfd65dc201004f6382b13c8432a406cd2af7188831944ac5cef22f260111f68

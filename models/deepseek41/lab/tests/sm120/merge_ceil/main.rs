@@ -213,6 +213,7 @@ fn twins_pair_with_the_served_merge_and_sliced_quantizer() {
         assert!(compare(&original, &bad).is_err());
     }
     assert!(coverage()["bitwise_cases"].as_u64().unwrap() > 14 * 10 * 14);
+    assert!(TIMED_ROWS.iter().all(|r| ROWS.contains(r)));
 }
 
 /// Explicit artifact staging and checking, never part of an ordinary run.

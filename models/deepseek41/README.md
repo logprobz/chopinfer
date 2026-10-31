@@ -185,6 +185,11 @@ them. A non-default value is unqualified.
 | `dspark_coupled_drafts` | `true` | Couple sampled drafts to the target sampler's noise. |
 | `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |
 | `dspark_graph_handles_per_rank` | `512` | Graph handles per rank, from 0 to 9223372036854775807; 0 keeps DSpark eager. The total across ranks must fit the platform's count range. |
+| `moe_direct_gate_tickets` | `false` | Candidate: on Flash TP4, the direct MoE's 32- to 64-row and wide verify buckets finish each gate strip in the gate queue once its last K-block item arrives, and no gate finisher runs. Bitwise equal to the default in the kernel-lab MoE pairs, but in every lab case slower than the default on its own and slower than the other knobs without it ([lab](lab/moe_direct_small.md#served-body-candidates)). |
+| `moe_direct_keep` | `false` | Candidate: the same buckets' queues store their K-block partials with an L2 evict_last policy. With the stream, retire and loads options this is the robust knob set, bitwise equal to the default in the kernel-lab MoE pairs and faster in the lab with served-like routing ([lab](lab/moe_direct_small.md#served-body-candidates)); served step-time acceptance remains required. |
+| `moe_direct_loads` | `false` | Candidate: the same buckets' gate finisher issues every partial load before its first add. Part of the robust knob set. |
+| `moe_direct_retire` | `false` | Candidate: the same buckets' finishers discard each partial line from L2 once read. Part of the robust knob set. |
+| `moe_direct_stream` | `false` | Candidate: the same buckets' queues stream their weight codes past L1 with an L2 evict_first policy. Part of the robust knob set. |
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit and each reused plan template again and refuse a differing plan. |

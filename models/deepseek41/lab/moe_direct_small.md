@@ -165,21 +165,144 @@ reading partials that stayed in L2; the queues' own times do not change.
 ## Proposals
 
 1. Qualify Stream, Keep, Retire and Loads as knobs on the served bodies
-   (one policy template parameter each on the absorbing, two-strip and
-   finisher bodies, served default off) and take the 32- to 64-row buckets
-   to served step-time acceptance. The lab gain is 3 to 6% of the routed
-   experts time with a clean L2 and 5 to 8% after a dirty one: 9 to 56 us
-   per layer, 0.3 to 2.2 ms per 40-layer step. The wide direct path runs
-   the same bodies at 65 to 192 rows, where the partials exceed L2 and the
-   policies need their own measurement.
+   and take the 32- to 64-row buckets to served step-time acceptance. Done
+   as options (below); acceptance remains.
 2. Store the down bank in 64-row by 128-K tiles, as the gate/up bank is,
    so each down item reads two contiguous tiles instead of 128 separate
-   64-byte runs. The down queue's 62 to 78% of floor is the largest
-   remaining gap after the finishers: about 70 us at 64 rows.
-3. Remove the gate finisher's partial reads entirely by finishing each
-   (expert, strip) in the queue once its 40 K-block items have arrived,
-   using a per-strip ticket. The fold stays one thread's ascending adds;
-   it needs ticket clearing in the route stage.
+   64-byte runs. This changes the prepared weight format (below), so it
+   is planned, not built.
+3. Finish each (expert, strip) in the gate queue once its 40 K-block
+   items have arrived, using a per-strip ticket. Built as an option
+   (below); it is slower than the same knobs without it in every case
+   measured.
+
+## Served-body candidates
+
+Five model options, all off by default, select the candidate kernels for
+the backbone bank's 32- to 64-row buckets and the wide verify buckets of
+65 to 192 rows on Flash TP4 (`bundle/src/sm120/moe_direct.rs`), from two
+knob modules (`routed_moe_direct_knobs`): `moe_direct_stream`,
+`moe_direct_keep`, `moe_direct_retire` and `moe_direct_loads` are the
+knobs above on the served bodies (`cuda/moe/chained_knobs.cuh`), and
+`moe_direct_gate_tickets` is Proposal 3. Off, the package prepares and
+launches the served entries, whose cubins did not change. Only the
+raw and width-1 tile-scale entries exist; with a bank of width 2 or 4 the
+candidates expand its scales first and launch the raw entries.
+
+With `moe_direct_gate_tickets` the gate queue takes the gate finisher's
+outputs and a per-rank array of strip tickets (one word per expert and
+64-column strip, 13,824 bytes, zeroed at create). After each item's last
+pass its CTA arrives on the strip's ticket with a release; the arrival
+that completes the strip's 40 K blocks acquires, resets the ticket and
+finishes the strip: one route per warp, each lane folding its four
+columns of the gate or up chain by ascending K block from +0 with the
+finisher's adds, then the finisher's epilogue, rounding, quantizer,
+status flags and per-token tickets. A count past the block count traps.
+
+### Bitwise twins
+
+`moe_wide::full_gpu` paired each candidate export with the served export
+at 16, 32, 48 and 64 rows and with the 8192-row chains at 65, 96, 128,
+160 and 192 rows: every routing pattern, every scale width (0, 1, 2 and
+4), two poisons, three modes and the live-row changes, each GPU checking
+one logical rank, on 2026-10-31.
+
+| Candidate | Cases | Replays | Controls | Result |
+| --- | ---: | ---: | --- | --- |
+| Stream, Keep, Retire, Loads | 864 | 25,920 | 864 dropped joins | bitwise equal |
+| Tickets | 864 | 25,920 | 864 dropped joins, 768 stale tickets | bitwise equal |
+| Tickets with Stream, Keep, Retire | 864 | 25,920 | 864 dropped joins, 768 stale tickets | bitwise equal |
+
+Every case compared every semantic buffer and the strip tickets, which
+must end each launch at zero (16 rows do not take the absorbing path, so
+they have no ticket controls). The ticket controls plant a stale arrival
+on a strip of an expert the live rows do not route: the queue must leave
+it, keep the output bitwise and end every routed strip at zero, and the
+zero check must report it. A stale arrival on a routed strip lets a later
+arrival count past the block count, which traps by design and ends the
+context; an earlier control did that and was replaced. No run raised an
+Xid.
+
+### Timing
+
+Routed experts, candidate over served, median of four GPUs, read flush
+(clean L2) / write flush (dirty L2). The A/A controls of these runs
+stayed within 0.986 to 1.015 for the routed experts and 0.983 to 1.004
+for the complete layer (case medians). The wide rows compare with the
+wide direct path, not the chains.
+
+| Candidate | Rows | Pattern 4 | Pattern 5 | Pattern 1 | Pattern 0 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Stream, Keep, Retire, Loads | 32 | 0.963 / 0.931 | 0.973 / 0.928 | 1.019 / 0.852 | 1.042 / 0.918 |
+| | 48 | 0.951 / 0.930 | 0.955 / 0.931 | 1.035 / 0.889 | 1.058 / 0.943 |
+| | 64 | 0.941 / 0.934 | 0.929 / 0.913 | 1.000 / 0.878 | 1.034 / 0.932 |
+| | 128 | 0.851 / 0.869 | 0.851 / 0.881 | 0.822 / 0.838 | 0.974 / 0.916 |
+| | 192 | 0.922 / 0.916 | 0.877 / 0.910 | 0.845 / 0.842 | 0.890 / 0.873 |
+| Tickets | 32 | 1.288 / 1.236 | 1.300 / 1.320 | 1.531 / 1.534 | 2.089 / 1.883 |
+| | 64 | 1.230 / 1.214 | 1.299 / 1.269 | 1.868 / 1.696 | 2.211 / 2.083 |
+| | 128 | 1.151 / 1.164 | 1.242 / 1.255 | 1.829 / 1.764 | 2.222 / 2.112 |
+| | 192 | 1.165 / 1.173 | 1.285 / 1.282 | 1.809 / 1.751 | 2.189 / 2.059 |
+| Tickets, Stream, Keep, Retire | 32 | 1.188 / 1.128 | 1.262 / 1.203 | 1.626 / 1.365 | 2.135 / 1.798 |
+| | 64 | 1.103 / 1.084 | 1.183 / 1.107 | 1.900 / 1.563 | 2.286 / 2.103 |
+| | 128 | 0.987 / 0.982 | 1.047 / 1.051 | 1.631 / 1.532 | 2.127 / 1.984 |
+| | 192 | 1.073 / 1.003 | 1.094 / 1.062 | 1.598 / 1.503 | 1.905 / 1.856 |
+
+Per-step estimate: the slowest rank's routed-experts change times 40
+layers, in ms, for pattern 4 then pattern 5; the robust set's ranges
+cover two runs.
+
+| Candidate | Flush | 32 rows | 48 rows | 64 rows | 128 rows | 192 rows |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Stream, Keep, Retire, Loads | read | -0.9, -0.4 | -1.8 to -1.9, -0.8 to -0.9 | -2.6 to -2.8, -2.0 | -9.5 to -10.7, -7.5 to -8.6 | -9.0 to -9.9, -9.1 to -9.2 |
+| | write | -1.9 to -2.0, -1.0 | -2.1 to -2.6, -1.7 to -1.9 | -3.1 to -3.4, -2.4 to -2.5 | -8.4, -6.7 to -8.6 | -7.0 to -9.9, -8.7 to -9.4 |
+| Tickets, Stream, Keep, Retire | read | +4.8, +3.3 | +4.6, +4.8 | +4.8, +4.6 | -0.8, +2.8 | +2.6, +5.2 |
+| | write | +3.1, +2.7 | +4.3, +3.6 | +3.5, +2.9 | -1.5, +1.6 | +0.6, +4.3 |
+
+The robust set gains 3 to 7% of the routed experts at 32 to 64 rows with
+patterns 4 and 5 (7 to 9% after a dirty L2) and 8 to 15% at 128 and 192
+rows, where the partials no longer fit beside the weights in L2. With
+six or 24 experts and a clean L2 it costs up to 6% (+0.04 to +0.25 ms per
+step). The complete layer took 0.923 to 0.961 of the served time at 64
+rows with patterns 4 and 5.
+
+The strip-finishing gate is slower than the robust set in every case. It
+is slower than the served path too, except with Stream, Keep and Retire
+at 128 rows with dispersed routing (0.98 to 0.99).
+Two costs outweigh the gate finisher it removes (49 to 57 us at 64 rows
+alone, less in the graph once Keep holds the partials in L2). Every item
+now releases its partials and waits for the ticket's atomic before the
+next item (up to 92 items per CTA at 64 rows), where the served queue
+issues its stores and moves on. And each strip finishes in one CTA: with
+64 routes on an expert, 16 per warp, the queue takes 214 us against
+105 us for the served queue and finisher. The first version used an
+acquire-release arrival, which also invalidated the SM's L1 on every
+item, and split each route's K blocks across the four warps with a
+barrier per warp: it took 420 us there and 1.15 times the served routed
+time with dispersed routing. Finishing in the queue can save at most the
+in-graph finisher time, a few percent of the routed experts, so the
+option is not worth served acceptance.
+
+### Down bank tiles (Proposal 2)
+
+The down bank's K per rank is 576, four and a half 128-K blocks, and the
+row-tiled layouts require K to be a multiple of 128 (`kernel-core`
+`precision/layout.rs`), so tiling the down codes needs a new layout with
+a 64-row by 64-K tail tile (2 KiB). That is a new prepared weight format:
+a new layout id in each rank's index and plan identity, a new prepared
+tensor for every MoE layer of every rank, and new tiled builds and locks
+of every kernel that reads the down bank (the bandwidth, two-strip,
+streamed and tile-scale direct queues, the 8192-row chains that serve 65
+to 192 rows by default, the prefill and lean native MoE, and the wide and
+knob modules). The byte count stays the same with the narrow tail tile;
+padding K to 640 instead would add about 60 MiB per layer and rank, about
+2.3 GiB per rank. The down scales are already tile-ordered in the
+width-1 encoding, so only the codes move. Plan: add the tail-tile layout
+in `kernel-core` with transform tests; prepare it beside the current
+layout behind a package option so the default package is unchanged;
+build the tiled down queues as twins and pair them in the lab; then
+re-prepare the package and relock in one adoption series. The prepared
+plan cache re-keys on the layout id; the drafter bank is separate and
+unchanged.
 
 ## Rerunning
 
@@ -191,4 +314,7 @@ the lab cubin with `build_family lab/moe_small_l2 $OUT`. Then
 `CHOPINFER_MOE_WIDE_SWAP` set to a knob set's tag (`l2k`, `l2sk`, `l2skr`,
 `l2skrl`, `l2skrf`, `l2skre`, `l2skrlf`, `l2skrlfe`) and, for timing,
 `CHOPINFER_MOE_WIDE_FLUSH=read` and `CHOPINFER_MOE_WIDE_LAUNCHES=1`, with
-the same served export as both reference and candidate.
+the same served export as both reference and candidate. The option
+candidates export with `CHOPINFER_MOE_GRAPH_KNOBS`, a comma list of
+`tickets`, `stream`, `keep`, `retire` and `loads`, and pair against the
+served export.

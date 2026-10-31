@@ -117,6 +117,8 @@ pub struct Arm {
     pub prefix: Vec<Launch>,
     pub calls: Vec<Launch>,
     pub units: Vec<Unit>,
+    /// Each lowered stage's calls, by stage name (`Route(0)`, ...).
+    pub scopes: Vec<(String, std::ops::Range<usize>)>,
     pub roles: BTreeMap<String, View>,
     pub mutable: Vec<View>,
 }
@@ -263,10 +265,13 @@ impl Arm {
         let prefix = decode(&doc["prefix"])?;
         let calls = decode(&doc["calls"])?;
         // Legacy route storage includes a spare count and a prefill-sized
-        // sorted tail. Both algorithms publish this same bounded metadata.
+        // sorted tail. Both algorithms publish this same bounded metadata:
+        // a 64-row tile per active expert through 64 rows, and above them
+        // the routes plus each expert's padding to whole tiles.
+        let sorted = (rows * 6 + 384 * 63).next_multiple_of(64).max(384 * 64);
         for (name, bytes) in [
             ("scratch.route_counts", 384 * 4),
-            ("sorted_rows", 384 * 64 * 4),
+            ("sorted_rows", u64::from(sorted) * 4),
         ] {
             let view = *roles.get(name).ok_or("missing routed metadata")?;
             roles.insert(name.into(), pool.subspan(view, 0, bytes)?);
@@ -306,14 +311,37 @@ impl Arm {
         if prefix.is_empty() || fork != 1 || join != 1 || coverage.iter().any(|&n| n != 1) {
             return Err("graph does not cover one complete fork/join MoE".into());
         }
+        let scopes = array(&doc["scopes"])?
+            .iter()
+            .map(|scope| {
+                let start = number(&scope["start"])? as usize;
+                let end = number(&scope["end"])? as usize;
+                if start > end || end > calls.len() {
+                    return Err("invalid stage scope".into());
+                }
+                Ok((string(&scope["stage"])?.to_owned(), start..end))
+            })
+            .collect::<LabResult<Vec<_>>>()?;
+        if scopes.iter().map(|(_, r)| r.len()).sum::<usize>() != calls.len() {
+            return Err("stage scopes do not cover the calls once".into());
+        }
         Ok(Self {
             rows,
             prefix,
             calls,
             units,
+            scopes,
             roles,
             mutable,
         })
+    }
+    /// The calls of the stage named `stage`.
+    pub fn scope(&self, stage: &str) -> LabResult<&[Launch]> {
+        self.scopes
+            .iter()
+            .find(|(name, _)| name == stage)
+            .map(|(_, range)| &self.calls[range.clone()])
+            .ok_or_else(|| format!("missing stage scope {stage}"))
     }
     pub fn role(&self, name: &str) -> LabResult<View> {
         self.roles

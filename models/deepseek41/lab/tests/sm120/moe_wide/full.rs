@@ -12,6 +12,8 @@ pub struct Options {
     checked: bool,
     compact: bool,
     widths: Vec<u32>,
+    ranks: Vec<u32>,
+    patterns: Vec<u32>,
     reference: PathBuf,
     candidate: PathBuf,
     weights: PathBuf,
@@ -22,24 +24,46 @@ impl Options {
         let worker = env("CHOPINFER_MOE_WIDE_WORKER")?
             .parse::<u32>()
             .map_err(|e| e.to_string())?;
-        let widths = env("CHOPINFER_MOE_WIDE_ROWS")?
-            .split(',')
-            .map(|r| r.parse::<u32>().map_err(|e| e.to_string()))
-            .collect::<LabResult<Vec<_>>>()?;
-        if worker > 1
-            || widths.is_empty()
+        let list = |text: String| {
+            text.split(',')
+                .map(|r| r.parse::<u32>().map_err(|e| e.to_string()))
+                .collect::<LabResult<Vec<_>>>()
+        };
+        let widths = list(env("CHOPINFER_MOE_WIDE_ROWS")?)?;
+        let checked = env("CHOPINFER_MOE_WIDE_MEMCHECK")? == "1";
+        // CHOPINFER_MOE_WIDE_RANKS optionally names the logical ranks; by
+        // default a worker takes ranks `worker` and `worker + 2`, or only
+        // `worker` under memcheck.
+        let ranks = match std::env::var("CHOPINFER_MOE_WIDE_RANKS") {
+            Ok(text) => list(text)?,
+            Err(_) if checked => vec![worker],
+            Err(_) => vec![worker, worker + 2],
+        };
+        // Routing patterns (`expert`), all four by default.
+        let patterns = match std::env::var("CHOPINFER_MOE_WIDE_PATTERNS") {
+            Ok(text) => list(text)?,
+            Err(_) => (0..PATTERNS).collect(),
+        };
+        let ordered = |v: &[u32]| !v.is_empty() && v.windows(2).all(|w| w[0] < w[1]);
+        if worker > 3
+            || !ordered(&widths)
             || widths
                 .iter()
-                .any(|&r| r != 16 && r != 32 && !(33..=64).contains(&r))
-            || widths.windows(2).any(|w| w[0] >= w[1])
+                .any(|&r| r != 16 && r != 32 && !(33..=192).contains(&r))
+            || !ordered(&ranks)
+            || ranks.iter().any(|&r| r > 3)
+            || !ordered(&patterns)
+            || patterns.iter().any(|&p| p >= PATTERNS)
         {
-            return Err("invalid worker or ordered row inventory".into());
+            return Err("invalid worker, rank, pattern or ordered row inventory".into());
         }
         Ok(Self {
             worker,
             compact: std::env::var("CHOPINFER_MOE_WIDE_COMPACT").as_deref() == Ok("1"),
-            checked: env("CHOPINFER_MOE_WIDE_MEMCHECK")? == "1",
+            checked,
             widths,
+            ranks,
+            patterns,
             reference: env("CHOPINFER_MOE_WIDE_REFERENCE")?.into(),
             candidate: env("CHOPINFER_MOE_WIDE_CANDIDATE")?.into(),
             weights: env("CHOPINFER_MOE_WIDE_WEIGHTS")?.into(),
@@ -47,16 +71,42 @@ impl Options {
     }
 }
 
-fn expert(row: u32, k: u32, pattern: u32, rank: u32) -> u32 {
+/// The routing patterns: 0 sends every row to the same six experts (each
+/// holds every row, above 64 for a wide step); 1 rotates rows over 24
+/// experts; 2 disperses routes over every expert; 3 is seeded and mixed:
+/// one expert takes every row, two take alternate rows and the other four
+/// routes of a row spread over the remaining 381 experts, so one step
+/// fills the wide, middle and small queues.
+const PATTERNS: u32 = 4;
+
+pub(super) fn expert(row: u32, k: u32, pattern: u32, rank: u32) -> u32 {
     let slot = match pattern {
         0 => k,
         1 => (6 * row + k) % 24,
         2 => 6 * row + k,
+        3 => match k {
+            0 => 0,
+            1 => 1 + row % 2,
+            // 97 is prime to 381, so a row's four slots are distinct.
+            _ => {
+                let seed = (row ^ (rank << 16))
+                    .wrapping_mul(0x9e37_79b1)
+                    .rotate_left(13)
+                    .wrapping_mul(0x85eb_ca6b);
+                3 + (seed % 381 + 97 * (k - 2)) % 381
+            }
+        },
         _ => unreachable!(),
     };
     (37 * slot + 11 + 17 * rank) % 384
 }
-fn setup(pool: &Pool<'_>, arm: &Arm, pattern: u32, rank: u32, poison: u8) -> LabResult<()> {
+pub(super) fn setup(
+    pool: &Pool<'_>,
+    arm: &Arm,
+    pattern: u32,
+    rank: u32,
+    poison: u8,
+) -> LabResult<()> {
     for &view in &arm.mutable {
         pool.fill(view, poison)?;
     }
@@ -87,7 +137,7 @@ fn setup(pool: &Pool<'_>, arm: &Arm, pattern: u32, rank: u32, poison: u8) -> Lab
     )?;
     status(pool, arm)
 }
-fn status(pool: &Pool<'_>, arm: &Arm) -> LabResult<()> {
+pub(super) fn status(pool: &Pool<'_>, arm: &Arm) -> LabResult<()> {
     for name in ["scratch.row_status", "scratch.shared_row_status"] {
         pool.fill(arm.role(name)?, 0)?;
     }
@@ -154,6 +204,8 @@ fn metadata(pool: &Pool<'_>, arm: &Arm, live: u32, pattern: u32, rank: u32) -> L
     if integers(&pool.read(arm.role("scratch.route_counts")?)?) != counts {
         return Err("route counts differ from the CPU union".into());
     }
+    // Each active expert's range is padded to whole 64-row tiles: one tile
+    // through 64 rows, several above.
     let mut offsets = vec![0_u32; 385];
     let mut sorted = Vec::new();
     let mut active = vec![0];
@@ -163,14 +215,15 @@ fn metadata(pool: &Pool<'_>, arm: &Arm, live: u32, pattern: u32, rank: u32) -> L
             continue;
         }
         active.push(e as u32);
-        offsets[e + 1] += 64;
+        let padded = counts[e].div_ceil(64) * 64;
+        offsets[e + 1] += padded;
         let start = sorted.len();
         sorted.extend(
             ids.iter()
                 .enumerate()
                 .filter_map(|(r, &id)| (id == e as u32).then_some(r as u32)),
         );
-        sorted.resize(start + 64, u32::MAX);
+        sorted.resize(start + padded as usize, u32::MAX);
     }
     active[0] = active.len() as u32 - 1;
     if integers(&pool.read(arm.role("scratch.route_offsets")?)?) != offsets
@@ -185,7 +238,7 @@ fn metadata(pool: &Pool<'_>, arm: &Arm, live: u32, pattern: u32, rank: u32) -> L
     }
     Ok(())
 }
-fn compare(
+pub(super) fn compare(
     pool: &Pool<'_>,
     arms: &[Arm; 2],
     live: u32,
@@ -219,17 +272,12 @@ fn compare(
 
 pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
     let dry = session.is_none();
-    let ranks = if options.checked {
-        vec![options.worker]
-    } else {
-        vec![options.worker, options.worker + 2]
-    };
     let mut cases = 0;
     let mut replays = 0;
     let mut negatives = 0;
     let mut destroyed = 0;
     let mut peak = 0;
-    for rank in ranks {
+    for &rank in &options.ranks {
         let mut pool = Pool::new(session);
         let weights = Weights::load(&mut pool, &options.weights, rank)?;
         let mark = pool.mark();
@@ -265,7 +313,7 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
                 } else {
                     None
                 };
-                for pattern in 0..3 {
+                for &pattern in &options.patterns {
                     let poisons: &[u8] = if options.checked || options.compact {
                         &[0xa5]
                     } else {
@@ -366,7 +414,7 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
             }
         }
     }
-    let expected = options.widths.len() * if options.checked { 1 } else { 2 } * 4 * 3;
+    let expected = options.widths.len() * options.ranks.len() * 4 * options.patterns.len();
     if cases != expected
         || replays
             != cases
@@ -378,7 +426,7 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
                     30
                 }
         || negatives != if options.checked { 0 } else { cases }
-        || (!dry && !options.checked && destroyed != cases / 3 * 5)
+        || (!dry && !options.checked && destroyed != cases / options.patterns.len() * 5)
     {
         return Err("full MoE executed inventory differs".into());
     }

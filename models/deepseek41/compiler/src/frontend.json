@@ -28,6 +28,12 @@
     "maximum_json_depth": 128,
     "maximum_json_values": 1048576
   },
+  "output_tokens": {
+    "default": 65536,
+    "efforts": {
+      "max": 131072
+    }
+  },
   "reasoning": {
     "disable_value": "none",
     "default_effort": "high",

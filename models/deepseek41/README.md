@@ -440,14 +440,45 @@ Responses API (`deepseek-recipe/src/protocol/openai/responses/request`):
   (`tools.rs` lines 148-186); `/v1/responses` serves function and namespace
   tools only.
 
-Sampling and limits: in thinking mode the recipe fixes the temperature at
-1.0 and raises `top_p` to at least 0.95; outside thinking mode it keeps the
-requested temperature and sets V4.1's `top_p` to 1.0
-(`deepseek-recipe/src/request/options.rs` lines 79-92,
-`protocol/openai/chat_completion/request/mod.rs` lines 7-11). It bounds
-`max_tokens` by mode (`options.rs` lines 230-240). The server keeps the
-request's sampling, `top_p` included in either mode, and its limits; the
-sampling and `max_tokens` follow-up decides whether to follow.
+Sampling and limits: the owner decided on 2026-10-31 that the server keeps
+the request's sampling and declares default output lengths. A chat or
+Responses request without `max_tokens`, `max_completion_tokens` or
+`max_output_tokens` generates at most 65,536 tokens when it thinks at low
+or high effort or with thinking off, and 131,072 when it thinks at max,
+each lowered to the context left after the prompt. An explicit limit is
+honored. The sampling fields a request sets are used as sent, and omitted
+ones take the declared `generation_config` (temperature 1.0, `top_p` 1.0).
+The recipe (`deepseek-recipe/src/` at commit 93b0fd229c) differs as
+follows, and the served behavior is kept:
+
+- Temperature: the recipe fixes it at 1.0 in thinking mode
+  (`protocol/validation.rs` lines 114-118); the server uses the request's.
+- `top_p`: the recipe raises V4.1's to at least 0.95 in thinking mode and
+  sets it to 1.0 outside it (`request/options.rs` lines 79-92); the server
+  uses the request's in either mode.
+- Default length outside thinking mode: 8,192 in the recipe
+  (`request/mod.rs` lines 155-166 and 221-227), 65,536 in the server.
+- Upper bound: the recipe refuses a `max_tokens` above 393,216 in either
+  mode (`request/options.rs` line 96 and lines 230-240,
+  `protocol/validation.rs` lines 93-106); the server takes any limit within
+  the context.
+- A prompt that fills the context: the recipe raises the resolved length
+  to 1 (`request/mod.rs` lines 228-234); the server refuses the request
+  with "prompt leaves no room for generated tokens".
+- `max_completion_tokens`: the recipe's `ChatCompletionRequest` declares no
+  such field and ignores unknown fields
+  (`protocol/openai/chat_completion/request/schema.rs` lines 7 and 17-60),
+  so a request that sets only it takes the recipe's default; the server
+  gives it precedence over `max_tokens`.
+- `top_k`, `min_p` and `repetition_penalty`: that struct declares none of
+  them and `InferenceOptions` carries none (`request/mod.rs` lines 27-55),
+  so the recipe drops them; the server applies them.
+- `presence_penalty` and `frequency_penalty`: the recipe checks them
+  against [-2, 2] and then drops them (`schema.rs` lines 23-25 and 34-36,
+  `protocol/validation.rs` lines 53-62 and 112-124); the server applies
+  them.
+- `n`: the recipe refuses any value but 1 (`protocol/validation.rs` lines
+  48-52); the server serves 1 through 128.
 
 ## Qualification
 

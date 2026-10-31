@@ -12,8 +12,9 @@ use model_deepseek41_contract::frontend::encoding::{
     Block, EOS, IMAGE_PLACEHOLDER, Message, ReasoningEffort, Role, ThinkingMode, ToolCall,
     encode_messages,
 };
-use runtime_frontend::PromptModeV1;
 use runtime_frontend::test_support::documents::PairedFrontendV1;
+use runtime_frontend::test_support::reasoning::ask;
+use runtime_frontend::{BundleChatStateV1, PromptModeV1};
 use runtime_server::{
     FrontendChatRequestV1, FrontendContentPartV1, FrontendJsonV1, FrontendMediaPartKindV1,
     FrontendMediaPartV1, FrontendMessageV1, FrontendRoleV1, FrontendToolCallV1,
@@ -1268,4 +1269,43 @@ fn a_forced_call_refuses_a_parameter_named_with_the_stop_text() {
         .tool_constraint(&[requiring(&format!("a{EOS}b"))], &choice)
         .unwrap_err();
     assert_eq!(error.parameter.as_deref(), Some("tools"));
+}
+
+/// One request's reasoning keywords and top-level effort, the mode its
+/// prompt renders in, and the output length it takes.
+type LengthCase<'a> = (&'a [(&'a str, bool)], Option<&'a str>, PromptModeV1, usize);
+
+/// A chat or Responses request without an output limit generates at most
+/// 65,536 tokens, or 131,072 when its prompt thinks at effort max (the owner
+/// decision of 2026-10-31), before the transport lowers the length to the
+/// context left. The efforts the recipe reads as low or high take the
+/// default, and so does a prompt with thinking off.
+#[test]
+fn a_request_without_an_output_limit_takes_its_effort_s_declared_length() {
+    let frontend = PairedFrontendV1::chat_format::<DeepSeekV41Format>(descriptor()).unwrap();
+    let cases: &[LengthCase<'_>] = &[
+        (&[], None, PromptModeV1::Thinking, 65_536),
+        (&[], Some("low"), PromptModeV1::Thinking, 65_536),
+        (&[], Some("high"), PromptModeV1::Thinking, 65_536),
+        (&[], Some("minimal"), PromptModeV1::Thinking, 65_536),
+        (&[], Some("medium"), PromptModeV1::Thinking, 65_536),
+        (&[], Some("xhigh"), PromptModeV1::Thinking, 65_536),
+        (&[], Some("max"), PromptModeV1::Thinking, 131_072),
+        (&[], Some("ultra"), PromptModeV1::Thinking, 131_072),
+        (&[], Some("none"), PromptModeV1::Chat, 65_536),
+        (&[("thinking", false)], None, PromptModeV1::Chat, 65_536),
+    ];
+    for &(keywords, effort, mode, expected) in cases {
+        let label = format!("{keywords:?} {effort:?}");
+        let rendered = frontend
+            .render_chat(ask(keywords, effort, None))
+            .unwrap_or_else(|error| panic!("{label}: {}", error.message));
+        let state = BundleChatStateV1::from_state(&rendered.state).unwrap();
+        assert_eq!(state.mode(), mode, "{label}");
+        assert_eq!(
+            frontend.default_output_tokens(&rendered.state),
+            Some(expected),
+            "{label}"
+        );
+    }
 }

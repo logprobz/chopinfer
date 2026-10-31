@@ -57,7 +57,7 @@
     "frontend": {
       "directory": false,
       "members": {
-        ".": "f2b2b332f90469eef8cf93d11fee30947c3abe2f944370c24d5d2662a7d583af"
+        ".": "405ea532c0b7edd9c284fc55c6cc252758c9f188becdd4a55a43dd3d30fdb2ce"
       },
       "path": "models/deepseek41/compiler/src/frontend.json"
     },
@@ -363,9 +363,6 @@
     "6550c1c3164b56a1215fcd9b1b5c0f0b63ee418eb4d59c617097208a298877c8": {
       "schema": "legacy-json-array"
     },
-    "f2b2b332f90469eef8cf93d11fee30947c3abe2f944370c24d5d2662a7d583af": {
-      "schema": "chop-frontend-openai-v2"
-    },
     "cc653739cddaf7ca4484b023ba93feb1730425146cc8dd5520945c798522b6a9": {
       "schema": "legacy-json-array"
     },
@@ -377,6 +374,9 @@
     },
     "9d7b339157f85fa31a5c125927e4498d822b68f67a8b80bf2c9b6b386d976f4e": {
       "schema": "chop-frontend-recipe-v1"
+    },
+    "405ea532c0b7edd9c284fc55c6cc252758c9f188becdd4a55a43dd3d30fdb2ce": {
+      "schema": "chop-frontend-openai-v2"
     }
   },
   "schema": "chopinfer-qual-references/v1"

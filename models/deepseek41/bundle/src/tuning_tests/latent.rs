@@ -37,7 +37,8 @@ fn pin_untuned_served_keys() {
             &[("ranks", ranks)],
             crate::sm120::latent_scheduled::QUERY_ROWS,
         ));
-        for capacity in 32..=64 {
+        // 32 to 64 rows, and the widest wide verify bucket.
+        for capacity in (32..=64).chain([192]) {
             domain.insert(key(
                 "latent.query.verify",
                 "f32",
@@ -52,7 +53,7 @@ fn pin_untuned_served_keys() {
             8192,
         ));
     }
-    assert_eq!(domain.len(), 132);
+    assert_eq!(domain.len(), 135);
     assert_untuned(
         Family::Latent,
         domain,
@@ -81,8 +82,9 @@ const UNTUNED: &[&str] = &[
     "latent.paired.prefill fp8 ranks=2 buckets=8192 rows=all",
     "latent.query.decode f32 ranks=1 buckets=48 rows=all",
     "latent.query.decode f32 ranks=2 buckets=48 rows=all",
-    "latent.query.verify f32 ranks=1 buckets=32..64 rows=all",
-    "latent.query.verify f32 ranks=2 buckets=32..64 rows=all",
+    "latent.query.verify f32 ranks=1 buckets=32..64,192 rows=all",
+    "latent.query.verify f32 ranks=2 buckets=32..64,192 rows=all",
+    "latent.query.verify f32 ranks=4 buckets=192 rows=1..64",
     "latent.query.verify f32 ranks=4 buckets=32..48 rows=all",
     "latent.query.verify f32 ranks=4 buckets=49..64 rows=1..48",
     "latent.sources.decode fp8 ranks=1 buckets=32 rows=all",

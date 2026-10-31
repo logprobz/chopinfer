@@ -316,12 +316,24 @@ fn row_bucket(rows: u32) -> (u32, u32, u32) {
     (rows.next_power_of_two(), 1, 1)
 }
 
+/// The HC column-block producer: one CTA per 128 columns and four rows.
+fn column_tile(rows: u32) -> (u32, u32, u32) {
+    (40, rows.div_ceil(4), 1)
+}
+
+/// The HC split finish: two CTAs per row.
+fn row_pair(rows: u32) -> (u32, u32, u32) {
+    (2, rows, 1)
+}
+
 /// Row-local stages of a verify step above the 64-row budget. Each grids
 /// the step's live rows, never a prepared capacity, so the symbol says
 /// which registered entry serves the stage. With the `wide_verify` option
-/// the ceil quantizers and the shared SwiGLU take the decode entries of
-/// their wide verify buckets (`verify_bounds::WIDE`); without it they keep
-/// the entries of [`CANDIDATE_STAGES`].
+/// the ceil quantizers, the shared SwiGLU and the latent and index queries
+/// take the decode entries of their wide verify buckets
+/// (`verify_bounds::WIDE`), and the HC boundary that of a 64-row step
+/// ([`WIDE_HC_STAGES`]); without it they keep the entries of
+/// [`CANDIDATE_STAGES`] and the unfused boundary.
 const WIDE_STAGES: &[Stage] = &[
     ("chop_deepseek41_moe_ceil_w5120_cached_v1", 320, per_row),
     ("chop_deepseek41_moe_ceil_w3456_v1", 160, per_row),
@@ -344,9 +356,9 @@ const WIDE_STAGES: &[Stage] = &[
     ("chop_deepseek41_dense_ceil_w6144_cached_v1", 8, per_row),
     ("chop_deepseek41_latent_ceil32_parallel_v1", 160, per_row),
     ("chop_deepseek41_latent_window_rope_v1", 160, per_row),
-    ("chop_deepseek41_latent_query_rope_v1", 160, per_row),
+    ("chop_deepseek41_latent_query_rope_heads_v1", 160, per_row),
     ("chop_deepseek41_q_norm_f32_v1", 160, per_row),
-    ("chop_position_query_deepseek41_mxfp4_v2", 32, per_row),
+    ("chop_position_query_deepseek41_parallel_v1", 32, per_row),
     ("chop_row_rmsnorm_deepseek41_w5120_v1", 320, per_row),
     (
         "chop_sinkhorn_hc_deepseek41_lagged_mix_collapse_v1",
@@ -370,20 +382,44 @@ const WIDE_STAGES: &[Stage] = &[
     ),
 ];
 
-/// Decode forms of those stages that serve 33 to 64 rows and launch
-/// nowhere above them.
-const NARROW_STAGES: &[&str] = &[
-    "chop_deepseek41_latent_query_rope_heads_v1",
-    "chop_position_query_deepseek41_parallel_v1",
-    "chop_deepseek41_hc_round_cols_r4_tx_v1",
-    "chop_deepseek41_hc_finish_split_w32_v1",
-    "chop_sinkhorn_hc_deepseek41_lagged_mix_collapse_split_v1",
+/// The decode form of the HC mixer that serves 33 to 64 rows and launches
+/// nowhere above them: the wide boundary keeps the one-CTA mixer.
+const NARROW_STAGES: &[&str] = &["chop_sinkhorn_hc_deepseek41_lagged_mix_collapse_split_v1"];
+
+/// With the `wide_verify` option, the HC boundary of a 64-row step: the
+/// column-block pair fuses 77 of each rank's 80 boundaries, writing their
+/// all-reduce round, expansion, next mixer and input norm and quantizer,
+/// so those stages launch only where a 64-row step runs them unfused. The
+/// mixers there keep the one-CTA entry. Each replaces the stage's pin in
+/// [`WIDE_STAGES`] or adds one.
+const WIDE_HC_STAGES: &[Stage] = &[
+    ("chop_deepseek41_hc_round_cols_r4_tx_v1", 308, column_tile),
+    ("chop_deepseek41_hc_finish_split_w32_v1", 308, row_pair),
+    (
+        "chop_sinkhorn_hc_deepseek41_lagged_mix_collapse_v1",
+        12,
+        per_row,
+    ),
+    (
+        "chop_sinkhorn_hc_deepseek41_expand_f32_v1",
+        12,
+        per_column_row,
+    ),
+    ("chop_row_rmsnorm_deepseek41_w5120_v1", 12, per_row),
+    (
+        "chop_row_rounding_round_deepseek41_w5120_v1",
+        16,
+        row_bucket,
+    ),
+    ("chop_row_rounding_widen_deepseek41_w5120_v1", 8, row_bucket),
+    ("chop_deepseek41_moe_ceil_w5120_cached_v1", 12, per_row),
 ];
 
 /// The stages the `wide_verify` option moves to their wide verify
-/// buckets' decode entries, as (decode entry, default entry): without the
-/// option each keeps the prefill entry, and each form launches nowhere
-/// the other serves.
+/// buckets' decode entries, as (decode entry, default entry), listing a
+/// decode entry once for each default launch it replaces (the first is
+/// pinned): without the option each keeps the prefill entry, and each form
+/// launches nowhere the other serves.
 const CANDIDATE_STAGES: &[(&str, &str)] = &[
     (
         "chop_deepseek41_moe_ceil_w5120_cached_v1",
@@ -412,6 +448,18 @@ const CANDIDATE_STAGES: &[(&str, &str)] = &[
     (
         "chop_deepseek41_latent_ceil32_parallel_v1",
         "chop_deepseek41_latent_ceil32_v1",
+    ),
+    (
+        "chop_deepseek41_latent_query_rope_heads_v1",
+        "chop_deepseek41_latent_query_rope_v1",
+    ),
+    (
+        "chop_position_query_deepseek41_parallel_v1",
+        "chop_position_query_deepseek41_mxfp4_v2",
+    ),
+    (
+        "chop_position_query_deepseek41_parallel_v1",
+        "chop_position_query_deepseek41_rotate_v3",
     ),
 ];
 
@@ -524,6 +572,21 @@ fn target_programs_lower_above_the_default_verify_rows() {
             Some(&(_, default)) if !enabled => default,
             _ => symbol,
         };
+        let hc: &[Stage] = if enabled { WIDE_HC_STAGES } else { &[] };
+        let stages: Vec<Stage> = WIDE_STAGES
+            .iter()
+            .map(|&(symbol, launches, grid)| {
+                hc.iter()
+                    .find(|stage| stage.0 == symbol)
+                    .copied()
+                    .unwrap_or((served(symbol), launches, grid))
+            })
+            .chain(
+                hc.iter()
+                    .filter(|stage| !WIDE_STAGES.iter().any(|s| s.0 == stage.0))
+                    .copied(),
+            )
+            .collect();
         let absent: Vec<_> = NARROW_STAGES
             .iter()
             .copied()
@@ -531,6 +594,12 @@ fn target_programs_lower_above_the_default_verify_rows() {
                 CANDIDATE_STAGES
                     .iter()
                     .map(|&(wide, default)| if enabled { default } else { wide }),
+            )
+            .chain(
+                WIDE_HC_STAGES
+                    .iter()
+                    .map(|stage| stage.0)
+                    .filter(|symbol| !enabled && !WIDE_STAGES.iter().any(|s| s.0 == *symbol)),
             )
             .collect();
         let directory =
@@ -541,8 +610,7 @@ fn target_programs_lower_above_the_default_verify_rows() {
                 write_journals(directory, count, rows, &target, &step);
             }
             let observed = grids(&target);
-            for &(symbol, launches, grid) in WIDE_STAGES {
-                let symbol = served(symbol);
+            for &(symbol, launches, grid) in &stages {
                 assert_eq!(
                     observed.get(symbol),
                     Some(&[(grid(rows), launches)].into()),

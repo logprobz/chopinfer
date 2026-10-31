@@ -70,6 +70,9 @@ pub(crate) struct GlueOps {
     query_rope: Prepared<LatentQueryRopeBuffers<View>>,
     query_rope_small: Prepared<LatentQueryRopeBuffers<View>>,
     query_rope_wide: Option<Prepared<LatentQueryRopeBuffers<View>>>,
+    /// The target's query rotation of each wide verify bucket
+    /// (`Shape::wide_verify_rows`), narrowest first.
+    query_rope_wide_rows: Vec<(u32, Prepared<LatentQueryRopeBuffers<View>>)>,
     /// The circular write into the ring and the circular key lists.
     window_write: RowBuckets<LatentWindowWriteBuffers<View>>,
     decode_window_write: Prepared<LatentWindowWriteBuffers<View>>,
@@ -213,6 +216,23 @@ impl GlueOps {
             } else {
                 None
             };
+        let query_rope_wide_rows = if target {
+            shape
+                .wide_verify_rows()
+                .into_iter()
+                .filter(|&rows| crate::Kernels::wide_verify_latent_query_rows(rows))
+                .map(|rows| {
+                    let op = asks.ask(
+                        format!("glue.query_rope wide verify rows {rows}"),
+                        exact::need(rows, exact::verify(rows)),
+                        |need| crate::Kernels::wide_verify_query_rope(shape, &query, need),
+                    )?;
+                    Ok((rows, op))
+                })
+                .collect::<Result<_, Refused>>()?
+        } else {
+            Vec::new()
+        };
         let ring = latent_glue::ring(g);
         let write = latent_glue::window_write_for_storage(g, ring, storage);
         let prepare = |need| backend.latent_window_write(&write, need);
@@ -269,6 +289,7 @@ impl GlueOps {
             query_rope,
             query_rope_small,
             query_rope_wide,
+            query_rope_wide_rows,
             window_write,
             decode_window_write,
             window_keys,
@@ -331,10 +352,14 @@ impl GlueOps {
         let rows = phase.rows();
         let mut bind = Bind::default();
         let buffers = query_rope_buffers(&mut bind, views);
-        let op = if matches!(phase, crate::program::Phase::Verify { .. })
-            && crate::Kernels::wide_latent_query_rows(64, rows)
-        {
+        let verify = matches!(phase, crate::program::Phase::Verify { .. });
+        let op = if verify && crate::Kernels::wide_latent_query_rows(64, rows) {
             self.query_rope_wide.as_ref()
+        } else if verify && crate::Kernels::wide_verify_latent_query_rows(rows) {
+            self.query_rope_wide_rows
+                .iter()
+                .find(|(bucket, _)| rows <= *bucket)
+                .map(|(_, op)| op)
         } else {
             None
         }

@@ -195,7 +195,7 @@ them. A non-default value is unqualified.
 | `text_config.indexer_mma` | `true` | Use the guarded native Flash index scorer where eligible. |
 | `text_config.indexer_prefill_tile` | `true` | Enable the qualified Flash tiled indexer routes. |
 | `verify_graph_rows` | `64` | Widest graphed verify step; wider admitted steps run eagerly. |
-| `wide_verify` | `false` | Candidate: Flash TP4 eager verify steps of 65 to 192 rows prepare their row-local stages at the wide verify buckets (128 rows and the verify rows) and launch the decode entries a 64-row step uses, and fold their dense projections through wide ticket folds at those buckets. Fixed-batch GPU replays matched the default bitwise; served step-time acceptance remains required before adoption. |
+| `wide_verify` | `false` | Candidate: Flash TP4 eager verify steps of 65 to 192 rows prepare their row-local stages and HC boundaries at the wide verify buckets (128 rows and the verify rows) and launch the decode entries a 64-row step uses, and fold their dense projections through wide ticket folds at those buckets. Fixed-batch GPU replays matched the default bitwise; served step-time acceptance remains required before adoption. |
 
 TP4 native-KV single-item DMA prefill overlaps both prepared Engram gathers
 by default at 512-8192 rows. The model joins each layer before its decoder;
@@ -301,23 +301,28 @@ verify width from 65 to 192 rows.
 
 With the `wide_verify` candidate option, eager verify steps of 65 to 192
 rows prepare the MoE input, dense input and latent window-write ceil
-quantizers and the shared SwiGLU at the wide verify buckets
-(`verify_bounds::WIDE`: 128 rows and the package's 192, each capped by the
-verify rows), so they launch the decode entries a 64-row step uses. The
-option also folds the dense projections of those steps (query down and up,
-window KV, output A and B, shared gate, up and down, and the indexer query)
-through wide ticket folds instead of the 8192-row fold: the dense decode
-template with a 256-row workspace header (`dense_decode::Entry::wide`), one
-per wide verify bucket, with the decode entries' fold order and arithmetic.
-Engram's projection takes its qualified matrix tile at the step's rows, as
-from 33 to 64 rows. Without the option those stages keep their prefill
-entries and the 8192-row folds. The route sweep `tp4-dspark-rows192-wide`
-serves the override with the option on. The other stages of those steps
-keep their prefill entries either way. The HC fusions, the query and row
-norms, the latent query and selected cache, the index query, the cached F32
-projections and the MoE need kernel, tuning or shared-limit changes to
-serve more than 64 rows, and the chained MoE's intermediate quantizer is
-selected inside its 64-row chain. On 2026-10-31, fixed-batch GPU replays of the option's stages at
+quantizers, the shared SwiGLU, the latent query rotation and the index
+query at the wide verify buckets (`verify_bounds::WIDE`: 128 rows and the
+package's 192, each capped by the verify rows), so they launch the decode
+entries a 64-row step uses. Their HC boundaries fuse as a 64-row step's
+do: 77 of each rank's 80 defer the all-reduce round into the column-block
+producer and split finish (`sm120::hc_wide`). The other three keep the
+one-CTA mixer, whose split form would need three times the mixer partials.
+The option also folds the dense projections of those steps (query down and
+up, window KV, output A and B, shared gate, up and down, and the indexer
+query) through wide ticket folds instead of the 8192-row fold: the dense
+decode template with a 256-row workspace header (`dense_decode::Entry::wide`),
+one per wide verify bucket, with the decode entries' fold order and
+arithmetic. Engram's projection takes its qualified matrix tile at the
+step's rows, as from 33 to 64 rows. Without the option those stages keep
+their prefill entries and the 8192-row folds, and the boundaries stay
+unfused. The route sweep `tp4-dspark-rows192-wide` serves the override with
+the option on. The query norm, the latent window rotation and the remaining
+row norms and rounding rows launch the 64-row entries either way, and the
+other stages keep their prefill entries. The latent selected cache, the
+cached F32 projections and the MoE need kernel, tuning or shared-limit
+changes to serve more than 64 rows, and the chained MoE's intermediate
+quantizer is selected inside its 64-row chain. On 2026-10-31, fixed-batch GPU replays of the option's stages at
 verify widths 64 to 192 (concurrency 16 and 32, four to six rows per item,
 verify capacities 80 to 192) matched the previous package bitwise in
 logits, proposals, acceptance and committed state. Under a CUDA trace, the
@@ -330,7 +335,16 @@ bitwise, and the dense folds of a 128-row step fell from 93.1 to 12.3 ms of
 GPU-busy time per device (the step from 196.3 to 103.0 ms; a 96-row step
 to 89.8 ms). A 192-row step (concurrency 32, six rows per item) fell from
 234.9 to 132.2 ms, its dense folds from 109.6 to 17.8 ms. The wide folds
-keep the untuned ticket schedule. This is not served step-time acceptance.
+keep the untuned ticket schedule. Measured on the quantizer change without
+the dense folds, the HC fusion and the queries took a 128-row step from
+193.8 to 182.1 ms and a 192-row step from 225.0 to 214.6 ms. Their HC
+boundaries fell from 12.9 to 2.8 ms and from 13.6 to 3.9 ms, and their
+index queries from 0.7 to under 0.1 ms. Replays at the same five
+configurations matched bitwise. The selected cache would save about 0.6 to
+0.8 ms of such a step, assuming its cost grows with the rows. At 64 rows it
+takes 2.1 ms, against 3.4 ms for the direct sources of an 80-row step, 5.0
+ms at 128 rows and 6.9 ms at 192. Its 192-row arena would add 84 MB per
+rank. This is not served step-time acceptance.
 
 Prefill commit projections are batched across prompts. Undrafted pure
 decode joins status once and submits private sampling before collecting it

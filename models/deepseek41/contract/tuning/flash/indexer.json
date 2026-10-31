@@ -8168,6 +8168,7 @@
     {"op": "indexer.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 61, "rows": [33, 61], "schedule": "parallel", "knobs": {}},
     {"op": "indexer.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 62, "rows": [33, 62], "schedule": "parallel", "knobs": {}},
     {"op": "indexer.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 63, "rows": [33, 63], "schedule": "parallel", "knobs": {}},
-    {"op": "indexer.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 64, "rows": [33, 64], "schedule": "parallel", "knobs": {}}
+    {"op": "indexer.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 64, "rows": [33, 64], "schedule": "parallel", "knobs": {}},
+    {"op": "indexer.query.verify", "weights": "f32", "shape": {"ranks": 4}, "bucket": 192, "rows": [65, 192], "schedule": "parallel", "knobs": {}}
   ]
 }

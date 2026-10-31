@@ -12,7 +12,8 @@ fn pin_untuned_served_keys() {
             &[("ranks", ranks)],
             32,
         ));
-        for capacity in 32..=64 {
+        // 32 to 64 rows, and the widest wide verify bucket.
+        for capacity in (32..=64).chain([192]) {
             domain.insert(key(
                 "indexer.query.verify",
                 "f32",
@@ -39,7 +40,7 @@ fn pin_untuned_served_keys() {
             ));
         }
     }
-    assert_eq!(domain.len(), 8296);
+    assert_eq!(domain.len(), 8299);
     assert_untuned(
         Family::Indexer,
         domain,
@@ -60,8 +61,9 @@ const UNTUNED: &[&str] = &[
     "indexer.cached.prefill f32 top_k=512,width=65536 buckets=32..4096 rows=1..31",
     "indexer.candidate_scores.prefill fp4 top_k=512 buckets=512 rows=1..511",
     "indexer.compressed_scores.prefill fp4 top_k=512 buckets=4096 rows=1..4095",
-    "indexer.query.verify f32 ranks=1 buckets=32..64 rows=all",
-    "indexer.query.verify f32 ranks=2 buckets=32..64 rows=all",
+    "indexer.query.verify f32 ranks=1 buckets=32..64,192 rows=all",
+    "indexer.query.verify f32 ranks=2 buckets=32..64,192 rows=all",
+    "indexer.query.verify f32 ranks=4 buckets=192 rows=1..64",
     "indexer.query.verify f32 ranks=4 buckets=32 rows=all",
     "indexer.query.verify f32 ranks=4 buckets=33..64 rows=1..32",
 ];

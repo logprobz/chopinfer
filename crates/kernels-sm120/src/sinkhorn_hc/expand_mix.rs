@@ -5,6 +5,11 @@ use kernel_core::contract::{DType, LaunchPlan, Refusal, Validate};
 use kernel_core::sinkhorn_expand_mix::SinkhornExpandMixQuery;
 use kernel_core::sinkhorn_hyper_connection::SinkhornHyperConnectionQuery;
 
+/// The most rows an expand-mix entry and the producers and finishers that
+/// keep its ABI hold. Every launch grids its rows and indexes them in 64
+/// bits, so capacity sizes only the grid and the workspace.
+pub const MAX_CAPACITY: u32 = 256;
+
 #[derive(Clone, Debug)]
 pub struct Entry {
     pub query: SinkhornExpandMixQuery,
@@ -21,12 +26,12 @@ impl Entry {
             capacity: self.capacity,
         })?;
         if self.capacity == 0
-            || self.capacity > 64
+            || self.capacity > MAX_CAPACITY
             || !m.flat_width().is_multiple_of(CHAIN * 8)
             || u64::from(m.mixes()) * u64::from(m.flat_width() / CHAIN + 1) * 4 > 46 * 1024
         {
             return Err(Refusal(
-                "expand-mix requires at most 64 rows and complete chain groups",
+                "expand-mix requires at most 256 rows and complete chain groups",
             ));
         }
         Ok(())
@@ -169,32 +174,34 @@ mod tests {
             symbol: "expand_mix_rows".into(),
             probe: false,
         };
-        let wide = Entry {
-            capacity: 64,
-            ..old.clone()
-        };
-        assert_eq!(
-            format!("{:?}", old.specs().unwrap()),
-            format!("{:?}", wide.specs().unwrap())
-        );
-        for rows in 1..=32 {
-            assert_eq!(old.plans(rows).unwrap(), wide.plans(rows).unwrap());
-        }
-        for rows in 33..=64 {
-            assert!(old.plans(rows).is_err());
-            let plans = wide.plans(rows).unwrap();
-            assert!(plans.iter().all(|p| p.grid[1] == rows));
+        for capacity in [64, MAX_CAPACITY] {
+            let wide = Entry {
+                capacity,
+                ..old.clone()
+            };
             assert_eq!(
-                wide.workspace(rows).unwrap(),
-                wide.workspace(1).unwrap() * u64::from(rows)
+                format!("{:?}", old.specs().unwrap()),
+                format!("{:?}", wide.specs().unwrap())
             );
+            for rows in 1..=32 {
+                assert_eq!(old.plans(rows).unwrap(), wide.plans(rows).unwrap());
+            }
+            for rows in 33..=capacity {
+                assert!(old.plans(rows).is_err());
+                let plans = wide.plans(rows).unwrap();
+                assert!(plans.iter().all(|p| p.grid[1] == rows));
+                assert_eq!(
+                    wide.workspace(rows).unwrap(),
+                    wide.workspace(1).unwrap() * u64::from(rows)
+                );
+            }
+            assert!(wide.plans(0).is_err());
+            assert!(wide.plans(capacity + 1).is_err());
         }
-        assert!(wide.plans(0).is_err());
-        assert!(wide.plans(65).is_err());
         assert!(
             Entry {
-                capacity: 65,
-                ..wide
+                capacity: MAX_CAPACITY + 1,
+                ..old
             }
             .validate()
             .is_err()

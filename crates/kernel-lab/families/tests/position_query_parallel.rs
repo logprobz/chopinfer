@@ -122,11 +122,18 @@ fn cpu_query_prepared_capacity_preserves_the_launch_crossover_and_refusals() {
 #[test]
 fn cpu_explicit_wide_query_keeps_the_default_crossover() {
     use kernel_core::backend::View;
-    for limit in [0, 65, u32::MAX] {
+    for limit in [0, 257, u32::MAX] {
         assert!(
             backend(false)
                 .with_parallel_position_query_rows(limit)
                 .is_err()
+        );
+    }
+    for limit in [65, 192, 256] {
+        assert!(
+            backend(false)
+                .with_parallel_position_query_rows(limit)
+                .is_ok()
         );
     }
     let wide = backend(false)

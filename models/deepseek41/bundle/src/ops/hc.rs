@@ -147,6 +147,17 @@ fn draft_selected(g: &model_deepseek41_contract::geometry::Geometry, phase: Phas
     )
 }
 
+/// One wide verify bucket's fused finish norm (`Shape::wide_verify_rows`,
+/// the `wide_verify` candidate): the boundaries of verify steps above the
+/// decode route up to `rows` rows (`sm120::hc_wide`). A mixer that follows
+/// no fused boundary keeps the one-CTA entry: the bounded split would take
+/// three times the decode route's mixer partials for three launches per
+/// rank and step.
+struct Wide {
+    rows: u32,
+    finish: Prepared<SinkhornRoundNormBuffers<View>>,
+}
+
 pub(crate) struct HcOps {
     geometry: &'static model_deepseek41_contract::geometry::Geometry,
     mix: Prepared<LaggedMixCollapseBuffers<View>>,
@@ -164,6 +175,8 @@ pub(crate) struct HcOps {
     prefill_fused: Option<Prepared<SinkhornExpandMixBuffers<View>>>,
     round_fused: Option<Prepared<SinkhornRoundExpandMixBuffers<View>>>,
     finish_norm: Option<Prepared<SinkhornRoundNormBuffers<View>>>,
+    /// The target's wide verify buckets, narrowest first.
+    wide: Vec<Wide>,
 }
 
 /// The mixer scratch the mix-collapse lists, in bytes: its partials,
@@ -220,10 +233,13 @@ pub(crate) struct HeadViews {
 }
 
 impl HcOps {
+    /// `target` prepares the wide verify buckets, which no drafter forward
+    /// reaches.
     pub(crate) fn prepare(
         backend: &dyn Backend,
         shape: &Shape,
         asks: &Asks,
+        target: bool,
     ) -> Result<HcOps, Refused> {
         // Every phase mixes and expands its sublayers and collapses the
         // head's rows.
@@ -234,6 +250,11 @@ impl HcOps {
         Ok(HcOps {
             geometry: g,
             finish_rows,
+            wide: if target {
+                Self::prepare_wide(shape, asks)?
+            } else {
+                Vec::new()
+            },
             finish_norm: {
                 let capacity = finish_rows;
                 let need = exact::need(capacity, exact::every_phase(capacity));
@@ -314,6 +335,53 @@ impl HcOps {
                 }
             },
         })
+    }
+
+    /// The fused finish norm of each wide verify bucket the instance
+    /// reaches, from the wide boundary's own backend
+    /// (`Kernels::wide_hc_backend`).
+    fn prepare_wide(shape: &Shape, asks: &Asks) -> Result<Vec<Wide>, Refused> {
+        let buckets = shape.wide_verify_rows();
+        let Some(&widest) = buckets.last() else {
+            return Ok(Vec::new());
+        };
+        let g = shape.geometry;
+        let wide_backend = crate::Kernels::wide_hc_backend(g, widest);
+        let query = SinkhornRoundNormQuery {
+            mixer: SinkhornExpandMixQuery { mix: hc::mix(g) },
+            norm: model_deepseek41_contract::rows::norm_quantizers(g)[0],
+        };
+        buckets
+            .into_iter()
+            .map(|rows| {
+                let need = exact::need(rows, exact::every_phase(rows));
+                Ok(Wide {
+                    rows,
+                    finish: asks.ask(
+                        format!("hc.round_expand_mix_norm wide rows {rows}"),
+                        need,
+                        |need| wide_backend.sinkhorn_round_expand_mix_norm(&query, need),
+                    )?,
+                })
+            })
+            .collect()
+    }
+
+    /// The wide verify bucket that serves `phase`: a verify step above the
+    /// decode route's rows, in the narrowest bucket that holds it.
+    fn wide_at(&self, phase: Phase) -> Option<&Wide> {
+        if !matches!(phase, Phase::Verify { .. }) || phase.rows() <= self.finish_rows {
+            return None;
+        }
+        self.wide.iter().find(|wide| phase.rows() <= wide.rows)
+    }
+
+    /// The wide verify finish norm that serves `phase`, where
+    /// `hc.finish_admit.verify` admits its rows.
+    fn wide_finish(&self, phase: Phase) -> Option<&Prepared<SinkhornRoundNormBuffers<View>>> {
+        self.wide_at(phase)
+            .filter(|_| crate::Kernels::wide_hc_admitted("hc.finish_admit.verify", phase.rows()))
+            .map(|wide| &wide.finish)
     }
 
     pub(crate) fn has_expand_mix(&self) -> bool {
@@ -450,6 +518,7 @@ impl HcOps {
     // and saves 1.07..1.12 ms per step cold (0.75..0.85 hot), 77 of 77 sites.
     pub(crate) fn has_finish_norm(&self, phase: Phase) -> bool {
         finish_selected(self.geometry, phase, self.finish_rows) && self.finish_norm.is_some()
+            || self.wide_finish(phase).is_some()
     }
 
     pub(crate) fn round_expand_mix_norm(
@@ -476,12 +545,11 @@ impl HcOps {
             seen.push((span, view));
             view
         });
-        bind.launch_within(
-            self.finish_norm.as_ref().unwrap(),
-            &b,
-            workspace,
-            Counts::rows(phase.rows()),
-        )
+        let op = self
+            .wide_finish(phase)
+            .or(self.finish_norm.as_ref())
+            .unwrap();
+        bind.launch_within(op, &b, workspace, Counts::rows(phase.rows()))
     }
 
     /// The mixer scratch every rank allocates for the mix-collapse.
@@ -642,7 +710,8 @@ mod tests {
         for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
             let shape = Shape::new(&FLASH, ranks).unwrap();
             let kernels = crate::Kernels::new(&shape).unwrap();
-            let ops = HcOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
+            let ops =
+                HcOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default(), true).unwrap();
             for rows in [
                 33, 63, 64, 65, 191, 192, 193, 320, 2239, 2240, 2241, 2495, 2496, 2497, 2623, 2624,
                 2625, 8150, 8191, 8192,
@@ -720,7 +789,8 @@ mod tests {
         for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
             let shape = Shape::new(&FLASH, ranks).unwrap();
             let kernels = crate::Kernels::new(&shape).unwrap();
-            let ops = HcOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
+            let ops =
+                HcOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default(), true).unwrap();
             let op = ops.prefill_fused.as_ref().unwrap();
             assert_eq!(op.info().workspace, 0);
             for rows in [1, 63, 64, 65, 192, 320, 2496, 4096, 8191, 8192] {
@@ -761,7 +831,7 @@ mod tests {
         use kernel_core::rmsnorm_quantize::RmsNormQuantizeBuffers;
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let kernels = crate::Kernels::new(&shape).unwrap();
-        let ops = HcOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
+        let ops = HcOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default(), true).unwrap();
         let tail = ops.finish_norm.as_ref().unwrap();
         let spans: std::collections::BTreeMap<_, _> = tail
             .info()
@@ -909,12 +979,153 @@ mod tests {
             }
         }
     }
+    /// With the `wide_verify` option at the package's 192 verify rows,
+    /// verify steps of 65 to 192 rows take the column-block pair that
+    /// serves 33 to 64 rows, over the arguments a 64-row step binds. Every
+    /// mixer, every step of at most 64 rows, every prefill and the
+    /// drafter's ops keep their launches and the mixer scratch its bytes,
+    /// and without the option every wider step keeps the unfused boundary.
+    #[test]
+    fn wide_verify_buckets_take_the_decode_boundary_above_64_rows() {
+        use kernel_core::rmsnorm_quantize::RmsNormQuantizeBuffers;
+        let view = |handle| View {
+            handle,
+            bytes: u64::MAX / 2,
+        };
+        let mixer = LaggedMixCollapseBuffers {
+            x: view(1),
+            mixer: MixerWeights {
+                fn_: view(2),
+                base: view(3),
+                scale: view(4),
+            },
+            pre_in: view(5),
+            collapsed: view(6),
+            pre: view(7),
+            post: view(8),
+            comb: view(9),
+            scratch: MixScratch {
+                partials: Some(view(11)),
+                tickets: Some(view(12)),
+            },
+            live_rows: View {
+                bytes: 4,
+                ..view(10)
+            },
+        };
+        let hc = SinkhornRoundExpandMixBuffers {
+            x: view(21),
+            sum: view(22),
+            rounded: view(23),
+            post_in: view(24),
+            comb_in: view(25),
+            expanded: view(26),
+            fn_: view(27),
+            base: view(28),
+            scale: view(29),
+            pre_in: view(30),
+            collapsed: view(31),
+            pre: view(32),
+            post: view(24),
+            comb: view(25),
+            live_rows: View {
+                bytes: 4,
+                ..view(33)
+            },
+        };
+        let finish = SinkhornRoundNormBuffers {
+            hc,
+            norm: RmsNormQuantizeBuffers {
+                input: hc.collapsed,
+                weight: view(41),
+                normed: view(42),
+                widened: Some(view(43)),
+                codes: view(44),
+                scales: view(45),
+                live_rows: hc.live_rows,
+                status: view(46),
+                status_row_offset: 0,
+            },
+            tickets: None,
+        };
+        let workspace = view(50);
+        let shape = Shape::new(&FLASH, Ranks::TP4)
+            .unwrap()
+            .with_verify_rows(192);
+        let wide_shape = shape.with_wide_verify(true);
+        let (kernels, wide_kernels) = (
+            crate::Kernels::new(&shape).unwrap(),
+            crate::Kernels::new(&wide_shape).unwrap(),
+        );
+        let prepare = |kernels: &crate::Kernels, shape: &Shape, target| {
+            HcOps::prepare(kernels.backend.as_ref(), shape, &Asks::default(), target).unwrap()
+        };
+        let off = prepare(&kernels, &shape, true);
+        let on = prepare(&wide_kernels, &wide_shape, true);
+        let drafter = prepare(&wide_kernels, &wide_shape, false);
+        assert!(off.wide.is_empty() && drafter.wide.is_empty());
+        assert_eq!(
+            on.wide.iter().map(|w| w.rows).collect::<Vec<_>>(),
+            [128, 192]
+        );
+        assert_eq!(off.scratch().partials, Some(64 * 15360));
+        assert_eq!(on.scratch(), off.scratch());
+        assert_eq!(drafter.scratch(), off.scratch());
+        let mix_at = |ops: &HcOps, phase: Phase| {
+            ops.mix_for_phase(phase)
+                .launches(&mixer, View::EMPTY, Counts::rows(phase.rows()))
+                .unwrap()
+        };
+        let finish_at = |ops: &HcOps, phase: Phase| {
+            ops.has_finish_norm(phase).then(|| {
+                ops.wide_finish(phase)
+                    .or(ops.finish_norm.as_ref())
+                    .unwrap()
+                    .launches(&finish, workspace, Counts::rows(phase.rows()))
+                    .unwrap()
+            })
+        };
+        let at_64 = Phase::Verify { rows: 64, items: 1 };
+        let finish_64 = finish_at(&on, at_64).unwrap();
+        let [producer, split] = [&finish_64[0].symbol, &finish_64[1].symbol];
+        assert_eq!(producer, "chop_deepseek41_hc_round_cols_r4_tx_v1");
+        assert_eq!(split, "chop_deepseek41_hc_finish_split_w32_v1");
+        for rows in 1..=192 {
+            let phases = [Phase::Prefill { rows }, Phase::Verify { rows, items: 1 }]
+                .into_iter()
+                .chain((rows <= DECODE_BATCH).then_some(Phase::Decode(rows)));
+            for phase in phases {
+                for ops in [&on, &drafter] {
+                    assert_eq!(mix_at(ops, phase), mix_at(&off, phase), "{phase:?}");
+                    if rows <= 64 || phase.prefill() || ops.wide.is_empty() {
+                        assert_eq!(finish_at(ops, phase), finish_at(&off, phase), "{phase:?}");
+                        continue;
+                    }
+                    assert!(!off.has_finish_norm(phase));
+                    let fused = finish_at(ops, phase).unwrap();
+                    assert_eq!(fused.len(), 2);
+                    for (new, old) in fused.iter().zip(&finish_64) {
+                        assert_eq!((&new.symbol, &new.arguments), (&old.symbol, &old.arguments));
+                        assert_eq!(new.plan.block, old.plan.block);
+                        assert_eq!(
+                            new.plan.workspace_bytes,
+                            old.plan.workspace_bytes / 64 * u64::from(rows)
+                        );
+                    }
+                    assert_eq!(fused[0].plan.grid, [40, rows.div_ceil(4), 1]);
+                    assert_eq!(fused[1].plan.grid, [2, rows, 1]);
+                }
+            }
+        }
+    }
+
     #[test]
     fn warp_mixer_is_limited_to_qualified_decode_and_verify_buckets() {
         for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
             let shape = Shape::new(&FLASH, ranks).unwrap();
             let kernels = crate::Kernels::new(&shape).unwrap();
-            let ops = HcOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
+            let ops =
+                HcOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default(), true).unwrap();
             for rows in [1, 2, 4, 6, 8, 12, 16, 32] {
                 for phase in [
                     Phase::Decode(rows),

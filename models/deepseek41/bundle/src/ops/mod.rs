@@ -245,7 +245,12 @@ impl Ops {
             &mut missing,
             &names,
             "hyper-connection",
-            hc::HcOps::prepare(kernels.backend.as_ref(), shape, &asks),
+            hc::HcOps::prepare(
+                kernels.backend.as_ref(),
+                shape,
+                &asks,
+                expert_set.count == shape.geometry.shape.moe.experts,
+            ),
         );
         let moe = family(
             &mut missing,
@@ -573,6 +578,25 @@ mod tests {
             ops.missing[4]
                 .starts_with("nothing and nothing own refuse DeepSeek V4.1's all-reduce ops")
         );
+    }
+
+    /// With the `wide_verify` option, Flash TP4 prepares every op at every
+    /// verify row budget above the decode route, whichever wide verify
+    /// buckets it reaches.
+    #[test]
+    fn wide_verify_prepares_every_op_at_every_verify_budget() {
+        let shape = Shape::new(
+            &model_deepseek41_contract::geometry::FLASH,
+            bundle_runtime::geometry::Ranks::TP4,
+        )
+        .unwrap();
+        for rows in [65, 80, 96, 128, 129, 160, 192] {
+            let shape = shape.with_verify_rows(rows).with_wide_verify(true);
+            assert!(!shape.wide_verify_rows().is_empty());
+            let kernels = Kernels::new(&shape).unwrap();
+            let ops = Ops::prepare(&kernels, &shape, KvStorage::Native, Default::default());
+            assert!(ops.missing.is_empty(), "{rows}: {:?}", ops.missing);
+        }
     }
 }
 

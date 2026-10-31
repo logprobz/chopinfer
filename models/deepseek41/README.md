@@ -394,6 +394,17 @@ Fixed-batch GPU replays with both options on, at verify widths 32 to 64
 (concurrency 16 and 32, two to four rows per item, against captures of the
 previous package) and at the five wide configurations, matched bitwise.
 
+Merged with the wide direct MoE, the five wide replays matched bitwise
+again, eagerly and with graphs up to each verify capacity, and so did the
+four at verify widths 16 to 64 with both options on. A 128-row step takes
+76.7 ms and a 192-row step 104.1 ms, against 67.4 and 97.7 ms before the
+merge. On rank 1 the head's tile takes 14.3 ms at every wide width,
+against 0.6 to 1.0 ms on the other ranks, and every rank waits for it in
+the logits exchange: one weight of rank 1's vocabulary slice (head row
+49423, about -5.9e-10) lies outside the exact-F32 tensor domain, and the
+CTA that owns its 16-row group computes that group's outputs in the serial
+SIMT chains. The other three ranks' slices have no such weight.
+
 Prefill commit projections are batched across prompts. Undrafted pure
 decode joins status once and submits private sampling before collecting it
 on the native result path. Verify and undrafted commits with at least eight

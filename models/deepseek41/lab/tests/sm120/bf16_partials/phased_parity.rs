@@ -36,9 +36,9 @@ use std::path::PathBuf;
 
 /// Every timed row count, the phased forms' boundaries (4/5, 32/33) and
 /// the package's 192 verify rows.
-const ROWS: [u32; 11] = [1, 2, 4, 5, 8, 16, 32, 33, 64, 128, 192];
-const CAPACITY: u32 = 192;
-const PATTERNS: [&str; 11] = [
+pub(super) const ROWS: [u32; 11] = [1, 2, 4, 5, 8, 16, 32, 33, 64, 128, 192];
+pub(super) const CAPACITY: u32 = 192;
+pub(super) const PATTERNS: [&str; 11] = [
     "finite",
     "cancellation",
     "dynamic_range",
@@ -53,14 +53,14 @@ const PATTERNS: [&str; 11] = [
 ];
 
 /// The served registration: the rounding rows alone.
-fn served_backend() -> Sm120 {
+pub(super) fn served_backend() -> Sm120 {
     reduce::register(Sm120::new(), &FLASH)
 }
 /// The candidate registration: the served one with the phased F32 entries.
-fn phased_backend() -> Sm120 {
+pub(super) fn phased_backend() -> Sm120 {
     served_backend().with_phased_f32_all_reduce()
 }
-fn rounded_op(backend: &Sm120, rank: usize) -> LabResult<Op> {
+pub(super) fn rounded_op(backend: &Sm120, rank: usize) -> LabResult<Op> {
     backend
         .all_reduce(
             &CommQuery::AllReduceRounded {
@@ -72,7 +72,7 @@ fn rounded_op(backend: &Sm120, rank: usize) -> LabResult<Op> {
         )
         .map_err(err)
 }
-fn served_symbols() -> Vec<String> {
+pub(super) fn served_symbols() -> Vec<String> {
     vec![
         reduce::SCATTER_SYMBOL.into(),
         reduce::GATHER_SYMBOL.into(),
@@ -96,14 +96,18 @@ fn phased_symbol(rows: u32) -> &'static str {
 
 /// The pair a step whose HC mix takes the round issues, and the index of
 /// the op's state region that receives this rank's F32 sum.
-fn deferred(op: &Op, buffers: &AllReduceBuffers<View>, counts: Counts) -> LabResult<Vec<Launch>> {
+pub(super) fn deferred(
+    op: &Op,
+    buffers: &AllReduceBuffers<View>,
+    counts: Counts,
+) -> LabResult<Vec<Launch>> {
     Ok(op
         .defer_bf16_round(buffers, View::EMPTY, counts)
         .map_err(err)?
         .ok_or("the served reduction no longer defers its round")?
         .launches)
 }
-fn sum_region(op: &Op, rank: usize) -> LabResult<usize> {
+pub(super) fn sum_region(op: &Op, rank: usize) -> LabResult<usize> {
     let buffers = super::views(op.info().state.len(), |_| u64::MAX / 4);
     let round = op
         .defer_bf16_round(&buffers, View::EMPTY, Counts::rows(1))
@@ -132,7 +136,7 @@ fn bits(seed: u64, rank: usize, i: usize) -> u64 {
 }
 
 /// Each rank's `rows` rows of `pattern`.
-fn pattern(name: &str, rows: usize) -> Vec<Vec<f32>> {
+pub(super) fn pattern(name: &str, rows: usize) -> Vec<Vec<f32>> {
     if name == "finite" {
         return synthetic(rows);
     }
@@ -272,7 +276,7 @@ fn run(
 }
 /// [`Fixture::upload`] with every input's bits kept, NaN payloads
 /// included.
-fn upload_bits(
+pub(super) fn upload_bits(
     sessions: &[Session],
     fixture: &Fixture,
     values: &[Vec<f32>],

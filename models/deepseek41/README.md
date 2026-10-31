@@ -195,7 +195,7 @@ them. A non-default value is unqualified.
 | `text_config.indexer_mma` | `true` | Use the guarded native Flash index scorer where eligible. |
 | `text_config.indexer_prefill_tile` | `true` | Enable the qualified Flash tiled indexer routes. |
 | `verify_graph_rows` | `64` | Widest graphed verify step; wider admitted steps run eagerly. |
-| `wide_verify` | `false` | Candidate: Flash TP4 eager verify steps of 65 to 192 rows prepare their row-local stages and HC boundaries at the wide verify buckets (128 rows and the verify rows) and launch the decode entries a 64-row step uses, and fold their dense projections through wide ticket folds at those buckets. Fixed-batch GPU replays matched the default bitwise; served step-time acceptance remains required before adoption. |
+| `wide_verify` | `false` | Candidate: Flash TP4 eager verify steps of 65 to 192 rows prepare their row-local stages and HC boundaries at the wide verify buckets (128 rows and the verify rows) and launch the decode entries a 64-row step uses, and fold their dense projections through wide folds at those buckets. Fixed-batch GPU replays matched the default bitwise; served step-time acceptance remains required before adoption. |
 
 TP4 native-KV single-item DMA prefill overlaps both prepared Engram gathers
 by default at 512-8192 rows. The model joins each layer before its decoder;
@@ -310,10 +310,10 @@ producer and split finish (`sm120::hc_wide`). The other three keep the
 one-CTA mixer, whose split form would need three times the mixer partials.
 The option also folds the dense projections of those steps (query down and
 up, window KV, output A and B, shared gate, up and down, and the indexer
-query) through wide ticket folds instead of the 8192-row fold: the dense
+query) through wide folds instead of the 8192-row fold: the dense
 decode template with a 256-row workspace header (`dense_decode::Entry::wide`),
 one per wide verify bucket, with the decode entries' fold order and
-arithmetic. Engram's projection takes its qualified matrix tile at the
+arithmetic and the schedule of its `dense_fold.wide.verify` row. Engram's projection takes its qualified matrix tile at the
 step's rows, as from 33 to 64 rows. Without the option those stages keep
 their prefill entries and the 8192-row folds, and the boundaries stay
 unfused. The route sweep `tp4-dspark-rows192-wide` serves the override with
@@ -334,8 +334,8 @@ replays of the same five configurations again matched the previous package
 bitwise, and the dense folds of a 128-row step fell from 93.1 to 12.3 ms of
 GPU-busy time per device (the step from 196.3 to 103.0 ms; a 96-row step
 to 89.8 ms). A 192-row step (concurrency 32, six rows per item) fell from
-234.9 to 132.2 ms, its dense folds from 109.6 to 17.8 ms. The wide folds
-keep the untuned ticket schedule. Measured on the quantizer change without
+234.9 to 132.2 ms, its dense folds from 109.6 to 17.8 ms, with the ticket
+schedule. Measured on the quantizer change without
 the dense folds, the HC fusion and the queries took a 128-row step from
 193.8 to 182.1 ms and a 192-row step from 225.0 to 214.6 ms. Their HC
 boundaries fell from 12.9 to 2.8 ms and from 13.6 to 3.9 ms, and their
@@ -343,7 +343,11 @@ index queries from 0.7 to under 0.1 ms. Replays at the same five
 configurations matched bitwise. With both changes merged, the five
 replays matched bitwise again, and a 128-row step takes 92.2 ms and a
 192-row step 121.9 ms of GPU-busy time per device, against 196.3 and 234.9
-ms without the option; the MoE expert chains take 41.0 and 49.9 ms of them. The selected cache would save about 0.6 to
+ms without the option; the MoE expert chains take 41.0 and 49.9 ms of them.
+With the wide fold rows from the lab sweep (weight prefetch in 14 of the 16
+keys), the five replays matched bitwise again, and the wide folds of a
+128-row step fell from 11.9 to 10.9 ms (the step from 92.2 to 90.8 ms) and
+those of a 192-row step from 17.3 to 16.2 ms (121.9 to 120.9 ms). The selected cache would save about 0.6 to
 0.8 ms of such a step, assuming its cost grows with the rows. At 64 rows it
 takes 2.1 ms, against 3.4 ms for the direct sources of an 80-row step, 5.0
 ms at 128 rows and 6.9 ms at 192. Its 192-row arena would add 84 MB per

@@ -103,7 +103,7 @@ The kernel lab's pairs ran on each of four GPUs on 2026-10-31:
 The HC and MoE options add no kernel. The fused HC boundary is the
 backbone's, whose lab pairs matched the unfused chain bitwise; the direct
 MoE entries already serve the drafter's 5-row forwards. The fixed-batch
-replays are their evidence at the drafter's other rows.
+replays below are their GPU evidence at the drafter's rows.
 
 Fixed-batch GPU replays (runtime-host `fixed-batch replay`) of the head
 package with all five options on matched captures of the base package
@@ -114,7 +114,10 @@ accepted drafts and alternating greedy and seeded steps. With
 `diagnostic_step_logs` at the debug log level, every drafted block's
 proposal IDs and confidence bits (`drafter-confidence.v1`) were equal: 771
 records over the six configurations. These traces run drafter forwards of
-5 rows (C1) and 40 rows (C8 and C16).
+5 rows (C1) and 40 rows (C8 and C16). Replays of the same transition
+schedule at C2 to C7 and C9 to C12, which run the other admitted rows (10
+to 35 and 45 to 60), are pending; until they pass, those rows rest on the
+structural argument above, and the options must not be adopted.
 
 The journal proof of the commits against the commit before the candidates
 was PROVEN with the declaration

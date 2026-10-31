@@ -22,3 +22,9 @@ of the F32 change's own declaration on its parent; only their positions
 differ. Each journal grows by 464 lines: C16 odd-width from 191338 to
 191802 and C32 maximum from 344076 to 344540. Every other journal, create
 range and device history is identical.
+
+On 2026-10-31 the journal proof of the merge commit against the first
+parent, with this declaration read at the commit that adds it, was
+PROVEN with full history coverage: 23 journals identical, 2 proven (768
+removed and 1184 added operations, 36 added resolves and 12 added
+configures each), 25 of 25 fixture histories compared.

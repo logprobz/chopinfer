@@ -361,6 +361,7 @@ fn simple() -> Vec<Recipe> {
             lab::compact_dense::FAMILY,
             lab::compact_dense::cubins()
         ),
+        one!(Lab, lab::moe_small_l2::FAMILY, lab::moe_small_l2::cubins()?),
         one!(
             Bundle,
             bundle::f32_verify::FAMILY,

@@ -94,6 +94,17 @@ per-layer saving is 12 ms per step with every row on six experts, 10 ms on
 The smallest saving measured was 3.4 ms per step. These are kernel-lab
 figures; served step-time acceptance is separate.
 
+After the change moved behind the `wide_verify` option, both arms were
+exported under it (`CHOPINFER_MOE_GRAPH_ARM=wide` against `=chains`) and
+rerun on 2026-10-31 at 65, 96, 128, 160 and 192 rows, every rank and scale
+width, and six routing patterns: the four above, rows drawing six experts
+each independently, and four-row sequences sharing four experts. All 480
+cases and 14,400 replays were bitwise equal, with no Xid. The option also
+makes the router and shared expert cheaper in both arms, so the
+complete-layer ratios fell: over 240 timed cases at raw and width-1
+scales the median was 0.459 and the largest 0.895 (192 rows, 24
+experts), with A/A ratios within 0.9968 to 1.0064.
+
 ## Rerunning
 
 Export each arm with the ignored bundle test

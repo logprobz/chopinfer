@@ -175,26 +175,41 @@ impl Drop for Pool<'_> {
     }
 }
 
-pub struct Programs(BTreeMap<String, Function>);
+pub struct Programs {
+    functions: BTreeMap<String, Function>,
+    /// A staged lab cubin for symbols the bundle does not embed.
+    lab: Option<Vec<u8>>,
+}
 impl Programs {
     pub fn load(pool: &Pool<'_>, calls: &[Launch]) -> LabResult<Self> {
-        let mut programs = Self(BTreeMap::new());
+        Self::with_lab(pool, calls, None)
+    }
+    pub fn with_lab(pool: &Pool<'_>, calls: &[Launch], lab: Option<Vec<u8>>) -> LabResult<Self> {
+        let mut programs = Self {
+            functions: BTreeMap::new(),
+            lab,
+        };
         programs.extend(pool, calls)?;
         Ok(programs)
     }
     pub fn extend(&mut self, pool: &Pool<'_>, calls: &[Launch]) -> LabResult<()> {
         let s = pool.session.ok_or("loading needs a GPU")?;
         for call in calls {
-            if self.0.contains_key(&call.symbol) {
+            if self.functions.contains_key(&call.symbol) {
                 continue;
             }
-            let (_, bytes) = bundle_deepseek41::sm120::fold_cubin_for_symbol(&call.symbol)
-                .ok_or_else(|| format!("missing embedded cubin {}", call.symbol))?;
+            let bytes = match bundle_deepseek41::sm120::fold_cubin_for_symbol(&call.symbol) {
+                Some((_, bytes)) => bytes,
+                None => self
+                    .lab
+                    .as_deref()
+                    .ok_or_else(|| format!("missing embedded cubin {}", call.symbol))?,
+            };
             let f = s
                 .load_cubin(bytes)?
                 .function(&call.symbol)
                 .map_err(|e| e.to_string())?;
-            self.0.insert(call.symbol.clone(), f);
+            self.functions.insert(call.symbol.clone(), f);
         }
         Ok(())
     }
@@ -216,7 +231,7 @@ impl Programs {
                 })
                 .collect::<LabResult<Vec<_>>>()?;
             launch::launch_with(
-                &self.0[&call.symbol],
+                &self.functions[&call.symbol],
                 stream,
                 launch::config(call.plan)?,
                 &args,

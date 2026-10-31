@@ -1,4 +1,5 @@
 //! Complete wide MoE pairs keep explicit reference schedules and guarded spans.
+mod candidate;
 mod device;
 mod full;
 mod graphs;
@@ -74,6 +75,57 @@ fn wide_pair_rejects_a_served_candidate() {
     short[0].pop();
     assert!(check(128, &chain, &short).is_err());
     check(64, &chain, &chain).unwrap();
+}
+
+/// Each lab twin keeps its served entry's ABI, launch bounds and call,
+/// changing only the device function and its cache policy, and the served
+/// entries rebuilt here are the ones the bundle embeds.
+#[test]
+fn lab_l2_twins_keep_the_served_abi() {
+    use candidate::moe_small_l2 as l2;
+    let entry = l2::entry().unwrap();
+    let served = l2::served(&entry).unwrap();
+    for spec in &served {
+        assert!(
+            bundle_deepseek41::sm120::fold_cubin_for_symbol(&spec.symbol).is_some(),
+            "{}",
+            spec.symbol
+        );
+    }
+    let names = [
+        "lanes::absorbing",
+        "bandwidth::gate_finish",
+        "strip2::compute",
+        "floor::down_finish",
+    ];
+    let twins = [
+        "lab_l2::absorbing",
+        "lab_l2::gate_finish",
+        "lab_l2::strip2",
+        "lab_l2::down_finish",
+    ];
+    for (tag, knobs) in l2::VARIANTS {
+        let candidates = l2::candidates(&entry, tag, knobs).unwrap();
+        assert_eq!(candidates.len(), served.len());
+        let policy = format!(
+            "chop::moe::lab_l2::Policy<{}>",
+            knobs.map(|k| k.to_string()).join(",")
+        );
+        for (i, (served, twin)) in served.iter().zip(&candidates).enumerate() {
+            assert_eq!(twin.symbol, l2::candidate_symbol(&served.symbol, tag));
+            assert_eq!(format!("{:?}", twin.params), format!("{:?}", served.params));
+            assert_eq!(
+                (twin.max_threads, twin.min_blocks),
+                (served.max_threads, served.min_blocks)
+            );
+            assert!(served.body.contains(names[i]) && twin.body.contains(twins[i]));
+            let undo = twin
+                .body
+                .replace(twins[i], names[i])
+                .replace(&format!(",{policy}>"), if i == 3 { ",false>" } else { ">" });
+            assert_eq!(undo, served.body, "{tag} {}", served.symbol);
+        }
+    }
 }
 
 #[test]

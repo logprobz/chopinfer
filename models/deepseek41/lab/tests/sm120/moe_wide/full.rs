@@ -1,4 +1,5 @@
 //! Complete routed and shared MoE pairs over all planned wide row counts.
+use super::candidate::Lab;
 use super::device::{Pool, Programs};
 use super::graphs::{self, Graphs};
 use super::recorded::{Arm, Weights, check_wide_pair};
@@ -17,6 +18,7 @@ pub struct Options {
     reference: PathBuf,
     candidate: PathBuf,
     weights: PathBuf,
+    lab: Option<Lab>,
 }
 impl Options {
     pub fn environment() -> LabResult<Self> {
@@ -47,9 +49,7 @@ impl Options {
         let ordered = |v: &[u32]| !v.is_empty() && v.windows(2).all(|w| w[0] < w[1]);
         if worker > 3
             || !ordered(&widths)
-            || widths
-                .iter()
-                .any(|&r| r != 16 && r != 32 && !(33..=192).contains(&r))
+            || widths.iter().any(|&r| !(1..=192).contains(&r))
             || !ordered(&ranks)
             || ranks.iter().any(|&r| r > 3)
             || !ordered(&patterns)
@@ -67,6 +67,7 @@ impl Options {
             reference: env("CHOPINFER_MOE_WIDE_REFERENCE")?.into(),
             candidate: env("CHOPINFER_MOE_WIDE_CANDIDATE")?.into(),
             weights: env("CHOPINFER_MOE_WIDE_WEIGHTS")?.into(),
+            lab: Lab::environment()?,
         })
     }
 }
@@ -313,6 +314,7 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
     let mut destroyed = 0;
     let mut peak = 0;
     let mut wide_pairs = 0;
+    let mut swapped = 0;
     for &rank in &options.ranks {
         let mut pool = Pool::new(session);
         let weights = Weights::load(&mut pool, &options.weights, rank)?;
@@ -320,17 +322,23 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
         let mut programs = if dry {
             None
         } else {
-            Some(Programs::load(&pool, &[])?)
+            Some(Programs::with_lab(
+                &pool,
+                &[],
+                options.lab.as_ref().map(|s| s.cubin.clone()),
+            )?)
         };
         let mut raw_outputs = BTreeMap::new();
         for &rows in &options.widths {
             for width in [0, 1, 2, 4] {
-                let arms = [
+                let mut arms = [
                     Arm::load(&mut pool, &weights, &options.reference, rows, rank, width)?,
                     Arm::load(&mut pool, &weights, &options.candidate, rows, rank, width)?,
                 ];
                 check_wide_pair(rows, &arms[0].expert_symbols()?, &arms[1].expert_symbols()?)?;
                 wide_pairs += u32::from(rows > 64);
+                let twins = options.lab.as_ref().map_or(0, |s| s.apply(&mut arms[1]));
+                swapped += twins;
                 for name in SEMANTIC {
                     if arms[0].role(name)?.bytes != arms[1].role(name)?.bytes {
                         return Err(format!("semantic extent differs: {name}"));
@@ -435,7 +443,7 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
                     }
                     cases += 1;
                     println!(
-                        "MOE_FULL_{} rows={rows} rank={rank} width={width} pattern={pattern} replays={} negative={} PASS",
+                        "MOE_FULL_{} rows={rows} rank={rank} width={width} pattern={pattern} replays={} negative={} lab_twins={twins} PASS",
                         if dry { "DRY" } else { "PAIR" },
                         poisons.len() * modes * lives.len(),
                         usize::from(!options.checked)
@@ -468,8 +476,13 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
     {
         return Err("full MoE executed inventory differs".into());
     }
+    if let Some(tag) = options.lab.as_ref().and_then(|l| l.swap.as_ref())
+        && swapped == 0
+    {
+        return Err(format!("knob set {tag} replaced no served launch"));
+    }
     println!(
-        "MOE_FULL_COMPLETE worker={} checked={} compact={} dry={dry} cases={cases} replays={replays} negatives={negatives} graphs_destroyed={destroyed} wide_pairs_checked={wide_pairs} allocated_peak={peak} PASS",
+        "MOE_FULL_COMPLETE worker={} checked={} compact={} dry={dry} cases={cases} replays={replays} negatives={negatives} graphs_destroyed={destroyed} wide_pairs_checked={wide_pairs} lab_twins={swapped} allocated_peak={peak} PASS",
         options.worker, options.checked, options.compact
     );
     Ok(())

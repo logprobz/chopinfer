@@ -71,8 +71,9 @@ impl Tile {
 
 /// The caller checks physical span alignment and disjointness before
 /// binding these views. The workspace holds the preparation's row domain
-/// and components (`prefill::Workspace`) and must start on a 16-byte
-/// boundary.
+/// and components (`prefill::Workspace`); it, the weights and the
+/// activation must start on a 16-byte boundary, as the tiles and their
+/// SIMT fallback copy them in 16-byte vectors.
 #[derive(Clone, Copy)]
 pub struct Buffers {
     pub activation: View,

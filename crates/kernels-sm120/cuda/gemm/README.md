@@ -107,7 +107,14 @@ With one slice a CTA adds them into its output itself and nothing else is
 written; with several, each chain's value goes to its own plane in the
 cached partial layout and the cached reducer adds them. Rows and weight
 tiles outside the tensor domain take the original SIMT chains; rows past
-the live count are not written.
+the live count are not written. The whole CTA runs that fallback: each
+16-feature weight tile outside the domain at every live row, then the rows
+outside the domain at the other tiles. Weight and activation lines reach
+shared memory through a ring of 16-byte copies, and each thread runs one
+feature's chains at a few rows, FMAs from +0 in K order per chain and the
+chains added in K order, so its outputs keep their bits. When a tile's live
+rows leave thread slots idle, the slots split its chains into groups, and
+the first group adds each round's chain values in K order.
 
 The split, cached and prefill tile entries give each warp one chain of 16
 features by 8 or 32 rows, or stage 16-feature warps with scalar packed

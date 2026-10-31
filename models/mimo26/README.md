@@ -16,6 +16,14 @@ pins that decode. See [the request surface](../../docs/serving-request-surface.m
 - [Checkpoint pins](checkpoint-files.json)
 - [Model integration](../../docs/adding-a-model.md)
 
+## Request defaults
+
+A chat or Responses request without `max_tokens`, `max_completion_tokens`
+or `max_output_tokens` generates at most 65,536 tokens, thinking or not,
+lowered to the context left after the prompt, as the owner decided on
+2026-10-31. An explicit limit is honored. See
+[the request surface](../../docs/serving-request-surface.md#request-parameters-and-defaults).
+
 ## Serving profiles
 
 The profile file owns settings, status and qualified concurrency. Read the

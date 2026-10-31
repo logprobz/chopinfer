@@ -299,7 +299,9 @@ step's rows must then sit all on rank 0 or all in the owner blocks, one layout
 for the whole trace, and the receipt records which. The mode is part of the
 comparison identity, so such a capture only serves as the reference of another
 default-owner replay, which must take the same layout, and never as a gathered
-baseline or the owned arm's control. Ownership is never numerical evidence;
+baseline or the owned arm's control. An ordinary replay refuses any reference
+or control whose receipt records default owners, including receipts written
+before the identity bound the mode. Ownership is never numerical evidence;
 the rows themselves still match the reference bit for bit.
 
 For a bounded drafting transition, supply a version-6 trace and set

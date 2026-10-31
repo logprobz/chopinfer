@@ -66,6 +66,21 @@ pub fn check_owner_layout(reference: &Path, observed: &str) -> Result<()> {
     Ok(())
 }
 
+/// A reference's or control's receipt, which passed and records default
+/// logits owners exactly when this replay takes them, as `identity` binds:
+/// no ordinary replay reuses default-owner evidence, including receipts
+/// written before the identity bound the mode, under an ordinary identity.
+fn passed_receipt(root: &Path, identity: &Value) -> Result<Value> {
+    let receipt: Value = serde_json::from_reader(File::open(root.join("receipt.json"))?)?;
+    if receipt["passed"] != true {
+        return Err("reference has no successful receipt".into());
+    }
+    if receipt.get("default_owners").is_some() != identity.get("default_owners").is_some() {
+        return Err("reference default logits owners differ from this replay's".into());
+    }
+    Ok(receipt)
+}
+
 /// The owned arm's control: a passed gathered/gathered repeat of this
 /// identity against the same reference. No default-owner receipt
 /// qualifies, whatever identity it names: its rows need not have come
@@ -257,6 +272,7 @@ impl Golden {
                 publication.reference = Some(diagnostic::binding(reference)?);
                 let desc: Description = serde_json::from_value(old["description"].clone())?;
                 status = "incompatible";
+                passed_receipt(reference, identity)?;
                 diagnostic::compatible(&desc, &publication.description)?;
                 status = "insufficient";
                 reference_description = Some(desc);
@@ -266,6 +282,7 @@ impl Golden {
                 if old["status"] != "match" || old["reference"] != json!(publication.reference) {
                     return Err("repeat is not bound to this reference".into());
                 }
+                passed_receipt(control, identity)?;
                 let desc: Description = serde_json::from_value(old["description"].clone())?;
                 if !desc.declared_differences.is_empty() {
                     return Err("baseline repeat must have no declared differences".into());
@@ -303,11 +320,7 @@ impl Golden {
         writeln!(frames)?;
         let reference = reference
             .map(|root| -> Result<_> {
-                let receipt: Value =
-                    serde_json::from_reader(File::open(root.join("receipt.json"))?)?;
-                if receipt["passed"] != true {
-                    return Err("reference has no successful receipt".into());
-                }
+                passed_receipt(root, identity)?;
                 let mut records = BufReader::new(File::open(root.join("frames.jsonl"))?);
                 let mut line = String::new();
                 records.read_line(&mut line)?;

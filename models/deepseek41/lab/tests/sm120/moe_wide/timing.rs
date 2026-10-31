@@ -5,11 +5,13 @@
 //! the overlapped fork/join graph; each stage group is its calls alone, in
 //! serial graphs, after a complete layer wrote their inputs. Both arms run
 //! the same weights, routing pattern and live rows, and one bitwise
-//! comparison precedes every case's timing.
+//! comparison precedes every case's timing. Above 64 rows the pair must be
+//! the 8192-row expert chains against the wide direct queues
+//! (`recorded::check_wide_pair`).
 use super::device::{Pool, Programs};
 use super::full::{compare, setup, status};
 use super::graphs::Graphs;
-use super::recorded::{Arm, Weights};
+use super::recorded::{Arm, Weights, check_wide_pair};
 use kernel_harness::{LabResult, Session};
 use runtime_cuda::GraphExec;
 use std::path::PathBuf;
@@ -144,6 +146,7 @@ pub fn run(session: &Session, options: Options) -> LabResult<()> {
     let flush_bytes = 256 << 20;
     let flush = session.allocate(flush_bytes)?;
     let mut cases = 0;
+    let mut wide_pairs = 0;
     for &rank in &options.ranks {
         let mut pool = Pool::new(Some(session));
         let weights = Weights::load(&mut pool, &options.weights, rank)?;
@@ -155,6 +158,8 @@ pub fn run(session: &Session, options: Options) -> LabResult<()> {
                     Arm::load(&mut pool, &weights, &options.reference, rows, rank, width)?,
                     Arm::load(&mut pool, &weights, &options.candidate, rows, rank, width)?,
                 ];
+                check_wide_pair(rows, &arms[0].expert_symbols()?, &arms[1].expert_symbols()?)?;
+                wide_pairs += u32::from(rows > 64);
                 programs.extend(
                     &pool,
                     &arms
@@ -249,6 +254,6 @@ pub fn run(session: &Session, options: Options) -> LabResult<()> {
     if cases != expected {
         return Err("timed inventory differs".into());
     }
-    println!("MOE_WIDE_TIME_COMPLETE cases={cases} PASS");
+    println!("MOE_WIDE_TIME_COMPLETE cases={cases} wide_pairs_checked={wide_pairs} PASS");
     Ok(())
 }

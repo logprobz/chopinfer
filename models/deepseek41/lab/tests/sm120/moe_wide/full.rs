@@ -1,7 +1,7 @@
 //! Complete routed and shared MoE pairs over all planned wide row counts.
 use super::device::{Pool, Programs};
 use super::graphs::{self, Graphs};
-use super::recorded::{Arm, Weights};
+use super::recorded::{Arm, Weights, check_wide_pair};
 use kernel_core::codec::f32_to_bf16;
 use kernel_harness::{LabResult, Session};
 use std::collections::BTreeMap;
@@ -277,6 +277,7 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
     let mut negatives = 0;
     let mut destroyed = 0;
     let mut peak = 0;
+    let mut wide_pairs = 0;
     for &rank in &options.ranks {
         let mut pool = Pool::new(session);
         let weights = Weights::load(&mut pool, &options.weights, rank)?;
@@ -293,6 +294,8 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
                     Arm::load(&mut pool, &weights, &options.reference, rows, rank, width)?,
                     Arm::load(&mut pool, &weights, &options.candidate, rows, rank, width)?,
                 ];
+                check_wide_pair(rows, &arms[0].expert_symbols()?, &arms[1].expert_symbols()?)?;
+                wide_pairs += u32::from(rows > 64);
                 for name in SEMANTIC {
                     if arms[0].role(name)?.bytes != arms[1].role(name)?.bytes {
                         return Err(format!("semantic extent differs: {name}"));
@@ -431,7 +434,7 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
         return Err("full MoE executed inventory differs".into());
     }
     println!(
-        "MOE_FULL_COMPLETE worker={} checked={} compact={} dry={dry} cases={cases} replays={replays} negatives={negatives} graphs_destroyed={destroyed} allocated_peak={peak} PASS",
+        "MOE_FULL_COMPLETE worker={} checked={} compact={} dry={dry} cases={cases} replays={replays} negatives={negatives} graphs_destroyed={destroyed} wide_pairs_checked={wide_pairs} allocated_peak={peak} PASS",
         options.worker, options.checked, options.compact
     );
     Ok(())

@@ -14,6 +14,19 @@ const ROUND: &str = "chop_row_rounding_round_deepseek41_w5120_v1 ";
 const REDUCTIONS: usize = 81;
 const DEFERRED: usize = 77;
 
+/// A residency report that holds the phased grids, which the fake device
+/// gives native Flash TP4 by default.
+fn report() -> BundleRawClusterResidencyV1 {
+    BundleRawClusterResidencyV1 {
+        multiprocessor_count: 188,
+        usable_multiprocessors: 188,
+        max_active_clusters: 188,
+        flags: BUNDLE_CLUSTER_RESIDENCY_V1_CLUSTERS_REPORTED
+            | BUNDLE_CLUSTER_RESIDENCY_V1_COOPERATIVE_LAUNCH,
+        ..BundleRawClusterResidencyV1::unreported()
+    }
+}
+
 fn instance(host: &Rc<Host>, items: u32, enabled: bool) -> BundleInstanceV1 {
     create_with_options(host, items, &[(PHASED_DECODE_REDUCE, enabled.into())])
 }
@@ -108,14 +121,7 @@ fn prefill_keeps_its_reductions_with_the_option() {
 fn decode_falls_back_on_unproven_residency() {
     for kind in 0..4 {
         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[1]);
-        let mut value = BundleRawClusterResidencyV1 {
-            multiprocessor_count: 188,
-            usable_multiprocessors: 188,
-            max_active_clusters: 188,
-            flags: BUNDLE_CLUSTER_RESIDENCY_V1_CLUSTERS_REPORTED
-                | BUNDLE_CLUSTER_RESIDENCY_V1_COOPERATIVE_LAUNCH,
-            ..BundleRawClusterResidencyV1::unreported()
-        };
+        let mut value = report();
         match kind {
             0 => value = BundleRawClusterResidencyV1::unreported(),
             1 => value.max_active_clusters = 0,
@@ -193,4 +199,31 @@ fn phased_decode_resets_only_its_protocol_before_an_execute() {
     drop(journal);
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
+}
+
+/// The pinned AR lifecycle journals of Flash TP4 with the option, at both
+/// KV layouts (`journal_steps`), on residency that holds the phased grids:
+/// its two-row decode steps launch the one-shot round for their complete
+/// reductions.
+#[test]
+fn phased_decode_lifetimes_journal() {
+    let mut mismatches = Vec::new();
+    for (kv, expected) in [
+        (KV_LAYOUTS[0], (72897, 0xd48990d5176a5efa)),
+        (KV_LAYOUTS[1], (74485, 0x102e1b6ae4b16d92)),
+    ] {
+        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), kv);
+        host.device.residency.set(Some(report()));
+        journal_steps_with(&host, &[(PHASED_DECODE_REDUCE, true.into())]);
+        assert_eq!(host.acquired.get(), host.released.get());
+        let lines = host.device.journal.borrow().clone();
+        // Both decode steps replay the one captured two-row graph.
+        assert_eq!(count(&lines, ONE_SHOT), 4 * (REDUCTIONS - DEFERRED));
+        let layout = format!("{:?}", kv.storage).to_lowercase();
+        let name = format!("deepseek41-flash-tp4.{layout}-phased.journal");
+        if let Err(observed) = bundle_runtime::fake_host::check_journal(&lines, expected, &name) {
+            mismatches.push(format!("{name}: {observed}"));
+        }
+    }
+    assert!(mismatches.is_empty(), "{mismatches:#?}");
 }

@@ -1066,7 +1066,12 @@ fn step(instance: &mut BundleInstanceV1, batch: &[u8], views: &mut Views) {
 /// in their slots, the first in one chunk; a decode of both; retire and
 /// destroy. Each scored row reaches the sink.
 fn journal_steps(host: &Rc<Host>) {
-    let mut instance = create(host, 4);
+    journal_steps_with(host, &[]);
+}
+
+/// [`journal_steps`] with model `options`.
+fn journal_steps_with(host: &Rc<Host>, options: &[(&str, serde_json::Value)]) {
+    let mut instance = create_with_options(host, 4, options);
     let mut views = Views::default();
     step(&mut instance, &prompt(7, 0, 0, 64, false), &mut views);
     assert_eq!(views.rows(), 0);

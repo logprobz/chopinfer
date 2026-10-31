@@ -225,6 +225,14 @@ past the block count, which traps by design and ends the context. No run
 raised an Xid. The ticket candidates, their strip tickets and these
 controls were removed with the option.
 
+Loads alone changes only the gate finisher, to the untagged
+all-loads-first finisher, which the pair check used to take for the
+served wide queues, refusing the pair with them. With that fixed, the
+loads-only export paired with the wide direct export at 65, 96, 128, 160
+and 192 rows on 2026-10-31 (same patterns, widths, poisons and modes):
+480 cases and 14,400 replays, all bitwise equal, with 480 dropped joins
+detected and no Xid.
+
 ### Timing
 
 Routed experts, candidate over served, median of four GPUs, read flush
@@ -283,6 +291,50 @@ barrier per warp: it took 420 us there and 1.15 times the served routed
 time with dispersed routing. Finishing in the queue can save at most the
 in-graph finisher time, a few percent of the routed experts, so the
 option was removed rather than taken to served acceptance.
+
+### Isolated finishers
+
+The runs above timed each stage group and launch alone by replaying it
+after the flush without rerunning its producers. Under Retire every
+sample after the first then read partials the previous sample had
+discarded, and under any knob set the flush had already evicted the
+partials a finisher reads. The harness (`moe_wide/timing.rs`) now runs
+the arm's serial complete layer, the flush and the arm's calls before
+the timed ones outside every sample, and every sample must leave each
+semantic role of the bitwise-compared complete layer unchanged. The
+tables above come from the routed-experts group, which runs its
+producers, and from the complete layer. Rerun with the corrected harness
+on the same inventory on 2026-10-31 (four GPUs, 30 rounds, every sample
+checked, no Xid), the complete-layer ratios moved by at most 0.015 and
+the routed-experts ratios at 32 to 64 rows by at most 0.033 with
+dispersed routing. At 128 and 192 rows the routed experts now start with
+the route's outputs in L2 and their ratios fell to 0.82 to 0.90 (from
+0.85 to 0.93); the complete layer did not move. A/A ratios stayed within
+0.983 to 1.014.
+
+Each finisher alone, served / Stream, Keep, Retire and Loads, in us,
+median of four GPUs, read flush. A single launch resolves to about 2 us,
+the step of the event timer on these GPUs.
+
+| Rows | Pattern 4 gate | Pattern 4 down | Pattern 5 gate | Pattern 5 down |
+| ---: | ---: | ---: | ---: | ---: |
+| 32 | 22.5 / 14.3 | 12.3 / 8.2 | 15.3 / 12.3 | 8.2 / 8.2 |
+| 48 | 31.7 / 18.4 | 18.4 / 10.2 | 20.5 / 17.9 | 14.3 / 10.2 |
+| 64 | 39.9 / 20.4 | 24.5 / 14.3 | 26.6 / 20.5 | 21.5 / 14.3 |
+| 128 | 83.9 / 34.8 | 48.1 / 22.5 | 81.9 / 34.8 | 46.1 / 22.5 |
+| 192 | 135.1 / 72.7 | 73.7 / 34.8 | 135.6 / 73.7 | 75.8 / 34.8 |
+
+The candidate's finishers take 0.41 to 0.67 of the served ones' time with
+pattern 4 at every row count and with pattern 5 at 128 and 192 rows,
+and 0.67 to 1.0 with pattern 5 at 32 to 64 rows. After the write flush
+the down finishers and both sets' finishers at 64 rows and above time
+the same within about one timer step, but the served gate finisher at 32 and
+48 rows is faster (14.3 and 23.5 us with pattern 4) and varies more
+across ranks. With six or 24 experts (patterns 0 and 1) the candidate
+finishers are equal or one step slower. The earlier runs showed both
+sets' finishers equal (50 / 49 and 31 / 31 us at 64 rows), which hid
+where the robust set's gain comes from: its finishers read partials that
+Keep held in L2.
 
 ### Down bank tiles (Proposal 2, deferred)
 

@@ -2192,12 +2192,12 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "82bc1cdf7ec520ef1080600208754e644c26fbecd8a803280de777da12f0489d",
+    "cubin_sha256": "f5331d9324cd6c813d8cc9d14951eb64175db55bd336a59d0c4539d8174e5742",
     "resources": [
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_e384_k6_gate_small_tickets_v1",
         "registers": 64,
-        "shared_static_bytes": 3876,
+        "shared_static_bytes": 3748,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -2206,7 +2206,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_e384_k6_gate_small_tickets_scale_tiles_w1_v1",
         "registers": 64,
-        "shared_static_bytes": 4388,
+        "shared_static_bytes": 4260,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -2251,7 +2251,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_e384_k6_gate_small_ticketss_v1",
         "registers": 64,
-        "shared_static_bytes": 3876,
+        "shared_static_bytes": 3748,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -2260,7 +2260,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_e384_k6_gate_small_ticketss_scale_tiles_w1_v1",
         "registers": 64,
-        "shared_static_bytes": 4388,
+        "shared_static_bytes": 4260,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -2305,7 +2305,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_e384_k6_gate_small_ticketsk_v1",
         "registers": 64,
-        "shared_static_bytes": 3876,
+        "shared_static_bytes": 3748,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -2314,7 +2314,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_e384_k6_gate_small_ticketsk_scale_tiles_w1_v1",
         "registers": 64,
-        "shared_static_bytes": 4388,
+        "shared_static_bytes": 4260,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -2359,7 +2359,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_e384_k6_gate_small_ticketssk_v1",
         "registers": 64,
-        "shared_static_bytes": 3876,
+        "shared_static_bytes": 3748,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -2368,7 +2368,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_e384_k6_gate_small_ticketssk_scale_tiles_w1_v1",
         "registers": 64,
-        "shared_static_bytes": 4388,
+        "shared_static_bytes": 4260,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -2395,7 +2395,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_e384_k6_gate_small_ticketsr_v1",
         "registers": 64,
-        "shared_static_bytes": 3876,
+        "shared_static_bytes": 3748,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -2404,7 +2404,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_e384_k6_gate_small_ticketsr_scale_tiles_w1_v1",
         "registers": 64,
-        "shared_static_bytes": 4388,
+        "shared_static_bytes": 4260,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -2413,7 +2413,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_e384_k6_gate_small_ticketssr_v1",
         "registers": 64,
-        "shared_static_bytes": 3876,
+        "shared_static_bytes": 3748,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -2422,7 +2422,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_e384_k6_gate_small_ticketssr_scale_tiles_w1_v1",
         "registers": 64,
-        "shared_static_bytes": 4388,
+        "shared_static_bytes": 4260,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -2431,7 +2431,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_e384_k6_gate_small_ticketskr_v1",
         "registers": 64,
-        "shared_static_bytes": 3876,
+        "shared_static_bytes": 3748,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -2440,7 +2440,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_e384_k6_gate_small_ticketskr_scale_tiles_w1_v1",
         "registers": 64,
-        "shared_static_bytes": 4388,
+        "shared_static_bytes": 4260,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -2449,7 +2449,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_e384_k6_gate_small_ticketsskr_v1",
         "registers": 64,
-        "shared_static_bytes": 3876,
+        "shared_static_bytes": 3748,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -2458,7 +2458,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_e384_k6_gate_small_ticketsskr_scale_tiles_w1_v1",
         "registers": 64,
-        "shared_static_bytes": 4388,
+        "shared_static_bytes": 4260,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -4668,12 +4668,12 @@
         "allowed_local_bytes": 0
       }
     ],
-    "cubin_sha256": "25fcd4ea4394dcc96617c65e4732e19eb2befc495285ba78c043b880c04f9217",
+    "cubin_sha256": "7262fd208ff1cbebe5c85f181044f9d40fb585d593953d6f29442ea67648591a",
     "resources": [
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_tickets_v1",
         "registers": 64,
-        "shared_static_bytes": 3876,
+        "shared_static_bytes": 3748,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -4682,7 +4682,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_tickets_scale_tiles_w1_v1",
         "registers": 64,
-        "shared_static_bytes": 4388,
+        "shared_static_bytes": 4260,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -4727,7 +4727,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_ticketss_v1",
         "registers": 64,
-        "shared_static_bytes": 3876,
+        "shared_static_bytes": 3748,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -4736,7 +4736,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_ticketss_scale_tiles_w1_v1",
         "registers": 64,
-        "shared_static_bytes": 4388,
+        "shared_static_bytes": 4260,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -4781,7 +4781,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_ticketsk_v1",
         "registers": 64,
-        "shared_static_bytes": 3876,
+        "shared_static_bytes": 3748,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -4790,7 +4790,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_ticketsk_scale_tiles_w1_v1",
         "registers": 64,
-        "shared_static_bytes": 4388,
+        "shared_static_bytes": 4260,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -4835,7 +4835,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_ticketssk_v1",
         "registers": 64,
-        "shared_static_bytes": 3876,
+        "shared_static_bytes": 3748,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -4844,7 +4844,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_ticketssk_scale_tiles_w1_v1",
         "registers": 64,
-        "shared_static_bytes": 4388,
+        "shared_static_bytes": 4260,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -4871,7 +4871,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_ticketsr_v1",
         "registers": 64,
-        "shared_static_bytes": 3876,
+        "shared_static_bytes": 3748,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -4880,7 +4880,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_ticketsr_scale_tiles_w1_v1",
         "registers": 64,
-        "shared_static_bytes": 4388,
+        "shared_static_bytes": 4260,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -4889,7 +4889,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_ticketssr_v1",
         "registers": 64,
-        "shared_static_bytes": 3876,
+        "shared_static_bytes": 3748,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -4898,7 +4898,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_ticketssr_scale_tiles_w1_v1",
         "registers": 64,
-        "shared_static_bytes": 4388,
+        "shared_static_bytes": 4260,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -4907,7 +4907,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_ticketskr_v1",
         "registers": 64,
-        "shared_static_bytes": 3876,
+        "shared_static_bytes": 3748,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -4916,7 +4916,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_ticketskr_scale_tiles_w1_v1",
         "registers": 64,
-        "shared_static_bytes": 4388,
+        "shared_static_bytes": 4260,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -4925,7 +4925,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_ticketsskr_v1",
         "registers": 64,
-        "shared_static_bytes": 3876,
+        "shared_static_bytes": 3748,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,
@@ -4934,7 +4934,7 @@
       {
         "symbol": "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_ticketsskr_scale_tiles_w1_v1",
         "registers": 64,
-        "shared_static_bytes": 4388,
+        "shared_static_bytes": 4260,
         "local_bytes": 0,
         "stack_bytes": 0,
         "max_threads": 128,

@@ -15,6 +15,22 @@ Pillow `Image.open` and `convert("RGB")` read them, and may arrive as
 URL (deepseek-recipe 0.2.0's mapping, read from OpenAI's nested file object;
 the recipe's flat fields are refused). See [the request surface](../../docs/serving-request-surface.md#media-inputs).
 
+Client text is plain text, as deepseek-recipe 0.2.0 renders a prompt. The
+format names the special tokens of its prompt (`vocabulary.explicit_special_tokens`
+in `frontend.json`): those the encoder's template writes, the tool
+instructions and DSML markup included, each image's placeholder, and the
+grounding tokens (`<｜ref｜>`, `<｜box｜>`, `<｜point｜>`, `<｜polygon｜>` and
+their closes) where assistant content or reasoning spells them. The host
+encodes all other text, message content, tool results, tool schemas, the
+response format and call arguments included, without the added vocabulary,
+so a special token spelled there is ordinary tokens: a tool result cannot
+forge a turn, and an added token or the image placeholder typed in text is
+accepted as text. The parser reads `<think>`, `</think>` and `｜DSML｜` only
+from their token IDs (`vocabulary.id_only_markers`), in a calls block too,
+so the model spelling them in ordinary tokens writes text. See [the request
+surface](../../docs/serving-request-surface.md#request-parameters-and-defaults)
+and `explicit-special-tokens` in [frontend-divergences.json](frontend-divergences.json).
+
 | Crate | Directory | Holds |
 |---|---|---|
 | `model-deepseek41-contract` | `contract/` | IDs, geometry, projection declarations and kernel contracts the compiler, bundle and lab share |
@@ -360,7 +376,19 @@ outcome for each committed case and round trip, and
 difference exactly: a refusal by its entry's feature tags and the recipe's
 refusal message, which names the failed check (`recipe_message`), and any
 other difference by the fingerprint of both outcomes, reviewed for every
-difference of the full generated corpus (`recipe_reviewed`). Install the recipe
+difference of the full generated corpus (`recipe_reviewed`).
+
+The corpus reference marks each render as the recipe does: the recipe's
+`DeepseekV41Encoding` renders a `RenderedPrompt` whose `special_ranges`
+name its special tokens, and its `PromptTokenizer` encodes each range as its
+added token and the text between them with a copy of the tokenizer without
+the added vocabulary (`deepseek-recipe-encoding/src/lib.rs` lines 8-15,
+`tokenizer.rs` lines 90-117, at the commit below). The pinned encoder
+writes one string, so `encoder_render` in `frontend_cases.py` hides each
+added-token spelling of client text behind a private sentinel while the
+encoder writes, and returns the text with the spellings restored and the
+ranges of those the encoder wrote (`Hiding`); `tools/refrun` tokenizes it
+(`marked_tokenizer`). Install the recipe
 into its own CPU environment, never the GPU runner's, whose package set is
 part of every reference key:
 
@@ -404,21 +432,15 @@ Output parsing (`deepseek-recipe/src/stream/output_parser.rs`):
   calls of both blocks.
 - `</think>` in chat-mode answer text: the recipe drops it (lines 450-458);
   the served parser keeps it as content.
-- `<think>` inside reasoning: the served parser drops it; the recipe keeps
-  it as text.
+- The `<think>` token inside reasoning: the served parser drops it; the
+  recipe keeps it as text. Spelled in ordinary tokens it is text in both,
+  as the corpus shows (`special-tokens-in-final-turn`).
 - DSML markup under `tool_choice` none or without offered tools: the recipe
   returns it as content (`chat_completion/request/convert.rs` line 150); the
   served parser reads it and drops it.
 - A calls block without its `calls` wrapper, or closed in the V4 spelling
   `</｜DSML｜tool_calls>`: the recipe reads its calls (lines 394-405,
   480-494); the served parser refuses the completion.
-- Markers: given a completion's token IDs, as the corpus oracle passes
-  them, the recipe matches `</think>` and `｜DSML｜` only as their special
-  tokens, so their spelling in plain tokens is content; given text without
-  token boundaries (`InferenceChunk::Text`), it matches their spelling
-  (lines 74-94). The served parser matches their spelling. This belongs to
-  the special-token spellings follow-up (`special-token-spellings` in the
-  divergence record).
 - Client stop sequences: the recipe matches them in answer text only (lines
   411-417); the served parser also matches them in reasoning and tool
   arguments.

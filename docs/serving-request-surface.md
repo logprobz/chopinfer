@@ -227,6 +227,25 @@ role carries string content only. Any other role is refused with "message role
 must be system, developer, user, assistant, or tool", which also names the
 declared roles when there are any.
 
+**Special-token spellings.** Most models tokenize the rendered prompt as one
+text: a declared prompt special token spelled anywhere in it, client text
+included, is that token, and a special token the model does not admit in
+prompts is refused with "prompt contains a special token the model does not
+admit in prompts".
+DeepSeek V4.1 Flash instead encodes client text as plain text, as
+deepseek-recipe 0.2.0 does: message content and text parts, reasoning, tool
+results, tool schemas, the response format, and tool-call names and
+arguments are ordinary tokens, so `<｜User｜>` or `</think>` typed in a tool
+result cannot end its turn or open another. Only the special tokens its
+template writes, image placeholders, and the grounding tokens (`<｜ref｜>`,
+`<｜box｜>`, `<｜point｜>`, `<｜polygon｜>` and their closes) in assistant
+history are special tokens. It therefore accepts requests it used to refuse
+with 400: the spelling of any other added token in client text, such as
+`<｜ref｜>` or `<｜place▁holder▁no▁5｜>`, and the image placeholder
+`<｜deepseek_image｜>` in text. Its parser reads `<think>`, `</think>` and
+`｜DSML｜` in a completion only from their token IDs, so the same spelling
+generated as ordinary tokens is text.
+
 **Streaming.** `stream_options.include_usage` adds final usage, and
 `continuous_usage_stats` adds cumulative usage to every chunk. Usage reports
 `prompt_tokens_details.cached_tokens` from the prefix cache.

@@ -162,7 +162,10 @@ host-read `tools.choice` section: `none_omits_tools`,
 `required` or named choice, and `forced_refused_in_thinking`. The host
 applies it around the render. The prefill must begin the parser section's
 `tool_call_open`; the completion's parser and the forced choice's
-constraint read it as the completion's start. A declaration without the
+constraint read it as the completion's start. Under explicit special tokens
+the host appends it as text and special segments, each declared boundary
+token's spelling in it, longest first, a special segment, since the
+prefill is template text. A declaration without the
 section renders every offered tool for every choice, and the constraint
 alone forces a call.
 
@@ -222,9 +225,13 @@ prompt that names its special tokens. The renderer writes a
 `push_special`, and every other piece, client text included, with
 `push_plain`. `split_marked_media_segments_v1` cuts it into text, media and
 special segments, each special segment a declared boundary token. The host
-encodes the text segments as plain text, so a special token spelled in
+encodes the text segments as plain text, without the added vocabulary, and
+each special segment as its token's ID, so a special token spelled in
 client text stays ordinary text, and media pads in client text are not
-refused. The export refuses special segments from a declaration without
+refused. A model's corpus checks such a render against a reference that
+marks its special tokens the same way
+([marked renders](../../tools/refrun/README.md#frontend-corpus-marked-renders)).
+The export refuses special segments from a declaration without
 the flag, and under it reads the reasoning markers from the special
 segments alone (`toolkit::reasoning_open_segments_v1`).
 

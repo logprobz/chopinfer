@@ -12,6 +12,8 @@ pub struct Options {
     worker: u32,
     checked: bool,
     compact: bool,
+    trace: bool,
+    scale_widths: Vec<u32>,
     widths: Vec<u32>,
     ranks: Vec<u32>,
     patterns: Vec<u32>,
@@ -46,7 +48,19 @@ impl Options {
             Ok(text) => list(text)?,
             Err(_) => (0..PATTERNS).collect(),
         };
+        // Scale widths, all four by default; raw first, as the encoded
+        // widths compare their outputs with its.
+        let scale_widths = match std::env::var("CHOPINFER_MOE_WIDE_SCALE_WIDTHS") {
+            Ok(text) => list(text)?,
+            Err(_) => vec![0, 1, 2, 4],
+        };
         let ordered = |v: &[u32]| !v.is_empty() && v.windows(2).all(|w| w[0] < w[1]);
+        if scale_widths.first() != Some(&0)
+            || !ordered(&scale_widths)
+            || scale_widths.iter().any(|w| ![0, 1, 2, 4].contains(w))
+        {
+            return Err("scale widths must be raw first, then 1, 2 or 4 ascending".into());
+        }
         if worker > 3
             || !ordered(&widths)
             || widths.iter().any(|&r| !(1..=192).contains(&r))
@@ -60,6 +74,9 @@ impl Options {
         Ok(Self {
             worker,
             compact: std::env::var("CHOPINFER_MOE_WIDE_COMPACT").as_deref() == Ok("1"),
+            // CHOPINFER_MOE_WIDE_TRACE=1 names each replay before it runs.
+            trace: std::env::var("CHOPINFER_MOE_WIDE_TRACE").as_deref() == Ok("1"),
+            scale_widths,
             checked,
             widths,
             ranks,
@@ -344,7 +361,7 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
         };
         let mut raw_outputs = BTreeMap::new();
         for &rows in &options.widths {
-            for width in [0, 1, 2, 4] {
+            for &width in &options.scale_widths {
                 let mut arms = [
                     Arm::load(&mut pool, &weights, &options.reference, rows, rank, width)?,
                     Arm::load(&mut pool, &weights, &options.candidate, rows, rank, width)?,
@@ -394,23 +411,35 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
                             }
                             for (live_index, &live) in lives.iter().enumerate() {
                                 if !dry {
-                                    for (index, arm) in arms.iter().enumerate() {
-                                        pool.write(arm.role("live")?, &live.to_le_bytes())?;
-                                        status(&pool, arm)?;
-                                        if mode == 0 {
-                                            graphs::serial(
-                                                &pool,
-                                                programs.as_ref().unwrap(),
-                                                arm,
-                                                &session.unwrap().stream,
-                                            )?;
-                                        } else {
-                                            graphs.as_ref().unwrap().run((mode - 1) * 2 + index)?;
-                                        }
+                                    let context = format!(
+                                        "rows={rows} rank={rank} width={width} pattern={pattern} live={live} mode={mode} poison={poison}"
+                                    );
+                                    if options.trace {
+                                        eprintln!("MOE_FULL_TRACE {context}");
                                     }
-                                    pool.sync()?;
+                                    let replay = || -> LabResult<()> {
+                                        for (index, arm) in arms.iter().enumerate() {
+                                            pool.write(arm.role("live")?, &live.to_le_bytes())?;
+                                            status(&pool, arm)?;
+                                            if mode == 0 {
+                                                graphs::serial(
+                                                    &pool,
+                                                    programs.as_ref().unwrap(),
+                                                    arm,
+                                                    &session.unwrap().stream,
+                                                )?;
+                                            } else {
+                                                graphs
+                                                    .as_ref()
+                                                    .unwrap()
+                                                    .run((mode - 1) * 2 + index)?;
+                                            }
+                                        }
+                                        pool.sync()
+                                    };
+                                    replay().map_err(|e| format!("{context}: {e}"))?;
                                     let output = compare(&pool, &arms, live, pattern, rank)
-                                        .map_err(|e| format!("rows={rows} rank={rank} width={width} pattern={pattern} live={live} mode={mode} poison={poison}: {e}"))?;
+                                        .map_err(|e| format!("{context}: {e}"))?;
                                     if mode == 0
                                         && poison_index == 0
                                         && live_index < lives.len() - 1
@@ -432,6 +461,11 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
                     }
                     if !options.checked {
                         if !dry {
+                            if options.trace {
+                                eprintln!(
+                                    "MOE_FULL_TRACE rows={rows} rank={rank} width={width} pattern={pattern} controls"
+                                );
+                            }
                             let candidate = &arms[1];
                             setup(&pool, candidate, pattern, rank, 0x5a)?;
                             pool.write(candidate.role("live")?, &rows.to_le_bytes())?;
@@ -506,7 +540,10 @@ pub fn run(session: Option<&Session>, options: Options) -> LabResult<()> {
             }
         }
     }
-    let expected = options.widths.len() * options.ranks.len() * 4 * options.patterns.len();
+    let expected = options.widths.len()
+        * options.ranks.len()
+        * options.scale_widths.len()
+        * options.patterns.len();
     if cases != expected
         || replays
             != cases

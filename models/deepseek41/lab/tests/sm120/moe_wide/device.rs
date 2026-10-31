@@ -235,7 +235,8 @@ impl Programs {
                 stream,
                 launch::config(call.plan)?,
                 &args,
-            )?;
+            )
+            .map_err(|e| format!("{}: {e}", call.symbol))?;
         }
         Ok(())
     }

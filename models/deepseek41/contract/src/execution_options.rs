@@ -20,6 +20,11 @@ pub const F32_ROW_TILES: &str = "f32_row_tiles";
 /// Candidate: Flash TP4 decode and verify all-reduces whose round no HC
 /// boundary defers take the phased F32 rounding entries.
 pub const PHASED_DECODE_REDUCE: &str = "phased_decode_reduce";
+/// Candidate: DSpark drafter Markov steps of two or more items load each
+/// thread's rank-256 weight chain into registers before the dependency
+/// wait and read each position's base logits in place, so no row copy
+/// precedes the step.
+pub const DSPARK_MARKOV_STAGED: &str = "dspark_markov_staged";
 pub const DEFAULT_PLANS: usize = 16;
 pub const MAX_PLANS: usize = 64;
 /// The served warmup fits within 512 graph handles per rank, leaving room
@@ -35,9 +40,10 @@ pub struct Options {
     pub wide_verify: bool,
     pub f32_row_tiles: bool,
     pub phased_decode_reduce: bool,
+    pub dspark_markov_staged: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 8] {
+pub fn declarations() -> [ModelOptionV1; 9] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -50,6 +56,10 @@ pub fn declarations() -> [ModelOptionV1; 8] {
                 minimum: 0,
                 maximum: i64::MAX,
             },
+        ),
+        (
+            DSPARK_MARKOV_STAGED,
+            OptionDefinitionV1::Boolean { default: false },
         ),
         (
             F32_ROW_TILES,
@@ -127,6 +137,9 @@ impl Options {
             phased_decode_reduce: values[PHASED_DECODE_REDUCE]
                 .as_bool()
                 .expect("checked boolean"),
+            dspark_markov_staged: values[DSPARK_MARKOV_STAGED]
+                .as_bool()
+                .expect("checked boolean"),
         })
     }
 }
@@ -188,6 +201,7 @@ mod tests {
             wide_verify: false,
             f32_row_tiles: false,
             phased_decode_reduce: false,
+            dspark_markov_staged: false,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -206,6 +220,7 @@ mod tests {
             (WIDE_VERIFY.into(), "true".into()),
             (F32_ROW_TILES.into(), "true".into()),
             (PHASED_DECODE_REDUCE.into(), "true".into()),
+            (DSPARK_MARKOV_STAGED.into(), "true".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -219,6 +234,7 @@ mod tests {
                 wide_verify: true,
                 f32_row_tiles: true,
                 phased_decode_reduce: true,
+                dspark_markov_staged: true,
             }
         );
         assert!(!declaration.is_qualified(&resolved));
@@ -238,6 +254,7 @@ mod tests {
             (WIDE_VERIFY, "1"),
             (F32_ROW_TILES, "1"),
             (PHASED_DECODE_REDUCE, "1"),
+            (DSPARK_MARKOV_STAGED, "1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),
         ] {

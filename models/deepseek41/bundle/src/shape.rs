@@ -30,6 +30,10 @@ pub struct Shape {
     /// Whether decode and verify steps' complete all-reduces take the phased
     /// F32 rounding entries (the `phased_decode_reduce` candidate option).
     pub phased_decode_reduce: bool,
+    /// Whether drafter Markov steps of two or more items run the staged
+    /// step over each position's base logits in place (the
+    /// `dspark_markov_staged` candidate option).
+    pub dspark_markov_staged: bool,
 }
 
 impl Shape {
@@ -44,6 +48,7 @@ impl Shape {
             wide_verify: false,
             f32_row_tiles: false,
             phased_decode_reduce: false,
+            dspark_markov_staged: false,
         })
     }
 
@@ -72,6 +77,13 @@ impl Shape {
     /// (`model_deepseek41_contract::execution_options::PHASED_DECODE_REDUCE`).
     pub fn with_phased_decode_reduce(mut self, enabled: bool) -> Shape {
         self.phased_decode_reduce = enabled;
+        self
+    }
+
+    /// This shape with the staged drafter Markov step on or off
+    /// (`model_deepseek41_contract::execution_options::DSPARK_MARKOV_STAGED`).
+    pub fn with_dspark_markov_staged(mut self, enabled: bool) -> Shape {
+        self.dspark_markov_staged = enabled;
         self
     }
 

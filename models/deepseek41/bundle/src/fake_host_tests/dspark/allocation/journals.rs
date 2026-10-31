@@ -65,7 +65,9 @@ impl LogitsRowSinkV1 for ProofSink {
     }
 }
 
-/// The `-wide` lifetimes run the two widest with the `wide_verify` option.
+/// The `-wide` lifetimes run the two widest with the `wide_verify` option,
+/// and the `-wide-draft` ones with `wide_draft` too: their 16 and 32 items
+/// draft in one forward each.
 #[test]
 fn allocated_lifetimes_journal() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
@@ -78,16 +80,25 @@ fn allocated_lifetimes_journal() {
         (32, 192, 5, "-maximum", (343172, 0x423f402926f10c51)),
         (16, 65, 5, "-odd-wide", (191802, 0x64bd42c3caef55c0)),
         (32, 192, 5, "-maximum-wide", (344540, 0x07785bc19d29a6ff)),
+        (16, 65, 5, "-odd-wide-draft", (191702, 0x7ec0e494350dc4a8)),
+        (
+            32,
+            192,
+            5,
+            "-maximum-wide-draft",
+            (343532, 0xf9ee11d6af367dda),
+        ),
     ] {
-        let (host, mut instance) = if suffix.ends_with("-wide") {
+        let (host, mut instance) = if suffix.contains("-wide") {
+            use model_deepseek41_contract::execution_options::{WIDE_DRAFT, WIDE_VERIFY};
             create_with_options(
                 shape,
                 32,
                 192,
-                &[(
-                    model_deepseek41_contract::execution_options::WIDE_VERIFY,
-                    true.into(),
-                )],
+                &[
+                    (WIDE_VERIFY, true.into()),
+                    (WIDE_DRAFT, suffix.ends_with("-wide-draft").into()),
+                ],
             )
         } else {
             create_with_limits(shape, 32, 192)

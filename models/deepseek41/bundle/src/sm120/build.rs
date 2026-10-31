@@ -746,6 +746,7 @@ pub fn selection(
     specs.extend(latent_window_bf16::cubins(geometries).expect("BF16 window cubins"));
     specs.extend(latent_window_stage::key_cubins(geometries).expect("staged window key cubins"));
     specs.extend(mxfp8_fold::dense_cubins(geometries).expect("dense decode template cubins"));
+    specs.extend(mxfp8_fold::dense_wide_cubins(geometries).expect("wide verify fold cubins"));
     specs.extend(mxfp8_fold::cubins(geometries).expect("deepseek41 MXFP8 fold cubins"));
     specs.extend(mxfp8_fold::prefill_cubins(geometries).expect("MXFP8 prefill cubins"));
     specs.extend(mxfp8_fold::prefill_split_cubins(geometries).expect("MXFP8 split prefill cubins"));

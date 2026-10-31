@@ -1034,6 +1034,8 @@ impl crate::Kernels {
         .contains(&cubin)
             || projection_reuse::enabled(shape.geometry, shape.ranks()))
             && (cubin != dense_dual::CUBIN || dense_dual::enabled(shape.geometry, shape.ranks()))
+            && (cubin != mxfp8_fold::dense_wide_cubin_name(shape.geometry)
+                || !shape.wide_verify_rows().is_empty())
             && (cubin != moe_grouped_entries::CUBIN
                 || (shape.geometry.id == model_deepseek41_contract::geometry::FLASH.id
                     && shape.ranks() == 4))
@@ -1180,6 +1182,12 @@ impl crate::Kernels {
         let sm120 = ceil_prefill::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = shared::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = mxfp8_fold::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = mxfp8_fold::register_wide(
+            sm120,
+            shape.geometry,
+            shape.ranks(),
+            &shape.wide_verify_rows(),
+        )?;
         let sm120 = mxfp8_fold_stream::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = mxfp8_fold_direct::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = projection_reuse::register(sm120, shape.geometry, shape.ranks())?;

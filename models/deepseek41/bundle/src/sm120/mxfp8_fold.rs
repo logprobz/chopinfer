@@ -304,6 +304,172 @@ pub fn dense_cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinS
         .collect()
 }
 
+/// The wide verify fold module of each geometry that has one
+/// ([`wide_catalog`]).
+pub fn dense_wide_cubins(
+    geometries: &[Geometry],
+) -> Result<Vec<(&'static str, CubinSpec)>, String> {
+    let mut specs = Vec::new();
+    for g in geometries {
+        let entries = wide_catalog(g)?;
+        if !entries.is_empty() {
+            specs.push((
+                DENSE_WIDE_FAMILY,
+                kernels_sm120::gemm::dense_decode::cubin_spec(
+                    &dense_wide_cubin_name(g),
+                    &entries,
+                    true,
+                )
+                .map_err(|e| e.to_string())?,
+            ));
+        }
+    }
+    Ok(specs)
+}
+
+pub const DENSE_WIDE_FAMILY: &str = "dense_decode_wide";
+
+/// The module of the wide verify dense folds ([`wide_entry`]), which only
+/// instances with wide verify buckets load.
+pub fn dense_wide_cubin_name(g: &Geometry) -> String {
+    format!("dense_decode_wide_{}_sm120_v1", g.kernel_tag)
+}
+
+/// Whether `g` at `ranks` has wide verify dense folds: Flash TP4, the
+/// topology whose verify rows exceed the 64-row decode buckets.
+pub fn wide_served(g: &Geometry, ranks: u32) -> bool {
+    g.id == model_deepseek41_contract::geometry::FLASH.id && ranks == 4
+}
+
+/// The schedule of `q`'s wide verify fold at `bucket`, one of
+/// `verify_bounds::WIDE`: its `dense_fold.wide.verify` row, or the ticket
+/// baseline.
+pub fn wide_knobs(
+    g: &Geometry,
+    q: Mxfp8FoldGemmQuery,
+    paired: bool,
+    bucket: u32,
+) -> Result<kernels_sm120::gemm::dense_decode::Knobs, String> {
+    use kernels_sm120::gemm::dense_decode::Knobs;
+    let row = model_deepseek41_contract::tuning::select(
+        g,
+        model_deepseek41_contract::tuning::Family::DenseFold,
+        "dense_fold.wide.verify",
+        "mxfp8",
+        &[
+            ("n", q.n),
+            ("k", q.k),
+            ("groups", q.groups),
+            ("paired", u32::from(paired)),
+        ],
+        bucket,
+        bucket,
+    );
+    match row {
+        Some(row) => {
+            let (knobs, folds) = Knobs::from_row(row)?;
+            if folds.is_some() {
+                return Err(format!("{}: wide folds take no runtime partition", row.key));
+            }
+            Ok(knobs)
+        }
+        None => Ok(Knobs::ticket(q.n)),
+    }
+}
+
+/// The decode folds a target verify step above 64 rows runs through the
+/// decode template: each backbone projection's and the indexer query's,
+/// single banked. Engram's wide buckets take its matrix tile; the
+/// drafter's verify forwards stay within 64 rows.
+pub fn wide_bases(
+    g: &Geometry,
+    ranks: u32,
+) -> Result<Vec<kernels_sm120::gemm::dense_decode::Entry>, String> {
+    let mut entries = BTreeMap::new();
+    for rank in 0..ranks {
+        for r in decode_registrations(g, ranks, rank)? {
+            let served = (r.projection.starts_with("layer.") || r.projection == "csa.indexer.wq_b")
+                && !r.entry.paired;
+            if served {
+                entries.insert(r.entry.symbol.clone(), r.entry);
+            }
+        }
+    }
+    Ok(entries.into_values().collect())
+}
+
+/// The wide verify fold of decode base `base` (a [`wide_bases`] entry)
+/// for an instance bucket of `capacity` rows, which caps the wide
+/// bucket `bucket` (`verify_bounds::WIDE`): the decode template with a
+/// header of `dense_decode::WIDE_ROWS` rows and `bucket`'s schedule, so
+/// one symbol serves every capacity of a schedule.
+pub fn wide_entry(
+    g: &Geometry,
+    base: &kernels_sm120::gemm::dense_decode::Entry,
+    bucket: u32,
+    capacity: u32,
+) -> Result<kernels_sm120::gemm::dense_decode::Entry, String> {
+    let q = base.query;
+    kernels_sm120::gemm::dense_decode::Entry::wide(
+        routed_query(q, capacity),
+        &format!(
+            "chop_deepseek41_dense_decode_n{}_k{}_g{}_{}",
+            q.n,
+            q.k,
+            q.groups,
+            if base.paired { "pair" } else { "single" }
+        ),
+        base.paired,
+        wide_knobs(g, q, base.paired, bucket)?,
+        kernels_sm120::gemm::dense_decode::WIDE_ROWS,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Every wide verify fold the module holds: each [`wide_bases`] entry at
+/// each wide bucket's schedule.
+pub fn wide_catalog(g: &Geometry) -> Result<Vec<kernels_sm120::gemm::dense_decode::Entry>, String> {
+    let mut entries = BTreeMap::new();
+    for &ranks in admission::SUPPORTED_RANKS {
+        if !wide_served(g, ranks) {
+            continue;
+        }
+        for base in wide_bases(g, ranks)? {
+            for bucket in model_deepseek41_contract::verify_bounds::WIDE {
+                let entry = wide_entry(g, &base, bucket, bucket)?;
+                entries.insert(entry.symbol.clone(), entry);
+            }
+        }
+    }
+    Ok(entries.into_values().collect())
+}
+
+/// Registers the wide verify folds of an instance whose wide verify buckets
+/// are `buckets` (`Shape::wide_verify_rows`), each capping the
+/// `verify_bounds::WIDE` bucket at its position.
+pub fn register_wide(
+    mut backend: Sm120,
+    g: &Geometry,
+    ranks: u32,
+    buckets: &[u32],
+) -> Result<Sm120, String> {
+    if buckets.is_empty() {
+        return Ok(backend);
+    }
+    if !wide_served(g, ranks) {
+        return Err("wide verify folds serve Flash TP4 only".into());
+    }
+    for base in wide_bases(g, ranks)? {
+        for (&capacity, bucket) in buckets
+            .iter()
+            .zip(model_deepseek41_contract::verify_bounds::WIDE)
+        {
+            backend = backend.with_dense_decode(wide_entry(g, &base, bucket, capacity)?, None);
+        }
+    }
+    Ok(backend)
+}
+
 pub const SMALL_CAPACITY: u32 = 64;
 
 /// Exact graph capacity selects the qualified single or paired registration.

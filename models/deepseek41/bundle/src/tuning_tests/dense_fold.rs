@@ -57,6 +57,19 @@ fn served() -> Coverage {
             }
         }
     }
+    // Wide verify folds take one schedule per wide bucket, at its widest row.
+    for entry in mxfp8_fold::wide_bases(&FLASH, 4).unwrap() {
+        for bucket in model_deepseek41_contract::verify_bounds::WIDE {
+            keys.entry(Key {
+                op: "dense_fold.wide.verify".into(),
+                weights: "mxfp8".into(),
+                shape: fold_shape(entry.query, entry.paired),
+                bucket,
+                rows: None,
+            })
+            .or_insert_with(|| [bucket].into());
+        }
+    }
     let shape: BTreeMap<String, u32> = [("ranks".into(), 4)].into();
     for (site, phase, bucket) in [
         ("status", "decode", 32),
@@ -252,6 +265,22 @@ dense_fold.stream.decode mxfp8 groups=1,k=15360,n=5120,paired=0 t64: 3..=64
 dense_fold.stream.decode mxfp8 groups=2,k=4096,n=1024,paired=0 t64: 2..=64
 dense_fold.stream.decode mxfp8 groups=4,k=4096,n=1024,paired=0 t64: 2..=64
 dense_fold.stream.decode mxfp8 groups=8,k=4096,n=1024,paired=0 t64: 1..=64
+dense_fold.wide.verify mxfp8 groups=1,k=576,n=5120,paired=0 t128: 128
+dense_fold.wide.verify mxfp8 groups=1,k=576,n=5120,paired=0 t192: 192
+dense_fold.wide.verify mxfp8 groups=1,k=1280,n=4096,paired=0 t128: 128
+dense_fold.wide.verify mxfp8 groups=1,k=1280,n=4096,paired=0 t192: 192
+dense_fold.wide.verify mxfp8 groups=1,k=1280,n=8192,paired=0 t128: 128
+dense_fold.wide.verify mxfp8 groups=1,k=1280,n=8192,paired=0 t192: 192
+dense_fold.wide.verify mxfp8 groups=1,k=2048,n=5120,paired=0 t128: 128
+dense_fold.wide.verify mxfp8 groups=1,k=2048,n=5120,paired=0 t192: 192
+dense_fold.wide.verify mxfp8 groups=1,k=5120,n=512,paired=0 t128: 128
+dense_fold.wide.verify mxfp8 groups=1,k=5120,n=512,paired=0 t192: 192
+dense_fold.wide.verify mxfp8 groups=1,k=5120,n=576,paired=0 t128: 128
+dense_fold.wide.verify mxfp8 groups=1,k=5120,n=576,paired=0 t192: 192
+dense_fold.wide.verify mxfp8 groups=1,k=5120,n=1280,paired=0 t128: 128
+dense_fold.wide.verify mxfp8 groups=1,k=5120,n=1280,paired=0 t192: 192
+dense_fold.wide.verify mxfp8 groups=2,k=4096,n=1024,paired=0 t128: 128
+dense_fold.wide.verify mxfp8 groups=2,k=4096,n=1024,paired=0 t192: 192
 "#;
 
 #[test]

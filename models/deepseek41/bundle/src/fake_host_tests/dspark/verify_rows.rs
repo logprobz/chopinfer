@@ -403,6 +403,63 @@ const CANDIDATE_STAGES: &[(&str, &str)] = &[
     ),
 ];
 
+/// The wide verify folds of a target step above the 64-row budget with the
+/// `wide_verify` option, as (projection shape, output-column tile,
+/// launches of each of its admission and compute entries in one step):
+/// every backbone projection on every layer and rank (the shared gate and
+/// up share one entry), and the indexer query on its layers.
+const WIDE_FOLDS: &[(&str, u32, usize)] = &[
+    ("n1280_k5120_g1_single", 32, 160),
+    ("n8192_k1280_g1_single", 64, 160),
+    ("n4096_k1280_g1_single", 64, 32),
+    ("n512_k5120_g1_single", 32, 160),
+    ("n1024_k4096_g2_single", 32, 160),
+    ("n5120_k2048_g1_single", 64, 160),
+    ("n576_k5120_g1_single", 32, 320),
+    ("n5120_k576_g1_single", 64, 160),
+];
+
+/// The Engram projection's matrix tile, which serves its verify rows above
+/// 32 (two Engram layers on four ranks).
+const ENGRAM_TILE: &str =
+    "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s2_v1_packed_v1";
+
+/// The dense folds of a `rows`-row target step: with the `wide_verify`
+/// option each [`WIDE_FOLDS`] entry, its admission one CTA per row and
+/// its compute 16-row tiles, Engram's matrix tile and no 8192-row fold;
+/// without it no wide fold.
+fn check_dense_folds(observed: &Grids, rows: u32, enabled: bool, what: &str) {
+    let wide: std::collections::BTreeMap<_, _> = observed
+        .iter()
+        .filter(|(symbol, _)| symbol.contains("_rows256_"))
+        .collect();
+    let folds: Vec<_> = observed
+        .keys()
+        .filter(|symbol| symbol.contains("_mxfp8_fold_m8192_") && !symbol.contains("_matrix_"))
+        .collect();
+    if !enabled {
+        assert!(wide.is_empty(), "{what}: {wide:?}");
+        assert!(!folds.is_empty(), "{what}");
+        return;
+    }
+    assert!(folds.is_empty(), "{what}: {folds:?}");
+    assert_eq!(wide.len(), 2 * WIDE_FOLDS.len(), "{what}: {wide:?}");
+    for &(shape, tile, launches) in WIDE_FOLDS {
+        let entry = format!(
+            "chop_deepseek41_dense_decode_{shape}_rows256_e4m3_ue8m0_k32x4_f32_f32_n{tile}r1s3w0f0_v1"
+        );
+        let admit = &observed[&format!("{entry}_admit_v1")];
+        assert_eq!(admit, &[((rows, 1, 1), launches)].into(), "{what}: {entry}");
+        let compute = &observed[&format!("{entry}_packed_v1")];
+        assert_eq!(compute.values().sum::<usize>(), launches, "{what}: {entry}");
+        assert!(
+            compute.keys().all(|grid| grid.1 == rows.div_ceil(16)),
+            "{what}: {entry} {compute:?}"
+        );
+    }
+    assert_eq!(observed[ENGRAM_TILE].values().sum::<usize>(), 8, "{what}");
+}
+
 /// Widths above the 64-row budget a step of 32 items (and 16 up to its 96
 /// rows) can take: both sides of 64, 96, 128 and 160, and 192.
 const WIDE_STEPS: [(u32, u32); 17] = [
@@ -486,6 +543,12 @@ fn target_programs_lower_above_the_default_verify_rows() {
                     "{symbol} at {count} items and {rows} rows ({enabled})"
                 );
             }
+            check_dense_folds(
+                &observed,
+                rows,
+                enabled,
+                &format!("{count} items and {rows} rows ({enabled})"),
+            );
             instance.commit_accepted(&accepted).unwrap();
         }
         for request in 1..=32 {

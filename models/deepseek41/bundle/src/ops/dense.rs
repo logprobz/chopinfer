@@ -249,6 +249,10 @@ pub(crate) struct DenseOps {
     gemms: Vec<(&'static str, Prepared<Mxfp8FoldGemmBuffers<View>>)>,
     decode: Vec<(&'static str, u32, Prepared<Mxfp8FoldGemmBuffers<View>>)>,
     paired: Vec<(u32, Prepared<[Mxfp8FoldGemmBuffers<View>; 2]>)>,
+    /// The target's folds by projection and wide verify bucket
+    /// ([`Shape::wide_verify_rows`], ascending). Engram's are its exact-row
+    /// `wide_engram` tiles.
+    wide: Vec<(&'static str, u32, Prepared<Mxfp8FoldGemmBuffers<View>>)>,
 }
 
 /// A step's spans of a dense projection: the activation codes and scales,
@@ -435,6 +439,7 @@ impl DenseOps {
             decode,
             paired,
             prefill_gemms,
+            wide: Vec::new(),
         })
     }
 
@@ -459,6 +464,60 @@ impl DenseOps {
         Ok(self)
     }
 
+    /// Bind the target's folds at each wide verify bucket
+    /// ([`Shape::wide_verify_rows`]): the decode folds with a wider row
+    /// bound, the shared gate and up each on its own like the 8192-row
+    /// folds they replace, and Engram's matrix tile at every verify row
+    /// count above 64 that they hold, as below 64. The drafter's verify
+    /// forwards stay within the decode buckets.
+    pub(crate) fn with_wide_verify(
+        mut self,
+        backend: &dyn Backend,
+        shape: &Shape,
+        asks: &Asks,
+        target: bool,
+    ) -> Result<Self, Refused> {
+        if !target {
+            return Ok(self);
+        }
+        let first = crate::Kernels::dense_decode_capacity() + 1;
+        for rows in first..=shape.wide_verify_rows().last().copied().unwrap_or(0) {
+            if let Some(op) = crate::Kernels::wide_verify_engram_fold(shape, rows)? {
+                let need = exact::need(rows, exact::verify(rows));
+                asks.record(format!("dense.engram.kv verify {rows}"), need, op.info());
+                self.wide_engram.push((rows, op));
+            }
+        }
+        for capacity in shape.wide_verify_rows() {
+            let need = exact::need(capacity, exact::verify(capacity));
+            for dense in projections(shape) {
+                if dense.id == "engram.kv" {
+                    continue;
+                }
+                let query = crate::Kernels::dense_decode_query(dense.query, capacity);
+                let op = asks.ask(
+                    format!("dense.{} wide {capacity}", dense.id),
+                    need,
+                    |need| backend.mxfp8_fold_gemm(&query, need),
+                )?;
+                self.wide.push((dense.id, capacity, op));
+            }
+        }
+        Ok(self)
+    }
+
+    /// The narrowest wide verify bucket of `buckets` that holds `rows`
+    /// decode or verify rows above the decode buckets.
+    fn wide_at<T>(rows: u32, buckets: impl IntoIterator<Item = (u32, T)>) -> Option<T> {
+        if rows <= crate::Kernels::dense_decode_capacity() {
+            return None;
+        }
+        buckets
+            .into_iter()
+            .find(|(bucket, _)| rows <= *bucket)
+            .map(|(_, op)| op)
+    }
+
     /// The layout every op of projection `id` reads its weight codes in.
     /// The dual fold reads the packed codes its stream storage binds.
     fn weight_layout(&self, id: &str) -> Result<String, String> {
@@ -473,6 +532,7 @@ impl DenseOps {
                 self.decode
                     .iter()
                     .chain(&self.local)
+                    .chain(&self.wide)
                     .filter(|(of, _, _)| *of == id)
                     .map(|(_, _, op)| op.info()),
             )
@@ -739,6 +799,16 @@ impl DenseOps {
                 .find(|(of, capacity, _)| *of == id && *capacity == rows)
                 .ok_or(Refusal("DeepSeek V4.1 has no dense decode bucket"))?
                 .2
+        } else if !phase.prefill()
+            && let Some(op) = Self::wide_at(
+                rows,
+                self.wide
+                    .iter()
+                    .filter(|(of, _, _)| *of == id)
+                    .map(|(_, bucket, op)| (*bucket, op)),
+            )
+        {
+            op
         } else {
             &self
                 .gemms
@@ -759,7 +829,7 @@ impl DenseOps {
             status_row_offset: 0,
         };
         if id == "engram.kv"
-            && matches!(phase, Phase::Verify { rows: 33..=64, .. })
+            && matches!(phase, Phase::Verify { rows: 33.., .. })
             && let Some((_, op)) = self.wide_engram.iter().find(|(count, _)| *count == rows)
         {
             return bind.launch(op, &buffers, Counts::rows(rows));
@@ -868,6 +938,122 @@ mod tests {
             query.groups,
             if paired { "pair" } else { "single" },
         )
+    }
+
+    /// With the `wide_verify` option a target verify step of 65 to 192 rows
+    /// folds each projection through the wide decode fold of the narrowest
+    /// wide bucket that holds it, gridded by the step's rows, and Engram
+    /// through its matrix tile at the step's exact rows. Prefill,
+    /// the decode buckets and the drafter keep their ops, and without the
+    /// option the 8192-row folds serve those steps.
+    #[test]
+    fn wide_verify_folds_serve_target_steps_above_the_decode_buckets() {
+        use model_deepseek41_contract::{moe::Experts, state::KvStorage};
+        let span = |index, length| {
+            DeviceBufferSpanV1::new(
+                runtime_bundle_abi::BundleDeviceBufferHandleV1::from_parts(index, 1),
+                0,
+                length,
+            )
+        };
+        let views = |first: u32| GemmViews {
+            stream: Some(fold_stream::Storage {
+                packed: [span(100, 1 << 30), span(101, 1 << 30)],
+                state: span(102, 1 << 20),
+                workspace: span(103, 1 << 30),
+            }),
+            activations: span(1, 1 << 30),
+            activation_scales: span(2, 1 << 30),
+            weights: span(first, 1 << 30),
+            weight_scales: span(first + 1, 1 << 30),
+            output: span(first + 2, 1 << 30),
+            live_rows: span(6, 4),
+            status: span(7, 1 << 20),
+        };
+        let phases = [
+            Phase::Prefill { rows: 128 },
+            Phase::Prefill { rows: 192 },
+            Phase::Decode(64),
+            Phase::Verify {
+                items: 32,
+                rows: 64,
+            },
+        ]
+        .into_iter()
+        .chain([65, 96, 128, 129, 160, 192].map(|rows| Phase::Verify { items: 32, rows }));
+        let phases: Vec<_> = phases.collect();
+        for enabled in [false, true] {
+            let shape = Shape::new(&FLASH, Ranks::TP4)
+                .unwrap()
+                .with_verify_rows(192)
+                .with_wide_verify(enabled);
+            let kernels = crate::Kernels::new(&shape).unwrap();
+            for target in [false, true] {
+                let experts = if target {
+                    Experts {
+                        count: FLASH.shape.moe.experts,
+                        top_k: FLASH.shape.moe.top_k,
+                    }
+                } else {
+                    Experts {
+                        count: FLASH.shape.dspark.experts,
+                        top_k: FLASH.shape.dspark.top_k,
+                    }
+                };
+                let ops =
+                    super::super::Ops::prepare_set(&kernels, &shape, KvStorage::Native, experts);
+                let dense = ops
+                    .dense
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("{:?}", ops.missing));
+                for &phase in &phases {
+                    let rows = phase.rows();
+                    let wide =
+                        enabled && target && matches!(phase, Phase::Verify { .. }) && rows > 64;
+                    let workspace = span(99, 1 << 30);
+                    for projection in projections(&shape) {
+                        let id = projection.id;
+                        let calls = dense.project(id, phase, &views(10), workspace).unwrap();
+                        let what = format!("{id} {enabled} {target} {phase:?}");
+                        let symbols: Vec<_> =
+                            calls.iter().map(|c| c.launch.symbol.as_str()).collect();
+                        if !wide {
+                            assert!(!symbols.iter().any(|s| s.contains("_rows256_")), "{what}");
+                            if matches!(phase, Phase::Verify { .. }) && rows > 64 {
+                                assert!(
+                                    symbols.iter().any(|s| s.contains("_mxfp8_fold_m8192_")),
+                                    "{what}: {symbols:?}"
+                                );
+                            }
+                        } else if id == "engram.kv" {
+                            assert_eq!(calls.len(), 2, "{what}");
+                            assert!(
+                                symbols[0].ends_with("_matrix_m64_n128_s2_v1_admit_v1"),
+                                "{what}"
+                            );
+                            assert!(
+                                symbols[1].ends_with("_matrix_m64_n128_s2_v1_packed_v1"),
+                                "{what}"
+                            );
+                            assert_eq!(calls[1].launch.rows, rows, "{what}");
+                        } else {
+                            let q = projection.query;
+                            let stem = format!(
+                                "chop_deepseek41_dense_decode_n{}_k{}_g{}_single_rows256_",
+                                q.n, q.k, q.groups
+                            );
+                            assert_eq!(calls.len(), 2, "{what}");
+                            assert!(symbols[0].starts_with(&stem), "{what}: {symbols:?}");
+                            assert!(symbols[0].ends_with("_admit_v1"), "{what}");
+                            assert!(symbols[1].starts_with(&stem), "{what}: {symbols:?}");
+                            assert!(symbols[1].ends_with("_packed_v1"), "{what}");
+                            assert_eq!(calls[0].launch.plan.grid, [rows, 1, 1], "{what}");
+                            assert_eq!(calls[1].launch.plan.grid[1], rows.div_ceil(16), "{what}");
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

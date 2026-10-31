@@ -270,11 +270,9 @@ impl Ops {
             &names,
             "dense projection",
             dense::DenseOps::prepare(kernels.backend.as_ref(), shape, &asks).and_then(|ops| {
-                ops.with_verify_engram(
-                    shape,
-                    &asks,
-                    expert_set.count == shape.geometry.shape.moe.experts,
-                )
+                let target = expert_set.count == shape.geometry.shape.moe.experts;
+                ops.with_verify_engram(shape, &asks, target)?
+                    .with_wide_verify(kernels.backend.as_ref(), shape, &asks, target)
             }),
         );
         let shared = family(

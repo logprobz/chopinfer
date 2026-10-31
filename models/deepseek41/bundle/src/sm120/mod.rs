@@ -496,6 +496,23 @@ impl crate::Kernels {
         dspark::markov_staged(shape.geometry, op, base_stride, need)
     }
 
+    /// The staged drafter confidence head (`dspark::confidence_staged`, the
+    /// `dspark_confidence_staged` candidate).
+    pub(crate) fn dspark_confidence_staged(
+        shape: &crate::shape::Shape,
+        op: &model_deepseek41_contract::own_ops::dspark::ConfidenceHead,
+        need: kernel_core::backend::Need,
+    ) -> Result<
+        kernel_core::backend::Prepared<
+            model_deepseek41_contract::own_ops::dspark::ConfidenceHeadBuffers<
+                kernel_core::backend::View,
+            >,
+        >,
+        kernel_core::backend::Refused,
+    > {
+        dspark::confidence_staged(shape.geometry, op, need)
+    }
+
     pub(crate) fn drafter_f32_backend(
         shape: &crate::shape::Shape,
     ) -> Result<Option<Sm120>, kernel_core::backend::Refused> {

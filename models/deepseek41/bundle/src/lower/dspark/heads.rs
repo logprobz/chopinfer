@@ -242,15 +242,17 @@ impl Heads {
                     .collect::<Result<_, _>>()?,
             ),
         };
-        let confidence = own.dspark_confidence(
-            &ConfidenceHead {
-                hidden: g.shape.hidden,
-                markov_rank: dim,
-                hidden_stride: BLOCK_ROWS * g.shape.hidden,
-                score_stride: BLOCK_ROWS,
-            },
-            need,
-        )?;
+        let head = ConfidenceHead {
+            hidden: g.shape.hidden,
+            markov_rank: dim,
+            hidden_stride: BLOCK_ROWS * g.shape.hidden,
+            score_stride: BLOCK_ROWS,
+        };
+        let confidence = if shape.dspark_confidence_staged {
+            crate::Kernels::dspark_confidence_staged(&shape, &head, need)?
+        } else {
+            own.dspark_confidence(&head, need)?
+        };
         let partial = (0..shape.ranks())
             .map(|rank| {
                 backend.sharded_argmax_partial(

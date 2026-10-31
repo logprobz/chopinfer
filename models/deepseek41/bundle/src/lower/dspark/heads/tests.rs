@@ -452,32 +452,18 @@ fn hidden_width(shape: &Shape) -> u64 {
     u64::from(shape.geometry.shape.hidden) * 4
 }
 
-/// With the `dspark_markov_staged` option a position of two or more items
-/// drops the row copy and runs the staged step over each item's block row
-/// in place, five rows apart; a packed position runs it over its
-/// contiguous slice, and a lone item keeps the row step. Every other launch
-/// keeps its symbol, plan and operands.
-#[test]
-fn staged_markov_positions_read_the_block_logits_in_place() {
-    let shape = Shape::new(
-        &model_deepseek41_contract::geometry::FLASH,
-        bundle_runtime::geometry::Ranks::TP4,
-    )
-    .unwrap();
-    let staged_shape = shape.with_dspark_markov_staged(true);
-    let prepare = |shape: Shape| {
-        let kernels = crate::Kernels::new(&shape).unwrap();
-        Heads::prepare(
-            kernels.backend.as_ref(),
-            kernels.own.as_ref(),
-            shape,
-            DraftMode::Sampled,
-        )
-        .unwrap()
-    };
-    let (served, staged) = (prepare(shape), prepare(staged_shape));
+/// Each rank's position views and peers for `items` items, allocated on a
+/// fake host (kept alive with them).
+fn position_fixture(
+    shape: Shape,
+    heads: &Heads,
+    items: u32,
+) -> (
+    Rc<crate::fake_host_tests::Host>,
+    Vec<Peer>,
+    Vec<PositionViews>,
+) {
     let host = crate::fake_host_tests::FakeHost::new(shape, crate::config::KV_LAYOUTS[0]);
-    let items = 8_u32;
     let dim = u64::from(shape.geometry.shape.dspark.markov_rank);
     let hidden = u64::from(shape.geometry.shape.hidden);
     let vocab = u64::from(shape.vocab_rows());
@@ -496,7 +482,7 @@ fn staged_markov_positions_read_the_block_logits_in_place() {
                 bytes,
             )
         };
-        let (reduce, gather) = served.state();
+        let (reduce, gather) = heads.state();
         let embedding = alloc(u64::from(items) * dim * 2);
         let embedding_weight = alloc(vocab * dim * 2);
         let gathered = alloc(u64::from(DECODE_BATCH * 2 * shape.ranks()) * 4);
@@ -529,6 +515,38 @@ fn staged_markov_positions_read_the_block_logits_in_place() {
             draft_ids: alloc(rows * 4),
         });
     }
+    (host, peers, views)
+}
+
+/// Heads of `shape`, prepared in sampled mode.
+fn sampled_heads(shape: Shape) -> Heads {
+    let kernels = crate::Kernels::new(&shape).unwrap();
+    Heads::prepare(
+        kernels.backend.as_ref(),
+        kernels.own.as_ref(),
+        shape,
+        DraftMode::Sampled,
+    )
+    .unwrap()
+}
+
+/// With the `dspark_markov_staged` option a position of two or more items
+/// drops the row copy and runs the staged step over each item's block row
+/// in place, five rows apart; a packed position runs it over its
+/// contiguous slice, and a lone item keeps the row step. Every other launch
+/// keeps its symbol, plan and operands.
+#[test]
+fn staged_markov_positions_read_the_block_logits_in_place() {
+    let shape = Shape::new(
+        &model_deepseek41_contract::geometry::FLASH,
+        bundle_runtime::geometry::Ranks::TP4,
+    )
+    .unwrap();
+    let staged_shape = shape.with_dspark_markov_staged(true);
+    let (served, staged) = (sampled_heads(shape), sampled_heads(staged_shape));
+    let items = 8_u32;
+    let (_host, peers, views) = position_fixture(shape, &served, items);
+    let vocab = u64::from(shape.vocab_rows());
     const TILED: &str = "chop_deepseek41_dspark_markov_tiled_v1";
     const ROW: &str = "chop_deepseek41_dspark_markov_row_v1";
     const GATHER: &str = "chop_row_gather_by_index_v1";
@@ -625,6 +643,71 @@ fn staged_markov_positions_read_the_block_logits_in_place() {
     }
     // Only the staged shape loads the staged entry's module.
     let cubin = crate::sm120::markov_staged::CUBIN;
+    assert!(!crate::serves(cubin, &shape));
+    assert!(crate::serves(cubin, &staged_shape));
+}
+
+/// With the `dspark_confidence_staged` option every position's confidence
+/// head runs the staged entry with the served entry's plan and operands;
+/// every other launch is unchanged.
+#[test]
+fn staged_confidence_keeps_every_position_launch_but_the_entry() {
+    let shape = Shape::new(
+        &model_deepseek41_contract::geometry::FLASH,
+        bundle_runtime::geometry::Ranks::TP4,
+    )
+    .unwrap();
+    let staged_shape = shape.with_dspark_confidence_staged(true);
+    let (served, staged) = (sampled_heads(shape), sampled_heads(staged_shape));
+    let items = 8_u32;
+    let (_host, peers, views) = position_fixture(shape, &served, items);
+    let old_symbol = crate::sm120::confidence_parallel::SYMBOL;
+    let new_symbol = crate::sm120::confidence_staged::SYMBOL;
+    for rank in 0..shape.ranks() {
+        let v = &views[rank as usize];
+        for position in 0..5_u32 {
+            for (count, packed) in [(items, false), (items, true), (1, false)] {
+                let old = served
+                    .position_packed(rank, position, count, v, &peers, packed)
+                    .unwrap();
+                let new = staged
+                    .position_packed(rank, position, count, v, &peers, packed)
+                    .unwrap();
+                assert_eq!(old.len(), new.len());
+                let mut replaced = 0;
+                for (old, new) in old.iter().zip(&new) {
+                    if old.launch.symbol == old_symbol {
+                        assert_eq!(new.launch.symbol, new_symbol);
+                        replaced += 1;
+                    } else {
+                        assert_eq!(old.launch.symbol, new.launch.symbol);
+                    }
+                    assert_eq!(old.collective, new.collective);
+                    assert_eq!(old.launch.plan, new.launch.plan);
+                    assert_eq!(old.launch.arguments.0.len(), new.launch.arguments.0.len());
+                    for (index, (a, b)) in old
+                        .launch
+                        .arguments
+                        .0
+                        .iter()
+                        .zip(&new.launch.arguments.0)
+                        .enumerate()
+                    {
+                        match (a, b) {
+                            (
+                                kernel_core::contract::Argument::DeviceBuffer(_),
+                                kernel_core::contract::Argument::DeviceBuffer(_),
+                            ) => assert_eq!(argument_span(old, index), argument_span(new, index)),
+                            _ => assert_eq!(a, b),
+                        }
+                    }
+                }
+                assert_eq!(replaced, 1, "{count} items packed {packed}");
+            }
+        }
+    }
+    // Only the staged shape loads the staged entry's module.
+    let cubin = crate::sm120::confidence_staged::CUBIN;
     assert!(!crate::serves(cubin, &shape));
     assert!(crate::serves(cubin, &staged_shape));
 }

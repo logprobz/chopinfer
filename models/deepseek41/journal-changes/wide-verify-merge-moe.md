@@ -19,3 +19,9 @@ side these are the counts of the MoE change's own declaration on its
 parent; only their positions differ. Each journal grows by 420 lines: C16
 odd-width from 190918 to 191338 and C32 maximum from 343656 to 344076.
 Every other journal, create range and device history is identical.
+
+On 2026-10-31 the journal proof of the merge commit against the first
+parent, with this declaration read at the commit that adds it, was
+PROVEN with full history coverage: 23 journals identical, 2 proven (1280
+removed and 1652 added operations and 48 added resolves each), 25 of 25
+fixture histories compared.

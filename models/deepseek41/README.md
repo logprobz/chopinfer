@@ -425,6 +425,14 @@ phased decode reduction merged, the wide replays matched bitwise again,
 eagerly and with graphs, and so did the 16-64 row replays with
 `f32_row_tiles` and the 16-192 row replays with `phased_decode_reduce`,
 each beside `wide_verify`; the 128- and 192-row steps kept their times.
+With the direct MoE cache knobs merged, the wide replays matched bitwise
+against references recorded again from the previous package by the
+merged host, whose frontend the earlier host cannot read, and so did the
+same replays with the robust knob set on (eagerly, with graphs and at
+16-64 rows). The knob set took the MoE router, experts and sum of a
+128-row step from 24.2 to 19.8 ms and of a 192-row step from 35.0 to 29.3
+ms, and the steps from 76.9 to 72.2 ms and from 104.0 to 98.3 ms. This is
+not served step-time acceptance.
 
 Prefill commit projections are batched across prompts. Undrafted pure
 decode joins status once and submits private sampling before collecting it

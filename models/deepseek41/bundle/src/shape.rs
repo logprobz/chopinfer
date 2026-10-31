@@ -42,11 +42,13 @@ impl Shape {
         self
     }
 
-    /// Prepared row bound for the Flash TP4 decode-path verify kernels.
-    pub(crate) fn verify_decode_rows(&self) -> u32 {
+    /// The prepared row bound of a Flash TP4 decode-route family whose
+    /// widest verify step is `bound` (`model_deepseek41_contract::verify_bounds`):
+    /// the bound capped by this instance's verify rows. Other topologies
+    /// keep the widest decode bucket.
+    pub(crate) fn verify_rows_within(&self, bound: u32) -> u32 {
         if self.geometry.id == model_deepseek41_contract::geometry::FLASH.id && self.ranks() == 4 {
-            self.verify_rows
-                .min(model_deepseek41_contract::serving::VERIFY_DECODE_ROWS)
+            self.verify_rows.min(bound)
         } else {
             DECODE_BATCH
         }

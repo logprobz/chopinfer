@@ -246,7 +246,7 @@ fn validate_values(row: &Row) -> Result<(), TuningError> {
         | "norm.ceil_capacity_f32.decode"
         | "norm.ceil_registered_bf16.decode"
         | "norm.ceil_registered_f32.decode" => {
-            (1..=crate::serving::VERIFY_DECODE_ROWS).contains(&count("capacity"))
+            (1..=crate::verify_bounds::CEIL).contains(&count("capacity"))
         }
         "norm.ceil_prefill_bf16.prefill" | "norm.ceil_prefill_f32.prefill" => {
             [4, 8, 16].contains(&count("warps"))

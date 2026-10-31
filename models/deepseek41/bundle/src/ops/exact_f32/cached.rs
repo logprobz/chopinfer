@@ -142,7 +142,8 @@ pub(crate) fn prepare(
     k: u32,
     target: bool,
 ) -> Result<Option<Wide>, kernel_core::backend::Refused> {
-    let maximum_rows = shape.verify_decode_rows();
+    let maximum_rows =
+        shape.verify_rows_within(model_deepseek41_contract::verify_bounds::F32_CACHED);
     if !target || maximum_rows <= 32 {
         return Ok(None);
     }

@@ -9,7 +9,7 @@ use model_deepseek41_contract::state::KvStorage;
 
 pub const FAMILY: &str = "latent_decode_cache";
 pub const CUBIN: &str = "latent_decode_cache_deepseek41_sm120";
-pub const MAX_ROWS: u32 = model_deepseek41_contract::serving::VERIFY_DECODE_ROWS;
+pub const MAX_ROWS: u32 = model_deepseek41_contract::verify_bounds::LATENT_CACHE;
 
 pub fn bytes(rows: u32) -> u64 {
     u64::from(rows.min(MAX_ROWS)) * 640 * (512 * 2 + 4)

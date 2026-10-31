@@ -30,9 +30,7 @@ fn dtype(dtype: kernel_core::contract::DType) -> &'static str {
 fn domains() -> std::collections::BTreeSet<Key> {
     use crate::sm120::{ceil_parallel, ceil_prefill};
     use model_deepseek41_contract::{
-        admission::SUPPORTED_RANKS,
-        rows,
-        serving::{PREFILL_TOKENS, VERIFY_DECODE_ROWS},
+        admission::SUPPORTED_RANKS, rows, serving::PREFILL_TOKENS, verify_bounds,
     };
     let mut out = std::collections::BTreeSet::new();
     for (site, query) in ["input", "query"]
@@ -46,7 +44,7 @@ fn domains() -> std::collections::BTreeSet<Key> {
             &format!("norm.{site}_cached.decode"),
             weights,
             &shape,
-            VERIFY_DECODE_ROWS,
+            verify_bounds::NORM_QUANTIZE,
         );
         for &ranks in SUPPORTED_RANKS {
             add(
@@ -91,7 +89,7 @@ fn domains() -> std::collections::BTreeSet<Key> {
                 &format!("norm.ceil_registered_{}.decode", dtype(entry.query.input)),
                 "none",
                 &shape,
-                VERIFY_DECODE_ROWS,
+                verify_bounds::CEIL,
             );
             add(
                 &mut out,
@@ -106,7 +104,7 @@ fn domains() -> std::collections::BTreeSet<Key> {
             "norm.activation_capacity.decode",
             "none",
             &[("ranks", ranks)],
-            VERIFY_DECODE_ROWS,
+            verify_bounds::CEIL,
         );
         for entry in ceil_prefill::baseline_quantizers(&FLASH, ranks).unwrap() {
             add(

@@ -79,10 +79,12 @@ pub(super) fn prepare_set(
         super::moe_row_tiles_op::layout(shape.geometry, shape.ranks(), set),
     )
     .map_err(Refused::Rule)?;
-    buckets(set, shape.verify_decode_rows())
+    let maximum_rows =
+        shape.verify_rows_within(model_deepseek41_contract::verify_bounds::MOE_DIRECT);
+    buckets(set, maximum_rows)
         .into_iter()
         .map(|(phase, rows)| {
-            let wide = super::moe_router_finish::wide(set, phase, rows, shape.verify_decode_rows());
+            let wide = super::moe_router_finish::wide(set, phase, rows, maximum_rows);
             Ok((
                 phase,
                 rows,

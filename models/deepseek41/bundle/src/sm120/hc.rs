@@ -92,7 +92,7 @@ pub fn verify_split_entry(g: &Geometry) -> lagged_split::Entry {
     lagged_split::entry(
         super::rows::profile(g),
         Mixer {
-            capacity: model_deepseek41_contract::serving::VERIFY_DECODE_ROWS,
+            capacity: model_deepseek41_contract::verify_bounds::HC_SPLIT,
             ..mixer(g)
         },
         false,

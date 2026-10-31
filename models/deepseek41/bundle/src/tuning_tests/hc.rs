@@ -24,7 +24,8 @@ fn domains() -> std::collections::BTreeSet<Key> {
     use model_deepseek41_contract::{
         admission::SUPPORTED_RANKS,
         dspark_options::SMALL_DRAFT_ROWS,
-        serving::{DECODE_BATCH, PREFILL_TOKENS, VERIFY_DECODE_ROWS},
+        serving::{DECODE_BATCH, PREFILL_TOKENS},
+        verify_bounds,
     };
     let mut out = std::collections::BTreeSet::new();
     let shape = [
@@ -48,7 +49,7 @@ fn domains() -> std::collections::BTreeSet<Key> {
                 ("ranks", ranks),
                 ("width", FLASH.shape.hidden),
             ],
-            VERIFY_DECODE_ROWS,
+            verify_bounds::HC_FINISH,
         );
     }
     for site in [
@@ -63,7 +64,7 @@ fn domains() -> std::collections::BTreeSet<Key> {
             &format!("hc.{site}.verify"),
             "f32",
             &shape,
-            VERIFY_DECODE_ROWS,
+            verify_bounds::HC_FINISH,
         );
     }
     for site in ["lagged_mix", "expand_mix"] {
@@ -76,8 +77,11 @@ fn domains() -> std::collections::BTreeSet<Key> {
         );
     }
     for phase in ["decode", "verify", "prefill"] {
-        for capacity in DECODE_BATCH..=VERIFY_DECODE_ROWS {
-            for site in ["finish_admit", "wide_mix"] {
+        for (site, bound) in [
+            ("finish_admit", verify_bounds::HC_FINISH),
+            ("wide_mix", verify_bounds::HC_SPLIT),
+        ] {
+            for capacity in DECODE_BATCH..=bound {
                 add(
                     &mut out,
                     &format!("hc.{site}.{phase}"),

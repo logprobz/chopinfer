@@ -26,7 +26,10 @@ impl crate::Kernels {
     ) -> Result<Prepared<PositionQueryBuffers<View>>, Refused> {
         if shape.geometry.id != FLASH.id
             || shape.ranks() != 4
-            || !Self::wide_index_query_rows(shape.verify_decode_rows(), need.capacity)
+            || !Self::wide_index_query_rows(
+                shape.verify_rows_within(model_deepseek41_contract::verify_bounds::INDEX_QUERY),
+                need.capacity,
+            )
         {
             return Err(Refused::Unsupported);
         }

@@ -2,6 +2,7 @@
 use kernel_core::backend::{Need, Prepared, Refused};
 use model_deepseek41_contract::dspark_options::SMALL_DRAFT_ROWS;
 use model_deepseek41_contract::serving::DECODE_BATCH;
+use model_deepseek41_contract::verify_bounds;
 
 use super::{Asks, exact};
 use crate::program::Phase;
@@ -31,7 +32,7 @@ impl<B> RowBuckets<B> {
             exact::need(DECODE_BATCH, exact::every_phase(DECODE_BATCH)),
             &mut prepare,
         )?;
-        let draft_rows = SMALL_DRAFT_ROWS.max(shape.verify_decode_rows());
+        let draft_rows = SMALL_DRAFT_ROWS.max(shape.verify_rows_within(verify_bounds::ROW_BUCKETS));
         let draft = asks.ask(
             format!("{what} draft rows"),
             exact::need(draft_rows, exact::every_phase(draft_rows)),

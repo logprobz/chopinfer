@@ -447,7 +447,9 @@ impl DenseOps {
         target: bool,
     ) -> Result<Self, Refused> {
         if target {
-            for rows in 33..=shape.verify_decode_rows() {
+            for rows in
+                33..=shape.verify_rows_within(model_deepseek41_contract::verify_bounds::ENGRAM_FOLD)
+            {
                 if let Some(op) = crate::Kernels::wide_engram_fold(shape, rows)? {
                     let need = exact::need(rows, exact::verify(rows));
                     asks.record(format!("dense.engram.kv verify {rows}"), need, op.info());

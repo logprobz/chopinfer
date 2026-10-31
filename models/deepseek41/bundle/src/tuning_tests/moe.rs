@@ -24,7 +24,8 @@ fn domains() -> std::collections::BTreeSet<Key> {
     use model_deepseek41_contract::{
         admission::SUPPORTED_RANKS,
         moe,
-        serving::{DECODE_BATCH, PREFILL_TOKENS, VERIFY_DECODE_ROWS},
+        serving::{DECODE_BATCH, PREFILL_TOKENS},
+        verify_bounds,
     };
     let mut out = std::collections::BTreeSet::new();
     let prefill_capacities = SUPPORTED_RANKS
@@ -55,7 +56,7 @@ fn domains() -> std::collections::BTreeSet<Key> {
                 &format!("moe.streamed.{phase}"),
                 "mxfp4",
                 &[("ranks", ranks)],
-                VERIFY_DECODE_ROWS,
+                verify_bounds::MOE_STREAMED,
             );
         }
         for set in moe::expert_sets(&FLASH) {
@@ -116,7 +117,7 @@ fn domains() -> std::collections::BTreeSet<Key> {
                     &format!("moe.{site}.{phase}"),
                     "mxfp4",
                     &shape,
-                    VERIFY_DECODE_ROWS,
+                    verify_bounds::MOE_DIRECT,
                 );
             }
             for site in [
@@ -133,7 +134,7 @@ fn domains() -> std::collections::BTreeSet<Key> {
                     &format!("moe.{site}.{phase}"),
                     "mxfp4",
                     &[("experts", set.count)],
-                    VERIFY_DECODE_ROWS,
+                    verify_bounds::MOE_DIRECT,
                 );
             }
         }

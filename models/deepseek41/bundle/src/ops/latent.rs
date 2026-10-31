@@ -201,7 +201,8 @@ impl GlueOps {
             exact::need(small, exact::every_phase(small)),
             |need| backend.latent_query_rope(&query, need),
         )?;
-        let wide_rows = shape.verify_decode_rows();
+        let wide_rows =
+            shape.verify_rows_within(model_deepseek41_contract::verify_bounds::LATENT_QUERY);
         let query_rope_wide =
             if target && crate::Kernels::wide_latent_query_rows(wide_rows, wide_rows) {
                 Some(asks.ask(
@@ -667,7 +668,7 @@ impl AttentionOps {
             shape.geometry,
             shape.ranks(),
             storage,
-            shape.verify_decode_rows(),
+            shape.verify_rows_within(model_deepseek41_contract::verify_bounds::LATENT_CACHE),
         )
         .is_some()
         {
@@ -688,7 +689,9 @@ impl AttentionOps {
                             shape.geometry,
                             &query,
                             need,
-                            shape.verify_decode_rows(),
+                            shape.verify_rows_within(
+                                model_deepseek41_contract::verify_bounds::LATENT_CACHE,
+                            ),
                         )
                     },
                 )?;

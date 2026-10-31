@@ -229,7 +229,8 @@ impl HcOps {
         // head's rows.
         let need = exact::need(PREFILL_TOKENS, exact::every_phase(shape.verify_rows));
         let g = shape.geometry;
-        let finish_rows = shape.verify_decode_rows();
+        let finish_rows =
+            shape.verify_rows_within(model_deepseek41_contract::verify_bounds::HC_FINISH);
         Ok(HcOps {
             geometry: g,
             finish_rows,

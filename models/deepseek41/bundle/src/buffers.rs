@@ -462,7 +462,7 @@ impl Scratch<Allocation> {
                 shape.geometry,
                 shape.ranks(),
                 storage,
-                shape.verify_decode_rows(),
+                shape.verify_rows_within(model_deepseek41_contract::verify_bounds::LATENT_CACHE),
             )
             .map(Allocation::bytes),
             attention: row(heads * BF16),

@@ -39,8 +39,9 @@ use kernel_harness::{Cubins, LabResult, Session};
 use kernels_sm120::{backend::Sm120, row::rounding::Rounding};
 use model_deepseek41_contract::{
     geometry::FLASH,
-    serving::{DECODE_BATCH, DECODE_BUCKETS, MAX_VERIFY_ROWS, VERIFY_DECODE_ROWS},
+    serving::{DECODE_BATCH, DECODE_BUCKETS, MAX_VERIFY_ROWS},
     tuning::{self, Family},
+    verify_bounds,
 };
 use runtime_cuda::GraphExec;
 use serde_json::{Value, json};
@@ -112,10 +113,11 @@ impl Step {
 /// - Verify graphs keep their exact rows, 1 to `DECODE_BATCH *
 ///   MAX_VERIFY_ROWS`. Verify defers only where `HcOps::has_finish_norm`
 ///   admits the phase: the Flash HC table's `hc.finish_admit.verify` row
-///   at the finish norm's capacity, `Shape::verify_decode_rows`, the
-///   instance's verify rows (at least `DECODE_BATCH`) capped at
-///   `VERIFY_DECODE_ROWS`. Every instance that can serve `rows` rows must
-///   agree, so the form never depends on the instance.
+///   at the finish norm's capacity, `Shape::verify_rows_within`: the
+///   instance's verify rows (at least `DECODE_BATCH`) capped at the HC
+///   finish bound (`verify_bounds::HC_FINISH`). Every instance that can
+///   serve `rows` rows must agree, so the form never depends on the
+///   instance.
 fn served(step: Step, rows: u32) -> LabResult<Option<Form>> {
     match step {
         Step::Decode => Ok(DECODE_BUCKETS.contains(&rows).then_some(Form::Deferred)),
@@ -129,7 +131,7 @@ fn served(step: Step, rows: u32) -> LabResult<Option<Form>> {
                 ("width", FLASH.shape.hidden),
             ];
             let admitted = |verify_rows: u32| {
-                let capacity = verify_rows.clamp(DECODE_BATCH, VERIFY_DECODE_ROWS);
+                let capacity = verify_rows.clamp(DECODE_BATCH, verify_bounds::HC_FINISH);
                 tuning::select(
                     &FLASH,
                     Family::Hc,

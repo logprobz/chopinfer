@@ -14,7 +14,7 @@ pub fn entry(g: &Geometry) -> Entry {
     Entry {
         query: SinkhornExpandMixQuery { mix: hc::mix(g) },
         capacity: if g.id == model_deepseek41_contract::geometry::FLASH.id {
-            model_deepseek41_contract::serving::VERIFY_DECODE_ROWS
+            model_deepseek41_contract::verify_bounds::HC_FINISH
         } else {
             DECODE_BATCH
         },

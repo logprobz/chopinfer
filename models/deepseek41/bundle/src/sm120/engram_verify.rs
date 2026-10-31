@@ -10,7 +10,9 @@ impl crate::Kernels {
     ) -> Result<Option<Prepared<Mxfp8FoldGemmBuffers<View>>>, Refused> {
         if shape.geometry.id != FLASH.id
             || shape.ranks() != 4
-            || !(33..=shape.verify_decode_rows()).contains(&rows)
+            || !(33..=shape
+                .verify_rows_within(model_deepseek41_contract::verify_bounds::ENGRAM_FOLD))
+                .contains(&rows)
         {
             return Ok(None);
         }

@@ -14,7 +14,10 @@ impl crate::Kernels {
         need: Need,
     ) -> Result<Prepared<LatentQueryRopeBuffers<View>>, Refused> {
         if !super::latent_scheduled::qualified(shape.geometry, shape.ranks())
-            || !super::latent_scheduled::wide_query(shape.verify_decode_rows(), need.capacity)
+            || !super::latent_scheduled::wide_query(
+                shape.verify_rows_within(model_deepseek41_contract::verify_bounds::LATENT_QUERY),
+                need.capacity,
+            )
         {
             return Err(Refused::Unsupported);
         }

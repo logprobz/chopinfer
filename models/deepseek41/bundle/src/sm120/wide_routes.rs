@@ -5,7 +5,19 @@ use kernel_core::route::{RouteClass, RouteTag};
 use model_deepseek41_contract::{
     geometry::FLASH,
     tuning::{self, Family},
+    verify_bounds,
 };
+
+/// The verify bound of a wide route family.
+fn bound(family: &str) -> u32 {
+    match family {
+        "f32_projection" => verify_bounds::F32_CACHED,
+        "indexer_query" => verify_bounds::INDEX_QUERY,
+        "latent_query" => verify_bounds::LATENT_QUERY,
+        "mxfp8_prefill" => verify_bounds::ENGRAM_FOLD,
+        _ => unreachable!("unregistered wide route family"),
+    }
+}
 
 /// `first` applies only to Engram's structural admission.
 pub(super) fn tag(symbol: &str, family: &'static str, first: u32) -> RouteTag {
@@ -55,7 +67,7 @@ fn tag_with_tables<'a>(
         _ => unreachable!("unregistered wide route family"),
     };
     // Export the full verification envelope, including for smaller instances.
-    let capacity = model_deepseek41_contract::serving::VERIFY_DECODE_ROWS;
+    let capacity = bound(family);
     let admitted = if let Some((source, op, weights, shape)) = key {
         tables(source)
             .rows()
@@ -93,8 +105,8 @@ pub(super) fn tagged<B: 'static>(op: Prepared<B>, family: &'static str, first: u
 #[cfg(test)]
 pub(super) fn catalogue(shape: &crate::shape::Shape) -> Result<Vec<RouteTag>, String> {
     let mut tags = Vec::new();
-    let rows = shape.verify_decode_rows();
-    if !super::f32_verify::enabled(shape.geometry, shape.ranks(), rows) {
+    let rows = |family| shape.verify_rows_within(bound(family));
+    if !super::f32_verify::enabled(shape.geometry, shape.ranks(), rows("f32_projection")) {
         return Ok(tags);
     }
     for entry in super::f32_verify::entries().map_err(|e| e.to_string())? {
@@ -105,23 +117,28 @@ pub(super) fn catalogue(shape: &crate::shape::Shape) -> Result<Vec<RouteTag>, St
                 .map(|symbol| tag(symbol, "f32_projection", 33)),
         );
     }
-    if let Some(op) = crate::Kernels::wide_engram_fold(shape, rows).map_err(|e| format!("{e:?}"))? {
+    if let Some(op) = crate::Kernels::wide_engram_fold(shape, rows("mxfp8_prefill"))
+        .map_err(|e| format!("{e:?}"))?
+    {
         tags.extend(self::tags(op.as_ref(), "mxfp8_prefill", 33));
     }
-    let need = crate::ops::exact::need(rows, crate::ops::exact::verify(rows));
+    let need = |rows| crate::ops::exact::need(rows, crate::ops::exact::verify(rows));
+    let index_rows = rows("indexer_query");
     let query = model_deepseek41_contract::indexer::selection(
         shape.geometry,
         shape.geometry.shape.csa.index_sources[0],
-        rows,
+        index_rows,
     )
     .ok_or("missing wide index query")?;
-    let op = crate::Kernels::wide_index_query(shape, &query, need).map_err(|e| format!("{e:?}"))?;
+    let op = crate::Kernels::wide_index_query(shape, &query, need(index_rows))
+        .map_err(|e| format!("{e:?}"))?;
     tags.extend(self::tags(op.as_ref(), "indexer_query", 33));
-    if rows > super::latent_scheduled::QUERY_ROWS {
+    let latent_rows = rows("latent_query");
+    if latent_rows > super::latent_scheduled::QUERY_ROWS {
         let query =
             model_deepseek41_contract::latent_glue::query_rope(shape.geometry, shape.ranks())?;
-        let op =
-            crate::Kernels::wide_query_rope(shape, &query, need).map_err(|e| format!("{e:?}"))?;
+        let op = crate::Kernels::wide_query_rope(shape, &query, need(latent_rows))
+            .map_err(|e| format!("{e:?}"))?;
         tags.extend(self::tags(op.as_ref(), "latent_query", 49));
     }
     Ok(tags)

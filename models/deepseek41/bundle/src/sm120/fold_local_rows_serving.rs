@@ -88,7 +88,7 @@ fn cluster(
     rows: u32,
 ) -> Option<kernels_sm120::gemm::mxfp8_fold_cluster_fused::Entry> {
     if super::fold_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows)
-        && rows <= shape.verify_decode_rows()
+        && rows <= shape.verify_rows_within(model_deepseek41_contract::verify_bounds::DENSE_FOLD)
         && let Some(entry) = super::fold_verify::served(id, rows)
     {
         return Some(entry);
@@ -186,7 +186,10 @@ impl crate::Kernels {
                         shape.geometry,
                         shape.ranks(),
                         shape.verify_rows,
-                    ) && need.capacity <= shape.verify_decode_rows()
+                    ) && need.capacity
+                        <= shape.verify_rows_within(
+                            model_deepseek41_contract::verify_bounds::DENSE_FOLD,
+                        )
                         && super::fold_verify_local::selected(
                             "dense_fold.status_wide.verify",
                             need.capacity,

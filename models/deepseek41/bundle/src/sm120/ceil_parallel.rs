@@ -41,7 +41,7 @@ fn early_release(g: &Geometry, symbol: &str) -> bool {
 
 /// Flash TP4's bounded verify rows. Capacity is not compiled; each row
 /// is quantized alone, including every drafter forward through 60 rows.
-pub const CAPACITY: u32 = model_deepseek41_contract::serving::VERIFY_DECODE_ROWS;
+pub const CAPACITY: u32 = model_deepseek41_contract::verify_bounds::CEIL;
 
 /// Flash TP4 includes the target intermediate in its wide verify forms.
 /// Other topologies retain their target decode and drafter row limits.

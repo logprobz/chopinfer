@@ -25,8 +25,8 @@ On native Flash TP4, serving's hidden-row all-reduces take these forms:
   - Verify graphs keep their exact width, up to 192 rows. A verify phase
     is admitted only where `HcOps::has_finish_norm` admits it: the Flash HC
     table's `hc.finish_admit.verify` rows at the finish norm's capacity,
-    the instance's verify rows capped at 64 (`Shape::verify_decode_rows`,
-    `VERIFY_DECODE_ROWS`). The table admits 4, 6, 8, 12 and 16 rows and
+    the instance's verify rows capped at 64 (`Shape::verify_rows_within`,
+    `verify_bounds::HC_FINISH`). The table admits 4, 6, 8, 12 and 16 rows and
     32 rows up to that capacity, so verify defers at those widths and at
     every width from 33 to 64. Every other width, 128 rows included,
     issues the complete sequence.

@@ -62,7 +62,7 @@ impl IndexerOps {
         let query = asks.ask("indexer.query", every, |need| {
             backend.position_indexer_query(&query_spec, need)
         })?;
-        let rows = shape.verify_decode_rows();
+        let rows = shape.verify_rows_within(model_deepseek41_contract::verify_bounds::INDEX_QUERY);
         let wide_query = if target && crate::Kernels::wide_index_query_rows(rows, rows) {
             Some(asks.ask(
                 "indexer.query wide verify",

@@ -18,7 +18,7 @@ pub fn entries(g: &Geometry) -> Result<Vec<Entry>, String> {
             Entry::new(
                 query,
                 if g.id == model_deepseek41_contract::geometry::FLASH.id {
-                    model_deepseek41_contract::serving::VERIFY_DECODE_ROWS
+                    model_deepseek41_contract::verify_bounds::NORM_QUANTIZE
                 } else {
                     DECODE_BATCH
                 },

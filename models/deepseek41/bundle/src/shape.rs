@@ -30,6 +30,9 @@ pub struct Shape {
     /// Whether decode and verify steps' complete all-reduces take the phased
     /// F32 rounding entries (the `phased_decode_reduce` candidate option).
     pub phased_decode_reduce: bool,
+    /// Whether verify steps of at most `DECODE_BATCH` rows run the decode
+    /// row fusions (the `verify_row_fusions` candidate option).
+    pub verify_row_fusions: bool,
 }
 
 impl Shape {
@@ -44,6 +47,7 @@ impl Shape {
             wide_verify: false,
             f32_row_tiles: false,
             phased_decode_reduce: false,
+            verify_row_fusions: false,
         })
     }
 
@@ -73,6 +77,28 @@ impl Shape {
     pub fn with_phased_decode_reduce(mut self, enabled: bool) -> Shape {
         self.phased_decode_reduce = enabled;
         self
+    }
+
+    /// This shape with the decode row fusions at verify steps of at most
+    /// `DECODE_BATCH` rows on or off
+    /// (`model_deepseek41_contract::execution_options::VERIFY_ROW_FUSIONS`).
+    pub fn with_verify_row_fusions(mut self, enabled: bool) -> Shape {
+        self.verify_row_fusions = enabled;
+        self
+    }
+
+    /// Whether `phase` runs the decode row fusions: the fused query norm
+    /// and ceil and the fused window write, prepared for `DECODE_BATCH`
+    /// rows of every phase. Decode steps run them; verify steps of at
+    /// most `DECODE_BATCH` rows with the `verify_row_fusions` option.
+    pub(crate) fn row_fusions(&self, phase: crate::program::Phase) -> bool {
+        match phase {
+            crate::program::Phase::Decode(_) => true,
+            crate::program::Phase::Verify { rows, .. } => {
+                self.verify_row_fusions && rows <= DECODE_BATCH
+            }
+            crate::program::Phase::Prefill { .. } => false,
+        }
     }
 
     /// The prepared row bound of a Flash TP4 decode-route family whose

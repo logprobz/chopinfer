@@ -131,7 +131,7 @@ impl Lowering<'_> {
         phase: Phase,
         layer: u32,
     ) -> Result<Option<Vec<Lowered>>, String> {
-        if matches!(phase, Phase::Decode(_)) {
+        if self.shape.row_fusions(phase) {
             return self.fused_query_norm(phase, layer);
         }
         let Some(glue) = &self.ops.glue else {

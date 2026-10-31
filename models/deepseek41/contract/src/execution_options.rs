@@ -20,6 +20,10 @@ pub const F32_ROW_TILES: &str = "f32_row_tiles";
 /// Candidate: Flash TP4 decode and verify all-reduces whose round no HC
 /// boundary defers take the phased F32 rounding entries.
 pub const PHASED_DECODE_REDUCE: &str = "phased_decode_reduce";
+/// Candidate: verify steps of at most `serving::DECODE_BATCH` rows run the
+/// decode steps' fused query norm and ceil and fused window norm, RoPE,
+/// ceil and store.
+pub const VERIFY_ROW_FUSIONS: &str = "verify_row_fusions";
 pub const DEFAULT_PLANS: usize = 16;
 pub const MAX_PLANS: usize = 64;
 /// The served warmup fits within 512 graph handles per rank, leaving room
@@ -35,9 +39,10 @@ pub struct Options {
     pub wide_verify: bool,
     pub f32_row_tiles: bool,
     pub phased_decode_reduce: bool,
+    pub verify_row_fusions: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 8] {
+pub fn declarations() -> [ModelOptionV1; 9] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -78,6 +83,10 @@ pub fn declarations() -> [ModelOptionV1; 8] {
                 minimum: 1,
                 maximum: i64::from(u32::MAX),
             },
+        ),
+        (
+            VERIFY_ROW_FUSIONS,
+            OptionDefinitionV1::Boolean { default: false },
         ),
         (WIDE_VERIFY, OptionDefinitionV1::Boolean { default: false }),
     ]
@@ -125,6 +134,9 @@ impl Options {
             wide_verify: values[WIDE_VERIFY].as_bool().expect("checked boolean"),
             f32_row_tiles: values[F32_ROW_TILES].as_bool().expect("checked boolean"),
             phased_decode_reduce: values[PHASED_DECODE_REDUCE]
+                .as_bool()
+                .expect("checked boolean"),
+            verify_row_fusions: values[VERIFY_ROW_FUSIONS]
                 .as_bool()
                 .expect("checked boolean"),
         })
@@ -188,6 +200,7 @@ mod tests {
             wide_verify: false,
             f32_row_tiles: false,
             phased_decode_reduce: false,
+            verify_row_fusions: false,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -206,6 +219,7 @@ mod tests {
             (WIDE_VERIFY.into(), "true".into()),
             (F32_ROW_TILES.into(), "true".into()),
             (PHASED_DECODE_REDUCE.into(), "true".into()),
+            (VERIFY_ROW_FUSIONS.into(), "true".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -219,6 +233,7 @@ mod tests {
                 wide_verify: true,
                 f32_row_tiles: true,
                 phased_decode_reduce: true,
+                verify_row_fusions: true,
             }
         );
         assert!(!declaration.is_qualified(&resolved));
@@ -238,6 +253,7 @@ mod tests {
             (WIDE_VERIFY, "1"),
             (F32_ROW_TILES, "1"),
             (PHASED_DECODE_REDUCE, "1"),
+            (VERIFY_ROW_FUSIONS, "1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),
         ] {

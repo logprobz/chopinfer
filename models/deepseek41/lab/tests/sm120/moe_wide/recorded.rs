@@ -121,6 +121,9 @@ pub struct Arm {
     pub scopes: Vec<(String, std::ops::Range<usize>)>,
     pub roles: BTreeMap<String, View>,
     pub mutable: Vec<View>,
+    /// The direct gate queue's strip tickets, which start zero and which
+    /// every complete launch leaves zero; no setup poisons them.
+    pub strip_tickets: Option<View>,
 }
 impl Arm {
     pub fn load(
@@ -157,6 +160,15 @@ impl Arm {
                 return Err("weight roles alias".into());
             }
         }
+        let persistent = match recorded.get("moe_strip_tickets") {
+            Some(span) => {
+                if number(&span["offset"])? != 0 {
+                    return Err("strip tickets do not start their buffer".into());
+                }
+                Some(number(&span["buffer"])?)
+            }
+            None => None,
+        };
         let mut mutable = Vec::new();
         for (owner, bytes) in doc["allocations"]
             .as_object()
@@ -172,7 +184,9 @@ impl Arm {
                 }
             } else {
                 let view = pool.zeros(bytes)?;
-                mutable.push(view);
+                if Some(owner) != persistent {
+                    mutable.push(view);
+                }
                 owners.insert(owner, view);
             }
         }
@@ -325,6 +339,7 @@ impl Arm {
         if scopes.iter().map(|(_, r)| r.len()).sum::<usize>() != calls.len() {
             return Err("stage scopes do not cover the calls once".into());
         }
+        let strip_tickets = roles.get("moe_strip_tickets").copied();
         Ok(Self {
             rows,
             prefix,
@@ -333,6 +348,7 @@ impl Arm {
             scopes,
             roles,
             mutable,
+            strip_tickets,
         })
     }
     /// The calls of the stage named `stage`.
@@ -371,9 +387,12 @@ const EXPERT_STAGES: [&str; 3] = ["ExpertsGateUp(0)", "ExpertsDown(0)", "RoutedS
 /// reference: gate/up chain and its ceil quantizer, down chain, routed sum)
 /// with the backbone bank's wide direct queues (the candidate: pack,
 /// absorbing gate queue and finisher, two-strip down queue, down finisher,
-/// all compiled at one capacity of at least `rows`). Two exports of the
-/// same selection would otherwise compare a path with itself. Pairs of 64
-/// rows or fewer compare revisions and are not checked here.
+/// all compiled at one capacity of at least `rows`), or the wide direct
+/// queues with the direct MoE knob candidates (the gate queue that finishes
+/// its strips runs without a finisher) against either reference. Two
+/// exports of the same selection would otherwise compare a path with
+/// itself. Pairs of 64 rows or fewer compare revisions and are not checked
+/// here.
 pub fn check_wide_pair(
     rows: u32,
     reference: &[Vec<&str>],
@@ -398,40 +417,49 @@ pub fn check_wide_pair(
         }
         _ => false,
     };
-    if !chain {
+    let Some(knobs) = wide_direct(rows, candidate) else {
         return Err(format!(
-            "{rows} rows: the reference does not run the 8192-row expert chains: {reference:?}"
+            "{rows} rows: the candidate does not run the wide direct queues: {candidate:?}"
+        ));
+    };
+    if !(chain || knobs && wide_direct(rows, reference) == Some(false)) {
+        return Err(format!(
+            "{rows} rows: the reference runs neither the 8192-row expert chains nor, against \
+             knob candidates, the wide direct queues: {reference:?}"
         ));
     }
-    let capacity = match candidate {
+    Ok(())
+}
+
+/// Whether `stages` run the wide direct queues at a capacity of at least
+/// `rows`: `Some(true)` with knob candidates, `Some(false)` without.
+fn wide_direct(rows: u32, stages: &[Vec<&str>]) -> Option<bool> {
+    let t = match stages {
         [gate, ..] => gate
             .first()
             .and_then(|s| s.strip_prefix("chop_deepseek41_moe_wide_t"))
             .and_then(|s| s.strip_suffix("_e384_k6_pack_v1"))
-            .and_then(|t| t.parse::<u32>().ok()),
-        _ => None,
+            .and_then(|t| t.parse::<u32>().ok())?,
+        _ => return None,
     };
-    let wide = capacity.is_some_and(|t| {
-        let bank = format!("t{t}_e384_k6_");
-        let named = |s: &str, prefix: &str, stage: &str| {
-            s.strip_prefix(prefix)
-                .and_then(|s| s.strip_prefix(bank.as_str()))
-                .is_some_and(|s| s.starts_with(stage))
-        };
-        t >= rows
-            && matches!(candidate, [gate, down, sum]
-                if matches!(gate.as_slice(), [_, g, f]
-                    if named(g, "chop_deepseek41_moe_absorb_lanes_", "gate_small")
-                        && named(f, "chop_deepseek41_moe_bandwidth_direct_", "gate_finish"))
-                && matches!(down.as_slice(), [d]
-                    if named(d, "chop_deepseek41_moe_strip2_", "down_small"))
-                && matches!(sum.as_slice(), [s]
-                    if named(s, "chop_deepseek41_moe_floor_", "down_finish")))
-    });
-    if !wide {
-        return Err(format!(
-            "{rows} rows: the candidate does not run the wide direct queues: {candidate:?}"
-        ));
-    }
-    Ok(())
+    let bank = format!("t{t}_e384_k6_");
+    let named = |s: &str, prefix: &str, stage: &str| {
+        s.strip_prefix(prefix)
+            .and_then(|s| s.strip_prefix(bank.as_str()))
+            .is_some_and(|s| s.starts_with(stage))
+    };
+    let knob = |s: &str| s.contains("_policy_") || s.contains("_gate_small_tickets");
+    let queues = t >= rows
+        && matches!(stages, [gate, down, sum]
+            if (matches!(gate.as_slice(), [_, g, f]
+                if named(g, "chop_deepseek41_moe_absorb_lanes_", "gate_small")
+                    && !g.contains("_gate_small_tickets")
+                    && named(f, "chop_deepseek41_moe_bandwidth_direct_", "gate_finish"))
+                || matches!(gate.as_slice(), [_, g]
+                    if named(g, "chop_deepseek41_moe_absorb_lanes_", "gate_small_tickets")))
+            && matches!(down.as_slice(), [d]
+                if named(d, "chop_deepseek41_moe_strip2_", "down_small"))
+            && matches!(sum.as_slice(), [s]
+                if named(s, "chop_deepseek41_moe_floor_", "down_finish")));
+    queues.then(|| stages.iter().flatten().any(|s| knob(s)))
 }

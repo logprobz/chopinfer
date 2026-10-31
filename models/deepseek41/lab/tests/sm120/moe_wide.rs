@@ -75,6 +75,38 @@ fn wide_pair_rejects_a_served_candidate() {
     short[0].pop();
     assert!(check(128, &chain, &short).is_err());
     check(64, &chain, &chain).unwrap();
+    // Knob candidates pair with either reference; a gate queue without a
+    // finisher must be the one that finishes its strips.
+    let tickets = vec![
+        vec![
+            "chop_deepseek41_moe_wide_t192_e384_k6_pack_v1",
+            "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_ticketsskr_scale_tiles_w1_v1",
+        ],
+        vec!["chop_deepseek41_moe_strip2_t192_e384_k6_down_small_policy_sk_scale_tiles_w1_v1"],
+        vec!["chop_deepseek41_moe_floor_t192_e384_k6_down_finish_policy_r_v1"],
+    ];
+    let mut policy = wide(
+        "chop_deepseek41_moe_absorb_lanes_t192_e384_k6_gate_small_policy_sk_v1",
+        "chop_deepseek41_moe_strip2_t192_e384_k6_down_small_policy_sk_v1",
+    );
+    policy[0][2] =
+        "chop_deepseek41_moe_bandwidth_direct_t192_e384_k6_gate_finish_loads_policy_r_v1";
+    let mut unfinished = policy.clone();
+    unfinished[0].pop();
+    let mut finished = tickets.clone();
+    finished[0].push("chop_deepseek41_moe_bandwidth_direct_t192_e384_k6_gate_finish_v1");
+    for rows in [65, 128, 192] {
+        for knobs in [&tickets, &policy] {
+            check(rows, &chain, knobs).unwrap();
+            check(rows, &raw, knobs).unwrap();
+            check(rows, &encoded, knobs).unwrap();
+            assert!(check(rows, knobs, knobs).is_err());
+            assert!(check(rows, knobs, &raw).is_err());
+        }
+        assert!(check(rows, &raw, &encoded).is_err());
+        assert!(check(rows, &chain, &unfinished).is_err());
+        assert!(check(rows, &chain, &finished).is_err());
+    }
 }
 
 /// Each lab twin keeps its served entry's ABI, launch bounds and call,

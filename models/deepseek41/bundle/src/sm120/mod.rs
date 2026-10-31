@@ -58,6 +58,7 @@ pub mod latent_decode;
 mod latent_query_serving;
 pub mod latent_scheduled;
 pub mod markov_row;
+pub mod markov_staged;
 pub mod markov_tiled;
 pub(crate) mod moe_floor;
 pub mod mxfp8_fold;
@@ -473,6 +474,25 @@ impl crate::Kernels {
             .flat_map(|rows| rows.map(|row| row..=row))
             .collect()
         })
+    }
+
+    /// The staged drafter Markov step (`dspark::markov_staged`, the
+    /// `dspark_markov_staged` candidate), base rows `base_stride` elements
+    /// apart.
+    pub(crate) fn dspark_markov_staged(
+        shape: &crate::shape::Shape,
+        op: &model_deepseek41_contract::own_ops::dspark::MarkovStep,
+        base_stride: u32,
+        need: kernel_core::backend::Need,
+    ) -> Result<
+        kernel_core::backend::Prepared<
+            model_deepseek41_contract::own_ops::dspark::MarkovStepBuffers<
+                kernel_core::backend::View,
+            >,
+        >,
+        kernel_core::backend::Refused,
+    > {
+        dspark::markov_staged(shape.geometry, op, base_stride, need)
     }
 
     pub(crate) fn drafter_f32_backend(
@@ -1003,6 +1023,7 @@ impl crate::Kernels {
             || cubin == confidence_parallel::CUBIN
             || cubin == markov_tiled::CUBIN
             || cubin == markov_row::CUBIN
+            || cubin == markov_staged::CUBIN
             || cubin == dspark_argmax::CUBIN
             || cubin == dspark_projection::CUBIN
             || cubin == dspark_noise::CUBIN
@@ -1055,6 +1076,7 @@ impl crate::Kernels {
                 .is_empty())
             && (cubin != f32_verify::CUBIN
                 || f32_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows))
+            && (cubin != markov_staged::CUBIN || shape.dspark_markov_staged)
             && (cubin != f32_verify_rows::CUBIN
                 || crate::ops::exact_f32::rows::admitted(shape).is_some())
             && (!ceil_split::is_cubin(cubin) || ceil_split::serves(shape.geometry, shape.ranks()))

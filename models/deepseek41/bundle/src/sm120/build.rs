@@ -90,6 +90,8 @@ mod latent_decode;
 mod latent_scheduled;
 #[allow(dead_code, reason = "the bundle dispatches the row step")]
 mod markov_row;
+#[allow(dead_code, reason = "the bundle dispatches the staged step")]
+mod markov_staged;
 mod markov_tiled;
 #[allow(dead_code)]
 mod norm_prefill;
@@ -263,6 +265,7 @@ pub fn selection(
     ));
     specs.push((markov_tiled::FAMILY, markov_tiled::cubin_spec(manifest)));
     specs.push((markov_row::FAMILY, markov_row::cubin_spec(manifest)));
+    specs.push((markov_staged::FAMILY, markov_staged::cubin_spec(manifest)));
     specs.push((dspark_argmax::FAMILY, dspark_argmax::cubin_spec()));
     specs.push((dspark_noise::FAMILY, dspark_noise::cubin_spec()));
     specs.push((

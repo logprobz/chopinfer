@@ -352,9 +352,7 @@ def snapshot(config, root=None, *, previous=None, only=None):
         if path is None or not path.exists():
             raise ValueError(f"lock entry {key}: missing input")
         members = {}
-        selected = scope(config, key)
-        if selected is None and path.is_dir() and old_entries.get(key, {}).get("path") == location:
-            selected = old_entries[key].get("scope")
+        selected = entry_scope(config, key, location, path, old_entries)
         for member in files(path, selected):
             sha = digest(member)
             relative = member.relative_to(path).as_posix() if path.is_dir() else "."
@@ -370,13 +368,43 @@ def snapshot(config, root=None, *, previous=None, only=None):
             "entries": entries, "objects": objects}
 
 
-def scoped_entries(config, previous, entries):
+def entry_scope(config, key, location, path, old_entries):
+    """The members directory input `key` at `path` pins: the declaration's
+    scope, else the scope its previous entry at the same location kept,
+    else (None) every file."""
+    selected = scope(config, key)
+    if selected is None and path.is_dir() and old_entries.get(key, {}).get("path") == location:
+        selected = old_entries[key].get("scope")
+    return selected
+
+
+def pinned_files(location, entry, root):
+    """The files lock entry `entry` at `location` pins, by its members, as
+    resolved paths; none where the location does not resolve on this host."""
+    from common import declared_path
+    path = declared_path(location, root)
+    if path is None or not isinstance(entry, dict) or not isinstance(entry.get("members"), dict):
+        return set()
+    return {(path if member == "." else path / member).resolve() for member in entry["members"]}
+
+
+def proof_bound(key):
+    """Whether a runner proof in `snapshot` verifies or reads input `key`."""
+    return key.startswith(("reference:", "workload:")) or key in ("media_capture", "media_manifest") \
+        or key in PROOF_INPUTS
+
+
+def scoped_entries(config, previous, entries, root=None):
     """The lock keys `adopt --entry` refreshes, checked before any input is
-    read: each of `entries` must be an input `config` declares that no
-    runner proof binds (a reference, a workload, a media reference's
-    captures or one of `PROOF_INPUTS`), every entry declaring the same path
-    as a named one must be named too, and the current lock `previous` must
-    exist."""
+    read. Each of `entries` must be an input `config` declares, and the
+    current lock `previous` must exist. Every other entry that pins a file
+    a named entry pins (the same declared location, a file inside a named
+    directory, or a directory holding a named file) must be named too, so a
+    lock never pins two digests for one file. No named or overlapping entry
+    may be bound by a runner proof (`proof_bound`): only a full adopt
+    repins those."""
+    from common import declared_path
+    root = root_path(root)
     declared = sources(config)
     names = set(entries)
     unknown = sorted(names - set(declared))
@@ -384,15 +412,28 @@ def scoped_entries(config, previous, entries):
         raise ValueError(f"adopt --entry: {', '.join(unknown)}: not a declared lock entry")
     if previous is None:
         raise ValueError("adopt --entry: a scoped adopt needs the current lock")
-    proved = sorted(key for key in names if key.startswith(("reference:", "workload:"))
-                    or key in ("media_capture", "media_manifest") or key in PROOF_INPUTS)
+    proved = sorted(key for key in names if proof_bound(key))
     if proved:
         raise ValueError(f"adopt --entry: {', '.join(proved)}: a runner proof binds it, so only a full adopt "
                          f"repins it")
-    shared = sorted(key for key, location in declared.items()
-                    if key not in names and any(location == declared[name] for name in names))
+    old_entries = previous.get("entries", {})
+    # The files the named entries pin now and would pin after the snapshot.
+    named = set()
+    for name in names:
+        named |= pinned_files(declared[name], old_entries.get(name), root)
+        path = declared_path(declared[name], root)
+        if path is not None and path.exists():
+            selected = entry_scope(config, name, declared[name], path, old_entries)
+            named |= {member.resolve() for member in files(path, selected)}
+    shared = sorted(key for key, location in declared.items() if key not in names and (
+        any(location == declared[name] for name in names)
+        or pinned_files(location, old_entries.get(key), root) & named))
+    proved = [key for key in shared if proof_bound(key)]
+    if proved:
+        raise ValueError(f"adopt --entry: {', '.join(proved)}: pins a file of a named entry and a runner proof "
+                         f"binds it, so only a full adopt repins them")
     if shared:
-        raise ValueError(f"adopt --entry: {', '.join(shared)}: declares the path of a named entry; name it too")
+        raise ValueError(f"adopt --entry: {', '.join(shared)}: pins a file a named entry pins; name it too")
     return names
 
 
@@ -414,7 +455,7 @@ def adoption(config, previous=None, root=None, entries=None):
     entries are snapshot. Every other entry `previous` holds stays whole,
     with the objects it pins, so no other input is read, and the lock is a
     full adoption's whenever only the named inputs changed."""
-    only = None if entries is None else scoped_entries(config, previous, entries)
+    only = None if entries is None else scoped_entries(config, previous, entries, root)
     value = snapshot(config, root, previous=previous, only=only)
     if previous is None:
         return value

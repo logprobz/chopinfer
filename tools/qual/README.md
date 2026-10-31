@@ -198,10 +198,12 @@ changed). A configuration's entries are edited in the model lock;
 entry, with the objects it pins, as the lock holds it, so it reads no other
 input; when only the named inputs changed it writes what a full `adopt`
 writes. It needs the current lock and refuses a name the declaration does
-not declare. It also refuses an input a runner proof binds (a reference, a
-workload, a media reference's captures, and the preprocessing and
-mixed-generation proof inputs), which only a full `adopt` repins, and a
-selection that names only some of the entries declaring one path. The lock
+not declare. It also refuses a selection that leaves out an entry pinning a file a
+named entry pins (the same path, or a file inside a named directory, or a
+directory holding a named file), and an input a runner proof binds (a
+reference, a workload, a media reference's captures, and the
+preprocessing and mixed-generation proof inputs), named or overlapping;
+only a full `adopt` repins those. The lock
 digest and `--dry-run` rules are the same. An external variant's lock is
 adopted whole.
 

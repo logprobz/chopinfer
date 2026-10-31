@@ -24,6 +24,20 @@ pub fn arms(
     } else {
         None
     };
+    sampled(
+        session,
+        count,
+        |stream| eviction.as_ref().map_or(Ok(()), |e| e.run(stream)),
+        work,
+    )
+}
+/// `arms` with `evict` issued before every timed sample.
+pub fn sampled(
+    session: &Session,
+    count: usize,
+    evict: impl Fn(&Stream) -> LabResult<()>,
+    work: impl Fn(usize, &Stream) -> LabResult<()>,
+) -> LabResult<serde_json::Value> {
     let start = session.context.timed_event().map_err(|e| e.to_string())?;
     let end = session.context.timed_event().map_err(|e| e.to_string())?;
     for _ in 0..3 {
@@ -39,9 +53,7 @@ pub fn arms(
         for sample in 0..3 {
             for step in 0..count {
                 let arm = (round + sample + step) % count;
-                if let Some(e) = &eviction {
-                    e.run(&session.stream)?;
-                }
+                evict(&session.stream)?;
                 start.record(&session.stream).map_err(|e| e.to_string())?;
                 for _ in 0..1 {
                     work(arm, &session.stream)?;

@@ -294,6 +294,9 @@ Sampled drafts use the target sampler's Philox noise at the draft position's
 generated index. The twelve-item forward limit splits larger batches into
 near-equal chunks, for example 16 as 8+8. Target outputs do not depend on
 this split. Wider admitted verify steps run eagerly above the graph budget.
+The route sweep `tp4-dspark-rows192` serves the profile at the package's
+192 verify rows (`--speculative-rows 192`), so its envelope adds every eager
+verify width from 65 to 192 rows.
 
 Prefill commit projections are batched across prompts. Undrafted pure
 decode joins status once and submits private sampling before collecting it

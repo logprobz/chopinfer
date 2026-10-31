@@ -1,9 +1,12 @@
 # Served route gaps. Remove each entry when its tracked range is qualified.
 # The backbone router finish covers Decode-2/4 and Verify-2..32; its eight
 # unfused-stage exceptions are retired. HC and drafter entries remain separate.
+# `tp4-dspark*` also names tp4-dspark-rows192, the profile at the package's 192
+# verify rows (fake_host_tests/conformance/wide.rs), whose envelope repeats
+# the profile's shapes.
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "decode"
 family = "latent_sources"
 entry = "latent_sources/cache-fallback/chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_decode_heads_v1"
@@ -13,7 +16,7 @@ reason = "The selected-key cache covers Decode-1/2/4/8; other decode widths reta
 task = "LATENT-source-range"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "decode"
 family = "latent_sources"
 entry = "latent_sources/cache-fallback/chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_decode_p32_heads_v1"
@@ -23,7 +26,7 @@ reason = "The selected-key cache covers Decode-1/2/4/8; other decode widths reta
 task = "LATENT-source-range"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "decode"
 family = "latent_sources"
 entry = "latent_sources/cache-fallback/chop_latent_sources_deepseek41_h16_d512_window_normalized_s1_r64_decode_heads_v1"
@@ -33,7 +36,7 @@ reason = "The selected-key cache covers Decode-1/2/4/8; other decode widths reta
 task = "LATENT-source-range"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "decode"
 family = "rmsnorm_quantize"
 entry = "rmsnorm_quantize/fallback/chop_norm_quantize_deepseek41_input_v1"
@@ -43,7 +46,7 @@ reason = "Cached input and query norms cover measured row buckets; intervening d
 task = "NORM-cached-range"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "decode"
 family = "rmsnorm_quantize"
 entry = "rmsnorm_quantize/fallback/chop_norm_quantize_deepseek41_query_v1"
@@ -53,7 +56,7 @@ reason = "Cached input and query norms cover measured row buckets; intervening d
 task = "NORM-cached-range"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_prefill_tma_v1_admit_v1"
@@ -63,7 +66,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_prefill_tma_v1_packed_v1"
@@ -73,7 +76,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_prefill_tma_v1_split_full_v1_admit_v1"
@@ -83,7 +86,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_prefill_tma_v1_split_full_v1_packed_v1"
@@ -93,7 +96,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_prefill_tma_v1_split_tail_v1_packed_v1"
@@ -103,7 +106,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_prefill_tma_v1_admit_v1"
@@ -113,7 +116,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_prefill_tma_v1_packed_v1"
@@ -123,7 +126,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_prefill_tma_v1_split_full_v1_admit_v1"
@@ -133,7 +136,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_prefill_tma_v1_split_full_v1_packed_v1"
@@ -143,7 +146,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_prefill_tma_v1_split_tail_v1_packed_v1"
@@ -153,7 +156,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_prefill_tma_v1_admit_v1"
@@ -163,7 +166,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_prefill_tma_v1_packed_v1"
@@ -173,7 +176,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_prefill_tma_v1_split_full_v1_admit_v1"
@@ -183,7 +186,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_prefill_tma_v1_split_full_v1_packed_v1"
@@ -193,7 +196,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_prefill_tma_v1_split_tail_v1_packed_v1"
@@ -203,7 +206,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_prefill_tma_v1_admit_v1"
@@ -213,7 +216,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_prefill_tma_v1_packed_v1"
@@ -223,7 +226,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_prefill_tma_v1_split_full_v1_admit_v1"
@@ -233,7 +236,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_prefill_tma_v1_split_full_v1_packed_v1"
@@ -243,7 +246,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_prefill_tma_v1_split_tail_v1_packed_v1"
@@ -253,7 +256,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_prefill_tma_v1_admit_v1"
@@ -263,7 +266,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_prefill_tma_v1_packed_v1"
@@ -273,7 +276,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_prefill_tma_v1_split_full_v1_admit_v1"
@@ -283,7 +286,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_prefill_tma_v1_split_full_v1_packed_v1"
@@ -293,7 +296,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_prefill_tma_v1_split_tail_v1_packed_v1"
@@ -303,7 +306,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_prefill_tma_v1_admit_v1"
@@ -313,7 +316,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_prefill_tma_v1_packed_v1"
@@ -323,7 +326,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_prefill_tma_v1_split_full_v1_admit_v1"
@@ -333,7 +336,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_prefill_tma_v1_split_full_v1_packed_v1"
@@ -343,7 +346,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_prefill_tma_v1_split_tail_v1_packed_v1"
@@ -353,7 +356,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_prefill_tma_v1_admit_v1"
@@ -363,7 +366,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_prefill_tma_v1_packed_v1"
@@ -373,7 +376,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_prefill_tma_v1_split_full_v1_admit_v1"
@@ -383,7 +386,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_prefill_tma_v1_split_full_v1_packed_v1"
@@ -393,7 +396,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_prefill_tma_v1_split_tail_v1_packed_v1"
@@ -403,7 +406,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_prefill_tma_v1_admit_v1"
@@ -413,7 +416,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_prefill_tma_v1_packed_v1"
@@ -423,7 +426,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_prefill_tma_v1_split_full_v1_admit_v1"
@@ -433,7 +436,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_prefill_tma_v1_split_full_v1_packed_v1"
@@ -443,7 +446,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_prefill_tma_v1_split_tail_v1_packed_v1"
@@ -453,7 +456,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_prefill_tma_v1_admit_v1"
@@ -463,7 +466,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_prefill_tma_v1_packed_v1"
@@ -473,7 +476,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_prefill_tma_v1_split_full_v1_admit_v1"
@@ -483,7 +486,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_prefill_tma_v1_split_full_v1_packed_v1"
@@ -493,7 +496,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_prefill"
 entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_prefill_tma_v1_split_tail_v1_packed_v1"
@@ -503,7 +506,7 @@ reason = "Compact, matrix and TMA-scale tiles are qualified at discrete rows; th
 task = "P4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "prefill_norm"
 entry = "prefill_norm/unfused/chop_row_rmsnorm_deepseek41_w5120_v1"
@@ -513,7 +516,7 @@ reason = "The fused prefill norm is qualified at 8192 and at 64 plus multiples o
 task = "NORM-prefill-range"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "sinkhorn_mix"
 entry = "sinkhorn_mix/prefill-fallback/chop_sinkhorn_hc_deepseek41_lagged_mix_collapse_tiled_r8_v1"
@@ -523,7 +526,7 @@ reason = "The measured prefill mixer replaces the ordinary mixer only at its reg
 task = "HC-prefill-range"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "sinkhorn_mix"
 entry = "sinkhorn_mix/prefill-fallback/chop_sinkhorn_hc_deepseek41_lagged_mix_collapse_v1"
@@ -533,7 +536,7 @@ reason = "The measured prefill mixer replaces the ordinary mixer only at its reg
 task = "HC-prefill-range"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "verify"
 family = "latent_sources"
 entry = "latent_sources/cache-fallback/chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_verify_heads_v1"
@@ -543,7 +546,7 @@ reason = "The selected-key cache covers Verify-4/6/16 and 32..64; intervening ve
 task = "LATENT-source-range"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "verify"
 family = "latent_sources"
 entry = "latent_sources/cache-fallback/chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_verify_p32_heads_v1"
@@ -553,7 +556,7 @@ reason = "The selected-key cache covers Verify-4/6/16 and 32..64; intervening ve
 task = "LATENT-source-range"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "verify"
 family = "latent_sources"
 entry = "latent_sources/cache-fallback/chop_latent_sources_deepseek41_h16_d512_window_normalized_s1_r64_verify_heads_v1"
@@ -563,7 +566,7 @@ reason = "The selected-key cache covers Verify-4/6/16 and 32..64; intervening ve
 task = "LATENT-source-range"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "decode"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1"
@@ -573,7 +576,7 @@ reason = "head_last::head admits rows 1, 8 and 32, and projection_reuse::head ad
 task = "ODR-HEAD-decode-2-4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "decode"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_reduce_v1"
@@ -583,7 +586,7 @@ reason = "head_last::head admits rows 1, 8 and 32, and projection_reuse::head ad
 task = "ODR-HEAD-decode-2-4"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "decode"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_rows_v1"
@@ -593,7 +596,7 @@ reason = "head_last::head admits rows 1, 8 and 32, and projection_reuse::head ad
 task = "ODR-HEAD-decode-2-4"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "verify"
 family = "sinkhorn_finish_norm"
 entry = "sinkhorn_finish_norm/fusion-fallback/chop_deepseek41_hc_finish_norm_w32_v1"
@@ -603,7 +606,7 @@ reason = "hc_cols::buckets replaces the pair at 1, 8, 16, 32 and larger widths, 
 task = "HC-cols-verify-4-12"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "verify"
 family = "sinkhorn_finish_norm"
 entry = "sinkhorn_finish_norm/fusion-fallback/chop_deepseek41_hc_round_chain_w4_v1"
@@ -613,7 +616,7 @@ reason = "hc_cols::buckets replaces the pair at 1, 8, 16, 32 and larger widths, 
 task = "HC-cols-verify-4-12"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "verify"
 family = "sinkhorn_finish_norm"
 entry = "sinkhorn_finish_norm/fusion-fallback/chop_deepseek41_hc_round_chain_w8_v1"
@@ -623,7 +626,7 @@ reason = "hc_cols::buckets replaces the pair at 1, 8, 16, 32 and larger widths, 
 task = "HC-cols-verify-4-12"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "verify"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1"
@@ -633,7 +636,7 @@ reason = "head_last::head admits 1, 8 and 32 and projection_reuse::head admits 9
 task = "ODR-HEAD-verify-tails"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "verify"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_reduce_v1"
@@ -643,7 +646,7 @@ reason = "head_last::head admits 1, 8 and 32 and projection_reuse::head admits 9
 task = "ODR-HEAD-verify-tails"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "verify"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_rows_v1"
@@ -653,7 +656,7 @@ reason = "head_last::head admits 1, 8 and 32 and projection_reuse::head admits 9
 task = "ODR-HEAD-verify-tails"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "verify"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_dspark_router_f32_v1_cached_decode_v1"
@@ -663,7 +666,7 @@ reason = "dspark_projection::route admits five-row drafter multiples from 35 thr
 task = "ODR-DRAFTER-router-verify-tails"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "verify"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_dspark_router_f32_v1_cached_reduce_v1"
@@ -673,7 +676,7 @@ reason = "dspark_projection::route admits five-row drafter multiples from 35 thr
 task = "ODR-DRAFTER-router-verify-tails"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "verify"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_dspark_router_f32_v1_cached_rows_v1"
@@ -683,7 +686,7 @@ reason = "dspark_projection::route admits five-row drafter multiples from 35 thr
 task = "ODR-DRAFTER-router-verify-tails"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n1024_k4096_g2_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_admit_v1"
@@ -693,7 +696,7 @@ reason = "Known-gap ratchet: dense::project_with uses short-prefill entries thro
 task = "MXFP8-fold-short-prefill"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n1024_k4096_g2_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_admit_v1"
@@ -703,7 +706,7 @@ reason = "Known-gap ratchet: execute::skip aligns the final dependency cone to 6
 task = "MXFP8-fold-cone-tails"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n1024_k4096_g2_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_packed_v1"
@@ -713,7 +716,7 @@ reason = "Known-gap ratchet: dense::project_with uses short-prefill entries thro
 task = "MXFP8-fold-short-prefill"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n1024_k4096_g2_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_packed_v1"
@@ -723,7 +726,7 @@ reason = "Known-gap ratchet: execute::skip aligns the final dependency cone to 6
 task = "MXFP8-fold-cone-tails"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n1280_k5120_g1_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_admit_v1"
@@ -733,7 +736,7 @@ reason = "Known-gap ratchet: dense::project_with uses short-prefill entries thro
 task = "MXFP8-fold-short-prefill"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n1280_k5120_g1_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_admit_v1"
@@ -743,7 +746,7 @@ reason = "Known-gap ratchet: execute::skip aligns the final dependency cone to 6
 task = "MXFP8-fold-cone-tails"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n1280_k5120_g1_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_packed_v1"
@@ -753,7 +756,7 @@ reason = "Known-gap ratchet: dense::project_with uses short-prefill entries thro
 task = "MXFP8-fold-short-prefill"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n1280_k5120_g1_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_packed_v1"
@@ -763,7 +766,7 @@ reason = "Known-gap ratchet: execute::skip aligns the final dependency cone to 6
 task = "MXFP8-fold-cone-tails"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n5120_k2048_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w1f0_v1_admit_v1"
@@ -773,7 +776,7 @@ reason = "Known-gap ratchet: dense::project_with uses short-prefill entries thro
 task = "MXFP8-fold-short-prefill"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n5120_k2048_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w1f0_v1_admit_v1"
@@ -783,7 +786,7 @@ reason = "Known-gap ratchet: execute::skip aligns the final dependency cone to 6
 task = "MXFP8-fold-cone-tails"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n5120_k2048_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w1f0_v1_packed_v1"
@@ -793,7 +796,7 @@ reason = "Known-gap ratchet: dense::project_with uses short-prefill entries thro
 task = "MXFP8-fold-short-prefill"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n5120_k2048_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w1f0_v1_packed_v1"
@@ -803,7 +806,7 @@ reason = "Known-gap ratchet: execute::skip aligns the final dependency cone to 6
 task = "MXFP8-fold-cone-tails"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w1f0_v1_admit_v1"
@@ -813,7 +816,7 @@ reason = "Known-gap ratchet: dense::project_with uses short-prefill entries thro
 task = "MXFP8-fold-short-prefill"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w1f0_v1_admit_v1"
@@ -823,7 +826,7 @@ reason = "Known-gap ratchet: execute::skip aligns the final dependency cone to 6
 task = "MXFP8-fold-cone-tails"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w1f0_v1_packed_v1"
@@ -833,7 +836,7 @@ reason = "Known-gap ratchet: dense::project_with uses short-prefill entries thro
 task = "MXFP8-fold-short-prefill"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w1f0_v1_packed_v1"
@@ -843,7 +846,7 @@ reason = "Known-gap ratchet: execute::skip aligns the final dependency cone to 6
 task = "MXFP8-fold-cone-tails"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n5120_k2048_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1"
@@ -853,7 +856,7 @@ reason = "Known-gap ratchet: dense::project_with uses short-prefill entries thro
 task = "MXFP8-fold-short-prefill"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n5120_k2048_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1"
@@ -863,7 +866,7 @@ reason = "Known-gap ratchet: execute::skip aligns the final dependency cone to 6
 task = "MXFP8-fold-cone-tails"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n5120_k2048_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1"
@@ -873,7 +876,7 @@ reason = "Known-gap ratchet: dense::project_with uses short-prefill entries thro
 task = "MXFP8-fold-short-prefill"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n5120_k2048_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1"
@@ -883,7 +886,7 @@ reason = "Known-gap ratchet: execute::skip aligns the final dependency cone to 6
 task = "MXFP8-fold-cone-tails"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1"
@@ -893,7 +896,7 @@ reason = "Known-gap ratchet: dense::project_with uses short-prefill entries thro
 task = "MXFP8-fold-short-prefill"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1"
@@ -903,7 +906,7 @@ reason = "Known-gap ratchet: execute::skip aligns the final dependency cone to 6
 task = "MXFP8-fold-cone-tails"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1"
@@ -913,7 +916,7 @@ reason = "Known-gap ratchet: dense::project_with uses short-prefill entries thro
 task = "MXFP8-fold-short-prefill"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1"
@@ -923,7 +926,7 @@ reason = "Known-gap ratchet: execute::skip aligns the final dependency cone to 6
 task = "MXFP8-fold-cone-tails"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n16r1s2w0f1_v1"
@@ -933,7 +936,7 @@ reason = "Known-gap ratchet: dense::project_with uses short-prefill entries thro
 task = "MXFP8-fold-short-prefill"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n16r1s2w0f1_v1"
@@ -943,7 +946,7 @@ reason = "Known-gap ratchet: execute::skip aligns the final dependency cone to 6
 task = "MXFP8-fold-cone-tails"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n16r1s2w0f1_v1_admit_v1"
@@ -953,7 +956,7 @@ reason = "Known-gap ratchet: dense::project_with uses short-prefill entries thro
 task = "MXFP8-fold-short-prefill"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n16r1s2w0f1_v1_admit_v1"
@@ -963,7 +966,7 @@ reason = "Known-gap ratchet: execute::skip aligns the final dependency cone to 6
 task = "MXFP8-fold-cone-tails"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n16r1s2w0f1_v1_partials_v1_packed_v1"
@@ -973,7 +976,7 @@ reason = "Known-gap ratchet: dense::project_with uses short-prefill entries thro
 task = "MXFP8-fold-short-prefill"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n16r1s2w0f1_v1_partials_v1_packed_v1"
@@ -983,7 +986,7 @@ reason = "Known-gap ratchet: execute::skip aligns the final dependency cone to 6
 task = "MXFP8-fold-cone-tails"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1"
@@ -993,7 +996,7 @@ reason = "Known-gap ratchet: dense::project_with selects short-prefill entries o
 task = "MXFP8-fold-middle-prefill"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1"
@@ -1003,7 +1006,7 @@ reason = "Known-gap ratchet: dense::project_with selects short-prefill entries o
 task = "MXFP8-fold-middle-prefill"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1"
@@ -1013,7 +1016,7 @@ reason = "Known-gap ratchet: dense::project_with selects short-prefill entries o
 task = "MXFP8-fold-middle-prefill"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1"
@@ -1023,7 +1026,7 @@ reason = "Known-gap ratchet: dense::project_with selects short-prefill entries o
 task = "MXFP8-fold-middle-prefill"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "sinkhorn_mix"
 entry = "sinkhorn_mix/prefill-fallback/chop_sinkhorn_hc_deepseek41_lagged_mix_collapse_split_v1"
@@ -1113,7 +1116,7 @@ reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends retain a separat
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1"
@@ -1123,7 +1126,7 @@ reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends align in global 
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1"
@@ -1133,7 +1136,7 @@ reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends align in global 
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1"
@@ -1143,7 +1146,7 @@ reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends align in global 
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1"
@@ -1153,7 +1156,7 @@ reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends align in global 
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n5120_k2048_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1"
@@ -1163,7 +1166,7 @@ reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends retain a separat
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n5120_k2048_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1"
@@ -1173,7 +1176,7 @@ reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends retain a separat
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1"
@@ -1183,7 +1186,7 @@ reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends retain a separat
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n8192_k1280_g1_single_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1"
@@ -1196,7 +1199,7 @@ task = "MXFP8-fold-packed-cones"
 # The complete 36-phase CPU rotation observes every listed profile/entry/row pair.
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "verify"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_dspark_router_f32_v1_cached_decode_v1"
@@ -1206,7 +1209,7 @@ reason = "Pre-existing at the refactor freeze in allocated verify: 2 items reser
 task = "C6b-allocated-router-reuse"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "verify"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_dspark_router_f32_v1_cached_reduce_v1"
@@ -1216,7 +1219,7 @@ reason = "Pre-existing at the refactor freeze in allocated verify: 2 items reser
 task = "C6b-allocated-router-reuse"
 
 [[allow]]
-profiles = ["tp4-dspark"]
+profiles = ["tp4-dspark*"]
 phase = "verify"
 family = "f32_reuse"
 entry = "f32_reuse/reuse-fallback/chop_deepseek41_dspark_router_f32_v1_cached_rows_v1"
@@ -1226,7 +1229,7 @@ reason = "Pre-existing at the refactor freeze in allocated verify: 2 items reser
 task = "C6b-allocated-router-reuse"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n1024_k4096_g2_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_admit_v1"
@@ -1236,7 +1239,7 @@ reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends retain a separat
 task = "MXFP8-fold-packed-cones"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark"]
+profiles = ["tp4-ar", "tp4-dspark*"]
 phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n1024_k4096_g2_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_packed_v1"
@@ -1244,3 +1247,126 @@ symbol = "chop_deepseek41_dense_decode_n1024_k4096_g2_single_e4m3_ue8m0_k32x4_f3
 rows = [[64, 64], [128, 128], [193, 250], [257, 8192]]
 reason = "Known-gap ratchet: packed-2 and packed-32 prompt ends retain a separate aligned 64-row output cone at these exact outer widths. The N1024/K4096/G2 prefetch admit and packed stages serve inner width 64 outside the reuse range of 17 through 32, retaining reuse-fallback metadata. Qualify this packed-cone reuse range and remove this exception"
 task = "MXFP8-fold-packed-cones"
+
+# Verify steps above the profile's 64-row budget, reached only at the
+# package's 192 verify rows. Each family's wide route replaces its entries.
+
+[[allow]]
+profiles = ["tp4-dspark-rows192"]
+phase = "verify"
+family = "f32_reuse"
+entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_split_prepare_v2"
+symbol = "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_split_prepare_v2"
+rows = [[65, 192]]
+reason = "The cached verify head serves at most 64 rows; eager verify steps of 65 to 192 rows at the package's verify rows keep the general split head"
+task = "WIDE-VERIFY-head"
+
+[[allow]]
+profiles = ["tp4-dspark-rows192"]
+phase = "verify"
+family = "f32_reuse"
+entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_split_v2"
+symbol = "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_split_v2"
+rows = [[65, 192]]
+reason = "The cached verify head serves at most 64 rows; eager verify steps of 65 to 192 rows at the package's verify rows keep the general split head"
+task = "WIDE-VERIFY-head"
+
+[[allow]]
+profiles = ["tp4-dspark-rows192"]
+phase = "verify"
+family = "latent_sources"
+entry = "latent_sources/cache-fallback/chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_verify_heads_v1"
+symbol = "chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_verify_heads_v1"
+rows = [[65, 192]]
+reason = "The selected-key cache holds at most 64 verify rows (latent_cache::MAX_ROWS); eager verify steps of 65 to 192 rows at the package's verify rows read their sources directly"
+task = "WIDE-VERIFY-latent-cache"
+
+[[allow]]
+profiles = ["tp4-dspark-rows192"]
+phase = "verify"
+family = "latent_sources"
+entry = "latent_sources/cache-fallback/chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_verify_p32_heads_v1"
+symbol = "chop_latent_sources_deepseek41_h16_d512_mixed_normalized_s1_r64_verify_p32_heads_v1"
+rows = [[65, 192]]
+reason = "The selected-key cache holds at most 64 verify rows (latent_cache::MAX_ROWS); eager verify steps of 65 to 192 rows at the package's verify rows read their sources directly"
+task = "WIDE-VERIFY-latent-cache"
+
+[[allow]]
+profiles = ["tp4-dspark-rows192"]
+phase = "verify"
+family = "latent_sources"
+entry = "latent_sources/cache-fallback/chop_latent_sources_deepseek41_h16_d512_window_normalized_s1_r64_verify_heads_v1"
+symbol = "chop_latent_sources_deepseek41_h16_d512_window_normalized_s1_r64_verify_heads_v1"
+rows = [[65, 192]]
+reason = "The selected-key cache holds at most 64 verify rows (latent_cache::MAX_ROWS); eager verify steps of 65 to 192 rows at the package's verify rows read their sources directly"
+task = "WIDE-VERIFY-latent-cache"
+
+[[allow]]
+profiles = ["tp4-dspark-rows192"]
+phase = "verify"
+family = "moe_router_finish"
+entry = "moe_router_finish/unfused/chop_moe_sqrt_softplus_row_bias_route_count_e384l384k6_t8192_p64_v1"
+symbol = "chop_moe_sqrt_softplus_row_bias_route_count_e384l384k6_t8192_p64_v1"
+rows = [[65, 192]]
+reason = "Direct MoE buckets fuse the router finish through 64 verify rows; eager verify steps of 65 to 192 rows at the package's verify rows run the unfused router before the 8192-row expert chains"
+task = "WIDE-VERIFY-moe"
+
+[[allow]]
+profiles = ["tp4-dspark-rows192"]
+phase = "verify"
+family = "moe_router_finish"
+entry = "moe_router_finish/unfused/chop_moe_sqrt_softplus_row_bias_route_scatter_e384l384k6_t8192_p64_v1"
+symbol = "chop_moe_sqrt_softplus_row_bias_route_scatter_e384l384k6_t8192_p64_v1"
+rows = [[65, 192]]
+reason = "Direct MoE buckets fuse the router finish through 64 verify rows; eager verify steps of 65 to 192 rows at the package's verify rows run the unfused router before the 8192-row expert chains"
+task = "WIDE-VERIFY-moe"
+
+[[allow]]
+profiles = ["tp4-dspark-rows192"]
+phase = "verify"
+family = "moe_router_finish"
+entry = "moe_router_finish/unfused/chop_moe_sqrt_softplus_row_bias_route_select_e384l384k6_t8192_p64_v1"
+symbol = "chop_moe_sqrt_softplus_row_bias_route_select_e384l384k6_t8192_p64_v1"
+rows = [[65, 192]]
+reason = "Direct MoE buckets fuse the router finish through 64 verify rows; eager verify steps of 65 to 192 rows at the package's verify rows run the unfused router before the 8192-row expert chains"
+task = "WIDE-VERIFY-moe"
+
+[[allow]]
+profiles = ["tp4-dspark-rows192"]
+phase = "verify"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1"
+symbol = "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1"
+rows = [[65, 192]]
+reason = "Dense verify folds are bucketed through 64 rows; eager verify steps of 65 to 192 rows at the package's verify rows take the 8192-row stream fold"
+task = "WIDE-VERIFY-dense-folds"
+
+[[allow]]
+profiles = ["tp4-dspark-rows192"]
+phase = "verify"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1"
+symbol = "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1"
+rows = [[65, 192]]
+reason = "Dense verify folds are bucketed through 64 rows; eager verify steps of 65 to 192 rows at the package's verify rows take the 8192-row stream fold"
+task = "WIDE-VERIFY-dense-folds"
+
+[[allow]]
+profiles = ["tp4-dspark-rows192"]
+phase = "verify"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1"
+symbol = "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1"
+rows = [[65, 192]]
+reason = "Dense verify folds are bucketed through 64 rows; eager verify steps of 65 to 192 rows at the package's verify rows take the 8192-row stream fold"
+task = "WIDE-VERIFY-dense-folds"
+
+[[allow]]
+profiles = ["tp4-dspark-rows192"]
+phase = "verify"
+family = "mxfp8_fold"
+entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1"
+symbol = "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1"
+rows = [[65, 192]]
+reason = "Dense verify folds are bucketed through 64 rows; eager verify steps of 65 to 192 rows at the package's verify rows take the 8192-row stream fold"
+task = "WIDE-VERIFY-dense-folds"

@@ -810,6 +810,99 @@ fn a_client_stop_inside_a_pending_argument_delivers_the_complete_ones() {
     }
 }
 
+/// Generation the token budget ends after or inside a call finishes
+/// `Length`, through the shared parser and through the format's export
+/// alike, at every split, and the call keeps only its complete parameters;
+/// an engine stop there finishes `ToolCalls`, and without a call `Stop`.
+#[test]
+fn a_length_cut_after_or_inside_a_call_finishes_length() {
+    use runtime_frontend::test_support::documents::PairedDecoderV1;
+    for fixture in fixtures() {
+        let parser = &fixture.parser;
+        let after = format!("answer{}", fixture.tool_block("lookup", "city", "Paris"));
+        let inside = format!(
+            "answer{}{}{}city{}{}Pa",
+            fixture.call_open("lookup"),
+            fixture.argument("days", "3"),
+            parser.parameter_open,
+            parser.parameter_name_close,
+            parser.parameter_value_open,
+        );
+        for (source, arguments) in [
+            (after.as_str(), r#"{"city": "Paris"}"#),
+            (inside.as_str(), r#"{"days": "3"}"#),
+            ("answer", ""),
+        ] {
+            for (length, reason) in [
+                (true, CompletionFinishV1::Length),
+                (
+                    false,
+                    if arguments.is_empty() {
+                        CompletionFinishV1::Stop
+                    } else {
+                        CompletionFinishV1::ToolCalls
+                    },
+                ),
+            ] {
+                for split in 0..=source.len() {
+                    let label =
+                        format!("{}: {source:?} length {length} split {split}", fixture.name);
+                    let mut decoder = PairedDecoderV1::new(
+                        Arc::clone(&fixture.descriptor),
+                        PromptModeV1::Chat,
+                        DecoderLimitsV1::declared(&fixture.descriptor),
+                    );
+                    let mut updates = Vec::new();
+                    let bytes = source.as_bytes();
+                    for (ordinal, part) in [&bytes[..split], &bytes[split..]]
+                        .into_iter()
+                        .filter(|part| !part.is_empty())
+                        .enumerate()
+                    {
+                        updates.extend(
+                            decoder
+                                .push(GeneratedTokenV1::new(ordinal as u64, 200, part.to_vec()))
+                                .unwrap_or_else(|error| panic!("{label}: {error}")),
+                        );
+                    }
+                    updates.extend(
+                        if length {
+                            decoder.finish_length()
+                        } else {
+                            decoder.finish_stop()
+                        }
+                        .unwrap_or_else(|error| panic!("{label}: {error}")),
+                    );
+                    let calls: Vec<_> = updates
+                        .iter()
+                        .filter_map(|update| match update {
+                            CompletionUpdateV1::ToolCalls(calls) => Some(calls.calls.clone()),
+                            _ => None,
+                        })
+                        .flatten()
+                        .map(|call| (call.name, call.arguments))
+                        .collect();
+                    let expected: Vec<_> = (!arguments.is_empty())
+                        .then(|| ("lookup".to_owned(), arguments.to_owned()))
+                        .into_iter()
+                        .collect();
+                    assert_eq!(calls, expected, "{label}");
+                    assert_eq!(
+                        text(&updates),
+                        (String::new(), "answer".to_owned()),
+                        "{label}"
+                    );
+                    assert_eq!(
+                        finished(&updates).map(|done| done.reason),
+                        Some(reason),
+                        "{label}"
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// The stop list is bounded and distinct, at the bound the bundle declared.
 #[test]
 fn client_stop_validation_is_bounded_and_distinct() {

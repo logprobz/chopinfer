@@ -352,6 +352,22 @@ class FrontendContracts(unittest.TestCase):
         choices[1]["index"] = 0
         self.assertFalse(frontend_goldens.api(sample, expected)["agrees"])
 
+    def test_a_call_the_token_budget_cut_finishes_length_where_vllm_says_tool_calls(self):
+        expected = {"tools-cut": {"status": 200, "finish_reason": "tool_calls", "content": False,
+                                  "reasoning": False, "tool_calls": ["lookup"]}}
+        choice = {"index": 0, "finish_reason": "length",
+                  "message": {"content": None, "tool_calls": [{"function": {"name": "lookup", "arguments": "{}"}}]}}
+        sample = {"tools-cut": {"status": 200, "body": {"choices": [choice]}}}
+        self.assertTrue(frontend_goldens.api(sample, expected)["agrees"])
+        # Only a length finish with the same calls stands for tool_calls.
+        choice["finish_reason"] = "stop"
+        self.assertFalse(frontend_goldens.api(sample, expected)["agrees"])
+        choice["finish_reason"] = "length"
+        choice["message"]["tool_calls"] = []
+        self.assertFalse(frontend_goldens.api(sample, expected)["agrees"])
+        expected["tools-cut"].update(finish_reason="stop", tool_calls=[])
+        self.assertFalse(frontend_goldens.api(sample, expected)["agrees"])
+
     def test_declared_tokenizer_and_context_do_not_change_the_gate(self):
         config = declared()
         with tempfile.TemporaryDirectory() as temporary:

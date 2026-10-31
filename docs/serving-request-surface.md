@@ -151,7 +151,12 @@ Tool names
 can stream before a call closes; argument deltas wait for the close, since a
 later parameter can replace an earlier one. A generation that ends inside a
 call (length, stop token or client stop) finishes it with the same complete
-parameters in streamed and whole responses, with `tool_calls`. `parallel_tool_calls=false` returns only the
+parameters in streamed and whole responses. When the token budget ended the
+generation, after or inside a call, chat finishes `length`, with a named
+`tool_choice` too, and Responses is `incomplete` with `max_output_tokens` and
+keeps the calls; vLLM finishes such a call `tool_calls`. A stop token or
+client stop after a call finishes `tool_calls`, or `stop` for a named
+`tool_choice`. `parallel_tool_calls=false` returns only the
 first call. A parameter whose declared schema rules out a string is read as
 JSON, and a closing marker inside one of its string literals is content, in
 both declared tool-call formats: for example `</parameter>` or `</function>`
@@ -477,12 +482,14 @@ The main differences, besides the refused fields above:
 
 ## Qwen3.8 API parity
 
-Qwen3.8 differs from a frozen vLLM capture only as follows; finish reasons,
-logprobs shape, `n` with a seed and the reasoning/content split match.
+Qwen3.8 differs from a frozen vLLM capture only as follows; finish reasons
+(except a call the token budget cut, below), logprobs shape, `n` with a seed
+and the reasoning/content split match.
 
 | Area | vLLM | Chopinfer |
 | --- | --- | --- |
 | Video | Refused with `At most 0 video(s)` | Refused when video is not served |
+| A call the token budget cut, after or inside it | finish `tool_calls` | finish `length`, with the call's complete parameters |
 | `reasoning_effort: "high"` | 400 with the template's message, param null | 400, `reasoning_effort must be xhigh, medium, or low`, param `reasoning_effort` |
 | Prompt too long | 400, param `input_tokens` | 400, param null, `prompt token count ... exceeds the serving limit 262144` |
 | Stream chunks | `prompt_token_ids`/`token_ids: null`; first tool delta has no `arguments` | `usage: null` with `include_usage`; first tool delta has `arguments: ""`; concatenated deltas are identical |

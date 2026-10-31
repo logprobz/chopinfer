@@ -718,7 +718,14 @@ impl NativeParserV1 {
                 "the format finished with a streamed tool call it never delivered",
             ));
         }
-        if (reason == CompletionFinishV1::ToolCalls) == self.calls.is_empty() {
+        // The token budget may end generation after or inside a call; any
+        // other end after a call is because of it.
+        let agrees = match reason {
+            CompletionFinishV1::Stop => self.calls.is_empty(),
+            CompletionFinishV1::ToolCalls => !self.calls.is_empty(),
+            CompletionFinishV1::Length => true,
+        };
+        if !agrees {
             return Err(malformed_v1(
                 "the format's finish reason disagrees with the calls it delivered",
             ));

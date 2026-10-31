@@ -238,6 +238,14 @@ def shape(sample):
     }
 
 
+def length_cut_call(ours, reference):
+    """Whether `ours` is `reference`'s call that the token budget cut: it
+    finishes `length` with the same calls where vLLM finishes `tool_calls`
+    (docs/serving-request-surface.md)."""
+    return (ours.get("finish_reason") == "length" and reference.get("finish_reason") == "tool_calls"
+            and bool(ours.get("tool_calls")) and {**ours, "finish_reason": "tool_calls"} == reference)
+
+
 def api(ours, theirs):
     rows = []
     for name, sample in ours.items():
@@ -248,7 +256,7 @@ def api(ours, theirs):
             rows.append({"name": name, "agrees": bool(sample) and theirs[name] == {"status": 200}})
             continue
         a, b = shape(sample), theirs[name]
-        agrees = a == b
+        agrees = a == b or length_cut_call(a, b)
         if name == "completion-n2-seeded":
             choices = (sample.get("body") or {}).get("choices", [])
             agrees = (agrees and len(choices) == 2 and {choice.get("index") for choice in choices} == {0, 1}

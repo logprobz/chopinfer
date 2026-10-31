@@ -655,7 +655,7 @@ fn no_tools(options: &mut FormatParserOptionsV1) {
 const CALL: &[u8] = b"<call>";
 const ONE: (&str, &str) = ("lookup", r#"{"city":"Paris"}"#);
 
-/// Every kind of bad parser answer, and two good ones.
+/// Every kind of bad parser answer, and three good ones.
 const PARSER_CASES: &[ParserCaseV1] = &[
     ParserCaseV1 {
         name: "good-text",
@@ -711,6 +711,25 @@ const PARSER_CASES: &[ParserCaseV1] = &[
                 ],
                 6,
             ),
+        },
+        refusal: None,
+    },
+    // The token budget may end generation after a delivered call.
+    ParserCaseV1 {
+        name: "good-length-after-calls",
+        options: chat,
+        pushes: &[(CALL, false, true)],
+        answers: |_| {
+            events(
+                vec![
+                    document::EventV1::ToolCalls {
+                        range: 0..6,
+                        calls: calls(&[ONE]),
+                    },
+                    finish(document::FinishReasonV1::Length),
+                ],
+                6,
+            )
         },
         refusal: None,
     },
@@ -1258,6 +1277,24 @@ const PARSER_CASES: &[ParserCaseV1] = &[
         options: chat,
         pushes: &[(b"ab", false, true)],
         answers: |_| events(vec![finish(document::FinishReasonV1::ToolCalls)], 2),
+        refusal: Some("malformed completion: the format's finish reason disagrees"),
+    },
+    ParserCaseV1 {
+        name: "stop-reason-with-calls",
+        options: chat,
+        pushes: &[(CALL, false, true)],
+        answers: |_| {
+            events(
+                vec![
+                    document::EventV1::ToolCalls {
+                        range: 0..6,
+                        calls: calls(&[ONE]),
+                    },
+                    finish(document::FinishReasonV1::Stop),
+                ],
+                6,
+            )
+        },
         refusal: Some("malformed completion: the format's finish reason disagrees"),
     },
     ParserCaseV1 {

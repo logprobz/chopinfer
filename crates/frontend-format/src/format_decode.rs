@@ -279,7 +279,10 @@ impl DeclaredParserV1 {
                 .count()
     }
 
-    /// Reads the last bytes, and ends the completion where generation ended.
+    /// Reads the last bytes, and ends the completion where generation ended:
+    /// at the token budget, after or inside a call too, whose complete
+    /// parameters are delivered. A host that stopped generation there reports
+    /// the stop instead.
     fn finish(&mut self, valid_end: usize) -> Result<Vec<FormatEventV1>, String> {
         let mut updates = self.advance_text(valid_end)?;
         if self.state == TextStateV1::Complete {
@@ -305,7 +308,7 @@ impl DeclaredParserV1 {
         self.cursor = self.bytes.len();
         self.state = TextStateV1::Complete;
         updates.push(FormatEventV1::Finish {
-            reason: self.finish_reason(CompletionFinishV1::Length),
+            reason: CompletionFinishV1::Length,
             completion: None,
         });
         Ok(updates)
@@ -316,7 +319,8 @@ impl DeclaredParserV1 {
         !self.held && end == self.bytes.len()
     }
 
-    /// Why this generation ended: after a delivered call, because of it.
+    /// Why a generation that an end marker stopped ended: after a delivered
+    /// call, because of it.
     fn finish_reason(&self, otherwise: CompletionFinishV1) -> CompletionFinishV1 {
         if self.calls.is_empty() {
             otherwise

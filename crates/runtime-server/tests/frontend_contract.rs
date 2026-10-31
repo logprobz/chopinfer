@@ -1431,6 +1431,73 @@ async fn incremental_tools_preserve_ids_arguments_and_nonstream_output() {
     }
 }
 
+/// A generation the token budget ends after or inside a call finishes
+/// `length`, streamed and whole, and keeps the call it delivered; a stop
+/// after a call keeps `tool_calls`. This fake frontend refuses a named
+/// choice, whose finishes the response module's own tests cover.
+#[tokio::test]
+async fn a_length_cut_after_a_call_finishes_length() {
+    let events = |reason| {
+        vec![
+            GenerationEvent::ToolCallDeltas(vec![runtime_server::ToolCallDelta {
+                index: 0,
+                name: Some("fixture.lookup".into()),
+                arguments: "{}".into(),
+            }]),
+            GenerationEvent::ToolCalls {
+                calls: vec![BackendToolCall {
+                    name: "fixture.lookup".into(),
+                    arguments: "{}".into(),
+                }],
+                generated_token_count: 1,
+            },
+            GenerationEvent::Finished {
+                reason,
+                usage: TokenUsage {
+                    prompt_tokens: 4,
+                    completion_tokens: 1,
+                    cached_tokens: None,
+                },
+            },
+        ]
+    };
+    for (reason, expected) in [
+        (FinishReason::Length, "length"),
+        (FinishReason::ToolCalls, "tool_calls"),
+        (FinishReason::Stop, "tool_calls"),
+    ] {
+        for stream in [false, true] {
+            let server = TestServerV1::start(ScriptedBackendV1::new(events(reason))).await;
+            let body = format!(
+                r#"{{"model":"{MODEL}","messages":[{{"role":"user","content":"x"}}],"max_tokens":1,"stream":{stream},"tools":[{{"type":"function","function":{{"name":"fixture.lookup","parameters":{{}}}}}}]}}"#
+            );
+            let response = server.request(&post("/v1/chat/completions", &body)).await;
+            let label = format!("{reason:?} stream {stream}: {}", response.body);
+            assert_eq!(response.status, 200, "{label}");
+            assert!(!response.body.contains("error"), "{label}");
+            assert!(
+                response
+                    .body
+                    .contains(&format!(r#""finish_reason":"{expected}""#)),
+                "{label}"
+            );
+            assert_eq!(
+                response.body.matches(r#""name":"fixture.lookup""#).count(),
+                1,
+                "{label}"
+            );
+            if !stream {
+                let choice = &response.json()["choices"][0];
+                assert_eq!(choice["finish_reason"], expected, "{label}");
+                assert_eq!(
+                    choice["message"]["tool_calls"][0]["function"]["arguments"], "{}",
+                    "{label}"
+                );
+            }
+        }
+    }
+}
+
 /// A final call must repeat the call that streamed, name included; a
 /// response that streams nothing ignores the deltas and serves the call.
 #[tokio::test]

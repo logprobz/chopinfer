@@ -3,14 +3,15 @@
 //! the instance's verify rows, run without a graph. A create record without
 //! the option uses the graph budget of the default DSpark profiles.
 
-use crate::serving::{DECODE_BATCH, MAX_VERIFY_ROWS, VERIFY_DECODE_ROWS};
+use crate::serving::{DECODE_BATCH, MAX_VERIFY_ROWS};
 use runtime_bundle::model_options::{ModelOptionV1, OptionDefinitionV1};
 use std::collections::BTreeMap;
 
 pub const GRAPH_ROWS: &str = runtime_bundle_abi::VERIFY_GRAPH_ROWS_OPTION_V1;
 
-/// The package default: every verify width of the default verify rows.
-pub const DEFAULT_GRAPH_ROWS: u32 = VERIFY_DECODE_ROWS;
+/// The package default: every verify width of the DSpark profiles' verify
+/// rows (`speculation.graph_rows` in profiles.json).
+pub const DEFAULT_GRAPH_ROWS: u32 = 64;
 
 /// The most verify rows a step of the package carries.
 pub const MAX_GRAPH_ROWS: u32 = DECODE_BATCH * MAX_VERIFY_ROWS;
@@ -88,6 +89,7 @@ mod tests {
         let rows = profiles["profiles"][name]["speculation"]["graph_rows"]
             .as_u64()
             .unwrap();
+        assert_eq!(rows, u64::from(DEFAULT_GRAPH_ROWS), "{name}");
         let resolved = declaration
             .resolve(&BTreeMap::from([(GRAPH_ROWS.into(), rows.to_string())]))
             .unwrap();

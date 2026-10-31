@@ -185,7 +185,7 @@ them. A non-default value is unqualified.
 | `dspark_coupled_drafts` | `true` | Couple sampled drafts to the target sampler's noise. |
 | `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |
 | `dspark_graph_handles_per_rank` | `512` | Graph handles per rank, from 0 to 9223372036854775807; 0 keeps DSpark eager. The total across ranks must fit the platform's count range. |
-| `f32_row_tiles` | `false` | Candidate: Flash TP4 verify steps of 33 to 64 rows run the vocabulary head and the compressor in their measured exact F32 row tiles instead of the cached separate spans; the router keeps its spans. Bitwise lab twins matched; fixed-batch replays and served step-time acceptance remain required before adoption. |
+| `f32_row_tiles` | `false` | Candidate: Flash TP4 verify steps of 33 to 64 rows run the vocabulary head and the compressor in their measured exact F32 row tiles instead of the cached separate spans; the router keeps its spans. Bitwise lab twins and fixed-batch GPU replays matched; served step-time acceptance remains required before adoption. |
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit and each reused plan template again and refuse a differing plan. |
@@ -307,19 +307,19 @@ quantizers and the shared SwiGLU at the wide verify buckets
 verify rows), so they launch the decode entries a 64-row step uses. Without
 it those stages keep their prefill entries. The route sweep
 `tp4-dspark-rows192-wide` serves the override with the option on. The other
-stages of those steps keep their prefill entries either way. The HC fusions,
-the query and row norms, the latent query and selected cache, the index
-query, the dense and Engram folds and the MoE need kernel, tuning or
+stages of those steps keep their prefill entries either way. The HC
+fusions, the query and row norms, the latent query and selected cache, the
+index query, the dense and Engram folds and the MoE need kernel, tuning or
 shared-limit changes to serve more than 64 rows, and the chained MoE's
-intermediate quantizer is selected inside its 64-row chain. On 2026-10-31, fixed-batch GPU replays of the option's stages at
-verify widths 64 to 192 (concurrency 16 and 32, four to six rows per item,
-verify capacities 80 to 192) matched the previous package bitwise in
-logits, proposals, acceptance and committed state. Under a CUDA trace, the
-quantizer stages of a 128-row step fell from 12.6 to 1.2 ms of GPU-busy
-time per device. The projections after them had overlapped those stages
-and now expose most of that time, so the step fell only from 196.3 to 193.9
-ms, and a 96-row step from 175.6 to 169.6 ms. This is not served step-time
-acceptance.
+intermediate quantizer is selected inside its 64-row chain. On 2026-10-31,
+fixed-batch GPU replays of the option's stages at verify widths 64 to 192
+(concurrency 16 and 32, four to six rows per item, verify capacities 80 to
+192) matched the previous package bitwise in logits, proposals, acceptance
+and committed state. Under a CUDA trace, the quantizer stages of a 128-row
+step fell from 12.6 to 1.2 ms of GPU-busy time per device. The projections
+after them had overlapped those stages and now expose most of that time, so
+the step fell only from 196.3 to 193.9 ms, and a 96-row step from 175.6 to
+169.6 ms. This is not served step-time acceptance.
 
 With the option, the same steps run the vocabulary head, the MoE router and
 the compressor projections in the measured whole-K exact F32 row tiles
@@ -335,8 +335,11 @@ against 3.44, 4.69, 6.00 and 6.85 ms on the split route (a cold read of its
 weights takes 0.23 ms), the router at 30 to 32 us against 53 to 93 us, and
 each compressor projection at 30 to 43 us against 68 to 120 us. The lab's
 comparisons matched the split route bit for bit at every tile boundary
-from 1 to 192 rows and on every operand witness. This is not served
-step-time acceptance.
+from 1 to 192 rows and on every operand witness, for the lab's tiles and
+the packaged ones. Fixed-batch GPU replays with the option at the five
+configurations above matched the previous package bitwise in logits,
+proposals, acceptance and committed state. This is not served step-time
+acceptance.
 
 The `f32_row_tiles` candidate option runs the same tiles at 33 to 64 verify
 rows, a range the decode route serves through the cached separate spans:
@@ -345,6 +348,9 @@ by 32. The router keeps its spans, which the tiles only matched there, and
 which the direct MoE's fused router consumes. In the same lab run the head
 took 0.40 and 0.41 ms at 48 and 64 rows against 1.08 and 1.37 ms on the
 spans, and each compressor projection 28 us against 33 and 38 us.
+Fixed-batch GPU replays with both options on, at verify widths 32 to 64
+(concurrency 16 and 32, two to four rows per item, against captures of the
+previous package) and at the five wide configurations, matched bitwise.
 
 Prefill commit projections are batched across prompts. Undrafted pure
 decode joins status once and submits private sampling before collecting it

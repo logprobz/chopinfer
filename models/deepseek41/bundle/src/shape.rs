@@ -47,6 +47,10 @@ pub struct Shape {
     /// path at the rows the drafter table admits (the `dspark_moe_direct`
     /// candidate option).
     pub dspark_moe_direct: bool,
+    /// Whether drafter forwards of one to six items admit the HC finish
+    /// route through the drafter table (the `dspark_hc_draft_rows`
+    /// candidate option, which takes effect with `dspark_hc_fusion`).
+    pub dspark_hc_draft_rows: bool,
 }
 
 impl Shape {
@@ -61,6 +65,7 @@ impl Shape {
             wide_verify: false,
             f32_row_tiles: false,
             phased_decode_reduce: false,
+            dspark_hc_draft_rows: false,
             dspark_moe_direct: false,
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
@@ -121,6 +126,13 @@ impl Shape {
     /// (`model_deepseek41_contract::execution_options::DSPARK_MOE_DIRECT`).
     pub fn with_dspark_moe_direct(mut self, enabled: bool) -> Shape {
         self.dspark_moe_direct = enabled;
+        self
+    }
+
+    /// This shape with the `dspark_hc_draft_rows` candidate on or off
+    /// (`model_deepseek41_contract::execution_options::DSPARK_HC_DRAFT_ROWS`).
+    pub fn with_dspark_hc_draft_rows(mut self, enabled: bool) -> Shape {
+        self.dspark_hc_draft_rows = enabled;
         self
     }
 

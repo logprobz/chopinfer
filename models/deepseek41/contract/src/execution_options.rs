@@ -39,6 +39,11 @@ pub const DSPARK_CONFIDENCE_STAGED: &str = "dspark_confidence_staged";
 /// drafter table admits (`moe.direct_drafter.verify`) run the routed
 /// experts through the direct path instead of the expert chains.
 pub const DSPARK_MOE_DIRECT: &str = "dspark_moe_direct";
+/// Candidate, with `dspark_hc_fusion`: DSpark drafter forwards of one
+/// to six items (5 to 30 block rows) admit the HC finish route through
+/// the drafter table (`hc.draft_admit.verify`), so their stage boundaries
+/// fuse as the measured rows' do.
+pub const DSPARK_HC_DRAFT_ROWS: &str = "dspark_hc_draft_rows";
 pub const DEFAULT_PLANS: usize = 16;
 pub const MAX_PLANS: usize = 64;
 /// The served warmup fits within 512 graph handles per rank, leaving room
@@ -58,9 +63,10 @@ pub struct Options {
     pub dspark_hc_fusion: bool,
     pub dspark_confidence_staged: bool,
     pub dspark_moe_direct: bool,
+    pub dspark_hc_draft_rows: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 12] {
+pub fn declarations() -> [ModelOptionV1; 13] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -77,6 +83,10 @@ pub fn declarations() -> [ModelOptionV1; 12] {
                 minimum: 0,
                 maximum: i64::MAX,
             },
+        ),
+        (
+            DSPARK_HC_DRAFT_ROWS,
+            OptionDefinitionV1::Boolean { default: false },
         ),
         (
             DSPARK_HC_FUSION,
@@ -166,6 +176,9 @@ impl Options {
             phased_decode_reduce: values[PHASED_DECODE_REDUCE]
                 .as_bool()
                 .expect("checked boolean"),
+            dspark_hc_draft_rows: values[DSPARK_HC_DRAFT_ROWS]
+                .as_bool()
+                .expect("checked boolean"),
             dspark_moe_direct: values[DSPARK_MOE_DIRECT]
                 .as_bool()
                 .expect("checked boolean"),
@@ -237,6 +250,7 @@ mod tests {
             wide_verify: false,
             f32_row_tiles: false,
             phased_decode_reduce: false,
+            dspark_hc_draft_rows: false,
             dspark_moe_direct: false,
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
@@ -259,6 +273,7 @@ mod tests {
             (WIDE_VERIFY.into(), "true".into()),
             (F32_ROW_TILES.into(), "true".into()),
             (PHASED_DECODE_REDUCE.into(), "true".into()),
+            (DSPARK_HC_DRAFT_ROWS.into(), "true".into()),
             (DSPARK_MOE_DIRECT.into(), "true".into()),
             (DSPARK_CONFIDENCE_STAGED.into(), "true".into()),
             (DSPARK_HC_FUSION.into(), "true".into()),
@@ -276,6 +291,7 @@ mod tests {
                 wide_verify: true,
                 f32_row_tiles: true,
                 phased_decode_reduce: true,
+                dspark_hc_draft_rows: true,
                 dspark_moe_direct: true,
                 dspark_confidence_staged: true,
                 dspark_hc_fusion: true,
@@ -299,6 +315,7 @@ mod tests {
             (WIDE_VERIFY, "1"),
             (F32_ROW_TILES, "1"),
             (PHASED_DECODE_REDUCE, "1"),
+            (DSPARK_HC_DRAFT_ROWS, "1"),
             (DSPARK_MOE_DIRECT, "1"),
             (DSPARK_CONFIDENCE_STAGED, "1"),
             (DSPARK_HC_FUSION, "1"),

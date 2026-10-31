@@ -5639,6 +5639,36 @@
    "agrees": true,
    "sha256": "c066a384fc732b1bc404a0fee6dada8dab1cb7d1afd68b9f5685fefc93310305"
   },
+  "prefix-beside-tools": {
+   "request_sha256": "0d2681f6c9267c7263e08084ece7f1761c5ceb8b8fa4af1b75764fdc47d72443",
+   "difference": "refuses",
+   "recipe": {
+    "refusal": {
+     "status": 400,
+     "message": "Function call should not be used with prefix"
+    }
+   }
+  },
+  "prefix-after-tool-results": {
+   "request_sha256": "cdba9c780ddbf3dd200510b0b942b8f7a2b44fc49528704a10006c076a08bec5",
+   "difference": "refuses",
+   "recipe": {
+    "refusal": {
+     "status": 400,
+     "message": "Function call should not be used with prefix"
+    }
+   }
+  },
+  "prefix-beside-json-object": {
+   "request_sha256": "8f188927e10db506c05d7ce1c88895ecde47d8748f3a7bded41d430c742f81e1",
+   "difference": "refuses",
+   "recipe": {
+    "refusal": {
+     "status": 400,
+     "message": "response_format json_object should not be used with prefix"
+    }
+   }
+  },
   "empty-system-messages-dropped": {
    "request_sha256": "342a76036f33a9bb556f107bd7e496c6634f782df734a13432367a4a88d357b3",
    "agrees": true,

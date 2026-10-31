@@ -1097,6 +1097,23 @@ def cases(declaration):
         user("What is 17 times 23?"),
         {"role": "assistant", "content": "The answer is", "reasoning_content": "17 times 23 is 391.",
          "prefix": True}]}, {"fixed:prefix-continues-answer", "ends:prefix"}
+    # A `prefix` continuation stays served beside offered tools, calls in
+    # history and json_object, which the recipe refuses
+    # (`prefix-beside-tools-or-json-object`).
+    yield "prefix-beside-tools", {"messages": [
+        user("Weather in Oslo?"),
+        {"role": "assistant", "content": "Let me check", "reasoning_content": "The user wants Oslo's weather.",
+         "prefix": True}], "tools": [WEATHER]}, {"fixed:prefix-beside-tools", "ends:prefix", "tools:wrapped"}
+    yield "prefix-after-tool-results", {"messages": [
+        user("Weather in Oslo?"),
+        {"role": "assistant", "content": "", "tool_calls": [call("call_a", "get_weather", {"location": "Oslo"})]},
+        {"role": "tool", "tool_call_id": "call_a", "content": "18"},
+        {"role": "assistant", "content": "It is", "prefix": True}]}, {"fixed:prefix-after-tool-results", "ends:prefix"}
+    yield "prefix-beside-json-object", {"messages": [
+        user("Answer in JSON: what is 17 times 23?"),
+        {"role": "assistant", "content": "{\"answer\": ", "prefix": True}],
+        "response_format": RESPONSE_FORMATS["json-object"]}, {
+        "fixed:prefix-beside-json-object", "ends:prefix", "response-format:json-object"}
     # R5: an empty system message is dropped, leading, later or as empty
     # parts; the one carrying the offered tools is still inserted.
     yield "empty-system-messages-dropped", {"messages": [

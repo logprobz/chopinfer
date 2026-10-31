@@ -418,8 +418,8 @@
     {
       "id": "R4-final-assistant-turn",
       "follows": "encoding.py",
-      "rule": "no generation header follows a final assistant turn, which ends with the end-of-sentence token, so such a request is refused (final-assistant-turn) unless the turn is continued, which renders it without that token: by prefix: true on it, as the recipe asks for a continuation, or by continue_final_message. The transport reads prefix for every model, as continue_final_message, and refuses it on any other message with the recipe's text. In thinking mode a continued turn with no content and no calls leaves its reasoning open, <think>{reasoning} without </think>, as the recipe renders a prefix turn, so the completion continues the reasoning; the encoder closes it, so the corpus reference removes that </think> from the encoder's text. The recipe refuses prefix beside tools or json_object, but the format cannot tell prefix from continue_final_message, so a continuation stays served there. The recipe appends a header after every request but a prefix continuation. System messages alone render as the encoder renders them: a later system message is followed by the header, so two or more are served and match the encoder, and the recipe serves them too; only a lone system message, after R5 drops empty ones, has no header and is refused",
-      "source": "plan V4; encoding.py lines 60, 695-706, 710-739 (line 731: a system message after the first is followed by the header); deepseek-recipe 8cadfede7 deepseek-recipe-encoding/src/v4/mod.rs lines 245-260 (line 255 appends the header after every request); deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 93-102, 232-246, deepseek-recipe-encoding/src/v4/dsv41.rs lines 206-230, 298-306",
+      "rule": "no generation header follows a final assistant turn, which ends with the end-of-sentence token, so such a request is refused (final-assistant-turn) unless the turn is continued, which renders it without that token: by prefix: true on it, as the recipe asks for a continuation, or by continue_final_message. The transport reads prefix for every model, as continue_final_message, and refuses it on any other message with the recipe's text. In thinking mode a continued turn with no content and no calls leaves its reasoning open, <think>{reasoning} without </think>, as the recipe renders a prefix turn, so the completion continues the reasoning; the encoder closes it, so the corpus reference removes that </think> from the encoder's text. The recipe refuses prefix beside tools or json_object, where a continuation stays served (prefix-beside-tools-or-json-object). The recipe appends a header after every request but a prefix continuation, and reads no continue_final_message (continue-final-message). System messages alone render as the encoder renders them: a later system message is followed by the header, so two or more are served and match the encoder, and the recipe serves them too; only a lone system message, after R5 drops empty ones, has no header and is refused",
+      "source": "plan V4; encoding.py lines 60, 695-706, 710-739 (line 731: a system message after the first is followed by the header); deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 93-102, 232-246, deepseek-recipe-encoding/src/v4/dsv41.rs lines 206-230, 298-306 (lines 298-306: the header follows every request but a prefix continuation)",
       "cases": [
         "final-assistant-turn",
         "continued-final-assistant-turn",
@@ -559,8 +559,8 @@
     {
       "id": "continue-final-message",
       "follows": "encoding.py",
-      "rule": "continue_final_message continues the final assistant turn as the encoder writes it without its end-of-sentence token (wo_eos); the recipe's Chat Completions request has no continue_final_message and ignores it, so it ends that turn with the end-of-sentence token and appends a generation header. The continued turn follows the last user turn, so in thinking mode without the tool prompt it also keeps the reasoning block the recipe drops (R1), as earlier turns do with preserve_thinking. Every continued request's render differs by the continuation, so this entry, not R1, explains a continued request's difference, R1's part included",
-      "source": "encoding.py lines 695-706; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 7, 17-60, deepseek-recipe-encoding/src/v4/dsv41.rs lines 228-231, 298-306",
+      "rule": "continue_final_message continues the final assistant turn as the encoder writes it without its end-of-sentence token (wo_eos), as prefix: true on that turn does (R4). The recipe continues a turn only by prefix: its Chat Completions request has no continue_final_message and ignores it, so it ends that turn with the end-of-sentence token and appends a generation header. The continued turn follows the last user turn, so in thinking mode without the tool prompt it also keeps the reasoning block the recipe drops (R1), as earlier turns do with preserve_thinking. Every continued request's render differs by the continuation, so this entry, not R1, explains a continued request's difference, R1's part included",
+      "source": "encoding.py lines 695-706; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 7, 17-60, deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 232-246, deepseek-recipe-encoding/src/v4/dsv41.rs lines 206-231, 298-306",
       "cases": [
         "continued-final-assistant-turn"
       ],
@@ -568,6 +568,22 @@
         "ends:continue",
         "recipe:render"
       ]
+    },
+    {
+      "id": "prefix-beside-tools-or-json-object",
+      "follows": "encoding.py",
+      "rule": "a final assistant turn continued by prefix: true renders as the encoder renders it, as with continue_final_message, beside offered tools, tool calls or results in the conversation, and a json_object response format, where the recipe refuses prefix there. Request mapping reads both continuation fields as one, and the frontend cannot tell prefix from continue_final_message without a change to the ABI's layout; refusing both would break agentic continuation",
+      "source": "plan choice (continuation stays served with tools and json_object); encoding.py lines 695-706; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 59-68, 93-102",
+      "cases": [
+        "prefix-beside-tools",
+        "prefix-after-tool-results",
+        "prefix-beside-json-object"
+      ],
+      "recipe_when": [
+        "ends:prefix",
+        "recipe:refuses"
+      ],
+      "recipe_message": "^(Function call|response_format json_object) should not be used with prefix$"
     },
     {
       "id": "falsy-json-schema",

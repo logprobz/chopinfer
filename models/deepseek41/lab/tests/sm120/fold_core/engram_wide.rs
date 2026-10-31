@@ -1,18 +1,31 @@
-//! Compare existing packed matrix tiles with the served small-row Engram fold.
+//! Compare existing packed matrix tiles with the served small-row Engram
+//! fold, and the wide verify tile with the fold it replaces above 64 rows.
 use super::*;
 
 const ROWS: [u32; 7] = [32, 33, 40, 48, 56, 63, 64];
 
-fn entries() -> Vec<prefill::Entry> {
+/// Wide verify steps the served 64-row, two-stage tile computes at their
+/// exact rows (`sm120::engram_verify`): both sides of the 128-row bucket
+/// and of the tile's 64-row boundaries, up to the widest 192-row step.
+const WIDE_ROWS: [u32; 8] = [65, 96, 127, 128, 129, 160, 191, 192];
+
+/// The packed matrix tiles compared at `rows`: every tile up to 64 rows
+/// at the decode route's rows, the served wide verify tile above them.
+fn entries(rows: u32) -> Vec<prefill::Entry> {
+    let wide = rows > 64;
     let entries: Vec<_> = sm120::prefill_matrix::catalog()
         .unwrap()
         .into_iter()
         .filter(|e| {
             (e.base.query.n, e.base.query.k, e.base.query.groups) == (25600, 6144, 1)
-                && e.tile_rows <= 64
+                && if wide {
+                    (e.tile_rows, e.stages) == (64, 2)
+                } else {
+                    e.tile_rows <= 64
+                }
         })
         .collect();
-    assert_eq!(entries.len(), 3);
+    assert_eq!(entries.len(), if wide { 1 } else { 3 });
     entries
 }
 
@@ -61,12 +74,23 @@ fn captured() -> LabResult<Vec<data::Input>> {
         .collect()
 }
 
+/// The first `rows` rows of the capture's first or last 64 rows, or of its
+/// first or last 192 for a wide verify step.
 fn slice(input: &data::Input, rows: u32, tail: bool) -> data::Input {
-    assert!(rows <= 64 && input.rows >= 64);
-    let start = if tail { input.rows as usize - 64 } else { 0 };
+    let window = if rows <= 64 { 64 } else { 192 };
+    assert!(rows <= window && input.rows >= window);
+    let start = if tail {
+        (input.rows - window) as usize
+    } else {
+        0
+    };
     let width = input.k as usize;
     data::Input {
-        id: format!("{}-{}", input.id, if tail { "tail64" } else { "head64" }),
+        id: format!(
+            "{}-{}{window}",
+            input.id,
+            if tail { "tail" } else { "head" }
+        ),
         rows,
         n: input.n,
         k: input.k,
@@ -89,15 +113,53 @@ fn matrix(entry: &prefill::Entry, b: &Buffers<View>, rows: u32) -> LabResult<Vec
     .map_err(|e| e.to_string())
 }
 
-fn check(s: &Session, input: &data::Input, mem: bool) -> LabResult<()> {
-    let entries = entries();
-    let base = &entries[0].base;
+/// What a verify step above 64 rows serves without the `wide_verify`
+/// option (`DenseOps::project_with`): the general fold prepared for the
+/// prefill capacity.
+fn verify_reference(
+    a: &mut Arena<'_>,
+    base: &mxfp8_fold::Entry,
+    b: &Buffers<View>,
+    rows: u32,
+) -> LabResult<Calls> {
+    let b = &packed_views(a, base, b)?;
+    let mut q = base.query;
+    q.m_capacity = 8192;
+    let op = backend()
+        .mxfp8_fold_gemm(&q, Need::rows(rows))
+        .map_err(|e| e.to_string())?;
+    let work = a.filled(op.info().workspace.max(4), 0)?;
+    let run = op
+        .launches(b, work, Counts::rows(rows))
+        .map_err(|e| e.to_string())?;
+    // The general fold's own entry, not the matrix tile under comparison.
+    if run.iter().any(|c| c.symbol.contains("_matrix_")) {
+        return Err("the verify reference must be the general fold".into());
+    }
+    Ok(Calls {
+        init: vec![],
+        run,
+        state: None,
+    })
+}
+
+/// Each tile of `entries(rows)` against the served baseline at the
+/// input's rows: the decode route up to 64 rows, `verify_reference` above.
+/// `timed` also times every arm warm and cold.
+fn check(s: &Session, input: &data::Input, timed: bool) -> LabResult<()> {
     let rows = input.rows;
+    let entries = entries(rows);
+    let base = &entries[0].base;
+    let arms = entries.len() + 1;
     let mut a = Arena::new(Some(s));
-    let b = (0..4)
+    let b = (0..arms)
         .map(|_| common(&mut a, base, rows, input))
         .collect::<LabResult<Vec<_>>>()?;
-    let baseline = reference(&mut a, base, &b[0], rows)?;
+    let baseline = if rows > 64 {
+        verify_reference(&mut a, base, &b[0], rows)?
+    } else {
+        reference(&mut a, base, &b[0], rows)?
+    };
     assert!(baseline.init.is_empty());
     if matches!(rows, 32 | 64) {
         assert!(baseline.run.iter().any(|c| c.symbol.contains("direct")));
@@ -131,7 +193,7 @@ fn check(s: &Session, input: &data::Input, mem: bool) -> LabResult<()> {
         (rows, false),
     ] {
         for replay in 0..3 {
-            for arm in 0..4 {
+            for arm in 0..arms {
                 reset(&a, &b[arm], input, rows, live, bad)?;
                 if replay == 0 {
                     issue(s, &a, &f, &fused::eager(&calls[arm]), &s.stream)?;
@@ -146,7 +208,7 @@ fn check(s: &Session, input: &data::Input, mem: bool) -> LabResult<()> {
                     return Err("status guard changed".into());
                 }
             }
-            for arm in 1..4 {
+            for arm in 1..arms {
                 compare(&a, &[b[0], b[arm]], input, rows, live, bad, None)?;
                 comparisons += 1;
             }
@@ -162,18 +224,18 @@ fn check(s: &Session, input: &data::Input, mem: bool) -> LabResult<()> {
     let minimum_free = std::cell::Cell::new(s.context.memory_info().map_err(|e| e.to_string())?.0);
     let mut record = json!({
         "rows": rows, "source":input.id, "comparisons":comparisons,
-        "bitwise":true, "negative_controls":3, "graph_replays":2,
+        "bitwise":true, "negative_controls":controls.len(), "graph_replays":2,
         "reference":calls[0].iter().map(|c| &c.symbol).collect::<Vec<_>>(),
         "variants":entries.iter().map(|e| format!("m{}s{}",e.tile_rows,e.stages)).collect::<Vec<_>>(),
         "modules":fused::served_modules(&all)
     });
-    if !mem {
+    if timed {
         for buffer in &b {
             reset(&a, buffer, input, rows, rows, false)?;
         }
         for (name, cold) in [("warm", false), ("cold", true)] {
             let sampled = std::cell::Cell::new(false);
-            record[name] = timing::arms(s, cold, 4, |arm, stream| {
+            record[name] = timing::arms(s, cold, arms, |arm, stream| {
                 // The first callback is untimed warmup, with eviction storage live.
                 if !sampled.replace(true) {
                     let free = s.context.memory_info().map_err(|e| e.to_string())?.0;
@@ -195,8 +257,8 @@ fn check(s: &Session, input: &data::Input, mem: bool) -> LabResult<()> {
 
 #[test]
 fn packed_matrix_candidates_preserve_admission_and_exact_rows() {
-    for entry in entries() {
-        for rows in ROWS {
+    for rows in ROWS.into_iter().chain(WIDE_ROWS) {
+        for entry in entries(rows) {
             let mut a = Arena::new(None);
             let b = common(&mut a, &entry.base, rows, &data::empty(&entry.base, rows)).unwrap();
             let calls = matrix(&entry, &b, rows).unwrap();
@@ -239,21 +301,55 @@ fn gpu_pair() {
         assert!(matches!(mode.as_str(), "time" | "memcheck"));
         let mem = mode == "memcheck";
         let rows = if mem { vec![33, 64] } else { ROWS.to_vec() };
-        let entries = entries();
         let captures = captured()?;
         let mut cases = 0;
         for rows in rows {
-            check(s, &data::synthetic(&entries[0].base, rows), mem)?;
+            check(s, &data::synthetic(&entries(rows)[0].base, rows), !mem)?;
             cases += 1;
             for capture in &captures {
                 for tail in if mem { vec![true] } else { vec![false, true] } {
-                    check(s, &slice(capture, rows, tail), mem)?;
+                    check(s, &slice(capture, rows, tail), !mem)?;
                     cases += 1;
                 }
             }
         }
         assert_eq!(cases, if mem { 6 } else { 35 });
         println!("ENGRAM_WIDE_DONE {}", json!({"cases":cases,"mode":mode}));
+        Ok(())
+    })
+    .unwrap();
+    assert!(ran.is_some(), "an idle GPU is required");
+}
+
+/// The served wide verify tile against the fold it replaces, bitwise, at
+/// every row count of `WIDE_ROWS`: live and rejected rows, eager and two
+/// graph replays, and the omit-first control. Synthetic inputs always;
+/// the captured Engram inputs' first and last 192 rows too when
+/// `CHOPINFER_FOLD_CORE_ROOT` holds them. Untimed.
+#[test]
+#[ignore = "requires assigned GPUs"]
+fn gpu_wide_verify() {
+    let ran = kernel_harness::gpu_test(6 << 30, |s| {
+        let captures = match std::env::var_os("CHOPINFER_FOLD_CORE_ROOT") {
+            Some(_) => captured()?,
+            None => Vec::new(),
+        };
+        let mut cases = 0;
+        for rows in WIDE_ROWS {
+            check(s, &data::synthetic(&entries(rows)[0].base, rows), false)?;
+            cases += 1;
+            for capture in &captures {
+                for tail in [false, true] {
+                    check(s, &slice(capture, rows, tail), false)?;
+                    cases += 1;
+                }
+            }
+        }
+        assert_eq!(cases, WIDE_ROWS.len() * (1 + 2 * captures.len()));
+        println!(
+            "ENGRAM_WIDE_VERIFY_DONE {}",
+            json!({"cases":cases,"captured":captures.len()})
+        );
         Ok(())
     })
     .unwrap();

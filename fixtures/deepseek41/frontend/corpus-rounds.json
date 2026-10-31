@@ -516,6 +516,232 @@
   "separator": ""
  },
  {
+  "id": "g0049-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "system",
+     "content": "  \n "
+    },
+    {
+     "role": "user",
+     "content": ""
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "get_weather",
+      "description": null,
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "boolean"
+        },
+        "city": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "convert",
+      "description": "The convert tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "ping",
+      "description": "The ping tool.",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "value": {
+         "type": "null"
+        }
+       }
+      }
+     }
+    },
+    {
+     "type": "function",
+     "function": {
+      "name": "clock",
+      "description": "The time.",
+      "parameters": {
+       "type": "object",
+       "properties": {}
+      },
+      "defer_loading": false
+     }
+    }
+   ],
+   "thinking": {
+    "type": "enabled"
+   },
+   "chat_template_kwargs": {
+    "reasoning_effort": "high",
+    "preserve_thinking": true
+   },
+   "response_format": {
+    "type": "json_object"
+   }
+  },
+  "token_ids": [
+   8824,
+   270,
+   7130,
+   16,
+   223,
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   1133,
+   65,
+   50219,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   5197,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   11476,
+   1718,
+   128825,
+   10767,
+   1018,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   37399,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   51119,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   54276,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   5197,
+   4,
+   3418,
+   1281,
+   11476,
+   3320,
+   6127,
+   8490,
+   37,
+   10943,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   22153,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   5197,
+   4,
+   3418,
+   1281,
+   19836,
+   3320,
+   16042,
+   1718,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "reasoning": " Check the units. ",
+   "tool_calls": [
+    {
+     "name": "get_weather",
+     "arguments": "{\"value\": true, \"city\": \"Paris\"}"
+    },
+    {
+     "name": "convert",
+     "arguments": "{\"value\": \"北京 °C ü\"}"
+    },
+    {
+     "name": "ping",
+     "arguments": "{\"value\": null}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
   "id": "g0051-round-endofsentence",
   "request": {
    "messages": [

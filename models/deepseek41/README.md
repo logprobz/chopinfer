@@ -356,7 +356,10 @@ only when `frontend_corpus generate` runs, under
 `fixtures/deepseek41/frontend/corpus-recipe.json` records the recipe's
 outcome for each committed case and round trip, and
 [frontend-divergences.json](frontend-divergences.json) records each
-difference with the `recipe_when` tags that match it. Install the recipe
+difference with its cause: the `recipe_when` tags that match it, the
+recipe's refusal message where a request holds several causes
+(`recipe_message`), or, for a generated case no tag describes, the
+fingerprint of the reviewed difference (`recipe_reviewed`). Install the recipe
 into its own CPU environment, never the GPU runner's, whose package set is
 part of every reference key:
 

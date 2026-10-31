@@ -365,7 +365,7 @@
     {
       "id": "R1-earlier-reasoning",
       "follows": "encoding.py",
-      "rule": "in thinking mode, reasoning before the last user turn drops, and such a turn writes </think> alone, unless preserve_thinking or a declared tool keeps it; a turn after the last user turn keeps its reasoning, or writes <think></think> without any. The recipe renders every turn's reasoning when its tool prompt renders, as the encoder does with a declared tool, and otherwise drops every turn's reasoning and writes </think> alone, so without the tool prompt (no offered tools, or tool_choice none) it differs after the last user turn; its request has no preserve_thinking",
+      "rule": "in thinking mode, reasoning before the last user turn drops, and such a turn writes </think> alone, unless preserve_thinking or a declared tool keeps it; a turn after the last user turn keeps its reasoning, or writes <think></think> without any. The recipe renders every turn's reasoning when its tool prompt renders, as the encoder does with a declared tool, and otherwise drops every turn's reasoning and writes </think> alone, so without the tool prompt (no offered tools, or tool_choice none) it differs after the last user turn; its request has no preserve_thinking. A generated request carries no tag for this cause, so its differences are reviewed one by one and bound by fingerprint (recipe_reviewed); a continued request's is continue-final-message's",
       "source": "plan V4 (rendering follows encoding.py); encoding.py lines 690-694, 749-790; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe-encoding/src/v4/dsv41.rs lines 206-226, 285-286, deepseek-recipe-encoding/src/v4/mod.rs lines 94-96",
       "cases": [
         "earlier-reasoning-dropped",
@@ -376,7 +376,12 @@
       "recipe_when": [
         "reasoning:rendered-without-tools",
         "recipe:render"
-      ]
+      ],
+      "recipe_reviewed": {
+        "g0045": "4590d0a17411089c876259229b2ba292be6e72706fe29e89ae6114c9324def41",
+        "g0050": "4ff3b0800c9aec50ffafc22261771d6e119b5ef8fe9ebe4b412746c918181ec9",
+        "g0076": "45c8d9e370b887a9611282ce4265ca7890fa50cc9ed29c4ff19f2826049e697a"
+      }
     },
     {
       "id": "R2-tool-schemas",
@@ -441,7 +446,7 @@
     {
       "id": "developer-as-system",
       "follows": "recipe Responses API",
-      "rule": "a developer message is a system message, in Chat Completions as in Responses: leading, it carries the offered tools and the response_format; later, the generation header follows it (R4); empty, it is dropped (R5); its billing header is removed as a system message's is. The recipe maps a Responses developer message to a system message for V4.1, but its Chat Completions request has no developer role and refuses a developer message as it reads the request; the encoder has no developer role and would drop one unread before the last user turn in thinking mode (encoding.py lines 756-761)",
+      "rule": "a developer message is a system message, in Chat Completions as in Responses: leading, it carries the offered tools and the response_format; later, the generation header follows it (R4); empty, it is dropped (R5); its billing header is removed as a system message's is. The recipe maps a Responses developer message to a system message for V4.1, but its Chat Completions request has no developer role and refuses a developer message as it reads the request; the encoder has no developer role and would drop one unread before the last user turn in thinking mode (encoding.py lines 756-761). The recipe refuses a developer message before any other check, so it reports this cause for every request that holds one",
       "source": "plan V4 (request mapping follows the recipe); deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/responses/request/convert.rs lines 421-446, deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 62-90",
       "cases": [
         "developer-before-last-user",
@@ -451,10 +456,10 @@
         "developer-image-alone"
       ],
       "recipe_when": [
-        "case:fixed",
         "developer:present",
         "recipe:refuses"
-      ]
+      ],
+      "recipe_message": "^invalid request body: unknown variant `developer`"
     },
     {
       "id": "system-images",
@@ -554,13 +559,12 @@
     {
       "id": "continue-final-message",
       "follows": "encoding.py",
-      "rule": "continue_final_message continues the final assistant turn as the encoder writes it without its end-of-sentence token (wo_eos); the recipe's Chat Completions request has no continue_final_message and ignores it, so it ends that turn with the end-of-sentence token and appends a generation header. The continued turn follows the last user turn, so in thinking mode without the tool prompt it also keeps the reasoning block the recipe drops (R1)",
+      "rule": "continue_final_message continues the final assistant turn as the encoder writes it without its end-of-sentence token (wo_eos); the recipe's Chat Completions request has no continue_final_message and ignores it, so it ends that turn with the end-of-sentence token and appends a generation header. The continued turn follows the last user turn, so in thinking mode without the tool prompt it also keeps the reasoning block the recipe drops (R1), as earlier turns do with preserve_thinking. Every continued request's render differs by the continuation, so this entry, not R1, explains a continued request's difference, R1's part included",
       "source": "encoding.py lines 695-706; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/schema.rs lines 7, 17-60, deepseek-recipe-encoding/src/v4/dsv41.rs lines 228-231, 298-306",
       "cases": [
         "continued-final-assistant-turn"
       ],
       "recipe_when": [
-        "case:fixed",
         "ends:continue",
         "recipe:render"
       ]
@@ -595,7 +599,7 @@
     {
       "id": "recipe-conversation-checks",
       "follows": "encoding.py",
-      "rule": "conversation shapes the encoder renders are rendered, where the recipe refuses them: tool messages directly after a turn's tool calls that do not answer each call once (a result missing, or naming no call of that turn), which the encoder renders and sorts as they are; a tool message with no call turn before it; and an assistant message with neither content nor tool calls. Where both refuse a request their refusal texts differ, and the recipe reports the first failure in its own check order; the corpus compares only whether each refuses",
+      "rule": "conversation shapes the encoder renders are rendered, where the recipe refuses them: tool messages directly after a turn's tool calls that do not answer each call once (a result missing, or naming no call of that turn), which the encoder renders and sorts as they are; a tool message with no call turn before it; and an assistant message with neither content nor tool calls. The recipe reports the first failure in its own check order, so this entry explains a refusal whose message names one of these checks. Where both refuse a request their refusal texts differ; the corpus compares only whether each refuses",
       "source": "encoding.py lines 184-260; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 41-46, 449-558",
       "cases": [
         "tool-image-single",
@@ -603,9 +607,9 @@
         "tool-images-sorted"
       ],
       "recipe_when": [
-        "results:partial",
         "recipe:refuses"
-      ]
+      ],
+      "recipe_message": "^(An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'|Messages with role 'tool' must be a response to a preceding message with 'tool_calls'|Invalid assistant message: content or tool_calls must be set)"
     },
     {
       "id": "json-word-check",
@@ -617,9 +621,10 @@
         "response-format-json-object"
       ],
       "recipe_when": [
-        "json-word:absent",
+        "response-format:json-object",
         "recipe:refuses"
-      ]
+      ],
+      "recipe_message": "^Prompt must contain the word 'json'"
     },
     {
       "id": "non-strict-schema-validation",
@@ -701,32 +706,6 @@
         "client-text:image-placeholder",
         "recipe:accepts"
       ]
-    },
-    {
-      "id": "generated-refusals",
-      "follows": "encoding.py",
-      "rule": "a generated case the recipe refuses carries a cause one of these entries records, and the recipe reports the first it meets: a developer message, for which its Chat Completions request has no role (developer-as-system); tool results that do not answer a turn's calls each once, a tool message with no call turn before it, or an assistant message with neither content nor tool calls (recipe-conversation-checks); or json_object without the word json (json-word-check). A generated case combines several inputs, so its refusal is matched here rather than by its cause's entry",
-      "source": "tools/refrun/frontend_cases.py generated cases; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 41-46",
-      "cases": [
-        "g0000"
-      ],
-      "recipe_when": [
-        "case:generated",
-        "recipe:refuses"
-      ]
-    },
-    {
-      "id": "generated-renders",
-      "follows": "encoding.py",
-      "rule": "a generated case the recipe renders differently differs by R1 (without the tool prompt the recipe drops reasoning the encoder keeps after the last user turn or with preserve_thinking), by continue-final-message (the recipe ends a continued turn and appends a generation header), or both; a turn whose text spells a special token there also tokenizes differently (special-token-spellings). A generated case combines several inputs, so its render is matched here rather than by its causes' entries",
-      "source": "tools/refrun/frontend_cases.py generated cases; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe-encoding/src/v4/dsv41.rs lines 206-231, 285-306",
-      "cases": [
-        "g0001"
-      ],
-      "recipe_when": [
-        "case:generated",
-        "recipe:render"
-      ]
     }
   ],
   "parser": [
@@ -747,19 +726,29 @@
       "reason": "under a json_object response format the served parser passes the answer through as the model wrote it; deepseek-recipe 0.2.0 (93b0fd229c) drops a JSON fence and turns text outside the JSON into spaces (deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs line 157, deepseek-recipe/src/stream/output_parser.rs lines 8, 422-434, 459-479)"
     },
     {
-      "id": "generated-round-trip-refusals",
+      "id": "developer-round-trips",
       "recipe_when": [
-        "case:generated",
+        "developer:present",
         "parse:refused"
       ],
-      "reason": "the recipe refuses the request of a generated round trip for a cause generated-refusals records (a developer message, or json_object without the word json), so it parses nothing"
+      "recipe_message": "^invalid request body: unknown variant `developer`",
+      "reason": "the recipe refuses the request of a round trip that holds a developer message, for which its Chat Completions request has no role (developer-as-system), so it parses nothing"
+    },
+    {
+      "id": "json-word-round-trips",
+      "recipe_when": [
+        "response-format:json-object",
+        "parse:refused"
+      ],
+      "recipe_message": "^Prompt must contain the word 'json'",
+      "reason": "the recipe refuses the request of a round trip with a json_object response format and no word json in its messages (json-word-check), so it parses nothing"
     },
     {
       "id": "type-alias-round-trips",
       "recipe_when": [
-        "case:fixed",
         "parse:refused"
       ],
+      "recipe_message": "^Invalid schema for function '[^']*': .* is not valid under any of the schemas listed in the 'anyOf' keyword",
       "reason": "the recipe refuses the request of the shared string-type round trips (s-string-type-* in tools/refrun/frontend_cases.py), whose tool declares a type name JSON Schema does not have, such as str or text, which the served argument coercion reads as string (non-strict-schema-validation), so it parses nothing"
     }
   ]

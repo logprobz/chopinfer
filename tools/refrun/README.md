@@ -237,9 +237,20 @@ recipe stops generation. `minimize` refuses a difference that matches no
 divergence entry or several, and keeps a case of each entry. `check`
 verifies the record against the committed corpus offline: each row must have
 been computed from its case's request, or its round trip's request and token
-IDs, which the row fingerprints. It requires each difference to match exactly
-one entry by its `recipe_when` tags, among inputs, mapping and parser entries
-whose ids are distinct. A mapping entry that follows the recipe needs every
+IDs, which the row fingerprints. It requires exactly one entry to explain
+each difference, among inputs, mapping and parser entries whose ids are
+distinct, and each entry to explain a committed difference. An entry
+explains a difference by its cause: its `recipe_when` tags, which must name
+more than the difference's class (`recipe:`, `parse:`, `case:` and `mode:`
+tags), optionally narrowed by `recipe_message`, a regular expression the
+recipe's refusal message or parser error must match. A recipe refuses a
+request for the first failure its checks find, so the message names the
+cause where a request holds several. Where no tag names the cause,
+`recipe_reviewed` binds a reviewed case or round trip id to the fingerprint
+of its difference, which covers the recipe's row and the corpus's own
+outcome; `generate` lists each unexplained difference with its
+fingerprint, and `check` and `minimize` fail a review whose difference has
+changed. A mapping entry that follows the recipe needs every
 case it names to agree with it; one that follows the pinned reference goes
 stale only when every case it names agrees, so it may name a boundary case
 that both render alike. The recipe never runs in `check` or CI.

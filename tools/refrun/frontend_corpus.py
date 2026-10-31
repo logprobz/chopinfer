@@ -44,10 +44,15 @@ A cases module may pin a second authority, a published recipe package, as
 `RECIPE` (`RECIPE_KEYS`). `generate` then runs the recipe's oracle script
 under its own interpreter (`SubprocessOracle`) on every case and round trip
 and writes `corpus-recipe.json`: the recipe it ran, and where the recipe's
-render or parse differs from the corpus. `minimize` refuses a difference that
-matches no divergence entry or several by its `recipe_when` tags and keeps a
-case of each entry, and `check` requires each committed difference to match
-exactly one (`check_recipe`).
+render or parse differs from the corpus. An entry explains a difference by
+a cause (`explains`): its `recipe_when` tags, which must name more than the
+difference's class, optionally narrowed by `recipe_message`, a pattern the
+recipe's refusal or parser error must match, or a review, `recipe_reviewed`,
+which binds a case or round trip id to the fingerprint of its difference.
+`minimize` refuses a difference that no entry or several explain, and a
+review the full corpus no longer holds, and keeps a case of each entry;
+`check` requires exactly one entry to explain each committed difference
+(`check_recipe`).
 """
 
 import argparse
@@ -60,6 +65,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import subprocess
 import sys
 import unicodedata
@@ -82,6 +88,11 @@ MAPPING_KEYS = ("id", "follows", "rule", "source", "cases")
 PARSER_KEYS = ("id", "recipe_when", "reason")
 # The sections whose entries may carry recipe_when tags.
 RECIPE_SECTIONS = ("inputs", "mapping", "parser")
+# Difference tags that say how or where a difference shows, not what causes
+# it (`RecipeDifference`). An entry's recipe_when needs a tag besides these,
+# or a recipe_message, so it never explains a difference by its class alone.
+RECIPE_OUTCOME_TAGS = ("recipe:", "parse:", "case:", "mode:")
+FINGERPRINT = re.compile(r"[0-9a-f]{64}")
 # The request fields a render vector may carry besides `messages`
 # (crates/runtime-host/src/frontend_check.rs REQUEST_FIELDS_V1).
 REQUEST_FIELDS = ("tools", "tool_choice", "chat_template_kwargs", "reasoning_effort", "thinking",
@@ -234,11 +245,32 @@ def read_divergences(path):
             raise CorpusError(f"{path}: parser entry {entry.get('id')} needs {', '.join(missing)}")
     for section in RECIPE_SECTIONS:
         for entry in table.get(section, []):
+            name = f"{path}: {section} entry {entry.get('id')}"
             tags = entry.get("recipe_when")
             if tags is not None and not (isinstance(tags, list) and tags
                                          and all(isinstance(tag, str) and tag for tag in tags)):
-                raise CorpusError(f"{path}: {section} entry {entry.get('id')} has a recipe_when that is not "
-                                  "a list of tags")
+                raise CorpusError(f"{name} has a recipe_when that is not a list of tags")
+            pattern, reviewed = entry.get("recipe_message"), entry.get("recipe_reviewed")
+            if tags is None:
+                if pattern is not None or reviewed is not None:
+                    raise CorpusError(f"{name} sets recipe_message or recipe_reviewed without recipe_when")
+                continue
+            if pattern is not None:
+                try:
+                    if not (isinstance(pattern, str) and pattern):
+                        raise re.error("not a non-empty string")
+                    re.compile(pattern)
+                except re.error as error:
+                    raise CorpusError(f"{name} has a recipe_message that is not a regular expression") from error
+            elif all(tag.startswith(RECIPE_OUTCOME_TAGS) for tag in tags):
+                raise CorpusError(f"{name} would explain a difference by its class alone: its recipe_when names "
+                                  f"no cause, only {', '.join(prefix + '*' for prefix in RECIPE_OUTCOME_TAGS)} "
+                                  "tags, and it sets no recipe_message")
+            if reviewed is not None and not (isinstance(reviewed, dict) and reviewed and all(
+                    isinstance(key, str) and key and isinstance(value, str) and FINGERPRINT.fullmatch(value)
+                    for key, value in reviewed.items())):
+                raise CorpusError(f"{name} has a recipe_reviewed that is not an object of case or round trip ids "
+                                  "to fingerprints")
     # A difference names the entry that explains it by id, so the ids of
     # every section a difference can match must be distinct.
     ids = [entry.get("id") for section in RECIPE_SECTIONS for entry in table.get(section, [])]
@@ -1189,50 +1221,94 @@ def read_recipe(directory):
 class RecipeDifference:
     """One difference a recipe record holds: the `case` it belongs to and,
     for a parse, its `round` trip; the `tags` entries match it by and the
-    `section` they come from. A case's tags are its features,
+    `section` they come from; the recipe's refusal or parser error
+    `message`, if it gives one; and the `fingerprint` a review records
+    (`difference_fingerprint`). A case's tags are its features,
     `recipe:<difference>` and `case:fixed` or `case:generated` (`is_fixed`),
     and an inputs or mapping entry explains it; a round trip's are its
     case's tags without `recipe:<difference>`, `recipe:parse`,
     `parse:<field>` for each field that differs and its generation prompt's
-    `mode:<mode>`, and a parser entry explains it. A recipe reports one
-    refusal where a generated case carries several causes, so `case:` lets
-    one entry explain the generated cases' differences without matching a
-    fixed case's own entry."""
+    `mode:<mode>`, and a parser entry explains it. A recipe refuses a
+    request with the first failure its checks find, where a request may
+    carry several causes, so the message names the cause it reports
+    (`recipe_message`)."""
 
-    def __init__(self, case, tags, section, detail, round=None):
+    def __init__(self, case, tags, section, detail, round=None, message=None, fingerprint=None):
         self.case = case
         self.round = round
         self.tags = tags
         self.section = section
         self.detail = detail
+        self.message = message
+        self.fingerprint = fingerprint
+
+    @property
+    def key(self):
+        """The id a review names the difference by: its round trip's or its
+        case's."""
+        return self.round or self.case
 
     @property
     def name(self):
         return f"round trip {self.round}" if self.round else f"case {self.case}"
 
 
-def recipe_differences(record, coverage):
+def recipe_differences(record, coverage, vectors=(), rounds=()):
     """Every difference a recipe record holds (`RecipeDifference`), cases
-    first, in the record's order."""
+    first, in the record's order. `vectors` and `rounds` are the corpus's,
+    which fingerprint each difference they hold."""
     def case_tags(case):
         features = coverage["cases"].get(case, {}).get("features", [])
         return {*features, f"case:{'fixed' if is_fixed(features) else 'generated'}"}
 
+    cases = {vector["id"]: vector for vector in vectors}
+    trips = {vector["id"]: vector for vector in rounds}
     differences = []
     for identifier, row in record["cases"].items():
         if "difference" in row:
-            differences.append(RecipeDifference(identifier, case_tags(identifier) | {f"recipe:{row['difference']}"},
-                                                "render", describe_recipe_case(row)))
+            vector = cases.get(identifier)
+            differences.append(RecipeDifference(
+                identifier, case_tags(identifier) | {f"recipe:{row['difference']}"}, "render",
+                describe_recipe_case(row), message=recipe_message(row["recipe"]),
+                fingerprint=difference_fingerprint(row, corpus_outcome(vector)) if vector else None))
     for identifier, row in record["rounds"].items():
         if "differences" in row:
             case = identifier.rsplit("-round-", 1)[0]
             shape = coverage["rounds"].get(identifier, {}).get("shape", "")
             tags = case_tags(case) | {"recipe:parse", *(f"parse:{field}" for field in row["differences"]),
                                       f"mode:{shape.rsplit('/', 1)[-1]}"}
-            differences.append(RecipeDifference(case, tags, "parser",
-                                                f"the recipe's parse differs in {', '.join(row['differences'])}",
-                                                identifier))
+            vector = trips.get(identifier)
+            differences.append(RecipeDifference(
+                case, tags, "parser", f"the recipe's parse differs in {', '.join(row['differences'])}", identifier,
+                message=recipe_message(row["recipe"]),
+                fingerprint=difference_fingerprint(row, canonical_turn(vector["expect"])) if vector else None))
     return differences
+
+
+def recipe_message(outcome):
+    """The message of the recipe's refusal or parser error in an outcome, or
+    None."""
+    for field in ("refusal", "error"):
+        value = outcome.get(field)
+        if isinstance(value, dict) and isinstance(value.get("message"), str):
+            return value["message"]
+    return None
+
+
+def corpus_outcome(vector):
+    """What a render vector gives: its refusal, or its text and token ids."""
+    if "refusal" in vector:
+        return {"refusal": vector["refusal"]}
+    return {"rendered_text": vector["rendered_text"], "token_ids": vector["token_ids"]}
+
+
+def difference_fingerprint(row, outcome):
+    """The fingerprint a review of a difference records (recipe_reviewed):
+    the digest of the recipe's row, which fingerprints the request and a
+    round trip's token ids and holds the recipe's outcome, with the corpus's
+    own outcome (`corpus_outcome`, or a round trip's `canonical_turn`), so a
+    review no longer holds once either side changes."""
+    return hashlib.sha256(json.dumps([row, outcome], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
 def describe_recipe_case(row):
@@ -1253,26 +1329,61 @@ def recipe_candidates(table, section):
     return [entry for name in sections for entry in table[name] if entry.get("recipe_when")]
 
 
+def explains(entry, difference):
+    """Whether an entry explains a difference: it reviewed the difference
+    (its recipe_reviewed fingerprint for the difference's id is the
+    difference's), or its recipe_when tags all hold, as `when` matches
+    features, and the recipe's message matches its recipe_message pattern,
+    when it sets one."""
+    reviewed = entry.get("recipe_reviewed") or {}
+    if difference.fingerprint is not None and reviewed.get(difference.key) == difference.fingerprint:
+        return True
+    if not set(entry["recipe_when"]) <= difference.tags:
+        return False
+    pattern = entry.get("recipe_message")
+    return pattern is None or (difference.message is not None and re.search(pattern, difference.message) is not None)
+
+
 def attribute(table, differences):
-    """Each difference with its matching entries, by recipe_when tags as
-    `when` matches features."""
+    """Each difference with the entries that explain it (`explains`)."""
     return [(difference, [entry for entry in recipe_candidates(table, difference.section)
-                          if set(entry["recipe_when"]) <= difference.tags]) for difference in differences]
+                          if explains(entry, difference)]) for difference in differences]
 
 
 def describe_match(difference, entries):
     kind = "parser" if difference.section == "parser" else "inputs or mapping"
-    found = f"several entries ({', '.join(entry['id'] for entry in entries)})" if entries else f"no {kind} entry"
-    return f"{difference.name}: {difference.detail}, and its recipe_when tags match {found}"
+    found = (f"several entries explain it ({', '.join(entry['id'] for entry in entries)})" if entries
+             else f"no {kind} entry explains it")
+    return f"{difference.name}: {difference.detail}, and {found}"
 
 
-def recipe_representatives(record, coverage, table):
+def stale_reviews(table, record, differences):
+    """Each review (recipe_reviewed) of a difference the record holds no
+    longer: its id names a case or round trip of the record whose difference
+    is gone or has another fingerprint. A review of an id the record lacks,
+    a case minimization dropped, is not judged."""
+    found = {difference.key: difference.fingerprint for difference in differences}
+    return [f"{section} entry {entry['id']} reviewed the difference of {key} from the recipe, which the corpus no "
+            f"longer holds: it {'has the fingerprint ' + found[key] if found.get(key) else 'agrees'}"
+            for section in RECIPE_SECTIONS for entry in table[section]
+            for key, fingerprint in (entry.get("recipe_reviewed") or {}).items()
+            if (key in record["cases"] or key in record["rounds"]) and found.get(key) != fingerprint]
+
+
+def recipe_representatives(record, coverage, table, vectors, rounds):
     """What minimization keeps of a full corpus's recipe differences: for
     each entry that explains one, the first case and round trip it explains,
     so no entry goes stale. Refuses a difference that matches no entry or
-    several, which a committed corpus would otherwise drop unexplained."""
-    attributed = attribute(table, recipe_differences(record, coverage))
+    several, which a committed corpus would otherwise drop unexplained, and
+    a review of a difference the full corpus no longer holds."""
+    differences = recipe_differences(record, coverage, vectors, rounds)
+    attributed = attribute(table, differences)
     unexplained = [describe_match(difference, entries) for difference, entries in attributed if len(entries) != 1]
+    unexplained += stale_reviews(table, record, differences)
+    unexplained += [f"{section} entry {entry['id']} reviewed {key}, which the full corpus does not hold"
+                    for section in RECIPE_SECTIONS for entry in table[section]
+                    for key in entry.get("recipe_reviewed") or {}
+                    if key not in record["cases"] and key not in record["rounds"]]
     if unexplained:
         raise CorpusError("differences from the recipe match no entry or several: " + "; ".join(unexplained))
     cases, rounds, seen = set(), set(), set()
@@ -1285,18 +1396,19 @@ def recipe_representatives(record, coverage, table):
     return cases, rounds
 
 
-def recipe_summary(record, coverage, table):
+def recipe_summary(record, coverage, table, vectors, rounds):
     """What generate reports of a recipe record: agreements, differences by
-    class, and the differences that match no entry or several."""
-    differences = recipe_differences(record, coverage)
+    class, and the differences that no entry or several explain, each with
+    the fingerprint a review of it would record."""
+    differences = recipe_differences(record, coverage, vectors, rounds)
     classes = {}
     for difference in differences:
         for tag in sorted(tag for tag in difference.tags if tag.startswith(("recipe:", "parse:"))):
             classes[tag] = classes.get(tag, 0) + 1
     rows = len(record["cases"]) + len(record["rounds"])
     return {"recipe_agreements": rows - len(differences), "recipe_differences": classes,
-            "recipe_unattributed": [difference.name for difference, entries in attribute(table, differences)
-                                    if len(entries) != 1]}
+            "recipe_unattributed": [f"{describe_match(difference, entries)} (fingerprint {difference.fingerprint})"
+                                    for difference, entries in attribute(table, differences) if len(entries) != 1]}
 
 
 # generate ---------------------------------------------------------------------------------
@@ -1406,7 +1518,7 @@ def generate(model, output, seed=0, divergences=None, template=None, refusals=No
     result = summary(document, corpus)
     if record is not None:
         write_json(output / RECIPE_FILE, record)
-        result.update(recipe_summary(record, document, table))
+        result.update(recipe_summary(record, document, table, corpus["vectors"], corpus["rounds"]))
     else:
         (output / RECIPE_FILE).unlink(missing_ok=True)
     return result
@@ -1523,7 +1635,7 @@ def minimize(model, corpus, output, divergences=None):
     required, required_rounds = set(), set()
     if record is not None:
         table = read_divergences(divergences if divergences is not None else model.divergences_path)
-        required, required_rounds = recipe_representatives(record, coverage, table)
+        required, required_rounds = recipe_representatives(record, coverage, table, vectors, rounds)
     chosen = minimize_selection(coverage, outcomes, required)
     keep = set(chosen)
     fixed = {key for key in keep if is_fixed(coverage["cases"][key]["features"])}
@@ -1793,8 +1905,11 @@ def check_recipe(model, fixtures, vectors, rounds, coverage, table):
     trip's token ids), it holds no internal recipe failure as a refusal, a
     recorded difference recomputes from the recipe's outcome, and an
     agreement's digest is the vector's. Each difference
-    matches exactly one entry by its recipe_when tags (`recipe_differences`),
-    and an entry whose tags match none is stale. A mapping entry that
+    (`recipe_differences`) is explained by exactly one entry (`explains`):
+    by its recipe_when tags, narrowed by its recipe_message, or by a review
+    of that difference (recipe_reviewed); an entry that explains none is
+    stale, as is a review of a committed case or round trip whose
+    difference has changed (`stale_reviews`). A mapping entry that
     follows the recipe needs every case it names to agree with it; one that
     follows the pinned reference (the pin's source file, or the chat
     template) is stale when every case it names agrees, as an inputs entry is
@@ -1829,13 +1944,15 @@ def check_recipe(model, fixtures, vectors, rounds, coverage, table):
         if problem:
             errors.append(f"round trip {vector['id']}: {RECIPE_FILE} {problem}")
     matched = set()
-    for difference, entries in attribute(table, recipe_differences(record, coverage)):
+    differences = recipe_differences(record, coverage, vectors, rounds)
+    for difference, entries in attribute(table, differences):
         if len(entries) == 1:
             matched.add(entries[0]["id"])
         else:
             errors.append(describe_match(difference, entries))
-    errors += [f"{section} entry {entry['id']} is stale: no committed difference from the recipe matches its "
-               "recipe_when" for section, entry in tagged if entry["id"] not in matched]
+    errors += [f"{section} entry {entry['id']} is stale: it explains no committed difference from the recipe"
+               for section, entry in tagged if entry["id"] not in matched]
+    errors += stale_reviews(table, record, differences)
     reference = Path(model.pin.get("source", "chat_template.jinja")).name
     # An entry that follows the recipe needs every case it names to agree.
     # One that follows the pinned reference goes stale only when every case

@@ -806,26 +806,9 @@ def image_format_cases():
         "file:flat"}
 
 
-def partial_results(messages):
-    """Whether an assistant turn's calls are not all answered by the tool
-    messages directly after it, which deepseek-recipe refuses
-    (`recipe-conversation-checks` in frontend-divergences.json)."""
-    for index, message in enumerate(messages):
-        calls = {call["id"] for call in message.get("tool_calls") or []}
-        answered = set()
-        for result in messages[index + 1:]:
-            if result.get("role") != "tool":
-                break
-            answered.add(result.get("tool_call_id"))
-        if calls - answered:
-            return True
-    return False
-
-
 def cases(declaration):
     for name, request, _ in tool_image_cases():
-        yield name, request, {f"fixed:{name}", "tool-results:images",
-                              *(("results:partial",) if partial_results(request["messages"]) else ())}
+        yield name, request, {f"fixed:{name}", "tool-results:images"}
     for name, request, tags in image_format_cases():
         yield name, request, {f"fixed:{name}", *tags}
     # The encoder's test pair 1 (encoding/tests/test_input_1.json) as a
@@ -1006,7 +989,8 @@ def cases(declaration):
         "fixed:named-choice-skips-schema", "tools:wrapped"}
     # A strict schema keeps a number's digits as sent, where the recipe
     # rounds one beyond u64 to a float, and refuses a node written as a
-    # sequence, which the recipe reads by position (`strict-schema-reading`).
+    # sequence, which the recipe reads by position (`strict-schema-numbers`,
+    # `strict-schema-positional-nodes`).
     yield "strict-large-number", {"messages": [user("q")], "tools": [
         {"type": "function", "function": {"name": "f", "strict": True, "parameters": {
             "type": "object", "properties": {"x": {"type": "number", "maximum": 18446744073709551617}}}}}]}, {
@@ -1050,7 +1034,7 @@ def cases(declaration):
     # refuses and this format renders (`json-word-check`).
     yield "json-object-without-json-word", {"messages": [user("Weather in Oslo?")],
                                             "response_format": RESPONSE_FORMATS["json-object"]}, {
-        "fixed:json-object-without-json-word", "response-format:json-object", "json-word:absent"}
+        "fixed:json-object-without-json-word", "response-format:json-object"}
     yield "strict-response-format-partial-required", {"messages": [user("q")], "response_format": {
         "type": "json_schema", "json_schema": {"name": "answer", "strict": True, "schema": {
             "type": "object", "properties": {"city": {"type": "string"}, "days": {"type": "integer"}},

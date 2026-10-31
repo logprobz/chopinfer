@@ -94,6 +94,17 @@ pub fn tiles(s: Shape) -> Vec<Tile> {
             tile(256, 32, 32, 32, 4, 32, 1),
             tile(64, 96, 32, 32, 3, 32, 1),
             tile(128, 64, 16, 64, 2, 64, 1),
+            // Decode rows: as many CTAs as one wave of two to four per SM
+            // holds, each streaming its feature lines over the whole K.
+            tile(96, 8, 32, 8, 3, 64, 1),
+            tile(64, 8, 16, 8, 5, 32, 1),
+            tile(48, 8, 16, 8, 5, 32, 1),
+            tile(128, 8, 32, 8, 2, 64, 1),
+            tile(32, 8, 16, 8, 4, 64, 1),
+            tile(96, 16, 32, 16, 2, 64, 1),
+            tile(64, 16, 16, 16, 4, 32, 1),
+            tile(96, 32, 32, 32, 3, 32, 1),
+            tile(64, 32, 32, 32, 3, 32, 1),
         ]
     } else {
         vec![

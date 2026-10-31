@@ -36,8 +36,13 @@ pub fn selected_shapes() -> Vec<Shape> {
         .collect()
 }
 
+/// The row counts `CHOPINFER_F32_ROWS_ROWS` names, or `rows`.
+pub fn rows_or(rows: &[u32]) -> Vec<u32> {
+    list("CHOPINFER_F32_ROWS_ROWS").unwrap_or_else(|| rows.to_vec())
+}
+
 pub fn selected_rows() -> Vec<u32> {
-    list("CHOPINFER_F32_ROWS_ROWS").unwrap_or_else(|| ROWS.to_vec())
+    rows_or(&ROWS)
 }
 
 /// The enforced power limit and SM clock of this session's GPU.

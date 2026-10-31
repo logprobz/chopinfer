@@ -83,13 +83,14 @@ const WITNESSES: [Witness; 11] = [
     Witness::NonfiniteWeight,
     Witness::Overflow,
 ];
-/// Every tile boundary of 8, 16, 32 and 64 rows from the decode bucket to
-/// the package's verify rows, and the wide buckets.
-const BOUNDARY_ROWS: [u32; 23] = [
-    1, 8, 31, 32, 33, 40, 47, 48, 63, 64, 65, 66, 95, 96, 97, 127, 128, 129, 159, 160, 161, 191,
-    192,
+/// Every tile boundary of 8, 16, 32 and 64 rows from one row to the
+/// package's verify rows, the decode and DSpark verify widths of one to
+/// eight items, the drafter's head widths and the wide buckets.
+const BOUNDARY_ROWS: [u32; 42] = [
+    1, 2, 4, 5, 6, 8, 9, 10, 12, 15, 16, 17, 20, 24, 25, 30, 31, 32, 33, 35, 40, 45, 47, 48, 50,
+    55, 60, 63, 64, 65, 66, 95, 96, 97, 127, 128, 129, 159, 160, 161, 191, 192,
 ];
-const WITNESS_ROWS: [u32; 5] = [33, 64, 65, 128, 192];
+const WITNESS_ROWS: [u32; 9] = [1, 6, 16, 32, 33, 60, 64, 65, 192];
 
 /// A named operand pattern and the row counts it runs at.
 type Case = (String, (Vec<f32>, Vec<f32>), Vec<u32>);
@@ -127,13 +128,13 @@ fn gpu_verify_rows_bitwise() {
             let mut cases: Vec<Case> = vec![(
                 "mixed".into(),
                 fixture::mixed(shape),
-                BOUNDARY_ROWS.to_vec(),
+                timing::rows_or(&BOUNDARY_ROWS),
             )];
             for witness in WITNESSES {
                 cases.push((
                     format!("{witness:?}"),
                     fixture::operands(shape, witness),
-                    WITNESS_ROWS.to_vec(),
+                    timing::rows_or(&WITNESS_ROWS),
                 ));
             }
             for (label, (a, b), rows) in cases {

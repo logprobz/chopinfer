@@ -254,9 +254,9 @@ fn reasoning_before_the_last_user_turn_drops_without_tools() {
     assert!(next.ends_with("q3<｜Assistant｜><think>"));
 }
 
-/// Not the vendor's: lines 107-114 refuse an image placeholder spelled in
-/// text, which the port renders as plain text, as deepseek-recipe 0.2.0
-/// does (`explicit-special-tokens` in
+/// Not the vendor's: lines 342-348 and 355-367 refuse an image placeholder
+/// spelled in text, which the port renders as plain text, as
+/// deepseek-recipe 0.2.0 does (`explicit-special-tokens` in
 /// `models/deepseek41/frontend-divergences.json`, section `mapping`).
 #[test]
 fn image_placeholders_in_text_are_plain_text() {

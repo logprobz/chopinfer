@@ -3905,6 +3905,90 @@
   "separator": ""
  },
  {
+  "id": "s-value-marker-0-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "Go."
+    }
+   ],
+   "tools": [
+    {
+     "type": "function",
+     "function": {
+      "name": "f",
+      "parameters": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "x"
+       ]
+      }
+     }
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   271,
+   30,
+   128825,
+   10699,
+   1018,
+   30,
+   128825,
+   34756,
+   2329,
+   1281,
+   72,
+   3816,
+   30,
+   128825,
+   10767,
+   2329,
+   1281,
+   90,
+   4,
+   3418,
+   1281,
+   11476,
+   11387,
+   28217,
+   10525,
+   7398,
+   28217,
+   10767,
+   7339,
+   128825,
+   10767,
+   1018,
+   1718,
+   128825,
+   34756,
+   1018,
+   1718,
+   128825,
+   10699,
+   32,
+   1
+  ],
+  "expect": {
+   "tool_calls": [
+    {
+     "name": "f",
+     "arguments": "{\"x\": \"</｜DSML｜ parameter>\"}"
+    }
+   ],
+   "finish_reason": "tool_calls"
+  },
+  "separator": ""
+ },
+ {
   "id": "vendor-pair-1-round-endofsentence",
   "request": {
    "messages": [
@@ -4017,6 +4101,38 @@
   "separator": ""
  },
  {
+  "id": "special-token-in-assistant-turn-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "q"
+    }
+   ]
+  },
+  "token_ids": [
+   128822,
+   30,
+   37947,
+   32,
+   46900,
+   2831,
+   1718,
+   37947,
+   32,
+   983,
+   344,
+   18857,
+   16,
+   1
+  ],
+  "expect": {
+   "content": "<think>inline plan</think> It is mild.",
+   "finish_reason": "stop"
+  },
+  "separator": ""
+ },
+ {
   "id": "newline-edged-turn-round-endofsentence",
   "request": {
    "messages": [
@@ -4076,6 +4192,63 @@
   ],
   "expect": {
    "content": "```json\n{\"temp\": 18}\n```",
+   "finish_reason": "stop"
+  },
+  "separator": ""
+ },
+ {
+  "id": "special-tokens-in-final-turn-round-endofsentence",
+  "request": {
+   "messages": [
+    {
+     "role": "user",
+     "content": "How are reasoning and calls marked?"
+    }
+   ]
+  },
+  "token_ids": [
+   65106,
+   818,
+   37947,
+   27594,
+   2728,
+   37947,
+   32,
+   305,
+   223,
+   28217,
+   10525,
+   7398,
+   28217,
+   412,
+   3051,
+   16,
+   128822,
+   77666,
+   288,
+   12802,
+   509,
+   2728,
+   37947,
+   27594,
+   305,
+   260,
+   10699,
+   5603,
+   22103,
+   418,
+   818,
+   28217,
+   10525,
+   7398,
+   28217,
+   10699,
+   43386,
+   1
+  ],
+  "expect": {
+   "reasoning": "Explain <think>, </think> and ｜DSML｜ as text.",
+   "content": "Reasoning ends at </think>, and a calls block opens with <｜DSML｜ calls>.",
    "finish_reason": "stop"
   },
   "separator": ""

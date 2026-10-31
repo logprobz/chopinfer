@@ -94,12 +94,14 @@ fn events(
         held: false,
         last: false,
         stop_floor: Some(0),
+        marks: None,
     })?;
     events.extend(parser.push(FormatInputV1 {
         completion: bytes,
         held: false,
         last: true,
         stop_floor: Some(0),
+        marks: None,
     })?);
     Ok(events)
 }

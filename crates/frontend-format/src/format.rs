@@ -79,6 +79,19 @@ pub struct FormatInputV1<'a> {
     /// `None` until the completion passes the request's minimum token
     /// count; then the byte offset an end marker must end after to stop it.
     pub stop_floor: Option<usize>,
+    /// The byte ranges in `completion` of the tokens generated as the
+    /// declaration's ID-only markers (`vocabulary.id_only_markers`),
+    /// ascending, disjoint and not empty; `None` for text without token
+    /// boundaries, whose markers all read by their spelling.
+    ///
+    /// With marks, an occurrence of a marker is the marker only when each
+    /// ID-only spelling in it is exactly one mark and no other byte of it
+    /// lies in a mark, so a marker spelled by ordinary tokens is text. Each
+    /// push names every mark of `completion`; the parser reads the ones that
+    /// end after the bytes it kept, and drops the ones a shorter completion
+    /// cut. A parser's pushes all carry marks or none, and a declaration
+    /// without ID-only markers takes none.
+    pub marks: Option<&'a [Range<usize>]>,
 }
 
 /// One tool-call delta, by the call's index among the delivered calls.

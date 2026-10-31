@@ -9,6 +9,7 @@ use crate::descriptor::{
     FormatDescriptorV1, FrontendJsonEncodingV1, FrontendParserDeclarationV1, FrontendToolGrammarV1,
 };
 use crate::format_decode::completion_calls_v1;
+use crate::marks::{MarkMatchV1, SourceMapV1};
 use crate::request::{FrontendJsonV1, FrontendToolV1};
 use crate::toolkit::{json_to_string_v1, resource_v1, validate_parameter_name_v1};
 
@@ -101,6 +102,61 @@ pub(crate) fn call_open_v1(parser: &FrontendParserDeclarationV1) -> (&str, &str)
     (read, &marker[end..])
 }
 
+/// Which marker spellings in some text of a tool region are markers: the
+/// completion's marks ([`MarkMatchV1`]) at the completion bytes each offset
+/// of the text stands for.
+#[derive(Clone, Copy)]
+pub(crate) struct RegionMarksV1<'a> {
+    marks: MarkMatchV1<'a>,
+    /// Where the region begins in the completion bytes.
+    start: usize,
+    /// Where the text begins in the region's decoded text.
+    base: usize,
+    /// How the region's decoded text maps back to its bytes, when it is not
+    /// those bytes unchanged.
+    map: Option<&'a SourceMapV1>,
+}
+
+impl<'a> RegionMarksV1<'a> {
+    /// `marks` over the decoded text of the region that begins at `start`.
+    pub(crate) const fn new(
+        marks: MarkMatchV1<'a>,
+        start: usize,
+        map: Option<&'a SourceMapV1>,
+    ) -> Self {
+        Self {
+            marks,
+            start,
+            base: 0,
+            map,
+        }
+    }
+
+    /// The same marks over the text that begins `offset` bytes into this
+    /// text.
+    const fn within(self, offset: usize) -> Self {
+        Self {
+            base: self.base + offset,
+            ..self
+        }
+    }
+
+    /// Whether `marker`, spelled at offset `at` of this text, is the marker.
+    fn accepts(&self, at: usize, marker: &str) -> bool {
+        if self.marks.spelled() {
+            return true;
+        }
+        let decoded = self.base + at;
+        let source = self.map.map_or(decoded, |map| map.source(decoded));
+        self.marks.accepts(self.start + source, marker)
+    }
+
+    /// Whether `text` begins with `marker`, and it is the marker.
+    fn starts(&self, text: &str, at: usize, marker: &str) -> bool {
+        text[at..].starts_with(marker) && self.accepts(at, marker)
+    }
+}
+
 /// One call a tool region named.
 pub(crate) struct RegionCallV1 {
     pub(crate) name: String,
@@ -175,22 +231,26 @@ pub(crate) fn scan_tool_region(
     terminals: ChatMlTerminalsV1<'_>,
     text: &str,
     tools: &[FrontendToolV1],
+    marks: RegionMarksV1<'_>,
 ) -> ToolRegionV1 {
     let mut scan = RegionScanV1::default();
-    scan.scan(terminals, text, tools);
+    scan.scan(terminals, text, tools, marks);
     scan.region
 }
 
 impl RegionScanV1 {
-    /// Scans `text`, which begins with the text this scan read before.
+    /// Scans `text`, which begins with the text this scan read before, with
+    /// the markers `marks` lets through. A marker spelling it rejects is
+    /// text, and the search goes on after it.
     pub(crate) fn scan(
         &mut self,
         terminals: ChatMlTerminalsV1<'_>,
         text: &str,
         tools: &[FrontendToolV1],
+        marks: RegionMarksV1<'_>,
     ) -> &ToolRegionV1 {
         if terminals.grammar == FrontendToolGrammarV1::XmlKeyValueArgumentsV1 {
-            self.region = scan_key_value_call(terminals, text, tools);
+            self.region = scan_key_value_call(terminals, text, tools, marks);
             return &self.region;
         }
         // A typed calls block begins at the newlines its open takes.
@@ -201,7 +261,7 @@ impl RegionScanV1 {
         };
         let opener = lead + terminals.tool_open.len().max(terminals.function_open.len());
         let mut cursor = self.settled.unwrap_or_else(|| {
-            let (state, start) = if text[lead..].starts_with(terminals.tool_open) {
+            let (state, start) = if marks.starts(text, lead, terminals.tool_open) {
                 (RegionStateV1::Preamble, lead + terminals.tool_open.len())
             } else {
                 (RegionStateV1::Name, terminals.function_open.len())
@@ -250,7 +310,9 @@ impl RegionScanV1 {
                     if cursor.state == RegionStateV1::Between {
                         wrappers.push((terminals.tool_open, RegionStateV1::Between));
                     }
-                    let Some((at, length, next)) = earliest_v1(rest, &wrappers) else {
+                    let Some((at, length, next)) =
+                        earliest_v1(rest, &wrappers, marks.within(cursor.from))
+                    else {
                         settle(&mut self.settled, cursor, None);
                         return &self.region;
                     };
@@ -273,7 +335,9 @@ impl RegionScanV1 {
                         (terminals.function_name_close, RegionStateV1::Arguments),
                         (terminals.function_close, RegionStateV1::Between),
                     ];
-                    let Some((at, length, next)) = earliest_v1(rest, &closes) else {
+                    let Some((at, length, next)) =
+                        earliest_v1(rest, &closes, marks.within(cursor.from))
+                    else {
                         settle(&mut self.settled, cursor, None);
                         return &self.region;
                     };
@@ -306,6 +370,7 @@ impl RegionScanV1 {
                     }
                     let json = &*self.json.as_ref().expect("the open call's rule").2;
                     let arguments = &text[cursor.start..];
+                    let within = marks.within(cursor.start);
                     let close = loop {
                         let from = cursor.from - cursor.start;
                         let Some(at) = arguments[from..].find(terminals.function_close) else {
@@ -313,11 +378,17 @@ impl RegionScanV1 {
                         };
                         let at = from + at;
                         settle(&mut self.settled, cursor, Some(cursor.start + at));
-                        // A close inside a JSON value's string literal is
-                        // content; a raw value ends at the first close.
-                        if !cursor
-                            .walk
-                            .walk(terminals, &arguments[..at], json, &mut |_, _, _| ())
+                        // A close the marks reject, or one inside a JSON
+                        // value's string literal, is content; a raw value
+                        // ends at the first close.
+                        if within.accepts(at, terminals.function_close)
+                            && !cursor.walk.walk(
+                                terminals,
+                                &arguments[..at],
+                                json,
+                                &mut |_, _, _| (),
+                                within,
+                            )
                         {
                             break Some(at);
                         }
@@ -380,6 +451,7 @@ fn scan_key_value_call(
     terminals: ChatMlTerminalsV1<'_>,
     text: &str,
     tools: &[FrontendToolV1],
+    marks: RegionMarksV1<'_>,
 ) -> ToolRegionV1 {
     let open = terminals.tool_open.len();
     let rest = text.get(open..).unwrap_or_default();
@@ -387,7 +459,7 @@ fn scan_key_value_call(
         (terminals.parameter_open, false),
         (terminals.tool_close, true),
     ];
-    let Some((at, length, closed)) = earliest_v1(rest, &closes) else {
+    let Some((at, length, closed)) = earliest_v1(rest, &closes, marks.within(open)) else {
         return ToolRegionV1 {
             calls: Vec::new(),
             end: None,
@@ -406,7 +478,8 @@ fn scan_key_value_call(
     }
     let arguments = &rest[at..];
     let json = json_arguments_v1(tools, &name);
-    let (_, end) = walk_key_value_arguments_v1(terminals, arguments, &json);
+    let (_, end) =
+        walk_key_value_arguments_v1(terminals, arguments, &json, marks.within(open + at));
     let kept = end.map_or(arguments.len(), |end| end - terminals.tool_close.len());
     ToolRegionV1 {
         calls: vec![RegionCallV1 {
@@ -431,6 +504,7 @@ fn walk_key_value_arguments_v1<'a>(
     terminals: ChatMlTerminalsV1<'_>,
     text: &'a str,
     json: &dyn Fn(&str) -> bool,
+    marks: RegionMarksV1<'_>,
 ) -> (Vec<(&'a str, &'a str)>, Option<usize>) {
     let mut pairs = Vec::new();
     let mut position = 0;
@@ -439,7 +513,9 @@ fn walk_key_value_arguments_v1<'a>(
             (terminals.parameter_open, false),
             (terminals.tool_close, true),
         ];
-        let Some((at, length, closes)) = earliest_v1(&text[position..], &opens) else {
+        let Some((at, length, closes)) =
+            earliest_v1(&text[position..], &opens, marks.within(position))
+        else {
             return (pairs, None);
         };
         if closes {
@@ -450,7 +526,9 @@ fn walk_key_value_arguments_v1<'a>(
             (terminals.parameter_name_close, false),
             (terminals.tool_close, true),
         ];
-        let Some((at, length, closes)) = earliest_v1(&text[key_start..], &key_closes) else {
+        let Some((at, length, closes)) =
+            earliest_v1(&text[key_start..], &key_closes, marks.within(key_start))
+        else {
             return (pairs, None);
         };
         if closes {
@@ -458,23 +536,22 @@ fn walk_key_value_arguments_v1<'a>(
         }
         let key = text[key_start..key_start + at].trim();
         let after_key = key_start + at + length;
-        let Some(value_start) = text[after_key..]
-            .trim_start()
-            .strip_prefix(terminals.parameter_value_open)
-            .map(|value| text.len() - value.len())
-        else {
+        let value_open = text.len() - text[after_key..].trim_start().len();
+        if !marks.starts(text, value_open, terminals.parameter_value_open) {
             position = after_key;
             continue;
-        };
+        }
+        let value_start = value_open + terminals.parameter_value_open.len();
         let value = &text[value_start..];
         let value_closes = [
             (terminals.parameter_close, false),
             (terminals.tool_close, true),
         ];
+        let marks = marks.within(value_start);
         let found = if json(key) {
-            earliest_outside_strings_v1(value, &value_closes)
+            earliest_outside_strings_v1(value, &value_closes, marks)
         } else {
-            earliest_v1(value, &value_closes)
+            earliest_v1(value, &value_closes, marks)
         };
         match found {
             None => return (pairs, None),
@@ -598,27 +675,32 @@ pub(crate) fn admits_string_v1(schema: &Value) -> bool {
 fn earliest_outside_strings_v1<T: Copy>(
     text: &str,
     terminals: &[(&str, T)],
+    marks: RegionMarksV1<'_>,
 ) -> Option<(usize, usize, T)> {
     let mut strings = JsonStringsV1::default();
     for (index, character) in text.char_indices() {
         if strings.read(character) {
             continue;
         }
-        if let Some((terminal, value)) = longest_terminal_v1(&text[index..], terminals) {
+        if let Some((terminal, value)) =
+            longest_terminal_v1(&text[index..], terminals, marks.within(index))
+        {
             return Some((index, terminal.len(), value));
         }
     }
     None
 }
 
-/// The longest terminal `text` starts with; the last listed at a tie.
+/// The longest terminal `text` starts with that `marks` lets through; the
+/// last listed at a tie.
 fn longest_terminal_v1<'t, T: Copy>(
     text: &str,
     terminals: &[(&'t str, T)],
+    marks: RegionMarksV1<'_>,
 ) -> Option<(&'t str, T)> {
     terminals
         .iter()
-        .filter(|(terminal, _)| text.starts_with(terminal))
+        .filter(|(terminal, _)| marks.starts(text, 0, terminal))
         .max_by_key(|(terminal, _)| terminal.len())
         .copied()
 }
@@ -653,12 +735,31 @@ impl JsonStringsV1 {
     }
 }
 
-/// The first of several terminals in `text`, preferring the longer at a tie.
-fn earliest_v1<T: Copy>(text: &str, terminals: &[(&str, T)]) -> Option<(usize, usize, T)> {
+/// The first of several terminals in `text` that `marks` lets through,
+/// preferring the longer at a tie.
+fn earliest_v1<T: Copy>(
+    text: &str,
+    terminals: &[(&str, T)],
+    marks: RegionMarksV1<'_>,
+) -> Option<(usize, usize, T)> {
     terminals
         .iter()
-        .filter_map(|(terminal, value)| text.find(terminal).map(|at| (at, terminal.len(), *value)))
+        .filter_map(|(terminal, value)| {
+            find_marker_v1(text, terminal, marks).map(|at| (at, terminal.len(), *value))
+        })
         .min_by_key(|(at, length, _)| (*at, usize::MAX - *length))
+}
+
+/// The first occurrence of `marker` in `text` that `marks` lets through.
+fn find_marker_v1(text: &str, marker: &str, marks: RegionMarksV1<'_>) -> Option<usize> {
+    let mut from = 0;
+    loop {
+        let at = from + text.get(from..)?.find(marker)?;
+        if marks.accepts(at, marker) {
+            return Some(at);
+        }
+        from = at + utf8_width_v1(&text[at..]);
+    }
 }
 
 /// What a parameter walk is reading.
@@ -723,6 +824,7 @@ impl ParameterWalkV1 {
         raw: &'a str,
         json: &dyn Fn(&str) -> bool,
         found: &mut dyn FnMut(&'a str, Option<&'a str>, bool),
+        marks: RegionMarksV1<'_>,
     ) -> bool {
         let settles =
             floor_char_boundary_v1(raw, raw.len().saturating_sub(terminals.longest() - 1));
@@ -743,7 +845,7 @@ impl ParameterWalkV1 {
             };
             match walk.state {
                 ParameterStateV1::Seek => {
-                    if here.starts_with(terminals.parameter_open) {
+                    if marks.starts(raw, walk.at, terminals.parameter_open) {
                         walk.at += terminals.parameter_open.len();
                         walk.state = ParameterStateV1::Name(walk.at);
                         continue;
@@ -753,9 +855,11 @@ impl ParameterWalkV1 {
                     // The typed grammar's close says whether the value is
                     // JSON; otherwise the parameter's schema does.
                     let typed = terminals.grammar == FrontendToolGrammarV1::XmlTypedParametersV1;
-                    let close = if here.starts_with(terminals.parameter_name_close) {
+                    let close = if marks.starts(raw, walk.at, terminals.parameter_name_close) {
                         Some((terminals.parameter_name_close, false))
-                    } else if typed && here.starts_with(terminals.parameter_json_name_close) {
+                    } else if typed
+                        && marks.starts(raw, walk.at, terminals.parameter_json_name_close)
+                    {
                         Some((terminals.parameter_json_name_close, true))
                     } else {
                         None
@@ -783,9 +887,9 @@ impl ParameterWalkV1 {
                     // close whatever it holds, as the reference parser reads
                     // it.
                     let typed = terminals.grammar == FrontendToolGrammarV1::XmlTypedParametersV1;
-                    let end = if !typed && here.starts_with(terminals.parameter_open) {
+                    let end = if !typed && marks.starts(raw, walk.at, terminals.parameter_open) {
                         Some(0)
-                    } else if here.starts_with(terminals.parameter_close) {
+                    } else if marks.starts(raw, walk.at, terminals.parameter_close) {
                         Some(terminals.parameter_close.len())
                     } else {
                         None
@@ -812,7 +916,9 @@ impl ParameterWalkV1 {
                             value,
                             json: Some(strings),
                         };
-                    } else if let Some((terminal, closes)) = longest_terminal_v1(here, &ends) {
+                    } else if let Some((terminal, closes)) =
+                        longest_terminal_v1(here, &ends, marks.within(walk.at))
+                    {
                         found(raw[name.0..name.1].trim(), Some(&raw[value..walk.at]), true);
                         walk.state = ParameterStateV1::Seek;
                         walk.at += if closes { terminal.len() } else { 0 };
@@ -850,19 +956,27 @@ pub(crate) fn call_arguments_v1(
     text: &str,
     tools: &[FrontendToolV1],
     open: bool,
+    marks: RegionMarksV1<'_>,
 ) -> Result<String, String> {
     if open {
         return Ok(String::new());
     }
     let raw = &text[call.arguments.clone()];
+    let marks = marks.within(call.arguments.start);
     if terminals.grammar == FrontendToolGrammarV1::XmlKeyValueArgumentsV1 {
-        return key_value_arguments_v1(descriptor, terminals, &call.name, raw, tools);
+        return key_value_arguments_v1(descriptor, terminals, &call.name, raw, tools, marks);
     }
     let json = json_arguments_v1(tools, &call.name);
     let mut parameters = Vec::new();
-    ParameterWalkV1::default().walk(terminals, raw, &json, &mut |parameter, value, flagged| {
-        parameters.push((parameter, value, flagged));
-    });
+    ParameterWalkV1::default().walk(
+        terminals,
+        raw,
+        &json,
+        &mut |parameter, value, flagged| {
+            parameters.push((parameter, value, flagged));
+        },
+        marks,
+    );
     let schema = tool_parameters_v1(tools, &call.name);
     let mut arguments: Vec<(String, FrontendJsonV1)> = Vec::new();
     for (parameter, value, flagged) in parameters {
@@ -943,9 +1057,10 @@ fn key_value_arguments_v1(
     name: &str,
     raw: &str,
     tools: &[FrontendToolV1],
+    marks: RegionMarksV1<'_>,
 ) -> Result<String, String> {
     let json = json_arguments_v1(tools, name);
-    let (pairs, _) = walk_key_value_arguments_v1(terminals, raw, &json);
+    let (pairs, _) = walk_key_value_arguments_v1(terminals, raw, &json, marks);
     let schema = tool_parameters_v1(tools, name);
     let mut arguments: Vec<(String, FrontendJsonV1)> = Vec::new();
     for (parameter, value) in pairs {

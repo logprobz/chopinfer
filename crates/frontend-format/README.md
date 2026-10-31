@@ -25,8 +25,8 @@ cannot wait for an SDK revision with that family implements `FrontendV1`.
 The library depends only on the ABI documents (`runtime-bundle-abi`), the
 declaration (`runtime-frontend-contract`), `runtime-grammar` and serde. It
 links no transport, host or device code, and names no model. Model tests and
-benchmarks call `tool_constraint_v1`, `parse_completion_v1` and
-`DeclaredParserV1` directly.
+benchmarks call `tool_constraint_v1`, `parse_completion_v1`,
+`parse_marked_completion_v1` and `DeclaredParserV1` directly.
 
 ## The format section
 
@@ -138,6 +138,20 @@ argument is dropped. A reserved marker anywhere the parser does not expect
 it refuses the completion. A whole-text parse (`parse_completion_v1`) reads
 a completion as one token carrying all of it and agrees with the incremental
 parse.
+
+A declaration may name ID-only markers (`vocabulary.id_only_markers`):
+boundary tokens the parser reads only from their token IDs. The host then
+marks each push with the byte ranges of the tokens generated as them
+(`FormatInputV1::marks`, a marked push document across the ABI). Every
+marker the parser reads, in text and inside a tool region, is read as the
+tokens it is made of: an occurrence is the marker only when each ID-only
+spelling in it is exactly one mark and no other byte of it lies in a mark.
+The same spelling from ordinary tokens is text, so a reasoning close in
+reasoning stays reasoning, a reserved marker in content stays content, and
+a parameter close inside a raw value stays in the value. Text without
+marks reads by spelling, as before. A parser's pushes all carry marks or
+none, and a push that keeps fewer bytes drops the marks past them.
+`parse_marked_completion_v1` is the whole-text parse with marks.
 
 The tool-choice grammar a request's `tool_choice` imposes writes calls in
 the same family, so a forced call reads back as the parser reads any call.

@@ -260,6 +260,7 @@ fn read_calls(
                 held: false,
                 last,
                 stop_floor: Some(0),
+                marks: None,
             })
             .unwrap_or_else(|error| panic!("{text:?} split {split:?}: {error}"))
     };

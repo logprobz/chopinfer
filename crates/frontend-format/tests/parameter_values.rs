@@ -116,6 +116,7 @@ fn calls(
                 held: false,
                 last: false,
                 stop_floor: Some(0),
+                marks: None,
             })
             .unwrap_or_else(|error| panic!("{text:?} split {split}: {error}"));
     }
@@ -126,6 +127,7 @@ fn calls(
                 held: false,
                 last: true,
                 stop_floor: Some(0),
+                marks: None,
             })
             .unwrap_or_else(|error| panic!("{text:?} split {split:?}: {error}")),
     );

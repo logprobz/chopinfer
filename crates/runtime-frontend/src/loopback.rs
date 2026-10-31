@@ -103,6 +103,8 @@ impl FormatParserV1 for LibraryParserV1 {
             held,
             last,
             stop_floor,
+            // The host sends no marks yet.
+            marks: None,
         })?;
         Ok(events.into_iter().map(event_v1).collect())
     }

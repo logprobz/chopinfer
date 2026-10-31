@@ -707,6 +707,12 @@ impl Tokenizer {
         self.within_token_limit(output)
     }
 
+    /// The most tokens one encode may produce, as the contract pins it.
+    #[must_use]
+    pub const fn model_max_length(&self) -> usize {
+        self.contract.model_max_length
+    }
+
     /// An empty output with room for the tokens `text` may encode to.
     fn token_output(&self, text: &str) -> Result<Vec<u32>> {
         let mut output = Vec::new();

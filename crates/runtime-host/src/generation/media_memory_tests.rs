@@ -851,10 +851,11 @@ fn inline_images_are_refused_from_their_headers_before_decoding() {
     let PreparedPrompt::MediaChat { segments, media } = &broken else {
         unreachable!()
     };
+    let pieces = pieces(&backend, segments);
     let plan = backend
         .plan_inline_media_v1(
             backend.policy.declaration().multimodal.as_ref().unwrap(),
-            segments,
+            &pieces,
             media,
             None,
             |text| backend.tokenize(text, false),
@@ -899,7 +900,7 @@ fn inline_images_wait_for_their_planned_need() {
     let need = probe
         .plan_inline_media_v1(
             probe.policy.declaration().multimodal.as_ref().unwrap(),
-            segments,
+            &pieces(&probe, segments),
             media,
             None,
             |text| probe.tokenize(text, false),
@@ -1027,4 +1028,18 @@ fn a_failed_image_releases_its_request_and_leaves_earlier_images_reclaimable() {
         .prepare_prompt(inline_jpegs(&[jpeg(false), good]))
         .unwrap();
     assert_eq!(media_inputs(&prepared).len(), 2);
+}
+
+/// A media chat's segments as `backend` encodes them.
+fn pieces<'a>(
+    backend: &EngineGenerationBackend,
+    segments: &'a [PromptSegmentV1],
+) -> PromptPiecesV1<'a> {
+    PromptPiecesV1::new(
+        &backend.policy.declaration().vocabulary,
+        segments,
+        backend.tokenizer_input_bytes,
+        backend.tokenizer.model_max_length(),
+    )
+    .unwrap()
 }

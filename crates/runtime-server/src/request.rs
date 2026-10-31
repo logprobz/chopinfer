@@ -1216,13 +1216,15 @@ fn prepare_chat(
             chat_template_kwargs,
         })
         .map_err(|error| frontend_error(error, "messages"))?;
-    let prompt = if rendered.media.is_empty() {
-        PreparedPrompt::RenderedChat(rendered.prompt)
-    } else {
+    let prompt = if !rendered.media.is_empty() {
         PreparedPrompt::MediaChat {
             segments: rendered.segments,
             media: rendered.media,
         }
+    } else if frontend.explicit_special_tokens() {
+        PreparedPrompt::SegmentedChat(rendered.segments)
+    } else {
+        PreparedPrompt::RenderedChat(rendered.prompt)
     };
     let requested_max = request.max_completion_tokens.or(request.max_tokens);
     // A request without an output limit generates up to the frontend's

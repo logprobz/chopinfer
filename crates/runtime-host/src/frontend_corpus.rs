@@ -42,7 +42,8 @@ use runtime_frontend::{
     tokenizer_from_components_v1,
 };
 use runtime_server::{
-    DecodingOptions, FinishReason, PreparedPrompt, ServerFrontendV1, prepare_chat_request_v1,
+    DecodingOptions, FinishReason, PreparedPrompt, PromptSegmentV1, ServerFrontendV1,
+    prepare_chat_request_v1,
 };
 use serde_json::{Map, Value, json};
 
@@ -449,14 +450,29 @@ fn write_outcomes(
                     json!({"refusal": {"message": error.message, "parameter": error.parameter}})
                 }
                 Ok(prepared) => {
-                    let text = match prepared.prompt {
-                        PreparedPrompt::RenderedChat(text) => text,
-                        PreparedPrompt::MediaChat { segments, media } => check
-                            .media_prompt_text_v1(&segments, &media)
-                            .unwrap_or_else(|error| panic!("{id}: {error}")),
+                    let explicit = check
+                        .frontend
+                        .descriptor()
+                        .vocabulary
+                        .explicit_special_tokens;
+                    let (segments, media) = match prepared.prompt {
+                        PreparedPrompt::RenderedChat(text) => {
+                            (vec![PromptSegmentV1::Text(text)], Vec::new())
+                        }
+                        PreparedPrompt::SegmentedChat(segments) => (segments, Vec::new()),
+                        PreparedPrompt::MediaChat { segments, media } => (segments, media),
                         _ => panic!("{id}: the transport prepared no rendered chat"),
                     };
-                    let ids = check.encode_v1(&text).ok();
+                    let text = check
+                        .media_prompt_text_v1(&segments, &media)
+                        .unwrap_or_else(|error| panic!("{id}: {error}"));
+                    // A render that names its special tokens encodes as the
+                    // host encodes it, and any other as its text scans.
+                    let ids = if explicit {
+                        check.encode_segments_v1(&segments, &media).ok()
+                    } else {
+                        check.encode_v1(&text).ok()
+                    };
                     json!({"rendered_text": text, "token_ids": ids})
                 }
             };

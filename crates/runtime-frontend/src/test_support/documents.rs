@@ -180,6 +180,10 @@ impl ServerFrontendV1 for PairedFrontendV1 {
         self.document.forced_choice_without_tools_is_auto()
     }
 
+    fn explicit_special_tokens(&self) -> bool {
+        self.document.explicit_special_tokens()
+    }
+
     fn tool_namespace_separator(&self) -> Option<&str> {
         self.document.tool_namespace_separator()
     }

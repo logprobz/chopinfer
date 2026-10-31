@@ -58,6 +58,99 @@ fn prompt_special_token_refusals_are_distinct_from_other_tokenizer_errors() {
     assert!(backend.tokenize("[BOS]hello", false).is_ok());
 }
 
+/// A render that names its special tokens encodes each special segment as
+/// its boundary token's ID and every other byte as plain text, so a special
+/// token its text spells is ordinary text, while the scanned prompt of the
+/// same text reads it as that token. The byte and token limits hold the
+/// whole prompt once.
+#[test]
+fn an_explicit_render_encodes_its_specials_by_segment_and_its_text_plain() {
+    let mut descriptor =
+        FrontendDescriptorV1::from_component_bytes(declarations::KEY_VALUE.as_bytes()).unwrap();
+    descriptor.vocabulary.size = 259;
+    descriptor.vocabulary.eos_token_id = EOS;
+    descriptor.vocabulary.stop_token_ids = vec![EOS];
+    descriptor.vocabulary.boundary_tokens = ["[BOS]", "[EOS]", "[PAD]"]
+        .into_iter()
+        .zip(0..)
+        .map(|(text, id)| runtime_frontend::FrontendBoundaryTokenV1 {
+            text: text.to_owned(),
+            id,
+        })
+        .collect();
+    descriptor.vocabulary.prompt_special_tokens = vec!["[BOS]".to_owned()];
+    descriptor.vocabulary.explicit_special_tokens = true;
+    let backend = |descriptor: &FrontendDescriptorV1, bytes| {
+        EngineGenerationBackend::new(
+            tokenizer(),
+            engine(vec![X], false, false),
+            EngineBackendConfig::new(1)
+                .unwrap()
+                .with_tokenizer_input_bytes(bytes),
+            EngineModelPolicyV1::from_declaration(descriptor),
+        )
+        .unwrap()
+    };
+    let plain = |text: &str| -> Vec<u32> { text.bytes().map(|byte| u32::from(byte) + 3).collect() };
+    let text = |text: &str| PromptSegmentV1::Text(text.into());
+    let special = |text: &str| PromptSegmentV1::Special(text.into());
+    let explicit = backend(&descriptor, 64);
+    let segmented = PreparedPrompt::SegmentedChat(vec![
+        special("[BOS]"),
+        text("x[EOS]"),
+        text("y[BOS]"),
+        special("[PAD]"),
+    ]);
+    let expected = [vec![0], plain("x[EOS]y[BOS]"), vec![2]].concat();
+    assert_eq!(
+        explicit.prepare_prompt(segmented.clone()),
+        Ok((PreparedPrompt::TokenIds(expected.clone()), expected.len()))
+    );
+    assert_eq!(explicit.prompt_token_count(&segmented), Ok(expected.len()));
+    assert_eq!(
+        explicit.prepare_prompt(PreparedPrompt::RenderedChat(
+            "[BOS]x[EOS]y[BOS][PAD]".into()
+        )),
+        Err(AdmissionError::InvalidParameter {
+            message: "prompt contains a special token the model does not admit in prompts: [EOS]"
+                .into(),
+            parameter: "prompt",
+        })
+    );
+    // The prompt's text and special bytes fit the byte limit together.
+    let refused = |backend: &EngineGenerationBackend, segments: Vec<PromptSegmentV1>| {
+        assert_eq!(
+            backend.prepare_prompt(PreparedPrompt::SegmentedChat(segments.clone())),
+            Err(AdmissionError::InvalidPrompt),
+            "{segments:?}"
+        );
+    };
+    let filled = |length: usize| vec![special("[BOS]"), text(&"x".repeat(length - 5))];
+    assert!(
+        explicit
+            .prepare_prompt(PreparedPrompt::SegmentedChat(filled(64)))
+            .is_ok()
+    );
+    refused(&explicit, filled(65));
+    // A special segment must spell a declared boundary token.
+    refused(&explicit, vec![special("[X]")]);
+    refused(&explicit, vec![special("x")]);
+    // The text and special tokens fit the token limit together, though each
+    // text run fits it alone.
+    let roomy = backend(&descriptor, 4096);
+    let limit = 1024;
+    assert_eq!(
+        roomy
+            .prepare_prompt(PreparedPrompt::SegmentedChat(filled(5 + limit - 1)))
+            .map(|(_, count)| count),
+        Ok(limit)
+    );
+    refused(&roomy, filled(5 + limit));
+    // A policy whose renders name no special tokens takes no segmented chat.
+    descriptor.vocabulary.explicit_special_tokens = false;
+    refused(&backend(&descriptor, 64), vec![text("x")]);
+}
+
 pub(crate) fn tokenizer() -> Tokenizer {
     tokenizer_with(&[])
 }

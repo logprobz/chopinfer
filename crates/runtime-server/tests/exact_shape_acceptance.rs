@@ -215,7 +215,9 @@ impl GenerationBackend for ScriptedBackendV1 {
                 }
             }
             PreparedPrompt::TokenIds(ids) => ids.len(),
-            PreparedPrompt::MediaChat { .. } | PreparedPrompt::MediaTokens { .. } => {
+            PreparedPrompt::SegmentedChat(_)
+            | PreparedPrompt::MediaChat { .. }
+            | PreparedPrompt::MediaTokens { .. } => {
                 return Err(AdmissionError::InvalidPrompt);
             }
         })

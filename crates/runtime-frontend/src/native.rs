@@ -186,8 +186,10 @@ impl NativeFormatV1 {
 
     /// Rebuilds a rendered prompt from the format's answer, checking that
     /// each media segment names a request media part, at most once and in
-    /// increasing order unless tool images are declared, and that it
-    /// selects a declared effort. Only images may be reordered.
+    /// increasing order unless tool images are declared, that each special
+    /// segment spells a declared boundary token under
+    /// `vocabulary.explicit_special_tokens`, and that it selects a declared
+    /// effort. Only images may be reordered.
     ///
     /// A format may leave a request media part out of the prompt, as one
     /// that renders a user message carrying message-level tools as plain
@@ -237,10 +239,24 @@ impl NativeFormatV1 {
                     placed[index] = true;
                     next = next.max(index + 1);
                 }
-                document::SegmentV1::Special(_) => {
-                    return Err(malformed(
-                        "a special segment needs vocabulary.explicit_special_tokens",
-                    ));
+                document::SegmentV1::Special(text) => {
+                    let vocabulary = &self.descriptor.vocabulary;
+                    if !vocabulary.explicit_special_tokens {
+                        return Err(malformed(
+                            "a special segment needs vocabulary.explicit_special_tokens",
+                        ));
+                    }
+                    if !vocabulary
+                        .boundary_tokens
+                        .iter()
+                        .any(|token| token.text == text)
+                    {
+                        return Err(malformed(
+                            "a special segment names no declared boundary token",
+                        ));
+                    }
+                    prompt.push_str(&text);
+                    segments.push(PromptSegmentV1::Special(text));
                 }
             }
         }
@@ -272,6 +288,26 @@ impl NativeFormatV1 {
         })
     }
 
+    /// The most special segments a prompt within the declared length holds:
+    /// none without `vocabulary.explicit_special_tokens`, and otherwise as
+    /// many as the shortest declared boundary token fits. Each one, and
+    /// the text segment after it, crosses with a tag and a length (5 bytes)
+    /// besides its text.
+    fn special_segments_v1(&self) -> usize {
+        let vocabulary = &self.descriptor.vocabulary;
+        if !vocabulary.explicit_special_tokens {
+            return 0;
+        }
+        let shortest = vocabulary
+            .boundary_tokens
+            .iter()
+            .map(|token| token.text.len())
+            .min()
+            .unwrap_or(1)
+            .max(1);
+        self.descriptor.limits.maximum_prompt_bytes / shortest
+    }
+
     /// The placeholder text the declaration renders for one media kind.
     fn pad(&self, kind: FrontendMediaPartKindV1) -> Option<&str> {
         let kind = match kind {
@@ -296,8 +332,9 @@ impl FormatRendererV1 for NativeFormatV1 {
     ) -> Result<FormatRenderedV1, FrontendErrorV1> {
         let (request, media) = render_document_v1(&request);
         // The prompt text the declaration allows, the parser state, and the
-        // segments around each media part: past that, the prompt is too long
-        // and the document is refused before it is copied.
+        // segments around each media part and each special token: past
+        // that, the prompt is too long and the document is refused before
+        // it is copied.
         let longest_effort = self
             .descriptor
             .reasoning
@@ -313,6 +350,7 @@ impl FormatRendererV1 for NativeFormatV1 {
             .saturating_add(document::FRONTEND_PARSER_STATE_BYTES_MAX_V1)
             .saturating_add(longest_effort)
             .saturating_add(media.len().saturating_add(1).saturating_mul(10))
+            .saturating_add(self.special_segments_v1().saturating_mul(10))
             .saturating_add(RENDER_OVERHEAD_BYTES_V1);
         let answer =
             self.frontend

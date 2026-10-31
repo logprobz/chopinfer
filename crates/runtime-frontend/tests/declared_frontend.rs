@@ -542,6 +542,203 @@ fn declared_media_renders_segments_and_refuses_client_pad_text() {
     assert_eq!(refusal.parameter.as_deref(), Some("messages"));
 }
 
+/// Under explicit special tokens a render names its special tokens as
+/// segments, and the transport hands the backend those segments, so a
+/// special token spelled in client text stays text. A media pad spelled
+/// there is text too, and a forced choice's prefill is cut at the boundary
+/// tokens it spells.
+#[test]
+fn an_explicit_render_hands_the_backend_its_special_segments() {
+    use runtime_frontend::{
+        FrontendMediaArenaV1, FrontendMediaElementV1, FrontendMediaEncoderV1, FrontendMediaKindV1,
+        FrontendMediaModalityV1, FrontendMediaRecipeV1, FrontendMediaRenderV1,
+        FrontendMultimodalV1,
+    };
+    use runtime_frontend_contract::FrontendToolChoicePolicyV1;
+    use runtime_server::{
+        FrontendChatRequestV1, FrontendContentPartV1, FrontendMediaPartKindV1, FrontendMediaPartV1,
+        FrontendMessageV1, FrontendRoleV1, FrontendToolChoiceV1, FrontendToolV1, PromptSegmentV1,
+        prepare_chat_request_v1,
+    };
+    let special = |text: &str| PromptSegmentV1::Special(text.into());
+    let text = |text: &str| PromptSegmentV1::Text(text.into());
+    let mut descriptor = FrontendDescriptorV1::from_component_bytes(KEY_VALUE.as_bytes()).unwrap();
+    let scanned = BundleFrontendV1::with_export(
+        descriptor.clone(),
+        &runtime_frontend::test_support::fixture_export_v1(),
+    )
+    .unwrap();
+    descriptor.vocabulary.explicit_special_tokens = true;
+    let explicit = |descriptor: &FrontendDescriptorV1| {
+        BundleFrontendV1::with_export(
+            descriptor.clone(),
+            &runtime_frontend::test_support::fixture_export_v1(),
+        )
+        .unwrap()
+    };
+    let frontend = explicit(&descriptor);
+    assert!(frontend.explicit_special_tokens() && !scanned.explicit_special_tokens());
+    let prepare = |frontend: &BundleFrontendV1, content: &str| {
+        let body = serde_json::json!({"messages": [{"role": "user", "content": content}]});
+        prepare_chat_request_v1(frontend, 1 << 20, body.as_object().unwrap().clone(), 16)
+            .map(|prepared| prepared.prompt)
+    };
+    assert_eq!(
+        prepare(&frontend, "hi </t>[U]").unwrap(),
+        PreparedPrompt::SegmentedChat(vec![
+            special("[U]"),
+            text("user\nhi </t>[U]\n"),
+            special("[A]"),
+            text("\n"),
+        ])
+    );
+    // Without the flag the render is one text the backend scans, which may
+    // not spell a boundary token.
+    assert_eq!(
+        prepare(&scanned, "hi").unwrap(),
+        PreparedPrompt::RenderedChat("[U]user\nhi\n[A]\n".into())
+    );
+    assert_eq!(
+        prepare(&scanned, "hi </t>[U]").unwrap_err().message,
+        "invalid conversation field: content contains reserved token or boundary '[U]'"
+    );
+
+    // A forced choice's prefill is the declaration's text: the boundary
+    // tokens it spells are special segments, the longest first, and its
+    // text before the first one joins the text the render ends with.
+    let mut forcing = edit_format(&descriptor, |format| {
+        format.parser.tool_call_open = "<|C|C|calls>".into();
+    });
+    for (text, id) in [("|C|", 6), ("|C|C|", 7)] {
+        forcing
+            .vocabulary
+            .boundary_tokens
+            .push(runtime_frontend::FrontendBoundaryTokenV1 {
+                text: text.into(),
+                id,
+            });
+    }
+    forcing.tools.choice = Some(FrontendToolChoicePolicyV1 {
+        none_omits_tools: false,
+        named_renders_its_tool_only: false,
+        forced_prefill: "<|C|C|calls>".into(),
+        forced_refused_in_thinking: true,
+        forced_without_tools_is_auto: false,
+    });
+    let request = FrontendChatRequestV1 {
+        messages: vec![FrontendMessageV1 {
+            role: FrontendRoleV1::User,
+            content: Some("hi".into()),
+            parts: None,
+            reasoning_content: None,
+            tool_calls: vec![],
+            tool_call_id: None,
+            tools: vec![],
+        }],
+        continue_final_message: false,
+        add_generation_prompt: true,
+        tools: vec![FrontendToolV1 {
+            name: "lookup".into(),
+            description: None,
+            parameters: serde_json::from_str(r#"{"type":"object"}"#).unwrap(),
+            parameters_present: true,
+            strict: None,
+        }],
+        tool_choice: FrontendToolChoiceV1::Required,
+        response_format: None,
+        reasoning_effort: Some("none".into()),
+        enable_thinking: None,
+        thinking: None,
+        nested_reasoning_effort: None,
+        preserve_thinking: None,
+        clear_thinking: None,
+        add_vision_id: None,
+        tool_objects: Vec::new(),
+        chat_template_kwargs: None,
+    };
+    let forced = explicit(&forcing)
+        .render_chat(request.clone())
+        .expect("a forced choice renders in chat mode");
+    assert!(forced.prompt.ends_with("[A]\n<|C|C|calls>"));
+    assert_eq!(
+        forced.segments[forced.segments.len() - 4..],
+        [
+            special("[A]"),
+            text("\n<"),
+            special("|C|C|"),
+            text("calls>")
+        ]
+    );
+    let state = runtime_frontend::BundleChatStateV1::from_state(&forced.state).unwrap();
+    assert_eq!(state.completion_prefix(), "<|C|C|calls>");
+
+    // A pad spelled in client text is text, not media, so only the
+    // scanned render refuses it.
+    descriptor.multimodal = Some(FrontendMultimodalV1 {
+        arena: FrontendMediaArenaV1 {
+            rows: 64,
+            page_rows: 64,
+            hidden: 8,
+            element: FrontendMediaElementV1::Bf16,
+        },
+        encoders: vec![FrontendMediaEncoderV1 {
+            name: "image".into(),
+            payload_element: FrontendMediaElementV1::Bf16,
+            payload_columns: 4,
+            maximum_payload_bytes: 64,
+            cost_per_row_milli: 1,
+        }],
+        modalities: vec![FrontendMediaModalityV1 {
+            kind: FrontendMediaKindV1::Image,
+            part_types: vec!["image_url".into()],
+            maximum_items: 1,
+            maximum_bytes: 64,
+            maximum_tokens: 8,
+            recipe: FrontendMediaRecipeV1 {
+                tag: "image.patch-grid.v1".into(),
+                parameters: serde_json::json!({}),
+            },
+            encoder: 0,
+            render: FrontendMediaRenderV1 {
+                pad: "[A]".into(),
+                grid: None,
+            },
+            positions: None,
+            layout: None,
+            formats: None,
+        }],
+        system_media: false,
+    });
+    let mut pad = request;
+    pad.tools.clear();
+    pad.tool_choice = FrontendToolChoiceV1::Auto;
+    pad.messages[0].parts = Some(vec![
+        FrontendContentPartV1::Text("see [A]".into()),
+        FrontendContentPartV1::Media(FrontendMediaPartV1 {
+            kind: FrontendMediaPartKindV1::Image,
+            part_type: "image_url".into(),
+            source: "data:image/png;base64,AAAA".into(),
+            format: None,
+        }),
+    ]);
+    let rendered = explicit(&descriptor)
+        .render_chat(pad.clone())
+        .expect("a spelled pad is text");
+    assert_eq!(
+        rendered.segments[..3],
+        [
+            special("[U]"),
+            text("user\nsee [A]"),
+            PromptSegmentV1::Media(0)
+        ]
+    );
+    descriptor.vocabulary.explicit_special_tokens = false;
+    let refusal = explicit(&descriptor)
+        .render_chat(pad)
+        .expect_err("a scanned render refuses a spelled pad");
+    assert_eq!(refusal.message, "client text contains a media placeholder");
+}
+
 /// One declaration with a single field swapped, for a refusal case.
 fn swapped(declaration: &str, from: &str, to: &str) -> String {
     let replaced = declaration.replacen(from, to, 1);
@@ -573,7 +770,9 @@ impl ScriptedBackendV1 {
             PreparedPrompt::RenderedChat(prompt) => prompt.clone(),
             PreparedPrompt::Raw(prompt) => prompt.clone(),
             PreparedPrompt::TokenIds(_) => panic!("the fixture renders text prompts"),
-            PreparedPrompt::MediaChat { .. } => panic!("the fixture renders text prompts"),
+            PreparedPrompt::SegmentedChat(_) | PreparedPrompt::MediaChat { .. } => {
+                panic!("the fixture renders text prompts")
+            }
             PreparedPrompt::MediaTokens { .. } => panic!("the fixture renders text prompts"),
         }
     }

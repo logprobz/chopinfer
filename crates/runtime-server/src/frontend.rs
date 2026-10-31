@@ -388,6 +388,10 @@ pub struct FrontendMediaPartV1 {
 pub enum PromptSegmentV1 {
     Text(String),
     Media(usize),
+    /// One special token of the prompt, given by its text, from a frontend
+    /// whose renders name their special tokens
+    /// ([`ServerFrontendV1::explicit_special_tokens`]).
+    Special(String),
 }
 
 /// One function tool a request offered.
@@ -687,6 +691,14 @@ frontend_with_alias_delegation! {
     /// Whether `required` or a named tool choice serves as `auto` when the
     /// request offers no tools, rather than being refused.
     fn forced_choice_without_tools_is_auto(&self) -> bool {
+        false
+    }
+    /// Whether a rendered chat names every special token of its prompt as a
+    /// [`PromptSegmentV1::Special`] segment, so the backend encodes all
+    /// other text as plain text. The transport then hands the backend the
+    /// segments ([`crate::PreparedPrompt::SegmentedChat`]) rather than the
+    /// prompt text.
+    fn explicit_special_tokens(&self) -> bool {
         false
     }
     /// The separator of a qualified function name (`namespace`, separator,

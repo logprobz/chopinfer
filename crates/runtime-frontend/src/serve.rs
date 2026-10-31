@@ -18,7 +18,9 @@ use runtime_server::{
     ServerFrontendV1,
 };
 
-use crate::checks::{integral_numbers_v1, parse_json_value_v1, validate_function_name_v1};
+use crate::checks::{
+    boundary_pieces_v1, integral_numbers_v1, parse_json_value_v1, validate_function_name_v1,
+};
 use crate::decode::PromptModeV1;
 use crate::descriptor::{
     FrontendComponentErrorV1, FrontendConstraintScopeV1, FrontendDescriptorV1, FrontendMediaKindV1,
@@ -411,6 +413,9 @@ impl ServerFrontendV1 for BundleFrontendV1 {
             .as_ref()
             .is_some_and(|choice| choice.forced_without_tools_is_auto)
     }
+    fn explicit_special_tokens(&self) -> bool {
+        self.descriptor.vocabulary.explicit_special_tokens
+    }
     fn tool_namespace_separator(&self) -> Option<&str> {
         self.descriptor
             .tools
@@ -442,41 +447,50 @@ impl ServerFrontendV1 for BundleFrontendV1 {
         &self,
         request: FrontendChatRequestV1,
     ) -> Result<FrontendRenderedChatV1, FrontendErrorV1> {
+        let explicit = self.descriptor.vocabulary.explicit_special_tokens;
         if let Some(multimodal) = &self.descriptor.multimodal {
-            for message in &request.messages {
-                let strings =
-                    message
-                        .content
+            // A render that names its special tokens encodes client text as
+            // plain text, so a placeholder spelled there is text, not media.
+            if !explicit {
+                for message in &request.messages {
+                    let strings =
+                        message
+                            .content
+                            .iter()
+                            .chain(
+                                message
+                                    .parts
+                                    .iter()
+                                    .flatten()
+                                    .filter_map(|part| match part {
+                                        runtime_server::FrontendContentPartV1::Text(text) => {
+                                            Some(text)
+                                        }
+                                        _ => None,
+                                    }),
+                            );
+                    // A tool name a format may write is client text too.
+                    let references = message
+                        .parts
                         .iter()
-                        .chain(
-                            message
-                                .parts
-                                .iter()
-                                .flatten()
-                                .filter_map(|part| match part {
-                                    runtime_server::FrontendContentPartV1::Text(text) => Some(text),
-                                    _ => None,
-                                }),
-                        );
-                // A tool name a format may write is client text too.
-                let references = message
-                    .parts
-                    .iter()
-                    .flatten()
-                    .filter_map(|part| match part {
-                        runtime_server::FrontendContentPartV1::ToolReference { name } => Some(name),
-                        _ => None,
-                    });
-                for text in strings.chain(references) {
-                    if multimodal
-                        .modalities
-                        .iter()
-                        .any(|modality| text.contains(&modality.render.pad))
-                    {
-                        return Err(FrontendErrorV1::new(
-                            "client text contains a media placeholder",
-                            Some("messages"),
-                        ));
+                        .flatten()
+                        .filter_map(|part| match part {
+                            runtime_server::FrontendContentPartV1::ToolReference { name } => {
+                                Some(name)
+                            }
+                            _ => None,
+                        });
+                    for text in strings.chain(references) {
+                        if multimodal
+                            .modalities
+                            .iter()
+                            .any(|modality| text.contains(&modality.render.pad))
+                        {
+                            return Err(FrontendErrorV1::new(
+                                "client text contains a media placeholder",
+                                Some("messages"),
+                            ));
+                        }
                     }
                 }
             }
@@ -663,12 +677,30 @@ impl ServerFrontendV1 for BundleFrontendV1 {
             }
             completion_prefix.clone_from(&policy.forced_prefill);
             rendered.prompt.push_str(&completion_prefix);
-            match rendered.segments.last_mut() {
-                Some(PromptSegmentV1::Text(text)) => text.push_str(&completion_prefix),
-                _ if completion_prefix.is_empty() => {}
-                _ => rendered
-                    .segments
-                    .push(PromptSegmentV1::Text(completion_prefix.clone())),
+            if explicit {
+                // The prefill is the declaration's text, so the boundary
+                // tokens it spells are special tokens.
+                let vocabulary = &self.descriptor.vocabulary;
+                for (piece, special) in boundary_pieces_v1(&completion_prefix, vocabulary) {
+                    let piece = &completion_prefix[piece];
+                    match rendered.segments.last_mut() {
+                        _ if special => rendered
+                            .segments
+                            .push(PromptSegmentV1::Special(piece.to_owned())),
+                        Some(PromptSegmentV1::Text(text)) => text.push_str(piece),
+                        _ => rendered
+                            .segments
+                            .push(PromptSegmentV1::Text(piece.to_owned())),
+                    }
+                }
+            } else {
+                match rendered.segments.last_mut() {
+                    Some(PromptSegmentV1::Text(text)) => text.push_str(&completion_prefix),
+                    _ if completion_prefix.is_empty() => {}
+                    _ => rendered
+                        .segments
+                        .push(PromptSegmentV1::Text(completion_prefix.clone())),
+                }
             }
         }
         let extract_tool_calls = tool_choice != FrontendToolChoiceV1::None && !tools.is_empty();

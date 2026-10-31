@@ -32,8 +32,8 @@ use runtime_frontend::{
     FrontendMediaKindV1,
 };
 use runtime_server::{
-    ChatEventFoldV1, FinishReason, FrontendMediaPartKindV1, GenerationEvent, PreparedPrompt,
-    PromptSegmentV1, ServerFrontendV1, prepare_chat_request_v1,
+    AdmissionError, ChatEventFoldV1, FinishReason, FrontendMediaPartKindV1, GenerationEvent,
+    PreparedPrompt, PromptSegmentV1, ServerFrontendV1, prepare_chat_request_v1,
 };
 use runtime_tokenizer::Tokenizer;
 use serde_json::{Map, Value};
@@ -41,7 +41,8 @@ use serde_json::{Map, Value};
 use crate::deployment::BundleDeploymentV1;
 use crate::generation::{
     DEFAULT_TOKENIZER_INPUT_BYTES, EngineModelPolicyV1, TokenAccounting, completion_decoder_v1,
-    generated_token_v1, generation_events_v1, prepare_owned_prompt, request_stop_ids_v1,
+    encode_segments_v1, generated_token_v1, generation_events_v1, prepare_owned_prompt,
+    request_stop_ids_v1,
 };
 
 /// The request fields a render case or a streaming vector's request may
@@ -699,7 +700,8 @@ impl FrontendCheckV1 {
     /// tokenizer-decoded text and a normalizing tokenizer (NFC) normalizes
     /// it. A prompt with media is compared before the host expands each
     /// media placeholder to the encoder's rows, as the reference template
-    /// tokenizes it.
+    /// tokenizes it. A render that names its special tokens encodes as the
+    /// host encodes it ([`Self::encode_segments_v1`]).
     pub fn check_render_v1(&self, vector: &RenderVectorV1) -> Result<(), String> {
         let prepared = prepare_chat_request_v1(
             &self.frontend,
@@ -724,7 +726,16 @@ impl FrontendCheckV1 {
         let (text, ids) = match prepared.prompt {
             PreparedPrompt::MediaChat { segments, media } => {
                 let text = self.media_prompt_text_v1(&segments, &media)?;
-                let ids = self.encode_v1(&text);
+                let ids = if self.explicit_special_tokens_v1() {
+                    self.encode_segments_v1(&segments, &media)
+                } else {
+                    self.encode_v1(&text)
+                };
+                (text, ids)
+            }
+            PreparedPrompt::SegmentedChat(segments) => {
+                let text = self.media_prompt_text_v1(&segments, &[])?;
+                let ids = self.encode_segments_v1(&segments, &[]);
                 (text, ids)
             }
             PreparedPrompt::RenderedChat(text) => {
@@ -902,33 +913,89 @@ impl FrontendCheckV1 {
         segments: &[PromptSegmentV1],
         media: &[runtime_server::FrontendMediaPartV1],
     ) -> Result<String, String> {
-        let modalities = self
-            .policy
-            .declaration()
-            .multimodal
-            .as_ref()
-            .map(|multimodal| multimodal.modalities.as_slice())
-            .unwrap_or_default();
         let mut text = String::new();
         for segment in segments {
             match segment {
-                PromptSegmentV1::Text(segment) => text.push_str(segment),
+                PromptSegmentV1::Text(segment) | PromptSegmentV1::Special(segment) => {
+                    text.push_str(segment);
+                }
                 PromptSegmentV1::Media(index) => {
-                    let kind = match media.get(*index).map(|part| part.kind) {
-                        Some(FrontendMediaPartKindV1::Image) => FrontendMediaKindV1::Image,
-                        Some(FrontendMediaPartKindV1::Audio) => FrontendMediaKindV1::Audio,
-                        Some(FrontendMediaPartKindV1::Video) => FrontendMediaKindV1::Video,
-                        None => return Err("a media segment names no media part".into()),
-                    };
-                    let modality = modalities
-                        .iter()
-                        .find(|modality| modality.kind == kind)
-                        .ok_or("a media segment has no declared modality")?;
-                    text.push_str(&modality.render.pad);
+                    text.push_str(self.media_pad_v1(media, *index)?.0);
                 }
             }
         }
         Ok(text)
+    }
+
+    /// The declared pad of the media part `index` of `media`, and its
+    /// boundary token's ID when the vocabulary declares one.
+    fn media_pad_v1(
+        &self,
+        media: &[runtime_server::FrontendMediaPartV1],
+        index: usize,
+    ) -> Result<(&str, Option<u32>), String> {
+        let declaration = self.policy.declaration();
+        let modalities = declaration
+            .multimodal
+            .as_ref()
+            .map(|multimodal| multimodal.modalities.as_slice())
+            .unwrap_or_default();
+        let kind = match media.get(index).map(|part| part.kind) {
+            Some(FrontendMediaPartKindV1::Image) => FrontendMediaKindV1::Image,
+            Some(FrontendMediaPartKindV1::Audio) => FrontendMediaKindV1::Audio,
+            Some(FrontendMediaPartKindV1::Video) => FrontendMediaKindV1::Video,
+            None => return Err("a media segment names no media part".into()),
+        };
+        let pad = &modalities
+            .iter()
+            .find(|modality| modality.kind == kind)
+            .ok_or("a media segment has no declared modality")?
+            .render
+            .pad;
+        let id = declaration
+            .vocabulary
+            .boundary_tokens
+            .iter()
+            .find(|token| token.text == *pad)
+            .map(|token| token.id);
+        Ok((pad, id))
+    }
+
+    /// Whether the served declaration's renders name their special tokens.
+    fn explicit_special_tokens_v1(&self) -> bool {
+        self.policy.declaration().vocabulary.explicit_special_tokens
+    }
+
+    /// Encodes a render that names its special tokens as the host encodes
+    /// it, with each media part as one pad ID, as the reference tokenizes
+    /// its placeholder, rather than the encoder's rows.
+    pub(crate) fn encode_segments_v1(
+        &self,
+        segments: &[PromptSegmentV1],
+        media: &[runtime_server::FrontendMediaPartV1],
+    ) -> Result<Vec<u32>, String> {
+        let mut pad_error = None;
+        encode_segments_v1(
+            &self.tokenizer,
+            &self.policy,
+            segments,
+            DEFAULT_TOKENIZER_INPUT_BYTES,
+            |index, tokens| match self.media_pad_v1(media, index) {
+                Ok((_, Some(id))) => {
+                    tokens.push(id);
+                    Ok(())
+                }
+                Ok((pad, None)) => {
+                    pad_error = Some(format!("the media pad {pad} is not a boundary token"));
+                    Err(AdmissionError::InvalidPrompt)
+                }
+                Err(error) => {
+                    pad_error = Some(error);
+                    Err(AdmissionError::InvalidPrompt)
+                }
+            },
+        )
+        .map_err(|error| pad_error.unwrap_or_else(|| format!("the prompt was refused: {error:?}")))
     }
 
     /// The field a capture's history `reasoning_content` is sent under.
@@ -1413,10 +1480,13 @@ mod tests {
     }
 
     /// A package frontend that declares the extra role `observation` and
-    /// renders the roles and template keywords its render document carries.
-    /// It refuses a message whose content is `refuse`, and parses a
-    /// completion as content delivered at its end.
-    struct EchoFrontendV1;
+    /// renders the roles and template keywords its render document carries,
+    /// after a special `[BOS]` segment when its declaration names its
+    /// special tokens. It refuses a message whose content is `refuse`, and
+    /// parses a completion as content delivered at its end.
+    struct EchoFrontendV1 {
+        explicit: bool,
+    }
 
     struct ContentParserV1;
 
@@ -1445,12 +1515,14 @@ mod tests {
     impl FrontendV1 for EchoFrontendV1 {
         type Parser = ContentParserV1;
 
-        fn open(_: &[u8]) -> Result<(Self, Vec<u8>), Vec<u8>> {
+        fn open(component: &[u8]) -> Result<(Self, Vec<u8>), Vec<u8>> {
             let opened = document::OpenedV1 {
                 extra_roles: vec!["observation".into()],
                 ..document::OpenedV1::default()
             };
-            Ok((Self, opened.encode()))
+            let declaration: Value = serde_json::from_slice(component).unwrap();
+            let explicit = declaration["vocabulary"]["explicit_special_tokens"] == true;
+            Ok((Self { explicit }, opened.encode()))
         }
 
         fn render(&self, request: &[u8]) -> Result<Vec<u8>, Vec<u8>> {
@@ -1470,8 +1542,12 @@ mod tests {
                 .map(|message| format!("{}:{}", message.role, message.content.as_deref().unwrap()))
                 .collect();
             text.extend(request.chat_template_kwargs);
+            let mut segments = vec![document::SegmentV1::Text(text.join("|"))];
+            if self.explicit {
+                segments.insert(0, document::SegmentV1::Special("[BOS]".into()));
+            }
             Ok(document::RenderedV1 {
-                segments: vec![document::SegmentV1::Text(text.join("|"))],
+                segments,
                 mode: document::ModeV1::Chat,
                 effort: "low".into(),
                 reasoning_open: false,
@@ -1504,6 +1580,47 @@ mod tests {
             tokenizer(),
         )
         .unwrap()
+    }
+
+    /// A render that names its special tokens is checked against the IDs
+    /// the host encodes it to: its special segment's ID, and its text as
+    /// plain text, where a scan of the rendered text reads `[EOS]` as that
+    /// token.
+    #[test]
+    fn an_explicit_render_checks_the_ids_the_host_encodes() {
+        use crate::generation::stop_tests::{declarations, tokenizer};
+        let special = r#""prompt_special_tokens": ["[BOS]", "[EOS]", "[U]", "[A]", "<t>", "</t>"]"#;
+        let declaration = declarations::KEY_VALUE.replace(
+            special,
+            r#""prompt_special_tokens": ["[BOS]", "[EOS]"], "explicit_special_tokens": true"#,
+        );
+        let check = FrontendCheckV1::from_component_v1(
+            &FrontendExportV1::in_process::<EchoFrontendV1>(),
+            declaration.as_bytes(),
+            tokenizer(),
+        )
+        .unwrap();
+        let rendered = "[BOS]user:q[EOS]";
+        let plain: Vec<u32> = "user:q[EOS]"
+            .bytes()
+            .map(|byte| u32::from(byte) + 3)
+            .collect();
+        let explicit = [vec![0], plain].concat();
+        let scanned = check.encode_v1(rendered).unwrap();
+        assert_ne!(scanned, explicit);
+        let vector = |ids: &[u32]| {
+            render_vector(&format!(
+                r#""messages":[{{"role":"user","content":"q[EOS]"}}],
+                   "rendered_text":"{rendered}","token_ids":{ids:?}"#
+            ))
+        };
+        assert_eq!(check.check_render_v1(&vector(&explicit)), Ok(()));
+        assert!(
+            check
+                .check_render_v1(&vector(&scanned))
+                .unwrap_err()
+                .starts_with("token ids differ at index 7")
+        );
     }
 
     /// One render vector over `request`, a JSON object's members.

@@ -52,7 +52,7 @@ fn tool_images_follow_sorted_prompt_order_in_the_host_media_list() {
     let mut indices = Vec::new();
     for segment in segments {
         match segment {
-            PromptSegmentV1::Text(text) => prompt.push_str(&text),
+            PromptSegmentV1::Text(text) | PromptSegmentV1::Special(text) => prompt.push_str(&text),
             PromptSegmentV1::Media(index) => {
                 indices.push(index);
                 prompt.push_str(&format!("[{}]", expected[index]));
@@ -148,7 +148,9 @@ fn system_and_developer_images_render_in_place() {
         let mut prompt = String::new();
         for segment in segments {
             match segment {
-                PromptSegmentV1::Text(text) => prompt.push_str(&text),
+                PromptSegmentV1::Text(text) | PromptSegmentV1::Special(text) => {
+                    prompt.push_str(&text)
+                }
                 PromptSegmentV1::Media(index) => {
                     prompt.push_str(&format!("[{}]", &media[index].source[22..]));
                 }

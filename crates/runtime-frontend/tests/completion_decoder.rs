@@ -520,8 +520,9 @@ fn streamed(
 }
 
 /// A typed calls block opens after any run of newlines before its open,
-/// including none, and the open drops them, as deepseek-recipe's stream
-/// parser reads it: content or reasoning, then the call, at every split.
+/// including none, and the open drops them, as the grammar's reference
+/// stream parser reads it: content or reasoning, then the call, at every
+/// split.
 /// Newlines that no open follows are text, and a reserved marker that does
 /// not open the block is still refused.
 #[test]

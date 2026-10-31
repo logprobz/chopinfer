@@ -120,7 +120,7 @@ fn each_close_types_its_value() {
 }
 
 /// The calls block opens after any run of newlines, including none, which
-/// the open drops, as deepseek-recipe's stream parser reads it.
+/// the open drops, as the grammar's reference stream parser reads it.
 #[test]
 fn a_block_opens_after_any_run_of_newlines() {
     for lead in ["", "\n", "\n\n\n"] {

@@ -265,7 +265,8 @@ impl DeclaredParserV1 {
 
     /// Where a calls open at `position` begins with the newlines it takes:
     /// in the typed grammar, the run of newlines before it in the pending
-    /// text, which the open drops as deepseek-recipe's stream parser does.
+    /// text, which the open drops as the grammar's reference stream parser
+    /// does.
     /// The other grammars trim the whitespace around their open themselves.
     fn open_lead(&self, position: usize) -> usize {
         if self.parser.tool_grammar != FrontendToolGrammarV1::XmlTypedParametersV1 {

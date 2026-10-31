@@ -92,8 +92,8 @@ impl<'a> ChatMlTerminalsV1<'a> {
 /// The call open as a completion is read by, and the whitespace the template
 /// writes after it: the declared marker trimmed. The typed grammar's calls
 /// block opens after any run of newlines, including none, which the
-/// completion parser reads as part of the open and drops, as
-/// deepseek-recipe's stream parser does.
+/// completion parser reads as part of the open and drops, as that grammar's
+/// reference stream parser does.
 pub(crate) fn call_open_v1(parser: &FrontendParserDeclarationV1) -> (&str, &str) {
     let marker = parser.tool_call_open.as_str();
     let read = marker.trim();

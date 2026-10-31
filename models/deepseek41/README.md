@@ -378,6 +378,31 @@ captures of the previous package) matched bitwise in logits, proposals,
 acceptance and committed state. The route sweep `tp4-dspark-tiles` serves
 the profile with the option on. This is not served step-time acceptance.
 
+The lab timings above ran the General witness, whose weights all lie in the
+tensor domain, which admits a nonzero operand only at 2^-30 <= |x| < 2^31.
+The checkpoint holds five BF16 weights of these projections below 2^-30:
+head row 49423 (tile 1068 of rank 1's slice), one in each router of layers
+19, 22 and 35 and one in layer 8's compressor `wkv`, whose tiles every rank
+holds; the index projections hold none, and the drafter's vocabulary head
+reads the same `head.weight`. Such a 16-feature tile keeps the SIMT chains
+at every row, which the row tiles first ran serially in 16 threads: on
+2026-10-31 the kernel lab, run on each rank's real slices (`CHOPINFER_F32_ROWS_WEIGHTS`, one GPU per rank at its 250 W
+enforced limit, in-job A/A controls within 2.7% and 4.5% at 65 rows),
+measured rank 1's head tile at 14.3 to 14.7 ms at every width from 33 to
+192 rows and its decode tiles at up to 14.1 ms, and the affected router
+and compressor tiles at 0.51 to 0.63 ms. The fallback now stages the tile's
+weight and activation lines through the CTA's ring and shares its chains
+among every thread, so rank 1's head took 0.40 to 0.44 ms at 33 to 64 rows,
+0.59 to 0.63 ms at 65 to 128 and 1.01 ms at 192, within 2% of the other
+ranks, and its decode tiles 252 to 297 us at 1 to 32 rows against 240 to
+266 us on the other ranks and 250 to 672 us on the served route. Router
+layer 19 took 41 to 44 us against 30 to 34 us for layer 0, and compressor
+layer 8 36 to 53 us against 28 to 43 us for layer 2. The lab's comparisons
+matched the split route bit for bit on every rank's head slice, the four
+routers, both compressors and layer 8's index projections, one of them with
+a weight set below 2^-30, at every boundary row from 1 to 192, and on the
+default operand matrix.
+
 Prefill commit projections are batched across prompts. Undrafted pure
 decode joins status once and submits private sampling before collecting it
 on the native result path. Verify and undrafted commits with at least eight

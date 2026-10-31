@@ -22,6 +22,7 @@ impl Entry {
                 symbol: symbol.into(),
                 paired,
                 knobs: dense_decode::Knobs::ticket(query.n),
+                header_rows: dense_decode::DECODE_ROWS,
             },
             defer_admission: false,
         };

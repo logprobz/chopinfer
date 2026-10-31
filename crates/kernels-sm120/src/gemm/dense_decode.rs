@@ -215,12 +215,22 @@ impl Knobs {
     }
 }
 
+/// The row bound of a decode entry's workspace header: one failed-row word
+/// per row before the tile tickets.
+pub const DECODE_ROWS: u32 = 64;
+/// The widest row bound a wide entry ([`Entry::wide`]) may name.
+pub const WIDE_ROWS: u32 = 256;
+
 #[derive(Clone, Debug)]
 pub struct Entry {
     pub query: Mxfp8FoldGemmQuery,
     pub symbol: String,
     pub paired: bool,
     pub knobs: Knobs,
+    /// The rows its workspace header holds: [`DECODE_ROWS`], or a wide
+    /// entry's multiple of 64 up to [`WIDE_ROWS`]. Codes, scales, folds
+    /// and their merge order do not depend on it.
+    pub header_rows: u32,
 }
 
 pub fn supported_reuse_rows(rows: u32) -> bool {
@@ -233,6 +243,39 @@ impl Entry {
         stem: &str,
         paired: bool,
         knobs: Knobs,
+    ) -> Result<Self, Refusal> {
+        Self::build(query, stem.to_owned(), paired, knobs, DECODE_ROWS)
+    }
+
+    /// A ticket entry whose header holds `header_rows` rows (a multiple of
+    /// 64 above [`DECODE_ROWS`], at most [`WIDE_ROWS`]), for a capacity of
+    /// up to that many rows. Its symbol names the bound; its arithmetic and
+    /// schedule are the decode entry's.
+    pub fn wide(
+        query: Mxfp8FoldGemmQuery,
+        stem: &str,
+        paired: bool,
+        knobs: Knobs,
+        header_rows: u32,
+    ) -> Result<Self, Refusal> {
+        if header_rows == DECODE_ROWS {
+            return Err(Refusal("a wide dense decode entry names a wider header"));
+        }
+        Self::build(
+            query,
+            format!("{stem}_rows{header_rows}"),
+            paired,
+            knobs,
+            header_rows,
+        )
+    }
+
+    fn build(
+        query: Mxfp8FoldGemmQuery,
+        stem: String,
+        paired: bool,
+        knobs: Knobs,
+        header_rows: u32,
     ) -> Result<Self, Refusal> {
         let entry = Self {
             query,
@@ -248,6 +291,7 @@ impl Entry {
             ),
             paired,
             knobs,
+            header_rows,
         };
         entry.validate()?;
         Ok(entry)
@@ -260,10 +304,20 @@ impl Entry {
     pub fn validate(&self) -> Result<(), Refusal> {
         self.knobs.validate()?;
         self.legacy()?;
+        if self.header_rows != DECODE_ROWS
+            && (self.header_rows % 64 != 0
+                || self.header_rows > WIDE_ROWS
+                || self.knobs.finish != Finish::Ticket
+                || self.knobs.row_groups != 1)
+        {
+            return Err(Refusal(
+                "a wide dense decode entry needs one ticket row group and a header of 128 to 256 rows",
+            ));
+        }
         let maximum = if self.knobs.finish == Finish::Merge {
             32
         } else {
-            64
+            self.header_rows
         };
         if self.query.m_capacity > maximum {
             return Err(Refusal("dense decode capacity exceeds its schedule"));
@@ -303,9 +357,10 @@ impl Entry {
         if self.knobs.finish == Finish::Merge {
             return Ok(256);
         }
+        let failed = (u64::from(self.header_rows) * 4).div_ceil(256) * 256;
         self.tiles(rows)
             .checked_mul(4)
-            .map(|n| 256 + n.div_ceil(256) * 256)
+            .map(|n| failed + n.div_ceil(256) * 256)
             .filter(|&n| n <= u64::from(u32::MAX))
             .ok_or(Refusal("dense decode header exceeds device index bounds"))
     }
@@ -407,7 +462,7 @@ impl Entry {
         self.validate()?;
         let q = self.query;
         let ns = "chop::gemm::dense_decode";
-        let args = format!(
+        let mut args = format!(
             "{},{},{},{},{},{},{},{},{},{}",
             q.n,
             q.k,
@@ -420,6 +475,9 @@ impl Entry {
             packed,
             self.arithmetic().cxx()
         );
+        if self.header_rows != DECODE_ROWS {
+            args += &format!(",{}", self.header_rows);
+        }
         let ptr = |name: &str, ty: &str| EntryParam::DevicePointer {
             name: name.into(),
             cxx_type: ty.into(),
@@ -651,6 +709,72 @@ mod tests {
             },
         ] {
             assert!(knobs.validate().is_err());
+        }
+    }
+
+    /// A wide entry keeps the decode entry's schedule, arithmetic and
+    /// template arguments, adds its header bound to them and its symbol,
+    /// holds up to that many rows and widens only the failed-row block
+    /// before the tickets. Decode entries keep their 64-row block.
+    #[test]
+    fn wide_entries_widen_only_the_header_rows() {
+        let q = |rows| Mxfp8FoldGemmQuery {
+            m_capacity: rows,
+            ..query(1280, 5120, 1, DType::F32)
+        };
+        let knobs = Knobs::ticket(1280);
+        let decode = Entry::new(q(DECODE_ROWS), "stem", false, knobs).unwrap();
+        assert!(Entry::new(q(DECODE_ROWS + 1), "stem", false, knobs).is_err());
+        let body = |entry: &Entry| -> Vec<String> {
+            entry
+                .packed_specs()
+                .unwrap()
+                .into_iter()
+                .map(|spec| spec.body)
+                .collect()
+        };
+        for header_rows in [128, 192, WIDE_ROWS] {
+            let wide = Entry::wide(q(header_rows), "stem", false, knobs, header_rows).unwrap();
+            assert_eq!(
+                wide.symbol,
+                decode
+                    .symbol
+                    .replace("stem_", &format!("stem_rows{header_rows}_"))
+            );
+            assert_eq!(wide.arithmetic(), decode.arithmetic());
+            for rows in [1, 64] {
+                assert_eq!(
+                    wide.header(rows).unwrap(),
+                    decode.header(rows).unwrap() + u64::from(header_rows) * 4 - 256
+                );
+                assert_eq!(
+                    wide.plans(rows, wide.folds_per_cta(rows)).unwrap(),
+                    decode.plans(rows, decode.folds_per_cta(rows)).unwrap()
+                );
+            }
+            assert!(
+                wide.plans(header_rows, wide.folds_per_cta(header_rows))
+                    .is_ok()
+            );
+            assert!(Entry::wide(q(header_rows + 1), "stem", false, knobs, header_rows).is_err());
+            for (wide, decode) in body(&wide).iter().zip(body(&decode)) {
+                assert_eq!(
+                    *wide,
+                    decode.replacen(">(", &format!(",{header_rows}>("), 1)
+                );
+            }
+        }
+        for header_rows in [32, DECODE_ROWS, 96, WIDE_ROWS + 64] {
+            assert!(Entry::wide(q(32), "stem", false, knobs, header_rows).is_err());
+        }
+        for knobs in [
+            Knobs::SPLIT,
+            Knobs {
+                row_groups: 2,
+                ..knobs
+            },
+        ] {
+            assert!(Entry::wide(q(32), "stem", false, knobs, 128).is_err());
         }
     }
 

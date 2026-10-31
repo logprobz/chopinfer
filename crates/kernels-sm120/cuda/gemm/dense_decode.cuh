@@ -68,14 +68,20 @@ __device__ __forceinline__ uint32_t tiles(uint32_t rows) {
   return ((N + S.tile_n - 1) / S.tile_n) * Groups * (Paired ? 2 : 1) *
       ((max(rows, 1u) + Rows - 1) / Rows);
 }
-template<int N, int Groups, Knobs S, bool Paired>
+// The workspace opens with one failed-row word per row, in whole 256-byte
+// blocks: 64 rows for the decode entries, more for an entry that names a
+// wider row bound. The tile tickets follow, then the fold partials.
+template<int FailedRows>
+inline constexpr uint32_t FailedBytes = (uint32_t(FailedRows) * 4 + 255) / 256 * 256;
+template<int N, int Groups, Knobs S, bool Paired, int FailedRows = 64>
 __device__ __forceinline__ uint32_t header(uint32_t rows) {
-  return 256 + ((tiles<N, Groups, S, Paired>(rows) * 4 + 255) / 256) * 256;
+  static_assert(FailedRows >= 64 && FailedRows % 64 == 0);
+  return FailedBytes<FailedRows> + ((tiles<N, Groups, S, Paired>(rows) * 4 + 255) / 256) * 256;
 }
 
 template<int N, int K, int Groups, int RowStride, int GroupStride,
          Knobs S, bool F32Output, bool Paired, bool PackedWeights,
-         class Activation, class Scale, class Chain, class Reduction>
+         class Activation, class Scale, class Chain, class Reduction, int FailedRows = 64>
 __device__ void initialize(const uint8_t* codes, const uint8_t* scales, uint8_t* workspace,
                           const uint32_t* live_rows, uint32_t* status,
                           uint64_t status_row_offset, uint32_t rows) {
@@ -83,7 +89,7 @@ __device__ void initialize(const uint8_t* codes, const uint8_t* scales, uint8_t*
   static_assert(S.finish == Finish::ticket);
   ptx::griddep_launch_dependents();
   ptx::griddep_wait();
-  auto* tickets = reinterpret_cast<uint32_t*>(workspace + 256);
+  auto* tickets = reinterpret_cast<uint32_t*>(workspace + FailedBytes<FailedRows>);
   for (uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
        i < tiles<N, Groups, S, Paired>(rows); i += gridDim.x * blockDim.x)
     tickets[i] = 0;
@@ -111,7 +117,7 @@ __device__ void initialize(const uint8_t* codes, const uint8_t* scales, uint8_t*
 
 template<int N, int K, int Groups, int RowStride, int GroupStride,
          Knobs S, bool F32Output, bool Paired, bool PackedWeights,
-         class Activation, class Scale, class Chain, class Reduction>
+         class Activation, class Scale, class Chain, class Reduction, int FailedRows = 64>
 __device__ void task(Task task, uint8_t (&codes)[S.stages][(16 * S.row_groups + S.tile_n) * 128],
                    uint8_t (&scales)[S.stages][(16 * S.row_groups + S.tile_n) * 4],
                    uint32_t (&row_failed)[16 * S.row_groups], bool& last, const uint8_t* activations, const uint8_t* activation_scales,
@@ -139,8 +145,8 @@ __device__ void task(Task task, uint8_t (&codes)[S.stages][(16 * S.row_groups + 
     if (token_base >= initial_live) return;
   }
   const auto* failed = reinterpret_cast<const uint32_t*>(workspace);
-  auto* tickets = reinterpret_cast<uint32_t*>(workspace + 256);
-  auto* partials = reinterpret_cast<float*>(workspace + header<N, Groups, S, Paired>(rows));
+  auto* tickets = reinterpret_cast<uint32_t*>(workspace + FailedBytes<FailedRows>);
+  auto* partials = reinterpret_cast<float*>(workspace + header<N, Groups, S, Paired, FailedRows>(rows));
   partials += uint64_t(bank) * Folds * rows * Groups * N;
   if constexpr (Paired) {
     if (bank) { weights = weights2; weight_scales = weight_scales2; output = output2; }
@@ -394,7 +400,7 @@ __device__ void task(Task task, uint8_t (&codes)[S.stages][(16 * S.row_groups + 
 
 template<int N, int K, int Groups, int RowStride, int GroupStride,
          Knobs S, bool F32Output, bool Paired, bool PackedWeights,
-         class Activation, class Scale, class Chain, class Reduction>
+         class Activation, class Scale, class Chain, class Reduction, int FailedRows = 64>
 __device__ void run(const uint8_t* activations, const uint8_t* activation_scales,
                    const uint8_t* weights, const uint8_t* weight_scales,
                    const uint8_t* weights2, const uint8_t* weight_scales2,
@@ -410,13 +416,13 @@ __device__ void run(const uint8_t* activations, const uint8_t* activation_scales
     __shared__ uint32_t row_failed[16];
     __shared__ bool last;
     task<N,K,Groups,RowStride,GroupStride,S,F32Output,Paired,PackedWeights,
-         Activation,Scale,Chain,Reduction>(work,codes,scales,row_failed,last,
+         Activation,Scale,Chain,Reduction,FailedRows>(work,codes,scales,row_failed,last,
         activations,activation_scales,weights,weight_scales,weights2,weight_scales2,
         output,output2,workspace,live_rows,rows,folds_per_cta);
   } else {
     __shared__ Arena<S> arena;
     task<N,K,Groups,RowStride,GroupStride,S,F32Output,Paired,PackedWeights,
-         Activation,Scale,Chain,Reduction>(work,arena.codes,arena.scales,arena.failed,arena.last,
+         Activation,Scale,Chain,Reduction,FailedRows>(work,arena.codes,arena.scales,arena.failed,arena.last,
         activations,activation_scales,weights,weight_scales,weights2,weight_scales2,
         output,output2,workspace,live_rows,rows,folds_per_cta);
   }

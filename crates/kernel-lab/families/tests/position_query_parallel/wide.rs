@@ -1,6 +1,8 @@
 //! Explicit wide-row query pairs, with upper-row failures and reused graphs.
 use super::*;
-const ROWS: [u32; 8] = [32, 33, 40, 48, 49, 56, 63, 64];
+/// The decode route's widths, then the wide verify buckets' through the
+/// shared parallel query's 256.
+const ROWS: [u32; 13] = [32, 33, 40, 48, 49, 56, 63, 64, 65, 128, 129, 192, 256];
 
 fn check(
     s: &kernel_harness::Session,
@@ -29,7 +31,7 @@ fn check(
     for parallel in [false, true] {
         let selected = if parallel {
             backend(false)
-                .with_parallel_position_query_rows(64)
+                .with_parallel_position_query_rows(rows.max(64))
                 .map_err(|e| e.to_string())?
         } else {
             backend(false)
@@ -174,7 +176,11 @@ fn check(
 #[ignore = "requires the staged pair GPU job"]
 fn gpu_wide_query_parallel() {
     let small = std::env::var("CHOPINFER_INDEX_QUERY_WIDE_MODE").as_deref() == Ok("memcheck");
-    let rows = if small { vec![33, 64] } else { ROWS.to_vec() };
+    let rows = if small {
+        vec![33, 64, 65, 256]
+    } else {
+        ROWS.to_vec()
+    };
     let ran = gpu_test(1 << 30, |s| {
         let root = PathBuf::from(
             std::env::var_os("CHOPINFER_QUERY_CUBINS").ok_or("query cubins required")?,

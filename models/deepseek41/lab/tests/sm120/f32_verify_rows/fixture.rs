@@ -33,7 +33,7 @@ pub enum Form {
     /// A whole-K row tile.
     Rows(Box<rows::Candidate>),
     /// A row tile the bundle registers (`f32_verify_rows`), launched from
-    /// the packaged cubin at the verify rows its tuning row serves.
+    /// the packaged cubin at the rows its tuning row serves.
     Packed(Box<rows::Candidate>, [u32; 2]),
 }
 
@@ -51,7 +51,12 @@ impl Form {
                 .map(|(_, tag)| {
                     let tag = tag.trim_end_matches("_v1");
                     if matches!(self, Self::Packed(..)) {
-                        format!("packed_rows_{tag}")
+                        let site = if c.symbol().contains("_decode_f32_") {
+                            "decode_"
+                        } else {
+                            ""
+                        };
+                        format!("packed_{site}rows_{tag}")
                     } else {
                         format!("rows_{tag}")
                     }

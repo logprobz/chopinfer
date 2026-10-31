@@ -1,0 +1,210 @@
+[
+  {
+    "name": "f32_decode_rows_deepseek41_sm120",
+    "line_info": false,
+    "toolchain_version": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2026 NVIDIA Corporation\nBuilt on Fri_May_08_10:53:34_AM_PDT_2026\nCuda compilation tools, release 13.2, V13.2.86\nBuild cuda_13.2.r13.2/compiler.37953736_0",
+    "nvcc_sha256": "e0341e832da4c4c9c412c0722ac1a9e6944d0c0fcb36f3cd51d2fe11435f46e5",
+    "flags": [
+      "-arch=sm_120f",
+      "-cubin",
+      "-std=c++20",
+      "-O3",
+      "-Xptxas=-warn-spills,-warn-lmem-usage"
+    ],
+    "defines": [],
+    "entries": [
+      {
+        "symbol": "chop_deepseek41_decode_f32_n32320_k5120_rows_prepare_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "void"
+          }
+        ],
+        "max_threads": 128,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_decode_f32_n32320_k5120_rows_f96_r8_w32x8_s3_k64_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 96,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_decode_f32_n32320_k5120_rows_f96_r16_w32x16_s2_k64_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 96,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      },
+      {
+        "symbol": "chop_deepseek41_decode_f32_n32320_k5120_rows_f256_r32_w32x32_s2_k64_v1",
+        "params": [
+          {
+            "kind": "DevicePointer",
+            "name": "activation",
+            "cxx_type": "const float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight",
+            "cxx_type": "const uint16_t"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "workspace",
+            "cxx_type": "void"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "output",
+            "cxx_type": "float"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "live_rows",
+            "cxx_type": "const uint32_t"
+          },
+          {
+            "kind": "U32",
+            "name": "rows"
+          },
+          {
+            "kind": "DevicePointer",
+            "name": "weight_domain",
+            "cxx_type": "const uint32_t"
+          }
+        ],
+        "max_threads": 256,
+        "min_blocks": 1,
+        "allowed_local_bytes": 0
+      }
+    ],
+    "cubin_sha256": "cb08db4dd2b0dd17f11936cfaf59ba7fda2aaf46dcecfca85936829c94a3d13a",
+    "resources": [
+      {
+        "symbol": "chop_deepseek41_decode_f32_n32320_k5120_rows_prepare_v1",
+        "registers": 20,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 128,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_decode_f32_n32320_k5120_rows_f96_r8_w32x8_s3_k64_v1",
+        "registers": 137,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 96,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_decode_f32_n32320_k5120_rows_f96_r16_w32x16_s2_k64_v1",
+        "registers": 176,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 96,
+        "min_blocks": 1
+      },
+      {
+        "symbol": "chop_deepseek41_decode_f32_n32320_k5120_rows_f256_r32_w32x32_s2_k64_v1",
+        "registers": 244,
+        "shared_static_bytes": 1024,
+        "local_bytes": 0,
+        "stack_bytes": 0,
+        "max_threads": 256,
+        "min_blocks": 1
+      }
+    ]
+  }
+]

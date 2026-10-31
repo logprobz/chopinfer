@@ -1,5 +1,5 @@
-//! Bind the measured whole-K exact-F32 row tiles of verify steps.
-use super::f32_verify_rows::{self, Served};
+//! Bind the measured whole-K exact-F32 row tiles of decode and verify steps.
+use super::f32_verify_rows::{self, Served, Site};
 use crate::ops::{
     Bind, Lowered,
     exact_f32::rows::{RowsProjection, Spans},
@@ -8,7 +8,6 @@ use kernel_core::backend::{OpInfo, Refused};
 use kernel_core::contract::Refusal;
 use kernel_core::properties::Invariance;
 use kernels_sm120::f32_projection::rows::Buffers;
-use model_deepseek41_contract::verify_bounds::F32_ROWS;
 
 struct Projection {
     tiles: Vec<Served>,
@@ -58,15 +57,26 @@ impl RowsProjection for Projection {
     }
 }
 impl crate::Kernels {
-    /// The measured row tiles of the projection of `n` outputs from `k`
-    /// inputs, admitted at `rows` only, prepared once before lowering.
+    /// The measured verify row tiles of the projection of `n` outputs from
+    /// `k` inputs, admitted at `rows` only, prepared once before lowering.
     /// Selecting them still requires the caller's verify phase and row gate.
     pub(crate) fn rows_verify_projection(
         n: u32,
         k: u32,
         rows: [u32; 2],
     ) -> Result<Box<dyn RowsProjection>, Refused> {
-        let tiles: Vec<_> = f32_verify_rows::tiles(n, k)?
+        Self::rows_projection(f32_verify_rows::VERIFY, n, k, rows)
+    }
+
+    /// The measured row tiles of `site` for the projection of `n` outputs
+    /// from `k` inputs, admitted at `rows` only.
+    fn rows_projection(
+        site: Site,
+        n: u32,
+        k: u32,
+        rows: [u32; 2],
+    ) -> Result<Box<dyn RowsProjection>, Refused> {
+        let tiles: Vec<_> = f32_verify_rows::tiles(site, n, k)?
             .into_iter()
             .filter(|t| t.rows[0] <= rows[1] && rows[0] <= t.rows[1])
             .collect();
@@ -93,8 +103,8 @@ impl crate::Kernels {
             workspace = workspace.max(t.candidate.workspace_bytes(t.rows[1].min(rows[1]))?);
         }
         let mut info = OpInfo::new(
-            "deepseek41.verify.exact-f32.rows",
-            Invariance::any_rows(F32_ROWS),
+            format!("deepseek41.{}.exact-f32.rows", site.stem),
+            Invariance::any_rows(site.bound),
             symbols,
         );
         info.workspace = workspace;
@@ -133,9 +143,13 @@ mod tests {
                     .with_wide_verify(wide)
                     .with_f32_row_tiles(tiles);
                 assert_eq!(
-                    crate::Kernels::loads(f32_verify_rows::CUBIN, &shape),
+                    crate::Kernels::loads(f32_verify_rows::VERIFY.cubin, &shape),
                     (wide && rows > 64) || (tiles && rows > 32)
                 );
+                assert!(!crate::Kernels::loads(
+                    f32_verify_rows::DECODE.cubin,
+                    &shape
+                ));
             }
         }
         let shape = crate::shape::Shape::new(&FLASH, Ranks::TP2)
@@ -143,7 +157,9 @@ mod tests {
             .with_verify_rows(192)
             .with_wide_verify(true)
             .with_f32_row_tiles(true);
-        assert!(!crate::Kernels::loads(f32_verify_rows::CUBIN, &shape));
+        for site in f32_verify_rows::SITES {
+            assert!(!crate::Kernels::loads(site.cubin, &shape));
+        }
     }
 
     /// Each projection's launches are its tile's preparation, compute and,

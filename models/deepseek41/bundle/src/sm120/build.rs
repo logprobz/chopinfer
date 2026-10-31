@@ -542,7 +542,9 @@ pub fn selection(
             owners.push((fold_verify::CUBIN.into(), geometry.id));
             owners.push((fold_verify_local::CUBIN.into(), geometry.id));
             owners.push((f32_verify::CUBIN.into(), geometry.id));
-            owners.push((f32_verify_rows::CUBIN.into(), geometry.id));
+            for site in f32_verify_rows::SITES {
+                owners.push((site.cubin.into(), geometry.id));
+            }
             owners.push((moe_router64::CUBIN.into(), geometry.id));
             owners.push((head_last::CUBIN.into(), geometry.id));
             owners.push((dspark_projection::CUBIN.into(), geometry.id));

@@ -184,12 +184,12 @@ pub fn spans(s: Shape) -> Option<cached_spans::Candidate> {
         .find(|c| c.entry().query().n == s.n && c.entry().query().k == s.k)
 }
 
-/// The row tiles the bundle registers for `s`, with the verify rows each
-/// serves; none for a projection that keeps its other routes.
+/// The row tiles the bundle registers for `s` at every site, with the
+/// rows each serves; none for a projection that keeps its other routes.
 pub fn packed(s: Shape) -> Vec<(Candidate, [u32; 2])> {
-    f32_verify_rows::tiles(s.n, s.k)
-        .unwrap()
+    f32_verify_rows::SITES
         .into_iter()
+        .flat_map(|site| f32_verify_rows::tiles(site, s.n, s.k).unwrap())
         .map(|t| (t.candidate, t.rows))
         .collect()
 }
@@ -290,11 +290,14 @@ fn cpu_lab_tiles_plan_every_timed_row_count() {
     }
     assert!(spans(shape("head").unwrap()).is_some());
     assert!(spans(shape("router").unwrap()).is_some());
-    // The bundle's tiles are lab tiles at the same capacity.
+    // The bundle's tiles are lab tiles, each at its site's bound.
     for s in shapes() {
-        for (c, _) in packed(s) {
-            assert!(candidates(s).iter().any(|lab| lab.tile() == c.tile()));
-            assert_eq!(c.capacity(), CAPACITY);
+        for site in f32_verify_rows::SITES {
+            for t in f32_verify_rows::tiles(site, s.n, s.k).unwrap() {
+                let c = t.candidate;
+                assert!(candidates(s).iter().any(|lab| lab.tile() == c.tile()));
+                assert_eq!(c.capacity(), site.bound);
+            }
         }
     }
     assert_eq!(packed(shape("index_weights").unwrap()).len(), 0);

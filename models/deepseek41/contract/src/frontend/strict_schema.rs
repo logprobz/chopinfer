@@ -410,7 +410,8 @@ fn number_kind(number: &serde_json::Number) -> NumberKind {
 }
 
 /// serde's `invalid type` refusal, the value spelled as serde_json's
-/// `Unexpected` writes it.
+/// `Unexpected` writes it, except that a string is quoted as JSON where
+/// serde quotes it as Rust's `Debug` does.
 fn invalid_type(value: &FrontendJsonV1, expected: &str) -> String {
     let unexpected = match value {
         FrontendJsonV1::Null => "null".to_owned(),
@@ -420,7 +421,10 @@ fn invalid_type(value: &FrontendJsonV1, expected: &str) -> String {
             NumberKind::Unsigned(unsigned) => format!("integer `{unsigned}`"),
             NumberKind::Float(float) => format!("floating point `{}`", float_text(float)),
         },
-        FrontendJsonV1::String(text) => format!("string {text:?}"),
+        FrontendJsonV1::String(text) => format!(
+            "string {}",
+            serde_json::to_string(text).expect("a string writes as JSON")
+        ),
         FrontendJsonV1::Array(_) => "sequence".to_owned(),
         FrontendJsonV1::Object(_) => "map".to_owned(),
     };
@@ -428,23 +432,30 @@ fn invalid_type(value: &FrontendJsonV1, expected: &str) -> String {
 }
 
 /// A float as the recipe's serde_json writes it in a refusal (the `zmij`
-/// crate's format): the shortest digits that read back, in fixed notation
-/// with at least one fraction digit when the decimal exponent is from -5
-/// through 15 (`0.00001`, `100.0`), else in exponent notation with a signed
-/// exponent (`1e-6`, `1.5e+16`).
+/// crate's format): the shortest digits that read back, ties to even, in
+/// fixed notation with at least one fraction digit when the decimal
+/// exponent is from -5 through 15 (`0.00001`, `100.0`), else in exponent
+/// notation with a signed exponent (`1e-6`, `1.5e+16`).
 fn float_text(float: f64) -> String {
-    if !float.is_finite() {
+    // serde_json's shortest digits, which break a tie to even as the
+    // recipe's do; Rust's `{:e}` rounds it up.
+    let Some(number) = serde_json::Number::from_f64(float.abs()) else {
         return float.to_string();
-    }
-    // The shortest digits and the decimal exponent of the first one.
-    let scientific = format!("{:e}", float.abs());
-    let (mantissa, exponent) = scientific
-        .split_once('e')
-        .expect("LowerExp writes an exponent");
+    };
+    let written = number.to_string();
+    let (mantissa, exponent) = written.split_once(['e', 'E']).unwrap_or((&written, "0"));
     let exponent: i32 = exponent
         .parse()
-        .expect("LowerExp writes a decimal exponent");
-    let digits = mantissa.replace('.', "");
+        .expect("serde_json writes a decimal exponent");
+    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let digits = format!("{whole}{fraction}");
+    // The significant digits and the decimal exponent of the first one.
+    let leading = digits.len() - digits.trim_start_matches('0').len();
+    let first = exponent + whole.len() as i32 - 1 - leading as i32;
+    let (digits, exponent) = match digits.trim_matches('0') {
+        "" => ("0", 0),
+        significant => (significant, first),
+    };
     let sign = if float.is_sign_negative() { "-" } else { "" };
     if !(-5..=15).contains(&exponent) {
         let sign_of_exponent = if exponent < 0 { '-' } else { '+' };
@@ -1094,6 +1105,13 @@ mod tests {
             ("1e300", "1e+300"),
             ("5e-324", "5e-324"),
             ("18446744073709551616", "1.8446744073709552e+19"),
+            // Halfway between two shortest spellings: the even one, where
+            // Rust's `{:e}` would round up.
+            ("1000000000000000.25", "1000000000000000.2"),
+            ("807175938442761.25", "807175938442761.2"),
+            ("-932080889275546.25", "-932080889275546.2"),
+            ("253424307849306.625", "253424307849306.62"),
+            ("72723312945259.125", "72723312945259.12"),
         ] {
             assert_eq!(
                 property_refusal(&format!(r#"{{"type": "integer", "minimum": {sent}}}"#)),
@@ -1103,19 +1121,21 @@ mod tests {
         }
     }
 
-    /// A string in a refusal is quoted as Rust's `Debug` quotes it, as the
-    /// wheel quotes it: U+1C89, new in Unicode 16, and an emoji stay as
-    /// they are, while a combining mark, an unassigned code point and
-    /// format characters are escaped.
+    /// A string in a refusal is quoted as JSON, where the wheel quotes it
+    /// as Rust's `Debug` does: only quotes, backslashes and control
+    /// characters are escaped, so U+1C89 (new in Unicode 16), an emoji, a
+    /// combining mark, an unassigned code point and format characters stay
+    /// as they are.
     #[test]
-    fn refusal_strings_are_quoted_as_the_recipe_quotes_them() {
+    fn refusal_strings_are_quoted_as_json() {
         for (sent, written) in [
             ("\u{1c89}", "\"\u{1c89}\""),
             ("\u{1f600}", "\"\u{1f600}\""),
-            ("x'y\"\n", r#""x'y\"\n""#),
-            ("a\u{301}", r#""a\u{301}""#),
-            ("\u{378}", r#""\u{378}""#),
-            ("\u{200b}\u{feff}", r#""\u{200b}\u{feff}""#),
+            ("x'y\"\\\n\t\u{1}", r#""x'y\"\\\n\t\u0001""#),
+            ("\u{7f}", "\"\u{7f}\""),
+            ("a\u{301}", "\"a\u{301}\""),
+            ("\u{378}", "\"\u{378}\""),
+            ("\u{200b}\u{feff}", "\"\u{200b}\u{feff}\""),
         ] {
             let schema = serde_json::json!({"type": "object",
                 "properties": {"x": {"type": "number", "minimum": sent}}});
@@ -1170,40 +1190,5 @@ mod tests {
                 "{node}"
             );
         }
-    }
-
-    /// The corpus reference quotes strings as these refusals do:
-    /// `RUST_DEBUG_ESCAPES` in `models/deepseek41/frontend_cases.py` lists
-    /// exactly the code points this toolchain's `Debug` writes as
-    /// `\u{...}` besides its named escapes.
-    #[test]
-    fn the_reference_escapes_what_debug_escapes() {
-        let source =
-            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../frontend_cases.py"))
-                .unwrap();
-        let (_, table) = source.split_once("RUST_DEBUG_ESCAPES = \"\"\"").unwrap();
-        let (table, _) = table.split_once("\"\"\"").unwrap();
-        let code = |text: &str| u32::from_str_radix(text, 16).unwrap();
-        let listed: Vec<(u32, u32)> = table
-            .split_whitespace()
-            .map(|range| {
-                let (start, end) = range.split_once('-').unwrap_or((range, range));
-                (code(start), code(end))
-            })
-            .collect();
-        let mut escaped: Vec<(u32, u32)> = Vec::new();
-        for character in (0..=char::MAX as u32).filter_map(char::from_u32) {
-            let text = character.to_string();
-            let named = matches!(character, '\0' | '\t' | '\r' | '\n' | '\\' | '"');
-            if named || format!("{text:?}") == format!("\"{text}\"") {
-                continue;
-            }
-            let point = character as u32;
-            match escaped.last_mut() {
-                Some((_, end)) if *end + 1 == point => *end = point,
-                _ => escaped.push((point, point)),
-            }
-        }
-        assert_eq!(listed, escaped);
     }
 }

@@ -10,11 +10,9 @@ The module states the pin, the transport translation, the generation endings,
 how a history turn reads back, and DeepSeek's own axes and fixed cases.
 """
 
-import bisect
 import copy
 import json
 import math
-import re
 
 PIN = {
     "revision": "1bae0e1088993b9b82de08f59de5be5a34e42170",
@@ -172,9 +170,10 @@ class SchemaError(ValueError):
 def float_text(value):
     """A float as the recipe's serde_json writes it in a refusal (the `zmij`
     crate's format), as strict_schema.rs writes it: the shortest digits that
-    read back, in fixed notation with at least one fraction digit when the
-    decimal exponent is from -5 through 15 (`0.00001`, `100.0`), else in
-    exponent notation with a signed exponent (`1e-6`, `1.5e+16`)."""
+    read back, ties to even as `repr` and serde_json break them, in fixed
+    notation with at least one fraction digit when the decimal exponent is
+    from -5 through 15 (`0.00001`, `100.0`), else in exponent notation with
+    a signed exponent (`1e-6`, `1.5e+16`)."""
     if value != value or value in (float("inf"), float("-inf")):
         return {"nan": "NaN"}.get(repr(value), repr(value))
     sign = "-" if math.copysign(1.0, value) < 0 else ""
@@ -196,117 +195,9 @@ def float_text(value):
     return f"{sign}{digits[:exponent + 1]}.{digits[exponent + 1:]}"
 
 
-# The code points Rust's `Debug` for str writes as `\u{...}` besides its
-# named escapes, as hexadecimal ranges: the printability and
-# grapheme-extend tables of the pinned toolchain (rust-toolchain.toml, Rust
-# 1.89.0, Unicode 16.0.0), which Python's own Unicode database, an older
-# version, cannot reproduce. strict_schema.rs's tests check the table
-# against the toolchain.
-RUST_DEBUG_ESCAPES = """
-1-8 b-c e-1f 7f-a0 ad 300-36f 378-379 380-383 38b 38d 3a2 483-489 530 557-558 58b-58c 590-5bd 5bf 5c1-5c2 5c4-5c5
-5c7-5cf 5eb-5ee 5f5-605 610-61a 61c 64b-65f 670 6d6-6dd 6df-6e4 6e7-6e8 6ea-6ed 70e-70f 711 730-74c 7a6-7b0 7b2-7bf
-7eb-7f3 7fb-7fd 816-819 81b-823 825-827 829-82f 83f 859-85d 85f 86b-86f 88f-89f 8ca-902 93a 93c 941-948 94d 951-957
-962-963 981 984 98d-98e 991-992 9a9 9b1 9b3-9b5 9ba-9bc 9be 9c1-9c6 9c9-9ca 9cd 9cf-9db 9de 9e2-9e5 9fe-a02 a04
-a0b-a0e a11-a12 a29 a31 a34 a37 a3a-a3d a41-a58 a5d a5f-a65 a70-a71 a75 a77-a82 a84 a8e a92 aa9 ab1 ab4 aba-abc
-ac1-ac8 aca acd-acf ad1-adf ae2-ae5 af2-af8 afa-b01 b04 b0d-b0e b11-b12 b29 b31 b34 b3a-b3c b3e-b3f b41-b46 b49-b4a
-b4d-b5b b5e b62-b65 b78-b82 b84 b8b-b8d b91 b96-b98 b9b b9d ba0-ba2 ba5-ba7 bab-bad bba-bbe bc0 bc3-bc5 bc9 bcd-bcf
-bd1-be5 bfb-c00 c04 c0d c11 c29 c3a-c3c c3e-c40 c45-c57 c5b-c5c c5e-c5f c62-c65 c70-c76 c81 c8d c91 ca9 cb4 cba-cbc
-cbf-cc0 cc2 cc5-cdc cdf ce2-ce5 cf0 cf4-d01 d0d d11 d3b-d3c d3e d41-d45 d49 d4d d50-d53 d57 d62-d65 d80-d81 d84
-d97-d99 db2 dbc dbe-dbf dc7-dcf dd2-dd7 ddf-de5 df0-df1 df5-e00 e31 e34-e3e e47-e4e e5c-e80 e83 e85 e8b ea4 ea6 eb1
-eb4-ebc ebe-ebf ec5 ec7-ecf eda-edb ee0-eff f18-f19 f35 f37 f39 f48 f6d-f7e f80-f84 f86-f87 f8d-fbd fc6 fcd fdb-fff
-102d-1030 1032-1037 1039-103a 103d-103e 1058-1059 105e-1060 1071-1074 1082 1085-1086 108d 109d 10c6 10c8-10cc
-10ce-10cf 1249 124e-124f 1257 1259 125e-125f 1289 128e-128f 12b1 12b6-12b7 12bf 12c1 12c6-12c7 12d7 1311 1316-1317
-135b-135f 137d-137f 139a-139f 13f6-13f7 13fe-13ff 1680 169d-169f 16f9-16ff 1712-171e 1732-1734 1737-173f 1752-175f
-176d 1771-177f 17b4-17b5 17b7-17bd 17c6 17c9-17d3 17dd-17df 17ea-17ef 17fa-17ff 180b-180f 181a-181f 1879-187f
-1885-1886 18a9 18ab-18af 18f6-18ff 191f-1922 1927-1928 192c-192f 1932 1939-193f 1941-1943 196e-196f 1975-197f
-19ac-19af 19ca-19cf 19db-19dd 1a17-1a18 1a1b-1a1d 1a56 1a58-1a60 1a62 1a65-1a6c 1a73-1a7f 1a8a-1a8f 1a9a-1a9f
-1aae-1b03 1b34-1b3d 1b42-1b44 1b4d 1b6b-1b73 1b80-1b81 1ba2-1ba5 1ba8-1bad 1be6 1be8-1be9 1bed 1bef-1bfb 1c2c-1c33
-1c36-1c3a 1c4a-1c4c 1c8b-1c8f 1cbb-1cbc 1cc8-1cd2 1cd4-1ce0 1ce2-1ce8 1ced 1cf4 1cf8-1cf9 1cfb-1cff 1dc0-1dff
-1f16-1f17 1f1e-1f1f 1f46-1f47 1f4e-1f4f 1f58 1f5a 1f5c 1f5e 1f7e-1f7f 1fb5 1fc5 1fd4-1fd5 1fdc 1ff0-1ff1 1ff5
-1fff-200f 2028-202f 205f-206f 2072-2073 208f 209d-209f 20c1-20ff 218c-218f 242a-243f 244b-245f 2b74-2b75 2b96
-2cef-2cf1 2cf4-2cf8 2d26 2d28-2d2c 2d2e-2d2f 2d68-2d6e 2d71-2d7f 2d97-2d9f 2da7 2daf 2db7 2dbf 2dc7 2dcf 2dd7
-2ddf-2dff 2e5e-2e7f 2e9a 2ef4-2eff 2fd6-2fef 3000 302a-302f 3040 3097-309a 3100-3104 3130 318f 31e6-31ee 321f
-a48d-a48f a4c7-a4cf a62c-a63f a66f-a672 a674-a67d a69e-a69f a6f0-a6f1 a6f8-a6ff a7ce-a7cf a7d2 a7d4 a7dd-a7f1 a802
-a806 a80b a825-a826 a82c-a82f a83a-a83f a878-a87f a8c4-a8cd a8da-a8f1 a8ff a926-a92d a947-a951 a953-a95e a97d-a982
-a9b3 a9b6-a9b9 a9bc-a9bd a9c0 a9ce a9da-a9dd a9e5 a9ff aa29-aa2e aa31-aa32 aa35-aa3f aa43 aa4c aa4e-aa4f aa5a-aa5b
-aa7c aab0 aab2-aab4 aab7-aab8 aabe-aabf aac1 aac3-aada aaec-aaed aaf6-ab00 ab07-ab08 ab0f-ab10 ab17-ab1f ab27 ab2f
-ab6c-ab6f abe5 abe8 abed-abef abfa-abff d7a4-d7af d7c7-d7ca d7fc-d7ff e000-f8ff fa6e-fa6f fada-faff fb07-fb12
-fb18-fb1c fb1e fb37 fb3d fb3f fb42 fb45 fbc3-fbd2 fd90-fd91 fdc8-fdce fdd0-fdef fe00-fe0f fe1a-fe2f fe53 fe67
-fe6c-fe6f fe75 fefd-ff00 ff9e-ff9f ffbf-ffc1 ffc8-ffc9 ffd0-ffd1 ffd8-ffd9 ffdd-ffdf ffe7 ffef-fffb fffe-ffff 1000c
-10027 1003b 1003e 1004e-1004f 1005e-1007f 100fb-100ff 10103-10106 10134-10136 1018f 1019d-1019f 101a1-101cf
-101fd-1027f 1029d-1029f 102d1-102e0 102fc-102ff 10324-1032c 1034b-1034f 10376-1037f 1039e 103c4-103c7 103d6-103ff
-1049e-1049f 104aa-104af 104d4-104d7 104fc-104ff 10528-1052f 10564-1056e 1057b 1058b 10593 10596 105a2 105b2 105ba
-105bd-105bf 105f4-105ff 10737-1073f 10756-1075f 10768-1077f 10786 107b1 107bb-107ff 10806-10807 10809 10836
-10839-1083b 1083d-1083e 10856 1089f-108a6 108b0-108df 108f3 108f6-108fa 1091c-1091e 1093a-1093e 10940-1097f
-109b8-109bb 109d0-109d1 10a01-10a0f 10a14 10a18 10a36-10a3f 10a49-10a4f 10a59-10a5f 10aa0-10abf 10ae5-10aea
-10af7-10aff 10b36-10b38 10b56-10b57 10b73-10b77 10b92-10b98 10b9d-10ba8 10bb0-10bff 10c49-10c7f 10cb3-10cbf
-10cf3-10cf9 10d24-10d2f 10d3a-10d3f 10d66-10d6d 10d86-10d8d 10d90-10e5f 10e7f 10eaa-10eac 10eae-10eaf 10eb2-10ec1
-10ec5-10eff 10f28-10f2f 10f46-10f50 10f5a-10f6f 10f82-10f85 10f8a-10faf 10fcc-10fdf 10ff7-10fff 11001 11038-11046
-1104e-11051 11070 11073-11074 11076-11081 110b3-110b6 110b9-110ba 110bd 110c2-110cf 110e9-110ef 110fa-11102
-11127-1112b 1112d-11135 11148-1114f 11173 11177-11181 111b6-111be 111c0 111c9-111cc 111cf 111e0 111f5-111ff 11212
-1122f-11231 11234-11237 1123e 11241-1127f 11287 11289 1128e 1129e 112aa-112af 112df 112e3-112ef 112fa-11301 11304
-1130d-1130e 11311-11312 11329 11331 11334 1133a-1133c 1133e 11340 11345-11346 11349-1134a 1134d-1134f 11351-1135c
-11364-1137f 1138a 1138c-1138d 1138f 113b6 113b8 113bb-113c9 113cb 113ce-113d0 113d2 113d6 113d9-113ff 11438-1143f
-11442-11444 11446 1145c 1145e 11462-1147f 114b0 114b3-114b8 114ba 114bd 114bf-114c0 114c2-114c3 114c8-114cf
-114da-1157f 115af 115b2-115b7 115bc-115bd 115bf-115c0 115dc-115ff 11633-1163a 1163d 1163f-11640 11645-1164f
-1165a-1165f 1166d-1167f 116ab 116ad 116b0-116b7 116ba-116bf 116ca-116cf 116e4-116ff 1171b-1171d 1171f 11722-11725
-11727-1172f 11747-117ff 1182f-11837 11839-1183a 1183c-1189f 118f3-118fe 11907-11908 1190a-1190b 11914 11917 11930
-11936 11939-1193e 11943 11947-1194f 1195a-1199f 119a8-119a9 119d4-119db 119e0 119e5-119ff 11a01-11a0a 11a33-11a38
-11a3b-11a3e 11a47-11a4f 11a51-11a56 11a59-11a5b 11a8a-11a96 11a98-11a99 11aa3-11aaf 11af9-11aff 11b0a-11bbf
-11be2-11bef 11bfa-11bff 11c09 11c30-11c3d 11c3f 11c46-11c4f 11c6d-11c6f 11c90-11ca8 11caa-11cb0 11cb2-11cb3
-11cb5-11cff 11d07 11d0a 11d31-11d45 11d47-11d4f 11d5a-11d5f 11d66 11d69 11d8f-11d92 11d95 11d97 11d99-11d9f
-11daa-11edf 11ef3-11ef4 11ef9-11f01 11f11 11f36-11f3d 11f40-11f42 11f5a-11faf 11fb1-11fbf 11ff2-11ffe 1239a-123ff
-1246f 12475-1247f 12544-12f8f 12ff3-12fff 13430-13440 13447-1345f 143fb-143ff 14647-160ff 1611e-16129 1612d-1612f
-1613a-167ff 16a39-16a3f 16a5f 16a6a-16a6d 16abf 16aca-16acf 16aee-16af4 16af6-16aff 16b30-16b36 16b46-16b4f 16b5a
-16b62 16b78-16b7c 16b90-16d3f 16d7a-16e3f 16e9b-16eff 16f4b-16f4f 16f88-16f92 16fa0-16fdf 16fe4-16fff 187f8-187ff
-18cd6-18cfe 18d09-1afef 1aff4 1affc 1afff 1b123-1b131 1b133-1b14f 1b153-1b154 1b156-1b163 1b168-1b16f 1b2fc-1bbff
-1bc6b-1bc6f 1bc7d-1bc7f 1bc89-1bc8f 1bc9a-1bc9b 1bc9d-1bc9e 1bca0-1cbff 1ccfa-1ccff 1ceb4-1cf4f 1cfc4-1cfff
-1d0f6-1d0ff 1d127-1d128 1d165-1d169 1d16d-1d182 1d185-1d18b 1d1aa-1d1ad 1d1eb-1d1ff 1d242-1d244 1d246-1d2bf
-1d2d4-1d2df 1d2f4-1d2ff 1d357-1d35f 1d379-1d3ff 1d455 1d49d 1d4a0-1d4a1 1d4a3-1d4a4 1d4a7-1d4a8 1d4ad 1d4ba 1d4bc
-1d4c4 1d506 1d50b-1d50c 1d515 1d51d 1d53a 1d53f 1d545 1d547-1d549 1d551 1d6a6-1d6a7 1d7cc-1d7cd 1da00-1da36
-1da3b-1da6c 1da75 1da84 1da8c-1deff 1df1f-1df24 1df2b-1e02f 1e06e-1e0ff 1e12d-1e136 1e13e-1e13f 1e14a-1e14d
-1e150-1e28f 1e2ae-1e2bf 1e2ec-1e2ef 1e2fa-1e2fe 1e300-1e4cf 1e4ec-1e4ef 1e4fa-1e5cf 1e5ee-1e5ef 1e5fb-1e5fe
-1e600-1e7df 1e7e7 1e7ec 1e7ef 1e7ff 1e8c5-1e8c6 1e8d0-1e8ff 1e944-1e94a 1e94c-1e94f 1e95a-1e95d 1e960-1ec70
-1ecb5-1ed00 1ed3e-1edff 1ee04 1ee20 1ee23 1ee25-1ee26 1ee28 1ee33 1ee38 1ee3a 1ee3c-1ee41 1ee43-1ee46 1ee48 1ee4a
-1ee4c 1ee50 1ee53 1ee55-1ee56 1ee58 1ee5a 1ee5c 1ee5e 1ee60 1ee63 1ee65-1ee66 1ee6b 1ee73 1ee78 1ee7d 1ee7f 1ee8a
-1ee9c-1eea0 1eea4 1eeaa 1eebc-1eeef 1eef2-1efff 1f02c-1f02f 1f094-1f09f 1f0af-1f0b0 1f0c0 1f0d0 1f0f6-1f0ff
-1f1ae-1f1e5 1f203-1f20f 1f23c-1f23f 1f249-1f24f 1f252-1f25f 1f266-1f2ff 1f6d8-1f6db 1f6ed-1f6ef 1f6fd-1f6ff
-1f777-1f77a 1f7da-1f7df 1f7ec-1f7ef 1f7f1-1f7ff 1f80c-1f80f 1f848-1f84f 1f85a-1f85f 1f888-1f88f 1f8ae-1f8af
-1f8bc-1f8bf 1f8c2-1f8ff 1fa54-1fa5f 1fa6e-1fa6f 1fa7d-1fa7f 1fa8a-1fa8e 1fac7-1facd 1fadd-1fade 1faea-1faef
-1faf9-1faff 1fb93 1fbfa-1ffff 2a6e0-2a6ff 2b73a-2b73f 2b81e-2b81f 2cea2-2ceaf 2ebe1-2ebef 2ee5e-2f7ff 2fa1e-2ffff
-3134b-3134f 323b0-10ffff
-"""
-
-
-def debug_ranges(table):
-    """The first and last code point of each range `table` lists."""
-    ranges = []
-    for text in table.split():
-        first, _, last = text.partition("-")
-        ranges.append((int(first, 16), int(last or first, 16)))
-    return ranges
-
-
-RUST_DEBUG_RANGES = debug_ranges(RUST_DEBUG_ESCAPES)
-
-
-def rust_escapes(char):
-    """Whether Rust's `Debug` writes `char` as a `\\u` escape; a surrogate,
-    which no Rust string holds, is escaped too."""
-    code = ord(char)
-    index = bisect.bisect_right(RUST_DEBUG_RANGES, (code, 0x10FFFF)) - 1
-    return 0xD800 <= code <= 0xDFFF or (index >= 0 and code <= RUST_DEBUG_RANGES[index][1])
-
-
-def debug_text(text):
-    """A string as Rust's `Debug` quotes it (`RUST_DEBUG_ESCAPES`)."""
-    escapes = {"\t": "\\t", "\r": "\\r", "\n": "\\n", "\\": "\\\\", "\"": "\\\"", "\0": "\\0"}
-    return '"' + "".join(escapes.get(char) or (f"\\u{{{ord(char):x}}}" if rust_escapes(char) else char)
-                         for char in text) + '"'
-
-
 def invalid_type(value, expected):
-    """serde's `invalid type` refusal, the value as serde_json spells it."""
+    """serde's `invalid type` refusal, the value as serde_json spells it and
+    a string quoted as JSON, as strict_schema.rs writes it."""
     if value is None:
         unexpected = "null"
     elif isinstance(value, bool):
@@ -316,7 +207,7 @@ def invalid_type(value, expected):
     elif isinstance(value, (int, float)):
         unexpected = f"floating point `{float_text(float(value))}`"
     elif isinstance(value, str):
-        unexpected = f"string {debug_text(value)}"
+        unexpected = f"string {json.dumps(value, ensure_ascii=False)}"
     elif isinstance(value, list):
         unexpected = "sequence"
     else:

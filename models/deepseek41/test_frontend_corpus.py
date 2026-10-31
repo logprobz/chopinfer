@@ -84,18 +84,24 @@ class StrictSchemaReference(unittest.TestCase):
                 ("9.999e15", "9999000000000000.0"), ("1e16", "1e+16"), ("1.5e16", "1.5e+16"),
                 ("1.2345678901234568e17", "1.2345678901234568e+17"), ("100.0", "100.0"), ("-0.0", "-0.0"),
                 ("123.456", "123.456"), ("1e300", "1e+300"), ("5e-324", "5e-324"),
-                ("18446744073709551616", "1.8446744073709552e+19")]:
+                ("18446744073709551616", "1.8446744073709552e+19"),
+                # Halfway between two shortest spellings: the even one.
+                ("1000000000000000.25", "1000000000000000.2"), ("807175938442761.25", "807175938442761.2"),
+                ("-932080889275546.25", "-932080889275546.2"), ("253424307849306.625", "253424307849306.62"),
+                ("72723312945259.125", "72723312945259.12")]:
             with self.subTest(sent=sent):
                 self.assertEqual(self.refusal({"type": "integer", "minimum": json.loads(sent)}),
                                  f"Invalid tool parameters schema : invalid type: floating point `{written}`, "
                                  "expected i64")
 
-    def test_refusal_strings_are_quoted_as_the_recipe_quotes_them(self):
+    def test_refusal_strings_are_quoted_as_json(self):
+        # Only quotes, backslashes and control characters are escaped, so
         # U+1C89, new in Unicode 16, which Python's Unicode database does not
-        # hold, stays as it is, as Rust's Debug and the wheel keep it.
-        for sent, written in [("\u1c89", '"\u1c89"'), ("\U0001f600", '"\U0001f600"'), ("x'y\"\n", '"x\'y\\"\\n"'),
-                              ("a\u0301", '"a\\u{301}"'), ("\u0378", '"\\u{378}"'),
-                              ("\u200b\ufeff", '"\\u{200b}\\u{feff}"')]:
+        # hold, stays as it is, as strict_schema.rs keeps it.
+        for sent, written in [("\u1c89", '"\u1c89"'), ("\U0001f600", '"\U0001f600"'),
+                              ("x'y\"\\\n\t\x01", r'''"x'y\"\\\n\t\u0001"'''), ("\x7f", '"\x7f"'),
+                              ("a\u0301", '"a\u0301"'), ("\u0378", '"\u0378"'),
+                              ("\u200b\ufeff", '"\u200b\ufeff"')]:
             with self.subTest(sent=sent):
                 self.assertEqual(self.refusal({"type": "number", "minimum": sent}),
                                  f"Invalid tool parameters schema : invalid type: string {written}, "

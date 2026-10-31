@@ -10,6 +10,7 @@ mod catch_up;
 mod commit;
 mod coupled;
 mod drafter_hc;
+mod drafter_moe;
 mod drafter_rows;
 mod early;
 mod graph_budget;

@@ -320,3 +320,31 @@ fn a_refused_step_leaves_its_gathers_for_the_next_step_to_settle() {
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
 }
+
+/// Destroy releases every handle newest first, as the host's release order
+/// requires, after decode steps whose requests were never retired: the AR
+/// status packet's events precede the prepared gathers, which destroy
+/// releases before every held resource.
+#[test]
+fn destroy_after_decode_releases_newest_first() {
+    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+    let mut instance = create_mapped(&host, 1);
+    assert!(indices(instance.handle()).is_some(), "prepared gathers");
+    step(
+        &mut instance,
+        &prompt(7, 0, 0, PROMPT, true),
+        &mut Views::default(),
+    );
+    let mut positions = [PROMPT];
+    for _ in 0..2 {
+        step(
+            &mut instance,
+            &decode_step(&positions, 1),
+            &mut Views::default(),
+        );
+        positions[0] += 1;
+    }
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+    assert!(host.release_order.borrow().is_empty());
+}

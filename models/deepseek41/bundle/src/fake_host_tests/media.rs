@@ -69,6 +69,8 @@ impl MediaHost {
             layouts: RefCell::new(std::collections::BTreeMap::new()),
             pull_only: Cell::new(false),
             fail_upload: Default::default(),
+            release_order: RefCell::new(Vec::new()),
+            references: RefCell::new(Vec::new()),
         };
         Rc::new(Backend::new(MediaHost {
             host,
@@ -94,6 +96,12 @@ impl FakePackage for MediaHost {
     }
     fn on_acquire(&self, handle: Handle) {
         self.host.on_acquire(handle);
+    }
+    fn admit_release(&self, handle: Handle) -> HostServiceResultV1<()> {
+        self.host.admit_release(handle)
+    }
+    fn release(&self, handle: Handle) {
+        self.host.release(handle);
     }
     fn read_back(
         &self,

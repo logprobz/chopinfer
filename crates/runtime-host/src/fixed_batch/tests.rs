@@ -477,6 +477,157 @@ fn live_row_owners_exclude_graph_padding_and_match_each_row() {
     }
 }
 
+/// A default-owner step matches the gathered layout, the owner blocks, or
+/// both when its rows fit in one block; any other owners are refused.
+#[test]
+fn default_owner_steps_match_the_gathered_or_block_layout() {
+    for (live, block) in [(1, 1), (2, 1), (16, 4), (32, 8), (48, 16)] {
+        let owned = (0..live)
+            .map(|row| (row / block) as u32)
+            .collect::<Vec<_>>();
+        let gathered = vec![0; live];
+        assert_eq!(
+            super::trace::row_owner_layouts(&gathered, 4).unwrap(),
+            [true, live <= block]
+        );
+        assert_eq!(
+            super::trace::row_owner_layouts(&owned, 4).unwrap(),
+            [live <= block, true]
+        );
+        let mut misplaced = owned.clone();
+        misplaced[live - 1] = 3 - misplaced[live - 1].min(3);
+        if live > 1 {
+            assert!(super::trace::row_owner_layouts(&misplaced, 4).is_err());
+        }
+    }
+    assert!(super::trace::row_owner_layouts(&[], 4).is_err());
+}
+
+/// A default-owner baseline and its repeat, both on block owners, can
+/// stand for neither the owned arm's gathered baseline nor its control: the
+/// identity binds the mode, the gate refuses any default-owner receipt, and
+/// a repeat must take its reference's layout.
+#[test]
+fn default_owner_receipts_cannot_stand_for_gathered_evidence() {
+    use super::record::{
+        bind_default_owners, check_gathered_control, check_owner_layout, owner_layout,
+    };
+    let scratch = Scratch::new();
+    let plain = json!({"format":"fixed-batch-logits-v1","trace":16});
+    let mut bound = plain.clone();
+    bind_default_owners(&mut bound);
+    assert_ne!(bound, plain);
+    let data = rows();
+    let baseline = scratch.0.join("baseline");
+    let repeat = scratch.0.join("repeat");
+    for (output, reference) in [(&baseline, None), (&repeat, Some(baseline.as_path()))] {
+        let mut golden = Golden::open(output, reference, &bound).unwrap();
+        golden.step(&frame(&data), &data).unwrap();
+        golden.finish(1).unwrap();
+        if let Some(reference) = reference {
+            check_owner_layout(reference, owner_layout([false, true])).unwrap();
+            assert!(check_owner_layout(reference, owner_layout([true, true])).is_err());
+        }
+        let receipt = json!({"passed":true,"identity":bound,"reference":reference,
+            "default_owners":owner_layout([false, true])});
+        std::fs::write(output.join("receipt.json"), receipt.to_string()).unwrap();
+    }
+    let control: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(repeat.join("receipt.json")).unwrap()).unwrap();
+    // The owned arm's identity is the plain one.
+    assert!(Golden::open(&scratch.0.join("owned"), Some(&baseline), &plain).is_err());
+    assert!(check_gathered_control(&control, &plain, Some(&baseline)).is_err());
+    // A repeat's receipt as written before the identity bound the mode.
+    let mut unbound = control.clone();
+    unbound["identity"] = plain.clone();
+    assert!(check_gathered_control(&unbound, &plain, Some(&baseline)).is_err());
+    let mut gathered = unbound;
+    gathered.as_object_mut().unwrap().remove("default_owners");
+    check_gathered_control(&gathered, &plain, Some(&baseline)).unwrap();
+    assert!(check_gathered_control(&gathered, &plain, None).is_err());
+}
+
+/// Default-owner evidence recorded before the identity bound the mode has
+/// an ordinary identity and a receipt that records the owners. An ordinary
+/// replay refuses such a baseline as its reference, so no marker-free
+/// repeat of it reaches the owned arm's control gate.
+#[test]
+fn ordinary_replays_refuse_legacy_default_owner_baselines() {
+    let scratch = Scratch::new();
+    let plain = json!({"format":"fixed-batch-logits-v1","trace":16});
+    let data = rows();
+    for (name, legacy) in [("ordinary", false), ("legacy", true)] {
+        let baseline = scratch.0.join(name);
+        let mut golden = Golden::open(&baseline, None, &plain).unwrap();
+        golden.step(&frame(&data), &data).unwrap();
+        golden.finish(1).unwrap();
+        let mut receipt = json!({"passed":true,"identity":plain,"reference":null});
+        if legacy {
+            receipt["default_owners"] = "owned".into();
+        }
+        std::fs::write(baseline.join("receipt.json"), receipt.to_string()).unwrap();
+        let repeat = Golden::open(
+            &scratch.0.join(format!("{name}-repeat")),
+            Some(&baseline),
+            &plain,
+        );
+        assert_eq!(repeat.is_err(), legacy, "{name}");
+    }
+}
+
+/// The diagnostic form of `ordinary_replays_refuse_legacy_default_owner_baselines`:
+/// an ordinary diagnostic replay refuses legacy default-owner evidence as
+/// its reference, publishing the refusal, and as its baseline repeat control.
+#[test]
+fn diagnostic_replays_refuse_legacy_default_owner_evidence() {
+    let scratch = Scratch::new();
+    let plain = json!({"format":"fixed-batch-logits-v1","trace":16});
+    let root = scratch.0.join("diagnostic");
+    std::fs::create_dir(&root).unwrap();
+    let desc = description(&root);
+    let record = |name: &str, reference: Option<&std::path::Path>, receipt: serde_json::Value| {
+        let path = root.join(name);
+        let mut golden =
+            Golden::open_diagnostic(&path, reference, None, &plain, desc.clone()).unwrap();
+        for step in 0..2 {
+            let data = fixture_rows();
+            golden.step(&fixture_frame(&data, step), &data).unwrap();
+        }
+        golden.finish(2).unwrap();
+        diagnostic::write_json(&path.join("receipt.json"), &receipt, 1024).unwrap();
+        let status = if reference.is_some() {
+            "match"
+        } else {
+            "baseline"
+        };
+        golden.publish(status, "fixture complete").unwrap();
+        path
+    };
+    let legacy_receipt = json!({"passed":true,"default_owners":"owned"});
+    let legacy = record("legacy", None, legacy_receipt.clone());
+    let refused = root.join("legacy-repeat");
+    assert!(Golden::open_diagnostic(&refused, Some(&legacy), None, &plain, desc.clone()).is_err());
+    assert!(diagnostic::read_terminal(&refused).is_err());
+    let published: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(refused.join("diagnostic.json")).unwrap()).unwrap();
+    assert_eq!(published["status"], "incompatible");
+    // A legacy default-owner repeat of an ordinary baseline is no control.
+    let baseline = record("baseline", None, json!({"passed":true}));
+    let repeat = record("repeat", Some(&baseline), legacy_receipt);
+    let arm = |name: &str, control: &std::path::Path| {
+        Golden::open_diagnostic(
+            &root.join(name),
+            Some(&baseline),
+            Some(control),
+            &plain,
+            desc.clone(),
+        )
+    };
+    assert!(arm("controlled", &repeat).is_err());
+    let ordinary = record("ordinary", Some(&baseline), json!({"passed":true}));
+    arm("ordinary-controlled", &ordinary).unwrap();
+}
+
 fn description(root: &std::path::Path) -> Description {
     Description {
         invariants: json!({"host":{"build":"fixture","binary_sha256":"fixture"},"trace":"two-steps",

@@ -101,6 +101,35 @@ fn uploads_reuse_capacity_and_replace_visible_bytes() {
     }
 }
 
+/// A repeated context or pool selection returns the live handle, and
+/// releasing a reference before its last succeeds while newer handles live,
+/// as on the host; the final releases keep the release order.
+#[test]
+fn repeated_selections_release_unordered_until_their_last_reference() {
+    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+    let context = host.select_context(0, 0).unwrap();
+    assert_eq!(host.select_context(0, 0).unwrap(), context);
+    let pool = host.select_memory_pool(context).unwrap();
+    assert_eq!(host.select_memory_pool(context).unwrap(), pool);
+    let event = host.create_event(context).unwrap();
+    host.release_context(context).unwrap();
+    host.release_memory_pool(pool).unwrap();
+    assert_eq!(
+        host.release_context(context),
+        Err(BundleStatusV1::InvalidState)
+    );
+    assert_eq!(
+        host.release_memory_pool(pool),
+        Err(BundleStatusV1::InvalidState)
+    );
+    host.release_event(event).unwrap();
+    host.release_memory_pool(pool).unwrap();
+    host.release_context(context).unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+    assert!(host.release_order.borrow().is_empty());
+    assert!(host.references.borrow().is_empty());
+}
+
 #[test]
 fn latent_sources_configure_shared_memory_before_serving_launches() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
@@ -418,6 +447,15 @@ pub(crate) struct FakeHost {
     pub pull_only: Cell<bool>,
     /// Fail an upload, after its journal record, once this many more pass.
     pub fail_upload: bundle_runtime::fake_host::Countdown,
+    /// The live handles in acquisition order: releasing any but the newest
+    /// is `InvalidState`, as the host's release order refuses it. Pool peer
+    /// grants stay outside it, as they do on the host. A context or pool
+    /// takes its place at its first selection.
+    pub release_order: RefCell<Vec<Handle>>,
+    /// Each selected context's and pool's live references: as on the host,
+    /// a repeated selection returns the live handle, and releasing any
+    /// reference but the last gives nothing back and is not ordered.
+    pub references: RefCell<Vec<(Handle, usize)>>,
 }
 
 pub(crate) type Host = Backend<FakeHost>;
@@ -643,7 +681,18 @@ impl FakeHost {
             layouts: RefCell::new(BTreeMap::new()),
             pull_only: Cell::new(false),
             fail_upload: Default::default(),
+            release_order: RefCell::new(Vec::new()),
+            references: RefCell::new(Vec::new()),
         }))
+    }
+
+    /// The live references of a selected context or pool, else none.
+    fn users(&self, handle: Handle) -> usize {
+        self.references
+            .borrow()
+            .iter()
+            .find(|(live, _)| *live == handle)
+            .map_or(0, |&(_, users)| users)
     }
 
     /// The rank's index bytes and image size, built once per test process
@@ -728,7 +777,45 @@ impl FakePackage for FakeHost {
             .borrow_mut()
             .push(String::from_utf8_lossy(message).into_owned());
     }
-    fn on_acquire(&self, _handle: Handle) {}
+    fn on_acquire(&self, handle: Handle) {
+        if matches!(handle, Handle::PeerGrant { .. }) {
+            return;
+        }
+        if matches!(handle, Handle::Context(_) | Handle::Pool(_)) {
+            let mut references = self.references.borrow_mut();
+            if let Some((_, users)) = references.iter_mut().find(|(live, _)| *live == handle) {
+                *users += 1;
+                return;
+            }
+            references.push((handle, 1));
+        }
+        self.release_order.borrow_mut().push(handle);
+    }
+    fn admit_release(&self, handle: Handle) -> HostServiceResultV1<()> {
+        if !matches!(handle, Handle::PeerGrant { .. })
+            && self.users(handle) <= 1
+            && self.release_order.borrow().last() != Some(&handle)
+        {
+            return Err(BundleStatusV1::InvalidState);
+        }
+        Ok(())
+    }
+    fn release(&self, handle: Handle) {
+        if !matches!(handle, Handle::PeerGrant { .. }) {
+            let mut references = self.references.borrow_mut();
+            let at = references.iter().position(|(live, _)| *live == handle);
+            match at {
+                Some(at) if references[at].1 > 1 => references[at].1 -= 1,
+                _ => {
+                    if let Some(at) = at {
+                        references.remove(at);
+                    }
+                    self.release_order.borrow_mut().pop();
+                }
+            }
+        }
+        self.device.note("release".into());
+    }
     fn read_back(
         &self,
         destination: &mut [u8],

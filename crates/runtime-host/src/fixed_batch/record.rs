@@ -34,6 +34,72 @@ impl From<&SampledRow> for SampleBits {
     }
 }
 
+/// A replay that takes the package's own logits owners binds that mode
+/// into its identity, so its captures and receipts never match a plain
+/// replay's: neither stands for the other's reference, and none for the
+/// owned arm's gathered baseline or control.
+pub fn bind_default_owners(identity: &mut Value) {
+    identity["default_owners"] = true.into();
+}
+
+/// The owner layout a default-owner receipt records: `either` when every
+/// step's owners matched both the gathered and the block layout.
+pub fn owner_layout(layouts: [bool; 2]) -> &'static str {
+    match layouts {
+        [true, true] => "either",
+        [true, false] => "gathered",
+        _ => "owned",
+    }
+}
+
+/// A default-owner comparison observed the owner layout its reference
+/// recorded.
+pub fn check_owner_layout(reference: &Path, observed: &str) -> Result<()> {
+    let receipt: Value = serde_json::from_reader(File::open(reference.join("receipt.json"))?)?;
+    if receipt["default_owners"] != observed {
+        return Err(format!(
+            "default logits owners took the {observed} layout, the reference {}",
+            receipt["default_owners"]
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/// A reference's or control's receipt, which passed and records default
+/// logits owners exactly when this replay takes them, as `identity` binds:
+/// no ordinary replay reuses default-owner evidence, including receipts
+/// written before the identity bound the mode, under an ordinary identity.
+fn passed_receipt(root: &Path, identity: &Value) -> Result<Value> {
+    let receipt: Value = serde_json::from_reader(File::open(root.join("receipt.json"))?)?;
+    if receipt["passed"] != true {
+        return Err("reference has no successful receipt".into());
+    }
+    if receipt.get("default_owners").is_some() != identity.get("default_owners").is_some() {
+        return Err("reference default logits owners differ from this replay's".into());
+    }
+    Ok(receipt)
+}
+
+/// The owned arm's control: a passed gathered/gathered repeat of this
+/// identity against the same reference. No default-owner receipt
+/// qualifies, whatever identity it names: its rows need not have come
+/// from the gathered owners.
+pub fn check_gathered_control(
+    control: &Value,
+    identity: &Value,
+    reference: Option<&Path>,
+) -> Result<()> {
+    if control["passed"] != true
+        || control["identity"] != *identity
+        || control["reference"] != json!(reference)
+        || control.get("default_owners").is_some()
+    {
+        return Err("gathered/gathered identity gate did not pass for this trace".into());
+    }
+    Ok(())
+}
+
 pub fn metadata(item: &ModelBatchItem, dispatch: SamplingDispatch) -> Value {
     let work = item.sampling().expect("every trace row samples");
     let p = &work.parameters;
@@ -206,6 +272,7 @@ impl Golden {
                 publication.reference = Some(diagnostic::binding(reference)?);
                 let desc: Description = serde_json::from_value(old["description"].clone())?;
                 status = "incompatible";
+                passed_receipt(reference, identity)?;
                 diagnostic::compatible(&desc, &publication.description)?;
                 status = "insufficient";
                 reference_description = Some(desc);
@@ -215,6 +282,7 @@ impl Golden {
                 if old["status"] != "match" || old["reference"] != json!(publication.reference) {
                     return Err("repeat is not bound to this reference".into());
                 }
+                passed_receipt(control, identity)?;
                 let desc: Description = serde_json::from_value(old["description"].clone())?;
                 if !desc.declared_differences.is_empty() {
                     return Err("baseline repeat must have no declared differences".into());
@@ -252,11 +320,7 @@ impl Golden {
         writeln!(frames)?;
         let reference = reference
             .map(|root| -> Result<_> {
-                let receipt: Value =
-                    serde_json::from_reader(File::open(root.join("receipt.json"))?)?;
-                if receipt["passed"] != true {
-                    return Err("reference has no successful receipt".into());
-                }
+                passed_receipt(root, identity)?;
                 let mut records = BufReader::new(File::open(root.join("frames.jsonl"))?);
                 let mut line = String::new();
                 records.read_line(&mut line)?;

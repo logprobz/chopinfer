@@ -20,7 +20,7 @@ pub fn root() -> PathBuf {
         .expect("artifact directory required")
         .into()
 }
-fn exports(lock: &str, name: &str, bytes: &[u8]) -> LabResult<Vec<String>> {
+pub fn exports(lock: &str, name: &str, bytes: &[u8]) -> LabResult<Vec<String>> {
     let rows: Vec<Value> = serde_json::from_str(lock).map_err(|e| e.to_string())?;
     let row = rows
         .iter()

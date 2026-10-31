@@ -6,7 +6,7 @@ use super::{artifacts, buffers, cols, twin};
 pub use buffers::Input;
 use bundle_deepseek41::sm120 as b;
 use kernel_core::{
-    backend::{Backend, Counts, Launch, Need, View},
+    backend::{Backend, Counts, Launch, Need, PreparedOp, View},
     contract::Argument,
     properties::{Chunk, Invariance, Rows},
     rmsnorm_quantize::RmsNormQuantizeBuffers as Norm,
@@ -156,7 +156,7 @@ fn need() -> Need {
     need_rows(DECODE_BATCH)
 }
 
-fn need_rows(rows: u32) -> Need {
+pub fn need_rows(rows: u32) -> Need {
     Need::rows(rows).with_exact(Invariance {
         rows: Rows::OneRow { max: rows },
         chunk: Chunk::Granule(PREFILL_GRANULE),
@@ -164,7 +164,7 @@ fn need_rows(rows: u32) -> Need {
     })
 }
 
-fn query() -> SinkhornRoundNormQuery {
+pub fn query() -> SinkhornRoundNormQuery {
     SinkhornRoundNormQuery {
         mixer: SinkhornExpandMixQuery {
             mix: hc::mix(&FLASH),
@@ -224,6 +224,21 @@ pub fn plans(
     let op = backend()?
         .sinkhorn_round_expand_mix_norm(&query(), need_rows(rows.max(DECODE_BATCH)))
         .map_err(|e| format!("{e:?}"))?;
+    compose(&*op, rows, views, widen, candidate)
+}
+
+/// `op`'s two launches at `rows` over `views` (in [`plans`]' role order),
+/// then `candidate` composed from them.
+pub fn compose(
+    op: &dyn PreparedOp<SinkhornRoundNormBuffers<View>>,
+    rows: u32,
+    views: &[View],
+    widen: bool,
+    candidate: Option<&Candidate>,
+) -> LabResult<Vec<Launch>> {
+    if views.len() != 22 {
+        return Err("an HC plan needs 22 views".into());
+    }
     let mut plans = op
         .launches(&buffers(views, widen), views[21], Counts::rows(rows))
         .map_err(|e| e.to_string())?;
@@ -300,9 +315,16 @@ pub struct Kernels {
 impl Kernels {
     pub fn load(s: &Session) -> LabResult<Self> {
         artifacts::verify()?;
+        Self::from_images(s, artifacts::images()?.into_values())
+    }
+    /// Load each module image and every symbol it exports.
+    pub fn from_images(
+        s: &Session,
+        images: impl IntoIterator<Item = (Vec<u8>, Vec<String>)>,
+    ) -> LabResult<Self> {
         let mut functions = BTreeMap::new();
         let mut modules = Vec::new();
-        for (_, (bytes, symbols)) in artifacts::images()? {
+        for (bytes, symbols) in images {
             let m = s.load_cubin(&bytes)?;
             for symbol in symbols {
                 functions.insert(
@@ -351,6 +373,22 @@ pub fn launch(
     widen: bool,
     alias: bool,
     epsilon: Option<u32>,
+) -> LabResult<Vec<String>> {
+    launch_with(s, k, i, o, alias, epsilon, |views| {
+        plans(o.rows as u32, views, widen, candidate)
+    })
+}
+
+/// [`launch`] with the launches `plan` gives over the bound views (in
+/// [`plans`]' role order).
+pub fn launch_with(
+    s: &Stream,
+    k: &Kernels,
+    i: &Input,
+    o: &Output,
+    alias: bool,
+    epsilon: Option<u32>,
+    plan: impl FnOnce(&[View]) -> LabResult<Vec<Launch>>,
 ) -> LabResult<Vec<String>> {
     let d = &i.data;
     let v = &o.data;
@@ -410,7 +448,7 @@ pub fn launch(
             .map(|index| buffers[index])
             .ok_or_else(|| "unbound handle".to_owned())
     };
-    let plans = plans(o.rows as u32, &views, widen, candidate)?;
+    let plans = plan(&views)?;
     if plans
         .iter()
         .any(|p| p.plan.workspace_bytes > o.scratch.byte_len() as u64)

@@ -8,7 +8,10 @@
 //! BF16 rounding ties, random bits, NaN and infinities), so this is
 //! structural coverage of the upper rows: grids, 64-bit row indexing, live
 //! rows, untouched padding rows, guards, status priors, graph replay and
-//! mutation controls at widths the captured corpus does not hold. It
+//! mutation controls at widths the captured corpus does not hold. Every
+//! arm, eager or replayed, starts from freshly written inputs, and every
+//! read-only role (each input and the live count) must keep its bytes
+//! after it. It
 //! complements the real-data end-to-end replays of wide verify steps at 65
 //! to 192 rows and does not replace them; the corpus tests (`replay`) keep
 //! real rows only.
@@ -28,6 +31,8 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 type Values = BTreeMap<String, Vec<u8>>;
+/// Each input role's bytes.
+type Operands = BTreeMap<&'static str, Vec<u8>>;
 type Op = Prepared<SinkhornRoundNormBuffers<View>>;
 
 /// The first row above the decode route, both sides of the 128-row
@@ -260,7 +265,7 @@ fn element(pattern: &str, role: &str, row: usize, rows: usize, j: usize, b: &mut
 }
 
 /// Every input role's bytes for `rows` rows of `pattern`.
-pub fn operands(rows: usize, pattern: &str) -> BTreeMap<&'static str, Vec<u8>> {
+pub fn operands(rows: usize, pattern: &str) -> Operands {
     ROLES
         .iter()
         .map(|&(role, elements, per_row, bf16)| {
@@ -304,14 +309,43 @@ fn input(s: &Session, rows: usize, pattern: &str) -> LabResult<Input> {
     Ok(input)
 }
 
-/// Rewrite `i`'s operands, in place, with `pattern`'s.
-fn rewrite(i: &Input, s: &Stream, pattern: &str) -> LabResult<()> {
-    for (role, bytes) in operands(i.rows, pattern) {
-        i.data[role]
-            .copy_from_bytes(&bytes, s)
+/// Write `operands` and the live count `live` into `i`, in place, so an
+/// arm starts from them whatever an earlier arm wrote.
+fn restore(i: &Input, s: &Stream, operands: &Operands, live: usize) -> LabResult<()> {
+    for (role, bytes) in operands {
+        i.data[*role]
+            .copy_from_bytes(bytes, s)
             .map_err(|e| e.to_string())?;
     }
-    Ok(())
+    set_live(i, s, live)
+}
+
+/// The read-only roles of `i` (each input and the live count) whose bytes
+/// differ from what [`restore`] wrote.
+fn changed_inputs(
+    i: &Input,
+    s: &Stream,
+    operands: &Operands,
+    live: usize,
+) -> LabResult<Vec<String>> {
+    let mut changed = Vec::new();
+    for (role, bytes) in operands {
+        let mut now = vec![0; bytes.len()];
+        i.data[*role]
+            .copy_to_bytes(&mut now, s)
+            .map_err(|e| e.to_string())?;
+        if now != *bytes {
+            changed.push(role.to_string());
+        }
+    }
+    let mut count = [0; 4];
+    i.live
+        .copy_to_bytes(&mut count, s)
+        .map_err(|e| e.to_string())?;
+    if u32::from_ne_bytes(count) as usize != live {
+        changed.push("live_rows".into());
+    }
+    Ok(changed)
 }
 
 fn set_live(i: &Input, s: &Stream, live: usize) -> LabResult<()> {
@@ -337,8 +371,10 @@ fn launch(
     .map(|_| ())
 }
 
-/// One eager launch from outputs reset under `prior`: the values the reset
-/// left and the values after the launch (guards checked by both reads).
+/// One eager launch over `i` restored to `inputs` (its operands and live
+/// count), from outputs reset under `prior`: the values the reset left,
+/// the values after the launch (guards checked by both reads) and the
+/// read-only roles the launch changed.
 #[allow(clippy::too_many_arguments)]
 fn eager(
     s: &Session,
@@ -349,11 +385,14 @@ fn eager(
     candidate: Option<&Candidate>,
     configuration: (bool, bool),
     prior: u32,
-) -> LabResult<(Values, Values)> {
+    (operands, live): (&Operands, usize),
+) -> LabResult<(Values, Values, Vec<String>)> {
+    restore(i, &s.stream, operands, live)?;
     device::reset(&s.stream, i, o, prior, configuration.1)?;
     let before = device::read(&s.stream, o)?;
     launch(&s.stream, k, op, i, o, candidate, configuration)?;
-    Ok((before, device::read(&s.stream, o)?))
+    let after = device::read(&s.stream, o)?;
+    Ok((before, after, changed_inputs(i, &s.stream, operands, live)?))
 }
 
 /// Whether every role's rows from `live` keep the bytes the reset wrote,
@@ -497,18 +536,34 @@ fn synthetic_wide_rows_bitwise_graphs_and_controls_on_gpu() {
             old.assert_disjoint(&new)?;
             for pattern in PATTERNS {
                 let i = input(s, rows, pattern)?;
+                let operands = operands(rows, pattern);
                 for configuration in CONFIGURATIONS {
                     for live in [rows, rows - 1] {
-                        set_live(&i, &s.stream, live)?;
                         for prior in [0, 0x80] {
-                            let (_, expected) =
-                                eager(s, &k, &op, &i, &old, None, configuration, prior)?;
-                            let (before, actual) =
-                                eager(s, &k, &op, &i, &new, Some(&c), configuration, prior)?;
                             let label = format!(
                                 "rows={rows} pattern={pattern} widen={} alias={} live={live} prior={prior}",
                                 configuration.0, configuration.1
                             );
+                            let inputs = (&operands, live);
+                            let (_, expected, changed) =
+                                eager(s, &k, &op, &i, &old, None, configuration, prior, inputs)?;
+                            if !changed.is_empty() {
+                                failures.push(format!("{label}: reference wrote {changed:?}"));
+                            }
+                            let (before, actual, changed) = eager(
+                                s,
+                                &k,
+                                &op,
+                                &i,
+                                &new,
+                                Some(&c),
+                                configuration,
+                                prior,
+                                inputs,
+                            )?;
+                            if !changed.is_empty() {
+                                failures.push(format!("{label}: candidate wrote {changed:?}"));
+                            }
                             let differences = compare(&actual, &expected, Some(&c));
                             if !differences.is_empty() {
                                 failures.push(format!("{label}: {differences:?}"));
@@ -542,23 +597,30 @@ fn synthetic_wide_rows_bitwise_graphs_and_controls_on_gpu() {
                     })
                     .collect::<LabResult<Vec<_>>>()?;
                 for pattern in PATTERNS {
-                    rewrite(&varied, &s.stream, pattern)?;
+                    let operands = operands(rows, pattern);
                     for live in [rows, 0, rows - 1] {
-                        set_live(&varied, &s.stream, live)?;
                         for prior in [0, 0x80] {
-                            for output in &outputs {
-                                device::reset(&s.stream, &varied, output, prior, configuration.1)?;
-                            }
-                            let before = device::read(&s.stream, &outputs[1])?;
-                            for graph in &graphs {
-                                graph.launch(&s.stream).map_err(|e| e.to_string())?;
-                            }
-                            let reference = device::read(&s.stream, &outputs[0])?;
-                            let observed = device::read(&s.stream, &outputs[1])?;
                             let label = format!(
                                 "graph rows={rows} pattern={pattern} alias={} live={live} prior={prior}",
                                 configuration.1
                             );
+                            restore(&varied, &s.stream, &operands, live)?;
+                            for output in &outputs {
+                                device::reset(&s.stream, &varied, output, prior, configuration.1)?;
+                            }
+                            let before = device::read(&s.stream, &outputs[1])?;
+                            // Each replay from freshly written inputs, which
+                            // it must leave as written.
+                            for (arm, graph) in graphs.iter().enumerate() {
+                                restore(&varied, &s.stream, &operands, live)?;
+                                graph.launch(&s.stream).map_err(|e| e.to_string())?;
+                                let changed = changed_inputs(&varied, &s.stream, &operands, live)?;
+                                if !changed.is_empty() {
+                                    failures.push(format!("{label} arm={arm}: wrote {changed:?}"));
+                                }
+                            }
+                            let reference = device::read(&s.stream, &outputs[0])?;
+                            let observed = device::read(&s.stream, &outputs[1])?;
                             let differences = compare(&observed, &reference, Some(&c));
                             if !differences.is_empty() {
                                 failures.push(format!("{label}: {differences:?}"));
@@ -574,32 +636,50 @@ fn synthetic_wide_rows_bitwise_graphs_and_controls_on_gpu() {
             // Negative controls: every mutated column pair, a changed sum
             // in the last row and a short live count must differ.
             let i = input(s, rows, "finite")?;
+            let finite = operands(rows, "finite");
+            // The input check's own control: one changed byte of the sum's
+            // last row and a changed live count must show.
+            restore(&i, &s.stream, &finite, rows)?;
+            let mut written = finite["sum"].clone();
+            *written.last_mut().unwrap() ^= 0x80;
+            i.data["sum"]
+                .copy_from_bytes(&written, &s.stream)
+                .map_err(|e| e.to_string())?;
+            set_live(&i, &s.stream, rows - 1)?;
+            if changed_inputs(&i, &s.stream, &finite, rows)? != ["sum", "live_rows"] {
+                failures.push(format!("rows={rows}: the input check missed a write"));
+            }
+            negatives += 1;
             let served = (true, true);
             for control in controls() {
                 let prior = prior_of(&control);
-                let (_, expected) = eager(s, &k, &op, &i, &old, None, served, prior)?;
-                let (_, actual) = eager(s, &k, &op, &i, &new, Some(&control), served, prior)?;
+                let inputs = (&finite, rows);
+                let (_, expected, _) = eager(s, &k, &op, &i, &old, None, served, prior, inputs)?;
+                let (_, actual, _) =
+                    eager(s, &k, &op, &i, &new, Some(&control), served, prior, inputs)?;
                 if compare(&actual, &expected, Some(&control)).is_empty() {
                     failures.push(format!("rows={rows}: {:?} not detected", control.symbols()));
                 }
                 negatives += 1;
             }
-            let (_, expected) = eager(s, &k, &op, &i, &old, None, served, 0)?;
+            let (_, expected, _) = eager(s, &k, &op, &i, &old, None, served, 0, (&finite, rows))?;
             for mutation in MUTATIONS {
-                let mutated = input(s, rows, "finite")?;
+                let (mut mutated, mut live) = (finite.clone(), rows);
                 match mutation {
                     "last_row_sum_sign" => {
-                        let mut bytes = operands(rows, "finite").remove("sum").unwrap();
                         let at = (rows * H - 1) * 4 + 3;
-                        bytes[at] ^= 0x80;
-                        mutated.data["sum"]
-                            .copy_from_bytes(&bytes, &s.stream)
-                            .map_err(|e| e.to_string())?;
+                        mutated.get_mut("sum").unwrap()[at] ^= 0x80;
                     }
-                    "live_short" => set_live(&mutated, &s.stream, rows - 1)?,
+                    "live_short" => live = rows - 1,
                     _ => unreachable!(),
                 }
-                let (_, actual) = eager(s, &k, &op, &mutated, &new, Some(&c), served, 0)?;
+                let (_, actual, changed) =
+                    eager(s, &k, &op, &i, &new, Some(&c), served, 0, (&mutated, live))?;
+                if !changed.is_empty() {
+                    failures.push(format!(
+                        "rows={rows} {mutation}: candidate wrote {changed:?}"
+                    ));
+                }
                 if compare(&actual, &expected, Some(&c)).is_empty() {
                     failures.push(format!("rows={rows}: {mutation} not detected"));
                 }
@@ -614,7 +694,10 @@ fn synthetic_wide_rows_bitwise_graphs_and_controls_on_gpu() {
         let per_rows = PATTERNS.len() * CONFIGURATIONS.len() * 2 * 2;
         assert_eq!(eager_pairs, ROWS.len() * per_rows);
         assert_eq!(graph_pairs, ROWS.len() * 2 * PATTERNS.len() * 3 * 2);
-        assert_eq!(negatives, ROWS.len() * (controls().len() + MUTATIONS.len()));
+        assert_eq!(
+            negatives,
+            ROWS.len() * (1 + controls().len() + MUTATIONS.len())
+        );
         let value = json!({"rows":ROWS,"patterns":PATTERNS,"candidate":c.symbols(),
             "eager_pairs":eager_pairs,"graph_pairs":graph_pairs,"negatives":negatives,
             "failures":failures,

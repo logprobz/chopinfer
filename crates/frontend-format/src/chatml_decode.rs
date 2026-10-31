@@ -10,7 +10,7 @@ use crate::descriptor::{
 };
 use crate::format_decode::completion_calls_v1;
 use crate::request::{FrontendJsonV1, FrontendToolV1};
-use crate::toolkit::{json_to_string_v1, resource_v1, validate_name_v1};
+use crate::toolkit::{json_to_string_v1, resource_v1, validate_parameter_name_v1};
 
 /// The strings a completion is parsed by: the parser declaration's
 /// delimiters without the whitespace the template writes around them.
@@ -861,7 +861,7 @@ pub(crate) fn call_arguments_v1(
     let schema = tool_parameters_v1(tools, &call.name);
     let mut arguments: Vec<(String, FrontendJsonV1)> = Vec::new();
     for (parameter, value, flagged) in parameters {
-        validate_name_v1(descriptor, parameter, "parsed parameter")?;
+        validate_parameter_name_v1(descriptor, parameter, "parsed parameter")?;
         let Some(value) = value else {
             break;
         };
@@ -944,7 +944,7 @@ fn key_value_arguments_v1(
     let schema = tool_parameters_v1(tools, name);
     let mut arguments: Vec<(String, FrontendJsonV1)> = Vec::new();
     for (parameter, value) in pairs {
-        validate_name_v1(descriptor, parameter, "parsed parameter")?;
+        validate_parameter_name_v1(descriptor, parameter, "parsed parameter")?;
         let value = coerce_parameter(schema.as_ref(), parameter, value);
         insert_argument_v1(descriptor, &mut arguments, parameter, value)?;
     }

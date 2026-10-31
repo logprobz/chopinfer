@@ -24,7 +24,8 @@ use frontend_format::toolkit::{
     append_v1, chat_message_v1, defers_loading_v1, field_v1, media_kind_v1, media_placeholder_v1,
     parse_json_object_v1, preserve_thinking_v1, python_capitalize_v1, python_split_v1,
     python_strip_v1, reasoning_open_v1, reserved_media_text_v1, resource_v1, screen_media_text_v1,
-    select_mode_v1, split_media_segments_v1, tojson_v1, validate_name_v1, write_tool_object_v1,
+    select_mode_v1, split_media_segments_v1, tojson_v1, validate_name_v1,
+    validate_parameter_name_v1, write_tool_object_v1,
 };
 use frontend_format::{
     AssistantTurnV1, ChatFormatV1, ChatMessageV1, ChatRenderV1, FormatDescriptorV1,
@@ -647,7 +648,7 @@ impl Glm53Format {
         prompt.write("<tool_call>")?;
         prompt.write(&call.name)?;
         for (key, value) in &arguments {
-            validate_name_v1(&self.descriptor, key, "tool parameter")?;
+            validate_parameter_name_v1(&self.descriptor, key, "tool parameter")?;
             prompt.write("<arg_key>")?;
             prompt.write(key)?;
             prompt.write("</arg_key><arg_value>")?;

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use frontend_format::toolkit::{
     append_v1, field_v1, media_kind_v1, media_placeholder_v1, parse_json_object_v1,
     reserved_media_text_v1, resource_v1, screen_media_text_v1, select_mode_v1,
-    split_media_segments_v1, tojson_v1, validate_name_v1,
+    split_media_segments_v1, tojson_v1, validate_name_v1, validate_parameter_name_v1,
 };
 use frontend_format::{
     AssistantTurnV1, ChatFormatV1, ChatMessageV1, ChatRenderV1, FormatDescriptorV1,
@@ -582,7 +582,7 @@ impl Mimo26Format {
             append_v1(output, ">", maximum)?;
             // Lines 51-53.
             for (name, value) in &arguments {
-                validate_name_v1(descriptor, name, "tool parameter")?;
+                validate_parameter_name_v1(descriptor, name, "tool parameter")?;
                 append_v1(output, "<parameter=", maximum)?;
                 append_v1(output, name, maximum)?;
                 append_v1(output, ">", maximum)?;

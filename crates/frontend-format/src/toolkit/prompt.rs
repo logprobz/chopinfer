@@ -52,6 +52,43 @@ pub fn validate_name_v1(
     Ok(())
 }
 
+/// Checks one parameter name: any text the tool-call parser reads back as
+/// it was written, as `encoding.py` reads any `name="..."`. It is not
+/// empty, fits `maximum_name_bytes`, has no whitespace around it (the parser
+/// trims a name), and holds no reserved marker and none of the bare markers
+/// the parser stops at while it reads a name. Unlike a function name, it
+/// need not be made of the declared name bytes.
+pub fn validate_parameter_name_v1(
+    descriptor: &FormatDescriptorV1,
+    name: &str,
+    context: &str,
+) -> Result<(), String> {
+    let parser = &descriptor.parser;
+    let maximum = descriptor.limits.maximum_name_bytes;
+    let marked = [
+        &parser.tool_call_open,
+        &parser.tool_call_close,
+        &parser.function_open,
+        &parser.function_name_close,
+        &parser.function_close,
+        &parser.parameter_open,
+        &parser.parameter_name_close,
+        &parser.parameter_json_name_close,
+        &parser.parameter_close,
+    ]
+    .into_iter()
+    .map(|marker| marker.trim())
+    .chain(parser.reserved_markers.iter().map(String::as_str))
+    .any(|marker| !marker.is_empty() && name.contains(marker));
+    if name.is_empty() || name.len() > maximum || name.trim() != name || marked {
+        return Err(field_v1(format!(
+            "{context} name must fit {maximum} bytes, without surrounding whitespace or a \
+             tool-call marker"
+        )));
+    }
+    Ok(())
+}
+
 /// Checks one function name: a name as [`validate_name_v1`] checks it, or,
 /// where the declaration qualifies names (`tools.namespaces`), a namespace
 /// and a name joined by the separator, each part such a name, so the whole

@@ -19,7 +19,7 @@ use frontend_format::toolkit::{
     append_v1, chat_message_v1, field_v1, json_to_string_v1, parse_json_object_v1,
     reasoning_open_v1, reject_non_integral_numbers_v1, reserved_media_text_v1, resource_v1,
     screen_media_text_v1, select_mode_v1, sequence_v1, split_media_segments_v1, validate_chat_v1,
-    validate_name_v1, write_json_v1,
+    validate_parameter_name_v1, write_json_v1,
 };
 use frontend_format::{
     AssistantTurnV1, ChatFormatV1, ChatMessageV1, ChatRenderV1, FormatDescriptorV1,
@@ -336,7 +336,7 @@ impl Writer<'_> {
         self.append(CALLS_OPEN)?;
         self.append(&call.name)?;
         for (name, value) in &arguments {
-            validate_name_v1(self.descriptor, name, "tool parameter")?;
+            validate_parameter_name_v1(self.descriptor, name, "tool parameter")?;
             self.append(PARAMETER_OPEN)?;
             self.append(name)?;
             self.append(PARAMETER_NAME_CLOSE)?;

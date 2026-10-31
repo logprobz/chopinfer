@@ -320,6 +320,65 @@ fn every_structural_delimiter_split_matches_the_whole_parse() {
     }
 }
 
+/// A parameter named outside the declared name bytes, such as `user.name`
+/// or a CJK name, streams at every split as the whole parse reads it: the
+/// call it names, with that name as written.
+#[test]
+fn any_parameter_name_streams_as_the_whole_parse_reads_it() {
+    for fixture in fixtures() {
+        for parameter in ["user.name", "名前"] {
+            let whole = format!(
+                "answer{}{}",
+                fixture.tool_block("lookup", parameter, "Ada"),
+                fixture.end()
+            );
+            let expected = parse_completion_v1(&fixture.descriptor, &whole, PromptModeV1::Chat)
+                .unwrap_or_else(|error| panic!("{}: {parameter}: {error}", fixture.name));
+            assert_eq!(expected.tool_calls.len(), 1, "{}", fixture.name);
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&expected.tool_calls[0].arguments)
+                    .unwrap(),
+                json!({ parameter: "Ada" }),
+                "{}",
+                fixture.name
+            );
+            for split in 0..=whole.len() {
+                let updates = feed(
+                    &mut fixture.decoder(PromptModeV1::Chat),
+                    &[&whole.as_bytes()[..split], &whole.as_bytes()[split..]],
+                );
+                let done = finished(&updates)
+                    .unwrap_or_else(|| panic!("{}: no finish at split {split}", fixture.name));
+                assert_eq!(
+                    done.completion.as_ref(),
+                    Some(&expected),
+                    "{}: {parameter}: split {split}",
+                    fixture.name
+                );
+            }
+        }
+    }
+}
+
+/// The fixture format renders a call with any parameter name as history,
+/// and it parses back to the same arguments; a name that holds a marker is
+/// still refused.
+#[test]
+fn any_parameter_name_round_trips_through_history() {
+    use runtime_frontend::test_support::tool_choice;
+    for fixture in fixtures() {
+        let frontend = runtime_frontend::test_support::documents::PairedFrontendV1::chat_format::<
+            frontend_format::test_support::FixtureFormatV1,
+        >((*fixture.descriptor).clone())
+        .unwrap_or_else(|error| panic!("{}: {error}", fixture.name));
+        tool_choice::any_parameter_name_round_trips(&frontend, &fixture.descriptor);
+        tool_choice::a_parameter_name_holding_a_marker_is_refused_as_history(
+            &frontend,
+            &fixture.descriptor,
+        );
+    }
+}
+
 /// The typed grammar's own shapes, streamed in any two pieces and one byte
 /// per token, parse as the whole completion does: two invokes in one calls
 /// block, a raw value that spells a parameter open and a function close,

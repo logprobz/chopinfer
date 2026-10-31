@@ -28,7 +28,7 @@ use crate::chatml_decode::{
 };
 use crate::descriptor::{FormatDescriptorV1, FrontendParserDeclarationV1, FrontendToolGrammarV1};
 use crate::request::{FrontendErrorV1, FrontendToolChoiceV1, FrontendToolV1};
-use crate::toolkit::validate_name_v1;
+use crate::toolkit::validate_parameter_name_v1;
 
 fn refusal(message: impl Into<String>) -> FrontendErrorV1 {
     FrontendErrorV1::new(message, Some("tool_choice"))
@@ -270,10 +270,12 @@ fn call_after_open(
         // The names written once each: the declared properties, then the
         // required names that are not properties.
         let mut written: Vec<&str> = Vec::new();
-        // The parser reads only a parameter name in the declared byte set
-        // and length: a required name outside it cannot be written so that
-        // it reads back, and an optional one is never written.
-        let readable = |name: &str| validate_name_v1(descriptor, name, "parameter").is_ok();
+        // The parser reads back only a parameter name that holds no marker
+        // and fits the declared length: a required name that does not
+        // cannot be written so that it reads back, and an optional one is
+        // never written.
+        let readable =
+            |name: &str| validate_parameter_name_v1(descriptor, name, "parameter").is_ok();
         if let Some(name) = required.iter().find(|name| !readable(name)) {
             return Err(FrontendErrorV1::new(
                 format!(

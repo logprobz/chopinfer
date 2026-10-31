@@ -2,13 +2,18 @@
 //! A declared name byte set and the delimiters a tool grammar reads names
 //! by: the format refuses a set that admits the first byte of a name
 //! delimiter, and every name an accepted set admits decodes as it was
-//! written, in each grammar.
+//! written, in each grammar. A parameter name need not be in the set: any
+//! name that holds no marker decodes as it was written, and the tool-choice
+//! grammar writes it.
 mod common;
 
+use std::sync::Arc;
+
 use frontend_format::{
-    FormatDescriptorV1, FrontendParserDeclarationV1, FrontendToolGrammarV1, PromptModeV1,
-    parse_completion_v1,
+    FormatDescriptorV1, FrontendJsonV1, FrontendParserDeclarationV1, FrontendToolChoiceV1,
+    FrontendToolGrammarV1, FrontendToolV1, PromptModeV1, parse_completion_v1, tool_constraint_v1,
 };
+use runtime_grammar::{CompiledGrammar, GrammarMatcher, TokenVocabulary, VocabularyToken};
 use serde_json::{Value, json};
 
 /// Each parser fixture, with the delimiters a name runs to as the decoder
@@ -173,5 +178,180 @@ fn every_name_an_accepted_set_admits_decodes_as_it_was_written() {
             (name.clone(), json!({ parameter.clone(): "v" })),
             "{form}"
         );
+    }
+}
+
+/// Parameter names other than the declared name bytes: a dotted name, a
+/// non-ASCII one and one with inner whitespace, as `encoding.py` reads any
+/// `name="..."`.
+const OPEN_NAMES: [&str; 4] = ["user.name", "名前", "first name", "a/b:c@d"];
+
+#[test]
+fn any_parameter_name_without_a_marker_decodes_as_it_was_written() {
+    for (form, descriptor, _) in forms() {
+        for parameter in OPEN_NAMES {
+            assert_eq!(
+                round_trip(&descriptor, "lookup", parameter),
+                ("lookup".to_owned(), json!({ parameter: "v" })),
+                "{form}: {parameter:?}"
+            );
+        }
+    }
+}
+
+/// The markers a parameter name may not hold: every bare tool-call marker
+/// the parser reads and every reserved marker.
+fn name_markers(descriptor: &FormatDescriptorV1) -> Vec<String> {
+    let parser = &descriptor.parser;
+    [
+        &parser.tool_call_open,
+        &parser.tool_call_close,
+        &parser.function_open,
+        &parser.function_name_close,
+        &parser.function_close,
+        &parser.parameter_open,
+        &parser.parameter_name_close,
+        &parser.parameter_json_name_close,
+        &parser.parameter_close,
+    ]
+    .into_iter()
+    .map(|marker| marker.trim().to_owned())
+    .chain(parser.reserved_markers.iter().cloned())
+    .filter(|marker| !marker.is_empty())
+    .collect()
+}
+
+/// A parsed parameter name that holds the parameter open is refused, as a
+/// name that holds any marker is: it is not a name a call could be sent back
+/// with.
+#[test]
+fn a_parsed_parameter_name_holding_a_marker_is_refused() {
+    for (form, descriptor, _) in forms() {
+        let open = descriptor.parser.parameter_open.trim().to_owned();
+        let parameter = format!("a{open}b");
+        let FrontendParserDeclarationV1 {
+            tool_call_open,
+            tool_call_close,
+            function_open,
+            function_name_close,
+            function_close,
+            parameter_open,
+            parameter_name_close,
+            parameter_value_open,
+            parameter_close,
+            ..
+        } = &descriptor.parser;
+        let completion = format!(
+            "{tool_call_open}{function_open}f{function_name_close}{parameter_open}{parameter}\
+             {parameter_name_close}{parameter_value_open}v{parameter_close}{function_close}\
+             {tool_call_close}[EOS]"
+        );
+        assert!(
+            parse_completion_v1(&descriptor, &completion, PromptModeV1::Chat).is_err(),
+            "{form}: {completion:?}"
+        );
+    }
+}
+
+/// One tool `f` whose string properties are `names`, `c` required.
+fn tool(names: &[&str], required: &[&str]) -> FrontendToolV1 {
+    let properties: serde_json::Map<String, Value> = names
+        .iter()
+        .map(|name| ((*name).to_owned(), json!({"type": "string"})))
+        .collect();
+    FrontendToolV1 {
+        name: "f".into(),
+        description: None,
+        parameters: serde_json::from_value::<FrontendJsonV1>(json!({
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": false
+        }))
+        .unwrap(),
+        parameters_present: true,
+        strict: None,
+    }
+}
+
+/// One call to `f` with each `(name, value)` string argument, as the
+/// tool-choice grammar writes it.
+fn forced_call(descriptor: &FormatDescriptorV1, arguments: &[(&str, &str)]) -> String {
+    let parser = &descriptor.parser;
+    let mut text = format!(
+        "{}{}f{}",
+        parser.tool_call_open, parser.function_open, parser.function_name_close
+    );
+    for (name, value) in arguments {
+        text += &format!(
+            "{}{name}{}{}{value}{}",
+            parser.parameter_open,
+            parser.parameter_name_close,
+            parser.parameter_value_open,
+            parser.parameter_close
+        );
+    }
+    text + &parser.function_close + &parser.tool_call_close
+}
+
+/// Whether the grammar a required choice imposes on `tools` admits `text`.
+fn admits(descriptor: &FormatDescriptorV1, tools: &[FrontendToolV1], text: &str) -> bool {
+    let grammar = tool_constraint_v1(descriptor, tools, &FrontendToolChoiceV1::Required)
+        .unwrap()
+        .expect("a required choice constrains");
+    let tokens = (0..=255_u8)
+        .map(|byte| VocabularyToken {
+            bytes: vec![byte],
+            special: false,
+        })
+        .collect();
+    let vocabulary = Arc::new(TokenVocabulary::new(256, tokens).unwrap());
+    let compiled = Arc::new(CompiledGrammar::new(&grammar, vocabulary).unwrap());
+    let mut matcher = GrammarMatcher::new(compiled);
+    matcher.accept_bytes(text.as_bytes()).is_ok() && matcher.is_complete()
+}
+
+/// A forced call writes an optional property with any name the parser reads
+/// back, and serves a required one; a name that holds a marker is never
+/// written, and a tool that requires one is refused.
+#[test]
+fn a_forced_call_writes_every_name_the_parser_reads_back() {
+    for (form, descriptor, _) in forms() {
+        for name in OPEN_NAMES {
+            let optional = [tool(&[name, "c"], &["c"])];
+            let text = forced_call(&descriptor, &[(name, "v"), ("c", "w")]);
+            assert!(admits(&descriptor, &optional, &text), "{form}: {text:?}");
+            assert_eq!(
+                parse_completion_v1(&descriptor, &format!("{text}[EOS]"), PromptModeV1::Chat)
+                    .map(|parsed| parsed.tool_calls[0].arguments.clone())
+                    .map(|arguments| serde_json::from_str::<Value>(&arguments).unwrap()),
+                Ok(json!({name: "v", "c": "w"})),
+                "{form}: {text:?}"
+            );
+            let required = [tool(&[name], &[name])];
+            let text = forced_call(&descriptor, &[(name, "v")]);
+            assert!(admits(&descriptor, &required, &text), "{form}: {text:?}");
+        }
+        for marker in name_markers(&descriptor) {
+            // Both names sort before `c`, so only the marker differs.
+            let readable = "a.b";
+            let marked = format!("a{marker}b");
+            let control = [tool(&[readable, "c"], &["c"])];
+            let text = forced_call(&descriptor, &[(readable, "v"), ("c", "w")]);
+            assert!(admits(&descriptor, &control, &text), "{form}: {text:?}");
+            let optional = [tool(&[&marked, "c"], &["c"])];
+            let text = forced_call(&descriptor, &[(&marked, "v"), ("c", "w")]);
+            assert!(!admits(&descriptor, &optional, &text), "{form}: {text:?}");
+            let only = forced_call(&descriptor, &[("c", "w")]);
+            assert!(admits(&descriptor, &optional, &only), "{form}: {only:?}");
+            let required = [tool(&[&marked], &[&marked])];
+            let error = tool_constraint_v1(&descriptor, &required, &FrontendToolChoiceV1::Required)
+                .unwrap_err();
+            assert_eq!(
+                error.parameter.as_deref(),
+                Some("tools"),
+                "{form}: {marker}"
+            );
+        }
     }
 }

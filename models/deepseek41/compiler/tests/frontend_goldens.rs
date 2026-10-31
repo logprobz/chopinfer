@@ -891,3 +891,14 @@ fn a_namespaced_tool_is_named_as_the_encoder_names_it() {
     assert_eq!(parsed.tool_calls[0].name, long);
     assert!(frontend.validate_tool_call(&long, r#"{"x": "v"}"#).is_ok());
 }
+
+/// A call with any parameter name renders as history and parses back, as
+/// `encoding.py` reads any `name="..."`.
+#[test]
+fn any_parameter_name_round_trips() {
+    let frontend = PairedFrontendV1::chat_format::<DeepSeekV41Format>(descriptor()).unwrap();
+    runtime_frontend::test_support::tool_choice::any_parameter_name_round_trips(
+        &frontend,
+        &descriptor(),
+    );
+}

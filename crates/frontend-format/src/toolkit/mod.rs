@@ -6,7 +6,8 @@
 //! reasoning controls and refuses requests in the same words:
 //!
 //! - prompt writing under the byte bound, names and media segments
-//!   ([`append_v1`], [`validate_name_v1`], [`media_placeholder_v1`],
+//!   ([`append_v1`], [`validate_name_v1`], [`validate_parameter_name_v1`],
+//!   [`media_placeholder_v1`],
 //!   [`screen_media_text_v1`], [`media_kind_v1`], [`split_media_segments_v1`]);
 //! - the conversation as a renderer reads it from a request, and the checks
 //!   it passes before anything is written ([`chat_message_v1`],
@@ -43,6 +44,7 @@ pub use json::{
 pub use prompt::{
     append_v1, media_kind_v1, media_placeholder_v1, reserved_media_text_v1, screen_media_text_v1,
     split_media_segments_v1, validate_function_name_v1, validate_name_v1,
+    validate_parameter_name_v1,
 };
 pub use python::{
     TojsonOptionsV1, python_capitalize_v1, python_rstrip_v1, python_split_v1, python_strip_v1,

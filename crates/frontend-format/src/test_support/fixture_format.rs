@@ -33,6 +33,7 @@ use crate::toolkit::{
     append_v1, field_v1, json_to_string_v1, media_kind_v1, media_placeholder_v1,
     parse_json_object_v1, preserve_thinking_v1, reasoning_open_v1, reserved_free_v1,
     reserved_media_text_v1, select_mode_v1, split_media_segments_v1, validate_name_v1,
+    validate_parameter_name_v1,
 };
 use crate::{ChatFormatV1, OpenedV1, PromptModeV1};
 
@@ -282,7 +283,7 @@ impl WriterV1<'_> {
             text.push_str(&parser.function_name_close);
         }
         for (name, value) in &arguments {
-            validate_name_v1(descriptor, name, "tool call parameter")?;
+            validate_parameter_name_v1(descriptor, name, "tool call parameter")?;
             self.screen_json(value, "tool call arguments")?;
             text.push_str(&parser.parameter_open);
             text.push_str(name);

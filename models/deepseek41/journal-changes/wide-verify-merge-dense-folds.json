@@ -1,0 +1,8722 @@
+{
+ "schema": "chopinfer.journal-proof.spec.v1",
+ "description": "Merge of the wide verify dense folds into the HC fusion and queries. In each wide allocation journal every 8192-row fold launch of a verify step becomes its wide fold's admission and compute launches (Engram's, its matrix tile's), the shared workspace grows, and the wide module's loads, resolves and releases are added, as in the wide dense fold change.",
+ "fixtures": [
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-1.jsonl",
+   "create": "deepseek41-allocation-c4.journal",
+   "journals": [
+    "deepseek41-allocation-c4.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-2.jsonl",
+   "create": "deepseek41-allocation-c8.journal",
+   "journals": [
+    "deepseek41-allocation-c8.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-3.jsonl",
+   "create": "deepseek41-allocation-c4-d3.journal",
+   "journals": [
+    "deepseek41-allocation-c4-d3.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-4.jsonl",
+   "create": "deepseek41-allocation-c16-odd.journal",
+   "journals": [
+    "deepseek41-allocation-c16-odd.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-5.jsonl",
+   "create": "deepseek41-allocation-c32-maximum.journal",
+   "journals": [
+    "deepseek41-allocation-c32-maximum.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-6.jsonl",
+   "create": "deepseek41-allocation-c16-odd-wide.journal",
+   "journals": [
+    "deepseek41-allocation-c16-odd-wide.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-7.jsonl",
+   "create": "deepseek41-allocation-c32-maximum-wide.journal",
+   "journals": [
+    "deepseek41-allocation-c32-maximum-wide.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-1.jsonl",
+   "create": "deepseek41-flash-tp1.native.journal",
+   "journals": [
+    "deepseek41-flash-tp1.native.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-2.jsonl",
+   "create": "deepseek41-flash-tp1.bf16.journal",
+   "journals": [
+    "deepseek41-flash-tp1.bf16.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-3.jsonl",
+   "create": "deepseek41-flash-tp2.native.journal",
+   "journals": [
+    "deepseek41-flash-tp2.native.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-4.jsonl",
+   "create": "deepseek41-flash-tp2.bf16.journal",
+   "journals": [
+    "deepseek41-flash-tp2.bf16.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-5.jsonl",
+   "create": "deepseek41-flash-tp4.native.journal",
+   "journals": [
+    "deepseek41-flash-tp4.native.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-6.jsonl",
+   "create": "deepseek41-flash-tp4.bf16.journal",
+   "journals": [
+    "deepseek41-flash-tp4.bf16.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-1.jsonl",
+   "create": "deepseek41-flash-tp2.media.journal",
+   "journals": [
+    "deepseek41-flash-tp2.media.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-2.jsonl",
+   "create": "deepseek41-flash-tp4.media.journal",
+   "journals": [
+    "deepseek41-flash-tp4.media.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-1.jsonl",
+   "create": "deepseek41-flash-tp4.native-moe.native.journal",
+   "journals": [
+    "deepseek41-flash-tp4.native-moe.native.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-2.jsonl",
+   "create": "deepseek41-flash-tp4.native-moe.bf16.journal",
+   "journals": [
+    "deepseek41-flash-tp4.native-moe.bf16.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-1.jsonl",
+   "create": "flash-tp4-ar-shared-anchor.journal",
+   "journals": [
+    "flash-tp4-ar-shared-anchor.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-2.jsonl",
+   "create": "flash-tp4-dspark-shared-anchor.journal",
+   "journals": [
+    "flash-tp4-dspark-shared-anchor.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-1.jsonl",
+   "create": "verify-hc-4.journal",
+   "journals": [
+    "verify-hc-4.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-2.jsonl",
+   "create": "verify-hc-6.journal",
+   "journals": [
+    "verify-hc-6.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-3.jsonl",
+   "create": "verify-hc-8.journal",
+   "journals": [
+    "verify-hc-8.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-4.jsonl",
+   "create": "verify-hc-12.journal",
+   "journals": [
+    "verify-hc-12.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-5.jsonl",
+   "create": "verify-hc-16.journal",
+   "journals": [
+    "verify-hc-16.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-6.jsonl",
+   "create": "verify-hc-32.journal",
+   "journals": [
+    "verify-hc-32.journal"
+   ]
+  }
+ ],
+ "journals": {
+  "deepseek41-allocation-c16-odd-wide.journal": {
+   "state_sizes": [
+    {
+     "line": 119,
+     "from": "allocate 11797504 256",
+     "to": "allocate 19665664 256"
+    },
+    {
+     "line": 326,
+     "from": "allocate 11797504 256",
+     "to": "allocate 19665664 256"
+    },
+    {
+     "line": 521,
+     "from": "allocate 11797504 256",
+     "to": "allocate 19665664 256"
+    },
+    {
+     "line": 716,
+     "from": "allocate 11797504 256",
+     "to": "allocate 19665664 256"
+    }
+   ],
+   "added_resolves": [
+    {
+     "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1235,
+      3761,
+      6287,
+      8813
+     ],
+     "count": 4,
+     "positions": [
+      1334,
+      3874,
+      6414,
+      8954
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1236,
+      3762,
+      6288,
+      8814
+     ],
+     "count": 4,
+     "positions": [
+      1335,
+      3875,
+      6415,
+      8955
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1237,
+      3763,
+      6289,
+      8815
+     ],
+     "count": 4,
+     "positions": [
+      1336,
+      3876,
+      6416,
+      8956
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1238,
+      3764,
+      6290,
+      8816
+     ],
+     "count": 4,
+     "positions": [
+      1337,
+      3877,
+      6417,
+      8957
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1239,
+      3765,
+      6291,
+      8817
+     ],
+     "count": 4,
+     "positions": [
+      1338,
+      3878,
+      6418,
+      8958
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1240,
+      3766,
+      6292,
+      8818
+     ],
+     "count": 4,
+     "positions": [
+      1339,
+      3879,
+      6419,
+      8959
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1241,
+      3767,
+      6293,
+      8819
+     ],
+     "count": 4,
+     "positions": [
+      1340,
+      3880,
+      6420,
+      8960
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1242,
+      3768,
+      6294,
+      8820
+     ],
+     "count": 4,
+     "positions": [
+      1341,
+      3881,
+      6421,
+      8961
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1243,
+      3769,
+      6295,
+      8821
+     ],
+     "count": 4,
+     "positions": [
+      1342,
+      3882,
+      6422,
+      8962
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1244,
+      3770,
+      6296,
+      8822
+     ],
+     "count": 4,
+     "positions": [
+      1343,
+      3883,
+      6423,
+      8963
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1245,
+      3771,
+      6297,
+      8823
+     ],
+     "count": 4,
+     "positions": [
+      1344,
+      3884,
+      6424,
+      8964
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1246,
+      3772,
+      6298,
+      8824
+     ],
+     "count": 4,
+     "positions": [
+      1345,
+      3885,
+      6425,
+      8965
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1247,
+      3773,
+      6299,
+      8825
+     ],
+     "count": 4,
+     "positions": [
+      1346,
+      3886,
+      6426,
+      8966
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1248,
+      3774,
+      6300,
+      8826
+     ],
+     "count": 4,
+     "positions": [
+      1347,
+      3887,
+      6427,
+      8967
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1249,
+      3775,
+      6301,
+      8827
+     ],
+     "count": 4,
+     "positions": [
+      1348,
+      3888,
+      6428,
+      8968
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1250,
+      3776,
+      6302,
+      8828
+     ],
+     "count": 4,
+     "positions": [
+      1349,
+      3889,
+      6429,
+      8969
+     ]
+    }
+   ],
+   "expansions": [
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1",
+     "prefix": "2",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1,
+        "grid_z": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 33557504
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 4
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 33557504
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1",
+     "prefix": "2",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 26216704
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 3
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 26216704
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_packed_v1",
+     "prefix": "2",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s2_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s2_v1_packed_v1",
+       "config": {
+        "grid_x": 200,
+        "grid_y": 2,
+        "block_x": 256,
+        "shared_memory_bytes": 50944
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "arg": 4
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 4
+      }
+     ],
+     "count": 4
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_packed_v1",
+     "prefix": "2",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 20974592
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 64,
+        "grid_z": 3,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 20974592
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(4)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 16
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1",
+     "prefix": "2",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 41946624
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 80,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 41946624
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_packed_v1",
+     "prefix": "2",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967421",
+         "offset": 0,
+         "length": 13110784
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 80,
+        "grid_z": 2,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967421",
+         "offset": 0,
+         "length": 13110784
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(4)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_packed_v1",
+     "prefix": "2",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 10487296
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 5
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 10487296
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(8)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_packed_v1",
+     "prefix": "2",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967421",
+         "offset": 0,
+         "length": 11798272
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 5
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967421",
+         "offset": 0,
+         "length": 11798272
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(8)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 160
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1",
+     "prefix": "2",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 41948160
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 128,
+        "grid_z": 2,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 41948160
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(8)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1",
+     "prefix": "3",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1,
+        "grid_z": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 33557504
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 4
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 33557504
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1",
+     "prefix": "3",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 26216704
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 3
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 26216704
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_packed_v1",
+     "prefix": "3",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s2_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s2_v1_packed_v1",
+       "config": {
+        "grid_x": 200,
+        "grid_y": 2,
+        "block_x": 256,
+        "shared_memory_bytes": 50944
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "arg": 4
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 4
+      }
+     ],
+     "count": 4
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_packed_v1",
+     "prefix": "3",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 20974592
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 64,
+        "grid_z": 3,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 20974592
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(4)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 16
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1",
+     "prefix": "3",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 41946624
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 80,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 41946624
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_packed_v1",
+     "prefix": "3",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967596",
+         "offset": 0,
+         "length": 13110784
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 80,
+        "grid_z": 2,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967596",
+         "offset": 0,
+         "length": 13110784
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(4)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_packed_v1",
+     "prefix": "3",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 10487296
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 5
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 10487296
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(8)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_packed_v1",
+     "prefix": "3",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967596",
+         "offset": 0,
+         "length": 11798272
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 5
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967596",
+         "offset": 0,
+         "length": 11798272
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(8)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 160
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1",
+     "prefix": "3",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 41948160
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 128,
+        "grid_z": 2,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 41948160
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(8)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1",
+     "prefix": "4",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1,
+        "grid_z": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 33557504
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 4
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 33557504
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1",
+     "prefix": "4",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 26216704
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 3
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 26216704
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_packed_v1",
+     "prefix": "4",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s2_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s2_v1_packed_v1",
+       "config": {
+        "grid_x": 200,
+        "grid_y": 2,
+        "block_x": 256,
+        "shared_memory_bytes": 50944
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "arg": 4
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 4
+      }
+     ],
+     "count": 4
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_packed_v1",
+     "prefix": "4",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 20974592
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 64,
+        "grid_z": 3,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 20974592
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(4)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 16
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1",
+     "prefix": "4",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 41946624
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 80,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 41946624
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_packed_v1",
+     "prefix": "4",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967761",
+         "offset": 0,
+         "length": 13110784
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 80,
+        "grid_z": 2,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967761",
+         "offset": 0,
+         "length": 13110784
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(4)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_packed_v1",
+     "prefix": "4",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 10487296
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 5
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 10487296
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(8)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_packed_v1",
+     "prefix": "4",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967761",
+         "offset": 0,
+         "length": 11798272
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 5
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967761",
+         "offset": 0,
+         "length": 11798272
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(8)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 160
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1",
+     "prefix": "4",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 41948160
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 128,
+        "grid_z": 2,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 41948160
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(8)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1",
+     "prefix": "5",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1,
+        "grid_z": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 33557504
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 4
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 33557504
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1",
+     "prefix": "5",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 26216704
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 3
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 26216704
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_packed_v1",
+     "prefix": "5",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s2_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s2_v1_packed_v1",
+       "config": {
+        "grid_x": 200,
+        "grid_y": 2,
+        "block_x": 256,
+        "shared_memory_bytes": 50944
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "arg": 4
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 4
+      }
+     ],
+     "count": 4
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_packed_v1",
+     "prefix": "5",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 20974592
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 64,
+        "grid_z": 3,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 20974592
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(4)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 16
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1",
+     "prefix": "5",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 41946624
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 80,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 41946624
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_packed_v1",
+     "prefix": "5",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967926",
+         "offset": 0,
+         "length": 13110784
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 80,
+        "grid_z": 2,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967926",
+         "offset": 0,
+         "length": 13110784
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(4)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_packed_v1",
+     "prefix": "5",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 10487296
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 5
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 10487296
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(8)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_packed_v1",
+     "prefix": "5",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967926",
+         "offset": 0,
+         "length": 11798272
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 5
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967926",
+         "offset": 0,
+         "length": 11798272
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(8)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 160
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1",
+     "prefix": "5",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 65,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 41948160
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 128,
+        "grid_z": 2,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 41948160
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(8)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    }
+   ],
+   "added_releases": [
+    {
+     "count": 68,
+     "positions": [
+      190851,
+      190852,
+      190853,
+      190854,
+      190855,
+      190856,
+      190857,
+      190858,
+      190859,
+      190860,
+      190861,
+      190862,
+      190863,
+      190864,
+      190865,
+      190866,
+      190867,
+      190868,
+      190869,
+      190870,
+      190871,
+      190872,
+      190873,
+      190874,
+      190875,
+      190876,
+      190877,
+      190878,
+      190879,
+      190880,
+      190881,
+      190882,
+      190883,
+      190884,
+      190885,
+      190886,
+      190887,
+      190888,
+      190889,
+      190890,
+      190891,
+      190892,
+      190893,
+      190894,
+      190895,
+      190896,
+      190897,
+      190898,
+      190899,
+      190900,
+      190901,
+      190902,
+      190903,
+      190904,
+      190905,
+      190906,
+      190907,
+      190908,
+      190909,
+      190910,
+      190911,
+      190912,
+      190913,
+      190914,
+      190915,
+      190916,
+      190917,
+      190918
+     ]
+    }
+   ]
+  },
+  "deepseek41-allocation-c32-maximum-wide.journal": {
+   "state_sizes": [
+    {
+     "line": 119,
+     "from": "allocate 11797504 256",
+     "to": "allocate 19665664 256"
+    },
+    {
+     "line": 326,
+     "from": "allocate 11797504 256",
+     "to": "allocate 19665664 256"
+    },
+    {
+     "line": 521,
+     "from": "allocate 11797504 256",
+     "to": "allocate 19665664 256"
+    },
+    {
+     "line": 716,
+     "from": "allocate 11797504 256",
+     "to": "allocate 19665664 256"
+    }
+   ],
+   "added_resolves": [
+    {
+     "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1235,
+      3761,
+      6287,
+      8813
+     ],
+     "count": 4,
+     "positions": [
+      1334,
+      3874,
+      6414,
+      8954
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1236,
+      3762,
+      6288,
+      8814
+     ],
+     "count": 4,
+     "positions": [
+      1335,
+      3875,
+      6415,
+      8955
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1237,
+      3763,
+      6289,
+      8815
+     ],
+     "count": 4,
+     "positions": [
+      1336,
+      3876,
+      6416,
+      8956
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1238,
+      3764,
+      6290,
+      8816
+     ],
+     "count": 4,
+     "positions": [
+      1337,
+      3877,
+      6417,
+      8957
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1239,
+      3765,
+      6291,
+      8817
+     ],
+     "count": 4,
+     "positions": [
+      1338,
+      3878,
+      6418,
+      8958
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1240,
+      3766,
+      6292,
+      8818
+     ],
+     "count": 4,
+     "positions": [
+      1339,
+      3879,
+      6419,
+      8959
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1241,
+      3767,
+      6293,
+      8819
+     ],
+     "count": 4,
+     "positions": [
+      1340,
+      3880,
+      6420,
+      8960
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1242,
+      3768,
+      6294,
+      8820
+     ],
+     "count": 4,
+     "positions": [
+      1341,
+      3881,
+      6421,
+      8961
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1243,
+      3769,
+      6295,
+      8821
+     ],
+     "count": 4,
+     "positions": [
+      1342,
+      3882,
+      6422,
+      8962
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1244,
+      3770,
+      6296,
+      8822
+     ],
+     "count": 4,
+     "positions": [
+      1343,
+      3883,
+      6423,
+      8963
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1245,
+      3771,
+      6297,
+      8823
+     ],
+     "count": 4,
+     "positions": [
+      1344,
+      3884,
+      6424,
+      8964
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1246,
+      3772,
+      6298,
+      8824
+     ],
+     "count": 4,
+     "positions": [
+      1345,
+      3885,
+      6425,
+      8965
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1247,
+      3773,
+      6299,
+      8825
+     ],
+     "count": 4,
+     "positions": [
+      1346,
+      3886,
+      6426,
+      8966
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1248,
+      3774,
+      6300,
+      8826
+     ],
+     "count": 4,
+     "positions": [
+      1347,
+      3887,
+      6427,
+      8967
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1249,
+      3775,
+      6301,
+      8827
+     ],
+     "count": 4,
+     "positions": [
+      1348,
+      3888,
+      6428,
+      8968
+     ]
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1250,
+      3776,
+      6302,
+      8828
+     ],
+     "count": 4,
+     "positions": [
+      1349,
+      3889,
+      6429,
+      8969
+     ]
+    }
+   ],
+   "expansions": [
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1",
+     "prefix": "2",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1,
+        "grid_z": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 50335744
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 4
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 50335744
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1",
+     "prefix": "2",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 39324672
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 3
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 39324672
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_packed_v1",
+     "prefix": "2",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s2_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s2_v1_packed_v1",
+       "config": {
+        "grid_x": 200,
+        "grid_y": 3,
+        "block_x": 256,
+        "shared_memory_bytes": 50944
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "arg": 4
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 4
+      }
+     ],
+     "count": 4
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_packed_v1",
+     "prefix": "2",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 31461376
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 64,
+        "grid_z": 2,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 31461376
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(8)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 16
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1",
+     "prefix": "2",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 62919424
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 80,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 62919424
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_packed_v1",
+     "prefix": "2",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967421",
+         "offset": 0,
+         "length": 19665664
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 80,
+        "grid_z": 2,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967421",
+         "offset": 0,
+         "length": 19665664
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(4)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_packed_v1",
+     "prefix": "2",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 15730432
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 3
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 15730432
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_packed_v1",
+     "prefix": "2",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967421",
+         "offset": 0,
+         "length": 17696768
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 3
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967421",
+         "offset": 0,
+         "length": 17696768
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 160
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1",
+     "prefix": "2",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 62921728
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 128,
+        "grid_z": 2,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967420",
+         "offset": 0,
+         "length": 62921728
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(8)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1",
+     "prefix": "3",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1,
+        "grid_z": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 50335744
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 4
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 50335744
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1",
+     "prefix": "3",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 39324672
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 3
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 39324672
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_packed_v1",
+     "prefix": "3",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s2_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s2_v1_packed_v1",
+       "config": {
+        "grid_x": 200,
+        "grid_y": 3,
+        "block_x": 256,
+        "shared_memory_bytes": 50944
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "arg": 4
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 4
+      }
+     ],
+     "count": 4
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_packed_v1",
+     "prefix": "3",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 31461376
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 64,
+        "grid_z": 2,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 31461376
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(8)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 16
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1",
+     "prefix": "3",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 62919424
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 80,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 62919424
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_packed_v1",
+     "prefix": "3",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967596",
+         "offset": 0,
+         "length": 19665664
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 80,
+        "grid_z": 2,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967596",
+         "offset": 0,
+         "length": 19665664
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(4)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_packed_v1",
+     "prefix": "3",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 15730432
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 3
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 15730432
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_packed_v1",
+     "prefix": "3",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967596",
+         "offset": 0,
+         "length": 17696768
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 3
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967596",
+         "offset": 0,
+         "length": 17696768
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 160
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1",
+     "prefix": "3",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 62921728
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 128,
+        "grid_z": 2,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967595",
+         "offset": 0,
+         "length": 62921728
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(8)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1",
+     "prefix": "4",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1,
+        "grid_z": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 50335744
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 4
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 50335744
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1",
+     "prefix": "4",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 39324672
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 3
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 39324672
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_packed_v1",
+     "prefix": "4",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s2_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s2_v1_packed_v1",
+       "config": {
+        "grid_x": 200,
+        "grid_y": 3,
+        "block_x": 256,
+        "shared_memory_bytes": 50944
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "arg": 4
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 4
+      }
+     ],
+     "count": 4
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_packed_v1",
+     "prefix": "4",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 31461376
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 64,
+        "grid_z": 2,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 31461376
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(8)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 16
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1",
+     "prefix": "4",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 62919424
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 80,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 62919424
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_packed_v1",
+     "prefix": "4",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967761",
+         "offset": 0,
+         "length": 19665664
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 80,
+        "grid_z": 2,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967761",
+         "offset": 0,
+         "length": 19665664
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(4)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_packed_v1",
+     "prefix": "4",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 15730432
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 3
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 15730432
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_packed_v1",
+     "prefix": "4",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967761",
+         "offset": 0,
+         "length": 17696768
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 3
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967761",
+         "offset": 0,
+         "length": 17696768
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 160
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1",
+     "prefix": "4",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 62921728
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 128,
+        "grid_z": 2,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967760",
+         "offset": 0,
+         "length": 62921728
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(8)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_packed_v1",
+     "prefix": "5",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1,
+        "grid_z": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 50335744
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 4
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 50335744
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_packed_v1",
+     "prefix": "5",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 39324672
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 3
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 39324672
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_packed_v1",
+     "prefix": "5",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s2_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_mxfp8_fold_m8192_n25600_k6144_g1_f32_v2_matrix_m64_n128_s2_v1_packed_v1",
+       "config": {
+        "grid_x": 200,
+        "grid_y": 3,
+        "block_x": 256,
+        "shared_memory_bytes": 50944
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "arg": 4
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 4
+      }
+     ],
+     "count": 4
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_packed_v1",
+     "prefix": "5",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 31461376
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 64,
+        "grid_z": 2,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 31461376
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(8)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 16
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_packed_v1",
+     "prefix": "5",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 62919424
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 80,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 62919424
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_packed_v1",
+     "prefix": "5",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967926",
+         "offset": 0,
+         "length": 19665664
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 80,
+        "grid_z": 2,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967926",
+         "offset": 0,
+         "length": 19665664
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(4)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_packed_v1",
+     "prefix": "5",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 15730432
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 3
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 15730432
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_packed_v1",
+     "prefix": "5",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967926",
+         "offset": 0,
+         "length": 17696768
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_z": 3
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967926",
+         "offset": 0,
+         "length": 17696768
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(16)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 160
+    },
+    {
+     "from_symbol": "chop_deepseek41_mxfp8_fold_m8192_n8192_k1280_g1_f32_v2_packed_v1",
+     "prefix": "5",
+     "sequence": [
+      {
+       "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+       "config": {
+        "grid_x": 192,
+        "grid_y": 1
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 62921728
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 6
+        },
+        {
+         "arg": 7
+        },
+        {
+         "arg": 8
+        }
+       ]
+      },
+      {
+       "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+       "config": {
+        "grid_x": 128,
+        "grid_z": 2,
+        "block_x": 256
+       },
+       "args": [
+        {
+         "arg": 0
+        },
+        {
+         "arg": 1
+        },
+        {
+         "arg": 2
+        },
+        {
+         "arg": 3
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "arg": 4
+        },
+        {
+         "literal": "NullDevicePointer"
+        },
+        {
+         "allocation": "workspace-4294967925",
+         "offset": 0,
+         "length": 62921728
+        },
+        {
+         "arg": 5
+        },
+        {
+         "arg": 8
+        },
+        {
+         "literal": "ScalarU32(8)"
+        }
+       ]
+      }
+     ],
+     "outputs": [
+      {
+       "from_arg": 4,
+       "to_launch": 1,
+       "to_arg": 6
+      }
+     ],
+     "count": 80
+    }
+   ],
+   "added_releases": [
+    {
+     "count": 68,
+     "positions": [
+      343589,
+      343590,
+      343591,
+      343592,
+      343593,
+      343594,
+      343595,
+      343596,
+      343597,
+      343598,
+      343599,
+      343600,
+      343601,
+      343602,
+      343603,
+      343604,
+      343605,
+      343606,
+      343607,
+      343608,
+      343609,
+      343610,
+      343611,
+      343612,
+      343613,
+      343614,
+      343615,
+      343616,
+      343617,
+      343618,
+      343619,
+      343620,
+      343621,
+      343622,
+      343623,
+      343624,
+      343625,
+      343626,
+      343627,
+      343628,
+      343629,
+      343630,
+      343631,
+      343632,
+      343633,
+      343634,
+      343635,
+      343636,
+      343637,
+      343638,
+      343639,
+      343640,
+      343641,
+      343642,
+      343643,
+      343644,
+      343645,
+      343646,
+      343647,
+      343648,
+      343649,
+      343650,
+      343651,
+      343652,
+      343653,
+      343654,
+      343655,
+      343656
+     ]
+    }
+   ]
+  }
+ },
+ "auxiliary_rules": {
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-1.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-2.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-3.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-4.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-5.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-6.jsonl": {
+   "added_resolves": [
+    {
+     "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1235,
+      3761,
+      6287,
+      8813
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1236,
+      3762,
+      6288,
+      8814
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1237,
+      3763,
+      6289,
+      8815
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1238,
+      3764,
+      6290,
+      8816
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1239,
+      3765,
+      6291,
+      8817
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1240,
+      3766,
+      6292,
+      8818
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1241,
+      3767,
+      6293,
+      8819
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1242,
+      3768,
+      6294,
+      8820
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1243,
+      3769,
+      6295,
+      8821
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1244,
+      3770,
+      6296,
+      8822
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1245,
+      3771,
+      6297,
+      8823
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1246,
+      3772,
+      6298,
+      8824
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1247,
+      3773,
+      6299,
+      8825
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1248,
+      3774,
+      6300,
+      8826
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1249,
+      3775,
+      6301,
+      8827
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1250,
+      3776,
+      6302,
+      8828
+     ],
+     "count": 4
+    }
+   ],
+   "added_modules": [
+    {
+     "name": "dense_decode_wide_deepseek41_sm120_v1",
+     "fnv1a": "a106d2c96d8f6414",
+     "bytes": 300832,
+     "ids": [
+      1234,
+      3760,
+      6286,
+      8812
+     ],
+     "count": 4
+    }
+   ],
+   "create_policy": {
+    "state_sizes": [
+     {
+      "line": 119,
+      "from": "allocate 11797504 256",
+      "to": "allocate 19665664 256"
+     },
+     {
+      "line": 326,
+      "from": "allocate 11797504 256",
+      "to": "allocate 19665664 256"
+     },
+     {
+      "line": 521,
+      "from": "allocate 11797504 256",
+      "to": "allocate 19665664 256"
+     },
+     {
+      "line": 716,
+      "from": "allocate 11797504 256",
+      "to": "allocate 19665664 256"
+     }
+    ],
+    "added_resolves": [
+     {
+      "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+      "ids": [
+       1235,
+       3761,
+       6287,
+       8813
+      ],
+      "count": 4,
+      "positions": [
+       1334,
+       3874,
+       6414,
+       8954
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+      "ids": [
+       1236,
+       3762,
+       6288,
+       8814
+      ],
+      "count": 4,
+      "positions": [
+       1335,
+       3875,
+       6415,
+       8955
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+      "ids": [
+       1237,
+       3763,
+       6289,
+       8815
+      ],
+      "count": 4,
+      "positions": [
+       1336,
+       3876,
+       6416,
+       8956
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+      "ids": [
+       1238,
+       3764,
+       6290,
+       8816
+      ],
+      "count": 4,
+      "positions": [
+       1337,
+       3877,
+       6417,
+       8957
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+      "ids": [
+       1239,
+       3765,
+       6291,
+       8817
+      ],
+      "count": 4,
+      "positions": [
+       1338,
+       3878,
+       6418,
+       8958
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+      "ids": [
+       1240,
+       3766,
+       6292,
+       8818
+      ],
+      "count": 4,
+      "positions": [
+       1339,
+       3879,
+       6419,
+       8959
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+      "ids": [
+       1241,
+       3767,
+       6293,
+       8819
+      ],
+      "count": 4,
+      "positions": [
+       1340,
+       3880,
+       6420,
+       8960
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+      "ids": [
+       1242,
+       3768,
+       6294,
+       8820
+      ],
+      "count": 4,
+      "positions": [
+       1341,
+       3881,
+       6421,
+       8961
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+      "ids": [
+       1243,
+       3769,
+       6295,
+       8821
+      ],
+      "count": 4,
+      "positions": [
+       1342,
+       3882,
+       6422,
+       8962
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+      "ids": [
+       1244,
+       3770,
+       6296,
+       8822
+      ],
+      "count": 4,
+      "positions": [
+       1343,
+       3883,
+       6423,
+       8963
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+      "ids": [
+       1245,
+       3771,
+       6297,
+       8823
+      ],
+      "count": 4,
+      "positions": [
+       1344,
+       3884,
+       6424,
+       8964
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+      "ids": [
+       1246,
+       3772,
+       6298,
+       8824
+      ],
+      "count": 4,
+      "positions": [
+       1345,
+       3885,
+       6425,
+       8965
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+      "ids": [
+       1247,
+       3773,
+       6299,
+       8825
+      ],
+      "count": 4,
+      "positions": [
+       1346,
+       3886,
+       6426,
+       8966
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+      "ids": [
+       1248,
+       3774,
+       6300,
+       8826
+      ],
+      "count": 4,
+      "positions": [
+       1347,
+       3887,
+       6427,
+       8967
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+      "ids": [
+       1249,
+       3775,
+       6301,
+       8827
+      ],
+      "count": 4,
+      "positions": [
+       1348,
+       3888,
+       6428,
+       8968
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+      "ids": [
+       1250,
+       3776,
+       6302,
+       8828
+      ],
+      "count": 4,
+      "positions": [
+       1349,
+       3889,
+       6429,
+       8969
+      ]
+     }
+    ]
+   },
+   "allocation_resizes": [
+    {
+     "base_raw": 4294967421,
+     "head_raw": 4294967421,
+     "rank": 0,
+     "from": 11797504,
+     "to": 19665664,
+     "alignment": 256
+    },
+    {
+     "base_raw": 4294967596,
+     "head_raw": 4294967596,
+     "rank": 1,
+     "from": 11797504,
+     "to": 19665664,
+     "alignment": 256
+    },
+    {
+     "base_raw": 4294967761,
+     "head_raw": 4294967761,
+     "rank": 2,
+     "from": 11797504,
+     "to": 19665664,
+     "alignment": 256
+    },
+    {
+     "base_raw": 4294967926,
+     "head_raw": 4294967926,
+     "rank": 3,
+     "from": 11797504,
+     "to": 19665664,
+     "alignment": 256
+    }
+   ],
+   "allocation_bindings": {
+    "workspace-4294967420": {
+     "base_raw": 4294967420,
+     "head_raw": 4294967420,
+     "rank": 0,
+     "base_bytes": 998963456,
+     "head_bytes": 998963456,
+     "stream_raw": 4294967298
+    },
+    "workspace-4294967595": {
+     "base_raw": 4294967595,
+     "head_raw": 4294967595,
+     "rank": 1,
+     "base_bytes": 998963456,
+     "head_bytes": 998963456,
+     "stream_raw": 4294967299
+    },
+    "workspace-4294967760": {
+     "base_raw": 4294967760,
+     "head_raw": 4294967760,
+     "rank": 2,
+     "base_bytes": 998963456,
+     "head_bytes": 998963456,
+     "stream_raw": 4294967300
+    },
+    "workspace-4294967925": {
+     "base_raw": 4294967925,
+     "head_raw": 4294967925,
+     "rank": 3,
+     "base_bytes": 998963456,
+     "head_bytes": 998963456,
+     "stream_raw": 4294967301
+    },
+    "workspace-4294967421": {
+     "base_raw": 4294967421,
+     "head_raw": 4294967421,
+     "rank": 0,
+     "base_bytes": 11797504,
+     "head_bytes": 19665664,
+     "stream_raw": 4294967298
+    },
+    "workspace-4294967596": {
+     "base_raw": 4294967596,
+     "head_raw": 4294967596,
+     "rank": 1,
+     "base_bytes": 11797504,
+     "head_bytes": 19665664,
+     "stream_raw": 4294967299
+    },
+    "workspace-4294967761": {
+     "base_raw": 4294967761,
+     "head_raw": 4294967761,
+     "rank": 2,
+     "base_bytes": 11797504,
+     "head_bytes": 19665664,
+     "stream_raw": 4294967300
+    },
+    "workspace-4294967926": {
+     "base_raw": 4294967926,
+     "head_raw": 4294967926,
+     "rank": 3,
+     "base_bytes": 11797504,
+     "head_bytes": 19665664,
+     "stream_raw": 4294967301
+    }
+   }
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-7.jsonl": {
+   "added_resolves": [
+    {
+     "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1235,
+      3761,
+      6287,
+      8813
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1236,
+      3762,
+      6288,
+      8814
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1237,
+      3763,
+      6289,
+      8815
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1238,
+      3764,
+      6290,
+      8816
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1239,
+      3765,
+      6291,
+      8817
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1240,
+      3766,
+      6292,
+      8818
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1241,
+      3767,
+      6293,
+      8819
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1242,
+      3768,
+      6294,
+      8820
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1243,
+      3769,
+      6295,
+      8821
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1244,
+      3770,
+      6296,
+      8822
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1245,
+      3771,
+      6297,
+      8823
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1246,
+      3772,
+      6298,
+      8824
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1247,
+      3773,
+      6299,
+      8825
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1248,
+      3774,
+      6300,
+      8826
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+     "ids": [
+      1249,
+      3775,
+      6301,
+      8827
+     ],
+     "count": 4
+    },
+    {
+     "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+     "ids": [
+      1250,
+      3776,
+      6302,
+      8828
+     ],
+     "count": 4
+    }
+   ],
+   "added_modules": [
+    {
+     "name": "dense_decode_wide_deepseek41_sm120_v1",
+     "fnv1a": "a106d2c96d8f6414",
+     "bytes": 300832,
+     "ids": [
+      1234,
+      3760,
+      6286,
+      8812
+     ],
+     "count": 4
+    }
+   ],
+   "create_policy": {
+    "state_sizes": [
+     {
+      "line": 119,
+      "from": "allocate 11797504 256",
+      "to": "allocate 19665664 256"
+     },
+     {
+      "line": 326,
+      "from": "allocate 11797504 256",
+      "to": "allocate 19665664 256"
+     },
+     {
+      "line": 521,
+      "from": "allocate 11797504 256",
+      "to": "allocate 19665664 256"
+     },
+     {
+      "line": 716,
+      "from": "allocate 11797504 256",
+      "to": "allocate 19665664 256"
+     }
+    ],
+    "added_resolves": [
+     {
+      "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+      "ids": [
+       1235,
+       3761,
+       6287,
+       8813
+      ],
+      "count": 4,
+      "positions": [
+       1334,
+       3874,
+       6414,
+       8954
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n1024_k4096_g2_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+      "ids": [
+       1236,
+       3762,
+       6288,
+       8814
+      ],
+      "count": 4,
+      "positions": [
+       1335,
+       3875,
+       6415,
+       8955
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+      "ids": [
+       1237,
+       3763,
+       6289,
+       8815
+      ],
+      "count": 4,
+      "positions": [
+       1336,
+       3876,
+       6416,
+       8956
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n1280_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+      "ids": [
+       1238,
+       3764,
+       6290,
+       8816
+      ],
+      "count": 4,
+      "positions": [
+       1337,
+       3877,
+       6417,
+       8957
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+      "ids": [
+       1239,
+       3765,
+       6291,
+       8817
+      ],
+      "count": 4,
+      "positions": [
+       1338,
+       3878,
+       6418,
+       8958
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n4096_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+      "ids": [
+       1240,
+       3766,
+       6292,
+       8818
+      ],
+      "count": 4,
+      "positions": [
+       1339,
+       3879,
+       6419,
+       8959
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+      "ids": [
+       1241,
+       3767,
+       6293,
+       8819
+      ],
+      "count": 4,
+      "positions": [
+       1340,
+       3880,
+       6420,
+       8960
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n5120_k2048_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+      "ids": [
+       1242,
+       3768,
+       6294,
+       8820
+      ],
+      "count": 4,
+      "positions": [
+       1341,
+       3881,
+       6421,
+       8961
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+      "ids": [
+       1243,
+       3769,
+       6295,
+       8821
+      ],
+      "count": 4,
+      "positions": [
+       1342,
+       3882,
+       6422,
+       8962
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n5120_k576_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+      "ids": [
+       1244,
+       3770,
+       6296,
+       8822
+      ],
+      "count": 4,
+      "positions": [
+       1343,
+       3883,
+       6423,
+       8963
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+      "ids": [
+       1245,
+       3771,
+       6297,
+       8823
+      ],
+      "count": 4,
+      "positions": [
+       1344,
+       3884,
+       6424,
+       8964
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n512_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+      "ids": [
+       1246,
+       3772,
+       6298,
+       8824
+      ],
+      "count": 4,
+      "positions": [
+       1345,
+       3885,
+       6425,
+       8965
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_admit_v1",
+      "ids": [
+       1247,
+       3773,
+       6299,
+       8825
+      ],
+      "count": 4,
+      "positions": [
+       1346,
+       3886,
+       6426,
+       8966
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n576_k5120_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w0f0_v1_packed_v1",
+      "ids": [
+       1248,
+       3774,
+       6300,
+       8826
+      ],
+      "count": 4,
+      "positions": [
+       1347,
+       3887,
+       6427,
+       8967
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_admit_v1",
+      "ids": [
+       1249,
+       3775,
+       6301,
+       8827
+      ],
+      "count": 4,
+      "positions": [
+       1348,
+       3888,
+       6428,
+       8968
+      ]
+     },
+     {
+      "symbol": "chop_deepseek41_dense_decode_n8192_k1280_g1_single_rows256_e4m3_ue8m0_k32x4_f32_f32_n64r1s3w0f0_v1_packed_v1",
+      "ids": [
+       1250,
+       3776,
+       6302,
+       8828
+      ],
+      "count": 4,
+      "positions": [
+       1349,
+       3889,
+       6429,
+       8969
+      ]
+     }
+    ]
+   },
+   "allocation_resizes": [
+    {
+     "base_raw": 4294967421,
+     "head_raw": 4294967421,
+     "rank": 0,
+     "from": 11797504,
+     "to": 19665664,
+     "alignment": 256
+    },
+    {
+     "base_raw": 4294967596,
+     "head_raw": 4294967596,
+     "rank": 1,
+     "from": 11797504,
+     "to": 19665664,
+     "alignment": 256
+    },
+    {
+     "base_raw": 4294967761,
+     "head_raw": 4294967761,
+     "rank": 2,
+     "from": 11797504,
+     "to": 19665664,
+     "alignment": 256
+    },
+    {
+     "base_raw": 4294967926,
+     "head_raw": 4294967926,
+     "rank": 3,
+     "from": 11797504,
+     "to": 19665664,
+     "alignment": 256
+    }
+   ],
+   "allocation_bindings": {
+    "workspace-4294967420": {
+     "base_raw": 4294967420,
+     "head_raw": 4294967420,
+     "rank": 0,
+     "base_bytes": 998963456,
+     "head_bytes": 998963456,
+     "stream_raw": 4294967298
+    },
+    "workspace-4294967595": {
+     "base_raw": 4294967595,
+     "head_raw": 4294967595,
+     "rank": 1,
+     "base_bytes": 998963456,
+     "head_bytes": 998963456,
+     "stream_raw": 4294967299
+    },
+    "workspace-4294967760": {
+     "base_raw": 4294967760,
+     "head_raw": 4294967760,
+     "rank": 2,
+     "base_bytes": 998963456,
+     "head_bytes": 998963456,
+     "stream_raw": 4294967300
+    },
+    "workspace-4294967925": {
+     "base_raw": 4294967925,
+     "head_raw": 4294967925,
+     "rank": 3,
+     "base_bytes": 998963456,
+     "head_bytes": 998963456,
+     "stream_raw": 4294967301
+    },
+    "workspace-4294967421": {
+     "base_raw": 4294967421,
+     "head_raw": 4294967421,
+     "rank": 0,
+     "base_bytes": 11797504,
+     "head_bytes": 19665664,
+     "stream_raw": 4294967298
+    },
+    "workspace-4294967596": {
+     "base_raw": 4294967596,
+     "head_raw": 4294967596,
+     "rank": 1,
+     "base_bytes": 11797504,
+     "head_bytes": 19665664,
+     "stream_raw": 4294967299
+    },
+    "workspace-4294967761": {
+     "base_raw": 4294967761,
+     "head_raw": 4294967761,
+     "rank": 2,
+     "base_bytes": 11797504,
+     "head_bytes": 19665664,
+     "stream_raw": 4294967300
+    },
+    "workspace-4294967926": {
+     "base_raw": 4294967926,
+     "head_raw": 4294967926,
+     "rank": 3,
+     "base_bytes": 11797504,
+     "head_bytes": 19665664,
+     "stream_raw": 4294967301
+    }
+   }
+  },
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-1.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-2.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-3.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-4.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-5.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-6.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-1.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-2.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-1.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-2.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-1.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-2.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-1.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-2.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-3.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-4.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-5.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-6.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  }
+ }
+}

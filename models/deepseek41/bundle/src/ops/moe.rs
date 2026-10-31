@@ -370,6 +370,19 @@ impl MoeOps {
         phase: Phase,
         symbol: &str,
     ) -> Option<kernel_core::route::RouteTag> {
+        if phase.prefill() {
+            // Prefill fuses no router finish: its routes are the plain
+            // router's own use, which serves every prefill row. A verify
+            // step wider than every direct bucket runs the same symbols
+            // as its unfused fallback.
+            return Some(kernel_core::route::branch(
+                symbol,
+                kernel_core::route::RouteClass::Fast,
+                "moe_router_finish",
+                "prefill",
+                [1..=PREFILL_TOKENS],
+            ));
+        }
         let p = USES[kind_of(phase)].phase;
         let admitted: Vec<_> = self
             .direct

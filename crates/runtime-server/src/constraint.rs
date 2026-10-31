@@ -66,8 +66,11 @@ pub(crate) fn grammar_error(error: &GrammarError, parameter: &str) -> ApiError {
     ApiError::invalid_owned(format!("{parameter}: {error}"), Some(parameter.to_owned()))
 }
 
-fn invalid(message: &str, parameter: &'static str) -> ApiError {
-    ApiError::invalid(message.to_owned(), Some(parameter))
+fn invalid(
+    message: impl Into<std::borrow::Cow<'static, str>>,
+    parameter: &'static str,
+) -> ApiError {
+    ApiError::invalid(message, Some(parameter))
 }
 
 fn entry<'a>(entries: &'a [(String, FrontendJsonV1)], name: &str) -> Option<&'a FrontendJsonV1> {
@@ -157,7 +160,7 @@ pub(crate) fn requested_constraint(
             Some(FrontendJsonV1::String(_)) => {
                 static IGNORED: std::sync::Once = std::sync::Once::new();
                 IGNORED.call_once(|| {
-                    eprintln!(
+                    runtime_log::debug!(
                         "debug: structured_outputs.whitespace_pattern is accepted and ignored, \
                          as vLLM does"
                     );

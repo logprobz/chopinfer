@@ -327,7 +327,11 @@ at C16 (96 runs without a graph).
 `--speculation-confidence` (profile `speculation.confidence`, see
 [serving profiles](serving-profiles.md#drafter-confidence)) needs a
 calibration of the drafter's raw confidence, fitted on CPU from the
-drafter records a sampled run's servers log (`*.drafter-confidence.v1`):
+drafter records a sampled run's servers log (`*.drafter-confidence.v1`).
+The records are routine traces that serve writes only at `--log-level
+debug`, with the model's diagnostic step-log option on; the tuner serves at
+`debug`, and the fitter's refusal of logs without records names the level
+each served at:
 
 ```sh
 python3 -B tools/tune/calibrate.py --sampled "$RUN" \

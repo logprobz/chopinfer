@@ -56,7 +56,11 @@ class MeasureTests(unittest.TestCase):
         _, errors = kv_capacity.measure("", {"status": "ready"})
         self.assertEqual(len(errors), 2, errors)
         _, errors = kv_capacity.measure(scrape(1, 1), health(), "no capacity here\n")
-        self.assertEqual(errors, ["the server log has no serving KV capacity line"])
+        self.assertEqual(len(errors), 1, errors)
+        self.assertTrue(errors[0].startswith("the server log has no serving KV capacity line; "), errors)
+        self.assertIn("no 'startup logging: level=' line", errors[0])
+        _, errors = kv_capacity.measure(scrape(1, 1), health(), "startup logging: level=warn\n")
+        self.assertIn("logged at level=warn, and startup lines need --log-level info or debug", errors[0])
 
     def test_contradictory_geometry_is_refused(self):
         # Tokens match, but the log's pages and page size contradict the

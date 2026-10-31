@@ -18,7 +18,7 @@ fn selected() -> Vec<Variant> {
 
 fn modules(session: &Session) -> LabResult<(Module, Module)> {
     Ok((
-        session.load_cubin(ROW_CUBIN)?,
+        session.module(ROW_CUBIN)?,
         module(session, model_mimo26_contract::sm120::config::PROFILE)?,
     ))
 }

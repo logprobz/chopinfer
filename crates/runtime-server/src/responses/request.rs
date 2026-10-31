@@ -48,13 +48,13 @@ pub(super) struct Request {
 
 impl Request {
     pub fn parse(body: &[u8], max_string_bytes: usize) -> Result<Self, ApiError> {
-        crate::json_limits::validate(body)
-            .map_err(|error| ApiError::invalid(error.to_string(), None))?;
-        let raw: Value = serde_json::from_slice(body)
-            .map_err(|error| ApiError::invalid(error.to_string(), None))?;
+        let refusal = |error: serde_json::Error| {
+            ApiError::invalid(error.to_string(), None).json_error(&error)
+        };
+        crate::json_limits::validate(body).map_err(refusal)?;
+        let raw: Value = serde_json::from_slice(body).map_err(refusal)?;
         validate_strings(&raw, max_string_bytes)?;
-        let request: Self = serde_json::from_value(raw)
-            .map_err(|error| ApiError::invalid(error.to_string(), None))?;
+        let request: Self = serde_json::from_value(raw).map_err(refusal)?;
         if request
             .truncation
             .as_deref()
@@ -496,7 +496,7 @@ fn string<'a>(value: &'a Value, field: &str) -> Result<&'a str, ApiError> {
         .as_str()
         .ok_or_else(|| invalid(format!("input item requires string {field}"), "input"))
 }
-pub(super) fn invalid(message: impl Into<String>, param: &str) -> ApiError {
+pub(super) fn invalid(message: impl Into<std::borrow::Cow<'static, str>>, param: &str) -> ApiError {
     ApiError::invalid(message, Some(param))
 }
 

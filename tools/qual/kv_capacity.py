@@ -20,7 +20,7 @@ planner's estimate; the estimate is context, not a pass condition.
 
 import re
 
-from common import Client, arguments, receipt
+from common import Client, arguments, receipt, startup_level_hint
 from spec_metrics import metrics_text
 
 CAPACITY_LINE = re.compile(r"serving KV capacity: (\d+) pages, (\d+) tokens")
@@ -70,12 +70,13 @@ def geometry_errors(tokens, blocks, size, page_tokens=None):
     return []
 
 
-def log_errors(capacity, group, tokens, blocks, size):
+def log_errors(capacity, group, tokens, blocks, size, hint=""):
     """Contradictions between the startup log's lines and the gauges and
     health: the same pages and tokens, and a group line exactly when the
-    health reports a size above 1, naming that size and those pages."""
+    health reports a size above 1, naming that size and those pages.
+    `hint` says why the log may lack its startup lines."""
     if capacity is None:
-        return ["the server log has no serving KV capacity line"]
+        return ["the server log has no serving KV capacity line" + hint]
     errors = []
     if tokens and capacity["tokens"] != int(tokens):
         errors.append(f"the log's {capacity['tokens']} tokens differ from the gauge's {int(tokens)}")
@@ -132,7 +133,7 @@ def measure(metrics, health, log=None, planned=None, page_tokens=None):
     if log is not None:
         capacity, group = startup_lines(log)
         record["startup"] = {"capacity": capacity, "context_parallel": group}
-        errors += log_errors(capacity, group, tokens, blocks, size)
+        errors += log_errors(capacity, group, tokens, blocks, size, startup_level_hint(log))
     if planned is not None:
         record["planned_tokens"] = planned
         record["measured_over_planned"] = tokens / planned if tokens else None

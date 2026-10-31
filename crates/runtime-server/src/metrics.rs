@@ -44,6 +44,12 @@ pub trait MetricsSnapshotProvider: Send + Sync + 'static {
     fn step_profile(&self) -> Option<String> {
         None
     }
+
+    /// The engine counters and gauges a periodic summary line reports. A
+    /// provider without an engine returns none.
+    fn summary(&self) -> Option<crate::request_log::EngineSummaryV1> {
+        None
+    }
 }
 
 impl<F> MetricsSnapshotProvider for F
@@ -97,6 +103,10 @@ impl MetricsEndpoint {
         self.provider.step_profile()
     }
 
+    pub(crate) fn summary(&self) -> Option<crate::request_log::EngineSummaryV1> {
+        self.provider.summary()
+    }
+
     pub(crate) fn snapshot(&self) -> String {
         self.provider.snapshot(self.clock.now_micros())
     }
@@ -133,6 +143,15 @@ impl AdmissionMetrics {
             _ => 7,
         };
         self.counts[index].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Refusals by reason since the server started.
+    pub(crate) fn totals(&self) -> Vec<(&'static str, u64)> {
+        REFUSAL_REASONS
+            .iter()
+            .zip(&self.counts)
+            .map(|(reason, count)| (*reason, count.load(std::sync::atomic::Ordering::Relaxed)))
+            .collect()
     }
 
     pub(crate) fn stored_response(&self, status: axum::http::StatusCode) {

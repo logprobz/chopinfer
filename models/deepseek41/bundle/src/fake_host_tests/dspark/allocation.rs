@@ -111,7 +111,8 @@ fn device_step(
 /// draft copies and before rank 0 hashes the computed rows, the target
 /// computes the width, every rank gathers packed feature rows into the
 /// reserved layout by index, the sampler maps reserved rows to computed logits, and the allocated acceptance walks the verified drafts. A host
-/// without device results is refused before any work. The target's graph
+/// without device results is refused as an invalid argument before any
+/// work, which the host may treat as a refused batch. The target's graph
 /// is keyed by the width in the allocated bank: the first step of a width
 /// captures it, a step of the same width that reserves other rows replays
 /// it without lowering when its reservation rounds to the same tail rows
@@ -134,8 +135,9 @@ fn allocated_steps_compute_the_width_and_keep_the_reserved_layout() {
         let mut legacy = Sink::default();
         assert_eq!(
             instance.execute(&request, &mut legacy).err(),
-            Some(BundleAbiError::Status(BundleStatusV1::Unsupported))
+            Some(BundleAbiError::Status(BundleStatusV1::InvalidArgument))
         );
+        assert!(instance.last_execute_refusal().is_some());
         let streams = host.rank_streams.borrow().clone();
         let allocated_acceptance = crate::sm120::allocated_acceptance_entries::SYMBOL;
         // Every rank allocates before rank 0 hashes, and no host
@@ -537,8 +539,9 @@ fn compact_allocation_scores_only_computed_rows_and_keeps_reserved_samples() {
                             &mut sink.inner,
                         )
                         .err(),
-                    Some(BundleAbiError::Status(BundleStatusV1::Unsupported)),
+                    Some(BundleAbiError::Status(BundleStatusV1::InvalidArgument)),
                 );
+                assert!(instance.last_execute_refusal().is_some());
                 assert_eq!(host.journal.borrow().len(), before);
             }
             let start = host.journal.borrow().len();

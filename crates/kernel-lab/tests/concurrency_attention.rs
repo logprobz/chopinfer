@@ -900,13 +900,7 @@ fn m5_mimo_attention_wide_batches() {
     }
     gpu_test(20 << 30, |s| {
         conc::exclusive(s)?;
-        let module = s
-            .context
-            .load_module(include_bytes!(concat!(
-                env!("OUT_DIR"),
-                "/attention_mimo_sm120.cubin"
-            )))
-            .map_err(|e| e.to_string())?;
+        let module = s.module("attention_mimo_sm120")?;
         let mut rng = Rng(0x5eed_c0c0_a77e_0005);
         MEASURED.store(0, Ordering::Relaxed);
         let mut failures = conc::replay::Failures::default();

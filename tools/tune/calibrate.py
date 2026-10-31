@@ -102,6 +102,18 @@ def records(log, index=0):
     return rows, dropped
 
 
+def missing_records(sources):
+    """Why `sources` hold no drafter records, from the level each server
+    logged at: the records are routine step traces, printed only at debug."""
+    levels = []
+    for log in sources:
+        found = re.findall(r'^startup logging: level=(\w+)$', log.read_text(errors='replace'), re.M)
+        levels.append(f'{log} served at level={found[-1]}' if found else
+                      f'{log} has no "startup logging: level=" line')
+    return (f'no drafter confidence records: {"; ".join(levels)}. The records need serve '
+            '--log-level debug (tools/tune sets it) and the model\'s diagnostic step-log option')
+
+
 def samples(rows):
     """Per position, `(score, label, fold)` samples, the emitted and
     accepted drafts per position, and the stops left unlabelled."""
@@ -231,6 +243,8 @@ def calibrate(sources, positions, min_samples):
         dropped += lost
         digests.append({'log': str(log), 'sha256': hashlib.sha256(log.read_bytes()).hexdigest(),
                         'records': len(found), 'dropped_lines': lost})
+    if not rows:
+        raise SystemExit(missing_records(sources))
     contracts = sorted({row.get('confidence_contract') for row in rows})
     if len(contracts) != 1 or not contracts[0]:
         raise SystemExit(f'records name confidence contracts {contracts}; fit one at a time')

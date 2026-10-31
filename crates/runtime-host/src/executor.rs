@@ -591,7 +591,7 @@ impl BatchEmissionsV1 {
 /// The bundle sees only the status and may return it from execute as its own,
 /// so this line is the one record of which host check refused the batch.
 fn refused(status: BundleStatusV1, emission: &str) -> BundleStatusV1 {
-    eprintln!(
+    runtime_log::error!(
         "bundle result sink refused {emission} with status {} ({})",
         status.0,
         status.name().unwrap_or("undefined")

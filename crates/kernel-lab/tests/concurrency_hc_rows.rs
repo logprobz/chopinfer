@@ -22,13 +22,7 @@ impl<'a> Fixture<'a> {
     fn new(session: &'a Session, rows: usize) -> LabResult<Self> {
         let mut f = Self {
             session,
-            module: session
-                .context
-                .load_module(include_bytes!(concat!(
-                    env!("OUT_DIR"),
-                    "/row_qwen38.cubin"
-                )))
-                .map_err(|e| e.to_string())?,
+            module: session.module("row_qwen38")?,
             buffers: BTreeMap::new(),
             scalars: BTreeMap::new(),
         };

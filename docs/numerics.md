@@ -591,6 +591,33 @@ decoding streams. The candidate stays off by default, so hits keep the chunk
 dependence above, until a cheaper canonical drafter run is measured. It does
 not relax the strict prefix-equality gate.
 
+A second canonical candidate, `CHOPINFER_QWEN38_CANONICAL_DRAFTER=2`, runs
+those prefill-phase runs through only the stages that write persistent
+drafter state (through the QSA key write, without the inject projection),
+queued whole on each rank. On 2026-10-30 it matched the first bit for bit in
+persistent state, drafts, acceptance, logits and served output, under a fixed
+37-step fixed-batch schedule and at C1, and was refused at served step time,
+measured as above: a one-token hit suffix beside three decoding streams took
+0.6 ms (1.5%) longer, beyond its 0.4% spread, while prefill steps of more
+than 32 rows got up to 2.1% faster. It stays off by default.
+
+By default, a drafter run of prefilling rows that is in the prefill phase
+anyway (more than 32 rows) runs only those persistent stages. Such a run
+never drafts, and no later run reads the arithmetic outputs of its other
+stages. Its two skipped collectives also advance protocol state (epochs and
+flags) that later calls read, but every rank skips the same complete calls,
+so that state stays consistent across ranks. Persistent drafter state,
+drafts and outputs keep their bits. On
+2026-10-30 the trimmed runs equalled the whole runs bit for bit under the
+same fixed-batch schedule (drafts, acceptance, logits and samples), in the
+drafter state and anchors of C1 hit, cut, chain and cold consumers, in the
+drafts of 772 drafting steps and in greedy and sampled served output.
+Served step time, measured as above, accepted it: seven of the eight cells
+it changes got 1.5% to 2.5% faster, each beyond its spread (hit suffixes of
+34 and 1024 tokens, 1024 beside three decoding streams, a cold 512-token
+prompt and continuing chunks of 64, 128 and 1024 tokens); a cold 34-token
+prompt and every cell it leaves unchanged were unresolved.
+
 Physical snapshot buffers are not canonical byte representations of live
 state. They also copy unread ring cells, spare retained rows, unused tail
 cells and padding, which can retain a previous slot occupant's data. Byte

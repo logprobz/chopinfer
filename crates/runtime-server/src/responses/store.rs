@@ -76,7 +76,7 @@ impl Store {
             Some(drain) => tokio::select! {
                 biased;
                 () = cancellation.cancelled() => return Err(ApiError::unavailable("response cancelled while waiting for storage")),
-                () = drain.cancelled() => return Err(ApiError::unavailable("server drain deadline expired")),
+                () = drain.cancelled() => return Err(drain_expired()),
                 turn = self.admission.lock() => turn,
             },
             None => self
@@ -103,7 +103,7 @@ impl Store {
             tokio::select! {
                 () = &mut available => {},
                 () = cancellation.cancelled() => return Err(ApiError::unavailable("response cancelled while waiting for storage")),
-                () = drain.expect("waiting is enabled").cancelled() => return Err(ApiError::unavailable("server drain deadline expired")),
+                () = drain.expect("waiting is enabled").cancelled() => return Err(drain_expired()),
             }
         }
     }
@@ -176,6 +176,14 @@ impl Store {
             self.available.notify_waiters();
         }
     }
+    /// Whether a client cancelled the stored response `id`.
+    pub fn cancelled(&self, id: &str) -> bool {
+        self.entries
+            .lock()
+            .expect("response store")
+            .iter()
+            .any(|entry| entry.id == id && entry.response["status"] == "cancelled")
+    }
     pub fn cancel(&self, id: &str) -> Result<Value, ApiError> {
         let mut entries = self.entries.lock().expect("response store");
         let entry = entries
@@ -205,11 +213,24 @@ fn json_bytes(value: &impl serde::Serialize) -> usize {
 fn not_found(id: &str) -> ApiError {
     ApiError {
         status: axum::http::StatusCode::NOT_FOUND,
-        message: format!("Response with id '{id}' not found."),
+        message: format!("Response with id '{id}' not found.").into(),
         kind: "invalid_request_error",
         code: None,
         parameter: Some("response_id".to_owned()),
+        log: crate::error::ErrorLog {
+            summary: "response not found",
+            ..crate::error::ErrorLog::default()
+        },
     }
+}
+
+/// The refusal of a request still waiting for storage at the drain
+/// deadline: the one a request waiting for admission gets.
+fn drain_expired() -> ApiError {
+    ApiError::backend(
+        "server drain deadline expired",
+        Some("shutdown_timeout".into()),
+    )
 }
 
 #[cfg(test)]
@@ -261,5 +282,46 @@ mod tests {
             poll_once(newcomer.as_mut()).await,
             Poll::Ready(Ok(()))
         ));
+    }
+
+    /// A request the drain deadline ends while it waits for storage is a
+    /// shutdown, as one waiting for admission is: a warning, not a fault.
+    #[tokio::test]
+    async fn the_drain_deadline_ends_a_storage_wait_as_a_shutdown() {
+        let store = Store::new(1, 65536);
+        let drain = CancellationSignal::new();
+        let held = json!({"id":"held"});
+        store
+            .reserve(&held, &[], CancellationSignal::new(), 1024)
+            .unwrap();
+        let waiting = json!({"id":"waiting"});
+        let mut first = Box::pin(store.reserve_waiting(
+            &waiting,
+            &[],
+            CancellationSignal::new(),
+            1024,
+            Some(&drain),
+        ));
+        assert!(poll_once(first.as_mut()).await.is_pending());
+        let mut second = Box::pin(store.reserve_waiting(
+            &waiting,
+            &[],
+            CancellationSignal::new(),
+            1024,
+            Some(&drain),
+        ));
+        assert!(poll_once(second.as_mut()).await.is_pending());
+        drain.cancel();
+        // The first holds the turn and waits for an entry; the second waits
+        // for the turn.
+        for waiter in [first.as_mut(), second.as_mut()] {
+            let Poll::Ready(Err(error)) = poll_once(waiter).await else {
+                panic!("the drain deadline ends the wait");
+            };
+            assert_eq!(error.code.as_deref(), Some("shutdown_timeout"));
+            let detail = error.failure_detail();
+            assert_eq!(detail.status, 503);
+            assert!(detail.routine, "{detail:?}");
+        }
     }
 }

@@ -21,13 +21,7 @@ fn m2_mimo_combine() {
         let mut failures = conc::replay::Failures::default();
         for s in sessions {
             conc::exclusive(s)?;
-            let module = s
-                .context
-                .load_module(include_bytes!(concat!(
-                    env!("OUT_DIR"),
-                    "/row_engine.cubin"
-                )))
-                .map_err(|e| e.to_string())?;
+            let module = s.module("row_engine")?;
             let f = module.function(&entry.symbol).map_err(|e| e.to_string())?;
             for rows in conc::ROWS {
                 let result = (|| -> LabResult<()> {

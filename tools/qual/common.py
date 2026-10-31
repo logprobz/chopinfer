@@ -581,6 +581,16 @@ def live_identity(server):
     return serving
 
 
+def startup_level_hint(text):
+    """Why a server log may lack startup lines: serve writes them at info,
+    so a server at --log-level warn or error leaves none."""
+    found = re.findall(r"^startup logging: level=(\w+)$", text, re.M)
+    if found:
+        return f"; the server logged at level={found[-1]}, and startup lines need --log-level info or debug"
+    return ("; the log has no 'startup logging: level=' line, so the server ran at --log-level warn or "
+            "error, or predates log levels")
+
+
 def served_checkpoint(log, url):
     """The checkpoint identity and startup nonce the server listening at
     `url` reported in its startup log: every direct package, weight plan,
@@ -593,6 +603,8 @@ def served_checkpoint(log, url):
     if not listening or listening[-1].get("address") != address:
         raise ValueError(f"{log} is not the log of the server at {address}")
     records = [(kind, json.loads(record)) for kind, record in CHECKPOINT_RECORDS.findall(text)]
+    if not records:
+        raise ValueError(f"{log} has no startup checkpoint records{startup_level_hint(text)}")
     identities = {record.get("checkpoint_identity") for _, record in records}
     if len(identities) != 1 or None in identities:
         raise ValueError(f"{log} names no single checkpoint identity: {sorted(map(str, identities))}")

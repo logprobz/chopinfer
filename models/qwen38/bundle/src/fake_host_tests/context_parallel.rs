@@ -190,11 +190,11 @@ const DCP2_JOURNALS: [(&str, &str, (usize, u64)); 14] = [
     ("fp8", "prefill", (7522, 0x72CE202BEB6E8FDE)),
     ("fp8", "decode", (6139, 0xA443B344982D7392)),
     ("mtp-bf16", "create", (2380, 0xA6EAF2F09108B506)),
-    ("mtp-bf16", "prefill", (7234, 0x19D66D0D930AF5BC)),
+    ("mtp-bf16", "prefill", (7094, 0xCE90782AF36DEA78)),
     ("mtp-bf16", "decode", (4237, 0x2D13CE624654669C)),
     ("mtp-bf16", "verify", (6768, 0x5EA16EB6F21EAC36)),
     ("mtp-fp8", "create", (2380, 0xA6EAF2F09108B506)),
-    ("mtp-fp8", "prefill", (7234, 0x44F77C4B70AE5F46)),
+    ("mtp-fp8", "prefill", (7094, 0xF3E2F6B39C15CA16)),
     ("mtp-fp8", "decode", (4237, 0xC753B55654872090)),
     ("mtp-fp8", "verify", (6768, 0x31AFE8C98B7B62B2)),
 ];

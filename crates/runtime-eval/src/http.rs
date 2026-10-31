@@ -274,6 +274,32 @@ const CHECKPOINT_RECORDS: [&str; 4] = [
     "serving_identity",
 ];
 
+/// Why a log may lack startup lines (`common.startup_level_hint`): serve
+/// writes them at info, so a server at warn or error leaves none.
+fn startup_level_hint(text: &str) -> String {
+    // `^startup logging: level=(\w+)$` per line, the last match.
+    let level = text
+        .split('\n')
+        .rev()
+        .filter_map(|line| line.strip_prefix("startup logging: level="))
+        .find(|level| {
+            !level.is_empty()
+                && level
+                    .chars()
+                    .all(|character| character.is_alphanumeric() || character == '_')
+        });
+    match level {
+        Some(level) => format!(
+            "; the server logged at level={level}, and startup lines need --log-level info or debug"
+        ),
+        None => {
+            "; the log has no 'startup logging: level=' line, so the server ran at --log-level \
+                 warn or error, or predates log levels"
+                .to_owned()
+        }
+    }
+}
+
 /// The checkpoint identity and startup nonce the server listening at `url`
 /// reported in its startup log `log` (`common.served_checkpoint`): the
 /// last `listening` record names the URL's address, every direct package,
@@ -338,6 +364,12 @@ pub fn served_checkpoint(log: &Path, url: &str) -> Result<LoggedCheckpoint, Bind
         if kind == "serving_identity" {
             nonces.push(record.get("startup_nonce").cloned().unwrap_or(Value::Null));
         }
+    }
+    if identities.is_empty() {
+        return Err(unidentified(format!(
+            "{shown} has no startup checkpoint records{}",
+            startup_level_hint(&text)
+        )));
     }
     let checkpoint_identity = match identities.as_slice() {
         [Value::String(identity)] => identity.clone(),

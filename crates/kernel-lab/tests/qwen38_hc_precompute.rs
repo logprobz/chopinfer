@@ -199,13 +199,7 @@ impl Fixture {
             .into_iter()
             .find(|e| e.symbol == "chop_row_qwen38_hc_bottleneck_v1")
             .unwrap();
-        let row_module = s
-            .context
-            .load_module(include_bytes!(concat!(
-                env!("OUT_DIR"),
-                "/row_qwen38.cubin"
-            )))
-            .map_err(|e| e.to_string())?;
+        let row_module = s.module("row_qwen38")?;
         let functions = vec![
             configure(
                 if padded {

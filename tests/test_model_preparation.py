@@ -72,6 +72,8 @@ class PreparationProcess(unittest.TestCase):
         cls.environment = dict(os.environ, PATH=str(cls.install), CHOPINFER_DEV_SKIP_WARMUP="1")
         cls.environment.pop("CHOPINFER_BUNDLE_VERIFY_CACHE_DIR", None)
         cls.environment.pop("CHOPINFER_REFERENCE_TOKENS_FILE", None)
+        # The startup lines these tests read print at the default level.
+        cls.environment.pop("CHOPINFER_LOG_LEVEL", None)
 
     @classmethod
     def tearDownClass(cls):

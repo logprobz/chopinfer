@@ -122,4 +122,6 @@ power) is report-only.
 
 `test_serving.py` (stub server, client, GPU query and profiler on loopback,
 dummy processes) and `test_compare.py` (synthetic captures) run in
-`ci/cpu.sh` as the `ab-serving` step. They use no GPU.
+`ci/cpu.sh` as the `ab-serving` step. They use no GPU. A `test_serving.py`
+test fails if a process it started outlives it, and a test run stopped by
+SIGTERM or Ctrl-C kills and reaps what it started before it exits.

@@ -780,7 +780,7 @@ fn serving_kv_room_v1<D: HostDeviceBackendV1>(
         free
     } else {
         let (Some(total), Some(own)) = (total, own) else {
-            eprintln!(
+            runtime_log::error!(
                 "host acquire_serving_kv: this device backend does not account for its own \
                  memory, which --gpu-memory-utilization below 1 needs"
             );
@@ -1334,7 +1334,7 @@ fn borrow_rank_images_v1<D: HostDeviceBackendV1>(
                 .map(|manifest| weight_content::expected(manifest, image, description, upload.rank))
                 .transpose()
                 .map_err(|error| {
-                    eprintln!("weight content proof refused: {error}");
+                    runtime_log::error!("weight content proof refused: {error}");
                     BundleStatusV1::InvalidArgument
                 })?,
         );
@@ -1391,7 +1391,7 @@ fn borrow_rank_images_v1<D: HostDeviceBackendV1>(
     }
     let released = (policy == KeeperPolicyV1::Prefer && taken.is_empty() && !refused.is_empty())
         .then(|| crate::weight_keeper::release_v1(&directory));
-    eprintln!(
+    runtime_log::info!(
         "startup weight_keeper: {}",
         crate::weight_keeper::report_v1(
             policy,
@@ -1403,7 +1403,7 @@ fn borrow_rank_images_v1<D: HostDeviceBackendV1>(
         )
     );
     if policy == KeeperPolicyV1::Require && (error.is_some() || !refused.is_empty()) {
-        eprintln!(
+        runtime_log::error!(
             "host weight keeper: --weight-keeper-policy require refuses to load a rank image the keeper did not lend"
         );
         return Err(BundleStatusV1::HostError);
@@ -1475,7 +1475,7 @@ fn read_component_bytes_v1(
         ComponentStorageV1::Planned(image) => match image.read(offset, destination) {
             Ok(()) => true,
             Err(error) => {
-                eprintln!("host direct load failed: {error}");
+                runtime_log::error!("host direct load failed: {error}");
                 false
             }
         },
@@ -1558,7 +1558,7 @@ impl DirectLoadTimingV1 {
                 line["prewarm_seconds"] = prewarm.seconds.into();
                 line["prewarm_resident_bytes"] = prewarm.resident_bytes.into();
             }
-            eprintln!("startup direct_load: {line}");
+            runtime_log::info!("startup direct_load: {line}");
         }
     }
 }
@@ -1620,7 +1620,7 @@ fn prepare_rank_upload_v1<D: HostDeviceBackendV1>(
             match mapped {
                 Ok(key) => Some(key),
                 Err(status) => {
-                    eprintln!(
+                    runtime_log::warn!(
                         "host weight keeper: rank {} could not map its lent image: {}",
                         upload.rank,
                         status.name().unwrap_or("unknown status")
@@ -2344,7 +2344,7 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
             .map(|manifest| weight_content::expected(manifest, image, description, rank))
             .transpose()
             .map_err(|error| {
-                eprintln!("keeper content proof refused: {error}");
+                runtime_log::error!("keeper content proof refused: {error}");
                 BundleStatusV1::InvalidArgument
             })?;
         state.order.preflight(order)?;
@@ -2371,7 +2371,7 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
             let stream = stream.object;
             let actual = device_digest_v1(&mut state.device, stream, object, byte_length)?;
             if actual != expected.content_sha256 {
-                eprintln!(
+                runtime_log::error!(
                     "keeper uploaded bytes differ from the CPU content proof for rank {rank}"
                 );
                 return Err(BundleStatusV1::HostError);
@@ -3087,7 +3087,7 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
             .device
             .acquire_peer_access(owner, peer)
             .inspect_err(|status| {
-                eprintln!("host acquire_peer_access: {status:?}");
+                runtime_log::error!("host acquire_peer_access: {status:?}");
             })?;
         self.context_peer_leases.insert(
             edge,
@@ -3153,13 +3153,13 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
                 .device
                 .memory_pool_peer_access(pool, peer)
                 .inspect_err(|status| {
-                    eprintln!("host memory_pool_peer_access: {status:?}");
+                    runtime_log::error!("host memory_pool_peer_access: {status:?}");
                 })?;
         if !preexisting {
             self.device
                 .set_memory_pool_peer_access(pool, peer, true)
                 .inspect_err(|status| {
-                    eprintln!("host set_memory_pool_peer_access: {status:?}");
+                    runtime_log::error!("host set_memory_pool_peer_access: {status:?}");
                 })?;
         }
         self.pool_peer_leases.insert(
@@ -3400,7 +3400,7 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
             .device
             .allocate_device_buffer(pool, stream, byte_length, alignment)
             .inspect_err(|status| {
-                eprintln!(
+                runtime_log::error!(
                     "host allocate_device_buffer: {byte_length} bytes, pool {}, stream {:?}: {status:?}",
                     pool.get(), stream.map(DeviceObjectV1::get)
                 );
@@ -3411,7 +3411,7 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
         {
             Ok(true) => Ok(object),
             Ok(false) => {
-                eprintln!(
+                runtime_log::error!(
                     "host allocate_device_buffer: {byte_length} bytes, pool {}: the allocation \
                      does not meet the requested {alignment}-byte alignment",
                     pool.get()
@@ -3545,7 +3545,7 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
             .device
             .allocate_mapped_host_buffer(stream, byte_length, fill)
             .inspect_err(|status| {
-                eprintln!(
+                runtime_log::error!(
                     "host allocate_mapped_host_buffer: {byte_length} bytes: {status:?}; \
                      page-locked host memory may be limited (docs/developer-preview.md)"
                 );
@@ -3830,7 +3830,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                 .graph_memory_reserve_bytes
                 .saturating_add(policy.state_reserved_bytes);
             let Some(rank_available) = memory.room.checked_sub(held) else {
-                eprintln!(
+                runtime_log::error!(
                     "host acquire_serving_kv: rank {rank} {}; it leaves less than the \
                      {}-byte graph memory reserve and {} bytes of request state; \
                      no serving KV pool",
@@ -3841,7 +3841,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                 if let Some(minimum) =
                     memory.minimum_utilization(held.saturating_add(layout.page_bytes()))
                 {
-                    eprintln!(
+                    runtime_log::error!(
                         "host acquire_serving_kv: rank {rank} needs --gpu-memory-utilization \
                          of at least {minimum:.2} for one KV page"
                     );
@@ -3859,7 +3859,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             capacity = capacity.min(maximum);
         }
         let plan = PagedKvPlanV1::validate(layout, capacity, 1).map_err(|_| {
-            eprintln!(
+            runtime_log::error!(
                 "host acquire_serving_kv: {budget} device bytes per rank for KV hold {capacity} \
                  pages of {} bytes; no serving KV pool",
                 layout.page_bytes()
@@ -3924,7 +3924,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                 free_bytes: free,
                 free_low_bytes: free,
             };
-            eprintln!("{}", memory.sizing_line());
+            runtime_log::info!("{}", memory.sizing_line());
             device_memory.push(memory);
         }
         if let Some(report) = &state.device_memory_report {
@@ -3955,7 +3955,14 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         if runtime_engine::profile::ranges::diagnostic_note(message) {
             return Ok(());
         }
-        self.state.borrow_mut().device.log(message)
+        let _phase = runtime_engine::profile::PhaseTimer::traced(
+            runtime_engine::profile::StepPhase::BundleLog,
+        );
+        // Route counts reach the step trace whatever the log level.
+        runtime_engine::logging::record_route(message);
+        self.state.borrow_mut().device.log(message)?;
+        print_bundle_log_v1(message);
+        Ok(())
     }
 
     fn select_context(
@@ -4294,7 +4301,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             }
         }
         timing.report(upload_seconds, 0.0);
-        eprintln!(
+        runtime_log::info!(
             "startup weight_upload: {}",
             serde_json::json!({
                 "seconds":upload_seconds, "status":if sparse {"sparse-probe"} else if result.is_ok() {"complete"} else {"failed"},
@@ -4414,7 +4421,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                     ComponentStorageV1::Planned(image) => Some(image.image_role()),
                     ComponentStorageV1::Bytes(_) => None,
                 };
-                eprintln!(
+                runtime_log::info!(
                     "startup arena_digest: {}",
                     serde_json::json!({
                         "rank": rank, "bytes": prepared.byte_length(),
@@ -4440,7 +4447,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             .filter(|rank| rank.lent)
             .map(PreparedRankUploadV1::byte_length)
             .sum();
-        eprintln!(
+        runtime_log::info!(
             "startup weight_upload: {}",
             serde_json::json!({
                 "seconds":upload_seconds, "digest_seconds":digest_seconds, "status":if sparse {"sparse-probe"} else if result.is_ok() {"complete"} else {"failed"},
@@ -4658,7 +4665,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         };
         plan.validate()?;
         crate::host_rows::resident::register(&plan.planes).map_err(|error| {
-            eprintln!("host resident mapped rows: {error}");
+            runtime_log::error!("host resident mapped rows: {error}");
             BundleStatusV1::InvalidArgument
         })?;
         let object = state.device.create_mapped_gather(plan)?;
@@ -4809,7 +4816,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                 .large_fanout
                 .rows(&mapping, row_bytes, gather.rows, later)
                 .map_err(|error| {
-                    eprintln!("host gather_mapped_rows: {error}");
+                    runtime_log::error!("host gather_mapped_rows: {error}");
                     BundleStatusV1::HostError
                 })?;
             Some(read)
@@ -4833,7 +4840,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                 }
             })
             .inspect_err(|status| {
-                eprintln!(
+                runtime_log::error!(
                     "host gather_mapped_rows: {} rows of {row_bytes} bytes, stream {}: {status:?}",
                     gather.rows.len(),
                     stream.slot()
@@ -5200,7 +5207,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                 .contexts
                 .get(context)
                 .map_or(u32::MAX, |record| record.rank);
-            eprintln!(
+            runtime_log::debug!(
                 "graph capture memory rank {rank}: {before} bytes free before, {after} after, {} held",
                 i128::from(before) - i128::from(after)
             );
@@ -5350,7 +5357,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             .device
             .copy_host_to_device_ordered(stream_object, range, source)
             .inspect_err(|status| {
-                eprintln!(
+                runtime_log::error!(
                     "host copy_host_to_device: {} bytes, stream {}: {status:?}",
                     source.len(),
                     stream.slot()
@@ -5466,7 +5473,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             .device
             .zero_device_buffer(stream_object, range)
             .inspect_err(|status| {
-                eprintln!(
+                runtime_log::error!(
                     "host zero_device_buffer: {} bytes, stream {}, buffer {}: {status:?}",
                     destination.length,
                     stream.slot(),
@@ -5645,7 +5652,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                 state
                     .require_reachable_slots(launch_context, slots)
                     .inspect_err(|status| {
-                        eprintln!(
+                        runtime_log::error!(
                             "host launch_cuda_symbol {} peer pointers: {status:?}",
                             symbol.slot()
                         );
@@ -5653,7 +5660,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             }
         }
         let arguments = state.resolve_arguments(arguments).inspect_err(|status| {
-            eprintln!(
+            runtime_log::error!(
                 "host launch_cuda_symbol {} arguments: {status:?}",
                 symbol.slot()
             );
@@ -5662,7 +5669,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             .device
             .launch_symbol(stream_object, symbol_object, config, &arguments)
             .inspect_err(|status| {
-                eprintln!(
+                runtime_log::error!(
                     "host launch_cuda_symbol {} dispatch: {status:?}",
                     symbol.slot()
                 );
@@ -6300,7 +6307,7 @@ fn verify_direct_sources_v1(storage: &ComponentStorageV1) -> HostServiceResultV1
         return Ok(());
     };
     image.checkpoint().verify_unchanged().map_err(|error| {
-        eprintln!("host direct load failed: {error}");
+        runtime_log::error!("host direct load failed: {error}");
         BundleStatusV1::HostError
     })
 }
@@ -6535,6 +6542,22 @@ enum CaptureSubmissionV1 {
     Wait(SlotKeyV1),
     /// Any other work: graph launches and copies.
     Other,
+}
+
+/// Prints one bundle log message as `bundle: MESSAGE`. The log ABI has no
+/// severity, so only recognized routine trace schemas are leveled: they go
+/// through the bounded routine queue when their level is enabled, and are
+/// dropped before any formatting otherwise. Every other message is printed
+/// synchronously at every level, since it can be the sole failure detail.
+fn print_bundle_log_v1(message: &[u8]) {
+    match runtime_engine::logging::bundle_trace_level(message) {
+        // `error!` is the level written at every setting.
+        None => runtime_log::error!("bundle: {}", String::from_utf8_lossy(message)),
+        Some(level) if runtime_log::enabled(level) => {
+            runtime_engine::diagnostic!("bundle: {}", String::from_utf8_lossy(message));
+        }
+        Some(_) => {}
+    }
 }
 
 #[cfg(test)]

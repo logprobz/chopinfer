@@ -530,14 +530,7 @@ impl Modules {
 }
 
 fn module(session: &Session) -> LabResult<Module> {
-    let bytes: &[u8] = include_bytes!(concat!(
-        env!("OUT_DIR"),
-        "/sparse_attention_qwen38_sm120.cubin"
-    ));
-    session
-        .context
-        .load_module(bytes)
-        .map_err(|e| e.to_string())
+    session.module("sparse_attention_qwen38_sm120")
 }
 
 fn function(module: &Module, symbol: &str, dynamic_shared_bytes: u32) -> LabResult<Function> {

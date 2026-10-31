@@ -50,6 +50,12 @@ class StartupTimingTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 summarize(value)
 
+    def test_a_log_without_startup_lines_names_the_level_it_served_at(self):
+        with self.assertRaisesRegex(ValueError, "logged at level=warn, and startup lines need"):
+            summarize('startup logging: level=warn\n{"status":"listening"}\n')
+        with self.assertRaisesRegex(ValueError, "no 'startup logging: level=' line"):
+            summarize('{"status":"listening"}\n')
+
     def test_failed_pipeline_is_not_hidden_by_upload_success(self):
         with self.assertRaises(ValueError):
             summarize(log() + 'startup weight_pipeline: {"status":"failed"}\n')

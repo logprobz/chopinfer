@@ -1224,7 +1224,11 @@ impl GenerationBackend for EngineGenerationBackend {
             // is what later captures can take.
             if !begin && let Some(report) = &self.device_memory {
                 for line in report.warmup_lines() {
-                    eprintln!("{line}");
+                    if line.starts_with("WARNING:") {
+                        runtime_log::warn!("{line}");
+                    } else {
+                        runtime_log::info!("{line}");
+                    }
                 }
             }
             Ok(())
@@ -1818,6 +1822,42 @@ impl MetricsSnapshotProvider for NativeRuntimeMetricsV1 {
     fn snapshot(&self, monotonic_micros: u64) -> String {
         self.prometheus(monotonic_micros)
     }
+    fn summary(&self) -> Option<runtime_server::EngineSummaryV1> {
+        let engine = self.engine.snapshot();
+        let requests = self.engine.request_summary();
+        let kv = self.kv.snapshot();
+        let histogram =
+            |latency: runtime_engine::LatencyHistogram| runtime_server::LatencyHistogramV1 {
+                bounds_micros: latency.bounds,
+                cumulative: latency.cumulative,
+                count: latency.count,
+            };
+        Some(runtime_server::EngineSummaryV1 {
+            requests_submitted: engine.requests_submitted,
+            requests_completed: engine.requests_completed,
+            requests_failed: engine.requests_failed(),
+            requests_cancelled: engine.cancellations,
+            prompt_tokens: engine.prompt_tokens,
+            generation_tokens: engine.generation_tokens,
+            draft_tokens: engine.spec_draft_tokens,
+            accepted_tokens: engine.spec_accepted_tokens,
+            preemptions: requests.preemptions,
+            ttft: histogram(requests.ttft),
+            itl: histogram(requests.itl),
+            running: requests.running,
+            waiting: requests.waiting,
+            kv_tokens_used: kv.tokens,
+            kv_tokens_capacity: kv.capacity_tokens,
+            kv_blocks_used: kv.blocks_used,
+            kv_block_capacity: kv.block_capacity,
+            worker_state: match self.state.load(Ordering::Acquire) {
+                STARTING => "starting",
+                READY => "ready",
+                FAILED => "failed",
+                _ => "stopped",
+            },
+        })
+    }
 }
 
 struct WorkerSubmission {
@@ -1930,6 +1970,9 @@ impl Outbox {
 }
 
 struct ActiveGeneration {
+    /// The transport's request ID with its choice suffix, at most 128 bytes,
+    /// for the failure line that pairs with the transport's failure record.
+    request_id: String,
     events: Outbox,
     cancellation: CancellationSignal,
     decoder: CompletionDecoderV1,
@@ -1945,6 +1988,16 @@ struct ActiveGeneration {
     admission: Option<oneshot::Sender<Result<(), AdmissionError>>>,
     queued_since: Instant,
     group_admitted: Rc<Cell<bool>>,
+}
+
+/// `id` cut to at most 128 bytes at a character boundary.
+fn bounded_request_id(id: &str) -> String {
+    const LIMIT: usize = 128;
+    let mut end = id.len().min(LIMIT);
+    while !id.is_char_boundary(end) {
+        end -= 1;
+    }
+    id[..end].to_owned()
 }
 
 /// When the worker delivers a step's events.
@@ -1975,13 +2028,13 @@ fn shutdown_worker<E: ModelExecutor>(
     match engine.drain_kv_transfers() {
         Ok(()) => WorkerExit::Shutdown,
         Err(EngineError::KvTransferDrainTimeout) => {
-            eprintln!(
+            runtime_log::warn!(
                 "KV transfer shutdown drain timed out; retaining DMA leases for arena cleanup"
             );
             WorkerExit::Shutdown
         }
         Err(error) => {
-            eprintln!("KV transfer shutdown drain failed: {error}");
+            runtime_log::error!("KV transfer shutdown drain failed: {error}");
             WorkerExit::Fatal
         }
     }
@@ -2018,7 +2071,7 @@ where
             let pending = match engine.poll_idle_kv_transfers() {
                 Ok(pending) => pending,
                 Err(error) => {
-                    eprintln!("generation worker idle KV poll failed: {error}");
+                    runtime_log::error!("generation worker idle KV poll failed: {error}");
                     state.store(FAILED, Ordering::Release);
                     return WorkerExit::Fatal;
                 }
@@ -2216,7 +2269,7 @@ where
         crate::overlap::run_pending();
         update_transfer_readiness(&engine, state);
         if let Err(error) = &step {
-            eprintln!("generation engine step failed: {error:?}");
+            runtime_log::error!("generation engine step failed: {error:?}");
         }
         for (id, generation) in &mut active {
             if generation.admission.is_some()
@@ -2230,7 +2283,13 @@ where
         let events = engine.drain_events();
         for event in events {
             if let EngineEventKind::Error { message } = event.kind() {
-                eprintln!("generation request failed: {message}");
+                let request_id = active
+                    .get(&event.request_id())
+                    .map_or("unknown", |generation| generation.request_id.as_str());
+                runtime_log::error!(
+                    "generation request failed: request_id={request_id} engine_request_id={}: {message}",
+                    event.request_id().get()
+                );
             }
             if !handle_engine_event(&tokenizer, &mut engine, &mut active, event) {
                 state.store(FAILED, Ordering::Release);
@@ -2246,7 +2305,7 @@ where
             // device or scheduler state uncertain, so they still stop this worker.
             Err(EngineError::Sampling(_) | EngineError::Constraint(_)) => {}
             Ok(StepStatus::Idle) | Err(_) => {
-                eprintln!(
+                runtime_log::error!(
                     "generation worker stopping: {}",
                     stop_reason(&step, active.len())
                 );
@@ -2472,6 +2531,7 @@ fn admit<E: ModelExecutor>(
     active.insert(
         id,
         ActiveGeneration {
+            request_id: bounded_request_id(&request.request_id),
             events: Outbox::new(
                 events,
                 request.cancellation.clone(),
@@ -4741,6 +4801,54 @@ fn video_geometry_v1(
 
 #[cfg(test)]
 mod tests {
+    /// The summary's KV usage is occupied pages over pages, as the metrics
+    /// endpoint reports it. A prefix several sequences share holds its pages
+    /// once but counts its tokens for each sequence, so tokens can exceed the
+    /// capacity while pages remain.
+    #[test]
+    fn the_summary_reports_kv_usage_by_pages_as_the_metrics_endpoint_does() {
+        use runtime_server::MetricsSnapshotProvider;
+        let kv = runtime_kv::KvMetrics::new(runtime_kv::KvCachePrecision::Other);
+        let mut pool = runtime_kv::KvPool::new_with_metrics(
+            runtime_kv::KvGeometry::new(4, 4).unwrap(),
+            4,
+            kv.clone(),
+        )
+        .unwrap();
+        let prompt = pool.create_sequence(16).unwrap();
+        pool.append(prompt, 12).unwrap();
+        let _first = pool.fork(prompt, 16).unwrap();
+        let _second = pool.fork(prompt, 16).unwrap();
+        kv.observe_occupancy(pool.stats());
+        let metrics = super::NativeRuntimeMetricsV1 {
+            model_name: "fixture".to_owned(),
+            engine: super::EngineMetrics::default(),
+            kv,
+            state: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(super::READY)),
+            media: None,
+            device_memory: None,
+        };
+
+        let summary = metrics.summary().unwrap();
+
+        assert_eq!(
+            (summary.kv_tokens_used, summary.kv_tokens_capacity),
+            (36, 16)
+        );
+        assert_eq!((summary.kv_blocks_used, summary.kv_block_capacity), (3, 4));
+        let endpoint = metrics.prometheus(0);
+        let reported = endpoint
+            .lines()
+            .find(|line| line.starts_with("vllm:kv_cache_usage_perc{"))
+            .and_then(|line| line.rsplit(' ').next())
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap();
+        assert_eq!(
+            reported,
+            summary.kv_blocks_used as f64 / summary.kv_block_capacity as f64
+        );
+    }
+
     /// A chat whose render left reasoning open waits for a declared
     /// reasoning end token before its constraint applies; a chat prompt, a
     /// thinking prompt that continues a final assistant turn which already

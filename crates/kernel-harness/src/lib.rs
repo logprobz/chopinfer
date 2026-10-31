@@ -5,12 +5,14 @@
 //! ([`kit`]), encoder conformance ([`encoder`]), receipts and timing.
 //!
 //! It names no model and builds no cubin. A consumer passes what it tests as
-//! data: the cubins it embeds ([`Cubins`]), the catalogs it selects from
-//! (`&kernels_sm120::Catalogs`), and its declarations and cases.
+//! data: the cubins it embeds or its build script wrote ([`Cubins`]), the
+//! catalogs it selects from (`&kernels_sm120::Catalogs`), and its
+//! declarations and cases.
 //! kernel-lab runs the in-tree models' cases on it; a model runs its own
 //! from its own test crate.
 
 pub mod conformance;
+mod cubin_file;
 pub mod encoder;
 pub mod eviction;
 mod gpu_state;
@@ -36,6 +38,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+pub use cubin_file::CubinFile;
 
 thread_local! {
     static TIMING_LABEL: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
@@ -67,14 +71,23 @@ pub fn take_launched() -> std::collections::BTreeSet<String> {
 
 pub type LabResult<T> = Result<T, String>;
 
-/// The cubins a consumer embeds, by spec name, with each one's entry
-/// symbols: what [`Session::module`] loads by name. SM120's probe kernels
-/// (`probe_sm120`, `probe_pdl_prefetch_sm120`) are among them for the PDL
-/// checks and timing that launch them.
+/// The cubins a consumer embeds or its build script wrote, by spec name,
+/// with each one's entry symbols: what [`Session::module`] loads by name.
+/// SM120's probe kernels (`probe_sm120`, `probe_pdl_prefetch_sm120`) are
+/// among them for the PDL checks and timing that launch them.
 #[derive(Clone, Copy)]
 pub struct Cubins {
-    bytes: &'static [(&'static str, &'static [u8])],
+    images: Images,
     entries: &'static [(&'static str, &'static [&'static str])],
+}
+
+#[derive(Clone, Copy)]
+enum Images {
+    Embedded(&'static [(&'static str, &'static [u8])]),
+    Files {
+        dir: &'static str,
+        files: &'static [CubinFile],
+    },
 }
 
 impl Cubins {
@@ -87,16 +100,45 @@ impl Cubins {
         bytes: &'static [(&'static str, &'static [u8])],
         entries: &'static [(&'static str, &'static [&'static str])],
     ) -> Cubins {
-        Cubins { bytes, entries }
+        Cubins {
+            images: Images::Embedded(bytes),
+            entries,
+        }
+    }
+
+    /// The cubins `files` a build script wrote under `dir`, and their entry
+    /// symbols `entries`. A cubin is read and checked against its recorded
+    /// SHA-256 when first loaded ([`CubinFile::read`]), once per process, so
+    /// a binary carries no cubin bytes. `CHOPINFER_KERNEL_CUBIN_DIR`, when
+    /// set, replaces `dir`, for cubins staged away from their build.
+    pub const fn files(
+        dir: &'static str,
+        files: &'static [CubinFile],
+        entries: &'static [(&'static str, &'static [&'static str])],
+    ) -> Cubins {
+        Cubins {
+            images: Images::Files { dir, files },
+            entries,
+        }
     }
 
     /// The bytes of the cubin `name`.
     pub fn bytes(self, name: &str) -> LabResult<&'static [u8]> {
-        self.bytes
-            .iter()
-            .find(|(cubin, _)| *cubin == name)
-            .map(|(_, bytes)| *bytes)
-            .ok_or_else(|| format!("unknown cubin {name}"))
+        let unknown = || format!("unknown cubin {name}");
+        match self.images {
+            Images::Embedded(bytes) => bytes
+                .iter()
+                .find(|(cubin, _)| *cubin == name)
+                .map(|(_, bytes)| *bytes)
+                .ok_or_else(unknown),
+            Images::Files { dir, files } => {
+                let file = files
+                    .iter()
+                    .find(|file| file.name == name)
+                    .ok_or_else(unknown)?;
+                cubin_file::load(dir, file)
+            }
+        }
     }
 
     /// The entry symbols of the cubin `name`.

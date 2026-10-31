@@ -100,7 +100,7 @@ fn catalog() -> Vec<RowInstantiation> {
     kernels_sm120::row::catalog(kernel_lab::catalogs())
 }
 
-const ROW_CUBIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/row_engine.cubin"));
+const ROW_CUBIN: &str = "row_engine";
 
 /// The fill of sorted route rows, whose -1 padding is all-ones: 0x80808080
 /// is neither a route index nor -1.
@@ -452,10 +452,7 @@ fn as_f64(values: &[u16]) -> Vec<f64> {
 }
 
 fn module(session: &Session) -> LabResult<Module> {
-    session
-        .context
-        .load_module(ROW_CUBIN)
-        .map_err(|e| e.to_string())
+    session.module(ROW_CUBIN)
 }
 
 /// A buffer an entry writes, and what its replay checks expect of it.

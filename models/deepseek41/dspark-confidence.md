@@ -8,7 +8,7 @@ Uncomputed tails are omitted from the record.
 
 Records are off by default. Set `--model-option diagnostic_step_logs=true`
 to enable them together with the DSpark phase, Engram, prefetch and commit
-JSON records. The resolved diagnostic option is part of serving identity.
+JSON records, and serve with `--log-level debug`, the level that prints them. The resolved diagnostic option is part of serving identity.
 Logging does not change confidence computation, acceptance or device IO.
 
 The record carries opaque instance, execute-step and request IDs, the number

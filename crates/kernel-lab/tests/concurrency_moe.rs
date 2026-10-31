@@ -20,9 +20,6 @@ use kernels_sm120::moe::{self, Phase, Projection, Variant};
 use runtime_cuda::{DeviceBuffer, Function, Module};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::fs;
-
-use std::path::PathBuf;
 
 fn err(error: impl std::fmt::Display) -> String {
     error.to_string()
@@ -71,9 +68,7 @@ fn sample(seed: u64) -> f32 {
 }
 
 fn load_cubin(session: &Session, name: &str) -> LabResult<Module> {
-    let path = PathBuf::from(env!("OUT_DIR")).join(format!("{name}.cubin"));
-    let bytes = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    session.context.load_module(&bytes).map_err(err)
+    session.module(name)
 }
 
 use kernel_core::contract::MoeQuery;

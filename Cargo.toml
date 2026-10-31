@@ -35,6 +35,7 @@ members = [
     "crates/runtime-kernel-contract",
     "crates/runtime-kernels",
     "crates/runtime-kv",
+    "crates/runtime-log",
     "crates/runtime-media",
     "crates/runtime-model-api",
     "crates/runtime-sampling",
@@ -80,6 +81,7 @@ default-members = [
     "crates/runtime-kernel-contract",
     "crates/runtime-kernels",
     "crates/runtime-kv",
+    "crates/runtime-log",
     "crates/runtime-media",
     "crates/runtime-model-api",
     "crates/runtime-sampling",
@@ -137,6 +139,7 @@ runtime-host = { path = "crates/runtime-host" }
 runtime-kernel-contract = { path = "crates/runtime-kernel-contract" }
 runtime-kernels = { path = "crates/runtime-kernels" }
 runtime-kv = { path = "crates/runtime-kv" }
+runtime-log = { path = "crates/runtime-log" }
 runtime-media = { path = "crates/runtime-media" }
 runtime-model-api = { path = "crates/runtime-model-api" }
 runtime-server = { path = "crates/runtime-server" }

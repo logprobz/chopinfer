@@ -117,6 +117,11 @@ struct ResponseMetadata {
     max_new_tokens: usize,
     max_output_bytes: usize,
     stream_write_timeout: std::time::Duration,
+    /// The request's record, for a failure after the response began.
+    record: crate::request_log::RecordHandle,
+    /// A choice that another stream merges: it reports only the failure it
+    /// sent, and the merging stream reports how the stream ended.
+    merged: bool,
 }
 
 /// The sending half of one event stream body.
@@ -129,24 +134,149 @@ struct SseSender {
     frames: mpsc::Sender<Result<Bytes, Infallible>>,
     write_timeout: std::time::Duration,
     drain_expired: CancellationSignal,
+    /// How the stream ended, for its request-failure line.
+    end: Arc<StreamEnd>,
 }
 
 impl SseSender {
+    fn new(
+        frames: mpsc::Sender<Result<Bytes, Infallible>>,
+        write_timeout: std::time::Duration,
+        drain_expired: CancellationSignal,
+        record: &crate::request_log::RecordHandle,
+    ) -> Self {
+        Self {
+            frames,
+            write_timeout,
+            drain_expired,
+            end: Arc::new(StreamEnd {
+                record: record.clone(),
+                ..StreamEnd::default()
+            }),
+        }
+    }
+
     async fn frame(&self, frame: Bytes) -> bool {
         let send = tokio::time::timeout(self.write_timeout, self.frames.send(Ok(frame)));
-        if self.drain_expired.is_cancelled() {
+        let drained = self.drain_expired.is_cancelled();
+        let sent = if drained {
             // After the deadline a terminal frame is still worth one bounded try.
-            return matches!(send.await, Ok(Ok(())));
-        }
-        tokio::select! {
-            biased;
-            sent = send => matches!(sent, Ok(Ok(()))),
-            () = self.drain_expired.cancelled() => false,
+            send.await
+        } else {
+            tokio::select! {
+                biased;
+                sent = send => sent,
+                () = self.drain_expired.cancelled() => {
+                    self.end.stop(STREAM_DRAINED);
+                    return false;
+                }
+            }
+        };
+        match sent {
+            Ok(Ok(())) => true,
+            failed => {
+                self.end.stop(if drained {
+                    STREAM_DRAINED
+                } else if failed.is_ok() {
+                    STREAM_CLOSED
+                } else {
+                    STREAM_TIMED_OUT
+                });
+                false
+            }
         }
     }
 
     async fn closed(&self) {
         self.frames.closed().await;
+        self.end.stop(STREAM_CLOSED);
+    }
+}
+
+const STREAM_OPEN: u8 = 0;
+const STREAM_CLOSED: u8 = 1;
+const STREAM_TIMED_OUT: u8 = 2;
+const STREAM_DRAINED: u8 = 3;
+/// The request's cancellation fired before the backend's terminal event.
+const STREAM_CANCELLED: u8 = 4;
+
+/// How one event stream ended: the failure it sent its client, or why it
+/// stopped sending. Neither means it finished.
+#[derive(Default)]
+struct StreamEnd {
+    failure: std::sync::Mutex<Option<crate::request_log::FailureDetail>>,
+    reason: std::sync::atomic::AtomicU8,
+    record: crate::request_log::RecordHandle,
+}
+
+impl StreamEnd {
+    fn fail(&self, error: &ApiError) {
+        let detail = error.failure_detail();
+        // A Responses adapter reading this stream classifies its request as
+        // soon as it reads the error frame, maybe before this task ends.
+        if let Some(record) = self.record.record() {
+            record.store_for_adapter(&detail);
+        }
+        if let Ok(mut failure) = self.failure.lock() {
+            failure.get_or_insert(detail);
+        }
+    }
+
+    fn stop(&self, reason: u8) {
+        let _ =
+            self.reason
+                .compare_exchange(STREAM_OPEN, reason, Ordering::AcqRel, Ordering::Acquire);
+    }
+}
+
+/// Reports how one stream task ended, when the task ends: the failure it
+/// sent, a reader that stopped or timed out, a drain, or nothing for a
+/// stream that finished.
+struct StreamOutcome {
+    record: crate::request_log::RecordHandle,
+    request_id: String,
+    end: Arc<StreamEnd>,
+    /// A merged choice ends when its merge or a sibling stops it, which is
+    /// not its request's outcome, so it reports only a failure it sent.
+    merged: bool,
+}
+
+impl StreamOutcome {
+    fn new(metadata: &ResponseMetadata, request_id: String, end: &Arc<StreamEnd>) -> Self {
+        metadata.record.defer();
+        Self {
+            record: metadata.record.clone(),
+            request_id,
+            end: Arc::clone(end),
+            merged: metadata.merged,
+        }
+    }
+}
+
+impl Drop for StreamOutcome {
+    fn drop(&mut self) {
+        let Some(record) = self.record.record() else {
+            return;
+        };
+        let failure = self
+            .end
+            .failure
+            .lock()
+            .ok()
+            .and_then(|mut failure| failure.take());
+        let reason = self.end.reason.load(Ordering::Acquire);
+        if failure.is_none() && (reason == STREAM_OPEN || self.merged) {
+            return;
+        }
+        let id = &self.request_id;
+        match (failure, reason) {
+            (Some(detail), _) => record.report(detail, id),
+            (None, STREAM_TIMED_OUT) => {
+                record.report(crate::request_log::client_write_timeout_detail(), id);
+            }
+            (None, STREAM_DRAINED) => record.report(crate::request_log::shutdown_detail(), id),
+            (None, _) => record.stream_abandoned(id),
+        }
     }
 }
 
@@ -232,7 +362,7 @@ impl OutputBudget {
             .checked_add(bytes)
             .ok_or_else(|| invalid_backend_event("backend output size overflowed"))?;
         if used > self.maximum {
-            return Err(invalid_backend_event(&format!(
+            return Err(invalid_backend_event(format!(
                 "backend {context} exceeds the configured output byte budget"
             )));
         }
@@ -521,7 +651,7 @@ impl ChatEventFoldV1 {
 
 fn rejected_event(error: ApiError) -> FrontendErrorV1 {
     FrontendErrorV1 {
-        message: error.message,
+        message: error.message.into_owned(),
         parameter: error.parameter,
     }
 }
@@ -542,7 +672,11 @@ pub(crate) async fn health(State(state): State<Arc<ServerState>>) -> Response {
     if let Some(serving) = &state.serving {
         body["serving"] = serving.clone();
     }
-    json_response(status, body, &request_id)
+    let mut response = json_response(status, body, &request_id);
+    response
+        .extensions_mut()
+        .insert(crate::request_log::ReadinessAnswer);
+    response
 }
 
 pub(crate) async fn version() -> Json<Value> {
@@ -648,8 +782,10 @@ async fn generate_inner(
     let deadline = state
         .queue_wait
         .map(|wait| tokio::time::Instant::now() + wait);
-    let peer = request.extensions().get::<std::net::SocketAddr>().copied();
     let request_id = next_request_id();
+    let record = crate::request_log::RecordHandle::of(&request);
+    record.set_request_id(&request_id);
+    record.set_stage(crate::request_log::Stage::Intake);
     let client_request_id = match request::validate_headers(request.headers()) {
         Ok(value) => value.or_else(|| {
             request
@@ -689,6 +825,7 @@ async fn generate_inner(
         Err(error) => return error.into_response(&request_id),
     };
     waiting.move_to(crate::waiting::Stage::Preparation);
+    record.set_stage(crate::request_log::Stage::Preparation);
     let cancellation = CancellationSignal::new();
     let identity = request::RequestIdentityV1 {
         request_id: request_id.clone(),
@@ -702,6 +839,7 @@ async fn generate_inner(
     // preparation to stop waiting on media work for it.
     let preparing = Arc::clone(&state);
     let leaving = CancelOnDrop(Some(cancellation.clone()));
+    let preparing_record = record.clone();
     let prepared = tokio::task::spawn_blocking(move || {
         let mut intake = intake;
         let prepared = (|| {
@@ -716,7 +854,7 @@ async fn generate_inner(
             } else {
                 (body, None)
             };
-            prepare_request(&preparing, endpoint, &body, identity)
+            prepare_request(&preparing, endpoint, &body, identity, &preparing_record)
                 .map(|prepared| (prepared, context))
         })();
         (prepared, intake)
@@ -736,13 +874,11 @@ async fn generate_inner(
     let ((mut parsed, count, prepared_prompts, prompt_tokens), mut responses_context) =
         match prepared {
             Ok(prepared) => prepared,
-            Err(error) => {
-                error.log_model_refusal(peer, state.frontend.models());
-                return error.into_response(&request_id);
-            }
+            Err(error) => return error.into_response(&request_id),
         };
     waiting.expand(count);
     waiting.move_to(crate::waiting::Stage::Staging);
+    record.set_stage(crate::request_log::Stage::Admission);
     if count > state.max_in_flight {
         return ApiError::invalid(
             "prompt batch times n exceeds the server request limit",
@@ -793,6 +929,8 @@ async fn generate_inner(
         max_new_tokens: parsed.prepared.max_new_tokens,
         max_output_bytes: state.max_output_bytes,
         stream_write_timeout: state.stream_write_timeout,
+        record: record.clone(),
+        merged: false,
     };
     if let Some(context) = &mut responses_context {
         waiting.move_to(crate::waiting::Stage::Storage);
@@ -900,9 +1038,14 @@ async fn generate_inner(
         return admission_error(error).into_response(&request_id);
     }
     active.complete();
+    record.set_stage(crate::request_log::Stage::Generation);
     if count == 1 {
+        record.set_request_id(&format!("{request_id}_0"));
         let (metadata, events, active) = choices.pop().expect("one choice");
         if let Some(context) = responses_context {
+            // The adapter reports this request's outcome; the chat stream
+            // inside it only stores a failure.
+            record.hand_to_adapter();
             let response = streaming_response(metadata, events, active);
             return crate::responses::adapt(
                 state,
@@ -910,6 +1053,7 @@ async fn generate_inner(
                 context,
                 response_cancellation,
                 request_id,
+                record,
             )
             .await;
         }
@@ -934,11 +1078,14 @@ type PreparedRequestParts = (
 );
 
 /// Parses one body and prepares each of its prompts.
+/// Parses and tokenizes a request, writing the model and prompt length to
+/// `record` as they become known, so a refusal's line carries them too.
 fn prepare_request(
     state: &ServerState,
     endpoint: Endpoint,
     body: &[u8],
     identity: request::RequestIdentityV1,
+    record: &crate::request_log::RecordHandle,
 ) -> Result<PreparedRequestParts, ApiError> {
     let mut parsed = request::parse(
         state.frontend.as_ref(),
@@ -950,6 +1097,7 @@ fn prepare_request(
         body,
         identity,
     )?;
+    record.set_model(&parsed.prepared.model);
     let count = parsed
         .choices
         .saturating_mul(parsed.additional_prompts.len() + 1);
@@ -965,7 +1113,9 @@ fn prepare_request(
     let mut prompt_tokens = 0;
     for prompt in prompts {
         parsed.prepared.prompt = prompt;
-        let tokens = prepare_prompt(state, &mut parsed)?;
+        let tokens = prepare_prompt(state, &mut parsed, &|tokens| {
+            record.set_prompt_tokens((prompt_tokens + tokens) as u64);
+        })?;
         prompt_tokens += tokens;
         prepared_prompts.push((parsed.prepared.clone(), tokens));
     }
@@ -973,16 +1123,20 @@ fn prepare_request(
 }
 
 fn capacity_error(state: &ServerState) -> ApiError {
-    let message = state.acceptance_profile.profile_name().map_or_else(
-        || "server request capacity is exhausted".to_owned(),
-        |profile| format!("server profile {profile} request capacity is exhausted"),
-    );
+    let message: std::borrow::Cow<'static, str> =
+        state.acceptance_profile.profile_name().map_or_else(
+            || "server request capacity is exhausted".into(),
+            |profile| format!("server profile {profile} request capacity is exhausted").into(),
+        );
     ApiError::capacity(message)
 }
 
+/// Prepares the request's current prompt and returns its token count,
+/// telling `counted` each count it learns, before any refusal that follows.
 fn prepare_prompt(
     state: &ServerState,
     parsed: &mut request::ParsedRequest,
+    counted: &dyn Fn(usize),
 ) -> Result<usize, ApiError> {
     let truncation_limit = parsed.truncation.limit(
         state.maximum_context_tokens,
@@ -1024,14 +1178,17 @@ fn prepare_prompt(
                 prompt_tokens
             }
             Err(AdmissionError::PromptTooLong { prompt_tokens }) => {
+                counted(prompt_tokens);
                 return Err(prompt_too_long(state, parsed, prompt_tokens));
             }
             Err(error) => return Err(admission_error(error)),
         };
+    counted(prompt_tokens);
     let prompt_tokens =
         parsed
             .truncation
             .apply(&mut parsed.prepared.prompt, prompt_tokens, truncation_limit)?;
+    counted(prompt_tokens);
     // Which ids a prompt became is the tokenizer's answer rather than the
     // request's, so a profile that admits one exact prompt length is enforced
     // here, on the ids the engine would run.
@@ -1139,17 +1296,22 @@ async fn multiple_nonstreaming_response(
 ) -> Response {
     let mut tasks = tokio::task::JoinSet::new();
     for (metadata, events, active) in choices {
-        tasks.spawn(nonstreaming_response(metadata, events, active));
+        let index = metadata.choice_index;
+        tasks.spawn(async move { (index, nonstreaming_response(metadata, events, active).await) });
     }
     let mut result = Value::Null;
     let mut outputs = Vec::new();
     let mut completion_tokens = 0;
     let mut cached = 0;
     while let Some(response) = tasks.join_next().await {
-        let Ok(response) = response else {
+        let Ok((index, response)) = response else {
             return invalid_backend_event("choice task failed").into_response(&metadata.request_id);
         };
         if !response.status().is_success() {
+            // The failure line names the choice that failed.
+            metadata
+                .record
+                .set_request_id(&format!("{}_{index}", metadata.request_id));
             return response;
         }
         let Ok(body) = to_bytes(response.into_body(), usize::MAX).await else {
@@ -1185,17 +1347,24 @@ fn multiple_streaming_response(
     choices_per_prompt: usize,
 ) -> Response {
     let (frames, body_rx) = mpsc::channel::<Result<Bytes, Infallible>>(1);
-    let body_tx = SseSender {
+    let body_tx = SseSender::new(
         frames,
-        write_timeout: metadata.stream_write_timeout,
-        drain_expired: choices
+        metadata.stream_write_timeout,
+        choices
             .first()
             .map_or_else(CancellationSignal::new, |(_, _, active)| {
                 active.drain_expired.clone()
             }),
-    };
+        &metadata.record,
+    );
     let request_id = metadata.request_id.clone();
+    // Each choice's stream reports only the failure it sent; this one
+    // reports how the merged stream ended. A choice that fails ends the
+    // merge, which stops its siblings, and they must not claim the request
+    // as a client that left.
+    let outcome = StreamOutcome::new(&metadata, metadata.request_id.clone(), &body_tx.end);
     tokio::spawn(async move {
+        let _outcome = outcome;
         let count = choices.len();
         let (tx, mut rx) = mpsc::channel(count);
         let mut tasks = tokio::task::JoinSet::new();
@@ -1203,6 +1372,7 @@ fn multiple_streaming_response(
             let tx = tx.clone();
             choice_metadata.include_usage = true;
             choice_metadata.continuous_usage_stats = true;
+            choice_metadata.merged = true;
             let index = choice_metadata.choice_index;
             let response = streaming_response(choice_metadata, events, active);
             tasks.spawn(async move {
@@ -1273,9 +1443,9 @@ fn multiple_streaming_response(
         }
         while tasks.join_next().await.is_some() {}
         if finished != count {
-            let _ = send_sse(
+            let _ = send_error(
                 &body_tx,
-                &invalid_backend_event("choice stream ended early").value(),
+                &invalid_backend_event("choice stream ended early"),
             )
             .await;
         } else if metadata.include_usage {
@@ -1343,6 +1513,11 @@ async fn nonstreaming_response(
         Err(error) => return error.into_response(&metadata.request_id),
     };
     while let Some(event) = active.next_event(&mut events).await {
+        // A failure line, or a sweep at a worker failure, reports what the
+        // request generated before it ended.
+        metadata
+            .record
+            .add_generated_tokens(generated_token_count(&event));
         match event {
             GenerationEvent::AdmissionFailed(error) => {
                 return admission_error(error).into_response(&metadata.request_id);
@@ -1662,13 +1837,21 @@ fn streaming_response(
     mut active: ActiveRequest,
 ) -> Response {
     let (frames, body_rx) = mpsc::channel::<Result<Bytes, Infallible>>(1);
-    let body_tx = SseSender {
+    let body_tx = SseSender::new(
         frames,
-        write_timeout: metadata.stream_write_timeout,
-        drain_expired: active.drain_expired.clone(),
-    };
+        metadata.stream_write_timeout,
+        active.drain_expired.clone(),
+        &metadata.record,
+    );
     let response_metadata = metadata.clone();
+    let outcome = StreamOutcome::new(
+        &metadata,
+        format!("{}_{}", metadata.request_id, metadata.choice_index),
+        &body_tx.end,
+    );
     tokio::spawn(async move {
+        // The task owns the guard, which reports when the task ends.
+        let _outcome = outcome;
         let mut token_ids = GeneratedTokenBudget::new(metadata.max_new_tokens);
         let mut chat_started = false;
         let mut reasoning_tokens = 0_u64;
@@ -1685,7 +1868,7 @@ fn streaming_response(
         let mut fold = match EventFold::for_response(&metadata) {
             Ok(fold) => fold,
             Err(error) => {
-                let _ = send_sse(&body_tx, &error.value()).await;
+                let _ = send_error(&body_tx, &error).await;
                 let _ = send_done(&body_tx).await;
                 return;
             }
@@ -1705,25 +1888,23 @@ fn streaming_response(
                     "generation backend closed without a terminal event",
                     Some("incomplete_generation".to_owned()),
                 );
-                let _ = send_sse(&body_tx, &error.value()).await;
+                // A worker closes a cancelled request's events: the cause of
+                // the cancellation, not this error, is its outcome.
+                if active.cancellation.is_cancelled() {
+                    body_tx.end.stop(STREAM_CANCELLED);
+                    let _ = send_sse(&body_tx, &error.value()).await;
+                } else {
+                    let _ = send_error(&body_tx, &error).await;
+                }
                 let _ = send_done(&body_tx).await;
                 return;
             };
-            metadata.completion_tokens = metadata.completion_tokens.saturating_add(match &event {
-                GenerationEvent::Content(event) => event.generated_token_count as u64,
-                GenerationEvent::Reasoning(event) => event.generated_token_count as u64,
-                GenerationEvent::ToolCalls {
-                    generated_token_count,
-                    ..
-                }
-                | GenerationEvent::TokenUsageDelta {
-                    generated_token_count,
-                } => *generated_token_count as u64,
-                _ => 0,
-            });
+            let generated = generated_token_count(&event);
+            metadata.completion_tokens = metadata.completion_tokens.saturating_add(generated);
+            metadata.record.add_generated_tokens(generated);
             match event {
                 GenerationEvent::AdmissionFailed(error) => {
-                    let _ = send_sse(&body_tx, &admission_error(error).value()).await;
+                    let _ = send_error(&body_tx, &admission_error(error)).await;
                     let _ = send_done(&body_tx).await;
                     return;
                 }
@@ -1732,9 +1913,9 @@ fn streaming_response(
                         || ids.is_empty()
                         || token_ids.observe(ids.len()).is_err()
                     {
-                        let _ = send_sse(
+                        let _ = send_error(
                             &body_tx,
-                            &invalid_backend_event("invalid generated token IDs").value(),
+                            &invalid_backend_event("invalid generated token IDs"),
                         )
                         .await;
                         let _ = send_done(&body_tx).await;
@@ -1807,7 +1988,7 @@ fn streaming_response(
                 }
                 GenerationEvent::GeneratedTokenLogprobs(records) => {
                     if let Err(error) = fold.token_logprobs(&records) {
-                        let _ = send_sse(&body_tx, &error.value()).await;
+                        let _ = send_error(&body_tx, &error).await;
                         let _ = send_done(&body_tx).await;
                         return;
                     }
@@ -1858,7 +2039,7 @@ fn streaming_response(
                         }
                     }
                     if let Err(error) = fold.content(&content_event) {
-                        let _ = send_sse(&body_tx, &error.value()).await;
+                        let _ = send_error(&body_tx, &error).await;
                         let _ = send_done(&body_tx).await;
                         return;
                     }
@@ -1876,7 +2057,7 @@ fn streaming_response(
                             None => {
                                 let error =
                                     invalid_backend_event("completion token offsets overflowed");
-                                let _ = send_sse(&body_tx, &error.value()).await;
+                                let _ = send_error(&body_tx, &error).await;
                                 let _ = send_done(&body_tx).await;
                                 return;
                             }
@@ -1911,7 +2092,7 @@ fn streaming_response(
                 GenerationEvent::Reasoning(reasoning_event) => {
                     reasoning_tokens += reasoning_event.generated_token_count as u64;
                     if let Err(error) = fold.reasoning(&reasoning_event) {
-                        let _ = send_sse(&body_tx, &error.value()).await;
+                        let _ = send_error(&body_tx, &error).await;
                         let _ = send_done(&body_tx).await;
                         return;
                     }
@@ -1946,7 +2127,7 @@ fn streaming_response(
                 }
                 GenerationEvent::ToolCallDeltas(deltas) => {
                     if let Err(error) = fold.tool_deltas(&deltas) {
-                        let _ = send_sse(&body_tx, &error.value()).await;
+                        let _ = send_error(&body_tx, &error).await;
                         let _ = send_done(&body_tx).await;
                         return;
                     }
@@ -1971,7 +2152,7 @@ fn streaming_response(
                     let group = match fold.tool_calls(&calls, generated_token_count) {
                         Ok(group) => group,
                         Err(error) => {
-                            let _ = send_sse(&body_tx, &error.value()).await;
+                            let _ = send_error(&body_tx, &error).await;
                             let _ = send_done(&body_tx).await;
                             return;
                         }
@@ -2026,7 +2207,7 @@ fn streaming_response(
                     generated_token_count,
                 } => {
                     if let Err(error) = fold.token_usage(generated_token_count) {
-                        let _ = send_sse(&body_tx, &error.value()).await;
+                        let _ = send_error(&body_tx, &error).await;
                         let _ = send_done(&body_tx).await;
                         return;
                     }
@@ -2041,9 +2222,9 @@ fn streaming_response(
                     if metadata.logprobs.return_token_ids
                         && token_ids.observed as u64 != usage.completion_tokens
                     {
-                        let _ = send_sse(
+                        let _ = send_error(
                             &body_tx,
-                            &invalid_backend_event("generated token IDs differ from usage").value(),
+                            &invalid_backend_event("generated token IDs differ from usage"),
                         )
                         .await;
                         let _ = send_done(&body_tx).await;
@@ -2054,7 +2235,7 @@ fn streaming_response(
                     let (reason, usage) = match finished {
                         Ok(result) => result,
                         Err(error) => {
-                            let _ = send_sse(&body_tx, &error.value()).await;
+                            let _ = send_error(&body_tx, &error).await;
                             let _ = send_done(&body_tx).await;
                             return;
                         }
@@ -2123,12 +2304,12 @@ fn streaming_response(
                 GenerationEvent::Failed { message, code } => {
                     active.complete();
                     if let Err(error) = fold.failure(&message, code.as_deref()) {
-                        let _ = send_sse(&body_tx, &error.value()).await;
+                        let _ = send_error(&body_tx, &error).await;
                         let _ = send_done(&body_tx).await;
                         return;
                     }
                     let error = ApiError::backend(message, code);
-                    let _ = send_sse(&body_tx, &error.value()).await;
+                    let _ = send_error(&body_tx, &error).await;
                     let _ = send_done(&body_tx).await;
                     return;
                 }
@@ -2237,7 +2418,7 @@ async fn send_chat_start(
     }
     if metadata.logprobs.return_token_ids && prompt_ids.is_none() {
         let error = invalid_backend_event("backend omitted requested prompt token IDs");
-        let _ = send_sse(sender, &error.value()).await;
+        let _ = send_error(sender, &error).await;
         let _ = send_done(sender).await;
         return false;
     }
@@ -2256,6 +2437,13 @@ async fn send_chat_start(
     } else {
         false
     }
+}
+
+/// Sends `error` as the stream's terminal error, and keeps its log-safe
+/// detail for the request-failure line.
+async fn send_error(sender: &SseSender, error: &ApiError) -> bool {
+    sender.end.fail(error);
+    send_sse(sender, &error.value()).await
 }
 
 async fn send_done(sender: &SseSender) -> bool {
@@ -2405,7 +2593,7 @@ fn check_tool_call_group(
         // arguments parse the way it serializes them.
         frontend
             .validate_tool_call(&call.name, &call.arguments)
-            .map_err(|error| invalid_backend_event(&error.message))?;
+            .map_err(|error| invalid_backend_event(error.message))?;
         bytes = bytes
             .checked_add(call.name.len())
             .and_then(|bytes| bytes.checked_add(call.arguments.len()))
@@ -2561,8 +2749,24 @@ fn validate_failure_event(
     output_budget.charge(bytes, "failure event")
 }
 
-fn invalid_backend_event(message: &str) -> ApiError {
+fn invalid_backend_event(message: impl Into<std::borrow::Cow<'static, str>>) -> ApiError {
     ApiError::backend(message, Some("invalid_backend_event".to_owned()))
+}
+
+/// The generated tokens one backend event reports.
+fn generated_token_count(event: &GenerationEvent) -> u64 {
+    match event {
+        GenerationEvent::Content(event) => event.generated_token_count as u64,
+        GenerationEvent::Reasoning(event) => event.generated_token_count as u64,
+        GenerationEvent::ToolCalls {
+            generated_token_count,
+            ..
+        }
+        | GenerationEvent::TokenUsageDelta {
+            generated_token_count,
+        } => *generated_token_count as u64,
+        _ => 0,
+    }
 }
 
 /// Whether generated-token logprobs are returned. vLLM hides them together

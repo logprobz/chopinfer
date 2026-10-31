@@ -96,6 +96,9 @@ struct Model {
     /// reaches this length, so their sampling fails at the first disallowed
     /// token after it.
     unmasked: BTreeMap<RequestId, usize>,
+    /// Returns device results and allocates verify steps there, where it
+    /// refuses a grammar's rows as a bundle does.
+    device_allocation: bool,
 }
 
 impl Model {
@@ -107,6 +110,7 @@ impl Model {
             in_place: false,
             invalid: std::collections::BTreeSet::new(),
             unmasked: BTreeMap::new(),
+            device_allocation: false,
         }
     }
 
@@ -162,6 +166,26 @@ impl ModelExecutor for Model {
 
     fn rollback_preserves_state_v1(&self) -> bool {
         !self.in_place
+    }
+
+    fn device_results_v1(&self) -> bool {
+        self.device_allocation
+    }
+
+    fn allocates_verify_drafts_v1(&self) -> bool {
+        self.device_allocation
+    }
+
+    fn execute_allocated<'a>(
+        &'a mut self,
+        _: &[ModelBatchItem],
+        _: &PreparedAppendBatch,
+        _: &runtime_engine::StepAllocation,
+    ) -> Result<ModelTransaction<Self::TransactionState<'a>>, ExecutorError> {
+        Err(
+            ExecutorError::new("an allocated step of grammar rows without mapped sampling")
+                .unwrap(),
+        )
     }
 
     fn retire_request_v1(&mut self, id: RequestId) -> Result<(), ExecutorError> {
@@ -417,6 +441,37 @@ fn constrained_outputs_are_valid_and_speculation_changes_nothing() {
             let outputs = run(&mut engine, &requests).unwrap();
             assert_eq!(outputs, baseline, "{rows:?} with {source:?} drafts");
         }
+    }
+}
+
+/// A grammar evolves with every token, so an executor with device results
+/// verifies a constrained step with host values and cannot allocate it:
+/// with confidence, constrained requests keep unallocated verify steps and
+/// emit what they emit without speculation. Such a step used to reach the
+/// executor allocated and fail.
+#[test]
+fn constrained_steps_over_device_results_stay_unallocated() {
+    let grammar = grammar();
+    let requests = requests(24, &grammar, false);
+    for rows in [Rows::Logits, Rows::Sampled] {
+        let mut plain = Engine::new(config(None), Model::new(rows)).unwrap();
+        let baseline = run(&mut plain, &requests).unwrap();
+        let speculation = SpeculationConfig::new(
+            5,
+            24,
+            SpeculationMode::Balanced(runtime_engine::DraftDepths::parse("1:5").unwrap()),
+            DraftSource::Bundle,
+        )
+        .unwrap()
+        .with_verify_widths(runtime_engine::VerifyWidths::parse("6,8,16").unwrap())
+        .with_verify_allocation(Some(
+            runtime_engine::VerifyAllocation::new(1, &[(1.0, 0.0); 5], &[(1.0, 0.0); 5]).unwrap(),
+        ));
+        let mut model = Model::new(rows);
+        model.device_allocation = true;
+        let mut engine = Engine::new(config(Some(speculation)), model).unwrap();
+        let outputs = run(&mut engine, &requests).unwrap();
+        assert_eq!(outputs, baseline, "{rows:?}");
     }
 }
 

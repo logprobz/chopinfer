@@ -24,6 +24,8 @@ LOAD_MARGIN_SECONDS = 5
 # test_model_preparation.py's HANG_SECONDS. The drain deadlines the tests
 # check keep their own bounds below.
 HANG_SECONDS = 20 * 60
+# The startup lines these tests read print at the default level.
+SERVE_ENVIRONMENT = {name: value for name, value in os.environ.items() if name != "CHOPINFER_LOG_LEVEL"}
 
 
 def wait_until(predicate, timeout=None):
@@ -75,7 +77,7 @@ class ProcessLifecycle(unittest.TestCase):
 
     def start(self, timeout=30000, extra=(), package=None):
         self.drain_timeout_seconds = timeout / 1000
-        env = dict(os.environ, TP4_FIXTURE_CONTROL_DIR=str(self.control))
+        env = dict(SERVE_ENVIRONMENT, TP4_FIXTURE_CONTROL_DIR=str(self.control))
         self.process = subprocess.Popen([
             str(TARGET / "chopinfer"), "serve", "--bundle", str(package or self.package),
             "--checkpoint", str(self.checkpoint), "--fake-host-services", "--listen", "127.0.0.1:0", "--max-sequences", "1",
@@ -130,7 +132,7 @@ class ProcessLifecycle(unittest.TestCase):
             str(TARGET / "chopinfer"), "serve", "--bundle", str(self.package),
             "--checkpoint", str(self.checkpoint), "--fake-host-services",
             "--listen", "127.0.0.1:0", "--kv-cache-dtype", "fp8",
-        ], cwd=ROOT, capture_output=True, text=True, timeout=HANG_SECONDS)
+        ], cwd=ROOT, env=SERVE_ENVIRONMENT, capture_output=True, text=True, timeout=HANG_SECONDS)
         self.assertNotEqual(refused.returncode, 0)
         self.assertIn("--kv-cache-dtype fp8: bundle", refused.stderr)
         self.assertIn("declares no fp8 KV layout; it supports bf16", refused.stderr)
@@ -176,7 +178,7 @@ class ProcessLifecycle(unittest.TestCase):
                     "--checkpoint", str(self.checkpoint), "--fake-host-services",
                     "--listen", "127.0.0.1:0", "--max-sequences", "1",
                     "--kv-cache-dtype", dtype,
-                ], cwd=ROOT, capture_output=True, text=True, timeout=HANG_SECONDS)
+                ], cwd=ROOT, env=SERVE_ENVIRONMENT, capture_output=True, text=True, timeout=HANG_SECONDS)
                 self.assertNotEqual(refused.returncode, 0, refused.stdout)
                 self.assertIn("serving KV cache dtype: fp8", refused.stdout)
                 self.assertIn("refused this host", refused.stdout + refused.stderr)

@@ -821,9 +821,10 @@ impl SharedV1 {
             }
             OperationV1::Lease => self.lend(&stream, peer.pid, &request, &proofs),
             OperationV1::Release | OperationV1::Stop => {
-                eprintln!(
+                runtime_log::info!(
                     "weight keeper: {:?} requested by process {}",
-                    request.op, peer.pid
+                    request.op,
+                    peer.pid
                 );
                 let state = self.state();
                 if request.op == OperationV1::Release && state.leases > 0 {
@@ -891,7 +892,7 @@ impl SharedV1 {
         state.leases += 1;
         let _ = self.write_registry(&state);
         drop(state);
-        eprintln!("weight keeper: lent {lent} images to process {pid}");
+        runtime_log::info!("weight keeper: lent {lent} images to process {pid}");
         // The lease lasts until the borrower closes the connection or exits.
         let _ = stream.set_read_timeout(None);
         let mut rest = [0_u8; 64];
@@ -900,7 +901,7 @@ impl SharedV1 {
         state.leases -= 1;
         state.last_lease_end_unix = unix_seconds();
         let _ = self.write_registry(&state);
-        eprintln!("weight keeper: process {pid} returned its lease");
+        runtime_log::info!("weight keeper: process {pid} returned its lease");
     }
 }
 
@@ -944,7 +945,7 @@ pub(crate) fn serve_v1(keeper: KeeperV1) -> Result<KeeperExitedV1, String> {
         exiting: AtomicBool::new(false),
     });
     shared.write_registry(&shared.state())?;
-    eprintln!(
+    runtime_log::info!(
         "weight keeper: ready, {} images, {}",
         shared.keeper.images.len(),
         socket.display()

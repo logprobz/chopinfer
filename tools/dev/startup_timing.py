@@ -31,6 +31,15 @@ def diagnostics(counters):
                 nonnegative(value, f"{name}.{field}", integer=not field.endswith("_seconds"))
 
 
+def level_hint(text):
+    """Why a log may lack startup lines: serve writes them at info."""
+    found = re.findall(r"^startup logging: level=(\w+)$", text, re.M)
+    if found:
+        return f"; the server logged at level={found[-1]}, and startup lines need --log-level info or debug"
+    return ("; the log has no 'startup logging: level=' line, so the server ran at --log-level warn or "
+            "error, or predates log levels")
+
+
 def summarize(text):
     result = {name: [] for name in ("direct_package", "weight_plan", "direct_load", "weight_upload",
                                     "weight_pipeline")}
@@ -52,7 +61,7 @@ def summarize(text):
                 raise ValueError(f"invalid or repeated {name}")
             result[elapsed[name]] = float(number[1])
     if not result["weight_upload"] or "readiness_seconds" not in result:
-        raise ValueError("startup did not finish a weight upload and reach readiness")
+        raise ValueError("startup did not finish a weight upload and reach readiness" + level_hint(text))
     if result["direct_package"]:
         if len(result["direct_package"]) != 1:
             raise ValueError("multiple direct package preparations")

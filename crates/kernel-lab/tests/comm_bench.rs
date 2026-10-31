@@ -1238,15 +1238,7 @@ fn run_wide(sessions: &[Session], rows: usize, combine: bool) -> LabResult<()> {
         .collect::<LabResult<Vec<_>>>()?;
     let row_modules = sessions
         .iter()
-        .map(|session| {
-            session
-                .context
-                .load_module(include_bytes!(concat!(
-                    env!("OUT_DIR"),
-                    "/row_engine.cubin"
-                )))
-                .map_err(|e| e.to_string())
-        })
+        .map(|session| session.module("row_engine"))
         .collect::<LabResult<Vec<_>>>()?;
     let mut results = Vec::new();
     for arm in ["wide", "phased"] {

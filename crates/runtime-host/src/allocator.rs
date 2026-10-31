@@ -18,9 +18,10 @@ fn arena_limit(value: Option<&std::ffi::OsStr>) -> Result<Option<i32>, String> {
 
 /// Called by the CLI before command parsing, model loading or thread startup.
 /// Zero leaves glibc's startup configuration intact. Library embedders retain
-/// ownership of their process-wide allocator policy.
+/// ownership of their process-wide allocator policy. Returns the startup note
+/// the CLI logs once it knows the log level.
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
-pub(crate) fn configure_serving_process() -> Result<(), String> {
+pub(crate) fn configure_serving_process() -> Result<Option<String>, String> {
     let limit = arena_limit(std::env::var_os(VARIABLE).as_deref())?;
     if let Some(limit) = limit {
         // SAFETY-REVIEWED: a positive c_int changes policy without moving live data.
@@ -30,16 +31,15 @@ pub(crate) fn configure_serving_process() -> Result<(), String> {
         if applied == 0 {
             return Err(format!("glibc refused {VARIABLE}={limit}"));
         }
-        eprintln!("host allocator: arena_max={limit}");
+        Ok(Some(format!("host allocator: arena_max={limit}")))
     } else {
-        eprintln!("host allocator: arena_max=default");
+        Ok(Some("host allocator: arena_max=default".to_owned()))
     }
-    Ok(())
 }
 
 #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
-pub(crate) fn configure_serving_process() -> Result<(), String> {
-    Ok(())
+pub(crate) fn configure_serving_process() -> Result<Option<String>, String> {
+    Ok(None)
 }
 
 #[cfg(test)]

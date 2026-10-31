@@ -1367,14 +1367,17 @@ fn main() {
         )
         .expect("build audited kernel-lab family cubins"),
     );
-    // Every built cubin by name, for `Session::module`.
-    let mut table = String::from("static CUBINS: &[(&str, &[u8])] = &[\n");
+    // Every built cubin by name, for `Session::module`: its path under
+    // OUT_DIR and the SHA-256 the build checked against its lock. A test
+    // reads only the cubins it loads, so no binary embeds the set.
+    let mut table = String::from("static CUBIN_FILES: &[kernel_harness::CubinFile] = &[\n");
     for cubin in built {
         let file = cubin.path.strip_prefix(&out).expect("cubin under OUT_DIR");
         table.push_str(&format!(
-            "({:?}, include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{}\"))),\n",
+            "kernel_harness::CubinFile {{ name: {:?}, path: {:?}, sha256: {:?} }},\n",
             cubin.name,
-            file.to_str().expect("UTF-8 cubin filename")
+            file.to_str().expect("UTF-8 cubin filename"),
+            cubin.sha256
         ));
     }
     table.push_str("];\n");

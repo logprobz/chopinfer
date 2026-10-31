@@ -100,7 +100,11 @@ zero tokens drop a profile's calibration, and `off` replaces it. Startup logs
 confidence when the package does not declare the capability or names
 another contract. A run with `--debug-reference-tokens` also serves without
 it, because forced rows are scored on the host and allocated verify steps
-need device results.
+need device results. For the same reason a step with any request whose
+sampling depends on its history (a presence, frequency or repetition
+penalty, or a grammar constraint such as a structured output or a required
+or named tool choice) is verified on the host without allocation, with the
+drafts the plan gives it without confidence.
 
 ## GPU memory
 

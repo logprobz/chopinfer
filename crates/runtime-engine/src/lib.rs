@@ -15,6 +15,7 @@ mod speculation;
 mod step_rows;
 pub mod warmup;
 
+pub use compatibility::{LatencyHistogram, RequestSummary};
 pub use media::{
     MAX_MEDIA_ENCODERS, MediaArenaV1, MediaConfigError, MediaConfigV1, MediaEncodeV1,
     MediaInjectV1, MediaInputV1, MediaPayloadSourceV1, MediaPayloadV1, MediaRequestError,
@@ -1521,7 +1522,9 @@ pub trait ModelExecutor {
     /// reports each bundle-drafted item's verified drafts: the drafts of its
     /// `DraftRow`, or its `AcceptedPrefix::drafted`. Its rows keep the
     /// reserved layout, and a row past an item's verified drafts repeats
-    /// its last verified row. The default refuses.
+    /// its last verified row. An executor with device results receives
+    /// only steps whose every item's sampling is history-independent. The
+    /// default refuses.
     fn execute_allocated<'a>(
         &'a mut self,
         items: &[ModelBatchItem],
@@ -3723,7 +3726,16 @@ fn plan_drafts<E: ModelExecutor>(
             remaining_tokens: candidate.remaining_tokens(),
         });
     }
-    let mut drafts = policy.plan(&plan_candidates, budget);
+    // An executor with device results verifies an allocated step on the
+    // device, which samples only history-independent rows. It returns host
+    // values for a step with any other item, so such a step is not allocated.
+    let allocatable = !executor.device_results_v1()
+        || candidates.iter().all(|candidate| {
+            requests
+                .get(&candidate.request_id())
+                .is_some_and(RequestRecord::history_independent)
+        });
+    let mut drafts = policy.plan_step(&plan_candidates, budget, allocatable);
     let planned = policy.take_allocation();
     pin_drafts(
         requests,

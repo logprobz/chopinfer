@@ -1907,29 +1907,11 @@ pub mod execution {
                     (tiles * 4).max(push.epoch_bytes as usize),
                 )?;
             }
-            let row_module = session
-                .context
-                .load_module(include_bytes!(concat!(
-                    env!("OUT_DIR"),
-                    "/row_engine.cubin"
-                )))
-                .map_err(|e| e.to_string())?;
+            let row_module = session.module("row_engine")?;
             let gemm_module = session.module("gemm_mimo_sm120")?;
-            let attention_module = session
-                .context
-                .load_module(include_bytes!(concat!(
-                    env!("OUT_DIR"),
-                    "/attention_mimo_sm120.cubin"
-                )))
-                .map_err(|e| e.to_string())?;
+            let attention_module = session.module("attention_mimo_sm120")?;
             let comm_module = session.module("comm_sm120")?;
-            let route_module = session
-                .context
-                .load_module(include_bytes!(concat!(
-                    env!("OUT_DIR"),
-                    "/chop_moe_mimo_decode_route_b16.cubin"
-                )))
-                .map_err(|e| e.to_string())?;
+            let route_module = session.module("chop_moe_mimo_decode_route_b16")?;
             let mut modules = vec![
                 row_module,
                 gemm_module,
@@ -2111,13 +2093,7 @@ pub mod execution {
             this.alloc(session, TOKEN_IDS, rows_capacity * 4)?;
             this.alloc(session, FINAL, rows_capacity * H * 2)?;
             this.alloc(session, LIVE, 4)?;
-            let module = session
-                .context
-                .load_module(include_bytes!(concat!(
-                    env!("OUT_DIR"),
-                    "/row_engine.cubin"
-                )))
-                .map_err(|e| e.to_string())?;
+            let module = session.module("row_engine")?;
             for (rows, prefill) in [(rows_capacity, true), (1, false)] {
                 let mut stages = Vec::new();
                 this.push_row(
@@ -2162,13 +2138,7 @@ pub mod execution {
             this.alloc(session, NORM, 8192 * H * 2)?;
             this.alloc(session, HEAD_OUT, 8192 * VOCAB_PER_RANK * 4)?;
             this.alloc(session, LIVE, 4)?;
-            let row_module = session
-                .context
-                .load_module(include_bytes!(concat!(
-                    env!("OUT_DIR"),
-                    "/row_engine.cubin"
-                )))
-                .map_err(|e| e.to_string())?;
+            let row_module = session.module("row_engine")?;
             let gemm_module = session.module("gemm_mimo_sm120")?;
             for (rows, symbol) in [
                 (rows_capacity, "chop_gemm_mimo_head_f32_prefill_v1"),

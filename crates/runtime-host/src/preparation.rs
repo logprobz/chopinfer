@@ -316,7 +316,7 @@ fn prepare_direct_with_executable(
     let (provider, names_profile) =
         accepting_provider(&path, model.tensor_parallel_size, executable)?;
     let provider = &provider;
-    eprintln!(
+    runtime_log::info!(
         "startup provider_discovery: {:.6}s",
         discovery_started.elapsed().as_secs_f64()
     );
@@ -402,7 +402,7 @@ fn prepare_direct_with_executable(
     if !exchange.child.wait()?.success() {
         return Err("preparation helper failed during lease handoff".into());
     }
-    eprintln!(
+    runtime_log::info!(
         "startup direct_package: {}",
         serde_json::to_string(&package)?
     );

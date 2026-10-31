@@ -32,15 +32,30 @@ pub struct AcceptedPrefix {
     pub empty_row: Option<usize>,
 }
 
+/// Whether sampling with `parameters` is independent of history: no penalty
+/// reads the tokens before a row, and no grammar (`constrained`) evolves
+/// with them.
+fn history_independent(parameters: &SamplingParameters, constrained: bool) -> bool {
+    !constrained
+        && parameters.repetition_penalty() == 1.0
+        && parameters.frequency_penalty() == 0.0
+        && parameters.presence_penalty() == 0.0
+}
+
+impl RequestRecord {
+    /// Whether the sampling of this request's next step is independent of
+    /// history, as [`SamplingWork::history_independent`] decides for it.
+    pub(crate) fn history_independent(&self) -> bool {
+        history_independent(&self.sampling, self.constraint.is_some())
+    }
+}
+
 impl SamplingWork {
     /// Verify rows can omit draft IDs only when their sampling mathematics
     /// does not depend on history or an evolving grammar.
     #[must_use]
     pub fn history_independent(&self) -> bool {
-        self.constraint.is_none()
-            && self.parameters.repetition_penalty() == 1.0
-            && self.parameters.frequency_penalty() == 0.0
-            && self.parameters.presence_penalty() == 0.0
+        history_independent(&self.parameters, self.constraint.is_some())
     }
 
     pub fn for_device_verify_row(&self, row: usize) -> Result<Self, ExecutorError> {

@@ -149,27 +149,85 @@ fn write_loop(mut writer: impl Write, receiver: mpsc::Receiver<Message>, counts:
 
 static LOGGER: OnceLock<Logger> = OnceLock::new();
 
-/// The untyped bundle log callback defaults to reliable delivery. Recognize
-/// only routine trace schema kinds, without depending on a model or bundle.
-pub fn is_routine_bundle_trace(message: &[u8]) -> bool {
-    if message.first() != Some(&b'{') {
-        return false;
+/// Model-neutral routine trace kinds: `chopinfer.<model>.<kind>`.
+const ROUTINE_KINDS: [&str; 4] = [
+    ".step-shape.v1",
+    ".commit-shape.v1",
+    ".drafter-catch-up.v1",
+    ".drafter-confidence.v1",
+];
+const GRAPH_CACHE: &str = "chopinfer.graph-cache.v1";
+const ROUTE_SCHEMA: &str = "chopinfer.route.v1";
+/// Graph-cache events an operator reads at `info`: the cache's capacity, a
+/// failed capture, the start of eviction and a full release. Captures and
+/// eager fallbacks, and any event this host does not know, are routine.
+const GRAPH_CACHE_EVENTS: [&str; 4] = [
+    "capacity",
+    "capture-failed",
+    "eviction-begin",
+    "release-all",
+];
+
+/// The level of one bundle log message, without depending on a model or
+/// bundle, or `None` for a message this host cannot classify. The log ABI has
+/// no severity and an unclassified message can be the sole failure detail, so
+/// it reaches stderr synchronously at every level. Classified messages are
+/// routine: they go through the bounded queue, and only when their level is
+/// enabled.
+pub fn bundle_trace_level(message: &[u8]) -> Option<runtime_log::Level> {
+    if message.first() != Some(&b'{') || !names_known_schema(message) {
+        return None;
     }
-    let Ok(value) = serde_json::from_slice::<serde_json::Value>(message) else {
-        return false;
-    };
-    value
-        .get("schema")
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|schema| {
-            schema.starts_with("chopinfer.")
-                && (schema.ends_with(".step-shape.v1")
-                    || schema.ends_with(".commit-shape.v1")
-                    || schema == "chopinfer.graph-cache.v1"
-                    || schema == "chopinfer.route.v1"
-                    || schema.ends_with(".drafter-catch-up.v1")
-                    || schema.ends_with(".drafter-confidence.v1"))
-        })
+    // Borrow only the two fields; the rest of the record is skipped, never
+    // built into a tree.
+    #[derive(serde::Deserialize)]
+    struct Head<'a> {
+        #[serde(borrow, default)]
+        schema: Option<std::borrow::Cow<'a, str>>,
+        #[serde(borrow, default)]
+        event: Option<std::borrow::Cow<'a, str>>,
+    }
+    let head = serde_json::from_slice::<Head<'_>>(message).ok()?;
+    let schema = head.schema?;
+    if schema == GRAPH_CACHE {
+        return Some(
+            if head
+                .event
+                .is_some_and(|event| GRAPH_CACHE_EVENTS.contains(&event.as_ref()))
+            {
+                runtime_log::Level::Info
+            } else {
+                runtime_log::Level::Debug
+            },
+        );
+    }
+    is_routine_schema(&schema).then_some(runtime_log::Level::Debug)
+}
+
+fn is_routine_schema(schema: &str) -> bool {
+    schema == ROUTE_SCHEMA
+        || (schema.starts_with("chopinfer.")
+            && ROUTINE_KINDS.iter().any(|kind| schema.ends_with(kind)))
+}
+
+/// Whether `message` holds a JSON string naming a classified schema, a byte
+/// scan that keeps unrelated diagnostics away from the JSON parser.
+fn names_known_schema(message: &[u8]) -> bool {
+    const OPEN: &[u8] = b"\"chopinfer.";
+    let mut rest = message;
+    while let Some(start) = rest.windows(OPEN.len()).position(|bytes| bytes == OPEN) {
+        let name = &rest[start + 1..];
+        let Some(end) = name.iter().position(|&byte| byte == b'"') else {
+            return false;
+        };
+        if std::str::from_utf8(&name[..end])
+            .is_ok_and(|name| name == GRAPH_CACHE || is_routine_schema(name))
+        {
+            return true;
+        }
+        rest = &name[end..];
+    }
+    false
 }
 
 /// Enqueue an already formatted routine line without waiting for writer
@@ -256,9 +314,10 @@ mod tests {
         const DROPPED: &str =
             r#"bundle: {"schema":"chopinfer.example.drafter-confidence.v1","step_id":"3"}"#;
         for line in [FIRST, SECOND, DROPPED] {
-            assert!(is_routine_bundle_trace(
-                line.strip_prefix("bundle: ").unwrap().as_bytes()
-            ));
+            assert_eq!(
+                bundle_trace_level(line.strip_prefix("bundle: ").unwrap().as_bytes()),
+                Some(runtime_log::Level::Debug)
+            );
         }
         let bytes = Arc::new(Mutex::new(Vec::new()));
         let (entered, waiting) = mpsc::sync_channel(0);
@@ -342,19 +401,67 @@ mod tests {
     }
 
     #[test]
-    fn only_recognized_routine_bundle_traces_allow_lossy_delivery() {
-        assert!(is_routine_bundle_trace(
-            br#"{"schema":"chopinfer.graph-cache.v1"}"#
-        ));
+    fn only_recognized_routine_bundle_traces_are_leveled() {
+        use runtime_log::Level::{Debug, Info};
         for kind in [
             "step-shape",
             "commit-shape",
             "drafter-catch-up",
             "drafter-confidence",
         ] {
-            assert!(is_routine_bundle_trace(
-                format!(r#"{{"schema":"chopinfer.example.{kind}.v1"}}"#).as_bytes()
-            ));
+            assert_eq!(
+                bundle_trace_level(
+                    format!(r#"{{"schema":"chopinfer.example.{kind}.v1"}}"#).as_bytes()
+                ),
+                Some(Debug),
+                "{kind}"
+            );
+        }
+        for (message, level) in [
+            (
+                r#"{"schema":"chopinfer.route.v1","fallback_launches":0}"#,
+                Debug,
+            ),
+            (r#"{"schema":"chopinfer.graph-cache.v1"}"#, Debug),
+            // Field order does not matter, and a routine record names its kind once.
+            (
+                r#"{"family":"verify","event":"capture","schema":"chopinfer.graph-cache.v1"}"#,
+                Debug,
+            ),
+            (
+                r#"{"schema":"chopinfer.graph-cache.v1","event":"eager"}"#,
+                Debug,
+            ),
+            (
+                r#"{"schema":"chopinfer.graph-cache.v1","event":"target-eager"}"#,
+                Debug,
+            ),
+            (
+                r#"{"schema":"chopinfer.graph-cache.v1","event":"some-new-event"}"#,
+                Debug,
+            ),
+            (
+                r#"{"schema":"chopinfer.graph-cache.v1","event":"capacity","capacity":64}"#,
+                Info,
+            ),
+            (
+                r#"{"schema":"chopinfer.graph-cache.v1","event":"capture-failed"}"#,
+                Info,
+            ),
+            (
+                r#"{"event":"eviction-begin","schema":"chopinfer.graph-cache.v1"}"#,
+                Info,
+            ),
+            (
+                r#"{"schema":"chopinfer.graph-cache.v1","event":"release-all"}"#,
+                Info,
+            ),
+        ] {
+            assert_eq!(
+                bundle_trace_level(message.as_bytes()),
+                Some(level),
+                "{message}"
+            );
         }
         for message in [
             "host component read failed: authenticated digest differs",
@@ -368,8 +475,41 @@ mod tests {
             r#"{"schema":"other.drafter-confidence.v1"}"#,
             r#"{"schema":"chopinfer.example.drafter-confidence.v2"}"#,
             r#"{"schema":"chopinfer.example.step-shape.v1""#,
+            // A routine schema named outside the schema field is not routine.
+            r#"{"schema":"chopinfer.example.error.v1","after":"chopinfer.example.step-shape.v1"}"#,
+            r#"{"message":"chopinfer.route.v1"}"#,
+            r#"{"schema":"chopinfer.route.v1","schema":"chopinfer.example.error.v1"}"#,
         ] {
-            assert!(!is_routine_bundle_trace(message.as_bytes()), "{message}");
+            assert_eq!(bundle_trace_level(message.as_bytes()), None, "{message}");
+        }
+    }
+
+    #[test]
+    fn unrelated_bundle_messages_never_reach_the_json_parser() {
+        for message in [
+            b"plain diagnostic".as_slice(),
+            br#"{"schema":"chopinfer.example.error.v1","detail":"x"}"#,
+            br#"{"schema":"chopinfer.route.v10"}"#,
+            br#"{"schema":"chopinfer.graph-cache.v1x"}"#,
+            br#"{"message":"chopinfer.example.step-shape.v1 without quotes around it}"#,
+            br#"{"schema":"chopinfer.unterminated"#,
+        ] {
+            assert!(
+                !names_known_schema(message),
+                "{}",
+                String::from_utf8_lossy(message)
+            );
+        }
+        for message in [
+            br#"{"schema":"chopinfer.graph-cache.v1"}"#.as_slice(),
+            br#"{"a":"chopinfer.x","schema":"chopinfer.route.v1"}"#,
+            br#"{"schema":"chopinfer.example.drafter-confidence.v1"}"#,
+        ] {
+            assert!(
+                names_known_schema(message),
+                "{}",
+                String::from_utf8_lossy(message)
+            );
         }
     }
 

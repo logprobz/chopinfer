@@ -33,6 +33,7 @@ CHOPINFER_KERNEL_REQUIRE=1 CHOPINFER_KERNEL_GPU=0 cargo test -p kernel-lab --rel
 | `CHOPINFER_KERNEL_TIMEOUT_SECS` | whole-test deadline of every multi-GPU test (default 300) |
 | `CHOPINFER_KERNEL_RECEIPTS` | receipts directory (see below) |
 | `CHOPINFER_KERNEL_SHARED_DEVICE` | `1` labels every measurement `shared-device` |
+| `CHOPINFER_KERNEL_CUBIN_DIR` | a directory `kernel-lab stage-cubins` wrote, read instead of the build's output directory (see below) |
 | `CHOPINFER_KERNEL_BENCH` | `1` enables the opt-in benchmarks |
 | `CHOPINFER_QWEN38_RANKS` | Qwen3.8 per-rank tests at 2 or 4 (default) ranks; TP2 runs lean cases |
 | `CHOPINFER_MIMO_CHECKPOINT` | MiMo checkpoint for real-weight and verify-drift cases |
@@ -54,6 +55,15 @@ holds the BF16 taps (`taps/bf16`) of a GPU reference runner run over
 --tap-sites x.hc.attn.xn,x.hc.attn,attn.core,x.hc.mlp,x.hc.mlp.xn
 --tap-rows` every position from 0 to 4095; the tests read layers 0, 1, 3
 and 7.
+
+Test binaries do not embed the lab's cubins. A test reads each cubin it
+loads from the build script's output directory and refuses it unless its
+SHA-256 equals the one the build recorded and checked against the kernel
+locks. Run a binary against the target directory that built it, and rebuild
+it after a later build there rewrites a cubin. To run copied binaries
+elsewhere, stage the cubins of the same build with
+`kernel-lab stage-cubins DIR` and set `CHOPINFER_KERNEL_CUBIN_DIR=DIR`, as
+the comm qualification scripts (`tools/prepare_comm_latency.sh`) do.
 
 CPU-only verification and compilation, with both GPU selection variables
 unset:

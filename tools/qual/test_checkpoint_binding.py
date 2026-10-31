@@ -279,6 +279,12 @@ class HelperTests(unittest.TestCase):
                         common.served_checkpoint(server_log(directory, 8101, nonce=nonce), "http://127.0.0.1:8101")
                     with self.assertRaisesRegex(ValueError, "startup nonce"):
                         common.live_identity(ReplayServer("http://127.0.0.1:8101", nonce=nonce).identity())
+            quiet = Path(directory, "quiet.log")
+            quiet.write_text("".join(line for line in log.read_text().splitlines(True)
+                                     if not line.startswith("startup ")) + "startup logging: level=warn\n")
+            with self.assertRaisesRegex(ValueError, "no startup checkpoint records; the server logged at "
+                                                    "level=warn"):
+                common.served_checkpoint(quiet, "http://127.0.0.1:8101")
             mixed = Path(directory, "mixed.log")
             mixed.write_text(log.read_text() + "startup weight_plan: "
                              + json.dumps({"checkpoint_identity": RL_IDENTITY}) + "\n")

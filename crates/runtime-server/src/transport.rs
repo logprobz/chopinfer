@@ -1,8 +1,16 @@
 //! HTTP/1 connections with explicit header deadlines and bounded task ownership.
-use std::{future::Future, io, sync::Arc};
+use std::{
+    future::Future,
+    io,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+};
 
 use axum::Router;
-use hyper::server::conn::http1;
+use axum::http::StatusCode;
+use hyper::{server::conn::http1, service::Service as _};
 use hyper_util::{
     rt::{TokioIo, TokioTimer},
     service::TowerToHyperService,
@@ -13,13 +21,14 @@ use tokio::{
     task::JoinSet,
 };
 
-use crate::ServerConfig;
+use crate::{ServerConfig, request_log::RequestLog};
 
 pub(crate) async fn serve(
     listener: TcpListener,
     router: Router,
     config: ServerConfig,
     budget: Arc<Budget>,
+    log: Arc<RequestLog>,
     shutdown: impl Future<Output = ()>,
 ) -> io::Result<()> {
     let capacity = config
@@ -37,13 +46,38 @@ pub(crate) async fn serve(
                 let permit = match &capacity {
                     Some(capacity) => match Arc::clone(capacity).try_acquire_owned() {
                         Ok(permit) => Some(permit),
-                        Err(_) => { drop(socket); continue; }
+                        Err(_) => {
+                            drop(socket);
+                            log.transport_failure(Some(peer), crate::request_log::connection_limit_detail());
+                            continue;
+                        }
                     },
                     None => None,
                 };
                 let service = TowerToHyperService::new(router.clone().layer(axum::Extension(peer)));
+                // Bytes this connection read, how many of them its finished
+                // exchanges read, and whether the last request left its body
+                // unread, to tell a head that never arrived from an idle
+                // keep-alive connection.
+                let read = Arc::new(AtomicU64::new(0));
+                let settled = Arc::new(AtomicU64::new(0));
+                let unread = Arc::new(AtomicBool::new(false));
+                let exchange = (Arc::clone(&read), Arc::clone(&settled), Arc::clone(&unread));
+                let service = hyper::service::service_fn(move |request: axum::http::Request<hyper::body::Incoming>| {
+                    let (read, settled) = (Arc::clone(&exchange.0), Arc::clone(&exchange.1));
+                    exchange.2.store(false, Ordering::Relaxed);
+                    let unread = Arc::clone(&exchange.2);
+                    let request = request.map(|body| RequestBody { body, ended: false, unread });
+                    let response = service.call(request);
+                    async move {
+                        response
+                            .await
+                            .map(|response| response.map(|body| Exchanged { body, read, settled }))
+                    }
+                });
                 let mut stopped = stopped.clone();
                 let budget = Arc::clone(&budget);
+                let log = Arc::clone(&log);
                 connections.spawn(async move {
                     let _permit = permit;
                     let waiting = budget.waiting.enter(crate::waiting::Stage::Transport);
@@ -55,14 +89,22 @@ pub(crate) async fn serve(
                     drop(waiting);
                     let mut builder = http1::Builder::new();
                     builder.timer(TokioTimer::new()).header_read_timeout(config.header_read_timeout).max_buf_size(READ_BUFFER);
-                    let connection = builder.serve_connection(TokioIo::new(MeteredSocket { socket, budget }), service);
+                    let socket = MeteredSocket { socket, budget, read: Arc::clone(&read) };
+                    let connection = builder.serve_connection(TokioIo::new(socket), service);
                     tokio::pin!(connection);
-                    tokio::select! {
-                        _ = &mut connection => {},
+                    let result = tokio::select! {
+                        result = &mut connection => result,
                         _ = stopped.changed() => {
                             connection.as_mut().graceful_shutdown();
-                            let _ = connection.await;
+                            connection.await
                         }
+                    };
+                    let partial = read.load(Ordering::Relaxed) > settled.load(Ordering::Relaxed)
+                        && !unread.load(Ordering::Relaxed);
+                    if let Err(error) = result
+                        && let Some(detail) = head_failure(&error, partial)
+                    {
+                        log.transport_failure(Some(peer), detail);
                     }
                 });
             }
@@ -71,6 +113,32 @@ pub(crate) async fn serve(
     let _ = stop.send(true);
     while connections.join_next().await.is_some() {}
     Ok(())
+}
+
+/// The failure line of a request whose head hyper refused: one that did not
+/// parse, which hyper answered, or a head that did not arrive within the
+/// header deadline. The deadline also expires on an idle keep-alive
+/// connection, so a timeout counts only when the connection read part of a
+/// head: bytes after its last exchange ended.
+fn head_failure(error: &hyper::Error, partial: bool) -> Option<crate::request_log::FailureDetail> {
+    if error.is_parse_too_large() {
+        Some(crate::request_log::transport_detail(
+            StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
+            "request head exceeds the size limit",
+        ))
+    } else if error.is_parse() {
+        Some(crate::request_log::transport_detail(
+            StatusCode::BAD_REQUEST,
+            "request head did not parse",
+        ))
+    } else if error.is_timeout() && partial {
+        Some(crate::request_log::transport_detail(
+            StatusCode::REQUEST_TIMEOUT,
+            "request head did not arrive in time",
+        ))
+    } else {
+        None
+    }
 }
 
 // Poll read closure without requesting ordinary readability: queued body
@@ -142,6 +210,8 @@ impl Budget {
 struct MeteredSocket {
     socket: tokio::net::TcpStream,
     budget: Arc<Budget>,
+    /// This connection's bytes read.
+    read: Arc<AtomicU64>,
 }
 
 impl tokio::io::AsyncRead for MeteredSocket {
@@ -152,11 +222,92 @@ impl tokio::io::AsyncRead for MeteredSocket {
     ) -> std::task::Poll<io::Result<()>> {
         let before = buf.filled().len();
         let result = std::pin::Pin::new(&mut self.socket).poll_read(cx, buf);
-        self.budget.read.fetch_add(
-            (buf.filled().len() - before) as u64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
+        let read = (buf.filled().len() - before) as u64;
+        self.budget.read.fetch_add(read, Ordering::Relaxed);
+        self.read.fetch_add(read, Ordering::Relaxed);
         result
+    }
+}
+
+/// A request body that notes, when the handler drops it, whether the
+/// handler left part of it unread. Hyper then drains what it can of the rest
+/// after the answer, and those bytes are not a head, so a header timeout
+/// that follows is not counted. A partial head after such a request
+/// therefore writes no line either.
+struct RequestBody {
+    body: hyper::body::Incoming,
+    ended: bool,
+    unread: Arc<AtomicBool>,
+}
+
+impl hyper::body::Body for RequestBody {
+    type Data = axum::body::Bytes;
+    type Error = hyper::Error;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        let frame = std::pin::Pin::new(&mut self.body).poll_frame(cx);
+        if matches!(frame, std::task::Poll::Ready(None)) {
+            self.ended = true;
+        }
+        frame
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.body.is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        self.body.size_hint()
+    }
+}
+
+impl Drop for RequestBody {
+    fn drop(&mut self) {
+        if !self.ended && !hyper::body::Body::is_end_stream(&self.body) {
+            self.unread.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
+/// A response body that, when hyper drops it, marks every byte its
+/// connection has read as part of a finished exchange. Hyper drops it after
+/// taking the response's last frame, and reads the next head only after
+/// that, having drained or closed the request's unread body. Bytes of a pipelined head
+/// read before then count as settled, so a partial pipelined head that times
+/// out writes no line.
+struct Exchanged {
+    body: axum::body::Body,
+    read: Arc<AtomicU64>,
+    settled: Arc<AtomicU64>,
+}
+
+impl hyper::body::Body for Exchanged {
+    type Data = axum::body::Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        std::pin::Pin::new(&mut self.body).poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.body.is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        self.body.size_hint()
+    }
+}
+
+impl Drop for Exchanged {
+    fn drop(&mut self) {
+        self.settled
+            .store(self.read.load(Ordering::Relaxed), Ordering::Relaxed);
     }
 }
 
@@ -236,7 +387,7 @@ mod tests {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = listener.local_addr().unwrap();
             let (stop, stopped) = tokio::sync::oneshot::channel();
-            let server = tokio::spawn(serve(listener, router, ServerConfig::default(), Arc::clone(&budget), async { let _ = stopped.await; }));
+            let server = tokio::spawn(serve(listener, router, ServerConfig::default(), Arc::clone(&budget), RequestLog::new(None, Vec::new()), async { let _ = stopped.await; }));
             let wire = format!("POST / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 32768\r\n\r\n{}", "x".repeat(32768));
             let mut clients = Vec::new();
             for _ in 0..2 {

@@ -1232,9 +1232,11 @@ dependencies = [
  "runtime-bundle-sdk",
  "runtime-grammar",
  "runtime-kv",
+ "runtime-log",
  "runtime-model-api",
  "runtime-sampling",
  "runtime-scheduler",
+ "serde",
  "serde_json",
  "sha2",
 ]
@@ -1300,6 +1302,7 @@ dependencies = [
  "runtime-kernel-contract",
  "runtime-kernels",
  "runtime-kv",
+ "runtime-log",
  "runtime-media",
  "runtime-model-api",
  "runtime-sampling",
@@ -1332,6 +1335,10 @@ version = "0.1.0-alpha.3"
 dependencies = [
  "sha2",
 ]
+
+[[package]]
+name = "runtime-log"
+version = "0.1.0-alpha.3"
 
 [[package]]
 name = "runtime-media"
@@ -1381,6 +1388,7 @@ dependencies = [
  "runtime-engine",
  "runtime-grammar",
  "runtime-kv",
+ "runtime-log",
  "runtime-model-api",
  "runtime-sampling",
  "runtime-scheduler",

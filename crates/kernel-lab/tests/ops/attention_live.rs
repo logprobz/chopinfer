@@ -571,10 +571,7 @@ const FOLD_CONTEXT: usize = 4096;
 #[test]
 fn folded_decode_replays_one_graph_at_every_live_count() {
     gpu_test(3 << 30, |session| {
-        let rows = session
-            .context
-            .load_module(ROW_CUBIN)
-            .map_err(|e| e.to_string())?;
+        let rows = session.module(ROW_CUBIN)?;
         let mut misses = Vec::new();
         for name in [
             "mimo_ga_bf16_decode",

@@ -8,7 +8,7 @@ skew=${3:?skew test name}
 verify=${4:?verify rows test name}
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 cd "$root"
-if [[ ! -x bin/comm_latency || ! -x bin/comm || ! -x bin/kernel-lab ]]; then
+if [[ ! -x bin/comm_latency || ! -x bin/comm || ! -x bin/kernel-lab || ! -d bin/cubins ]]; then
   echo 'run the prepared copy beside bin/' >&2
   exit 2
 fi
@@ -20,6 +20,9 @@ esac
 # CUDA_VISIBLE_DEVICES comes from the caller.
 unset CHOPINFER_KERNEL_GPU CHOPINFER_KERNEL_SHARED_DEVICE CHOPINFER_KERNEL_BENCH
 export CHOPINFER_KERNEL_GPUS=$devices CHOPINFER_KERNEL_REQUIRE=1 CHOPINFER_KERNEL_TIMEOUT_SECS=300
+# The cubins prepare_comm_latency.sh staged, which each load checks against
+# the binary's recorded SHA-256.
+export CHOPINFER_KERNEL_CUBIN_DIR=$root/bin/cubins
 stamp=$(timeout 5 date -u +%Y%m%dT%H%M%SZ)
 out=$root/run-$stamp-tp$ranks
 timeout 5 mkdir -p "$out/receipts" "$out/data"

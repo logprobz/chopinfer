@@ -309,7 +309,7 @@ def main():
                 name = f"{mode}-{'capture' if capture else 'timing'}"
                 run = root / name
                 run.mkdir()
-                env = dict(os.environ, CUDA_VISIBLE_DEVICES=",".join(uuids),
+                env = dict(os.environ, CUDA_VISIBLE_DEVICES=",".join(uuids), CHOPINFER_LOG_LEVEL="info",
                            CHOPINFER_ENCODER_SERIAL=str(int(mode == "serial")),
                            CHOPINFER_QUAL_RECEIPTS=str(run / "receipts"))
                 for key in ("CHOPINFER_ENCODER_CAPTURE_DIR", "CHOPINFER_ENCODER_CAPTURE_ALL_LAYERS",

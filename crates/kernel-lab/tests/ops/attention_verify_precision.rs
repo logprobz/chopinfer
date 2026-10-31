@@ -986,7 +986,7 @@ fn pipeline_step(
         .map(|_| f32_to_bf16(((random_word(&mut state) % 2001) as f32 - 1000.0) / 250.0))
         .collect();
     let cubin = module(session, v.profile)?;
-    let rows = session.load_cubin(ROW_CUBIN)?;
+    let rows = session.module(ROW_CUBIN)?;
     let positions = token_rows(&items);
 
     // AR: one folded decode step per token, items one after another, on

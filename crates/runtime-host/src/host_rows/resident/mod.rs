@@ -349,6 +349,15 @@ impl Cache {
     }
 
     fn report(&self, phase: &str) {
+        // Periodic samples are routine; the lifecycle phases stay at info.
+        let level = if phase == "sample" {
+            runtime_log::Level::Debug
+        } else {
+            runtime_log::Level::Info
+        };
+        if !runtime_log::enabled(level) {
+            return;
+        }
         runtime_engine::logging::line(serde_json::json!({
             "schema":"chopinfer.mapped-row-cache.v1", "phase":phase, "cache_id":self.id,
             "mapping_offsets":self.key.iter().map(|(key,_)| key.offset).collect::<Vec<_>>(),

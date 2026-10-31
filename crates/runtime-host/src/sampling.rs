@@ -464,7 +464,7 @@ impl LogitsCapture {
         {
             Ok(file) => Some(Self { file, remaining }),
             Err(error) => {
-                eprintln!(
+                runtime_log::warn!(
                     "sampling capture: cannot open {}: {error}",
                     path.to_string_lossy()
                 );

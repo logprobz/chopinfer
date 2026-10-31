@@ -138,6 +138,7 @@ kernel inspect --manifest FILE [--cache-dir DIR]
 fixed-batch replay --config FILE
 serve --model DIR [--tensor-parallel-size N] [--model-cache-dir DIR] [--activation-policy auto|checkpoint|bf16]
   [--modalities auto|all|text[,image][,video][,audio]] [--load-threads N]
+  [--log-level error|warn|info|debug]
 verify --model DIR [--manifest FILE[#ENTRY]] [--allow-unrecorded] [--jobs N]
 eval list|run|verify-references --model DIR ... (eval --help lists the options)
 serve --bundle DIR [--checkpoint DIR [--load-threads N]
@@ -167,6 +168,8 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]
   [--media-fetch-timeout-ms N] [--media-request-timeout-ms N] [--media-max-redirects N]
   [--allowed-origins JSON] [--allowed-methods JSON] [--allowed-headers JSON]
   [--allow-credentials] [--api-key KEY] [--enable-request-id-headers]
+  [--log-level error|warn|info|debug] (default info, or CHOPINFER_LOG_LEVEL;
+  CHOPINFER_LOG_SUMMARY_SECONDS sets the summary line interval, 1 to 86400, default 60)
   [--fake-host-services]
 weights keep --keeper-dir DIR [--read-write] SERVE-OPTIONS (loads what serve would, and lends it)
 weights identity [--content] [--output FILE] SERVE-OPTIONS (CPU-only rank fingerprints)
@@ -886,6 +889,8 @@ pub enum HostCommandV1 {
         /// The direct package `serve --model` prepared, reported by `/health`.
         direct_package: Option<Box<DirectPackageIdentityV1>>,
         http_options: Box<runtime_server::HttpOptions>,
+        /// `--log-level`, or `CHOPINFER_LOG_LEVEL`, or `info`.
+        log_level: runtime_log::Level,
         devices: Option<Box<crate::DeviceSelectionV1>>,
         selection: ServeSelection,
         host: Box<BundleHostCompatibilityV1>,
@@ -1384,6 +1389,40 @@ fn resolve_api_key_v1(
     })
 }
 
+/// `CHOPINFER_LOG_LEVEL`, the level a serve without `--log-level` uses;
+/// `info` when it is unset.
+fn environment_log_level_v1() -> Result<runtime_log::Level, HostCommandErrorV1> {
+    log_level_from_v1(std::env::var("CHOPINFER_LOG_LEVEL").ok().as_deref())
+}
+
+fn log_level_from_v1(value: Option<&str>) -> Result<runtime_log::Level, HostCommandErrorV1> {
+    value.map_or(Ok(runtime_log::Level::Info), |value| {
+        runtime_log::Level::parse(value)
+            .ok_or_else(|| usage_error("CHOPINFER_LOG_LEVEL must be error, warn, info or debug"))
+    })
+}
+
+/// `CHOPINFER_LOG_SUMMARY_SECONDS`: how often serve writes its summary line,
+/// from a second to a day, or `None` for the server's default.
+fn summary_interval_from_v1(
+    value: Option<&str>,
+) -> Result<Option<std::time::Duration>, HostCommandErrorV1> {
+    value
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .ok()
+                .filter(|seconds| (1..=86_400).contains(seconds))
+                .map(std::time::Duration::from_secs)
+                .ok_or_else(|| {
+                    usage_error(
+                        "CHOPINFER_LOG_SUMMARY_SECONDS must be a whole number of seconds from 1 to 86400",
+                    )
+                })
+        })
+        .transpose()
+}
+
 fn model_options_environment_v1(value: Option<&str>) -> Result<Vec<String>, HostCommandErrorV1> {
     let Some(value) = value else {
         return Ok(Vec::new());
@@ -1473,6 +1512,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             "--queue-depth",
             "--queue-wait-ms",
             "--drain-timeout-ms",
+            "--log-level",
             "--max-request-body-bytes",
             "--max-request-string-bytes",
             "--responses-store-bytes",
@@ -1700,6 +1740,11 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
         std::env::var("CHOPINFER_API_KEY").ok(),
         std::env::var("VLLM_API_KEY").ok(),
     );
+    http_options.summary_interval = summary_interval_from_v1(
+        std::env::var("CHOPINFER_LOG_SUMMARY_SECONDS")
+            .ok()
+            .as_deref(),
+    )?;
     http_options.validate().map_err(usage_error)?;
     if !profile_pending
         && parsed.speculative_rows.is_some()
@@ -1751,6 +1796,10 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
         qualified_max_sequences: resolved.qualified_max_sequences,
         direct_package: None,
         http_options: Box::new(http_options),
+        log_level: match parsed.log_level {
+            Some(level) => level,
+            None => environment_log_level_v1()?,
+        },
         devices: parsed
             .devices
             .clone()
@@ -1914,12 +1963,16 @@ pub fn run_command_line_v1(
     };
     // Initialize before even parsing serve: profile preparation and model
     // loading can start threads. Other commands and library embedders keep
-    // ownership of their allocator policy.
-    if arguments.first().is_some_and(|command| command == "serve")
-        && let Err(error) = crate::allocator::configure_serving_process()
-    {
-        return refuse_v1(program, &error);
-    }
+    // ownership of their allocator policy. The note waits for the log level.
+    let serving = arguments.first().is_some_and(|command| command == "serve");
+    let allocator_note = if serving {
+        match crate::allocator::configure_serving_process() {
+            Ok(note) => note,
+            Err(error) => return refuse_v1(program, &error),
+        }
+    } else {
+        None
+    };
     if arguments == ["--version"] || arguments == ["-V"] {
         let version = env!("CARGO_PKG_VERSION");
         let revision = env!("CHOPINFER_BUILD_REVISION");
@@ -1952,7 +2005,20 @@ pub fn run_command_line_v1(
         };
         return runtime_eval::command_line(&tool, &host, rest);
     }
-    match parse(&arguments).and_then(|command| {
+    let parsed = parse(&arguments);
+    // A serve that could not be parsed still honors a valid environment level.
+    if let Ok(HostCommandV1::Serve { log_level, .. }) = &parsed {
+        runtime_log::set_level(*log_level);
+    } else if serving && let Ok(level) = environment_log_level_v1() {
+        runtime_log::set_level(level);
+    }
+    if let Some(note) = allocator_note {
+        runtime_log::info!("{note}");
+    }
+    match parsed.and_then(|command| {
+        if let HostCommandV1::Serve { log_level, .. } = &command {
+            runtime_log::info!("startup logging: level={log_level}");
+        }
         log_resolved_serve_v1(&command);
         run_host_command_v1(&command)
     }) {
@@ -1986,17 +2052,17 @@ fn log_resolved_serve_v1(command: &HostCommandV1) {
         } else {
             format!("{speculation_mode:?}")
         };
-        eprintln!(
+        runtime_log::info!(
             "resolved served model names: {:?}",
             http_options.served_model_names
         );
-        eprintln!(
+        runtime_log::info!(
             "resolved serve: bundle={selection:?} topology={topology:?} devices={devices:?} listen={listen} settings={serving:?} speculative_tokens={speculative_tokens} speculation={mode} draft_cost={draft_cost_model:?} verify_widths={verify_widths:?} profile_drafter={profile_drafter:?}"
         );
         if let Some(limit) = qualified_max_sequences
             && serving.maximum_sequences > *limit
         {
-            eprintln!(
+            runtime_log::warn!(
                 "warning: --max-sequences {} exceeds the profile's qualified limit {limit}; this override is not qualified",
                 serving.maximum_sequences
             );
@@ -2005,7 +2071,7 @@ fn log_resolved_serve_v1(command: &HostCommandV1) {
 }
 
 fn refuse_v1(program: &str, message: &str) -> ExitCode {
-    eprintln!("{program}: {message}");
+    runtime_log::error!("{program}: {message}");
     ExitCode::FAILURE
 }
 
@@ -2153,6 +2219,7 @@ fn run_host_command_from_v1(
             qualified_max_sequences: _,
             direct_package,
             http_options,
+            log_level,
             devices,
             selection,
             host,
@@ -2174,6 +2241,9 @@ fn run_host_command_from_v1(
             weight_keeper,
             weight_keeper_identity,
         } => {
+            // Set before any serve output, also for embedders that skip
+            // `run_command_line_v1`.
+            runtime_log::set_level(*log_level);
             let started = serve_started_v1(started);
             if let Some(path) = weight_keeper_identity {
                 crate::weight_keeper::content::select(path).map_err(run_error)?;
@@ -2194,7 +2264,7 @@ fn run_host_command_from_v1(
             if let Some(root) = direct_checkpoint {
                 let opened = std::time::Instant::now();
                 crate::direct::select_checkpoint_v1(root).map_err(run_error)?;
-                eprintln!(
+                runtime_log::info!(
                     "startup direct_checkpoint: {:.6}s, {}",
                     opened.elapsed().as_secs_f64(),
                     root.display()
@@ -2278,7 +2348,7 @@ fn run_host_command_from_v1(
                             package.checkpoint_identity, package.metadata_identity
                         )));
                     }
-                    eprintln!(
+                    runtime_log::info!(
                         "startup direct_checkpoint: {:.6}s, {}",
                         opened.elapsed().as_secs_f64(),
                         model.path.display()
@@ -2294,7 +2364,7 @@ fn run_host_command_from_v1(
                         &model.serve_arguments,
                         &package.bundle,
                     )?;
-                    eprintln!(
+                    runtime_log::info!(
                         "startup direct_profile: {} (explicit options override it)",
                         package.profile.name
                     );
@@ -2349,7 +2419,7 @@ fn run_host_command_from_v1(
                 *list_model_options,
             );
             if let Err(error) = &result {
-                eprintln!("startup/serving failure: {error}");
+                runtime_log::error!("startup/serving failure: {error}");
             }
             result
         }
@@ -2438,7 +2508,7 @@ fn with_verify_confidence_v1(
     });
     match resolved {
         Some(Ok(allocation)) => {
-            eprintln!(
+            runtime_log::info!(
                 "startup speculation_confidence: on, floor {}, {} positions",
                 allocation.floor(),
                 allocation.positions()
@@ -2446,7 +2516,7 @@ fn with_verify_confidence_v1(
             config.with_verify_allocation(Some(allocation))
         }
         Some(Err(reason)) => {
-            eprintln!("startup speculation_confidence: off, {reason}");
+            runtime_log::info!("startup speculation_confidence: off, {reason}");
             config
         }
         None => config,
@@ -2934,7 +3004,7 @@ fn serve_v1(
         crate::offload::preflight_host_memory(serving.kv_offload.budget_bytes, available)
             .map_err(run_error)?;
     }
-    println!("{}", kv_cache.describe(package.manifest()));
+    runtime_log::info_stdout!("{}", kv_cache.describe(package.manifest()));
     let bundle_id = package.manifest().id().as_str().to_owned();
     // The served frontend is the package's own export, so the module opens
     // here, before the deployment; the generation worker builds its engine
@@ -2983,7 +3053,7 @@ fn serve_v1(
         .manifest()
         .model_options()
         .map(|options| options.is_qualified(&identity.model_options));
-    eprintln!(
+    runtime_log::info!(
         "startup serving_identity: {}",
         serde_json::to_string(&identity).map_err(|error| run_error(error.to_string()))?
     );
@@ -3000,7 +3070,7 @@ fn serve_v1(
     )
     .map_err(usage_error)?;
     if let Some(images) = frontend.maximum_images_per_request() {
-        eprintln!("startup images_per_request: {images}");
+        runtime_log::info!("startup images_per_request: {images}");
     }
     if let Some(root) = allowed_local_media_path {
         let root = root.canonicalize().map_err(|error| {
@@ -3203,7 +3273,7 @@ fn serve_v1(
         serving.maximum_request_body_bytes.is_some(),
     )
     .map_err(usage_error)?;
-    eprintln!(
+    runtime_log::info!(
         "startup request_body_bytes: media={} other={}",
         server_config.max_media_body_bytes(),
         server_config.max_body_bytes()
@@ -3249,8 +3319,8 @@ fn serve_v1(
     {
         // A failed native rank may also block destruction. Let the supervisor
         // restart this process without waiting on a poisoned worker join.
-        eprintln!("{error}");
-        eprintln!("fatal: generation worker failed; exiting for supervisor restart");
+        runtime_log::error!("{error}");
+        runtime_log::error!("fatal: generation worker failed; exiting for supervisor restart");
         runtime_engine::logging::flush();
         std::process::exit(1);
     }
@@ -3320,7 +3390,7 @@ fn serve_transport_v1(
         let address = listener
             .local_addr()
             .map_err(|error| run_error(format!("the listener has no address: {error}")))?;
-        eprintln!("startup readiness: {:.6}s (elapsed, includes preparation, verification, upload and warmup)", readiness_started.elapsed().as_secs_f64());
+        runtime_log::info!("startup readiness: {:.6}s (elapsed, includes preparation, verification, upload and warmup)", readiness_started.elapsed().as_secs_f64());
         // A served process runs until it is stopped, so what it bound is
         // reported when it binds rather than when it returns.
         println!(
@@ -3527,7 +3597,7 @@ impl ServedEngineV1 {
             offload_startup_probe_v1(),
         );
         if self.kv_offload.budget_bytes != 0 && !offload_capability {
-            println!(
+            runtime_log::info_stdout!(
                 "KV offload: bundle capability absent; victims recompute; arena allocation {}",
                 if allocate_offload {
                     "startup probe only"
@@ -3555,7 +3625,7 @@ impl ServedEngineV1 {
                 )
             },
         )?;
-        eprintln!(
+        runtime_log::info!(
             "startup bundle create: {:.3}s",
             create_started.elapsed().as_secs_f64()
         );
@@ -3566,19 +3636,19 @@ impl ServedEngineV1 {
                 .ok_or("the serving bundle did not acquire its KV pool during create")?;
             let page_tokens = u64::from(loaded.manifest().kv_layout().page_tokens());
             let group = self.topology.context_parallel_size as u64;
-            println!(
+            runtime_log::info_stdout!(
                 "serving KV capacity: {} pages, {} tokens",
                 pages,
                 pages.saturating_mul(page_tokens).saturating_mul(group)
             );
             if group > 1 {
-                println!(
+                runtime_log::info_stdout!(
                     "context parallel: {group} ranks per group, each holding {pages} pages of \
                      {page_tokens} tokens"
                 );
             }
             if fp8_kv {
-                println!("serving KV precision: FP8 E4M3 K and V");
+                runtime_log::info_stdout!("serving KV precision: FP8 E4M3 K and V");
             }
             self.config
                 .with_kv_page_capacity(
@@ -3605,11 +3675,11 @@ impl ServedEngineV1 {
         };
         let config = negotiate_prefill_timing_cuts_v1(config, self.prefill_timing_cuts)?;
         if let Some(marker) = prefill_timing_cuts_startup_v1(config) {
-            println!("{marker}");
+            runtime_log::info_stdout!("{marker}");
         }
         let aligned_prompt_capture = std::env::var_os("CHOPINFER_CANDIDATE_ALIGNED_PROMPT_CAPTURE")
             .is_some_and(|value| value == "1");
-        eprintln!(
+        runtime_log::info!(
             "startup aligned_prompt_capture: {}",
             u8::from(aligned_prompt_capture)
         );
@@ -3626,11 +3696,11 @@ impl ServedEngineV1 {
         };
         let config = if self.prefix_cache && prefix_capability {
             let pages = snapshot_pages;
-            println!("prefix cache: {pages} snapshot pages per anchor");
+            runtime_log::info_stdout!("prefix cache: {pages} snapshot pages per anchor");
             config.with_prefix_cache(pages)
         } else {
             if self.prefix_cache {
-                println!(
+                runtime_log::info_stdout!(
                     "prefix cache: the bundle does not declare {}, so nothing is cached",
                     runtime_bundle_abi::PREFIX_CACHE_CAPABILITY_V1
                 );
@@ -3643,7 +3713,7 @@ impl ServedEngineV1 {
             None
         };
         if let Some(plan) = offload_plan {
-            println!(
+            runtime_log::info_stdout!(
                 "host KV capacity: {} pages per rank, {} bytes across {} ranks, {} tokens per rank",
                 plan.pages_per_rank,
                 plan.allocated_bytes,
@@ -3729,7 +3799,7 @@ impl ServedEngineV1 {
                     "--debug-reference-tokens forces tokens in the device sampler, which these services lack"
                         .to_owned()
                 })?;
-            println!(
+            runtime_log::info_stdout!(
                 "debug: --debug-reference-tokens forces drafts and sampled tokens onto {} reference sequences; outputs are not model samples",
                 reference.sequence_count()
             );
@@ -4127,7 +4197,7 @@ fn keep_on_device_v1<D: crate::HostDeviceBackendV1>(
     // The images hold their memory without a context, so every context goes
     // with the backend and the keeper is no compute process while it lends.
     drop(backend);
-    eprintln!(
+    runtime_log::info!(
         "weight keeper: loaded {} rank images, {} bytes, in {:.3}s; device contexts released",
         images.len(),
         images
@@ -4242,7 +4312,7 @@ fn open_compiled_instance_v1(
     let started = std::time::Instant::now();
     let device = crate::cuda::CudaHostDeviceV1::new()
         .map_err(|error| format!("cannot open the device driver: {error}"))?;
-    eprintln!(
+    runtime_log::info!(
         "startup driver initialization: {:.3}s",
         started.elapsed().as_secs_f64()
     );
@@ -4345,7 +4415,7 @@ impl ServedTopologyV1 {
                     .resource_requirements()
                     .minimum_device_memory_bytes(),
             ) {
-                eprintln!("{warning}");
+                runtime_log::warn!("{warning}");
             }
         }
         Ok(selected)
@@ -4416,7 +4486,7 @@ fn host_memory_fallback_v1(minimum_device_memory_bytes: u64) -> Result<(), HostC
              `--features runtime-host/linux-cuda-host` to serve it on GPUs"
         )));
     }
-    eprintln!(
+    runtime_log::info!(
         "startup device services: host memory, {available} device bytes per rank (this build \
          links no device driver)"
     );
@@ -4718,7 +4788,7 @@ fn serving_backend_config_v1(
         .saturating_add(serving.queue_depth.unwrap_or(PREPARED_QUEUE_DEPTH_V1));
     let step_overlap = crate::overlap::step_overlap_from_environment();
     if step_overlap {
-        eprintln!(
+        runtime_log::info!(
             "step overlap on ({}=1): each step's events are delivered while the device runs the next step",
             crate::overlap::STEP_OVERLAP
         );
@@ -5035,7 +5105,7 @@ fn run_over_device_v1<D: HostDeviceBackendV1 + 'static>(
             }),
         )
         .map_err(HostCommandErrorV1::Load)?;
-    eprintln!(
+    runtime_log::info!(
         "startup bundle create: {:.3}s",
         create_started.elapsed().as_secs_f64()
     );
@@ -5498,6 +5568,7 @@ struct ArgumentsV1 {
     queue_depth: Option<usize>,
     queue_wait_ms: Option<u64>,
     drain_timeout_ms: Option<u64>,
+    log_level: Option<runtime_log::Level>,
     maximum_request_body_bytes: Option<usize>,
     maximum_request_string_bytes: Option<usize>,
     responses_store_bytes: Option<usize>,
@@ -5934,6 +6005,13 @@ impl ArgumentsV1 {
                 "--queue-depth" => {
                     set_once_v1(&mut parsed.queue_depth, count_v1(flag, value)?, flag)?;
                 }
+                "--log-level" => set_once_v1(
+                    &mut parsed.log_level,
+                    runtime_log::Level::parse(value).ok_or_else(|| {
+                        usage_error("--log-level must be error, warn, info or debug")
+                    })?,
+                    flag,
+                )?,
                 "--drain-timeout-ms" => set_once_v1(
                     &mut parsed.drain_timeout_ms,
                     value
@@ -6165,6 +6243,7 @@ impl ArgumentsV1 {
             ("--queue-depth", self.queue_depth.is_some()),
             ("--queue-wait-ms", self.queue_wait_ms.is_some()),
             ("--drain-timeout-ms", self.drain_timeout_ms.is_some()),
+            ("--log-level", self.log_level.is_some()),
             (
                 "--max-request-body-bytes",
                 self.maximum_request_body_bytes.is_some(),
@@ -6860,6 +6939,53 @@ mod tests {
             let mut words = arguments(&["weights", "identity", "--model", "checkpoint"]);
             words.extend(arguments(&extra));
             assert!(parse_host_command_v1(&words).is_err());
+        }
+    }
+
+    #[test]
+    fn serve_takes_its_log_level_from_the_flag_or_its_variable() {
+        use runtime_log::Level;
+        for (value, level) in [
+            ("error", Level::Error),
+            ("warn", Level::Warn),
+            ("info", Level::Info),
+            ("debug", Level::Debug),
+        ] {
+            for selection in [["--bundle", "a"], ["--model", "checkpoint"]] {
+                let mut words = arguments(&["serve"]);
+                words.extend(arguments(&selection));
+                words.extend(arguments(&["--log-level", value]));
+                let HostCommandV1::Serve { log_level, .. } = parse_host_command_v1(&words).unwrap()
+                else {
+                    panic!("expected serve");
+                };
+                assert_eq!(log_level, level);
+            }
+            assert_eq!(super::log_level_from_v1(Some(value)).unwrap(), level);
+        }
+        assert_eq!(super::log_level_from_v1(None).unwrap(), Level::Info);
+        assert!(super::log_level_from_v1(Some("verbose")).is_err());
+        assert!(
+            parse_host_command_v1(&arguments(&[
+                "serve",
+                "--bundle",
+                "a",
+                "--log-level",
+                "trace"
+            ]))
+            .is_err()
+        );
+        assert_eq!(super::summary_interval_from_v1(None).unwrap(), None);
+        assert_eq!(
+            super::summary_interval_from_v1(Some("5")).unwrap(),
+            Some(std::time::Duration::from_secs(5))
+        );
+        assert_eq!(
+            super::summary_interval_from_v1(Some("86400")).unwrap(),
+            Some(std::time::Duration::from_secs(86_400))
+        );
+        for refused in ["0", "-1", "1.5", "soon", "86401", "18446744073709551615"] {
+            assert!(super::summary_interval_from_v1(Some(refused)).is_err());
         }
     }
 

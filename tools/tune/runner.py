@@ -206,7 +206,10 @@ class Server:
             port = sock.getsockname()[1]
         self.url = f'http://127.0.0.1:{port}'
         self.env = server_environment()
-        self.env.update(CHOPINFER_STEP_TRACE='1', CHOPINFER_ROUTE_COUNTERS='1', PYTHONDONTWRITEBYTECODE='1')
+        # Calibration reads routine step records, which serve prints only at
+        # debug. An arm's env may set another level, for an A/B of the levels.
+        self.env.update(CHOPINFER_STEP_TRACE='1', CHOPINFER_ROUTE_COUNTERS='1', CHOPINFER_LOG_LEVEL='debug',
+                        PYTHONDONTWRITEBYTECODE='1')
         self.env = apply_environment(self.env, self.environment)
         self.server_command = [str(Path(install) / 'bin/chopinfer'), 'serve', '--listen', f'127.0.0.1:{port}',
                                *serve_options(cache, arguments, os.environ.get(CHECKPOINT_ENV, 'dry-run'), bundle)]

@@ -7,7 +7,8 @@ prepared=$(realpath -m -- "${1:?output directory outside the repository}")
 case "$prepared/" in "$repo/"*) echo 'prepare outside the repository' >&2; exit 2 ;; esac
 cd "$repo"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$repo/target}" CARGO_INCREMENTAL=0
-unset CHOPINFER_KERNEL_GPU CHOPINFER_KERNEL_GPUS CHOPINFER_KERNEL_REQUIRE KERNELS_LOCK_UPDATE CHOPINFER_KERNEL_LINEINFO
+unset CHOPINFER_KERNEL_GPU CHOPINFER_KERNEL_GPUS CHOPINFER_KERNEL_REQUIRE KERNELS_LOCK_UPDATE CHOPINFER_KERNEL_LINEINFO \
+    CHOPINFER_KERNEL_CUBIN_DIR
 mkdir -p "$prepared/bin" "$prepared/verify"
 cargo test -p kernel-lab --release --locked --offline --no-run --test comm_latency --test comm > "$prepared/verify/prepare-binaries.log" 2>&1
 cargo build -p kernel-lab --release --locked --offline --bin kernel-lab > "$prepared/verify/prepare-probe.log" 2>&1
@@ -27,7 +28,17 @@ for test in ('comm_latency', 'comm'):
     shutil.copy2(paths[0], root / 'bin' / test)
 shutil.copy2(target / 'release/kernel-lab', root / 'bin/kernel-lab')
 shutil.copy2('crates/kernel-lab/tools/run_comm_latency.sh', root / 'run-gpu.sh')
-files = ('comm', 'comm_latency', 'kernel-lab')
+# The binaries read their cubins from the build's output directory; stage a
+# checked copy, which run-gpu.sh selects with CHOPINFER_KERNEL_CUBIN_DIR.
+cubins = root / 'bin/cubins'
+if cubins.is_symlink():
+    cubins.unlink()
+elif cubins.exists():
+    shutil.rmtree(cubins)
+with open(root / 'verify/prepare-cubins.log', 'w') as log:
+    subprocess.run([root / 'bin/kernel-lab', 'stage-cubins', cubins], check=True, stdout=log)
+files = ('comm', 'comm_latency', 'kernel-lab', *sorted(
+    str(path.relative_to(root / 'bin')) for path in cubins.rglob('*') if path.is_file()))
 (root / 'bin/SHA256SUMS').write_text(''.join(
     hashlib.sha256((root / 'bin' / name).read_bytes()).hexdigest() + '  ' + name + '\n'
     for name in files))
@@ -37,4 +48,4 @@ files = ('comm', 'comm_latency', 'kernel-lab')
 PY
 "$prepared/bin/comm_latency" --list > "$prepared/verify/prepared-tests.txt"
 "$prepared/bin/comm" --list >> "$prepared/verify/prepared-tests.txt"
-(cd "$prepared/bin" && sha256sum -c SHA256SUMS)
+(cd "$prepared/bin" && sha256sum -c --quiet SHA256SUMS)

@@ -268,21 +268,11 @@ pub fn measure(
         b.insert(117, bytes(s, &vec![0; decode_sizes.flags_bytes as usize])?);
         b.insert(118, bytes(s, &vec![0; decode_sizes.epoch_bytes as usize])?);
         fixtures.push(b);
-        let load = |image: &[u8], symbol: &str| -> LabResult<Function> {
-            s.context
-                .load_module(image)
-                .map_err(|e| e.to_string())?
-                .function(symbol)
-                .map_err(|e| e.to_string())
+        let load = |cubin: &str, symbol: &str| -> LabResult<Function> {
+            s.module(cubin)?.function(symbol).map_err(|e| e.to_string())
         };
-        general.push(load(
-            include_bytes!(concat!(env!("OUT_DIR"), "/hc-prefill/comm_qwen38.cubin")),
-            qwen38::SYMBOL,
-        )?);
-        let image = include_bytes!(concat!(
-            env!("OUT_DIR"),
-            "/hc-prefill/comm_qwen38_decode.cubin"
-        ));
+        general.push(load("comm_qwen38", qwen38::SYMBOL)?);
+        let image = "comm_qwen38_decode";
         decode.push([
             load(image, symbol_v2(4).map_err(|e| e.to_string())?)?,
             load(image, symbol_v3(4).map_err(|e| e.to_string())?)?,

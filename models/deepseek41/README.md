@@ -420,7 +420,11 @@ against 0.6 to 1.0 ms on the other ranks, and every rank waits for it in
 the logits exchange: one weight of rank 1's vocabulary slice (head row
 49423, about -5.9e-10) lies outside the exact-F32 tensor domain, and the
 CTA that owns its 16-row group computes that group's outputs in the serial
-SIMT chains. The other three ranks' slices have no such weight.
+SIMT chains. The other three ranks' slices have no such weight. With the
+phased decode reduction merged, the wide replays matched bitwise again,
+eagerly and with graphs, and so did the 16-64 row replays with
+`f32_row_tiles` and the 16-192 row replays with `phased_decode_reduce`,
+each beside `wide_verify`; the 128- and 192-row steps kept their times.
 
 Prefill commit projections are batched across prompts. Undrafted pure
 decode joins status once and submits private sampling before collecting it

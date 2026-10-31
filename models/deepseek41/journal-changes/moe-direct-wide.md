@@ -32,3 +32,15 @@ and operands.
 | C32 maximum, wide | 345944, `8aacb4dc20b58ef8` | 346364, `3ad600cc7d668879` |
 
 Every other journal is unchanged. No kernel lock or golden changes.
+
+The [layout declaration](moe-direct-wide.json) adds the locked module to
+load wherever `dense_decode_wide_deepseek41_sm120_v1` loads (the fixtures
+with wide verify buckets), with its 12 owned resolves, and lists 661 exact
+operation edits in each of the two fixtures: 1280 removed and 1600 added
+launches and the 52 releases. `tools/journal_proof/specs/operation_edits.py`
+generated the edits from sealed captures of the parent tip and of this
+change, and a review checked every edit's symbol, count and grid (the gate
+finisher at five column groups by six rows per routed token, the down
+finisher at 40 strips by the step's rows, the pack, gate and down queues
+at their capacity grids). Positions belong to that capture pair;
+regenerate the edits after a rebase.

@@ -189,6 +189,29 @@ fn verify_step(
     count: u32,
     rows: u32,
 ) -> (Vec<String>, Vec<String>, Vec<BundleKeptRowsV1>) {
+    let (step, accepted) = verify_batch(instance, host, count, rows);
+    let hash = crate::sm120::engram_hash_rows::SYMBOL;
+    assert_eq!(step.iter().filter(|line| line.contains(hash)).count(), 1);
+    let target_start = step.iter().rposition(|line| line.contains(hash)).unwrap() + 1;
+    let target: Vec<_> = step[target_start..]
+        .iter()
+        .filter(|line| line.starts_with("launch "))
+        .cloned()
+        .collect();
+    assert!(target.len() > 1000);
+    assert!(!target.iter().any(|line| line.contains("dspark_markov")));
+    (target, step, accepted)
+}
+
+/// Executes the `rows`-row step of `verify_step`, eager or with graphs,
+/// and checks its drafts. Returns the step's whole journal and the commit
+/// that keeps one row of each verifying item.
+fn verify_batch(
+    instance: &mut BundleInstanceV1,
+    host: &Host,
+    count: u32,
+    rows: u32,
+) -> (Vec<String>, Vec<BundleKeptRowsV1>) {
     let widths = item_widths(count, rows);
     let mut requests = Vec::new();
     let mut appends = Vec::new();
@@ -225,19 +248,8 @@ fn verify_step(
             .map(|(slot, width)| (slot as u64 + 1, vec![0; (width - 1) as usize]))
             .collect::<Vec<_>>()
     );
-    let journal = host.journal.borrow();
-    let step = journal[from..].to_vec();
-    let hash = crate::sm120::engram_hash_rows::SYMBOL;
-    assert_eq!(step.iter().filter(|line| line.contains(hash)).count(), 1);
-    let target_start = step.iter().rposition(|line| line.contains(hash)).unwrap() + 1;
-    let target: Vec<_> = step[target_start..]
-        .iter()
-        .filter(|line| line.starts_with("launch "))
-        .cloned()
-        .collect();
-    assert!(target.len() > 1000);
-    assert!(!target.iter().any(|line| line.contains("dspark_markov")));
-    (target, step, accepted)
+    let step = host.journal.borrow()[from..].to_vec();
+    (step, accepted)
 }
 
 fn write_journals(
@@ -557,4 +569,217 @@ fn target_programs_lower_above_the_default_verify_rows() {
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
     }
+}
+
+/// Wide verify steps below and above each wide bucket: 65 rows, the
+/// 128-row bucket and one row past it, and the widest 192-row step.
+const WIDE_GRAPH_STEPS: [u32; 4] = [65, 128, 129, 192];
+
+/// With graphs up to the package's 192 verify rows, with and without the
+/// `wide_verify` option, the first step at each width above 64 rows
+/// captures its graphs and every repeat replays them without capturing
+/// again. On each rank, a step's launches with each replay expanded to the
+/// launches its graph captured are the launches of the eager step at the
+/// same rows and option, with the same grids and arguments: each stream's
+/// in eager order, together all of them (a graph runs the shared expert on
+/// its rank's overlap stream). With `CHOPINFER_VERIFY_ROW_JOURNALS` each
+/// step's journal is exported, under `wide/` or `default/` and then
+/// `graphs/` or `eager/`.
+#[test]
+fn verify_graphs_above_64_rows_replay_the_eager_programs() {
+    use model_deepseek41_contract::execution_options::WIDE_VERIFY;
+    use model_deepseek41_contract::verify_graphs::GRAPH_ROWS;
+    const REPEATS: usize = 3;
+    let run = |wide: bool, graphed: bool| {
+        let budget = if graphed {
+            (GRAPH_ROWS, 192.into())
+        } else {
+            (DSPARK_GRAPH_HANDLES_PER_RANK, 0.into())
+        };
+        let (host, mut instance) = create_with_options(
+            Shape::new(&FLASH, Ranks::TP4).unwrap(),
+            32,
+            192,
+            &[(WIDE_VERIFY, wide.into()), budget],
+        );
+        for slot in 0..32 {
+            execute(
+                &mut instance,
+                &host,
+                &super::super::prompt(slot + 1, slot, 0, 3, true),
+            );
+            instance.commit().unwrap();
+        }
+        let mut graphs = Graphs::new();
+        let mut programs = Vec::new();
+        for repeat in 0..REPEATS {
+            for rows in WIDE_GRAPH_STEPS {
+                let (step, accepted) = verify_batch(&mut instance, &host, 32, rows);
+                if let Some(directory) = journal_directory() {
+                    let directory = directory
+                        .join(if wide { "wide" } else { "default" })
+                        .join(if graphed { "graphs" } else { "eager" });
+                    std::fs::create_dir_all(&directory).unwrap();
+                    let name = format!("rows-{rows}-repeat-{repeat}.journal");
+                    std::fs::write(directory.join(name), step.join("\n")).unwrap();
+                }
+                let ranks = host.device.stream_ranks.borrow().clone();
+                let (program, captures, replays) = replayed_program(&step, &mut graphs, &ranks);
+                let what = format!("{rows} rows, repeat {repeat}, wide {wide}, graphs {graphed}");
+                if graphed {
+                    assert_eq!(captures > 0, repeat == 0, "{what}: {captures} captures");
+                    assert!(replays > 0, "{what}");
+                } else {
+                    assert_eq!((captures, replays), (0, 0), "{what}");
+                }
+                assert_eq!(program.len(), 4, "{what}");
+                assert!(
+                    program.values().all(|launches| launches.len() > 1000),
+                    "{what}"
+                );
+                programs.push((what, program));
+                instance.commit_accepted(&accepted).unwrap();
+            }
+        }
+        let stats = crate::instance::dspark_graphs_for_test(instance.handle(), None);
+        if graphed {
+            assert_eq!(
+                (stats.denied, stats.released, stats.epoch),
+                (0, 0, 0),
+                "{stats:?}"
+            );
+        }
+        for request in 1..=32 {
+            instance.retire_request(request).unwrap();
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+        programs
+    };
+    for wide in [false, true] {
+        let eager = run(wide, false);
+        let graphed = run(wide, true);
+        assert_eq!(eager.len(), graphed.len());
+        for ((_, eager), (what, graphed)) in eager.iter().zip(&graphed) {
+            for (rank, launches) in eager {
+                let mut streams = std::collections::BTreeMap::<u32, Vec<&String>>::new();
+                for (stream, launch) in &graphed[rank] {
+                    streams.entry(*stream).or_default().push(launch);
+                }
+                if let Err(error) = interleaves(launches, &streams) {
+                    panic!("{what}: rank {rank}: {error}");
+                }
+            }
+        }
+    }
+}
+
+/// Whether `streams` (one rank's graphed launches on each stream) together
+/// hold exactly the `eager` launches, each stream's in eager order.
+fn interleaves(
+    eager: &[(u32, String)],
+    streams: &std::collections::BTreeMap<u32, Vec<&String>>,
+) -> Result<(), String> {
+    let mut next: std::collections::BTreeMap<u32, usize> =
+        streams.keys().map(|&stream| (stream, 0)).collect();
+    for (index, (_, launch)) in eager.iter().enumerate() {
+        let stream = streams
+            .iter()
+            .find(|(stream, launches)| launches.get(next[*stream]) == Some(&launch))
+            .map(|(stream, _)| *stream)
+            .ok_or_else(|| format!("eager launch {index} is no stream's next: {launch}"))?;
+        *next.get_mut(&stream).unwrap() += 1;
+    }
+    for (stream, launches) in streams {
+        if next[stream] != launches.len() {
+            return Err(format!(
+                "stream {stream} runs {} launches the eager step does not",
+                launches.len() - next[stream]
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Each live graph's captured launch lines, by graph slot.
+type Graphs = std::collections::BTreeMap<String, Vec<String>>;
+
+/// Each rank's launches in issue order, each with its stream.
+type Program = std::collections::BTreeMap<u32, Vec<(u32, String)>>;
+
+/// The launches `step` runs on each rank (by `ranks`, each stream's rank),
+/// in issue order with their stream, with each replay expanded to the
+/// launches of the graph it replays. A capture records the launches of
+/// its stream and of the streams that joined it through an event recorded
+/// inside it (the fake device's capture rule) into `graphs`; a captured
+/// launch runs only when its graph replays. Returns the program and the
+/// step's captures and replays.
+fn replayed_program(
+    step: &[String],
+    graphs: &mut Graphs,
+    ranks: &std::collections::BTreeMap<u32, u32>,
+) -> (Program, usize, usize) {
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut program = Program::new();
+    let mut run = |launch: &str| {
+        let (stream, rest) = launch["launch ".len()..].split_once(' ').unwrap();
+        let stream = stream.parse::<u32>().unwrap();
+        program
+            .entry(ranks[&stream])
+            .or_default()
+            .push((stream, rest.to_owned()));
+    };
+    // Each open capture's joined streams and launches, by capturing stream.
+    let mut open = BTreeMap::<String, (BTreeSet<String>, Vec<String>)>::new();
+    let mut events = BTreeMap::<String, String>::new();
+    let (mut captures, mut replays) = (0, 0);
+    let capture_of = |open: &BTreeMap<String, (BTreeSet<String>, Vec<String>)>, stream: &str| {
+        open.iter()
+            .find(|(capture, (members, _))| *capture == stream || members.contains(stream))
+            .map(|(capture, _)| capture.clone())
+    };
+    for line in step {
+        let fields: Vec<_> = line.split_whitespace().collect();
+        match fields[..] {
+            ["capture", stream] => {
+                open.insert(stream.into(), Default::default());
+            }
+            ["record", stream, event] => match capture_of(&open, stream) {
+                Some(capture) => {
+                    events.insert(event.into(), capture);
+                }
+                None => {
+                    events.remove(event);
+                }
+            },
+            ["wait", stream, event] => {
+                if let Some(capture) = events.get(event)
+                    && capture != stream
+                {
+                    open.get_mut(capture).unwrap().0.insert(stream.into());
+                }
+            }
+            ["captured", stream, id, nodes] => {
+                let (_, launches) = open.remove(stream).expect("an open capture");
+                assert_eq!(launches.len().to_string(), nodes, "{line}");
+                events.retain(|_, capture| capture != stream);
+                graphs.insert(id.into(), launches);
+                captures += 1;
+            }
+            ["replay", _, id] => {
+                graphs[id].iter().for_each(|launch| run(launch));
+                replays += 1;
+            }
+            ["release", "graph", id] => {
+                graphs.remove(id);
+            }
+            _ if fields[0] == "launch" => match capture_of(&open, fields[1]) {
+                Some(capture) => open.get_mut(&capture).unwrap().1.push(line.clone()),
+                None => run(line),
+            },
+            _ => {}
+        }
+    }
+    assert!(open.is_empty(), "a capture stays open after the step");
+    (program, captures, replays)
 }

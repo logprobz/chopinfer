@@ -67,6 +67,17 @@ fn domains() -> std::collections::BTreeSet<Key> {
             verify_bounds::HC_FINISH,
         );
     }
+    // The wide verify sites (`sm120::hc_wide`), keyed by the widest wide
+    // verify bucket.
+    for site in ["finish_admit", "finish_cols", "finish_pair"] {
+        add(
+            &mut out,
+            &format!("hc.{site}.verify"),
+            "f32",
+            &shape,
+            verify_bounds::WIDE[verify_bounds::WIDE.len() - 1],
+        );
+    }
     for site in ["lagged_mix", "expand_mix"] {
         add(
             &mut out,
@@ -216,9 +227,12 @@ const UNTUNED: &[&str] = &[
     "hc.finish_admit.verify f32 groups=4,width=5120 t62: 1..=3,5,7,9..=11,13..=15,17..=31",
     "hc.finish_admit.verify f32 groups=4,width=5120 t63: 1..=3,5,7,9..=11,13..=15,17..=31",
     "hc.finish_admit.verify f32 groups=4,width=5120 t64: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_admit.verify f32 groups=4,width=5120 t192: 1..=64",
     "hc.finish_chain.verify f32 groups=4,width=5120 t64: 2..=3,5,7,9..=11,13..=15,17..=31",
     "hc.finish_cols.verify f32 groups=4,width=5120 t64: 2..=7,9..=15,17..=31",
+    "hc.finish_cols.verify f32 groups=4,width=5120 t192: 1..=64",
     "hc.finish_pair.verify f32 groups=4,width=5120 t64: 2..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.finish_pair.verify f32 groups=4,width=5120 t192: 1..=64",
     "hc.finish_rows.verify f32 groups=4,width=5120 t64: 1..=31,33..=64",
     "hc.finish_twin.verify f32 groups=4,width=5120 t64: 1..=5,7..=64",
     "hc.lagged_mix.prefill f32 groups=4,width=5120 t8192: 1..=63,65..=191,193..=2239,2241..=2495,2497..=2623,2625..=8191",

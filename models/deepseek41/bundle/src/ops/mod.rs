@@ -245,7 +245,12 @@ impl Ops {
             &mut missing,
             &names,
             "hyper-connection",
-            hc::HcOps::prepare(kernels.backend.as_ref(), shape, &asks),
+            hc::HcOps::prepare(
+                kernels.backend.as_ref(),
+                shape,
+                &asks,
+                expert_set.count == shape.geometry.shape.moe.experts,
+            ),
         );
         let moe = family(
             &mut missing,

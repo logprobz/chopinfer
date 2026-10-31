@@ -29,6 +29,11 @@ pub const VERIFY_ROW_FUSIONS: &str = "verify_row_fusions";
 /// fold merge each layer's attention heads and quantize WO_a's input in one
 /// launch, in place of the merge and the row-sliced quantizer.
 pub const ATTENTION_MERGE_CEIL: &str = "attention_merge_ceil";
+/// Candidate: Flash TP4 steps of at most 32 rows whose router finish is
+/// fused launch the router's exact F32 producer that classifies its own
+/// rows and resets the finish's ticket, in place of the finish's prepare
+/// launch and the producer.
+pub const ROUTER_PREPARE_FUSION: &str = "router_prepare_fusion";
 pub const DEFAULT_PLANS: usize = 16;
 pub const MAX_PLANS: usize = 64;
 /// The served warmup fits within 512 graph handles per rank, leaving room
@@ -46,9 +51,10 @@ pub struct Options {
     pub phased_decode_reduce: bool,
     pub verify_row_fusions: bool,
     pub attention_merge_ceil: bool,
+    pub router_prepare_fusion: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 10] {
+pub fn declarations() -> [ModelOptionV1; 11] {
     [
         (
             ATTENTION_MERGE_CEIL,
@@ -84,6 +90,10 @@ pub fn declarations() -> [ModelOptionV1; 10] {
         ),
         (
             PREFILL_PLAN_CACHE_VERIFY,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            ROUTER_PREPARE_FUSION,
             OptionDefinitionV1::Boolean { default: false },
         ),
         (
@@ -152,6 +162,9 @@ impl Options {
             attention_merge_ceil: values[ATTENTION_MERGE_CEIL]
                 .as_bool()
                 .expect("checked boolean"),
+            router_prepare_fusion: values[ROUTER_PREPARE_FUSION]
+                .as_bool()
+                .expect("checked boolean"),
         })
     }
 }
@@ -215,6 +228,7 @@ mod tests {
             phased_decode_reduce: false,
             verify_row_fusions: false,
             attention_merge_ceil: false,
+            router_prepare_fusion: false,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -235,6 +249,7 @@ mod tests {
             (PHASED_DECODE_REDUCE.into(), "true".into()),
             (VERIFY_ROW_FUSIONS.into(), "true".into()),
             (ATTENTION_MERGE_CEIL.into(), "true".into()),
+            (ROUTER_PREPARE_FUSION.into(), "true".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -250,6 +265,7 @@ mod tests {
                 phased_decode_reduce: true,
                 verify_row_fusions: true,
                 attention_merge_ceil: true,
+                router_prepare_fusion: true,
             }
         );
         assert!(!declaration.is_qualified(&resolved));
@@ -271,6 +287,7 @@ mod tests {
             (PHASED_DECODE_REDUCE, "1"),
             (VERIFY_ROW_FUSIONS, "1"),
             (ATTENTION_MERGE_CEIL, "1"),
+            (ROUTER_PREPARE_FUSION, "1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),
         ] {

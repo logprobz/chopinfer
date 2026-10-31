@@ -2007,9 +2007,14 @@ pub fn run_command_line_v1(
     }
     let parsed = parse(&arguments);
     // A serve that could not be parsed still honors a valid environment level.
+    // So does a fixed-batch replay: a bundle's routine records, such as a
+    // drafter's per-position confidence, are replay evidence at `debug`.
+    let replaying = matches!(parsed, Ok(HostCommandV1::FixedBatchReplay { .. }));
     if let Ok(HostCommandV1::Serve { log_level, .. }) = &parsed {
         runtime_log::set_level(*log_level);
-    } else if serving && let Ok(level) = environment_log_level_v1() {
+    } else if (serving || replaying)
+        && let Ok(level) = environment_log_level_v1()
+    {
         runtime_log::set_level(level);
     }
     if let Some(note) = allocator_note {

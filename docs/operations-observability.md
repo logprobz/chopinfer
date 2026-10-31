@@ -436,6 +436,9 @@ Bundle records are leveled by their schema whatever enabled them, so a
 model's diagnostic step-log option (for example `--model-option
 diagnostic_step_logs=true`) shows its records only at `debug`. `tools/tune`
 serves at `debug`; launchers that read startup lines set `info`.
+`chopinfer fixed-batch replay` also reads `CHOPINFER_LOG_LEVEL`, so a
+replay at `debug` with that option writes the bundle's records, such as each
+drafted block's proposals and confidence bits, beside its exact comparison.
 
 ### Request failure lines
 

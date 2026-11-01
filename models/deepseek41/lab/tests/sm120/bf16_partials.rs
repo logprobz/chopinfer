@@ -37,6 +37,8 @@ type Op = Prepared<AllReduceBuffers<View>>;
 type Plan = fn(&Op, &AllReduceBuffers<View>, Counts) -> LabResult<Vec<Launch>>;
 
 // The bundle's all-reduce registration, which decode's served reduction uses.
+#[path = "bf16_partials/phased_deferred.rs"]
+mod phased_deferred;
 #[path = "bf16_partials/phased_parity.rs"]
 mod phased_parity;
 #[path = "../../../bundle/src/sm120/reduce.rs"]
@@ -151,6 +153,26 @@ impl Fixture {
         symbols: &[&str],
         op: impl Fn(usize) -> LabResult<Op>,
     ) -> LabResult<Self> {
+        Self::with_cubins(
+            sessions,
+            capacity,
+            symbols,
+            |name| {
+                fold_cubin_for_symbol(name)
+                    .map(|(_, cubin)| cubin)
+                    .ok_or_else(|| format!("missing served symbol {name}"))
+            },
+            op,
+        )
+    }
+    /// [`Fixture::with_ops`] with each symbol's module from `cubin`.
+    fn with_cubins(
+        sessions: &[Session],
+        capacity: u32,
+        symbols: &[&str],
+        cubin: impl Fn(&str) -> LabResult<&'static [u8]>,
+        op: impl Fn(usize) -> LabResult<Op>,
+    ) -> LabResult<Self> {
         let mut modules = Vec::new();
         let mut functions = Vec::new();
         let mut ranks = Vec::new();
@@ -159,9 +181,7 @@ impl Fixture {
             let prepared = op(rank)?;
             let mut fns = BTreeMap::new();
             for &name in symbols {
-                let (_, cubin) = fold_cubin_for_symbol(name)
-                    .ok_or_else(|| format!("missing served symbol {name}"))?;
-                let module = s.load_cubin(cubin)?;
+                let module = s.load_cubin(cubin(name)?)?;
                 fns.insert(name.into(), module.function(name).map_err(err)?);
                 modules.push(module);
             }

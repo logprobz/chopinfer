@@ -237,6 +237,33 @@ media, taps and unavailable prepared row services retain their existing
 fallbacks. See [mapped-row read-ahead](../../docs/mapped-row-read-ahead.md)
 for the adoption evidence and remaining synchronous callers.
 
+Flash TP4 verify steps of at most 6 rows launch the decode steps' fused
+query norm and ceil and fused window norm, RoPE, ceil and store; the
+drafter's forwards of at most 6 rows (one drafting item) fuse their
+queries, and its window writes of at most 6 rows quantize with the
+parallel ceil32 entry instead of the serial one. The latent tuning row
+`latent.row_fusions.verify` admits rows 1 to 6: verify steps and drafter
+forwards by their rows, and the drafter's writes by each write's own rows.
+Verify steps of 7 to 32 rows, wider drafter forwards and wider writes keep
+the unfused route. The route was adopted on 2026-11-01 from the
+`verify_row_fusions` candidate option, which ran the fusions at verify
+steps and drafter forwards of at most 32 rows and the parallel ceil32 at
+drafter writes of at most the draft rows, and which was then removed. Its
+lab pairs and fixed-batch GPU replays were bitwise, and served exactness
+passed at C1, C8 and C16. In the served step-time A/B of the option
+against the profile, with the first-visit control clear, C1 (one item, six
+verify rows a step) gained 1.85%, resolved, with paired deltas of 1.74%
+and 1.95%; C8 (eight items, 32 rows a step) gained 1.45%, neutral, with
+paired deltas of 0.54% and 2.35% and a spread of 1.81 points; C32, which
+does not draft, was untouched. Timing acceptance needs a resolved gain at
+every admitted width, so the target fusions are admitted only at the
+six-row width C1 resolved. The drafter's forwards and writes are admitted
+by their own rows at the same range: they are bitwise in the lab pairs and
+replays, and the C8 cell already ran a superset, every drafter forward of
+up to 32 rows fused and every write of up to 60 rows on the parallel
+entry, without a regression in any cell ([small-kernel
+latency](lab/small-kernel-latency.md#verify-row-fusions)).
+
 The bundle no longer reads execution settings from
 `CHOPINFER_DEEPSEEK41_SHARED_OVERLAP`,
 `CHOPINFER_DEEPSEEK41_PREFILL_PLAN_CACHE_PLANS`,

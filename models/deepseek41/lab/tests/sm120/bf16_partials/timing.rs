@@ -1011,3 +1011,254 @@ fn decode_reduction_timing() {
     let result = kernel_harness::gpu_test_multi_with(probe().unwrap(), 2 << 30, bench).unwrap();
     assert!(result.is_some(), "the timing must run on four GPUs");
 }
+
+/// The arms of [`phased_deferred_timing`].
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum Prototype {
+    Pair,
+    Control,
+    Deferred,
+    Rounding,
+}
+const PROTOTYPE_ORDER: [Prototype; 4] = [
+    Prototype::Pair,
+    Prototype::Control,
+    Prototype::Deferred,
+    Prototype::Rounding,
+];
+impl Prototype {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Pair => "f32_deferred",
+            Self::Control => "f32_control",
+            Self::Deferred => "f32_phased_deferred",
+            Self::Rounding => "f32_phased",
+        }
+    }
+    fn role(self) -> &'static str {
+        match self {
+            Self::Pair => "served: the reduce-scatter and all-gather the next HC mix rounds",
+            Self::Control => "A/A control: a second graph of the pair",
+            Self::Deferred => {
+                "prototype: the pair in one launch of the phased F32-output entry, \
+                 the same sums for the same deferred round; no step serves it"
+            }
+            Self::Rounding => {
+                "reference: the phased rounding entry of the same protocol and geometry, \
+                 a complete step"
+            }
+        }
+    }
+    fn plan(self) -> Plan {
+        match self {
+            Self::Rounding => every,
+            _ => deferred,
+        }
+    }
+}
+
+/// The deferred pair against its one-launch prototype
+/// (`phased_deferred`) at each row count: every rank's F32 sums first
+/// equal the pair's bit for bit, then each arm is timed as [`bench`] times
+/// its arms, with the pair's second graph as the A/A control.
+fn phased_deferred_bench(sessions: &[Session], cubin: &'static [u8]) -> LabResult<PathBuf> {
+    use super::phased_deferred;
+    if sessions.len() != 4 {
+        return Err("exactly four ranks required".into());
+    }
+    let started = Instant::now();
+    let labels: Vec<_> = sessions
+        .iter()
+        .map(|s| s.metadata["measurement_label"].clone())
+        .collect();
+    if labels.iter().any(|label| label != "exclusive-device") {
+        eprintln!("PHASED_DEFERRED shared devices: these timings are diagnostic only");
+    }
+    let cases = match std::env::var_os("CHOPINFER_BF16_PARTIAL_INPUTS") {
+        Some(_) => Some(manifest()?),
+        None => None,
+    };
+    let served_f32 = phased_deferred::served(sessions)?;
+    let prototype = phased_deferred::fixture(sessions, cubin)?;
+    let fixture = |arm| match arm {
+        Prototype::Pair | Prototype::Control => &served_f32,
+        Prototype::Deferred | Prototype::Rounding => &prototype,
+    };
+    let timed = timed_rows(std::env::var(ROWS_VARIABLE).ok().as_deref())?;
+    let mut power = Power::start(sessions)?;
+    let mut results = Vec::new();
+    for rows in timed {
+        let forms = [Step::Decode, Step::Verify]
+            .into_iter()
+            .filter_map(|step| Some((step, served(step, rows).transpose()?)))
+            .map(|(step, form)| form.map(|form| (step.name(), form.arm().name())))
+            .collect::<LabResult<BTreeMap<_, _>>>()?;
+        let (values, source) = timed_inputs(cases.as_deref(), rows)?;
+        let tally =
+            phased_deferred::compare(sessions, &served_f32, &prototype, &values, rows, rows)?;
+        let mut launched = BTreeMap::new();
+        let mut timed = BTreeMap::new();
+        for arm in PROTOTYPE_ORDER {
+            let calls = planned(&fixture(arm).ops[0], rows, arm.plan())?;
+            launched.insert(
+                arm.name(),
+                calls.into_iter().map(|c| c.symbol).collect::<Vec<_>>(),
+            );
+            timed.insert(arm, graphs(sessions, fixture(arm), rows, arm.plan())?);
+        }
+        let mut us = BTreeMap::<Prototype, Vec<f64>>::new();
+        let mut visits = Vec::new();
+        for cycle in 0..2 {
+            let order: Vec<Prototype> = match cycle {
+                0 => PROTOTYPE_ORDER.to_vec(),
+                _ => PROTOTYPE_ORDER.iter().rev().copied().collect(),
+            };
+            for arm in order {
+                let label = format!("rows={rows} arm={} cycle={cycle}", arm.name());
+                let (slowest, record) = visit(sessions, &timed[&arm], &label, &mut power)?;
+                us.entry(arm).or_default().push(slowest);
+                visits.push(record);
+            }
+        }
+        let pair = |arm: Prototype| [us[&arm][0], us[&arm][1]];
+        let control = Paired::new(pair(Prototype::Pair), pair(Prototype::Control));
+        let bound = control.mean.abs().max(control.spread);
+        let compared = |candidate: Prototype| {
+            let paired = Paired::new(pair(Prototype::Pair), pair(candidate));
+            let mut record = paired.json();
+            record["baseline"] = json!(Prototype::Pair.name());
+            record["candidate"] = json!(candidate.name());
+            record["aa_bound"] = json!(bound);
+            record["resolved"] = json!(paired.resolved(bound));
+            (paired, record)
+        };
+        let (deferred, deferred_record) = compared(Prototype::Deferred);
+        let (_, rounding_record) = compared(Prototype::Rounding);
+        eprintln!(
+            "PHASED_DEFERRED rows={rows} served={forms:?} pair_us={:?} prototype_us={:?} \
+             rounding_us={:?} saved_us={:.3} d=[{:.4},{:.4}] mean={:.4} spread={:.4} \
+             aa_bound={bound:.4} resolved={} elapsed_s={:.0}",
+            pair(Prototype::Pair),
+            pair(Prototype::Deferred),
+            pair(Prototype::Rounding),
+            deferred.saved,
+            deferred.d[0],
+            deferred.d[1],
+            deferred.mean,
+            deferred.spread,
+            deferred.resolved(bound),
+            started.elapsed().as_secs_f64(),
+        );
+        results.push(json!({
+            "rows": rows,
+            "inputs": source,
+            "served_forms": forms,
+            "sums_bitwise_equal": true,
+            "nan_sums": tally.nan_sums,
+            "launched": launched,
+            "slowest_rank_median_us": us.iter().map(|(arm, us)| (arm.name(), us))
+                .collect::<BTreeMap<_, _>>(),
+            "aa_control": control.json(),
+            "aa_bound": bound,
+            "f32_phased_deferred_vs_f32_deferred": deferred_record,
+            "f32_phased_vs_f32_deferred": rounding_record,
+            "visits": visits,
+        }));
+    }
+    power.sample("end")?;
+    receipts()?;
+    let path = sessions[0].receipt(
+        RECEIPT_KIND,
+        BTreeMap::from([
+            ("case".into(), json!("phased_deferred_timing")),
+            ("geometry".into(), json!(FLASH.id)),
+            ("width".into(), json!(WIDTH)),
+            ("ranks".into(), json!(4)),
+            ("row_capacity".into(), json!(ROW_CAPACITY)),
+            ("calls_per_graph".into(), json!(CALLS)),
+            ("warmup_replays".into(), json!(WARMUP)),
+            ("timed_replays".into(), json!(REPLAYS)),
+            (
+                "cycle_order".into(),
+                json!(PROTOTYPE_ORDER.map(Prototype::name)),
+            ),
+            (
+                "arms".into(),
+                json!(
+                    PROTOTYPE_ORDER
+                        .map(|arm| (arm.name(), arm.role()))
+                        .into_iter()
+                        .collect::<BTreeMap<_, _>>()
+                ),
+            ),
+            ("rank_measurement_labels".into(), json!(labels)),
+            ("power_samples".into(), json!(power.samples)),
+            ("power_limit_changes".into(), json!(power.changes)),
+            (
+                "power_limits_constant".into(),
+                json!(power.changes.is_empty()),
+            ),
+            ("void".into(), json!(!power.changes.is_empty())),
+            ("elapsed_s".into(), json!(started.elapsed().as_secs_f64())),
+            ("rows".into(), json!(results)),
+        ]),
+    )?;
+    eprintln!("PHASED_DEFERRED_RECEIPT {}", path.display());
+    if let Some(change) = power.changes.first() {
+        return Err(format!(
+            "an enforced power limit changed during the job, so it is void: {change}"
+        ));
+    }
+    Ok(path)
+}
+
+#[test]
+fn prototype_arms_launch_the_pair_and_its_one_launch_twin() {
+    use super::phased_deferred::{Deferred, SYMBOLS};
+    assert_eq!(ROW_CAPACITY, super::phased_parity::CAPACITY);
+    let pair = served_symbols();
+    for rank in 0..4 {
+        let served = served_op(rank, ROW_CAPACITY).unwrap();
+        let prototype: Op = Box::new(Deferred::new(rank).unwrap());
+        for rows in [1, 4, 5, 6, 32, 33, 64, 192] {
+            let names = |op: &Op, arm: Prototype| -> Vec<String> {
+                planned(op, rows, arm.plan())
+                    .unwrap()
+                    .into_iter()
+                    .map(|call| call.symbol)
+                    .collect()
+            };
+            assert_eq!(names(&served, Prototype::Pair), pair[..2]);
+            assert_eq!(names(&served, Prototype::Control), pair[..2]);
+            let one = if rows <= 4 { 0 } else { 1 };
+            assert_eq!(names(&prototype, Prototype::Deferred), [SYMBOLS[2 + one]]);
+            assert_eq!(names(&prototype, Prototype::Rounding), [SYMBOLS[one]]);
+        }
+    }
+}
+
+#[test]
+fn phased_deferred_timing() {
+    if std::env::var("CHOPINFER_KERNEL_BENCH").as_deref() != Ok("1") {
+        eprintln!(
+            "skipping the phased deferred timing: set CHOPINFER_KERNEL_BENCH=1, \
+             CHOPINFER_PHASED_F32_CUBIN and CHOPINFER_KERNEL_GPUS to four idle GPUs"
+        );
+        return;
+    }
+    if kernel_harness::selected_ordinals().unwrap().is_none() {
+        kernel_harness::skip(
+            "the phased deferred timing: set CHOPINFER_KERNEL_GPUS to four idle GPUs",
+        )
+        .unwrap();
+        return;
+    }
+    let receipts = receipts().unwrap();
+    eprintln!("PHASED_DEFERRED receipts in {}", receipts.display());
+    let cubin = super::phased_deferred::lab_cubin().unwrap();
+    let result = kernel_harness::gpu_test_multi_with(probe().unwrap(), 2 << 30, |sessions| {
+        phased_deferred_bench(sessions, cubin)
+    })
+    .unwrap();
+    assert!(result.is_some(), "the timing must run on four GPUs");
+}

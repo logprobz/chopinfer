@@ -73,7 +73,7 @@ impl Lowering<'_> {
             ),
             Input::Query
                 if id == "attention.q-b"
-                    && (matches!(phase, Phase::Decode(_))
+                    && (self.shape.row_fusions(phase)
                         || (self.ops.query_prefill.is_some()
                             && crate::ops::query_prefill::eligible(
                                 self.shape.geometry,

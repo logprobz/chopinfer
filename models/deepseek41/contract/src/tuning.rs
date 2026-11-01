@@ -262,6 +262,24 @@ mod tests {
     }
 
     #[test]
+    fn row_fusions_hold_the_decode_batch_rows() {
+        let row = |bucket| Row {
+            key: Key {
+                op: "latent.row_fusions.verify".into(),
+                weights: "none".into(),
+                shape: [("ranks".into(), 4)].into(),
+                bucket,
+                rows: None,
+            },
+            schedule: "fused".into(),
+            knobs: BTreeMap::new(),
+        };
+        sites::validate(&row(crate::serving::DECODE_BATCH)).unwrap();
+        let error = sites::validate(&row(64)).unwrap_err();
+        assert!(error.0.contains("latent.row_fusions.verify"), "{error}");
+    }
+
+    #[test]
     fn site_knobs_refuse_unimplemented_catalog_values() {
         use kernel_build::tuning::Knob::{Count, Flag};
         for (family, op, knob, value) in [

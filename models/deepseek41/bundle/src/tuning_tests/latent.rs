@@ -52,8 +52,14 @@ fn pin_untuned_served_keys() {
             &[("ranks", ranks)],
             8192,
         ));
+        domain.insert(key(
+            "latent.row_fusions.verify",
+            "none",
+            &[("ranks", ranks)],
+            model_deepseek41_contract::serving::DECODE_BATCH,
+        ));
     }
-    assert_eq!(domain.len(), 135);
+    assert_eq!(domain.len(), 138);
     assert_untuned(
         Family::Latent,
         domain,
@@ -64,6 +70,7 @@ fn pin_untuned_served_keys() {
             ("staged", &["head_group", "packed", "stage_keys"]),
             ("parallel", &[]),
             ("paired", &[]),
+            ("fused", &[]),
         ],
     );
 }
@@ -87,6 +94,9 @@ const UNTUNED: &[&str] = &[
     "latent.query.verify f32 ranks=4 buckets=192 rows=1..64",
     "latent.query.verify f32 ranks=4 buckets=32..48 rows=all",
     "latent.query.verify f32 ranks=4 buckets=49..64 rows=1..48",
+    "latent.row_fusions.verify none ranks=1 buckets=32 rows=all",
+    "latent.row_fusions.verify none ranks=2 buckets=32 rows=all",
+    "latent.row_fusions.verify none ranks=4 buckets=32 rows=7..32",
     "latent.sources.decode fp8 ranks=1 buckets=32 rows=all",
     "latent.sources.decode fp8 ranks=2 buckets=32 rows=all",
     "latent.sources.prefill fp8 ranks=1 buckets=8192 rows=all",

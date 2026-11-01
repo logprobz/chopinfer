@@ -1,0 +1,520 @@
+{
+ "schema": "chopinfer.journal-proof.spec.v1",
+ "description": "Retire the verify_row_fusions option: every default journal, create range and device history of the flipped package is identical, and the four lifetimes pinned with the option on are removed with it.",
+ "fixtures": [
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-1.jsonl",
+   "create": "deepseek41-allocation-c4.journal",
+   "journals": [
+    "deepseek41-allocation-c4.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-10.jsonl",
+   "create": "deepseek41-allocation-c16-odd-wide-draft.journal",
+   "journals": [
+    "deepseek41-allocation-c16-odd-wide-draft.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-11.jsonl",
+   "create": "deepseek41-allocation-c32-maximum-wide-draft.journal",
+   "journals": [
+    "deepseek41-allocation-c32-maximum-wide-draft.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-12.jsonl",
+   "create": "deepseek41-allocation-c8-markov-staged.journal",
+   "journals": [
+    "deepseek41-allocation-c8-markov-staged.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-13.jsonl",
+   "create": "deepseek41-allocation-c8-hc-fusion.journal",
+   "journals": [
+    "deepseek41-allocation-c8-hc-fusion.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-14.jsonl",
+   "create": "deepseek41-allocation-c8-confidence-staged.journal",
+   "journals": [
+    "deepseek41-allocation-c8-confidence-staged.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-15.jsonl",
+   "create": "deepseek41-allocation-c8-moe-direct.journal",
+   "journals": [
+    "deepseek41-allocation-c8-moe-direct.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-16.jsonl",
+   "create": "deepseek41-allocation-c4-hc-draft-rows.journal",
+   "journals": [
+    "deepseek41-allocation-c4-hc-draft-rows.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-17.jsonl",
+   "create": "deepseek41-allocation-c4-drafter.journal",
+   "journals": [
+    "deepseek41-allocation-c4-drafter.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-18.jsonl",
+   "create": "deepseek41-allocation-c4-rowfuse.journal",
+   "journals": [
+    "deepseek41-allocation-c4-rowfuse.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-19.jsonl",
+   "create": "deepseek41-allocation-c8-rowfuse.journal",
+   "journals": [
+    "deepseek41-allocation-c8-rowfuse.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-2.jsonl",
+   "create": "deepseek41-allocation-c8.journal",
+   "journals": [
+    "deepseek41-allocation-c8.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-3.jsonl",
+   "create": "deepseek41-allocation-c4-d3.journal",
+   "journals": [
+    "deepseek41-allocation-c4-d3.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-4.jsonl",
+   "create": "deepseek41-allocation-c16-odd.journal",
+   "journals": [
+    "deepseek41-allocation-c16-odd.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-5.jsonl",
+   "create": "deepseek41-allocation-c32-maximum.journal",
+   "journals": [
+    "deepseek41-allocation-c32-maximum.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-6.jsonl",
+   "create": "deepseek41-allocation-c16-odd-wide.journal",
+   "journals": [
+    "deepseek41-allocation-c16-odd-wide.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-7.jsonl",
+   "create": "deepseek41-allocation-c32-maximum-wide.journal",
+   "journals": [
+    "deepseek41-allocation-c32-maximum-wide.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-8.jsonl",
+   "create": "deepseek41-allocation-c4-phased.journal",
+   "journals": [
+    "deepseek41-allocation-c4-phased.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-9.jsonl",
+   "create": "deepseek41-allocation-c16-odd-phased.journal",
+   "journals": [
+    "deepseek41-allocation-c16-odd-phased.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::catch_up::prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions#tests/fake_host_tests.dspark.catch_up.prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions/device-1.jsonl",
+   "create": "flash-tp4-dspark-prefix-capture.journal",
+   "journals": [
+    "flash-tp4-dspark-prefix-capture.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::catch_up::prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions#tests/fake_host_tests.dspark.catch_up.prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions/device-2.jsonl",
+   "create": "flash-tp4-dspark-prefix-capture-rowfuse.journal",
+   "journals": [
+    "flash-tp4-dspark-prefix-capture-rowfuse.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-1.jsonl",
+   "create": "deepseek41-flash-tp1.native.journal",
+   "journals": [
+    "deepseek41-flash-tp1.native.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-2.jsonl",
+   "create": "deepseek41-flash-tp1.bf16.journal",
+   "journals": [
+    "deepseek41-flash-tp1.bf16.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-3.jsonl",
+   "create": "deepseek41-flash-tp2.native.journal",
+   "journals": [
+    "deepseek41-flash-tp2.native.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-4.jsonl",
+   "create": "deepseek41-flash-tp2.bf16.journal",
+   "journals": [
+    "deepseek41-flash-tp2.bf16.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-5.jsonl",
+   "create": "deepseek41-flash-tp4.native.journal",
+   "journals": [
+    "deepseek41-flash-tp4.native.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-6.jsonl",
+   "create": "deepseek41-flash-tp4.bf16.journal",
+   "journals": [
+    "deepseek41-flash-tp4.bf16.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-1.jsonl",
+   "create": "deepseek41-flash-tp2.media.journal",
+   "journals": [
+    "deepseek41-flash-tp2.media.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-2.jsonl",
+   "create": "deepseek41-flash-tp4.media.journal",
+   "journals": [
+    "deepseek41-flash-tp4.media.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-1.jsonl",
+   "create": "deepseek41-flash-tp4.native-moe.native.journal",
+   "journals": [
+    "deepseek41-flash-tp4.native-moe.native.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-2.jsonl",
+   "create": "deepseek41-flash-tp4.native-moe.bf16.journal",
+   "journals": [
+    "deepseek41-flash-tp4.native-moe.bf16.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::phased_decode_reduce::phased_decode_lifetimes_journal#tests/fake_host_tests.phased_decode_reduce.phased_decode_lifetimes_journal/device-1.jsonl",
+   "create": "deepseek41-flash-tp4.native-phased.journal",
+   "journals": [
+    "deepseek41-flash-tp4.native-phased.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::phased_decode_reduce::phased_decode_lifetimes_journal#tests/fake_host_tests.phased_decode_reduce.phased_decode_lifetimes_journal/device-2.jsonl",
+   "create": "deepseek41-flash-tp4.bf16-phased.journal",
+   "journals": [
+    "deepseek41-flash-tp4.bf16-phased.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-1.jsonl",
+   "create": "flash-tp4-ar-shared-anchor.journal",
+   "journals": [
+    "flash-tp4-ar-shared-anchor.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-2.jsonl",
+   "create": "flash-tp4-dspark-shared-anchor.journal",
+   "journals": [
+    "flash-tp4-dspark-shared-anchor.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-3.jsonl",
+   "create": "flash-tp4-dspark-shared-anchor-rowfuse.journal",
+   "journals": [
+    "flash-tp4-dspark-shared-anchor-rowfuse.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-1.jsonl",
+   "create": "verify-hc-4.journal",
+   "journals": [
+    "verify-hc-4.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-2.jsonl",
+   "create": "verify-hc-6.journal",
+   "journals": [
+    "verify-hc-6.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-3.jsonl",
+   "create": "verify-hc-8.journal",
+   "journals": [
+    "verify-hc-8.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-4.jsonl",
+   "create": "verify-hc-12.journal",
+   "journals": [
+    "verify-hc-12.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-5.jsonl",
+   "create": "verify-hc-16.journal",
+   "journals": [
+    "verify-hc-16.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-6.jsonl",
+   "create": "verify-hc-32.journal",
+   "journals": [
+    "verify-hc-32.journal"
+   ]
+  }
+ ],
+ "journals": {},
+ "auxiliary_rules": {
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-1.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-10.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-11.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-12.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-13.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-14.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-15.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-16.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-17.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-18.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-19.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-2.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-3.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-4.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-5.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-6.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-7.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-8.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-9.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::catch_up::prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions#tests/fake_host_tests.dspark.catch_up.prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions/device-1.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::dspark::catch_up::prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions#tests/fake_host_tests.dspark.catch_up.prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions/device-2.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-1.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-2.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-3.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-4.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-5.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-6.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-1.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::media::an_image_prefill_journals_at_two_and_four_ranks#tests/fake_host_tests.media.an_image_prefill_journals_at_two_and_four_ranks/device-2.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-1.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::native_moe_prefill_switch_runs_the_tp4_journal#tests/fake_host_tests.native_moe_prefill_switch_runs_the_tp4_journal/device-2.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::phased_decode_reduce::phased_decode_lifetimes_journal#tests/fake_host_tests.phased_decode_reduce.phased_decode_lifetimes_journal/device-1.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::phased_decode_reduce::phased_decode_lifetimes_journal#tests/fake_host_tests.phased_decode_reduce.phased_decode_lifetimes_journal/device-2.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-1.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-2.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-3.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-1.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-2.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-3.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-4.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-5.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
+  "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-6.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  }
+ },
+ "added_journals": [],
+ "removed_journals": [
+  "deepseek41-allocation-c4-rowfuse.journal",
+  "deepseek41-allocation-c8-rowfuse.journal",
+  "flash-tp4-dspark-shared-anchor-rowfuse.journal",
+  "flash-tp4-dspark-prefix-capture-rowfuse.journal"
+ ]
+}

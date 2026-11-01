@@ -143,6 +143,12 @@ pub struct Prepared {
     hidden_quantize: Op<BlockQuantizeBuffers<View>>,
     ring_write: Op<LatentWindowWriteBuffers<View>>,
     block_write: Op<LatentWindowWriteBuffers<View>>,
+    /// With the verify row fusions (`Shape::fuses_verify_rows`), the ring
+    /// and block writes prepared for at most `draft_rows` rows, whose
+    /// quantizer is the parallel decode ceil entry instead of the prefill
+    /// one. Writes of the rows `Shape::row_fusion_rows` admits take them.
+    draft_writes: Option<[Op<LatentWindowWriteBuffers<View>>; 2]>,
+    draft_rows: u32,
     attention: Op<LatentSourcesBuffers<View>>,
 }
 
@@ -210,19 +216,26 @@ impl Prepared {
             },
             need,
         )?;
-        let ring_write = backend.latent_window_write(
-            &latent_glue::window_write(
-                g,
-                WindowAddressing::Circular {
-                    slots: g.shape.attention.window,
-                },
-            ),
-            need,
-        )?;
-        let block_write = backend.latent_window_write(
-            &latent_glue::window_write(g, WindowAddressing::Staged { slots: BLOCK_ROWS }),
-            need,
-        )?;
+        let ring = latent_glue::window_write(
+            g,
+            WindowAddressing::Circular {
+                slots: g.shape.attention.window,
+            },
+        );
+        let block = latent_glue::window_write(g, WindowAddressing::Staged { slots: BLOCK_ROWS });
+        let ring_write = backend.latent_window_write(&ring, need)?;
+        let block_write = backend.latent_window_write(&block, need)?;
+        let draft_rows = model_deepseek41_contract::dspark_options::SMALL_DRAFT_ROWS
+            .max(shape.verify_rows_within(model_deepseek41_contract::verify_bounds::ROW_BUCKETS));
+        let draft_writes = if shape.fuses_verify_rows() {
+            let small = Need::rows(draft_rows);
+            Some([
+                backend.latent_window_write(&ring, small)?,
+                backend.latent_window_write(&block, small)?,
+            ])
+        } else {
+            None
+        };
         let query = latent::query(
             g,
             shape.ranks(),
@@ -244,6 +257,8 @@ impl Prepared {
             hidden_quantize,
             ring_write,
             block_write,
+            draft_writes,
+            draft_rows,
             attention,
         })
     }
@@ -412,6 +427,7 @@ impl Prepared {
         .into_iter()
         .chain(self.main_project_small.iter().map(|op| op.info()))
         .chain(self.main_stream.iter().map(|(_, op)| op.info()))
+        .chain(self.draft_writes.iter().flatten().map(|op| op.info()))
         .flat_map(|info| &info.symbols)
     }
 
@@ -435,6 +451,12 @@ impl Prepared {
         ]
         .into_iter()
         .chain(self.main_project_small.iter().map(|op| op.info().workspace))
+        .chain(
+            self.draft_writes
+                .iter()
+                .flatten()
+                .map(|op| op.info().workspace),
+        )
         .max()
         .unwrap_or(0)
     }
@@ -535,10 +557,13 @@ impl Prepared {
             status: bind.view(v.status),
             status_row_offset: 0,
         };
-        let op = if v.first.is_some() {
-            &self.block_write
-        } else {
-            &self.ring_write
+        let block = usize::from(v.first.is_some());
+        let op = match &self.draft_writes {
+            Some(small) if count <= self.draft_rows && self.shape.row_fusion_rows(count) => {
+                &small[block]
+            }
+            _ if block == 1 => &self.block_write,
+            _ => &self.ring_write,
         };
         bind.launch_within(op, &buffers, v.workspace, Counts::rows(count))
     }

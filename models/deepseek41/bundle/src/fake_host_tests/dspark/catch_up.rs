@@ -133,3 +133,59 @@ fn catch_up_graphs_reuse_exact_rows_across_slots_and_commits() {
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
 }
+
+/// A prefix capture catches the drafter up outside any target step
+/// (`instance/prefix.rs`), and its window writes of the rows
+/// `latent.row_fusions.verify` admits (at most six) take the parallel
+/// ceil32 entry, as a step's do. The eager lifetime (a short prefill, its
+/// capture, a restore into another slot and a drafted verify step) is
+/// pinned; the verify step's fusions are `verify_rows`' to check.
+#[test]
+fn prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions() {
+    use model_deepseek41_contract::execution_options::DSPARK_GRAPH_HANDLES_PER_RANK;
+    const SERIAL: &str = "chop_deepseek41_latent_ceil32_v1 ";
+    const PARALLEL: &str = "chop_deepseek41_latent_ceil32_parallel_v1 ";
+    let (host, mut instance) = create_with_options(
+        Shape::new(&FLASH, Ranks::TP4).unwrap(),
+        4,
+        32,
+        &[(DSPARK_GRAPH_HANDLES_PER_RANK, 0.into())],
+    );
+    execute(
+        &mut instance,
+        &host,
+        &super::super::prompt(1, 0, 0, 3, true),
+    );
+    instance.commit().unwrap();
+    let pages = (0..instance.describe_prefix_state().unwrap())
+        .map(|page| 40 + page)
+        .collect::<Vec<_>>();
+    let start = host.journal.borrow().len();
+    instance.capture_prefix_state(1, 3, &pages).unwrap();
+    let capture = start..host.journal.borrow().len();
+    instance.retire_request(1).unwrap();
+    instance
+        .restore_prefix_state_in_slot(2, &[0, 1, 2], &pages, 1)
+        .unwrap();
+    execute(&mut instance, &host, &verify(2, 1, 3, 5));
+    instance.commit_accepted(&[kept(2, 3)]).unwrap();
+    instance.retire_request(2).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+    let lines = host.journal.borrow().clone();
+    // The capture's catch-up writes the three prompt rows in 12 small
+    // window writes over the four ranks.
+    let launches = |name: &str| {
+        lines[capture.clone()]
+            .iter()
+            .filter(|line| line.starts_with("launch ") && line.contains(name))
+            .count()
+    };
+    assert_eq!((launches(SERIAL), launches(PARALLEL)), (0, 12));
+    let name = "flash-tp4-dspark-prefix-capture.journal";
+    if let Err(error) =
+        bundle_runtime::fake_host::check_journal(&lines, (40104, 0x00ca4ee0728ce1b9), name)
+    {
+        panic!("{name}: {error}");
+    }
+}

@@ -14,6 +14,9 @@
 //! itself with the option on. Separate names keep their allowlist entries
 //! apart from the default profile, whose full sweep refuses entries it
 //! never reaches; entries for the shapes they share name `tp4-dspark*`.
+//! Every profile here and the package's own run the decode row fusions at
+//! verify steps of at most 6 rows (`latent.row_fusions.verify`), so their
+//! sweeps cover that route beside each candidate.
 //!
 //! Besides the host's own shapes, the envelope adds every eager width with
 //! 32 items, and 65 to 96 rows with 16 items, drafts spread as evenly as

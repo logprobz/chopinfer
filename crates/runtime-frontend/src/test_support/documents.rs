@@ -91,6 +91,11 @@ fn assert_same_render(
                 document.extracts_tool_calls(),
                 "tool extraction"
             );
+            assert_eq!(
+                library.completion_prefix_parts(),
+                document.completion_prefix_parts(),
+                "completion prefix"
+            );
             assert!(library.parser_source().is_none());
             assert!(document.parser_source().is_some());
         }

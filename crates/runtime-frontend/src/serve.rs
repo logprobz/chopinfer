@@ -45,6 +45,11 @@ pub struct BundleChatStateV1 {
     /// What the prompt ends with that the completion continues: a forced
     /// tool choice's declared prefill, or empty.
     completion_prefix: String,
+    /// The boundary tokens the prompt holds in place of their spellings in
+    /// `completion_prefix`, under `vocabulary.explicit_special_tokens` or
+    /// ID-only markers: each spelling's byte range in the prefix and its
+    /// token's identifier.
+    completion_prefix_tokens: Vec<(std::ops::Range<usize>, u32)>,
     /// The frontend that rendered the prompt and the state its render
     /// returned; `None` for a frontend that calls a chat format directly.
     parser: Option<BundleParserSourceV1>,
@@ -60,6 +65,7 @@ impl PartialEq for BundleChatStateV1 {
             && self.tools == other.tools
             && self.extract_tool_calls == other.extract_tool_calls
             && self.completion_prefix == other.completion_prefix
+            && self.completion_prefix_tokens == other.completion_prefix_tokens
             && self.parser.as_ref().map(BundleParserSourceV1::state)
                 == other.parser.as_ref().map(BundleParserSourceV1::state)
     }
@@ -106,6 +112,30 @@ impl BundleChatStateV1 {
     #[must_use]
     pub fn completion_prefix(&self) -> &str {
         &self.completion_prefix
+    }
+
+    /// [`Self::completion_prefix`] as the prompt holds it: its text, and the
+    /// boundary tokens the prompt holds in place of their spellings, which a
+    /// constraint's token elements read as those tokens.
+    #[must_use]
+    pub fn completion_prefix_parts(&self) -> Vec<runtime_grammar::PrefixPart<'_>> {
+        let prefix = self.completion_prefix.as_bytes();
+        let mut parts = Vec::with_capacity(2 * self.completion_prefix_tokens.len() + 1);
+        let mut at = 0;
+        for (range, id) in &self.completion_prefix_tokens {
+            if range.start > at {
+                parts.push(runtime_grammar::PrefixPart::Text(&prefix[at..range.start]));
+            }
+            parts.push(runtime_grammar::PrefixPart::Token(
+                *id,
+                &prefix[range.clone()],
+            ));
+            at = range.end;
+        }
+        if at < prefix.len() {
+            parts.push(runtime_grammar::PrefixPart::Text(&prefix[at..]));
+        }
+        parts
     }
 
     /// Where the completion's parser opens: the frontend that rendered the
@@ -668,6 +698,7 @@ impl ServerFrontendV1 for BundleFrontendV1 {
         })?;
         let mut rendered = rendered;
         let mut completion_prefix = String::new();
+        let mut completion_prefix_tokens = Vec::new();
         if forced && let Some(policy) = policy {
             if policy.forced_refused_in_thinking && rendered.mode == PromptModeV1::Thinking {
                 return Err(FrontendErrorV1::new(
@@ -677,12 +708,28 @@ impl ServerFrontendV1 for BundleFrontendV1 {
             }
             completion_prefix.clone_from(&policy.forced_prefill);
             rendered.prompt.push_str(&completion_prefix);
+            let vocabulary = &self.descriptor.vocabulary;
+            // The prefill is the declaration's text, so the prompt holds the
+            // boundary tokens it spells, the longest first, as those tokens:
+            // an explicit render names them, and the scan of a scanned
+            // prompt finds them, as the decoder's marks of ID-only markers
+            // assume.
+            if explicit || !vocabulary.id_only_markers.is_empty() {
+                for (range, special) in boundary_pieces_v1(&completion_prefix, vocabulary) {
+                    let piece = &completion_prefix[range.clone()];
+                    if special
+                        && let Some(token) = vocabulary
+                            .boundary_tokens
+                            .iter()
+                            .find(|token| token.text == piece)
+                    {
+                        completion_prefix_tokens.push((range, token.id));
+                    }
+                }
+            }
             if explicit {
-                // The prefill is the declaration's text, so the boundary
-                // tokens it spells are special tokens.
-                let vocabulary = &self.descriptor.vocabulary;
-                for (piece, special) in boundary_pieces_v1(&completion_prefix, vocabulary) {
-                    let piece = &completion_prefix[piece];
+                for (range, special) in boundary_pieces_v1(&completion_prefix, vocabulary) {
+                    let piece = &completion_prefix[range];
                     match rendered.segments.last_mut() {
                         _ if special => rendered
                             .segments
@@ -721,6 +768,7 @@ impl ServerFrontendV1 for BundleFrontendV1 {
                 tools,
                 extract_tool_calls,
                 completion_prefix,
+                completion_prefix_tokens,
                 parser: self
                     .parser
                     .as_ref()

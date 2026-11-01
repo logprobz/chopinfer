@@ -391,14 +391,31 @@ impl FormatRendererV1 for NativeFormatV1 {
         }
         // Decoding checks the document's shape and compile depth; the
         // grammar budgets apply at compilation, as for a local grammar.
-        runtime_grammar::Grammar::decode_wire(&answer)
-            .map(Some)
-            .map_err(|error| {
-                FrontendErrorV1::new(
-                    format!("the bundle frontend answered a malformed constraint: {error}"),
-                    None,
-                )
-            })
+        let grammar = runtime_grammar::Grammar::decode_wire(&answer).map_err(|error| {
+            FrontendErrorV1::new(
+                format!("the bundle frontend answered a malformed constraint: {error}"),
+                None,
+            )
+        })?;
+        // A token element writes a marker the parser reads only by its ID,
+        // so it names one of the declared ID-only markers.
+        let vocabulary = &self.descriptor.vocabulary;
+        let id_only = |id: u32| {
+            vocabulary
+                .boundary_tokens
+                .iter()
+                .any(|token| token.id == id && vocabulary.id_only_markers.contains(&token.text))
+        };
+        if let Some(id) = grammar.named_tokens().into_iter().find(|id| !id_only(*id)) {
+            return Err(FrontendErrorV1::new(
+                format!(
+                    "the bundle frontend answered a constraint naming token {id}, which is no \
+                     declared ID-only marker"
+                ),
+                None,
+            ));
+        }
+        Ok(Some(grammar))
     }
 
     fn opened(&self) -> document::OpenedV1 {

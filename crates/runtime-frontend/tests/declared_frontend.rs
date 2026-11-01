@@ -671,6 +671,36 @@ fn an_explicit_render_hands_the_backend_its_special_segments() {
     );
     let state = runtime_frontend::BundleChatStateV1::from_state(&forced.state).unwrap();
     assert_eq!(state.completion_prefix(), "<|C|C|calls>");
+    // A constraint reads the prefix as the prompt holds it: the boundary
+    // token as that token.
+    assert_eq!(
+        state.completion_prefix_parts(),
+        [
+            runtime_grammar::PrefixPart::Text(b"<"),
+            runtime_grammar::PrefixPart::Token(7, b"|C|C|"),
+            runtime_grammar::PrefixPart::Text(b"calls>"),
+        ]
+    );
+    // Without the flag the prefix is text alone.
+    let scanned_forcing = BundleFrontendV1::with_export(
+        FrontendDescriptorV1 {
+            vocabulary: runtime_frontend::FrontendVocabularyV1 {
+                explicit_special_tokens: false,
+                ..forcing.vocabulary.clone()
+            },
+            ..forcing.clone()
+        },
+        &runtime_frontend::test_support::fixture_export_v1(),
+    )
+    .unwrap()
+    .render_chat(request.clone())
+    .unwrap();
+    assert_eq!(
+        runtime_frontend::BundleChatStateV1::from_state(&scanned_forcing.state)
+            .unwrap()
+            .completion_prefix_parts(),
+        [runtime_grammar::PrefixPart::Text(b"<|C|C|calls>")]
+    );
 
     // A pad spelled in client text is text, not media, so only the
     // scanned render refuses it.

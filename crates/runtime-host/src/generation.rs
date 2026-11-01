@@ -2446,12 +2446,12 @@ fn admit<E: ModelExecutor>(
         }
     };
     // A forced choice's constraint begins after the prefill the prompt ends
-    // with, which the completion continues.
-    let prefix = chat_state.map_or("", BundleChatStateV1::completion_prefix);
+    // with, which the completion continues, read as the prompt holds it.
+    let prefix = chat_state.map_or_else(Vec::new, BundleChatStateV1::completion_prefix_parts);
     let constraint = match constraint
         .map(|grammar| {
             let gate = constraint_gate_v1(chat_state, declaration);
-            ConstraintState::new(grammar, gate, stop_ids.clone()).with_prefix(prefix.as_bytes())
+            ConstraintState::new(grammar, gate, stop_ids.clone()).with_prefix_parts(&prefix)
         })
         .transpose()
     {

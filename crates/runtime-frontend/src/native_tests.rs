@@ -162,6 +162,10 @@ impl FrontendV1 for FakeFrontendV1 {
                     runtime_grammar::Expr::literal(&"g".repeat(2 << 20)),
                 )
                 .encode_wire()),
+                "named-token" => Ok(runtime_grammar::Grammar::from_expr(
+                    runtime_grammar::Expr::Token(5),
+                )
+                .encode_wire()),
                 _ => Ok(b"CHOPGRAMnot a grammar".to_vec()),
             },
         }
@@ -246,6 +250,9 @@ fn format(scenario: &str) -> NativeFormatV1 {
     let mut descriptor = descriptor();
     let scenario = if let Some(scenario) = scenario.strip_prefix("tool-images:") {
         Arc::make_mut(&mut descriptor).tools.image_results = true;
+        scenario
+    } else if let Some(scenario) = scenario.strip_prefix("id-only:") {
+        Arc::make_mut(&mut descriptor).vocabulary.id_only_markers = vec!["</t>".into()];
         scenario
     } else if let Some(scenario) = scenario.strip_prefix("explicit:") {
         let descriptor = Arc::make_mut(&mut descriptor);
@@ -680,6 +687,21 @@ fn constraint_answers_are_checked() {
             .unwrap_err()
             .message
             .starts_with("the bundle frontend answered a malformed constraint")
+    );
+    // A token element names a declared ID-only marker, `</t>` (5), only.
+    assert_eq!(
+        format("id-only:named-token").tool_constraint(&[], &FrontendToolChoiceV1::Required),
+        Ok(Some(runtime_grammar::Grammar::from_expr(
+            runtime_grammar::Expr::Token(5)
+        )))
+    );
+    assert_eq!(
+        format("named-token")
+            .tool_constraint(&[], &FrontendToolChoiceV1::Required)
+            .unwrap_err()
+            .message,
+        "the bundle frontend answered a constraint naming token 5, which is no declared \
+         ID-only marker"
     );
 }
 

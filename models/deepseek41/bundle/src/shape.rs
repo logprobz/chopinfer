@@ -28,9 +28,6 @@ pub struct Shape {
     /// the fewest forwards the widest wide verify bucket holds, on the wide
     /// verify buckets (the `wide_draft` candidate option).
     pub wide_draft: bool,
-    /// Whether Flash TP4 steps of 64 rows or fewer run the measured exact
-    /// F32 row tiles (the `f32_row_tiles` candidate option).
-    pub f32_row_tiles: bool,
     /// Whether decode and verify steps' complete all-reduces take the phased
     /// F32 rounding entries (the `phased_decode_reduce` candidate option).
     pub phased_decode_reduce: bool,
@@ -72,7 +69,6 @@ impl Shape {
             verify_rows: DECODE_BATCH,
             wide_verify: false,
             wide_draft: false,
-            f32_row_tiles: false,
             phased_decode_reduce: false,
             moe_knobs: Default::default(),
             dspark_hc_draft_rows: false,
@@ -113,13 +109,6 @@ impl Shape {
         let widest = self.wide_verify_rows().last().copied()?;
         self.wide_draft
             .then(|| (widest / MAX_DRAFT_TOKENS).min(DECODE_BATCH))
-    }
-
-    /// This shape with the exact F32 row tiles of 64 rows or fewer on or
-    /// off (`model_deepseek41_contract::execution_options::F32_ROW_TILES`).
-    pub fn with_f32_row_tiles(mut self, enabled: bool) -> Shape {
-        self.f32_row_tiles = enabled;
-        self
     }
 
     /// This shape with the phased decode reduction on or off

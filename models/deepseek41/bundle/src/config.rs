@@ -417,7 +417,6 @@ pub(crate) mod tests {
             (DIAGNOSTIC_STEP_LOGS, true.into()),
             (WIDE_VERIFY, true.into()),
             (WIDE_DRAFT, true.into()),
-            (F32_ROW_TILES, true.into()),
             (PHASED_DECODE_REDUCE, true.into()),
             (MOE_DIRECT_STREAM, true.into()),
             (MOE_DIRECT_RETIRE, true.into()),
@@ -439,7 +438,6 @@ pub(crate) mod tests {
                 diagnostic_step_logs: true,
                 wide_verify: true,
                 wide_draft: true,
-                f32_row_tiles: true,
                 phased_decode_reduce: true,
                 moe_direct: MoeDirect {
                     stream: true,

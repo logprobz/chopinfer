@@ -212,7 +212,6 @@ them. A non-default value is unqualified.
 | `dspark_hc_fusion` | `false` | Candidate: the drafter's stage boundaries fuse their all-reduce round, expansion, next mixer and input norm where the finish route admits the forward's rows (7 to 12 items), as the backbone's do ([drafter cost](lab/drafter-cost.md)). Fixed-batch GPU replays at C1 to C12 and C16 matched bitwise. Not adopted: the pair's served A/B on 2026-11-01 was invalid, and its estimated gain (about 0.8% at C1, 0.4 to 0.5% at C8 and C16) is below the 1.5% bar. |
 | `dspark_markov_staged` | `false` | Candidate: drafter Markov steps of two or more items load each thread's weight chain into registers before the dependency wait and read each position's logits in place, with no row copy ([drafter cost](lab/drafter-cost.md)). Bitwise lab pairs and fixed-batch GPU replays matched. Not adopted: its served single-option A/B on 2026-11-01 gained 2.14% in C16 step time but lost 0.70% in C8 decode request throughput, a resolved regression. |
 | `dspark_moe_direct` | `false` | Candidate: drafter forwards whose block rows the drafter table admits (`moe.direct_drafter.verify`) run the routed experts through the direct path instead of the expert chains ([drafter cost](lab/drafter-cost.md)). Fixed-batch GPU replays at C1 to C12 and C16 matched bitwise. Not adopted: no served A/B was run, since its estimated gain of about 0.15% is below the 1.5% bar. |
-| `f32_row_tiles` | `false` | Candidate: Flash TP4 steps of 64 rows or fewer run the vocabulary head in its measured exact F32 row tiles at every decode and verify width, the DSpark drafter's head alike, and at 33 to 64 verify rows the compressor in its row tiles and the index weights on the split route instead of the cached separate spans; the router keeps its spans. Bitwise lab twins and fixed-batch GPU replays matched; served step-time acceptance remains required before adoption. |
 | `moe_direct_keep` | `false` | Candidate: on Flash TP4, the direct MoE's 32- to 64-row and wide verify buckets' queues store their K-block partials with an L2 evict_last policy. With the stream, retire and loads options this is the robust knob set, bitwise equal to the default in the kernel-lab MoE pairs and faster in the lab with served-like routing ([lab](lab/moe_direct_small.md#served-body-candidates)); served step-time acceptance remains required. |
 | `moe_direct_loads` | `false` | Candidate: the same buckets' gate finisher issues every partial load before its first add. Part of the robust knob set. |
 | `moe_direct_retire` | `false` | Candidate: the same buckets' finishers discard each partial line from L2 once read. Part of the robust knob set. |
@@ -450,19 +449,20 @@ configurations above matched the previous package bitwise in logits,
 proposals, acceptance and committed state. This is not served step-time
 acceptance.
 
-The `f32_row_tiles` candidate option runs the same tiles at 33 to 64 verify
-rows, a range the decode route serves through the cached separate spans:
+Flash TP4 verify steps of 33 to 64 rows run the same tiles, a range the
+decode route served through the cached separate spans:
 the head's tile at every width and the compressor's eight K slices of 64
 by 32. The router keeps its spans, which the tiles only matched there, and
 which the direct MoE's fused router consumes. In the same lab run the head
 took 0.40 and 0.41 ms at 48 and 64 rows against 1.08 and 1.37 ms on the
 spans, and each compressor projection 28 us against 33 and 38 us.
-Fixed-batch GPU replays with both options on, at verify widths 32 to 64
+Fixed-batch GPU replays with `wide_verify` and the `f32_row_tiles`
+candidate option on, at verify widths 32 to 64
 (concurrency 16 and 32, two to four rows per item, against captures of the
 previous package) and at the five wide configurations, matched bitwise.
 
-The option also runs the head at every decode and verify width of 32 rows
-or fewer in its decode tiles (tuning site `f32.rows.decode`, a module of its
+The head also runs at every decode and verify width of 32 rows or fewer
+in its decode tiles (tuning site `f32.rows.decode`, a module of its
 own so the verify module keeps its bytes): 96 features by 8 rows through 8
 rows, 96 by 16 through 16 and 256 by 32 through 32, each a wave of CTAs that
 streams its features over every chain. The DSpark drafter's head runs the
@@ -481,11 +481,20 @@ weights 14.6 to 14.9 us at 33 to 64 rows against 18.3 to 18.4 us on the
 spans. The lab's comparisons matched the split route bit for bit at every
 tile boundary and at the decode, small verify and drafter head widths from 1
 to 64 rows, on every operand witness, for the lab's tiles and the packaged
-ones. Fixed-batch GPU replays with the option on at verify
+ones. Fixed-batch GPU replays with the candidate option on at verify
 widths 4 to 64 (concurrency 1, 16 and 32, two to six rows per item, against
 captures of the previous package) matched bitwise in logits, proposals,
-acceptance and committed state. The route sweep `tp4-dspark-tiles` serves
-the profile with the option on. This is not served step-time acceptance.
+acceptance and committed state.
+
+These routes served behind the `f32_row_tiles` candidate option until its
+adoption on 2026-11-01, which removed the option; an instance that names it
+is refused, and the results here that name it ran with it on. Served
+exactness with the option alone beside the `tp4-dspark` profile gave
+identical tokens at C1, C8, C16 and C32. The served step-time A/B of the
+option against the profile, every visit valid, resolved a gain in every
+cell: C1 (cell i1-r6) 0.33% with a spread of 0.08%, C8 (i8-r32) 3.78%
+(0.96%), C16 (i16-r64) 7.00% (0.67%) and C32 (i32-r32) 1.53% (0.54%, its
+lead visit discarded; the same design's A/A was clear). No cell regressed.
 
 The lab timings above ran the General witness, whose weights all lie in the
 tensor domain, which admits a nonzero operand only at 2^-30 <= |x| < 2^31.

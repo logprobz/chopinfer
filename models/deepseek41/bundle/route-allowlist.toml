@@ -6,11 +6,8 @@
 # the profile's shapes, tp4-dspark-rows192-wide, the same override with the
 # `wide_verify` candidate on, tp4-dspark-rows192-wide-draft, with
 # `wide_draft` too, tp4-dspark-rows192-phased, with the
-# `phased_decode_reduce` candidate on, tp4-dspark-tiles, the profile with
-# the `f32_row_tiles` candidate on, and tp4-dspark-drafter, the profile with
-# the five drafter cost candidates on. With `f32_row_tiles` the head runs its
-# row tiles, so the head's cached-stage entries name the other DSpark
-# profiles alone; the drafter options leave the target's head as it is.
+# `phased_decode_reduce` candidate on, and tp4-dspark-drafter, the profile
+# with the five drafter cost candidates on.
 
 [[allow]]
 profiles = ["tp4-ar", "tp4-dspark*"]
@@ -583,36 +580,6 @@ reason = "The selected-key cache covers Verify-4/6/16 and 32..64; intervening ve
 task = "LATENT-source-range"
 
 [[allow]]
-profiles = ["tp4-ar", "tp4-dspark", "tp4-dspark-drafter", "tp4-dspark-rows192*"]
-phase = "decode"
-family = "f32_reuse"
-entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1"
-symbol = "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1"
-rows = [[2, 2], [4, 4]]
-reason = "head_last::head admits rows 1, 8 and 32, and projection_reuse::head admits 9 through 32; decode buckets 2 and 4 retain the original cached head stages until those two buckets pass equality and crossover qualification"
-task = "ODR-HEAD-decode-2-4"
-
-[[allow]]
-profiles = ["tp4-ar", "tp4-dspark", "tp4-dspark-drafter", "tp4-dspark-rows192*"]
-phase = "decode"
-family = "f32_reuse"
-entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_reduce_v1"
-symbol = "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_reduce_v1"
-rows = [[2, 2], [4, 4]]
-reason = "head_last::head admits rows 1, 8 and 32, and projection_reuse::head admits 9 through 32; decode buckets 2 and 4 retain the original cached head stages until those two buckets pass equality and crossover qualification"
-task = "ODR-HEAD-decode-2-4"
-
-[[allow]]
-profiles = ["tp4-ar", "tp4-dspark", "tp4-dspark-drafter", "tp4-dspark-rows192*"]
-phase = "decode"
-family = "f32_reuse"
-entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_rows_v1"
-symbol = "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_rows_v1"
-rows = [[2, 2], [4, 4]]
-reason = "head_last::head admits rows 1, 8 and 32, and projection_reuse::head admits 9 through 32; decode buckets 2 and 4 retain the original cached head stages until those two buckets pass equality and crossover qualification"
-task = "ODR-HEAD-decode-2-4"
-
-[[allow]]
 profiles = ["tp4-dspark*"]
 phase = "verify"
 family = "sinkhorn_finish_norm"
@@ -641,36 +608,6 @@ symbol = "chop_deepseek41_hc_round_chain_w8_v1"
 rows = [[4, 4]]
 reason = "hc_cols::buckets replaces the pair at 1, 8, 16, 32 and larger widths, and the twin tail covers 6; these observed 4- and 12-row verify widths retain the original paired stages until the column pair is qualified at those widths"
 task = "HC-cols-verify-4-12"
-
-[[allow]]
-profiles = ["tp4-dspark", "tp4-dspark-drafter", "tp4-dspark-rows192*"]
-phase = "verify"
-family = "f32_reuse"
-entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1"
-symbol = "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_decode_v1"
-rows = [[3, 7], [9, 13], [17, 21]]
-reason = "head_last::head admits 1, 8 and 32 and projection_reuse::head admits 9 through 32; verify includes five-position drafter sub-batches and short verification tails outside those inner-row admissions. These enclosing verify widths select the cached head stages; qualify the missing inner-row counts before removing this exception"
-task = "ODR-HEAD-verify-tails"
-
-[[allow]]
-profiles = ["tp4-dspark", "tp4-dspark-drafter", "tp4-dspark-rows192*"]
-phase = "verify"
-family = "f32_reuse"
-entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_reduce_v1"
-symbol = "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_reduce_v1"
-rows = [[3, 7], [9, 13], [17, 21]]
-reason = "head_last::head admits 1, 8 and 32 and projection_reuse::head admits 9 through 32; verify includes five-position drafter sub-batches and short verification tails outside those inner-row admissions. These enclosing verify widths select the cached head stages; qualify the missing inner-row counts before removing this exception"
-task = "ODR-HEAD-verify-tails"
-
-[[allow]]
-profiles = ["tp4-dspark", "tp4-dspark-drafter", "tp4-dspark-rows192*"]
-phase = "verify"
-family = "f32_reuse"
-entry = "f32_reuse/reuse-fallback/chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_rows_v1"
-symbol = "chop_deepseek41_head_f32_m8192_n32320_k5120_v1_cached_rows_v1"
-rows = [[3, 7], [9, 13], [17, 21]]
-reason = "head_last::head admits 1, 8 and 32 and projection_reuse::head admits 9 through 32; verify includes five-position drafter sub-batches and short verification tails outside those inner-row admissions. These enclosing verify widths select the cached head stages; qualify the missing inner-row counts before removing this exception"
-task = "ODR-HEAD-verify-tails"
 
 [[allow]]
 profiles = ["tp4-dspark*"]

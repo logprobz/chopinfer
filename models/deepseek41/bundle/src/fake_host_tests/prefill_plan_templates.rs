@@ -573,12 +573,12 @@ fn long_context_templates_issue_the_fresh_lowerings_journal() {
         let (name, expected) = if dspark {
             (
                 "flash-tp4-dspark-long-context-templates",
-                (192754, 0x95c7cbfd89de3432),
+                (192786, 0x7ea1e220703625a0),
             )
         } else {
             (
                 "flash-tp4-ar-long-context-templates",
-                (164541, 0x7fddd4fc8d9b9068),
+                (164581, 0x0da2c4fb7f11178c),
             )
         };
         for verify in [false, true] {
@@ -657,10 +657,10 @@ fn a_failed_launch_of_a_reused_template_poisons_the_instance() {
         let (name, expected) = if dspark {
             (
                 "flash-tp4-dspark-failed-template",
-                (33213, 0x565c2a3e287f283f),
+                (33233, 0xfdcee06730b747a4),
             )
         } else {
-            ("flash-tp4-ar-failed-template", (31784, 0x0fea75874ec88215))
+            ("flash-tp4-ar-failed-template", (31804, 0x7b3408d491b260e2))
         };
         let observed = bundle_runtime::fake_host::journal_digest(&host.device.journal.borrow());
         if observed != expected {

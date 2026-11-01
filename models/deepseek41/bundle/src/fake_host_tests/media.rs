@@ -478,7 +478,7 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
 /// memory. The TP2 history and resource inventory remain byte-identical.
 const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
     (Ranks::TP2, (19487, 0xfd3d33b42935248f)),
-    (Ranks::TP4, (47281, 0x9002432756ab2a61)),
+    (Ranks::TP4, (47321, 0x9cb38b96ff33ab09)),
 ];
 
 /// The image prefill's lifecycle at two and four ranks over the native

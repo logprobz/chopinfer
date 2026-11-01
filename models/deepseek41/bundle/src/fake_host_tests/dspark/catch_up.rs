@@ -184,7 +184,7 @@ fn prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions() {
     assert_eq!((launches(SERIAL), launches(PARALLEL)), (0, 12));
     let name = "flash-tp4-dspark-prefix-capture.journal";
     if let Err(error) =
-        bundle_runtime::fake_host::check_journal(&lines, (40104, 0x00ca4ee0728ce1b9), name)
+        bundle_runtime::fake_host::check_journal(&lines, (40136, 0x3200d56f4a6c30ee), name)
     {
         panic!("{name}: {error}");
     }

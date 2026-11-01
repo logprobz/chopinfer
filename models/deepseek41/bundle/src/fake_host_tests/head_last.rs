@@ -28,97 +28,51 @@ fn qualified_module_and_row_policy_are_explicit() {
     }
 }
 
+/// One prefill step of `items` new one-token prompts from request `first`,
+/// in slots 0 onward, each scoring its row: a head of `items` rows.
+pub(super) fn prompts(first: u64, items: u32) -> Vec<u8> {
+    use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
+    let slots = 0..u64::from(items);
+    BatchRequestV1::new(
+        BatchWireVersionV1::V3,
+        slots
+            .clone()
+            .map(|slot| BatchItemV1::new(first + slot, false, 1, true, vec![7]))
+            .collect(),
+        slots
+            .clone()
+            .map(|slot| BatchAppendV1::new(0, 1, 1, vec![slot * 8], None))
+            .collect(),
+    )
+    .with_state_slots(slots.collect())
+    .encode()
+    .unwrap()
+}
+
+/// Decode and verify heads run the head's row tiles, so the measured last
+/// producers serve the prefill heads of 1, 8 and 32 rows: prefills of one
+/// to 32 one-token prompts.
 fn run_case(reference: bool) -> Vec<String> {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
-    host.speculation.set(Some((5, 48)));
     let mut instance = create(&host, 32);
-    for slot in 0..32 {
-        step(
-            &mut instance,
-            &prompt(slot + 1, slot, 0, 1, true),
-            &mut Views::default(),
-        );
-    }
-    let mut ends = [1u64; 32];
-    let mut cases = 0;
-    let mut captured = std::collections::BTreeSet::new();
-    for (rows, width) in [
-        (1u32, 1u32),
-        (2, 1),
-        (6, 1),
-        (8, 1),
-        (9, 1),
-        (16, 1),
-        (24, 1),
-        (31, 1),
-        (32, 1),
-        (6, 6),
-        (8, 4),
-        (24, 4),
-        (32, 4),
-        (32, 2),
-    ] {
-        let count = rows / width;
+    let mut first = 1;
+    for rows in [1u32, 2, 6, 8, 9, 16, 24, 31, 32] {
         let from = host.device.journal.borrow().len();
-        if width == 1 {
-            let items = (0..count)
-                .map(|i| (u64::from(i) + 1, u64::from(i), ends[i as usize], 7))
-                .collect::<Vec<_>>();
-            step(&mut instance, &decode(&items), &mut Views::default());
-        } else {
-            let tokens = vec![7; width as usize];
-            let items = (0..count)
-                .map(|i| {
-                    (
-                        u64::from(i) + 1,
-                        u64::from(i),
-                        ends[i as usize],
-                        tokens.as_slice(),
-                    )
-                })
-                .collect::<Vec<_>>();
-            instance
-                .execute(&verify(&items), &mut Views::default())
-                .unwrap();
-            instance
-                .commit_accepted(
-                    &(1..=count)
-                        .map(|i| kept(u64::from(i), width))
-                        .collect::<Vec<_>>(),
-                )
-                .unwrap();
-        }
-        let lines = host.device.journal.borrow();
-        // AR pads to its graph capacity; verification retains the exact
-        // row width, with one graph for every item count of those rows. A
-        // repeated capacity replays the already checked graph.
-        let capacity = if width == 1 {
-            rows.next_power_of_two()
-        } else {
-            rows
-        };
-        let first = captured.insert((capacity, width > 1));
-        let selected = !reference && first && [1, 8, 32].contains(&capacity);
+        step(&mut instance, &prompts(first, rows), &mut Views::default());
+        let selected = !reference && [1, 8, 32].contains(&rows);
         assert_eq!(
-            lines[from..]
+            host.device.journal.borrow()[from..]
                 .iter()
                 .filter(|line| line.starts_with("launch ") && line.contains("_last_m"))
                 .count(),
             if selected { 8 } else { 0 },
-            "rows={rows} width={width}"
+            "rows={rows}"
         );
-        if !first {
-            assert!(lines[from..].iter().any(|line| line.starts_with("replay ")));
+        for request in first..first + u64::from(rows) {
+            instance.retire_request(request).unwrap();
         }
-        for end in &mut ends[..count as usize] {
-            *end += u64::from(width);
-        }
-        cases += 1;
-    }
-    assert_eq!(cases, 14);
-    for id in 1..=32 {
-        instance.retire_request(id).unwrap();
+        first += u64::from(rows);
     }
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
@@ -139,7 +93,7 @@ fn run_case(reference: bool) -> Vec<String> {
 }
 
 #[test]
-fn measured_heads_preserve_other_launches_and_graph_dependencies() {
+fn measured_heads_preserve_other_launches_and_dependencies() {
     let before = crate::sm120::head_last::with_reference(|| run_case(true));
     let after = run_case(false);
     let retained = |lines: Vec<String>| {
@@ -159,14 +113,13 @@ fn measured_heads_preserve_other_launches_and_graph_dependencies() {
     );
 }
 
-/// With the `f32_row_tiles` option every AR decode graph runs the head's
-/// decode row tiles at its capacity, and no other head route.
+/// Every AR decode graph runs the head's decode row tiles at its capacity,
+/// and no other head route.
 #[test]
-fn row_tile_option_runs_decode_heads_in_row_tiles() {
-    use model_deepseek41_contract::execution_options::F32_ROW_TILES;
+fn ar_decode_heads_run_in_row_tiles() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
-    let mut instance = super::create_with_options(&host, 32, &[(F32_ROW_TILES, true.into())]);
+    let mut instance = create(&host, 32);
     for slot in 0..32 {
         step(
             &mut instance,

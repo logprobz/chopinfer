@@ -1047,6 +1047,45 @@ class Tuner(unittest.TestCase):
                 tune.r.write(path, row)
             self.assertEqual(report.ab(root)['status'], 'invalid')
 
+    def test_lead_visit_runs_first_and_stays_out_of_pairs_and_controls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, summary = ab_fixture(root, control_shapes={'8': ['i8-r16']}, lead_visit=True)
+            visits = tune.visits(config)
+            self.assertEqual([v['label'] for v in visits], ['a-lead', 'a-r0', 'b-r0', 'b-r1', 'a-r1'])
+            self.assertEqual([v['visit'] for v in visits], list(range(5)))
+            lead, first = visits[0], visits[1]
+            self.assertTrue(lead['lead'])
+            self.assertEqual((lead['arm'], lead['passes']), (first['arm'], first['passes']))
+            def controls(values):
+                for visit, value in zip(visits, values):
+                    path = root / visit['label'] / 'windows/c8.json'
+                    row = json.loads(path.read_text())
+                    row['cells']['i8-r16'] = {'cycle_ms': [value] * 20, 'execution_ms': []}
+                    tune.r.write(path, row)
+            # A slow leading visit reaches neither the A1 check nor the pairs.
+            controls([11, 10, 10.01, 10, 10])
+            result = report.ab(root)
+            self.assertEqual(result['status'], 'valid')
+            self.assertEqual(result['a1_control_check']['cells']['a/b/c8/i8-r16']['cycle_ms_median'],
+                             [10, 10.01, 10, 10])
+            self.assertEqual(result['pairs']['a/b']['8']['order'], ['a', 'b', 'b', 'a'])
+            # A1 itself is still checked.
+            controls([10, 11, 10.01, 10, 10])
+            self.assertEqual(report.ab(root)['status'], 'invalid')
+            # The leading visit keeps every runtime limit.
+            controls([10, 10, 10.01, 10, 10])
+            summary['processes']['a-lead']['faults']['major_faults'] = 1001
+            tune.r.write(root / 'summary.json', summary)
+            with self.assertRaisesRegex(ValueError, 'invalid visit fault evidence'):
+                report.ab(root)
+            for bad in ({'lead_visit': 1}, {'lead_visit': True, 'cold_engram': {'images': []}}):
+                with self.subTest(bad=bad):
+                    model = {**config['model'], **{k: v for k, v in bad.items() if k == 'lead_visit'}}
+                    with self.assertRaisesRegex(ValueError, 'lead_visit'):
+                        tune.visits({**config, 'model': model,
+                                     **({'cold_engram': bad['cold_engram']} if 'cold_engram' in bad else {})})
+
     def test_cold_pause_timeout_does_not_resume_requests(self):
         import threading
         from types import SimpleNamespace

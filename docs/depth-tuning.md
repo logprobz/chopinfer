@@ -408,6 +408,11 @@ their max/min spread and 0.5% to flag an offset. Either direction invalidates
 the job's timing verdict. `a1_control_check` records the medians and threshold;
 missing or thin controls are labelled `unavailable`, not cleared. This checks
 for a first-visit confound, without attributing its cause to page residency.
+Where a job's design shows such an offset, `"lead_visit": true` runs one
+more visit before A1: the first declared arm in a fresh process on A1's
+windows and seed set. It is held to every runtime check (faults, prompt
+caching, power, exactness) and recorded in `summary.json`, but no pair,
+control check or verdict reads its windows.
 
 Each window opens only after every slot completes its first request and at
 least four seconds of priming have elapsed. Workers continue replacing

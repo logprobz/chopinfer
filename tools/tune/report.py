@@ -348,6 +348,14 @@ def paired(values, change='speedup'):
                                    or math.isclose(mean, .015, abs_tol=1e-12)))}
 
 
+def measured_rows(config, rows):
+    """The rows pairs and controls read: all but a leading visit's
+    (`lead_visit`), which validation checks like any other visit."""
+    import tune
+    lead = {visit['label'] for visit in tune.visits(config) if visit.get('lead')}
+    return [row for row in rows if row['label'] not in lead]
+
+
 def ab_validity(config, rows, summary):
     """Validate counts and provenance before any pair can be pooled."""
     import faults
@@ -457,7 +465,7 @@ def ab_validity(config, rows, summary):
         measured = faults.combine([r['faults'] for r in rows if r['label'] == visit['label']])
         if any(measured[k] != processes[visit['label']]['faults'][k] for k in ('complete', 'major_faults')):
             raise ValueError('incomplete visit faults')
-    control = control_offsets(config, rows)
+    control = control_offsets(config, measured_rows(config, rows))
     if matched and matched_cold_validity(config, rows, matched):
         return {'status': 'void', 'reason': 'matched cold visit remains partly warm after advice'}
     return {'status': 'void' if changed else 'invalid' if control['status'] == 'offset' else 'valid',
@@ -685,6 +693,7 @@ def ab(run):
     matched = tune.matched_cold(config)
     validity = ({'status': 'void', 'reason': summary.get('void_reason', 'power limits changed within job')}
                 if summary.get('status') == 'void' else ab_validity(config, rows, summary))
+    rows = measured_rows(config, rows)
     cold = bool(config.get('cold_engram'))
     out = {**validity, 'pairs': {}, 'weighted': {}, 'mechanics_only': summary.get('dry_run', False),
            'arm_installs': arm_installs(run, rows),

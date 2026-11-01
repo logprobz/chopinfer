@@ -1211,7 +1211,18 @@ def visits(config):
     for baseline, treatment in model['pairs']:
         if baseline not in labels or treatment not in labels or labels.index(baseline) >= labels.index(treatment):
             raise ValueError('declare every baseline before its treatments for ABBA')
+    lead = model.get('lead_visit', False)
+    if type(lead) is not bool or lead and config.get('cold_engram'):
+        raise ValueError('lead_visit is a boolean of standard A/B jobs')
     out = []
+    if lead:
+        # A leading visit of the first declared arm on repeat 0's windows and
+        # seeds, measured as A1 is and held to every runtime check, that no
+        # pair, control check or verdict reads (report.ab drops its rows after
+        # validation): it takes a first-visit offset off A1.
+        arm = declared[0]
+        out.append({**arm, 'arm': arm['label'], 'label': f"{arm['label']}-lead", 'visit': 0, 'lead': True,
+                    'passes': [(0, list(windows_for(config, arm['depth'])))]})
     for repeat, group in enumerate((declared, declared[::-1])):
         for arm in group:
             windows = [(kind, c) for kind, c in windows_for(config, arm['depth'])

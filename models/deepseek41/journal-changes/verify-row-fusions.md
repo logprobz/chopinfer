@@ -45,3 +45,9 @@ option cannot excuse any change to their launches, copies, resources or
 ordering. Journal identity establishes structural preservation only; the
 lab pairs, the fixed-batch GPU replays and the route sweeps supply the
 numerical and route evidence.
+
+On 2026-11-01 the journal proof of the commit that added the two prefix
+lifetimes against the commit before the candidates, with this
+declaration, was PROVEN: 29 journals identical and the 4 declared
+additions, with 29 of 33 fixture histories compared (the added fixtures
+have no base history).

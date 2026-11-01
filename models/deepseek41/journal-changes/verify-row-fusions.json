@@ -1,6 +1,6 @@
 {
  "schema": "chopinfer.journal-proof.spec.v1",
- "description": "Keep every existing journal identical and add the C4 and C8 allocated lifetimes with the verify_row_fusions candidate option on.",
+ "description": "Keep every existing journal identical and add four lifetimes with the verify_row_fusions candidate option on: the C4 and C8 allocated lifetimes, the DSpark shared prefix lifetime and an eager DSpark prefix capture lifetime.",
  "fixtures": [
   {
    "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-1.jsonl",
@@ -77,6 +77,13 @@
    "create": "deepseek41-allocation-c16-odd-phased.journal",
    "journals": [
     "deepseek41-allocation-c16-odd-phased.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::dspark::catch_up::prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions#tests/fake_host_tests.dspark.catch_up.prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions/device-2.jsonl",
+   "create": "flash-tp4-dspark-prefix-capture-rowfuse.journal",
+   "journals": [
+    "flash-tp4-dspark-prefix-capture-rowfuse.journal"
    ]
   },
   {
@@ -175,6 +182,13 @@
    "create": "flash-tp4-dspark-shared-anchor.journal",
    "journals": [
     "flash-tp4-dspark-shared-anchor.journal"
+   ]
+  },
+  {
+   "name": "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-3.jsonl",
+   "create": "flash-tp4-dspark-shared-anchor-rowfuse.journal",
+   "journals": [
+    "flash-tp4-dspark-shared-anchor-rowfuse.journal"
    ]
   },
   {
@@ -277,6 +291,11 @@
    "added_modules": [],
    "create_policy": {}
   },
+  "fake_host_tests::dspark::catch_up::prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions#tests/fake_host_tests.dspark.catch_up.prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions/device-2.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
   "fake_host_tests::every_geometry_topology_runs_the_fake_host_journal_and_lifecycle#tests/fake_host_tests.every_geometry_topology_runs_the_fake_host_journal_and_lifecycle/device-1.jsonl": {
    "added_resolves": [],
    "added_modules": [],
@@ -347,6 +366,11 @@
    "added_modules": [],
    "create_policy": {}
   },
+  "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-3.jsonl": {
+   "added_resolves": [],
+   "added_modules": [],
+   "create_policy": {}
+  },
   "fake_host_tests::verify_hc::verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint#tests/fake_host_tests.verify_hc.verify_hc_fuses_only_measured_rows_and_keeps_scratch_disjoint/device-1.jsonl": {
    "added_resolves": [],
    "added_modules": [],
@@ -380,7 +404,9 @@
  },
  "added_journals": [
   "deepseek41-allocation-c4-rowfuse.journal",
-  "deepseek41-allocation-c8-rowfuse.journal"
+  "deepseek41-allocation-c8-rowfuse.journal",
+  "flash-tp4-dspark-shared-anchor-rowfuse.journal",
+  "flash-tp4-dspark-prefix-capture-rowfuse.journal"
  ],
  "removed_journals": []
 }

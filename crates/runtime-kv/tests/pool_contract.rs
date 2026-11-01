@@ -41,7 +41,7 @@ fn exhaustion_and_quota_fail_without_partial_mutation() {
             requested: 9
         })
     );
-    assert_eq!(pool.snapshot(first).unwrap().tokens(), 5);
+    assert_eq!(pool.sequence_tokens(first).unwrap(), 5);
     pool.audit().unwrap();
 }
 
@@ -59,7 +59,7 @@ fn append_spans_blocks_and_reserve_is_checked() {
         [0, 1, 2]
     );
     assert!(report.copy().is_none());
-    assert_eq!(pool.snapshot(handle).unwrap().tokens(), 9);
+    assert_eq!(pool.sequence_tokens(handle).unwrap(), 9);
     assert_eq!(pool.reserve(handle, 3).unwrap().new_tokens(), 12);
     assert_eq!(
         pool.reserve(handle, 1),
@@ -133,6 +133,50 @@ fn a_shared_full_last_page_is_copied_when_appends_rewrite_it() {
 }
 
 #[test]
+fn sequence_tokens_matches_snapshot_for_live_released_and_reused_handles() {
+    let mut pool = pool(4, 3, 1);
+    let old = pool.create_sequence(12).unwrap();
+    assert_eq!(pool.sequence_tokens(old), Ok(0));
+    assert_eq!(
+        pool.sequence_tokens(old),
+        pool.snapshot(old).map(|snapshot| snapshot.tokens())
+    );
+    let mut tokens = 0;
+    for additional in [3, 2, 3] {
+        pool.append(old, additional).unwrap();
+        tokens += additional;
+        assert_eq!(pool.sequence_tokens(old), Ok(tokens));
+        assert_eq!(
+            pool.sequence_tokens(old),
+            pool.snapshot(old).map(|snapshot| snapshot.tokens())
+        );
+    }
+
+    pool.release(old).unwrap();
+    assert_eq!(pool.sequence_tokens(old), Err(KvError::StaleHandle));
+    assert_eq!(
+        pool.sequence_tokens(old),
+        pool.snapshot(old).map(|snapshot| snapshot.tokens())
+    );
+
+    let current = pool.create_sequence(12).unwrap();
+    assert_eq!(old.slot(), current.slot());
+    assert_ne!(old.generation(), current.generation());
+    pool.append(current, 6).unwrap();
+    assert_eq!(pool.sequence_tokens(current), Ok(6));
+    assert_eq!(
+        pool.sequence_tokens(current),
+        pool.snapshot(current).map(|snapshot| snapshot.tokens())
+    );
+    assert_eq!(pool.sequence_tokens(old), Err(KvError::StaleHandle));
+    assert_eq!(
+        pool.sequence_tokens(old),
+        pool.snapshot(old).map(|snapshot| snapshot.tokens())
+    );
+    pool.audit().unwrap();
+}
+
+#[test]
 fn stale_handles_double_release_and_deterministic_reuse_are_rejected_or_stable() {
     let mut pool = pool(4, 3, 1);
     let old = pool.create_sequence(8).unwrap();
@@ -176,7 +220,7 @@ fn batch_append_is_atomic_and_rejects_duplicate_handles() {
         Err(KvError::PoolExhausted { needed: 3, free: 2 })
     );
     assert_eq!(pool.stats(), before);
-    assert_eq!(pool.snapshot(first).unwrap().tokens(), 0);
+    assert_eq!(pool.sequence_tokens(first).unwrap(), 0);
     assert_eq!(
         pool.append_batch(&[(first, 1), (first, 1)]),
         Err(KvError::DuplicateBatchHandle)
@@ -214,8 +258,8 @@ fn prepared_plan_is_visible_before_exact_commit() {
             .collect::<Vec<_>>(),
         [2]
     );
-    assert_eq!(pool.snapshot(first).unwrap().tokens(), 0);
-    assert_eq!(pool.snapshot(second).unwrap().tokens(), 0);
+    assert_eq!(pool.sequence_tokens(first).unwrap(), 0);
+    assert_eq!(pool.sequence_tokens(second).unwrap(), 0);
     pool.audit().unwrap();
 
     let reports = pool.commit_prepared(plan.id()).unwrap();
@@ -250,7 +294,7 @@ fn prevalidated_commit_rejects_foreign_and_stale_tokens_before_mutation() {
         Err(KvError::PreparedTransactionMismatch)
     );
     assert_eq!(second.prepared_id(), Some(second_plan.id()));
-    assert_eq!(second.snapshot(second_handle).unwrap().tokens(), 0);
+    assert_eq!(second.sequence_tokens(second_handle).unwrap(), 0);
 
     let stale = second
         .preflight_commit_prepared(second_plan.id(), &[second_handle])
@@ -260,7 +304,7 @@ fn prevalidated_commit_rejects_foreign_and_stale_tokens_before_mutation() {
         second.apply_prepared_commit(stale),
         Err(KvError::NoPreparedTransaction)
     );
-    assert_eq!(second.snapshot(second_handle).unwrap().tokens(), 0);
+    assert_eq!(second.sequence_tokens(second_handle).unwrap(), 0);
     first.rollback_prepared(first_plan.id()).unwrap();
     first.audit().unwrap();
     second.audit().unwrap();
@@ -434,7 +478,7 @@ fn cancellation_discards_the_whole_prepared_batch_without_leaks() {
     );
     pool.cancel(first).unwrap();
     assert_eq!(pool.prepared_id(), None);
-    assert_eq!(pool.snapshot(second).unwrap().tokens(), 0);
+    assert_eq!(pool.sequence_tokens(second).unwrap(), 0);
     assert_eq!(pool.stats().free_blocks(), 4);
     assert_eq!(
         pool.commit_prepared(plan.id()),

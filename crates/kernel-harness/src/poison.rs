@@ -1109,7 +1109,7 @@ impl<'a> Checks<'a> {
         buffers: RouteBuffers<'a>,
         pattern: &[u8],
     ) -> LabResult<Self> {
-        // route_parallel.cuh:267-323 and row/router.cuh:148-337.
+        // route_parallel.cuh:332-388 and row/router.cuh:148-337.
         let local = geometry.experts.len();
         for (name, buffer, dtype, words) in [
             ("route IDs", buffers.ids, DType::I32, geometry.routes),

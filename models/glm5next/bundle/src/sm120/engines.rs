@@ -172,6 +172,8 @@ impl Engines {
             }
         }
         // The route cubin also holds the BF16 sum, which nothing launches.
+        // It stays planned: module load resolves every symbol of a loaded
+        // cubin, and the split cubins are kernel-lab's, spec for spec.
         let bf16 = sum.with_output(chained::RoutedSumOutput::Bf16);
         for spec in [sum.entry(prefix), bf16.entry(prefix), sum.add_entry(prefix)] {
             let spec = spec.map_err(|r| r.to_string())?;

@@ -53,6 +53,7 @@
 //! product into its subtraction and report `STATUS_MALFORMED`, which the
 //! served entries never write.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, VecDeque};
 
 use crate::sampling_records::decode_output;
@@ -658,7 +659,7 @@ impl DeviceSamplingSession {
                 let parameters = SamplingParameters::new(0.0)
                     .and_then(|settings| settings.with_top_logprobs(row.item.prompt_top_logprobs()))
                     .map_err(|_| BundleStatusV1::InvalidArgument)?;
-                scoring_items.push(
+                scoring_items.push(Cow::Owned(
                     ModelBatchItem::new(row.item.request_id(), row.item.phase(), Vec::new(), true)
                         .with_sampling(SamplingWork {
                             parameters,
@@ -668,12 +669,12 @@ impl DeviceSamplingSession {
                             stop_ids: Vec::new(),
                             constraint: None,
                         }),
-                );
+                ));
             } else {
-                scoring_items.push(row.item.clone());
+                scoring_items.push(Cow::Borrowed(row.item));
             }
         }
-        let scoring_refs = scoring_items.iter().collect::<Vec<_>>();
+        let scoring_refs = scoring_items.iter().map(Cow::as_ref).collect::<Vec<_>>();
         let raw_scores = self.sample_with_dispatch(logits, view, &scoring_refs, dispatch)?;
         let element_bytes = match view.element_type {
             BUNDLE_LOGITS_ELEMENT_V1_F32 => 4_usize,
@@ -713,18 +714,17 @@ impl DeviceSamplingSession {
             }
         }
         if rows.iter().any(|row| row.target.is_some() && row.output) {
-            let output_items = rows
+            let output_refs = rows
                 .iter()
-                .zip(scoring_items)
+                .zip(&scoring_items)
                 .map(|(row, scoring)| {
                     if row.target.is_some() && row.output {
-                        row.item.clone()
+                        row.item
                     } else {
-                        scoring
+                        scoring.as_ref()
                     }
                 })
                 .collect::<Vec<_>>();
-            let output_refs = output_items.iter().collect::<Vec<_>>();
             for (row, sample) in rows.iter().zip(self.sample(logits, view, &output_refs)?) {
                 if row.target.is_some() && row.output {
                     generated.push(sample);
@@ -2457,6 +2457,221 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A prefill item of `rows` rows that scores one target per row.
+    fn scored_item(rows: usize, top: usize, targets: &[u32]) -> ModelBatchItem {
+        ModelBatchItem::new(
+            RequestId::new(1),
+            BatchPhase::Prefill { tokens: rows },
+            vec![0; rows],
+            false,
+        )
+        .with_prompt_targets(targets.iter().copied().map(Some).collect(), top)
+    }
+
+    fn score_rows(
+        sampler: &mut DeviceSamplingSession,
+        logits: &runtime_cuda::DeviceBuffer,
+        view: runtime_bundle_abi::BundleLogitsViewV1,
+        item: &ModelBatchItem,
+    ) -> Result<Vec<runtime_engine::SampledRow>, runtime_bundle_abi::BundleStatusV1> {
+        let rows = item
+            .prompt_targets()
+            .iter()
+            .map(|target| crate::executor::DevicePromptRowV1 {
+                item,
+                target: *target,
+                prompt: true,
+                output: false,
+            })
+            .collect::<Vec<_>>();
+        sampler
+            .score_prompt(logits, view, &rows, None)
+            .map(|(scores, generated)| {
+                assert!(generated.is_empty());
+                scores
+            })
+    }
+
+    /// A target that is its row's argmax keeps the sampler's logprob bits; any
+    /// other target adds its logit and subtracts the argmax's, both read back
+    /// as stored, on F32 and BF16 views at an offset, with a stride past the
+    /// live width, in two views. `CHOPINFER_SCORE_TIMING=1` also prints the
+    /// scalar readback cost of the serving split: 64-row calls, eight per
+    /// 512-row view, with every target the argmax against half mismatched.
+    #[test]
+    fn prompt_scores_keep_argmax_bits_and_correct_other_targets_gpu() {
+        use runtime_bundle_abi::{
+            BUNDLE_LOGITS_ELEMENT_V1_BF16, BUNDLE_LOGITS_ELEMENT_V1_F32, BundleLogitsViewV1,
+            BundleStatusV1,
+        };
+        let Ok(ordinal) = std::env::var("CHOPINFER_KERNEL_GPU") else {
+            return;
+        };
+        let ordinal: i32 = ordinal.parse().expect("GPU ordinal is an integer");
+        let driver = runtime_cuda::Driver::initialize().unwrap();
+        let context = driver.retain_primary_context(ordinal).unwrap();
+        let stream = context.stream().unwrap();
+        let pool = context.default_memory_pool().unwrap();
+        let mut sampler = DeviceSamplingSession::new(context).unwrap();
+        // Eighths in [-5, 5] are exact in BF16; each row's unique peak is its
+        // argmax.
+        let peak = |row: usize, live: usize| (row * 37 + 11) % live;
+        let value = |row: usize, token: usize, live: usize| {
+            if token == peak(row, live) {
+                20.0_f32
+            } else {
+                ((row * 131 + token * 29) % 81) as f32 / 8.0 - 5.0
+            }
+        };
+        let upload = |rows: usize, live: usize, stride: usize, lead: usize, bf16: bool| {
+            let bytes = if bf16 { 2 } else { 4 };
+            let mut host = vec![0_u8; (lead + rows * stride) * bytes];
+            for row in 0..rows {
+                for token in 0..live {
+                    let bits = value(row, token, live).to_bits();
+                    let at = (lead + row * stride + token) * bytes;
+                    if bf16 {
+                        host[at..at + 2].copy_from_slice(&((bits >> 16) as u16).to_le_bytes());
+                    } else {
+                        host[at..at + 4].copy_from_slice(&bits.to_le_bytes());
+                    }
+                }
+            }
+            let device = pool.allocate(&stream, host.len()).unwrap();
+            device.copy_from_bytes(&host, &stream).unwrap();
+            stream.synchronize().unwrap();
+            device
+        };
+        let make_view =
+            |first: usize, rows: usize, live: usize, stride: usize, lead: usize, bf16| {
+                let bytes = if bf16 { 2 } else { 4 };
+                let mut view = BundleLogitsViewV1::empty();
+                view.element_type = if bf16 {
+                    BUNDLE_LOGITS_ELEMENT_V1_BF16
+                } else {
+                    BUNDLE_LOGITS_ELEMENT_V1_F32
+                };
+                view.buffer.offset = ((lead + first * stride) * bytes) as u64;
+                view.buffer.length = (rows * stride * bytes) as u64;
+                view.row_stride_elements = stride as u64;
+                view.row_count = rows as u32;
+                view.live_width = live as u32;
+                view
+            };
+        let (live, stride, lead, rows) = (1000_usize, 1024_usize, 3 * 1024 + 8, 64_usize);
+        for bf16 in [false, true] {
+            let logits = upload(2 * rows, live, stride, lead, bf16);
+            for first in [0, rows] {
+                let view = make_view(first, rows, live, stride, lead, bf16);
+                let row = |index: usize| first + index;
+                let argmax = (0..rows)
+                    .map(|index| peak(row(index), live) as u32)
+                    .collect::<Vec<_>>();
+                let mut targets = argmax.clone();
+                for (index, target) in targets.iter_mut().enumerate().skip(1).step_by(2) {
+                    *target = ((*target as usize + 1 + index) % live) as u32;
+                }
+                assert_ne!(argmax[3], live as u32 - 1);
+                targets[3] = live as u32 - 1;
+                for top in [0, 5] {
+                    let kept = score_rows(
+                        &mut sampler,
+                        &logits,
+                        view,
+                        &scored_item(rows, top, &argmax),
+                    )
+                    .unwrap();
+                    let scored = score_rows(
+                        &mut sampler,
+                        &logits,
+                        view,
+                        &scored_item(rows, top, &targets),
+                    )
+                    .unwrap();
+                    for index in 0..rows {
+                        let (kept, scored) = (&kept[index], &scored[index]);
+                        assert_eq!(kept.token_id(), argmax[index]);
+                        assert_eq!(scored.token_id(), targets[index]);
+                        assert_eq!(scored.top_logprobs(), kept.top_logprobs());
+                        let expected = if targets[index] == argmax[index] {
+                            kept.logprob()
+                        } else {
+                            kept.logprob()
+                                + f64::from(value(row(index), targets[index] as usize, live))
+                                - f64::from(value(row(index), argmax[index] as usize, live))
+                        };
+                        assert_eq!(
+                            scored.logprob().to_bits(),
+                            expected.to_bits(),
+                            "bf16 {bf16} first {first} top {top} row {index}"
+                        );
+                    }
+                }
+                let mut outside = targets.clone();
+                outside[5] = live as u32;
+                assert_eq!(
+                    score_rows(&mut sampler, &logits, view, &scored_item(rows, 5, &outside)),
+                    Err(BundleStatusV1::InvalidArgument)
+                );
+            }
+        }
+        if std::env::var_os("CHOPINFER_SCORE_TIMING").is_none_or(|value| value != "1") {
+            return;
+        }
+        // Serving geometry: a 151,936-token F32 vocabulary and five prompt
+        // logprobs, as the serving A/B teacher phase asks.
+        let (live, calls, repeats) = (151_936_usize, 8_usize, 25_usize);
+        let logits = upload(calls * rows, live, live, 0, false);
+        let items = (0..calls)
+            .map(|call| {
+                let argmax = (0..rows)
+                    .map(|index| peak(call * rows + index, live) as u32)
+                    .collect::<Vec<_>>();
+                let mut mismatched = argmax.clone();
+                for target in mismatched.iter_mut().skip(1).step_by(2) {
+                    *target = (*target + 1) % live as u32;
+                }
+                (
+                    scored_item(rows, 5, &argmax),
+                    scored_item(rows, 5, &mismatched),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut time = |item: &ModelBatchItem, call: usize| {
+            let started = std::time::Instant::now();
+            score_rows(
+                &mut sampler,
+                &logits,
+                make_view(call * rows, rows, live, live, 0, false),
+                item,
+            )
+            .unwrap();
+            started.elapsed().as_secs_f64() * 1e6
+        };
+        for (call, (kept, scored)) in items.iter().enumerate() {
+            time(kept, call);
+            time(scored, call);
+        }
+        let (mut kept_us, mut scored_us) = (Vec::new(), Vec::new());
+        for _ in 0..repeats {
+            for (call, (kept, scored)) in items.iter().enumerate() {
+                kept_us.push(time(kept, call));
+                scored_us.push(time(scored, call));
+            }
+        }
+        let median = |values: &mut Vec<f64>| {
+            values.sort_by(f64::total_cmp);
+            values[values.len() / 2]
+        };
+        let (kept, scored) = (median(&mut kept_us), median(&mut scored_us));
+        println!(
+            "score_prompt 64-row call, {} samples: all argmax {kept:.1} us, half mismatched {scored:.1} us, readback {:.1} us per call, {:.2} us per mismatched row",
+            kept_us.len(),
+            scored - kept,
+            (scored - kept) / (rows / 2) as f64
+        );
     }
 }
 

@@ -39,8 +39,9 @@ __device__ void select_scored(const float* unbiased_shared, const float* rank_sh
 #pragma unroll
     for (int j = 0; j < Experts / 32; ++j) {
       const int expert = lane + 32 * j;
-      if (scores[j] > best || (Score::select_negative_infinity &&
-          scores[j] == best && expert < best_id)) {
+      if (scores[j] > best || (Score::signed_zero_keys && scores[j] == best &&
+          __float_as_int(scores[j]) > __float_as_int(best)) ||
+          (Score::select_negative_infinity && scores[j] == best && expert < best_id)) {
         best = scores[j];
         best_id = expert;
       }

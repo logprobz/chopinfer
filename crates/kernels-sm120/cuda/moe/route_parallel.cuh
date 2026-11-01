@@ -9,8 +9,13 @@ namespace chop::moe {
 // Policies share one interface: transform, ranking, selected weight, and
 // normalization. Reduction order and -inf tie handling are explicit because
 // the qualified softmax and biased sigmoid routes have different contracts.
+// `signed_zero_keys` says whether a rank can be -0, which ranks below an
+// equal +0 (`Ties::LowerIndex`); a policy whose ranks cannot be -0 compiles
+// without that comparison.
 struct Softmax {
   static constexpr bool serial_sum = false, select_negative_infinity = false;
+  // Raw logits can be -0.
+  static constexpr bool signed_zero_keys = true;
   __device__ float transform(float logit) const { return logit; }
   __device__ float rank(float value, int) const { return value; }
   __device__ float selected(float, float chosen, float maximum) const {
@@ -20,6 +25,8 @@ struct Softmax {
 };
 struct SigmoidBias {
   static constexpr bool serial_sum = true, select_negative_infinity = true;
+  // A sigmoid is at least +0, so a sigmoid plus a bias is never -0.
+  static constexpr bool signed_zero_keys = false;
   const float* bias;
   float scaling_factor;
   __device__ float transform(float logit) const { return 1.f / (1.f + expf(-logit)); }
@@ -87,70 +94,128 @@ __device__ void mask_route_groups(float (&scores)[Experts / 32]) {
   }
 }
 
+// Lanes of a policy whose ranks can be -0 and that never selects -inf
+// (raw-logit softmax) rank ordered bits, as the reduction does, so +0 ranks
+// above an equal -0 at no extra compare. NaN and -inf take `kUnranked`,
+// which nothing at or below it passes: they are never selected, and a lane
+// with nothing else offers INT32_MAX, as in the float lanes.
+template<int Experts, int TopK, int Groups, int Take, class Score>
+__device__ void select_route_warp_ordered(const float* logits, int token, Score score,
+                                          int32_t* ids, float* weights) {
+  static_assert(!Score::serial_sum && !Score::select_negative_infinity);
+  constexpr uint32_t kUnranked = 0x007fffffu;  // ordered_route_bits(-INFINITY)
+  const int lane = threadIdx.x & 31;
+  float scores[Experts / 32];
+#pragma unroll
+  for (int j = 0; j < Experts / 32; ++j) {
+    const int expert = lane + j * 32;
+    scores[j] = score.rank(score.transform(logits[uint64_t(token) * Experts + expert]), expert);
+  }
+  mask_route_groups<Experts, Groups, Take>(scores);
+  uint32_t ranks[Experts / 32];
+#pragma unroll
+  for (int j = 0; j < Experts / 32; ++j)
+    ranks[j] = scores[j] != scores[j] ? kUnranked : ordered_route_bits(scores[j]);
+  int id = INT32_MAX;
+  float weight = 0.f, maximum = 0.f;
+#pragma unroll
+  for (int k = 0; k < TopK; ++k) {
+    uint32_t best = kUnranked;
+    int best_id = INT32_MAX;
+#pragma unroll
+    for (int j = 0; j < Experts / 32; ++j)
+      if (ranks[j] > best) { best = ranks[j]; best_id = lane + 32 * j; }
+    const uint32_t winning = __reduce_max_sync(0xffffffff, best);
+    best_id = __reduce_min_sync(0xffffffff, best == winning ? best_id : INT32_MAX);
+#pragma unroll
+    for (int j = 0; j < Experts / 32; ++j)
+      if (best_id == lane + 32 * j) ranks[j] = kUnranked;
+    const float chosen = route_from_ordered(winning);
+    if (k == 0) maximum = chosen;
+    if (lane == k) { id = best_id; weight = chosen; }
+  }
+  weight = lane < TopK ? score.selected(0.f, weight, maximum) : 0.f;
+  float selected_sum = weight;
+#pragma unroll
+  for (int offset = 16; offset; offset >>= 1)
+    selected_sum += __shfl_xor_sync(0xffffffff, selected_sum, offset);
+  if (lane < TopK) {
+    ids[token * TopK + lane] = id;
+    weights[token * TopK + lane] = score.normalize(weight, selected_sum);
+  }
+}
+
 template<int Experts, int TopK, int Groups = 1, int Take = 1, class Score>
 __device__ void select_route_warp(const float* logits, int token, Score score,
                                   int32_t* ids, float* weights) {
   static_assert(Experts % 32 == 0 && TopK > 0 && TopK <= 32);
-  const int lane = threadIdx.x & 31;
-  float scores[Experts / 32], unbiased[Experts / 32];
-#pragma unroll
-  for (int j = 0; j < Experts / 32; ++j) {
-    const int expert = lane + j * 32;
-    unbiased[j] = score.transform(logits[uint64_t(token) * Experts + expert]);
-    scores[j] = score.rank(unbiased[j], expert);
-  }
-  mask_route_groups<Experts, Groups, Take>(scores);
-  int id = INT32_MAX;
-  float weight = 0.f, maximum = 0.f, selected_sum = 0.f;
-#pragma unroll
-  for (int k = 0; k < TopK; ++k) {
-    float best = -INFINITY;
-    int best_id = INT32_MAX;
-#pragma unroll
-    for (int j = 0; j < Experts / 32; ++j) {
-      const int expert = lane + 32 * j;
-      if (scores[j] > best || (Score::select_negative_infinity &&
-          scores[j] == best && expert < best_id)) {
-        best = scores[j];
-        best_id = expert;
-      }
-    }
-    const uint32_t winning = __reduce_max_sync(0xffffffff, ordered_route_bits(best));
-    best_id = __reduce_min_sync(0xffffffff,
-        ordered_route_bits(best) == winning ? best_id : INT32_MAX);
-    float local_weight = 0.f;
-#pragma unroll
-    for (int j = 0; j < Experts / 32; ++j) {
-      if (best_id == lane + 32 * j) {
-        local_weight = unbiased[j];
-        scores[j] = -INFINITY;
-      }
-    }
-    // A non-finite row can select INT32_MAX. Policies never receive that
-    // index: gather only matched values, using a valid shuffle lane.
-    const float chosen_weight = __shfl_sync(0xffffffff, local_weight,
-        best_id < Experts ? best_id & 31 : 0);
-    const float chosen = route_from_ordered(winning);
-    if (k == 0) maximum = chosen;
-    const float selected = Score::serial_sum
-        ? score.selected(chosen_weight, chosen, maximum) : chosen;
-    if constexpr (Score::serial_sum) {
-      if (lane == 0) selected_sum += selected;
-    }
-    if (lane == k) { id = best_id; weight = selected; }
-  }
-  if constexpr (Score::serial_sum) {
-    selected_sum = __shfl_sync(0xffffffff, selected_sum, 0);
+  if constexpr (Score::signed_zero_keys && !Score::select_negative_infinity) {
+    select_route_warp_ordered<Experts, TopK, Groups, Take>(logits, token, score, ids, weights);
   } else {
-    weight = lane < TopK ? score.selected(0.f, weight, maximum) : 0.f;
-    selected_sum = weight;
+    const int lane = threadIdx.x & 31;
+    float scores[Experts / 32], unbiased[Experts / 32];
 #pragma unroll
-    for (int offset = 16; offset; offset >>= 1)
-      selected_sum += __shfl_xor_sync(0xffffffff, selected_sum, offset);
-  }
-  if (lane < TopK) {
-    ids[token * TopK + lane] = id;
-    weights[token * TopK + lane] = score.normalize(weight, selected_sum);
+    for (int j = 0; j < Experts / 32; ++j) {
+      const int expert = lane + j * 32;
+      unbiased[j] = score.transform(logits[uint64_t(token) * Experts + expert]);
+      scores[j] = score.rank(unbiased[j], expert);
+    }
+    mask_route_groups<Experts, Groups, Take>(scores);
+    int id = INT32_MAX;
+    float weight = 0.f, maximum = 0.f, selected_sum = 0.f;
+#pragma unroll
+    for (int k = 0; k < TopK; ++k) {
+      float best = -INFINITY;
+      int best_id = INT32_MAX;
+#pragma unroll
+      for (int j = 0; j < Experts / 32; ++j) {
+        const int expert = lane + 32 * j;
+        // A lane ranks as the reduction does: +0 above an equal -0 (whose
+        // bits are a negative int), then the lower expert.
+        if (scores[j] > best || (Score::signed_zero_keys && scores[j] == best &&
+            __float_as_int(scores[j]) > __float_as_int(best)) ||
+            (Score::select_negative_infinity && scores[j] == best && expert < best_id)) {
+          best = scores[j];
+          best_id = expert;
+        }
+      }
+      const uint32_t winning = __reduce_max_sync(0xffffffff, ordered_route_bits(best));
+      best_id = __reduce_min_sync(0xffffffff,
+          ordered_route_bits(best) == winning ? best_id : INT32_MAX);
+      float local_weight = 0.f;
+#pragma unroll
+      for (int j = 0; j < Experts / 32; ++j) {
+        if (best_id == lane + 32 * j) {
+          local_weight = unbiased[j];
+          scores[j] = -INFINITY;
+        }
+      }
+      // A non-finite row can select INT32_MAX. Policies never receive that
+      // index: gather only matched values, using a valid shuffle lane.
+      const float chosen_weight = __shfl_sync(0xffffffff, local_weight,
+          best_id < Experts ? best_id & 31 : 0);
+      const float chosen = route_from_ordered(winning);
+      if (k == 0) maximum = chosen;
+      const float selected = Score::serial_sum
+          ? score.selected(chosen_weight, chosen, maximum) : chosen;
+      if constexpr (Score::serial_sum) {
+        if (lane == 0) selected_sum += selected;
+      }
+      if (lane == k) { id = best_id; weight = selected; }
+    }
+    if constexpr (Score::serial_sum) {
+      selected_sum = __shfl_sync(0xffffffff, selected_sum, 0);
+    } else {
+      weight = lane < TopK ? score.selected(0.f, weight, maximum) : 0.f;
+      selected_sum = weight;
+#pragma unroll
+      for (int offset = 16; offset; offset >>= 1)
+        selected_sum += __shfl_xor_sync(0xffffffff, selected_sum, offset);
+    }
+    if (lane < TopK) {
+      ids[token * TopK + lane] = id;
+      weights[token * TopK + lane] = score.normalize(weight, selected_sum);
+    }
   }
 }
 

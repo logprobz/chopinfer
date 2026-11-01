@@ -47,7 +47,7 @@ OPTIONS = [('tensor_parallel', '--tensor-parallel-size'), ('max_sequences', '--m
            ('graph_memory_reserve_mib', '--graph-memory-reserve-mib'), ('kv_cache_dtype', '--kv-cache-dtype'),
            ('prefix_cache', '--prefix-cache'), ('queue_depth', '--queue-depth'),
            ('context_parallel_size', '--context-parallel-size'), ('prefill_budget', '--prefill-budget'),
-           ('decode_tbt_target_ms', '--decode-tbt-target-ms')]
+           ('prefill_timing_cuts', '--prefill-timing-cuts'), ('decode_tbt_target_ms', '--decode-tbt-target-ms')]
 DESCRIPTIVE = {'bundle_id', 'topology', 'devices_required', 'devices', 'speculation', 'model_options',
                'qualified_max_sequences', 'qualification', 'status', 'evidence'}
 

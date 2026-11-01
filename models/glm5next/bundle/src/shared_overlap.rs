@@ -26,8 +26,11 @@
 //! whose replays are unchanged, so the side stream does work only while a
 //! capture runs. Eager runs keep one stream.
 //!
-//! On for every bucket by default; [`SWITCH`] `0` turns it off
-//! ([`Settings::read`]).
+//! Every bucket overlaps ([`Settings::served`]): PERF-B12 job 1 (g2-075)
+//! served it bitwise equal to one stream, AR ms/token C1 16.21 -> 15.47,
+//! C4 22.0 -> 21.2, C8 25.95 -> 24.95, C16 33.6 -> 32.8, MTP C1 7.72 ->
+//! 7.75, C4 11.0 -> 10.6, C8 15.1 -> 14.4, C16 23.5 -> 23.2. Tests may
+//! overlap fewer buckets, or none, to compare.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -41,21 +44,12 @@ use runtime_bundle_abi::{
 use crate::program::Stage;
 use crate::submit::launch_all;
 
-/// The graph buckets whose MoE sublayers overlap the shared expert.
-/// Exactly `0` turns the overlap off (the off-ramp); a positive number
-/// names the largest bucket's rows that overlap (a decode bucket's items,
-/// a verify bucket's tokens), so `8` overlaps buckets of 1 to 8 rows; unset
-/// or any other value overlaps every bucket, the default: PERF-B12 job 1
-/// (g2-075) served it bitwise equal to one stream, AR ms/token C1 16.21 ->
-/// 15.47, C4 22.0 -> 21.2, C8 25.95 -> 24.95, C16 33.6 -> 32.8, MTP C1 7.72
-/// -> 7.75, C4 11.0 -> 10.6, C8 15.1 -> 14.4, C16 23.5 -> 23.2.
-pub const SWITCH: &str = "CHOPINFER_GLM5NEXT_SHARED_OVERLAP";
-
-/// Which graph buckets overlap, read at create (which creates each rank's
+/// Which graph buckets overlap, fixed at create (which creates each rank's
 /// side stream and events when any does).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Settings {
-    /// The largest bucket's rows that overlap; 0 for none.
+    /// The largest bucket's rows that overlap (a decode bucket's items, a
+    /// verify bucket's tokens); 0 for none.
     pub max_rows: u32,
 }
 
@@ -65,23 +59,13 @@ impl Settings {
     /// Every bucket overlapped, the default.
     pub const ALL: Self = Self { max_rows: u32::MAX };
 
-    /// The settings [`SWITCH`]'s `value` names.
-    pub fn read(value: Option<&str>) -> Self {
-        match value.map(str::parse::<u32>) {
-            Some(Ok(0)) => Self::OFF,
-            Some(Ok(max_rows)) => Self { max_rows },
-            None | Some(Err(_)) => Self::ALL,
-        }
-    }
-
-    /// The process environment's settings; a test's instances take the
-    /// default (not the process environment) unless it sets theirs within
-    /// [`with_settings_in_tests`].
-    pub fn from_env() -> Self {
+    /// The served settings, every bucket; a test's instances take other
+    /// settings within [`with_settings_in_tests`].
+    pub fn served() -> Self {
         #[cfg(test)]
-        return IN_TESTS.get().unwrap_or_else(|| Self::read(None));
+        return IN_TESTS.get().unwrap_or(Self::ALL);
         #[cfg(not(test))]
-        Self::read(std::env::var(SWITCH).ok().as_deref())
+        Self::ALL
     }
 
     /// Whether any bucket overlaps.
@@ -100,7 +84,7 @@ thread_local! {
     static IN_TESTS: std::cell::Cell<Option<Settings>> = const { std::cell::Cell::new(None) };
 }
 
-/// Runs `create` with `settings`, as [`SWITCH`] would set them.
+/// Runs `create` with `settings` instead of the served ones.
 #[cfg(test)]
 pub(crate) fn with_settings_in_tests<T>(settings: Settings, create: impl FnOnce() -> T) -> T {
     IN_TESTS.set(Some(settings));
@@ -286,15 +270,11 @@ mod tests {
     use model_glm5next_contract::contract::Shape;
 
     #[test]
-    fn the_switch_names_the_largest_overlapped_bucket() {
-        assert_eq!(Settings::read(None), Settings::ALL);
-        for all in ["all", "", "on", "-1", "1.5"] {
-            assert_eq!(Settings::read(Some(all)), Settings::ALL, "{all}");
-        }
-        assert_eq!(Settings::read(Some("0")), Settings::OFF);
+    fn settings_name_the_largest_overlapped_bucket() {
+        assert_eq!(Settings::served(), Settings::ALL);
         assert!(!Settings::OFF.on() && !Settings::OFF.serves(1));
         assert!(Settings::ALL.serves(1) && Settings::ALL.serves(256));
-        let eight = Settings::read(Some("8"));
+        let eight = Settings { max_rows: 8 };
         assert!(eight.serves(1) && eight.serves(8) && !eight.serves(16));
     }
 

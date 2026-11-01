@@ -167,14 +167,15 @@ fn run(size: u32, drafting: bool) -> Run {
     let format = Shape::TP4.kv_formats()[usize::from(drafting)];
     assert_eq!(has_mtp_layer(&format), drafting);
     let host = FakeHost::with_format((3, 32), format);
-    // Size 1 keeps every prefill whole, as a group does, so that the
-    // groups' extra allocations are their state alone.
-    let mut instance = {
+    // Size 1 keeps every prefill whole, as a group does, and the collective
+    // prefill transport a group runs, not the ordered DMA and its inboxes,
+    // so that the groups' extra allocations are their state alone.
+    let mut instance = crate::prefill_dma::with_selection(Some(false), || {
         api().create(
             HostServicesTableV1::new(Rc::clone(&host)),
             &record(size, format),
         )
-    }
+    })
     .unwrap_or_else(|error| panic!("size {size}: {error:?} {:?}", host.logs.borrow()));
     // The journals hold the prompt's eager launches.
     crate::instance::keep_last_chunks_eager(instance.handle());

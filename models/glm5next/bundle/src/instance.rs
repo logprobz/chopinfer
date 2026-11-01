@@ -765,6 +765,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
     };
     let config = decode(bytes, log)?;
     let prefill_dma = crate::prefill_dma::requested(&config);
+    // The served policy never selects these; a test's explicit selection can.
     if prefill_dma && (config.context_parallel.size() != 1 || config.comm_epilogue) {
         log("prefill DMA currently requires CP1 without the comm epilogue");
         return Err(BundleStatusV1::Unsupported.into());
@@ -868,7 +869,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         projections: None,
         sync_stages: std::env::var_os(SYNC_STAGES).is_some_and(|value| value == "1"),
         taps,
-        shared_overlap: crate::shared_overlap::Settings::from_env(),
+        shared_overlap: crate::shared_overlap::Settings::served(),
         side_lanes: Vec::new(),
         dma: Vec::new(),
         prefill_dma,
@@ -891,22 +892,6 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         instance.log(&format!(
             "{}=true: the sublayer all-reduces run the Sinkhorn mHC comm epilogue",
             model_glm5next_contract::options::COMM_EPILOGUE_OPTION
-        ));
-    }
-    if instance.shared_overlap.on() {
-        let buckets = match instance.shared_overlap.max_rows {
-            u32::MAX => "every decode and verify graph bucket runs".to_owned(),
-            rows => format!("decode and verify graph buckets of at most {rows} rows run"),
-        };
-        instance.log(&format!(
-            "{} on (the default; 0 turns it off): {buckets} each MoE sublayer's shared gate/up \
-             on a side stream beside the routed experts",
-            crate::shared_overlap::SWITCH,
-        ));
-    } else {
-        instance.log(&format!(
-            "{}=0: every decode and verify graph bucket runs its shared gate/up on one stream",
-            crate::shared_overlap::SWITCH,
         ));
     }
     if instance.sync_stages {

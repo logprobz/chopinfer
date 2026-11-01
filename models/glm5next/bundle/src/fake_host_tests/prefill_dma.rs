@@ -5,15 +5,9 @@ use crate::prefill_dma::with_selection;
 mod owner_host;
 use owner_host::OwnerHost;
 
-const SUM: &str = "chop_comm_owned_sum_round_f32_v1";
+pub(super) const SUM: &str = "chop_comm_owned_sum_round_f32_v1";
 const OLD: &str = "chop_comm_allreduce_phased_round_f32_v1";
 type Span = (u64, u64, u64);
-
-fn host() -> Rc<Host> {
-    let host = FakeHost::new((0, 0));
-    host.device.ordinary_symbols.borrow_mut().insert(SUM.into());
-    host
-}
 
 fn create_dma(host: &Rc<Host>, enabled: bool) -> (Rc<OwnerHost>, BundleInstanceV1) {
     create_selected(host, Some(enabled))
@@ -144,7 +138,7 @@ fn audit(lines: &[String]) -> Result<usize, String> {
 }
 
 fn capture(rows: u64, enabled: bool) -> Vec<String> {
-    let host = host();
+    let host = FakeHost::new((0, 0));
     let (_observer, mut instance) = create_dma(&host, enabled);
     host.device.journal.borrow_mut().clear();
     instance
@@ -206,7 +200,7 @@ fn dma_keeps_short_prefills_and_decode_on_existing_entries() {
             .iter()
             .any(|l| l.starts_with("peer-copy ") || l.contains(SUM))
     );
-    let host = host();
+    let host = FakeHost::new((0, 0));
     let (_observer, mut instance) = create_dma(&host, true);
     instance
         .execute(&prompt_chunk(7, 0, 512, true), &mut NoRows::default())
@@ -230,7 +224,7 @@ fn dma_keeps_short_prefills_and_decode_on_existing_entries() {
 
 #[test]
 fn dma_partial_copy_failure_poisons_before_reuse_or_release() {
-    let host = host();
+    let host = FakeHost::new((0, 0));
     let (_observer, mut instance) = create_dma(&host, true);
     host.device.journal.borrow_mut().clear();
     host.fail_copy.set(Some(2));
@@ -251,7 +245,7 @@ fn dma_partial_copy_failure_poisons_before_reuse_or_release() {
 
 #[test]
 fn dma_repeated_chunks_keep_transport_and_mtp_target_eligibility() {
-    let host = host();
+    let host = FakeHost::new((0, 0));
     let (_observer, mut instance) = create_dma(&host, true);
     host.device.journal.borrow_mut().clear();
     for (previous, last) in [(0, false), (512, false), (1024, true)] {
@@ -283,7 +277,6 @@ fn dma_repeated_chunks_keep_transport_and_mtp_target_eligibility() {
     instance.destroy().unwrap();
 
     let host = FakeHost::with_format((3, 32), Shape::TP4.kv_formats()[1]);
-    host.device.ordinary_symbols.borrow_mut().insert(SUM.into());
     let (_observer, mut instance) = create_dma(&host, true);
     host.device.journal.borrow_mut().clear();
     instance
@@ -304,7 +297,7 @@ fn dma_repeated_chunks_keep_transport_and_mtp_target_eligibility() {
 
 #[test]
 fn dma_uses_private_owners_and_failed_drain_retains_buffers() {
-    let host = host();
+    let host = FakeHost::new((0, 0));
     let (observer, mut instance) = create_dma(&host, true);
     host.device.journal.borrow_mut().clear();
     host.launch_log.borrow_mut().clear();
@@ -359,7 +352,6 @@ fn dma_journal_is_pinned() {
 fn automatic_default_matches_the_qualified_opt_in_program() {
     let capture = |selection| {
         let host = FakeHost::with_format((3, 32), Shape::TP4.kv_formats()[1]);
-        host.device.ordinary_symbols.borrow_mut().insert(SUM.into());
         let (_observer, mut instance) = create_selected(&host, selection);
         host.device.journal.borrow_mut().clear();
         instance

@@ -76,6 +76,7 @@ impl KvPool {
                 *page,
                 self.blocks[page.index()] + 1,
                 self.transfer_refs[page.index()] + 1,
+                self.anchor_refs[page.index()],
             );
         }
         let id = self.next_transfer;
@@ -103,6 +104,7 @@ impl KvPool {
                 page,
                 self.blocks[page.index()] - 1,
                 self.transfer_refs[page.index()] - 1,
+                self.anchor_refs[page.index()],
             );
             if self.blocks[page.index()] == 0 {
                 self.free_blocks.push(page);
@@ -171,7 +173,7 @@ impl KvPool {
         for _ in 0..total {
             let page = self.free_blocks.pop().expect("pages counted");
             self.allocation_serials[page.index()] += 1;
-            self.blocks[page.index()] = 1;
+            self.set_block_references(page, 1, 0, 0);
             pages.push(page);
         }
         let state = pages.split_off(count);

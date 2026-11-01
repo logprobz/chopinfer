@@ -3,10 +3,11 @@
 Ordered DMA is the default for the official block-FP8 checkpoint layout
 with FP8 MTP KV at CP1, without the comm epilogue. It serves single-request
 text target prefill from 512 rows. Other configurations retain their existing
-transport. `CHOPINFER_GLM5NEXT_PREFILL_DMA=0` disables DMA; `1` opts in and
-still refuses CP greater than one and the comm epilogue. Draft passes,
-injected media, partial execution, synchronous stage diagnostics, short
-tails and non-phased admissions retain their existing paths.
+transport. Draft passes, injected media, partial execution, synchronous
+stage diagnostics, short tails and non-phased admissions retain their
+existing paths. On 2026-11-01 adoption completed: the
+`CHOPINFER_GLM5NEXT_PREFILL_DMA` switch was removed, and tests and route
+sweeps follow the served policy.
 
 The transport replaces exactly the 42 target MoE F32 collective launches.
 Each owner receives peer partials in source-rank slots, adds them in the
@@ -30,8 +31,10 @@ Vector clocks check cross-stream accesses using recorded event dependencies;
 removing waits must fail that audit. The 513-row launch journal pins this
 ordered schedule after the audit. A separate MTP test compares the automatic
 default's complete program with the qualified explicit opt-in and checks
-its cross-stream ordering. Existing journal fixtures explicitly select the
-legacy transport; their pins do not change for this policy change.
+its cross-stream ordering. Since adoption completed, every test follows
+the served policy unless it selects a transport to compare; no existing
+journal pin changed, since none runs a single-request prefill of at least
+512 rows on the FP8 MTP format.
 The DMA journal was separately repinned after omitting the unrelated
 active-down module and symbol: 20 later buffer handles move by eight.
 Comparing all 12817 lines showed only those bijective identity changes,

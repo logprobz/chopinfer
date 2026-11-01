@@ -38,7 +38,7 @@ impl Context<'_> {
         self.kv.release(stale)?;
         self.slots.retire(request);
         self.history.replace(slot, Vec::new())?;
-        if self.kv.snapshot(stale).is_ok() || self.slots.lease(request).is_some() {
+        if self.kv.sequence_tokens(stale).is_ok() || self.slots.lease(request).is_some() {
             return Err("retirement left a live handle or state lease".into());
         }
         self.kv.audit()?;

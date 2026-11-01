@@ -138,7 +138,7 @@
   "crates/kernel-lab/tests/qwen38_moe_tail.rs": {"matches": {"qwen": 26, "qwen38": 17}, "reason": "Model comparison and qualification harness; retain only the counted current model references."},
   "crates/kernel-lab/tests/qwen38_ngram_host.rs": {"matches": {"qwen": 3, "qwen38": 9}, "reason": "Model comparison and qualification harness; retain only the counted current model references."},
   "crates/kernel-lab/tests/qwen38_ple_items.rs": {"matches": {"qwen": 4, "qwen38": 28}, "reason": "Model comparison and qualification harness; retain only the counted current model references."},
-  "crates/kernel-lab/tests/qwen38_route_parallel.rs": {"matches": {"qwen": 11, "qwen38": 6}, "reason": "Model comparison and qualification harness; retain only the counted current model references."},
+  "crates/kernel-lab/tests/qwen38_route_parallel.rs": {"matches": {"qwen": 7, "qwen38": 3}, "reason": "Model comparison and qualification harness; retain only the counted current model references."},
   "crates/kernel-lab/tests/qwen38_rows.rs": {"matches": {"qwen": 10, "qwen38": 32}, "reason": "Model comparison and qualification harness; retain only the counted current model references."},
   "crates/kernel-lab/tests/qwen38_speculation_rows.rs": {"matches": {"qwen": 2, "qwen38": 21}, "reason": "Model comparison and qualification harness; retain only the counted current model references."},
   "crates/kernel-lab/tests/row_build.rs": {"matches": {"mimo": 8, "qwen38": 1}, "reason": "Model comparison and qualification harness; retain only the counted current model references."},

@@ -41,32 +41,40 @@ __device__ __forceinline__ float from_ordered(uint32_t ordered) {
   return __uint_as_float(ordered & 0x80000000u ? ordered ^ 0x80000000u : ~ordered);
 }
 
-// One warp selects a token's ten experts: the largest logits, ties to the
-// lower expert. Lane k < 10 returns route k's expert and renormalized
-// softmax weight; the softmax total cancels in the renormalization.
+// One warp selects a token's ten experts: the largest logits, +0 above -0,
+// ties to the lower expert (`Ties::LowerIndex`). Lane k < 10 returns route
+// k's expert and renormalized softmax weight; the softmax total cancels in
+// the renormalization.
+//
+// Every comparison ranks ordered bits, the lanes' and the reduction's alike.
+// -inf and NaN rank as `kUnranked`, which nothing at or below it passes:
+// they are never selected, and a lane with nothing else offers INT32_MAX.
 __device__ __forceinline__ void select_top10(const float* row, int& id, float& weight) {
+  constexpr uint32_t kUnranked = 0x007fffffu;  // ordered_bits(-INFINITY)
   const int lane = threadIdx.x & 31;
-  float scores[kGlobalExperts / 32];
+  uint32_t ranks[kGlobalExperts / 32];
 #pragma unroll
-  for (int j = 0; j < kGlobalExperts / 32; ++j) scores[j] = row[lane + 32 * j];
+  for (int j = 0; j < kGlobalExperts / 32; ++j) {
+    const float logit = row[lane + 32 * j];
+    ranks[j] = logit != logit ? kUnranked : ordered_bits(logit);
+  }
   float maximum = 0.f, chosen = 0.f;
   id = INT32_MAX;
 #pragma unroll
   for (int k = 0; k < kTopK; ++k) {
-    float best = -INFINITY;
+    uint32_t best = kUnranked;
     int best_id = INT32_MAX;
 #pragma unroll
     for (int j = 0; j < kGlobalExperts / 32; ++j)
-      if (scores[j] > best) {
-        best = scores[j];
+      if (ranks[j] > best) {
+        best = ranks[j];
         best_id = lane + 32 * j;
       }
-    const uint32_t winning = __reduce_max_sync(0xffffffff, ordered_bits(best));
-    best_id = __reduce_min_sync(
-        0xffffffff, ordered_bits(best) == winning ? best_id : INT32_MAX);
+    const uint32_t winning = __reduce_max_sync(0xffffffff, best);
+    best_id = __reduce_min_sync(0xffffffff, best == winning ? best_id : INT32_MAX);
 #pragma unroll
     for (int j = 0; j < kGlobalExperts / 32; ++j)
-      if (best_id == lane + 32 * j) scores[j] = -INFINITY;
+      if (best_id == lane + 32 * j) ranks[j] = kUnranked;
     const float value = from_ordered(winning);
     if (k == 0) maximum = value;
     if (lane == k) {

@@ -46,7 +46,7 @@ fn replay(candidate: bool) -> Outcome {
                 } else {
                     pool.create_sequence(2000).unwrap()
                 };
-                let committed = pool.snapshot(source).unwrap().tokens();
+                let committed = pool.sequence_tokens(source).unwrap();
                 pool.append(source, history.len() - committed).unwrap();
                 for depth in [previous + 1, previous + 2] {
                     pool.insert_content_anchor(&chain, source, depth, 125)

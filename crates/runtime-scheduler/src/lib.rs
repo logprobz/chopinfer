@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+use std::ops::{Deref, Index, IndexMut};
 use std::sync::Arc;
 
 use runtime_kv::{
@@ -1444,6 +1445,83 @@ struct RequestRecord {
     shared_tail: bool,
 }
 
+#[derive(Clone, Debug)]
+struct RequestRecords {
+    records: Vec<RequestRecord>,
+    generation: u64,
+}
+
+impl RequestRecords {
+    fn bump_generation(&mut self) {
+        // Even a billion mutations per second would take centuries to wrap.
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    fn iter_mut(&mut self) -> std::slice::IterMut<'_, RequestRecord> {
+        self.bump_generation();
+        self.records.iter_mut()
+    }
+
+    fn push(&mut self, record: RequestRecord) {
+        self.bump_generation();
+        self.records.push(record);
+    }
+
+    fn remove(&mut self, index: usize) -> RequestRecord {
+        self.bump_generation();
+        self.records.remove(index)
+    }
+}
+
+impl Deref for RequestRecords {
+    type Target = [RequestRecord];
+
+    fn deref(&self) -> &Self::Target {
+        &self.records
+    }
+}
+
+impl Index<usize> for RequestRecords {
+    type Output = RequestRecord;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.records[index]
+    }
+}
+
+impl IndexMut<usize> for RequestRecords {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        self.bump_generation();
+        &mut self.records[index]
+    }
+}
+
+impl<'a> IntoIterator for &'a RequestRecords {
+    type Item = &'a RequestRecord;
+    type IntoIter = std::slice::Iter<'a, RequestRecord>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut RequestRecords {
+    type Item = &'a mut RequestRecord;
+    type IntoIter = std::slice::IterMut<'a, RequestRecord>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
+    }
+}
+
+impl PartialEq for RequestRecords {
+    fn eq(&self, other: &Self) -> bool {
+        self.records == other.records
+    }
+}
+
+impl Eq for RequestRecords {}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PendingBatch {
     generation: u64,
@@ -1459,7 +1537,7 @@ struct PendingBatch {
 
 #[derive(Debug)]
 struct SchedulerPreflightState {
-    requests: Vec<RequestRecord>,
+    requests_generation: u64,
     active_sequences: usize,
     reserved_blocks: usize,
     next_arrival: u64,
@@ -1472,18 +1550,13 @@ struct SchedulerPreflightState {
 
 impl SchedulerPreflightState {
     fn capture(scheduler: &Scheduler, pending: &PendingBatch) -> Result<Self, ScheduleError> {
-        let mut requests = Vec::new();
-        requests
-            .try_reserve_exact(scheduler.requests.len())
-            .map_err(|_| ScheduleError::MetadataAllocationFailed)?;
-        requests.extend_from_slice(&scheduler.requests);
         let mut items = Vec::new();
         items
             .try_reserve_exact(pending.items.len())
             .map_err(|_| ScheduleError::MetadataAllocationFailed)?;
         items.extend_from_slice(&pending.items);
         Ok(Self {
-            requests,
+            requests_generation: scheduler.requests.generation,
             active_sequences: scheduler.active_sequences,
             reserved_blocks: scheduler.reserved_blocks,
             next_arrival: scheduler.next_arrival,
@@ -1504,7 +1577,7 @@ impl SchedulerPreflightState {
     }
 
     fn matches(&self, scheduler: &Scheduler) -> bool {
-        self.requests == scheduler.requests
+        self.requests_generation == scheduler.requests.generation
             && self.active_sequences == scheduler.active_sequences
             && self.reserved_blocks == scheduler.reserved_blocks
             && self.next_arrival == scheduler.next_arrival
@@ -1521,7 +1594,7 @@ pub struct Scheduler {
     identity: Arc<()>,
     config: SchedulerConfig,
     kv: KvPool,
-    requests: Vec<RequestRecord>,
+    requests: RequestRecords,
     active_sequences: usize,
     reserved_blocks: usize,
     next_arrival: u64,
@@ -1639,7 +1712,10 @@ impl Scheduler {
             identity: Arc::new(()),
             config,
             kv,
-            requests,
+            requests: RequestRecords {
+                records: requests,
+                generation: 0,
+            },
             active_sequences: 0,
             reserved_blocks: 0,
             next_arrival: 0,
@@ -2855,7 +2931,7 @@ impl Scheduler {
             if record.state.is_terminal()
                 || record.handle != Some(append.handle())
                 || append.additional_tokens() != item.phase.appended_tokens()
-                || self.kv.snapshot(append.handle()).is_err()
+                || self.kv.sequence_tokens(append.handle()).is_err()
             {
                 return Err(ScheduleError::InvariantViolation);
             }
@@ -3456,11 +3532,7 @@ impl Scheduler {
         let (Some(handle), None) = (record.handle, record.restore.as_ref()) else {
             return Err(ScheduleError::InvariantViolation);
         };
-        let tokens = self
-            .kv
-            .snapshot(handle)
-            .map_err(ScheduleError::Kv)?
-            .tokens();
+        let tokens = self.kv.sequence_tokens(handle).map_err(ScheduleError::Kv)?;
         self.captures
             .try_reserve(1)
             .map_err(|_| ScheduleError::MetadataAllocationFailed)?;
@@ -3584,9 +3656,8 @@ impl Scheduler {
         if !capture.interior
             && self
                 .kv
-                .snapshot(capture.handle)
+                .sequence_tokens(capture.handle)
                 .map_err(ScheduleError::Kv)?
-                .tokens()
                 != capture.tokens
         {
             return Err(ScheduleError::InvariantViolation);
@@ -3710,11 +3781,7 @@ impl Scheduler {
     pub fn kv_tokens(&self, id: RequestId) -> Result<usize, ScheduleError> {
         let record = self.record(id)?;
         match record.handle {
-            Some(handle) => self
-                .kv
-                .snapshot(handle)
-                .map(|snapshot| snapshot.tokens())
-                .map_err(ScheduleError::Kv),
+            Some(handle) => self.kv.sequence_tokens(handle).map_err(ScheduleError::Kv),
             None => Ok(0),
         }
     }
@@ -3839,11 +3906,7 @@ impl Scheduler {
                 }
                 continue;
             };
-            let tokens = self
-                .kv
-                .snapshot(handle)
-                .map_err(ScheduleError::Kv)?
-                .tokens();
+            let tokens = self.kv.sequence_tokens(handle).map_err(ScheduleError::Kv)?;
             // The reservation covers the committed KV, in pages net of the
             // shared prefix pages reserved once, plus snapshot pins until the
             // restore and the copy of a shared tail until the first commit.
@@ -5035,6 +5098,87 @@ impl Error for ScheduleError {}
 mod tests {
     use super::*;
 
+    #[test]
+    fn record_mutation_refuses_prepared_commit_without_consuming_pending_batch() {
+        let mut scheduler = Scheduler::new(
+            SchedulerConfig::new(1, 2, 4, 4, 1).unwrap(),
+            KvGeometry::new(4, 8).unwrap(),
+        )
+        .unwrap();
+        for id in [1, 2] {
+            scheduler
+                .submit(RequestSpec::new(RequestId::new(id), 2, 2).unwrap())
+                .unwrap();
+        }
+        let batch = scheduler.next_batch().unwrap().unwrap();
+        let item = batch.items()[0];
+        let prepared = scheduler
+            .preflight_commit_batch(
+                batch.id(),
+                &[BatchOutcome::success(
+                    item.request_id(),
+                    item.phase(),
+                    1,
+                    false,
+                )],
+            )
+            .unwrap();
+
+        // The token covers queued records as well as the batch's records.
+        assert_eq!(scheduler.requests[1].state, RequestState::Queued);
+        scheduler.requests[1].queued_micros += 1;
+        let before = scheduler.clone();
+        assert_eq!(
+            scheduler.apply_prepared_commit(prepared),
+            Err(ScheduleError::PreparedCommitMismatch)
+        );
+        assert_eq!(scheduler, before);
+        scheduler.rollback_batch(batch.id()).unwrap();
+        scheduler.audit().unwrap();
+    }
+
+    #[test]
+    fn mutable_record_access_refuses_prepared_commit_without_changing_equality() {
+        for access in 0..3 {
+            let mut scheduler = Scheduler::new(
+                SchedulerConfig::new(1, 2, 4, 4, 1).unwrap(),
+                KvGeometry::new(4, 8).unwrap(),
+            )
+            .unwrap();
+            let id = RequestId::new(1);
+            scheduler
+                .submit(RequestSpec::new(id, 2, 2).unwrap())
+                .unwrap();
+            let batch = scheduler.next_batch().unwrap().unwrap();
+            let prepared = scheduler
+                .preflight_commit_batch(
+                    batch.id(),
+                    &[BatchOutcome::success(
+                        id,
+                        batch.items()[0].phase(),
+                        1,
+                        false,
+                    )],
+                )
+                .unwrap();
+            let before = scheduler.clone();
+            assert_eq!(scheduler.requests.generation, before.requests.generation);
+            let record = match access {
+                0 => &mut scheduler.requests[0],
+                1 => scheduler.requests.iter_mut().next().unwrap(),
+                _ => (&mut scheduler.requests).into_iter().next().unwrap(),
+            };
+            assert_eq!(record.spec.id, id);
+            assert_eq!(scheduler, before);
+            assert_eq!(
+                scheduler.apply_prepared_commit(prepared),
+                Err(ScheduleError::PreparedCommitMismatch)
+            );
+            scheduler.rollback_batch(batch.id()).unwrap();
+            scheduler.audit().unwrap();
+        }
+    }
+
     fn capture_past_prompt(ancestry: bool, interior: bool) -> (Scheduler, PrefixCaptureV1) {
         let mut scheduler = Scheduler::new(
             SchedulerConfig::new(1, 8, 16, 8, 1)
@@ -5077,7 +5221,7 @@ mod tests {
                 )],
             )
             .unwrap();
-        assert_eq!(scheduler.kv.snapshot(capture.handle).unwrap().tokens(), 5);
+        assert_eq!(scheduler.kv.sequence_tokens(capture.handle).unwrap(), 5);
         let chain = Arc::new(PrefixChainV1::new(4, vec![1; 5].into(), vec![]).unwrap());
         capture.tokens = 5;
         capture.key = chain.key_at(5).unwrap();
@@ -5193,7 +5337,7 @@ mod tests {
                 writes.push((capture.tokens, pages[0]));
                 scheduler.end_prefix_capture(&capture).unwrap();
                 if capture.interior {
-                    assert_eq!(scheduler.kv.snapshot(source).unwrap().tokens(), 8);
+                    assert_eq!(scheduler.kv.sequence_tokens(source).unwrap(), 8);
                 }
                 scheduler.kv.audit().unwrap();
             }

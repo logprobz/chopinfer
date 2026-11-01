@@ -1,7 +1,7 @@
 [
   {
     "name": "chop_deepseek41_dspark_moe_route",
-    "source_closure_sha256": "f662df809a189ae3827172fcfc5e3570acf4bde0886c483f66d69d368c15cb14"
+    "source_closure_sha256": "0eb9b7de25e2291f37cd48e2b961a6a114df93c2187151d9f2923a6bdea1bbd0"
   },
   {
     "name": "chop_deepseek41_dspark_moe_sum_add",

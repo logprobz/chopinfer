@@ -2,7 +2,63 @@
   "schema": "chopinfer-depth-tune-model.v1",
   "model": "deepseek41",
   "allow_fallbacks": {
-    "engram_gather": "AR prefill uses synchronous gathers; C10 removes this allowance when prefill uses prepared gathers."
+    "engram_gather": {
+      "reason": "AR prefill uses synchronous gathers; C10 removes this allowance when prefill uses prepared gathers.",
+      "phases": [
+        "prefill"
+      ]
+    },
+    "mxfp8_fold": {
+      "reason": "Prompt prefill and its dependency cones: short-prefill widths through 64 rows, the 65 to 127 rows between the short and staged prefill entries, and the aligned cone tails and packed prompt-end cones keep the general or original fold stages (route-allowlist.toml prefill entries: MXFP8-fold-short-prefill, MXFP8-fold-middle-prefill, MXFP8-fold-cone-tails, MXFP8-fold-packed-cones). A mixed step takes them for its prompt rows only; its verify rows take the decode or wide verify folds.",
+      "phases": [
+        "prefill"
+      ]
+    },
+    "mxfp8_prefill": {
+      "reason": "Prefill fold stages outside their measured row ranges (route-allowlist.toml prefill entries, P4).",
+      "phases": [
+        "prefill"
+      ]
+    },
+    "prefill_norm": {
+      "reason": "Prefill RMS norms outside the fused range run unfused (route-allowlist.toml, NORM-prefill-range).",
+      "phases": [
+        "prefill"
+      ]
+    },
+    "sinkhorn_mix": {
+      "reason": "Prefill HC mixes outside the measured range and at the dependency cone tails take the prefill fallback (route-allowlist.toml, HC-prefill-range, HC-prefill-cone-tails).",
+      "phases": [
+        "prefill"
+      ]
+    },
+    "f32_reuse": {
+      "reason": "The head's and the drafter router's exact F32 reuse plans fall back at the row counts they do not cover: decode heads at 2 and 4 rows (ODR-HEAD-decode-2-4), verify tails (ODR-HEAD-verify-tails, ODR-DRAFTER-router-verify-tails) and allocated router steps (C6b-allocated-router-reuse) in route-allowlist.toml, and the same heads over a prefill step's prompt-end rows and the drafter's first proposals after it.",
+      "phases": [
+        "prefill",
+        "verify",
+        "decode"
+      ]
+    },
+    "latent_sources": {
+      "reason": "The selected-key cache serves its measured row ranges; other decode and verify widths read the sources directly (route-allowlist.toml, LATENT-source-range).",
+      "phases": [
+        "verify",
+        "decode"
+      ]
+    },
+    "rmsnorm_quantize": {
+      "reason": "The cached norm-quantize serves its measured decode rows; other widths take the fallback (route-allowlist.toml, NORM-cached-range).",
+      "phases": [
+        "decode"
+      ]
+    },
+    "sinkhorn_finish_norm": {
+      "reason": "The HC finish-norm fusion falls back at 4 and 12 verify columns (route-allowlist.toml, HC-cols-verify-4-12).",
+      "phases": [
+        "verify"
+      ]
+    }
   },
   "description": "DeepSeek V4.1 Flash TP4 with the DSpark drafter (tp4-dspark profile): balanced plans over depths 0-5, the drafter's published block, one server per depth with repeated windows, borrowing weights from the keeper. Every window is sampled at temperature 1.0 (the serving workload); greedy is an exactness check, not a measurement. The profile's verify widths stay on. The sweep runs as two jobs, low (C1-C4, depths 0-5) and high (C8-C32, depths 0-3, the deepest that can change their rows); report.py merges them. The confidence job verifies five draft positions at two and four live items for the confidence calibration. The costs job measures step time per verify width at C8 and C16 (16 to 48 rows at C8, 32 to 96 at C16) with 128 rows of token capacity and graphs up to 64; its arms list widths that hold every exact row count, so the profile's widths never land a plan elsewhere, and its depth 0 arm serves the profile defaults for the default graph memory.",
   "served_model_name": "DeepSeek-V4.1-Flash",
@@ -234,7 +290,73 @@
       "extra_arguments": [
         "--speculation-confidence",
         "off"
-      ]
+      ],
+      "allow_fallbacks": {
+        "engram_gather": {
+          "reason": "AR prefill uses synchronous gathers; C10 removes this allowance when prefill uses prepared gathers.",
+          "phases": [
+            "prefill"
+          ]
+        },
+        "mxfp8_fold": {
+          "reason": "Prompt prefill and its dependency cones: short-prefill widths through 64 rows, the 65 to 127 rows between the short and staged prefill entries, and the aligned cone tails and packed prompt-end cones keep the general or original fold stages (route-allowlist.toml prefill entries: MXFP8-fold-short-prefill, MXFP8-fold-middle-prefill, MXFP8-fold-cone-tails, MXFP8-fold-packed-cones). A mixed step takes them for its prompt rows only; its verify rows take the decode or wide verify folds. The costs job serves verify steps of 65 to 96 rows at 128 speculative rows without the wide_verify option: they take the 8192-row stream folds (route-allowlist.toml, WIDE-VERIFY-dense-folds).",
+          "phases": [
+            "prefill",
+            "verify"
+          ]
+        },
+        "mxfp8_prefill": {
+          "reason": "Prefill fold stages outside their measured row ranges (route-allowlist.toml prefill entries, P4).",
+          "phases": [
+            "prefill"
+          ]
+        },
+        "prefill_norm": {
+          "reason": "Prefill RMS norms outside the fused range run unfused (route-allowlist.toml, NORM-prefill-range).",
+          "phases": [
+            "prefill"
+          ]
+        },
+        "sinkhorn_mix": {
+          "reason": "Prefill HC mixes outside the measured range and at the dependency cone tails take the prefill fallback (route-allowlist.toml, HC-prefill-range, HC-prefill-cone-tails).",
+          "phases": [
+            "prefill"
+          ]
+        },
+        "f32_reuse": {
+          "reason": "The head's and the drafter router's exact F32 reuse plans fall back at the row counts they do not cover: decode heads at 2 and 4 rows (ODR-HEAD-decode-2-4), verify tails (ODR-HEAD-verify-tails, ODR-DRAFTER-router-verify-tails) and allocated router steps (C6b-allocated-router-reuse) in route-allowlist.toml, and the same heads over a prefill step's prompt-end rows and the drafter's first proposals after it. The costs job serves verify steps of 65 to 96 rows at 128 speculative rows without the wide_verify option: the cached verify head serves at most 64 rows, so those steps keep the general split head (route-allowlist.toml, WIDE-VERIFY-head).",
+          "phases": [
+            "prefill",
+            "verify",
+            "decode"
+          ]
+        },
+        "latent_sources": {
+          "reason": "The selected-key cache serves its measured row ranges; other decode and verify widths read the sources directly (route-allowlist.toml, LATENT-source-range). The costs job serves verify steps of 65 to 96 rows at 128 speculative rows without the wide_verify option: the selected-key cache holds at most 64 verify rows, so those steps read their sources directly (route-allowlist.toml, WIDE-VERIFY-latent-cache).",
+          "phases": [
+            "verify",
+            "decode"
+          ]
+        },
+        "rmsnorm_quantize": {
+          "reason": "The cached norm-quantize serves its measured decode rows; other widths take the fallback (route-allowlist.toml, NORM-cached-range).",
+          "phases": [
+            "decode"
+          ]
+        },
+        "sinkhorn_finish_norm": {
+          "reason": "The HC finish-norm fusion falls back at 4 and 12 verify columns (route-allowlist.toml, HC-cols-verify-4-12).",
+          "phases": [
+            "verify"
+          ]
+        },
+        "moe_router_finish": {
+          "reason": "The costs job serves verify steps of 65 to 96 rows at 128 speculative rows without the wide_verify option: direct MoE buckets fuse the router finish through 64 verify rows, so those steps run the unfused router before the 8192-row expert chains (route-allowlist.toml, WIDE-VERIFY-moe).",
+          "phases": [
+            "verify"
+          ]
+        }
+      }
     },
     "confidence-exact": {
       "verify_widths": [

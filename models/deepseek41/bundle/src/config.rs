@@ -419,7 +419,6 @@ pub(crate) mod tests {
             (F32_ROW_TILES, true.into()),
             (PHASED_DECODE_REDUCE, true.into()),
             (VERIFY_ROW_FUSIONS, true.into()),
-            (ATTENTION_MERGE_CEIL, true.into()),
         ] {
             changed = with_option(changed, name, value);
         }
@@ -435,7 +434,6 @@ pub(crate) mod tests {
                 f32_row_tiles: true,
                 phased_decode_reduce: true,
                 verify_row_fusions: true,
-                attention_merge_ceil: true,
             }
         );
         for (name, value) in [

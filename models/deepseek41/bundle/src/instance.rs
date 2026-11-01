@@ -936,8 +936,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         .with_wide_verify(config.execution.wide_verify)
         .with_f32_row_tiles(config.execution.f32_row_tiles)
         .with_phased_decode_reduce(config.execution.phased_decode_reduce)
-        .with_verify_row_fusions(config.execution.verify_row_fusions)
-        .with_attention_merge_ceil(config.execution.attention_merge_ceil);
+        .with_verify_row_fusions(config.execution.verify_row_fusions);
     if verify_rows > 0 && config.kv.storage == model_deepseek41_contract::state::KvStorage::Bf16 {
         log("BF16 KV supports autoregressive serving only; set --speculative-tokens 0");
         return Err(BundleStatusV1::Unsupported.into());

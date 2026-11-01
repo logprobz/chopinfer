@@ -83,3 +83,13 @@ long-context template lifetimes by 124 lines like the other complete
 lifetimes (15 resolves and 16 releases per rank), and the failed-template
 journals by 60 (15 resolves per rank; their destroy fails before any
 release).
+
+On 2026-11-01 the journal proof of this change against its parent, with
+this declaration, was PROVEN with full history coverage: 5 journals
+identical and 32 proven (the 30 above and the two aliases), with 37 of 37
+fixture histories compared, 3,840 launches renamed by the four kernel
+rules and 1,664 releases added. The identity proof of the next commit,
+which removes the candidate options, against this one was PROVEN: all 37
+journals and fixture histories byte-identical. The captures of both
+commits ran with their free-space thresholds lowered to 80 GiB at start
+and 60 GiB minimum.

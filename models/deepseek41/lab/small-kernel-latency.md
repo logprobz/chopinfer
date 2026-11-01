@@ -3,8 +3,9 @@
 Where a DSpark step's GPU time goes at one to sixteen concurrent
 sequences on native Flash TP4, what earlier fusion work did about it, and
 which fusions that keep every value and every add are left. Proposals 1
-and 2 are built as the `verify_row_fusions` candidate option, proposals
-3 and 4 were built, measured and retired (one neutral, one slower), and
+and 2 were built as the `verify_row_fusions` candidate option and adopted
+at six rows or fewer, proposals 3 and 4 were built, measured and retired
+(one neutral, one slower), and
 proposal 5 was prototyped in the lab;
 [estimates](#estimates-at-c1-c8-and-c16) puts their expected gains side
 by side.
@@ -148,8 +149,8 @@ The built candidates' measured estimates replace these
 
 | # | Fusion | Launches per step | C1 ms | C8 ms | Work |
 | ---: | --- | ---: | ---: | ---: | --- |
-| 1 | Decode row fusions at verify rows of at most 32 | -120 to -123 | 0 to 0.05 | 0.15 | built (below) |
-| 2 | Drafter window ceil: the parallel ceil32 or the fused window | 0 to -12 | 0.06 | 0.06 | built (below) |
+| 1 | Decode row fusions at verify rows of at most 32 | -120 to -123 | 0 to 0.05 | 0.15 | adopted at 6 rows or fewer (below) |
+| 2 | Drafter window ceil: the parallel ceil32 or the fused window | 0 to -12 | 0.06 | 0.06 | adopted at writes of 6 rows or fewer (below) |
 | 3 | Attention heads merge and output ceil in one kernel | -40 to -43 | 0.05 to 0.07 | 0.12 to 0.17 | built, neutral, retired (below) |
 | 4 | Router finish prepare into the router producer | -40 | up to 0.08 | up to 0.12 | built, slower, retired (below) |
 | 5 | Reduce-scatter and all-gather in one launch | -88 | 0.13 to 0.26 | 0.26 to 0.5 | prototype, slower above 4 rows (below) |
@@ -198,20 +199,23 @@ C8 the routed finishers are the larger latency cost; the direct MoE
 cache-policy candidates (the `moe_direct_*` options) address them and
 await served acceptance.
 
-## Verify row fusions candidate
+## Verify row fusions
 
-The `verify_row_fusions` model option, off by default, lets verify
+The `verify_row_fusions` candidate option, off by default, let verify
 steps of at most 32 rows (`serving::DECODE_BATCH`) select the decode
 steps' fused query norm and ceil and fused window norm, RoPE, ceil and
 store (`Shape::row_fusions`). The entries are the decode ones every
 instance already prepares at 32 rows, so no kernel, cubin or lock
-changes, and off the package launches what it did. The fake-host test
+changed, and off the package launched what it did. The fake-host test
 `row_fusion_option_fuses_the_query_and_window_chains_through_32_rows`
-pairs instances with the option off and on at 6, 12, 32, 33 and 64 verify
-rows: through 32 rows each target layer's query pair and window chain
-become one launch each on every rank, the drafter's queries fuse when
-its rows fit and its window keeps its chain, and above 32 rows the
-launch sequences are identical.
+paired instances with the option off and on at 6, 12, 32, 33 and 64
+verify rows: through 32 rows each target layer's query pair and window
+chain became one launch each on every rank, the drafter's queries fused
+when its rows fit and its window kept its chain, and above 32 rows the
+launch sequences were identical. The fusions are now the default route
+at verify steps of at most six rows (adoption, below), and
+`verify_steps_fuse_the_query_and_window_chains_through_6_rows` checks the
+default's launches at 6, 12, 32, 33 and 64 rows.
 
 The norm and window lab pairs (`norm_quantize`, `window_fused`) now run
 6, 12 and 24 rows besides the decode buckets, and the window pairs a
@@ -235,23 +239,45 @@ against the same package's recording without options (package-comparison
 mode): verify traces at one request with 5 and 6 rows a step (67 logits
 rows), at 16 requests with 16 and 32 rows (304) and at 16 requests with
 48 and 64 rows (688), the last covering the drafter's window ceil alone.
-The option goes to served step-time acceptance at C1 to C16 before any
-adoption.
+Allocated replays beside `wide_verify` at 72 to 184 computed rows matched
+too, in logits, proposals, acceptance, committed state and drafter
+confidence words, and served exactness passed at C1, C8 and C16.
+
+Adoption. In the served step-time A/B of the option against the profile,
+with the first-visit control clear, C1 (one item, six verify rows a
+step) gained 1.85%, resolved, with paired deltas of 1.74% and 1.95%, and
+C8 (eight items, 32 rows) gained 1.45%, neutral, with paired deltas of
+0.54% and 2.35% and a spread of 1.81 points; C32, which does not draft,
+was untouched. Timing acceptance needs a resolved gain at every admitted
+width, so on 2026-11-01 the fusions became the default route at the six
+rows C1 resolved: the Flash TP4 latent tuning row
+`latent.row_fusions.verify` admits rows 1 to 6, verify steps and the
+drafter's forwards by their rows and the drafter's window writes by each
+write's own rows, and verify steps of 7 to 32 rows keep the chains. The
+drafter's forward of one drafting item is five rows, so it fuses its
+queries at every verify step with one drafting item. The drafter's
+forwards and writes are bitwise in the lab pairs and replays, and the C8
+cell already ran a superset, every drafter forward of up to 32 rows
+fused and every write of up to 60 rows on the parallel entry, without a
+regression in any cell. The option, its test overrides and its sweep
+profiles were removed.
 
 ## Drafter window ceil
 
-`verify_row_fusions` also carries proposal 2. The drafter's catch-up and
+`verify_row_fusions` also carried proposal 2. The drafter's catch-up and
 block window writes were prepared at prefill capacity, so they launched
-the serial `latent_ceil32_v1`. With the option they also prepare writes
-of at most the draft rows, which select the parallel
-`latent_ceil32_parallel_v1` the target's window takes; its groups compute
-the same codes, scales and status. Wider writes, such as the 85-row
-catch-up writes at C8, keep the serial entry. In the C4 and C8 allocated
-journals the 36 serial launches become parallel ones. The drafter's
-catch-up picks its writer by row count wherever it runs, so the option
-also changes the catch-up of DSpark prefill steps and of a prefix
-capture, which runs outside any target step; their journals are pinned
-with the option ([verify row fusions journals](../journal-changes/verify-row-fusions.md)).
+the serial `latent_ceil32_v1`. The option also prepared writes of at
+most the draft rows, which select the parallel
+`latent_ceil32_parallel_v1` the target's window takes; its groups
+compute the same codes, scales and status. Wider writes, such as the
+85-row catch-up writes at C8, kept the serial entry. In the C4 and C8
+allocated journals the option's 36 serial launches became parallel ones.
+The drafter's catch-up picks its writer by row count wherever it runs,
+so the option also changed the catch-up of DSpark prefill steps and of a
+prefix capture, which runs outside any target step; their journals were
+pinned with the option ([verify row fusions
+journals](../journal-changes/verify-row-fusions.md)). The adopted route
+keeps that count rule at writes of at most six rows.
 
 The serial and parallel ceil lab pairs (`ceil_parallel`) now also run 3,
 5 and 12 rows. On 2026-10-31, on two idle GPUs, each GPU passed 4,695
@@ -260,7 +286,7 @@ from 1 to 64 and detected all 939 negative controls. The ceil32 pair took 20.5
 against 8.2 us for one launch. In the served graphs the drafter's serial
 ceil32 advances 12.35, 13.56 and 13.60 us a launch at C1, C8 and C16
 against the target's parallel 1.99, 2.56 and 2.74 us. At the 6.1, 6 and
-12 launches per step the option moves, that saves about 0.063, 0.066 and
+12 launches per step the option moved, that saves about 0.063, 0.066 and
 0.13 ms a step.
 
 ## Quantizing attention merge (retired)

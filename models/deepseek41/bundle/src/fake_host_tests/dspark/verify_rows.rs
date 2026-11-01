@@ -228,22 +228,73 @@ fn row_tile_option_replaces_the_head_and_compressor_spans() {
 /// rows and every other launch unchanged.
 #[test]
 fn row_fusion_option_fuses_the_query_and_window_chains_through_32_rows() {
+    let steps = [(1, 6), (2, 12), (8, 32), (16, 33), (16, 64)];
+    let pairs = row_fusion_pairs(&[], 16, 128, &steps);
+    assert!(pairs.drafted > 0 && pairs.windows.iter().sum::<usize>() > 0);
+}
+
+/// The same pairing beside the `wide_verify` option at the package's 192
+/// verify rows, both instances with it on: through 32 rows the chains fuse
+/// as without it, and at 33 to 192 rows, where `wide_verify` serves the
+/// wide buckets and no chain fuses, only the drafter's small window writes
+/// change their quantizer, which some steps above 64 rows launch.
+#[test]
+fn row_fusion_option_beside_wide_verify_changes_only_small_drafter_writes_above_32_rows() {
+    use model_deepseek41_contract::execution_options::WIDE_VERIFY;
+    let steps: Vec<_> = [(1, 6), (8, 32), (16, 64)]
+        .into_iter()
+        .chain(WIDE_STEPS)
+        .collect();
+    let pairs = row_fusion_pairs(&[(WIDE_VERIFY, true.into())], 32, 192, &steps);
+    assert!(pairs.drafted > 0);
+    let wide: usize = steps
+        .iter()
+        .zip(&pairs.windows)
+        .filter(|((_, rows), _)| *rows > 64)
+        .map(|(_, windows)| windows)
+        .sum();
+    assert!(
+        wide > 0,
+        "no step above 64 rows wrote a small drafter window"
+    );
+}
+
+/// What [`row_fusion_pairs`] saw: the steps whose drafter fused its
+/// queries, and each step's small drafter window writes.
+struct RowFusionPairs {
+    drafted: usize,
+    windows: Vec<usize>,
+}
+
+/// Runs `steps` (items, rows) on two eager instances of `items` slots and
+/// `verify_tokens` verify rows with `options`, one with
+/// `verify_row_fusions` off and one with it on, and checks each pair of
+/// steps as `row_fusion_option_fuses_the_query_and_window_chains_through_32_rows`
+/// describes.
+fn row_fusion_pairs(
+    options: &[(&str, serde_json::Value)],
+    items: u32,
+    verify_tokens: u32,
+    steps: &[(u32, u32)],
+) -> RowFusionPairs {
     use model_deepseek41_contract::execution_options::VERIFY_ROW_FUSIONS;
     let create = |fused: bool| {
+        let mut all = vec![
+            (DSPARK_GRAPH_HANDLES_PER_RANK, 0.into()),
+            (VERIFY_ROW_FUSIONS, fused.into()),
+        ];
+        all.extend(options.iter().cloned());
         create_with_options(
             Shape::new(&FLASH, Ranks::TP4).unwrap(),
-            16,
-            128,
-            &[
-                (DSPARK_GRAPH_HANDLES_PER_RANK, 0.into()),
-                (VERIFY_ROW_FUSIONS, fused.into()),
-            ],
+            items,
+            verify_tokens,
+            &all,
         )
     };
     let (served_host, mut served) = create(false);
     let (fused_host, mut fused) = create(true);
     for (host, instance) in [(&served_host, &mut served), (&fused_host, &mut fused)] {
-        for slot in 0..16 {
+        for slot in 0..u64::from(items) {
             execute(
                 instance,
                 host,
@@ -276,16 +327,18 @@ fn row_fusion_option_fuses_the_query_and_window_chains_through_32_rows() {
             .map(grid)
             .collect::<Vec<_>>()
     };
-    let mut drafted = 0;
-    let mut windows = 0;
-    for (items, rows) in [(1_u32, 6_u32), (2, 12), (8, 32), (16, 33), (16, 64)] {
-        let (a, step_a, accepted_a) = verify_step(&mut served, &served_host, items, rows);
-        let (b, step_b, accepted_b) = verify_step(&mut fused, &fused_host, items, rows);
+    let mut pairs = RowFusionPairs {
+        drafted: 0,
+        windows: Vec::new(),
+    };
+    for &(count, rows) in steps {
+        let (a, step_a, accepted_a) = verify_step(&mut served, &served_host, count, rows);
+        let (b, step_b, accepted_b) = verify_step(&mut fused, &fused_host, count, rows);
         // The served step's small drafter windows quantize serially; the
         // fused step's never do. `launches` names both arms' parallel.
         let small = serial(&step_a).into_iter().filter(|&r| r <= 64).count();
         assert!(serial(&step_b).iter().all(|&r| r > 64), "{rows} rows");
-        windows += small;
+        pairs.windows.push(small);
         let (all_a, all_b) = (launches(&step_a), launches(&step_b));
         let (target_a, target_b): (Vec<_>, Vec<_>) = (
             a.iter().map(symbol).collect(),
@@ -309,7 +362,7 @@ fn row_fusion_option_fuses_the_query_and_window_chains_through_32_rows() {
                     3 * 4,
                     "{rows} rows"
                 );
-                drafted += 1;
+                pairs.drafted += 1;
             } else {
                 assert_eq!(before_a, before_b, "{rows} rows");
             }
@@ -318,14 +371,14 @@ fn row_fusion_option_fuses_the_query_and_window_chains_through_32_rows() {
         served.commit_accepted(&accepted_a).unwrap();
         fused.commit_accepted(&accepted_b).unwrap();
     }
-    assert!(drafted > 0 && windows > 0);
     for (host, instance) in [(&served_host, &mut served), (&fused_host, &mut fused)] {
-        for request in 1..=16 {
+        for request in 1..=u64::from(items) {
             instance.retire_request(request).unwrap();
         }
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
     }
+    pairs
 }
 
 /// Checks that `fused` is `served` with each query norm and the query ceil

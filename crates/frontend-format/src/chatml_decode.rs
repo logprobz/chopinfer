@@ -9,7 +9,7 @@ use crate::descriptor::{
     FormatDescriptorV1, FrontendJsonEncodingV1, FrontendParserDeclarationV1, FrontendToolGrammarV1,
 };
 use crate::format_decode::completion_calls_v1;
-use crate::marks::{MarkMatchV1, SourceMapV1};
+use crate::marks::{MarkMatchV1, SourceMapV1, marked_join_v1};
 use crate::request::{FrontendJsonV1, FrontendToolV1};
 use crate::toolkit::{json_to_string_v1, resource_v1, validate_parameter_name_v1};
 
@@ -1104,6 +1104,9 @@ fn insert_argument_v1(
 /// the coercion makes of the whole text. A literal the grammar offers, such
 /// as a string enumeration value, may spell a marker that ends a raw value
 /// early, or open a string literal that a JSON value's scan never closes.
+/// Under ID-only markers the grammar writes the markers' ID-only spellings
+/// as tokens and the literal as ordinary tokens, so the completion carries
+/// marks on the markers' spellings alone.
 pub(crate) fn literal_value_reads_back_v1(
     descriptor: &Arc<FormatDescriptorV1>,
     tool: &FrontendToolV1,
@@ -1111,23 +1114,27 @@ pub(crate) fn literal_value_reads_back_v1(
     value: &str,
 ) -> bool {
     let parser = &descriptor.parser;
-    let text = [
-        parser.tool_call_open.as_str(),
-        &parser.function_open,
-        &tool.name,
-        &parser.function_name_close,
-        &parser.parameter_open,
-        key,
-        &parser.parameter_name_close,
-        &parser.parameter_value_open,
-        value,
-        &parser.parameter_close,
-        &parser.function_close,
-        &parser.tool_call_close,
-    ]
-    .concat();
+    let spellings = &descriptor.vocabulary.id_only_markers;
+    let (text, marks) = marked_join_v1(
+        spellings,
+        &[
+            (parser.tool_call_open.as_str(), true),
+            (parser.function_open.as_str(), true),
+            (tool.name.as_str(), false),
+            (parser.function_name_close.as_str(), true),
+            (parser.parameter_open.as_str(), true),
+            (key, false),
+            (parser.parameter_name_close.as_str(), true),
+            (parser.parameter_value_open.as_str(), true),
+            (value, false),
+            (parser.parameter_close.as_str(), true),
+            (parser.function_close.as_str(), true),
+            (parser.tool_call_close.as_str(), true),
+        ],
+    );
     let tools = std::slice::from_ref(tool);
-    let Ok(calls) = completion_calls_v1(descriptor, &text, tools) else {
+    let marks = (!spellings.is_empty()).then_some(marks.as_slice());
+    let Ok(calls) = completion_calls_v1(descriptor, &text, tools, marks) else {
         return false;
     };
     let schema = tool_parameters_v1(tools, &tool.name);

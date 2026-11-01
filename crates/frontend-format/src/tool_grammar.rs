@@ -13,6 +13,12 @@
 //! and an empty marker is written as nothing and avoided nowhere. The typed
 //! grammar closes a raw value's name with `parameter_name_close` and a JSON
 //! value's with `parameter_json_name_close`.
+//!
+//! Under a declaration's ID-only markers (`vocabulary.id_only_markers`) the
+//! parser reads a marker only where each ID-only spelling in it is its
+//! token, so the grammar writes those spellings as token elements: a marker
+//! spelled with ordinary tokens is text, which free text and raw values may
+//! hold, and the marker token appears nowhere else.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -27,6 +33,7 @@ use crate::chatml_decode::{
     literal_value_reads_back_v1,
 };
 use crate::descriptor::{FormatDescriptorV1, FrontendParserDeclarationV1, FrontendToolGrammarV1};
+use crate::marks::spelling_parts_v1;
 use crate::request::{FrontendErrorV1, FrontendToolChoiceV1, FrontendToolV1};
 use crate::toolkit::validate_parameter_name_v1;
 
@@ -106,10 +113,17 @@ fn calls_v1(
     shared: bool,
 ) -> Result<Grammar, FrontendErrorV1> {
     let format = &descriptor.parser;
+    let markup = MarkupV1::new(descriptor);
     let mut builder = GrammarBuilder::new();
     let mut rests = Vec::with_capacity(offered.len());
     for tool in offered {
-        rests.push(call_after_open(&mut builder, descriptor, format, tool)?);
+        rests.push(call_after_open(
+            &mut builder,
+            descriptor,
+            format,
+            &markup,
+            tool,
+        )?);
     }
     // Everything a call writes after its open marker.
     let rest = Expr::alt(rests);
@@ -118,7 +132,7 @@ fn calls_v1(
     } else {
         rest
     };
-    let open = || Expr::literal(&format.tool_call_open);
+    let open = || markup.marker(&format.tool_call_open);
     let typed = format.tool_grammar == FrontendToolGrammarV1::XmlTypedParametersV1;
     // The typed grammar writes every call of a turn as one function element
     // after another inside one call block, as its reference parser reads
@@ -128,8 +142,8 @@ fn calls_v1(
         Expr::seq([
             open(),
             rest.clone(),
-            Expr::seq([Expr::literal(&format.tool_call_separator), rest.clone()]).star(),
-            Expr::literal(&format.tool_call_close),
+            Expr::seq([markup.marker(&format.tool_call_separator), rest.clone()]).star(),
+            markup.marker(&format.tool_call_close),
         ])
     } else {
         Expr::seq([open(), rest.clone()])
@@ -137,10 +151,10 @@ fn calls_v1(
     let more_calls = if typed {
         Expr::Empty
     } else {
-        Expr::seq([Expr::literal(&format.tool_call_separator), call.clone()]).star()
+        Expr::seq([markup.marker(&format.tool_call_separator), call.clone()]).star()
     };
     // A template that writes a prefix before the answer may start with it.
-    let answer_prefix = Expr::literal(&format.answer_prefix).optional();
+    let answer_prefix = markup.marker(&format.answer_prefix).optional();
     let body = match forced {
         FrontendToolChoiceV1::Named(_) if !typed => Expr::seq([answer_prefix, call]),
         FrontendToolChoiceV1::Named(_) | FrontendToolChoiceV1::Required => {
@@ -155,20 +169,17 @@ fn calls_v1(
             let calls = if typed {
                 Expr::seq([
                     rest.clone(),
-                    Expr::seq([Expr::literal(&format.tool_call_separator), rest]).star(),
-                    Expr::literal(&format.tool_call_close),
+                    Expr::seq([markup.marker(&format.tool_call_separator), rest]).star(),
+                    markup.marker(&format.tool_call_close),
                 ])
             } else {
                 Expr::seq([rest, more_calls])
             };
             Expr::alt([
-                Expr::TextExcluding(bare_markers_v1([tool_open, function_open])),
+                markup.text(&[tool_open, function_open]),
                 Expr::seq([
-                    Expr::TextUntil {
-                        end: tool_open.as_bytes().to_vec(),
-                        avoid: bare_markers_v1([function_open]),
-                    },
-                    Expr::literal(after_open),
+                    markup.text_until(tool_open, &[function_open])?,
+                    markup.marker(after_open),
                     calls,
                 ]),
             ])
@@ -182,6 +193,7 @@ fn call_after_open(
     builder: &mut GrammarBuilder,
     descriptor: &FormatDescriptorV1,
     format: &FrontendParserDeclarationV1,
+    markup: &MarkupV1<'_>,
     tool: &FrontendToolV1,
 ) -> Result<Expr, FrontendErrorV1> {
     let schema = tool.parameters.to_json_value();
@@ -202,14 +214,14 @@ fn call_after_open(
                 &format.parameter_name_close
             };
         Expr::seq([
-            Expr::literal(&format.parameter_open),
+            markup.marker(&format.parameter_open),
             name,
-            Expr::literal(name_close),
-            Expr::literal(&format.parameter_value_open),
+            markup.marker(name_close),
+            markup.marker(&format.parameter_value_open),
             value_and_close,
         ])
     };
-    let close = || Expr::literal(&format.parameter_close);
+    let close = || markup.marker(&format.parameter_close);
     let (bare_close, after_close) = bare_v1(&format.parameter_close);
     // A function's arguments end at its close; a key-value call's arguments
     // end at the call close, and a value may hold the next key's open marker.
@@ -217,21 +229,12 @@ fn call_after_open(
     let avoid = match format.tool_grammar {
         FrontendToolGrammarV1::XmlTypedParametersV1 => Vec::new(),
         FrontendToolGrammarV1::XmlFunctionParametersV1 => {
-            bare_markers_v1([format.parameter_open.trim(), format.function_close.trim()])
+            vec![format.parameter_open.trim(), format.function_close.trim()]
         }
-        FrontendToolGrammarV1::XmlKeyValueArgumentsV1 => {
-            bare_markers_v1([format.tool_call_close.trim()])
-        }
+        FrontendToolGrammarV1::XmlKeyValueArgumentsV1 => vec![format.tool_call_close.trim()],
     };
-    let free_text = || {
-        Expr::seq([
-            Expr::TextUntil {
-                end: bare_close.as_bytes().to_vec(),
-                avoid: avoid.clone(),
-            },
-            Expr::literal(after_close),
-        ])
-    };
+    let until_close = markup.text_until(bare_close, &avoid)?;
+    let free_text = || Expr::seq([until_close.clone(), markup.marker(after_close)]);
     // A literal value the grammar offers must read back whole under the
     // parameter's name, as the served parser reads the call it is in.
     let served = std::sync::Arc::new(descriptor.clone());
@@ -367,16 +370,126 @@ fn call_after_open(
     let block_close = if format.tool_grammar == FrontendToolGrammarV1::XmlTypedParametersV1 {
         Expr::Empty
     } else {
-        Expr::literal(&format.tool_call_close)
+        markup.marker(&format.tool_call_close)
     };
     Ok(Expr::seq([
-        Expr::literal(&format.function_open),
+        markup.marker(&format.function_open),
         Expr::literal(&tool.name),
-        Expr::literal(&format.function_name_close),
+        markup.marker(&format.function_name_close),
         parameters,
-        Expr::literal(&format.function_close),
+        markup.marker(&format.function_close),
         block_close,
     ]))
+}
+
+/// How a grammar writes the declared markers, and the text around them: as
+/// their text, except that each ID-only spelling in a marker
+/// (`vocabulary.id_only_markers`) is a token element for its boundary token.
+/// Text may spell an ID-only marker with ordinary tokens, which the parser
+/// reads as text, so it avoids only the markers that spell none. Without
+/// ID-only markers every marker and text is written as before.
+struct MarkupV1<'a> {
+    spellings: &'a [String],
+    /// Each ID-only spelling and its boundary token's identifier.
+    tokens: Vec<(&'a str, u32)>,
+}
+
+impl<'a> MarkupV1<'a> {
+    fn new(descriptor: &'a FormatDescriptorV1) -> Self {
+        let vocabulary = &descriptor.vocabulary;
+        let tokens = vocabulary
+            .id_only_markers
+            .iter()
+            .map(|spelling| {
+                let token = vocabulary
+                    .boundary_tokens
+                    .iter()
+                    .find(|token| token.text == *spelling)
+                    .expect("a checked declaration's ID-only markers are boundary tokens");
+                (spelling.as_str(), token.id)
+            })
+            .collect();
+        Self {
+            spellings: &vocabulary.id_only_markers,
+            tokens,
+        }
+    }
+
+    /// Whether `marker` holds an ID-only spelling.
+    fn tokenized(&self, marker: &str) -> bool {
+        spelling_parts_v1(marker, self.spellings).next().is_some()
+    }
+
+    /// The declared `marker` as the grammar writes it: its text, with each
+    /// ID-only spelling, found as the parser finds them, its token.
+    fn marker(&self, marker: &str) -> Expr {
+        let mut items = Vec::new();
+        let mut at = 0;
+        for part in spelling_parts_v1(marker, self.spellings) {
+            if part.start > at {
+                items.push(Expr::literal(&marker[at..part.start]));
+            }
+            let (_, id) = self
+                .tokens
+                .iter()
+                .find(|(spelling, _)| *spelling == &marker[part.clone()])
+                .expect("each part is an ID-only spelling");
+            items.push(Expr::Token(*id));
+            at = part.end;
+        }
+        if items.is_empty() || at < marker.len() {
+            items.push(Expr::literal(&marker[at..]));
+        }
+        Expr::seq(items)
+    }
+
+    /// The markers of `avoid` that text must not hold, as bytes.
+    fn avoided(&self, avoid: &[&str]) -> Vec<Vec<u8>> {
+        bare_markers_v1(
+            avoid
+                .iter()
+                .copied()
+                .filter(|marker| !self.tokenized(marker)),
+        )
+    }
+
+    /// Text that holds none of the bare markers `avoid`.
+    fn text(&self, avoid: &[&str]) -> Expr {
+        let avoid = self.avoided(avoid);
+        if avoid.is_empty() && !self.spellings.is_empty() {
+            Expr::Class(CharClass::any()).star()
+        } else {
+            Expr::TextExcluding(avoid)
+        }
+    }
+
+    /// Text through the first bare marker `end`, which ends it, holding none
+    /// of the bare markers `avoid`.
+    ///
+    /// An `end` with an ID-only spelling is text followed by the marker:
+    /// text holds no marker token, so the first one ends it. A marker the
+    /// text avoids could then straddle the text and the end's leading
+    /// bytes unseen, so no avoided marker may remain beside such an end.
+    fn text_until(&self, end: &str, avoid: &[&str]) -> Result<Expr, FrontendErrorV1> {
+        let avoided = self.avoided(avoid);
+        if !self.tokenized(end) {
+            return Ok(Expr::TextUntil {
+                end: end.as_bytes().to_vec(),
+                avoid: avoided,
+            });
+        }
+        if !avoided.is_empty() {
+            return Err(FrontendErrorV1::new(
+                "tools: the tool grammar cannot end text at a marker that spells an ID-only \
+                 marker while it avoids markers that spell none",
+                Some("tools"),
+            ));
+        }
+        Ok(Expr::seq([
+            Expr::Class(CharClass::any()).star(),
+            self.marker(end),
+        ]))
+    }
 }
 
 /// A parameter's value text and its close marker, and whether the value is

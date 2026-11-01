@@ -4,7 +4,9 @@
 //! ID-only markers and pushes that mark the tokens generated as them, a
 //! marker is a marker only where its ID-only spellings are marked tokens
 //! and its other bytes ordinary ones, so a marker spelled by ordinary
-//! tokens is text. Text without marks reads by spelling, as before.
+//! tokens is text. Text without marks reads by spelling, as before. A tool
+//! choice's grammar writes those spellings as the tokens, so what it admits
+//! reads back as it was written.
 #[allow(dead_code)]
 mod common;
 
@@ -13,8 +15,12 @@ use std::sync::Arc;
 
 use frontend_format::{
     AssistantCompletionV1, CompletionFinishV1, DeclaredParserV1, FormatDescriptorV1, FormatEventV1,
-    FormatInputV1, FormatParserOptionsV1, ParsedToolCallV1, PromptModeV1, parse_completion_v1,
-    parse_marked_completion_v1,
+    FormatInputV1, FormatParserOptionsV1, FrontendToolChoiceV1, FrontendToolV1, ParsedToolCallV1,
+    PromptModeV1, parse_completion_v1, parse_marked_completion_v1, tool_constraint_v1,
+};
+use runtime_grammar::{
+    CompiledGrammar, ConstraintState, GRAMMAR_WIRE_LAYOUT_V1, Grammar, GrammarMatcher, PrefixPart,
+    TokenVocabulary, VocabularyToken,
 };
 use serde_json::{Value, json};
 
@@ -737,4 +743,266 @@ fn marks_hold_across_invalid_bytes_in_a_tool_region() {
         let arguments: Value = serde_json::from_str(&calls[0].arguments).unwrap();
         assert_eq!(arguments, json!({"s": "a\u{fffd}b</|T| parameter>\nc"}));
     }
+}
+
+/// The vocabulary the fixture's grammars compile over: each byte as the
+/// token [`BYTE`] plus its value, and `<think>` (5) and `|T|` ([`MARKER`])
+/// as ordinary tokens, as a tokenizer may leave them, so their bytes alone
+/// would fit wherever a grammar admits the text.
+fn vocabulary() -> Arc<TokenVocabulary> {
+    let mut tokens = vec![
+        VocabularyToken {
+            bytes: Vec::new(),
+            special: false,
+        };
+        300
+    ];
+    for (id, text, special) in [
+        (0, "<|s|>", true),
+        (1, "[EOS]", true),
+        (2, "</think>", false),
+        (3, "<|u|>", true),
+        (4, "<|a|>", true),
+        (5, "<think>", false),
+        (MARKER, "|T|", false),
+    ] {
+        tokens[id as usize] = VocabularyToken {
+            bytes: text.as_bytes().to_vec(),
+            special,
+        };
+    }
+    for byte in 0..=255_u8 {
+        tokens[(BYTE + u32::from(byte)) as usize] = VocabularyToken {
+            bytes: vec![byte],
+            special: false,
+        };
+    }
+    Arc::new(TokenVocabulary::new(300, tokens).unwrap())
+}
+
+const BYTE: u32 = 16;
+const MARKER: u32 = 6;
+
+/// A completion written as [`marked`] writes it, as tokens: each marked
+/// spelling the marker token, every other byte its own token.
+fn tokens(written: &str) -> Vec<u32> {
+    let (text, marks) = marked(written);
+    let mut tokens = Vec::new();
+    let mut at = 0;
+    while at < text.len() {
+        if let Some(mark) = marks.iter().find(|mark| mark.start == at) {
+            assert_eq!(&text[mark.clone()], "|T|", "{written:?}");
+            tokens.push(MARKER);
+            at = mark.end;
+        } else {
+            tokens.push(BYTE + u32::from(text.as_bytes()[at]));
+            at += 1;
+        }
+    }
+    tokens
+}
+
+fn compiled(tools: &[FrontendToolV1], choice: &FrontendToolChoiceV1) -> Arc<CompiledGrammar> {
+    let grammar = tool_constraint_v1(&descriptor(), tools, choice)
+        .unwrap()
+        .expect("the choice constrains");
+    // The grammar crosses the bundle boundary as it is.
+    assert_eq!(
+        Grammar::decode_wire(&grammar.encode_wire()).unwrap(),
+        grammar
+    );
+    Arc::new(CompiledGrammar::new(&grammar, vocabulary()).unwrap())
+}
+
+/// How many of `tokens` the grammar admits in turn, each also in the mask
+/// before it, and whether it then matches whole.
+fn admitted(compiled: &Arc<CompiledGrammar>, tokens: &[u32]) -> (usize, bool) {
+    let mut matcher = GrammarMatcher::new(Arc::clone(compiled));
+    let mut mask = vec![0; compiled.vocabulary().mask_words()];
+    for (index, &token) in tokens.iter().enumerate() {
+        matcher.fill_token_bitmask(&mut mask).unwrap();
+        let masked = mask[token as usize / 32] & (1 << (token % 32)) != 0;
+        let accepted = matcher.accept_token(token).is_ok();
+        assert_eq!(masked, accepted, "token {index}: {token}");
+        if !accepted {
+            return (index, false);
+        }
+    }
+    (tokens.len(), matcher.is_complete())
+}
+
+fn admits(compiled: &Arc<CompiledGrammar>, written: &str) -> bool {
+    let tokens = tokens(written);
+    admitted(compiled, &tokens) == (tokens.len(), true)
+}
+
+fn string_tool(strict: Option<bool>) -> FrontendToolV1 {
+    FrontendToolV1 {
+        name: "f".into(),
+        description: None,
+        parameters: serde_json::from_value(json!({
+            "type": "object", "properties": {"x": {"type": "string"}},
+            "required": ["x"], "additionalProperties": false
+        }))
+        .unwrap(),
+        parameters_present: true,
+        strict,
+    }
+}
+
+/// One call to `f` with the raw value `value`, its markers' `|T|` marked.
+fn forced(value: &str) -> String {
+    format!(
+        "\n\n<⟦|T|⟧ calls>\n<⟦|T|⟧ invoke name=\"f\">\n\
+         <⟦|T|⟧ parameter name=\"x\" string=\"true\">{value}</⟦|T|⟧ parameter>\n\
+         </⟦|T|⟧ invoke>\n</⟦|T|⟧ calls>"
+    )
+}
+
+/// A forced call's grammar writes each marker's ID-only spelling as the
+/// marker token: the call with marker tokens is admitted and reads back as
+/// the call, and the same call with the markers spelled by ordinary tokens,
+/// which the parser reads as text, is refused at the first of them.
+#[test]
+fn a_forced_call_admits_its_markers_only_as_tokens() {
+    let tools = [string_tool(None)];
+    for choice in [
+        FrontendToolChoiceV1::Required,
+        FrontendToolChoiceV1::Named("f".into()),
+    ] {
+        let compiled = compiled(&tools, &choice);
+        let written = forced("v");
+        assert!(admits(&compiled, &written), "{choice:?}");
+        assert_eq!(
+            parse(&format!("{written}[EOS]"), PromptModeV1::Chat)
+                .unwrap()
+                .tool_calls,
+            [call("f", r#"{"x": "v"}"#)]
+        );
+        let spelled = written.replace(['⟦', '⟧'], "");
+        assert_eq!(
+            admitted(&compiled, &tokens(&spelled)),
+            ("\n\n<".len(), false),
+            "{choice:?}"
+        );
+        assert!(
+            parse(&format!("{spelled}[EOS]"), PromptModeV1::Chat)
+                .unwrap()
+                .tool_calls
+                .is_empty()
+        );
+    }
+}
+
+/// A raw value may spell any marker with ordinary tokens, the parameter
+/// close included, and reads back holding it; the marker token itself is
+/// refused inside the value.
+#[test]
+fn a_raw_value_may_spell_markers_with_ordinary_tokens() {
+    let compiled = compiled(&[string_tool(None)], &FrontendToolChoiceV1::Required);
+    let value = "a</|T| parameter>\n|T| b";
+    let written = forced(value);
+    assert!(admits(&compiled, &written));
+    assert_eq!(
+        parse(&format!("{written}[EOS]"), PromptModeV1::Chat)
+            .unwrap()
+            .tool_calls,
+        [call("f", r#"{"x": "a</|T| parameter>\n|T| b"}"#)]
+    );
+    assert!(!admits(&compiled, &forced("a⟦|T|⟧b")));
+}
+
+/// Before a strict call under `auto`, free text may spell the calls open
+/// with ordinary tokens, as the parser reads it as text; the marker token
+/// opens the call.
+#[test]
+fn free_text_before_a_strict_call_may_spell_the_open() {
+    let compiled = compiled(&[string_tool(Some(true))], &FrontendToolChoiceV1::Auto);
+    let text = "Say <|T| calls> plainly.";
+    assert!(admits(&compiled, text));
+    assert!(!admits(&compiled, "Say ⟦|T|⟧ here."));
+    let written = format!("{text}{}", forced("v"));
+    assert!(admits(&compiled, &written));
+    let read = parse(&format!("{written}[EOS]"), PromptModeV1::Chat).unwrap();
+    assert_eq!(read.content, text);
+    assert_eq!(read.tool_calls, [call("f", r#"{"x": "v"}"#)]);
+}
+
+/// A forced choice's prefill the prompt ends with holds the marker token,
+/// which the constraint reads as that token; read as text, the prefill
+/// does not continue the grammar.
+#[test]
+fn the_forced_prefill_reads_its_marker_as_the_token() {
+    let compiled = compiled(&[string_tool(None)], &FrontendToolChoiceV1::Required);
+    let prefill = [
+        PrefixPart::Text(b"\n\n<"),
+        PrefixPart::Token(MARKER, b"|T|"),
+        PrefixPart::Text(b" calls>\n"),
+    ];
+    let mut state = ConstraintState::new(Arc::clone(&compiled), None, vec![1])
+        .with_prefix_parts(&prefill)
+        .unwrap();
+    let body = forced("v");
+    let body = &body[body.find("<⟦|T|⟧ invoke").unwrap()..];
+    for token in tokens(body) {
+        state.accept(token).unwrap();
+    }
+    assert!(state.allows(1).unwrap());
+    assert!(
+        ConstraintState::new(compiled, None, vec![1])
+            .with_prefix(b"\n\n<|T| calls>\n")
+            .is_err()
+    );
+}
+
+/// A string enumeration value that spells the parameter close with
+/// ordinary tokens reads back whole under ID-only markers, so the grammar
+/// offers it, written as ordinary tokens.
+#[test]
+fn an_enumeration_value_spelling_a_marker_reads_back() {
+    let value = "a</|T| parameter>\nb";
+    let tool = FrontendToolV1 {
+        parameters: serde_json::from_value(json!({
+            "type": "object", "properties": {"x": {"type": "string", "enum": [value]}},
+            "required": ["x"], "additionalProperties": false
+        }))
+        .unwrap(),
+        ..string_tool(None)
+    };
+    let compiled = compiled(&[tool], &FrontendToolChoiceV1::Required);
+    let written = forced(value);
+    assert!(admits(&compiled, &written));
+    assert!(!admits(&compiled, &forced("a</⟦|T|⟧ parameter>\nb")));
+    assert_eq!(
+        parse(&format!("{written}[EOS]"), PromptModeV1::Chat)
+            .unwrap()
+            .tool_calls,
+        [call("f", r#"{"x": "a</|T| parameter>\nb"}"#)]
+    );
+}
+
+/// A declaration without ID-only markers writes its grammar with no token
+/// element, so its grammar document is the layout it always was.
+#[test]
+fn without_id_only_markers_the_grammar_names_no_tokens() {
+    let plain =
+        FormatDescriptorV1::from_component_bytes(common::TYPED_PARAMETERS.as_bytes()).unwrap();
+    for choice in [FrontendToolChoiceV1::Required, FrontendToolChoiceV1::Auto] {
+        let grammar = tool_constraint_v1(&plain, &[string_tool(Some(true))], &choice)
+            .unwrap()
+            .unwrap();
+        assert!(grammar.named_tokens().is_empty());
+        assert_eq!(
+            grammar.encode_wire()[8..12],
+            GRAMMAR_WIRE_LAYOUT_V1.to_le_bytes()
+        );
+    }
+    let grammar = tool_constraint_v1(
+        &descriptor(),
+        &[string_tool(None)],
+        &FrontendToolChoiceV1::Required,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(grammar.named_tokens(), [MARKER]);
 }

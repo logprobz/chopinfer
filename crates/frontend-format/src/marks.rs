@@ -66,9 +66,30 @@ impl<'a> MarkMatchV1<'a> {
     }
 }
 
+/// `pieces` joined, with a mark on each ID-only spelling in a piece flagged
+/// as markup, as a tool-choice grammar writes those spellings as tokens and
+/// everything else as ordinary tokens.
+pub(crate) fn marked_join_v1(
+    spellings: &[String],
+    pieces: &[(&str, bool)],
+) -> (String, Vec<Range<usize>>) {
+    let mut text = String::new();
+    let mut marks = Vec::new();
+    for &(piece, markup) in pieces {
+        if markup {
+            let at = text.len();
+            marks.extend(
+                spelling_parts_v1(piece, spellings).map(|part| at + part.start..at + part.end),
+            );
+        }
+        text.push_str(piece);
+    }
+    (text, marks)
+}
+
 /// The byte ranges of `marker` its ID-only spellings take, leftmost and
 /// longest first.
-fn spelling_parts_v1<'a>(
+pub(crate) fn spelling_parts_v1<'a>(
     marker: &'a str,
     spellings: &'a [String],
 ) -> impl Iterator<Item = Range<usize>> + 'a {

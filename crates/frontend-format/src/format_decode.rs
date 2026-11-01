@@ -1129,11 +1129,13 @@ const WHOLE_TEXT_TOKEN_V1: u32 = u32::MAX;
 /// released, and the end marker or stop ends the completion.
 /// The calls the served parser reads from `text`, a completion that ends
 /// with a declared stop token after it, with the request's tool schemas
-/// `tools`: the calls a client receives for that generation.
+/// `tools` and the completion's `marks` ([`FormatInputV1::marks`]): the calls
+/// a client receives for that generation.
 pub(crate) fn completion_calls_v1(
     descriptor: &Arc<FormatDescriptorV1>,
     text: &str,
     tools: &[FrontendToolV1],
+    marks: Option<&[Range<usize>]>,
 ) -> Result<Vec<ParsedToolCallV1>, String> {
     let vocabulary = &descriptor.vocabulary;
     let stop = vocabulary.stop_token_ids.first().and_then(|id| {
@@ -1162,7 +1164,7 @@ pub(crate) fn completion_calls_v1(
         held: false,
         last: true,
         stop_floor: Some(0),
-        marks: None,
+        marks,
     })?;
     Ok(events
         .into_iter()

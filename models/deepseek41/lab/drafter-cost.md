@@ -114,10 +114,11 @@ accepted drafts and alternating greedy and seeded steps. With
 `diagnostic_step_logs` at the debug log level, every drafted block's
 proposal IDs and confidence bits (`drafter-confidence.v1`) were equal: 771
 records over the six configurations. These traces run drafter forwards of
-5 rows (C1) and 40 rows (C8 and C16). Replays of the same transition
-schedule at C2 to C7 and C9 to C12, which run the other admitted rows (10
-to 35 and 45 to 60), are pending; until they pass, those rows rest on the
-structural argument above, and the options must not be adopted.
+5 rows (C1) and 40 rows (C8 and C16). On 2026-11-01 replays of the same
+transition schedule at C2 to C7 and C9 to C12, which run the other
+admitted rows (10 to 35 and 45 to 60), matched captures of the base package
+bitwise as well, and all 1,035 of their drafted blocks' confidence records
+were equal.
 
 The journal proof of the commits against the commit before the candidates
 was PROVEN with the declaration

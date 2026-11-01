@@ -51,3 +51,7 @@ lifetimes against the commit before the candidates, with this
 declaration, was PROVEN: 29 journals identical and the 4 declared
 additions, with 29 of 33 fixture histories compared (the added fixtures
 have no base history).
+
+The fusions were adopted at six rows or fewer and the option was retired
+with these four lifetimes
+([verify row fusions adoption](verify-row-fusions-adoption.md)).

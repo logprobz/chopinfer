@@ -260,7 +260,8 @@ forwards and writes are bitwise in the lab pairs and replays, and the C8
 cell already ran a superset, every drafter forward of up to 32 rows
 fused and every write of up to 60 rows on the parallel entry, without a
 regression in any cell. The option, its test overrides and its sweep
-profiles were removed.
+profiles were removed
+([adoption journals](../journal-changes/verify-row-fusions-adoption.md)).
 
 ## Drafter window ceil
 

@@ -1086,6 +1086,32 @@ class Tuner(unittest.TestCase):
                         tune.visits({**config, 'model': model,
                                      **({'cold_engram': bad['cold_engram']} if 'cold_engram' in bad else {})})
 
+    def test_lead_window_install_provenance_is_checked_like_any_window(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, summary = ab_fixture(root, lead_visit=True)
+            identities = {'a': {'install': 'base', 'revision': '1' * 40},
+                          'b': {'install': 'head', 'revision': '2' * 40}}
+            for arm in config['model']['arms']:
+                arm['install'] = identities[arm['label']]['install']
+            tune.r.write(root / 'config.json', config)
+            for path in root.glob('*/windows/*.json'):
+                row = json.loads(path.read_text())
+                tune.r.write(path, {**row, **identities[row['arm']]})
+            for label, process in summary['processes'].items():
+                process.update(identities[label.split('-')[0]])
+            summary['arm_installs'] = identities
+            tune.r.write(root / 'summary.json', summary)
+            self.assertEqual(report.ab(root)['status'], 'valid')
+            path = root / 'a-lead/windows/c8.json'
+            row = json.loads(path.read_text())
+            missing = {k: v for k, v in row.items() if k not in ('install', 'revision')}
+            for name, lead in (('missing', missing), ('mismatched', {**row, **identities['b']})):
+                with self.subTest(lead=name):
+                    tune.r.write(path, lead)
+                    with self.assertRaisesRegex(ValueError, 'window install or revision differs from its arm'):
+                        report.ab(root)
+
     def test_cold_pause_timeout_does_not_resume_requests(self):
         import threading
         from types import SimpleNamespace

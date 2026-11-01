@@ -693,10 +693,12 @@ def ab(run):
     matched = tune.matched_cold(config)
     validity = ({'status': 'void', 'reason': summary.get('void_reason', 'power limits changed within job')}
                 if summary.get('status') == 'void' else ab_validity(config, rows, summary))
+    # Provenance covers every window, a leading visit's included.
+    installs = arm_installs(run, rows)
     rows = measured_rows(config, rows)
     cold = bool(config.get('cold_engram'))
     out = {**validity, 'pairs': {}, 'weighted': {}, 'mechanics_only': summary.get('dry_run', False),
-           'arm_installs': arm_installs(run, rows),
+           'arm_installs': installs,
            'contract_a_admissible': validity['status'] == 'valid' and not summary.get('dry_run', False) and (not cold or bool(matched))}
     if config['model'].get('kv_pages') == 'default':
         out['kv_pages_per_rank'] = {label: process.get('kv_pages_per_rank')

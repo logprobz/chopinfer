@@ -543,6 +543,25 @@ acceptance and all 80, 120 and 160 raw F32 drafter confidence words of the
 step's items (the replay tool's `draft_confidence` mode). This is not
 served step-time acceptance.
 
+Served acceptance on 2026-11-01 (four GPUs at their 250 W limit, the
+fixed 65536-page pool, sampled coding prompts at temperature 1.0 with 256
+output tokens) measured `wide_verify` with `wide_draft` at 192 verify and
+graph rows, and neither is adopted on this host. The depth sweeps chose
+8:3, 16:2 and 32:0, so no chosen depth verifies more than 64 rows. At C16
+the 64-row step (54.8 ms, 47.1 tokens) gave 1.199 times plain decode's
+tok/s, and the 80- and 96-row steps (66.8 and 75.2 ms) 1.116 and 1.058
+times. At C32 the 128-row step (95.0 ms, 92.3 tokens) gave 1.016 times
+plain decode's full-concurrency tok/s at 1.044 times its J/token and 0.973
+times its request tok/s; the 160- and 192-row steps (110.1 and 124.4 ms)
+fell below plain decode. Without the option the same 80- to 192-row steps
+took 191.9 to 286.7 ms, 2.3 to 2.9 times the wide route. The software power
+cap held the SM clocks in 76 to 97% of samples in every arm.
+
+The drafter cost candidates merged into this branch with every existing
+journal identical ([merge note](journal-changes/wide-verify-merge-drafter.md)).
+At the merged tip every profile's quick route sweep passed, and the drafter
+profile's at the full tier.
+
 Prefill commit projections are batched across prompts. Undrafted pure
 decode joins status once and submits private sampling before collecting it
 on the native result path. Verify and undrafted commits with at least eight

@@ -8,6 +8,7 @@
 //! documents in `runtime_bundle_abi::frontend_document`, so the export
 //! serves the host the same way in process as from a loaded package.
 
+use std::ops::Range;
 use std::sync::Arc;
 
 use runtime_bundle_abi::frontend::FrontendParserV1;
@@ -27,6 +28,9 @@ use crate::request::{
 /// One request's shared parser behind the export.
 pub struct DeclaredExportParserV1 {
     parser: DeclaredParserV1,
+    /// A marked push's marks as completion offsets, kept so each push reuses
+    /// the allocation.
+    marks: Vec<Range<usize>>,
 }
 
 /// Answers one render request document with what `render` renders for it,
@@ -44,6 +48,7 @@ pub(crate) fn render_document_v1(
         .into_iter()
         .map(|segment| match segment {
             PromptSegmentV1::Text(text) => Ok(document::SegmentV1::Text(text)),
+            PromptSegmentV1::Special(text) => Ok(document::SegmentV1::Special(text)),
             // The renderer's media list holds the parts it placed, each
             // carrying its request index (see `media_part_v1`).
             PromptSegmentV1::Media(index) => rendered
@@ -122,6 +127,7 @@ pub(crate) fn open_parser_document_v1(
                 tool_schemas,
             },
         ),
+        marks: Vec::new(),
     })
 }
 
@@ -133,9 +139,22 @@ impl FrontendParserV1 for DeclaredExportParserV1 {
         };
         let keep = offset(push.keep)?;
         let stop_floor = push.stop_floor.map(offset).transpose()?;
+        let marks = match push.marks {
+            Some(marks) => {
+                self.marks.clear();
+                self.marks
+                    .try_reserve(marks.len())
+                    .map_err(|_| refusal_v1("push marks allocation failed", None))?;
+                for mark in marks.iter() {
+                    self.marks.push(offset(mark.start)?..offset(mark.end)?);
+                }
+                Some(self.marks.as_slice())
+            }
+            None => None,
+        };
         let events = self
             .parser
-            .push_suffix(keep, push.suffix, push.held, last, stop_floor)
+            .push_suffix(keep, push.suffix, push.held, last, stop_floor, marks)
             .map_err(|message| refusal_v1(message, None))?;
         let mut answer = Vec::new();
         events_document_v1(&events, self.parser.cursor()).encode_into(&mut answer);
@@ -492,12 +511,17 @@ mod tests {
     }
 
     fn push(keep: u64, suffix: &[u8]) -> Vec<u8> {
+        marked_push(keep, suffix, None)
+    }
+
+    fn marked_push(keep: u64, suffix: &[u8], marks: Option<&[std::ops::Range<u64>]>) -> Vec<u8> {
         let mut bytes = Vec::new();
         document::PushV1 {
             keep,
             held: false,
             stop_floor: Some(0),
             suffix,
+            marks: marks.map(document::MarksV1::new),
         }
         .encode_into(&mut bytes);
         bytes
@@ -666,6 +690,141 @@ mod tests {
             }
         );
         assert_eq!(events.cursor, 18);
+    }
+
+    /// A marked push's ranges reach the parser: under a declaration whose
+    /// reasoning close and value close are ID-only, only their marked
+    /// tokens are markers, and ordinary spellings of them are text.
+    #[test]
+    fn the_parser_reads_the_marks_a_push_carries() {
+        let mut declaration: serde_json::Value =
+            serde_json::from_str(test_common::KEY_VALUE).unwrap();
+        let vocabulary = &mut declaration["vocabulary"];
+        vocabulary["boundary_tokens"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"text": "</arg_value>", "id": 6}));
+        vocabulary["id_only_markers"] = serde_json::json!(["</t>", "</arg_value>"]);
+        let (frontend, _) = export()
+            .open(&serde_json::to_vec(&declaration).unwrap())
+            .unwrap();
+        let mut open = parser_open(document::ModeV1::Thinking);
+        open.engine_tokens = false;
+        let completion = "plan</t>more</t><tool_call>f<arg_key>k</arg_key><arg_value>a\
+                          </arg_value>b</arg_value></tool_call>[EOS]";
+        let at = |pattern: &str, nth: usize| {
+            let start = completion.match_indices(pattern).nth(nth).unwrap().0 as u64;
+            start..start + pattern.len() as u64
+        };
+        let marks = [at("</t>", 1), at("</arg_value>", 1)];
+        let mut parser = frontend.open_parser(&open.encode()).unwrap();
+        let (head, tail) = completion.split_at(20);
+        let answer = parser
+            .push(
+                &marked_push(0, head.as_bytes(), Some(&marks[..1])),
+                false,
+                1 << 20,
+            )
+            .unwrap();
+        let events = document::EventsV1::decode(&answer).unwrap();
+        assert_eq!(events.events, [document::EventV1::Reasoning(0..12)]);
+        let answer = parser
+            .push(
+                &marked_push(20, tail.as_bytes(), Some(&marks[1..])),
+                false,
+                1 << 20,
+            )
+            .unwrap();
+        let events = document::EventsV1::decode(&answer).unwrap();
+        assert!(
+            events.events.contains(&document::EventV1::Finish {
+                reason: document::FinishReasonV1::ToolCalls,
+                completion: Some(document::CompletionV1 {
+                    content: "",
+                    reasoning_content: Some("plan</t>more"),
+                    tool_calls: vec![document::CallV1 {
+                        name: "f",
+                        arguments: r#"{"k": "a</arg_value>b"}"#,
+                    }],
+                }),
+            }),
+            "{:?}",
+            events.events
+        );
+
+        // A push without marks after one with them is out of sequence, and
+        // a declaration without ID-only markers takes none.
+        let mut parser = frontend.open_parser(&open.encode()).unwrap();
+        parser
+            .push(&marked_push(0, b"pl", Some(&[])), false, 1 << 20)
+            .unwrap();
+        assert_eq!(
+            refusal(parser.push(&push(2, b"an"), false, 1 << 20).unwrap_err()).message,
+            "invalid conversation sequence: a push without marks follows one with marks"
+        );
+        let mut parser = self::frontend().open_parser(&open.encode()).unwrap();
+        assert_eq!(
+            refusal(
+                parser
+                    .push(&marked_push(0, b"pl", Some(&[])), false, 1 << 20)
+                    .unwrap_err()
+            )
+            .message,
+            "invalid conversation sequence: a push carries marks, and the declaration names no \
+             ID-only markers"
+        );
+    }
+
+    /// A token released in part crosses without a mark and is held; the push
+    /// that releases the rest marks it whole, the mark starting before
+    /// `keep`.
+    #[test]
+    #[allow(clippy::single_range_in_vec_init)]
+    fn a_marked_push_completes_a_token_released_in_part() {
+        let mut declaration: serde_json::Value =
+            serde_json::from_str(test_common::FUNCTION_PARAMETERS).unwrap();
+        declaration["vocabulary"]["id_only_markers"] = serde_json::json!(["</think>"]);
+        let (frontend, _) = export()
+            .open(&serde_json::to_vec(&declaration).unwrap())
+            .unwrap();
+        let mut open = parser_open(document::ModeV1::Thinking);
+        open.engine_tokens = false;
+        let mut parser = frontend.open_parser(&open.encode()).unwrap();
+        let mut held = Vec::new();
+        document::PushV1 {
+            keep: 0,
+            held: true,
+            stop_floor: Some(0),
+            suffix: b"plan</thi",
+            marks: Some(document::MarksV1::new(&[])),
+        }
+        .encode_into(&mut held);
+        let answer = parser.push(&held, false, 1 << 20).unwrap();
+        let events = document::EventsV1::decode(&answer).unwrap();
+        assert_eq!(events.events, [document::EventV1::Reasoning(0..4)]);
+        assert_eq!(events.cursor, 4);
+        let answer = parser
+            .push(
+                &marked_push(9, b"nk>answer[EOS]", Some(&[4..12])),
+                false,
+                1 << 20,
+            )
+            .unwrap();
+        let events = document::EventsV1::decode(&answer).unwrap();
+        assert_eq!(
+            events.events,
+            [
+                document::EventV1::Content(12..18),
+                document::EventV1::Finish {
+                    reason: document::FinishReasonV1::Stop,
+                    completion: Some(document::CompletionV1 {
+                        content: "answer",
+                        reasoning_content: Some("plan"),
+                        tool_calls: vec![],
+                    }),
+                },
+            ]
+        );
     }
 
     #[test]

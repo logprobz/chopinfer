@@ -68,6 +68,12 @@ fn required_grammar(
     descriptor: &FormatDescriptorV1,
     tools: &[FrontendToolV1],
 ) -> Option<Arc<CompiledGrammar>> {
+    // Calls are fed as bytes, which never fill the token element an ID-only
+    // marker is written with.
+    assert!(
+        descriptor.vocabulary.id_only_markers.is_empty(),
+        "these checks feed calls as text, so they serve declarations without ID-only markers"
+    );
     let grammar = tool_constraint_v1(descriptor, tools, &FrontendToolChoiceV1::Required)
         .ok()?
         .expect("a required tool choice constrains");
@@ -129,7 +135,7 @@ pub fn assert_forced_literals_read_back(descriptor: &FormatDescriptorV1) {
                     Some(true),
                     "{label}: the grammar refuses or does not write the call"
                 );
-                let calls = completion_calls_v1(&served, &text, &tools)
+                let calls = completion_calls_v1(&served, &text, &tools, None)
                     .unwrap_or_else(|error| panic!("{label}: {error}"));
                 let read: Vec<(String, Value)> = calls
                     .into_iter()
@@ -260,6 +266,7 @@ fn read_calls(
                 held: false,
                 last,
                 stop_floor: Some(0),
+                marks: None,
             })
             .unwrap_or_else(|error| panic!("{text:?} split {split:?}: {error}"))
     };

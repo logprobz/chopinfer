@@ -89,7 +89,12 @@ pub(crate) struct ParsedRequest {
     pub(crate) stream: bool,
     pub(crate) include_usage: bool,
     pub(crate) continuous_usage_stats: bool,
+    /// Whether the request set no output limit, so it generates up to the
+    /// context left after its prompt, capped by `default_output_tokens`.
     pub(crate) use_remaining_context: bool,
+    /// The frontend's default output length for the rendered prompt, for a
+    /// request that set no output limit; `None` leaves the context left.
+    pub(crate) default_output_tokens: Option<usize>,
     pub(crate) parallel_tool_calls: bool,
 }
 
@@ -987,6 +992,7 @@ fn prepare_completion(
         include_usage,
         continuous_usage_stats,
         use_remaining_context: false,
+        default_output_tokens: None,
         parallel_tool_calls: true,
     })
 }
@@ -1210,13 +1216,23 @@ fn prepare_chat(
             chat_template_kwargs,
         })
         .map_err(|error| frontend_error(error, "messages"))?;
-    let prompt = if rendered.media.is_empty() {
-        PreparedPrompt::RenderedChat(rendered.prompt)
-    } else {
+    let prompt = if !rendered.media.is_empty() {
         PreparedPrompt::MediaChat {
             segments: rendered.segments,
             media: rendered.media,
         }
+    } else if frontend.explicit_special_tokens() {
+        PreparedPrompt::SegmentedChat(rendered.segments)
+    } else {
+        PreparedPrompt::RenderedChat(rendered.prompt)
+    };
+    let requested_max = request.max_completion_tokens.or(request.max_tokens);
+    // A request without an output limit generates up to the frontend's
+    // default for the rendered prompt, lowered to the context left.
+    let default_output_tokens = if requested_max.is_none() {
+        frontend.default_output_tokens(&rendered.state)
+    } else {
+        None
     };
     let sampling = prepare_sampling(
         frontend
@@ -1232,15 +1248,13 @@ fn prepare_chat(
         request.logit_bias,
         top_logprobs,
     )?
-    .with_minimum_new_tokens(validate_minimum(
-        request.min_tokens,
-        Some(
-            request
-                .max_completion_tokens
-                .or(request.max_tokens)
-                .unwrap_or(MAX_NEW_TOKENS),
-        ),
-    )?)
+    .with_minimum_new_tokens(match default_output_tokens {
+        Some(default) => validate_minimum_within_default(request.min_tokens, default)?,
+        None => validate_minimum(
+            request.min_tokens,
+            Some(requested_max.unwrap_or(MAX_NEW_TOKENS)),
+        )?,
+    })
     .map_err(|error| sampling_error(error, "min_tokens"))?;
     let has_stream_options = request.stream_options.is_some();
     let include_usage = request
@@ -1272,7 +1286,7 @@ fn prepare_chat(
             model,
             prompt,
             max_new_tokens: validate_max(
-                request.max_completion_tokens.or(request.max_tokens),
+                requested_max,
                 if request.max_completion_tokens.is_some() {
                     "max_completion_tokens"
                 } else {
@@ -1313,8 +1327,8 @@ fn prepare_chat(
         stream: request.stream,
         include_usage,
         continuous_usage_stats,
-        use_remaining_context: request.max_tokens.is_none()
-            && request.max_completion_tokens.is_none(),
+        use_remaining_context: requested_max.is_none(),
+        default_output_tokens,
         parallel_tool_calls: request.parallel_tool_calls.unwrap_or(true),
     })
 }
@@ -2495,6 +2509,23 @@ fn validate_minimum(value: Option<usize>, maximum: Option<usize>) -> Result<usiz
     if value > maximum.unwrap_or(DEFAULT_MAX_NEW_TOKENS) {
         return Err(ApiError::invalid(
             "min_tokens exceeds maximum completion tokens",
+            Some("min_tokens"),
+        ));
+    }
+    Ok(value)
+}
+
+/// Checks the `min_tokens` of a request without an output limit against
+/// the frontend's default output length. A context left smaller than the
+/// default is checked once the prompt is counted.
+fn validate_minimum_within_default(
+    value: Option<usize>,
+    default: usize,
+) -> Result<usize, ApiError> {
+    let value = value.unwrap_or(0);
+    if value > default {
+        return Err(ApiError::invalid(
+            format!("min_tokens exceeds the default output limit of {default} tokens"),
             Some("min_tokens"),
         ));
     }

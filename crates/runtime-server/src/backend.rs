@@ -59,6 +59,10 @@ impl std::error::Error for LocalReplicaPoolError {}
 pub enum PreparedPrompt {
     Raw(String),
     RenderedChat(String),
+    /// A rendered chat without media whose frontend names its special
+    /// tokens: each [`PromptSegmentV1::Special`] is that token, and the
+    /// text segments are plain text.
+    SegmentedChat(Vec<PromptSegmentV1>),
     MediaChat {
         segments: Vec<PromptSegmentV1>,
         media: Vec<FrontendMediaPartV1>,

@@ -158,6 +158,7 @@ impl NativeFormatV1 {
             extract_tools: options.extract_tools,
             stream_tool_calls: options.stream_tool_calls,
             request: Vec::new(),
+            marks: Vec::new(),
             delivered: 0,
             cursor: 0,
             text_end: 0,
@@ -186,8 +187,10 @@ impl NativeFormatV1 {
 
     /// Rebuilds a rendered prompt from the format's answer, checking that
     /// each media segment names a request media part, at most once and in
-    /// increasing order unless tool images are declared, and that it
-    /// selects a declared effort. Only images may be reordered.
+    /// increasing order unless tool images are declared, that each special
+    /// segment spells a declared boundary token under
+    /// `vocabulary.explicit_special_tokens`, and that it selects a declared
+    /// effort. Only images may be reordered.
     ///
     /// A format may leave a request media part out of the prompt, as one
     /// that renders a user message carrying message-level tools as plain
@@ -237,6 +240,25 @@ impl NativeFormatV1 {
                     placed[index] = true;
                     next = next.max(index + 1);
                 }
+                document::SegmentV1::Special(text) => {
+                    let vocabulary = &self.descriptor.vocabulary;
+                    if !vocabulary.explicit_special_tokens {
+                        return Err(malformed(
+                            "a special segment needs vocabulary.explicit_special_tokens",
+                        ));
+                    }
+                    if !vocabulary
+                        .boundary_tokens
+                        .iter()
+                        .any(|token| token.text == text)
+                    {
+                        return Err(malformed(
+                            "a special segment names no declared boundary token",
+                        ));
+                    }
+                    prompt.push_str(&text);
+                    segments.push(PromptSegmentV1::Special(text));
+                }
             }
         }
         // The toolkit's prompt writer refuses a prompt past the declared
@@ -267,6 +289,26 @@ impl NativeFormatV1 {
         })
     }
 
+    /// The most special segments a prompt within the declared length holds:
+    /// none without `vocabulary.explicit_special_tokens`, and otherwise as
+    /// many as the shortest declared boundary token fits. Each one, and
+    /// the text segment after it, crosses with a tag and a length (5 bytes)
+    /// besides its text.
+    fn special_segments_v1(&self) -> usize {
+        let vocabulary = &self.descriptor.vocabulary;
+        if !vocabulary.explicit_special_tokens {
+            return 0;
+        }
+        let shortest = vocabulary
+            .boundary_tokens
+            .iter()
+            .map(|token| token.text.len())
+            .min()
+            .unwrap_or(1)
+            .max(1);
+        self.descriptor.limits.maximum_prompt_bytes / shortest
+    }
+
     /// The placeholder text the declaration renders for one media kind.
     fn pad(&self, kind: FrontendMediaPartKindV1) -> Option<&str> {
         let kind = match kind {
@@ -291,8 +333,9 @@ impl FormatRendererV1 for NativeFormatV1 {
     ) -> Result<FormatRenderedV1, FrontendErrorV1> {
         let (request, media) = render_document_v1(&request);
         // The prompt text the declaration allows, the parser state, and the
-        // segments around each media part: past that, the prompt is too long
-        // and the document is refused before it is copied.
+        // segments around each media part and each special token: past
+        // that, the prompt is too long and the document is refused before
+        // it is copied.
         let longest_effort = self
             .descriptor
             .reasoning
@@ -308,6 +351,7 @@ impl FormatRendererV1 for NativeFormatV1 {
             .saturating_add(document::FRONTEND_PARSER_STATE_BYTES_MAX_V1)
             .saturating_add(longest_effort)
             .saturating_add(media.len().saturating_add(1).saturating_mul(10))
+            .saturating_add(self.special_segments_v1().saturating_mul(10))
             .saturating_add(RENDER_OVERHEAD_BYTES_V1);
         let answer =
             self.frontend
@@ -347,14 +391,31 @@ impl FormatRendererV1 for NativeFormatV1 {
         }
         // Decoding checks the document's shape and compile depth; the
         // grammar budgets apply at compilation, as for a local grammar.
-        runtime_grammar::Grammar::decode_wire(&answer)
-            .map(Some)
-            .map_err(|error| {
-                FrontendErrorV1::new(
-                    format!("the bundle frontend answered a malformed constraint: {error}"),
-                    None,
-                )
-            })
+        let grammar = runtime_grammar::Grammar::decode_wire(&answer).map_err(|error| {
+            FrontendErrorV1::new(
+                format!("the bundle frontend answered a malformed constraint: {error}"),
+                None,
+            )
+        })?;
+        // A token element writes a marker the parser reads only by its ID,
+        // so it names one of the declared ID-only markers.
+        let vocabulary = &self.descriptor.vocabulary;
+        let id_only = |id: u32| {
+            vocabulary
+                .boundary_tokens
+                .iter()
+                .any(|token| token.id == id && vocabulary.id_only_markers.contains(&token.text))
+        };
+        if let Some(id) = grammar.named_tokens().into_iter().find(|id| !id_only(*id)) {
+            return Err(FrontendErrorV1::new(
+                format!(
+                    "the bundle frontend answered a constraint naming token {id}, which is no \
+                     declared ID-only marker"
+                ),
+                None,
+            ));
+        }
+        Ok(Some(grammar))
     }
 
     fn opened(&self) -> document::OpenedV1 {
@@ -448,6 +509,8 @@ pub(crate) struct NativeParserV1 {
     stream_tool_calls: bool,
     /// The push document, reused across pushes.
     request: Vec<u8>,
+    /// A push's marks as the document carries them, reused across pushes.
+    marks: Vec<std::ops::Range<u64>>,
     /// How many completion bytes the format holds.
     delivered: usize,
     cursor: usize,
@@ -471,11 +534,23 @@ impl FormatParserV1 for NativeParserV1 {
             return Err(malformed_v1("bytes received after terminal completion"));
         }
         let keep = self.delivered.min(input.completion.len());
+        // A push carries the marks that end in the bytes it adds; the
+        // format keeps the ones before.
+        self.marks.clear();
+        if let Some(marks) = input.marks {
+            let first = marks.partition_point(|mark| mark.end <= keep);
+            self.marks.extend(
+                marks[first..]
+                    .iter()
+                    .map(|mark| mark.start as u64..mark.end as u64),
+            );
+        }
         document::PushV1 {
             keep: keep as u64,
             held: input.held,
             stop_floor: input.stop_floor.map(|floor| floor as u64),
             suffix: &input.completion[keep..],
+            marks: input.marks.map(|_| document::MarksV1::new(&self.marks)),
         }
         .encode_into(&mut self.request);
         let limits = &self.descriptor.limits;

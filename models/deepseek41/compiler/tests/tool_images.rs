@@ -52,7 +52,7 @@ fn tool_images_follow_sorted_prompt_order_in_the_host_media_list() {
     let mut indices = Vec::new();
     for segment in segments {
         match segment {
-            PromptSegmentV1::Text(text) => prompt.push_str(&text),
+            PromptSegmentV1::Text(text) | PromptSegmentV1::Special(text) => prompt.push_str(&text),
             PromptSegmentV1::Media(index) => {
                 indices.push(index);
                 prompt.push_str(&format!("[{}]", expected[index]));
@@ -104,26 +104,49 @@ fn tool_images_keep_text_screening_and_other_role_refusals() {
         let PreparedPrompt::MediaChat { segments, .. } = prepared.prompt else {
             panic!("the user image must reach media preparation");
         };
-        let Some(PromptSegmentV1::Text(text)) = segments.first() else {
-            panic!("the prompt starts with text");
-        };
+        let text: String = segments
+            .iter()
+            .map_while(|segment| match segment {
+                PromptSegmentV1::Text(text) | PromptSegmentV1::Special(text) => Some(text.as_str()),
+                PromptSegmentV1::Media(_) => None,
+            })
+            .collect();
         assert!(
             text.ends_with("<｜System｜>Be brief.<｜User｜>"),
             "{role}: {text}"
         );
     }
-    for marker in ["<｜deepseek_image｜>", "\u{e000}chopinfer-media:0:\u{e001}"] {
-        let mut body = history();
-        body["messages"][2]["content"][0]["text"] = marker.into();
-        let error =
-            prepare_chat_request_v1(&frontend, 1 << 20, body.as_object().unwrap().clone(), 1024)
-                .unwrap_err();
-        assert!(
-            error.message.contains("placeholder") || error.message.contains("media boundary"),
-            "{}",
-            error.message
-        );
-    }
+    // The private media boundary is refused in client text.
+    let mut body = history();
+    body["messages"][2]["content"][0]["text"] = "\u{e000}chopinfer-media:0:\u{e001}".into();
+    let error =
+        prepare_chat_request_v1(&frontend, 1 << 20, body.as_object().unwrap().clone(), 1024)
+            .unwrap_err();
+    assert!(
+        error.message.contains("media boundary"),
+        "{}",
+        error.message
+    );
+    // The encoder's placeholder there is plain text, which the vendor
+    // refuses (encoding.py lines 342-348; `explicit-special-tokens` in
+    // models/deepseek41/frontend-divergences.json, section `mapping`): the
+    // images are still the five parts.
+    let mut body = history();
+    body["messages"][2]["content"][0]["text"] = "<｜deepseek_image｜>".into();
+    let prepared =
+        prepare_chat_request_v1(&frontend, 1 << 20, body.as_object().unwrap().clone(), 1024)
+            .unwrap();
+    let PreparedPrompt::MediaChat { segments, media } = prepared.prompt else {
+        panic!("tool images must reach media preparation");
+    };
+    assert_eq!(media.len(), 5);
+    assert!(
+        segments.contains(&PromptSegmentV1::Text(
+            "\n\n<tool_result><｜deepseek_image｜>\n\n".into()
+        )),
+        "{segments:?}"
+    );
+    assert!(!segments.contains(&PromptSegmentV1::Special("<｜deepseek_image｜>".into())));
 }
 
 /// The image declaration admits images in system and developer messages,
@@ -148,7 +171,9 @@ fn system_and_developer_images_render_in_place() {
         let mut prompt = String::new();
         for segment in segments {
             match segment {
-                PromptSegmentV1::Text(text) => prompt.push_str(&text),
+                PromptSegmentV1::Text(text) | PromptSegmentV1::Special(text) => {
+                    prompt.push_str(&text)
+                }
                 PromptSegmentV1::Media(index) => {
                     prompt.push_str(&format!("[{}]", &media[index].source[22..]));
                 }

@@ -18,7 +18,9 @@ use runtime_server::{
     ServerFrontendV1,
 };
 
-use crate::checks::{integral_numbers_v1, parse_json_value_v1, validate_function_name_v1};
+use crate::checks::{
+    boundary_pieces_v1, integral_numbers_v1, parse_json_value_v1, validate_function_name_v1,
+};
 use crate::decode::PromptModeV1;
 use crate::descriptor::{
     FrontendComponentErrorV1, FrontendConstraintScopeV1, FrontendDescriptorV1, FrontendMediaKindV1,
@@ -43,6 +45,11 @@ pub struct BundleChatStateV1 {
     /// What the prompt ends with that the completion continues: a forced
     /// tool choice's declared prefill, or empty.
     completion_prefix: String,
+    /// The boundary tokens the prompt holds in place of their spellings in
+    /// `completion_prefix`, under `vocabulary.explicit_special_tokens` or
+    /// ID-only markers: each spelling's byte range in the prefix and its
+    /// token's identifier.
+    completion_prefix_tokens: Vec<(std::ops::Range<usize>, u32)>,
     /// The frontend that rendered the prompt and the state its render
     /// returned; `None` for a frontend that calls a chat format directly.
     parser: Option<BundleParserSourceV1>,
@@ -58,6 +65,7 @@ impl PartialEq for BundleChatStateV1 {
             && self.tools == other.tools
             && self.extract_tool_calls == other.extract_tool_calls
             && self.completion_prefix == other.completion_prefix
+            && self.completion_prefix_tokens == other.completion_prefix_tokens
             && self.parser.as_ref().map(BundleParserSourceV1::state)
                 == other.parser.as_ref().map(BundleParserSourceV1::state)
     }
@@ -104,6 +112,30 @@ impl BundleChatStateV1 {
     #[must_use]
     pub fn completion_prefix(&self) -> &str {
         &self.completion_prefix
+    }
+
+    /// [`Self::completion_prefix`] as the prompt holds it: its text, and the
+    /// boundary tokens the prompt holds in place of their spellings, which a
+    /// constraint's token elements read as those tokens.
+    #[must_use]
+    pub fn completion_prefix_parts(&self) -> Vec<runtime_grammar::PrefixPart<'_>> {
+        let prefix = self.completion_prefix.as_bytes();
+        let mut parts = Vec::with_capacity(2 * self.completion_prefix_tokens.len() + 1);
+        let mut at = 0;
+        for (range, id) in &self.completion_prefix_tokens {
+            if range.start > at {
+                parts.push(runtime_grammar::PrefixPart::Text(&prefix[at..range.start]));
+            }
+            parts.push(runtime_grammar::PrefixPart::Token(
+                *id,
+                &prefix[range.clone()],
+            ));
+            at = range.end;
+        }
+        if at < prefix.len() {
+            parts.push(runtime_grammar::PrefixPart::Text(&prefix[at..]));
+        }
+        parts
     }
 
     /// Where the completion's parser opens: the frontend that rendered the
@@ -411,12 +443,23 @@ impl ServerFrontendV1 for BundleFrontendV1 {
             .as_ref()
             .is_some_and(|choice| choice.forced_without_tools_is_auto)
     }
+    fn explicit_special_tokens(&self) -> bool {
+        self.descriptor.vocabulary.explicit_special_tokens
+    }
     fn tool_namespace_separator(&self) -> Option<&str> {
         self.descriptor
             .tools
             .namespaces
             .as_ref()
             .map(|namespaces| namespaces.separator.as_str())
+    }
+    fn default_output_tokens(&self, state: &Arc<dyn ChatStateV1>) -> Option<usize> {
+        let output = self.descriptor.output_tokens.as_ref()?;
+        let state = BundleChatStateV1::from_state(state)?;
+        // A chat prompt carries the default effort's name without thinking
+        // at it, so only a thinking prompt takes its effort's length.
+        let effort = (state.mode() == PromptModeV1::Thinking).then(|| state.reasoning_effort());
+        Some(output.for_effort(effort))
     }
     fn models(&self) -> &[FrontendModelV1] {
         &self.models
@@ -434,41 +477,50 @@ impl ServerFrontendV1 for BundleFrontendV1 {
         &self,
         request: FrontendChatRequestV1,
     ) -> Result<FrontendRenderedChatV1, FrontendErrorV1> {
+        let explicit = self.descriptor.vocabulary.explicit_special_tokens;
         if let Some(multimodal) = &self.descriptor.multimodal {
-            for message in &request.messages {
-                let strings =
-                    message
-                        .content
+            // A render that names its special tokens encodes client text as
+            // plain text, so a placeholder spelled there is text, not media.
+            if !explicit {
+                for message in &request.messages {
+                    let strings =
+                        message
+                            .content
+                            .iter()
+                            .chain(
+                                message
+                                    .parts
+                                    .iter()
+                                    .flatten()
+                                    .filter_map(|part| match part {
+                                        runtime_server::FrontendContentPartV1::Text(text) => {
+                                            Some(text)
+                                        }
+                                        _ => None,
+                                    }),
+                            );
+                    // A tool name a format may write is client text too.
+                    let references = message
+                        .parts
                         .iter()
-                        .chain(
-                            message
-                                .parts
-                                .iter()
-                                .flatten()
-                                .filter_map(|part| match part {
-                                    runtime_server::FrontendContentPartV1::Text(text) => Some(text),
-                                    _ => None,
-                                }),
-                        );
-                // A tool name a format may write is client text too.
-                let references = message
-                    .parts
-                    .iter()
-                    .flatten()
-                    .filter_map(|part| match part {
-                        runtime_server::FrontendContentPartV1::ToolReference { name } => Some(name),
-                        _ => None,
-                    });
-                for text in strings.chain(references) {
-                    if multimodal
-                        .modalities
-                        .iter()
-                        .any(|modality| text.contains(&modality.render.pad))
-                    {
-                        return Err(FrontendErrorV1::new(
-                            "client text contains a media placeholder",
-                            Some("messages"),
-                        ));
+                        .flatten()
+                        .filter_map(|part| match part {
+                            runtime_server::FrontendContentPartV1::ToolReference { name } => {
+                                Some(name)
+                            }
+                            _ => None,
+                        });
+                    for text in strings.chain(references) {
+                        if multimodal
+                            .modalities
+                            .iter()
+                            .any(|modality| text.contains(&modality.render.pad))
+                        {
+                            return Err(FrontendErrorV1::new(
+                                "client text contains a media placeholder",
+                                Some("messages"),
+                            ));
+                        }
                     }
                 }
             }
@@ -646,6 +698,7 @@ impl ServerFrontendV1 for BundleFrontendV1 {
         })?;
         let mut rendered = rendered;
         let mut completion_prefix = String::new();
+        let mut completion_prefix_tokens = Vec::new();
         if forced && let Some(policy) = policy {
             if policy.forced_refused_in_thinking && rendered.mode == PromptModeV1::Thinking {
                 return Err(FrontendErrorV1::new(
@@ -655,12 +708,46 @@ impl ServerFrontendV1 for BundleFrontendV1 {
             }
             completion_prefix.clone_from(&policy.forced_prefill);
             rendered.prompt.push_str(&completion_prefix);
-            match rendered.segments.last_mut() {
-                Some(PromptSegmentV1::Text(text)) => text.push_str(&completion_prefix),
-                _ if completion_prefix.is_empty() => {}
-                _ => rendered
-                    .segments
-                    .push(PromptSegmentV1::Text(completion_prefix.clone())),
+            let vocabulary = &self.descriptor.vocabulary;
+            // The prefill is the declaration's text, so the prompt holds the
+            // boundary tokens it spells, the longest first, as those tokens:
+            // an explicit render names them, and the scan of a scanned
+            // prompt finds them, as the decoder's marks of ID-only markers
+            // assume.
+            if explicit || !vocabulary.id_only_markers.is_empty() {
+                for (range, special) in boundary_pieces_v1(&completion_prefix, vocabulary) {
+                    let piece = &completion_prefix[range.clone()];
+                    if special
+                        && let Some(token) = vocabulary
+                            .boundary_tokens
+                            .iter()
+                            .find(|token| token.text == piece)
+                    {
+                        completion_prefix_tokens.push((range, token.id));
+                    }
+                }
+            }
+            if explicit {
+                for (range, special) in boundary_pieces_v1(&completion_prefix, vocabulary) {
+                    let piece = &completion_prefix[range];
+                    match rendered.segments.last_mut() {
+                        _ if special => rendered
+                            .segments
+                            .push(PromptSegmentV1::Special(piece.to_owned())),
+                        Some(PromptSegmentV1::Text(text)) => text.push_str(piece),
+                        _ => rendered
+                            .segments
+                            .push(PromptSegmentV1::Text(piece.to_owned())),
+                    }
+                }
+            } else {
+                match rendered.segments.last_mut() {
+                    Some(PromptSegmentV1::Text(text)) => text.push_str(&completion_prefix),
+                    _ if completion_prefix.is_empty() => {}
+                    _ => rendered
+                        .segments
+                        .push(PromptSegmentV1::Text(completion_prefix.clone())),
+                }
             }
         }
         let extract_tool_calls = tool_choice != FrontendToolChoiceV1::None && !tools.is_empty();
@@ -681,6 +768,7 @@ impl ServerFrontendV1 for BundleFrontendV1 {
                 tools,
                 extract_tool_calls,
                 completion_prefix,
+                completion_prefix_tokens,
                 parser: self
                     .parser
                     .as_ref()

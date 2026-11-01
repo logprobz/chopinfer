@@ -8,7 +8,9 @@
 //! - prompt writing under the byte bound, names and media segments
 //!   ([`append_v1`], [`validate_name_v1`], [`validate_parameter_name_v1`],
 //!   [`media_placeholder_v1`],
-//!   [`screen_media_text_v1`], [`media_kind_v1`], [`split_media_segments_v1`]);
+//!   [`screen_media_text_v1`], [`media_kind_v1`], [`split_media_segments_v1`]),
+//!   and prompts that name their special tokens ([`MarkedPromptV1`],
+//!   [`split_marked_media_segments_v1`]);
 //! - the conversation as a renderer reads it from a request, and the checks
 //!   it passes before anything is written ([`chat_message_v1`],
 //!   [`validate_chat_v1`]);
@@ -22,7 +24,7 @@
 //! - tool objects as a template writes them ([`json_truthy`],
 //!   [`defers_loading_v1`], [`write_tool_object_v1`]);
 //! - the reasoning controls ([`select_mode_v1`], [`preserve_thinking_v1`],
-//!   [`reasoning_open_v1`]);
+//!   [`reasoning_open_v1`], [`reasoning_open_segments_v1`]);
 //! - the refusal messages ([`sequence_v1`], [`field_v1`], [`resource_v1`],
 //!   [`malformed_v1`], [`json_v1`]).
 
@@ -42,13 +44,15 @@ pub use json::{
     reject_non_integral_numbers_v1, resource_v1, sequence_v1, write_json_v1,
 };
 pub use prompt::{
-    append_v1, media_kind_v1, media_placeholder_v1, reserved_media_text_v1, screen_media_text_v1,
-    split_media_segments_v1, validate_function_name_v1, validate_name_v1,
-    validate_parameter_name_v1,
+    MarkedPromptV1, append_v1, media_kind_v1, media_placeholder_v1, reserved_media_text_v1,
+    screen_media_text_v1, split_marked_media_segments_v1, split_media_segments_v1,
+    validate_function_name_v1, validate_name_v1, validate_parameter_name_v1,
 };
 pub use python::{
     TojsonOptionsV1, python_capitalize_v1, python_rstrip_v1, python_split_v1, python_strip_v1,
     tojson_v1,
 };
-pub use reasoning::{preserve_thinking_v1, reasoning_open_v1, select_mode_v1};
+pub use reasoning::{
+    preserve_thinking_v1, reasoning_open_segments_v1, reasoning_open_v1, select_mode_v1,
+};
 pub use tools::{defers_loading_v1, json_truthy, write_tool_object_v1};

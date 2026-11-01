@@ -24,11 +24,15 @@ mod vocab;
 mod wire;
 
 pub use budget::CompileUsage;
-pub use expr::{CharClass, Expr, Grammar, GrammarBuilder, GrammarError, MAX_SCALAR, RuleId};
+pub use expr::{
+    CharClass, Expr, GRAMMAR_TOKENS_MAX, Grammar, GrammarBuilder, GrammarError, MAX_SCALAR, RuleId,
+};
 pub use json::{JsonOptions, SchemaCompiler, json_object_grammar, json_schema_grammar};
-pub use matcher::{CompiledGrammar, ConstraintState, GrammarMatcher, MAX_ROLLBACK};
+pub use matcher::{CompiledGrammar, ConstraintState, GrammarMatcher, MAX_ROLLBACK, PrefixPart};
 pub use vocab::{TokenVocabulary, VocabularyToken};
-pub use wire::{GRAMMAR_WIRE_LAYOUT_V1, GRAMMAR_WIRE_NESTING_MAX_V1};
+pub use wire::{
+    GRAMMAR_WIRE_LAYOUT_TOKENS_V1, GRAMMAR_WIRE_LAYOUT_V1, GRAMMAR_WIRE_NESTING_MAX_V1,
+};
 
 /// A grammar for whole outputs matching `pattern` in the supported subset.
 pub fn regex_grammar(pattern: &str) -> Result<Grammar, GrammarError> {

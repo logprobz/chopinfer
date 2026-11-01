@@ -5,7 +5,7 @@
 use runtime_frontend_contract::{
     FRONTEND_FORMAT_MAX_BYTES, FrontendComponentErrorV1, FrontendConstraintScopeV1,
     FrontendDescriptorV1, FrontendNameBytesV1, FrontendReasoningFieldV1, FrontendThinkingSwitchV1,
-    FrontendToolArgumentsV1,
+    FrontendToolArgumentsV1, lower_output_tokens_v1,
 };
 use serde_json::{Value, json};
 
@@ -206,6 +206,117 @@ fn request_mapping_policies_default_to_the_template_and_every_constraint() {
     );
 }
 
+/// The output-length section is optional and written back only when
+/// declared. Its lengths are bounded by the generated-token limit, not the
+/// context, which the transport lowers them to.
+#[test]
+fn output_tokens_are_optional_and_bounded_by_the_generated_token_limit() {
+    let descriptor = read(&declaration()).unwrap();
+    assert!(descriptor.output_tokens.is_none());
+    let written = serde_json::to_value(&descriptor).unwrap();
+    assert!(written.get("output_tokens").is_none());
+    assert_eq!(read(&written).unwrap(), descriptor);
+    for (section, expected) in [
+        (json!({"default": 64}), json!({"default": 64})),
+        (
+            json!({"default": 64, "efforts": {"low": 128}}),
+            json!({"default": 64, "efforts": {"low": 128}}),
+        ),
+        (
+            json!({"default": 64, "efforts": {}}),
+            json!({"default": 64}),
+        ),
+    ] {
+        let mut value = declaration();
+        value["output_tokens"] = section;
+        let descriptor = read(&value).unwrap();
+        let written = serde_json::to_value(&descriptor).unwrap();
+        assert_eq!(written["output_tokens"], expected);
+        assert_eq!(read(&written).unwrap(), descriptor);
+    }
+    let mut value = declaration();
+    value["output_tokens"] = json!({"default": 64, "efforts": {"low": 128}});
+    let output = read(&value).unwrap().output_tokens.unwrap();
+    assert_eq!(output.for_effort(None), 64);
+    assert_eq!(output.for_effort(Some("low")), 128);
+    assert_eq!(output.for_effort(Some("high")), 64);
+    // Past the context of 512 and within maximum_generated_tokens 4096.
+    value["output_tokens"] = json!({"default": 4096, "efforts": {"low": 513}});
+    assert!(read(&value).is_ok());
+    // Each refusal names the member it blames.
+    let refused_naming =
+        |section: Value, member: &str, kind: fn(&FrontendComponentErrorV1) -> bool| {
+            let mut value = declaration();
+            value["output_tokens"] = section.clone();
+            let error = read(&value).expect_err("the section must be refused");
+            assert!(kind(&error), "{section}: {error}");
+            assert!(error.to_string().contains(member), "{section}: {error}");
+        };
+    refused_naming(json!({"default": 0}), "output_tokens.default 0", invalid);
+    refused_naming(
+        json!({"default": 4097}),
+        "output_tokens.default 4097",
+        invalid,
+    );
+    refused_naming(
+        json!({"default": 64, "efforts": {"high": 128}}),
+        "output_tokens effort 'high' is not a declared effort",
+        invalid,
+    );
+    refused_naming(
+        json!({"default": 64, "efforts": {"low": 0}}),
+        "output_tokens.efforts.low 0",
+        invalid,
+    );
+    refused_naming(
+        json!({"default": 64, "efforts": {"low": 4097}}),
+        "output_tokens.efforts.low 4097",
+        invalid,
+    );
+    refused_naming(json!({"default": 64, "maximum": 128}), "`maximum`", syntax);
+    refused_naming(json!({"efforts": {"low": 128}}), "`default`", syntax);
+}
+
+/// A geometry that lowers the generated-token limit lowers each declared
+/// output length above it to it and keeps the others; a declaration
+/// without the section is left as it is.
+#[test]
+fn lowered_output_lengths_follow_the_generated_token_limit() {
+    let mut value = declaration();
+    let before = value.clone();
+    lower_output_tokens_v1(&mut value, 100);
+    assert_eq!(value, before);
+    value["output_tokens"] = json!({"default": 300, "efforts": {"low": 100}});
+    value["limits"]["maximum_generated_tokens"] = 256.into();
+    let error = read(&value).expect_err("a length past the limit is refused");
+    assert!(
+        invalid(&error) && error.to_string().contains("output_tokens.default 300"),
+        "{error}"
+    );
+    lower_output_tokens_v1(&mut value, 256);
+    assert_eq!(
+        value["output_tokens"],
+        json!({"default": 256, "efforts": {"low": 100}})
+    );
+    let output = read(&value).unwrap().output_tokens.unwrap();
+    assert_eq!(
+        (output.for_effort(None), output.for_effort(Some("low"))),
+        (256, 100)
+    );
+    value["output_tokens"] = json!({"default": 64, "efforts": {"low": 4096}});
+    lower_output_tokens_v1(&mut value, 256);
+    assert_eq!(
+        value["output_tokens"],
+        json!({"default": 64, "efforts": {"low": 256}})
+    );
+    assert!(read(&value).is_ok());
+    // A length that is not an integer is left for validation to refuse.
+    value["output_tokens"] = json!({"default": "many"});
+    lower_output_tokens_v1(&mut value, 256);
+    assert_eq!(value["output_tokens"]["default"], "many");
+    assert!(syntax(&read(&value).unwrap_err()));
+}
+
 /// Qualified function names are optional; a separator is short ASCII
 /// punctuation that no name byte spells, so its first byte splits a name.
 #[test]
@@ -349,6 +460,52 @@ fn end_markers_are_distinct_declared_boundary_tokens() {
         },
         invalid,
     );
+}
+
+/// Explicit special tokens and ID-only markers are optional, and a
+/// declaration without them writes back without them.
+#[test]
+fn explicit_special_tokens_and_id_only_markers_are_opt_in() {
+    let descriptor = read(&declaration()).unwrap();
+    assert!(!descriptor.vocabulary.explicit_special_tokens);
+    assert!(descriptor.vocabulary.id_only_markers.is_empty());
+    let written = serde_json::to_value(&descriptor).unwrap();
+    assert_eq!(written["vocabulary"], declaration()["vocabulary"]);
+    let mut value = declaration();
+    value["vocabulary"]["explicit_special_tokens"] = json!(true);
+    value["vocabulary"]["id_only_markers"] = json!(["</t>", "<c>"]);
+    let descriptor = read(&value).unwrap();
+    assert!(descriptor.vocabulary.explicit_special_tokens);
+    assert_eq!(descriptor.vocabulary.id_only_markers, ["</t>", "<c>"]);
+    let written = serde_json::to_value(&descriptor).unwrap();
+    assert_eq!(written["vocabulary"], value["vocabulary"]);
+    assert_eq!(read(&written).unwrap(), descriptor);
+    refused(
+        |value| value["vocabulary"]["explicit_special_tokens"] = json!("yes"),
+        syntax,
+    );
+    refused(
+        |value| value["vocabulary"]["id_only_markers"] = json!("</t>"),
+        syntax,
+    );
+}
+
+#[test]
+fn id_only_markers_are_distinct_declared_boundary_tokens() {
+    let mut value = declaration();
+    value["vocabulary"]["id_only_markers"] = json!(["[EOS]"]);
+    assert!(read(&value).is_ok());
+    for markers in [
+        json!([""]),
+        json!(["</think>"]),
+        json!(["</t>", "</t>"]),
+        json!(vec!["</t>"; 129]),
+    ] {
+        refused(
+            |value| value["vocabulary"]["id_only_markers"] = markers,
+            invalid,
+        );
+    }
 }
 
 #[test]

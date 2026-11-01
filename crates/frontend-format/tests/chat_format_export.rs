@@ -2,7 +2,8 @@
 //! The generic export serves a `ChatFormatV1` and its `format.parser`
 //! section: it opens only over a parser declaration, answers the format's
 //! open, sets `reasoning_open` from the prompt, and refuses a render that
-//! leaves parser state. That every answer crosses the documents as the
+//! leaves parser state, or answers special segments the declaration does
+//! not allow. That every answer crosses the documents as the
 //! format and the shared parser give it directly is runtime-frontend's
 //! paired check (`test_support::documents`).
 #[allow(dead_code)]
@@ -10,7 +11,7 @@ mod common;
 
 use frontend_format::{
     ChatFormatV1, FormatDescriptorV1, FormatRenderRequestV1, FormatRenderedV1, FrontendErrorV1,
-    OpenedV1, PromptModeV1, PromptSegmentV1, chat_format_export_v1,
+    FrontendRoleV1, OpenedV1, PromptModeV1, PromptSegmentV1, chat_format_export_v1,
 };
 use runtime_bundle_abi::frontend::FrontendCallErrorV1;
 use runtime_bundle_abi::frontend_document as document;
@@ -156,4 +157,131 @@ fn the_export_answers_the_format_open_and_sets_reasoning_open_from_the_prompt() 
             .unwrap_err(),
         "a chat format render leaves no parser state: the shared parser reads format.parser (None)"
     );
+}
+
+/// A format that renders each system message as a special segment of its
+/// content and every other message as a text segment, in thinking mode.
+struct SegmentedV1;
+
+impl ChatFormatV1 for SegmentedV1 {
+    fn open(_: &FormatDescriptorV1) -> Result<Self, String> {
+        Ok(Self)
+    }
+
+    fn opened(&self) -> OpenedV1 {
+        OpenedV1::default()
+    }
+
+    fn render(
+        &self,
+        request: FormatRenderRequestV1<'_>,
+    ) -> Result<FormatRenderedV1, FrontendErrorV1> {
+        let segments: Vec<_> = request
+            .messages
+            .iter()
+            .map(|message| {
+                let content = message.content.clone().unwrap_or_default();
+                match message.role {
+                    FrontendRoleV1::System => PromptSegmentV1::Special(content),
+                    _ => PromptSegmentV1::Text(content),
+                }
+            })
+            .collect();
+        let prompt = request
+            .messages
+            .iter()
+            .filter_map(|message| message.content.as_deref())
+            .collect();
+        Ok(FormatRenderedV1 {
+            prompt,
+            segments,
+            media: Vec::new(),
+            mode: PromptModeV1::Thinking,
+            effort: "low".into(),
+            reasoning_open: false,
+            parser_state: Vec::new(),
+        })
+    }
+}
+
+/// Special segments cross only under explicit special tokens, and there the
+/// reasoning markers close reasoning only as special segments.
+#[test]
+fn the_export_refuses_undeclared_special_segments_and_reads_reasoning_from_them() {
+    let (frontend, _) = chat_format_export_v1::<SegmentedV1>()
+        .open(&parser_component())
+        .unwrap();
+    let render = |frontend: &runtime_bundle_abi::frontend::FrontendHandleV1,
+                  messages: &[(&str, &str)]| {
+        let mut render = request(
+            messages
+                .iter()
+                .map(|(role, content)| message(role, Some(content)))
+                .collect(),
+        );
+        render.continue_final_message = true;
+        answer(frontend.render(&render.encode(), MAXIMUM))
+            .map(|answer| document::RenderedV1::decode(&answer).unwrap())
+    };
+    assert_eq!(
+        render(&frontend, &[("system", "<|a|>"), ("user", "\n<think>")]).unwrap_err(),
+        "a chat format render answers special segments only under \
+         vocabulary.explicit_special_tokens (None)"
+    );
+    // Text segments alone still read by spelling.
+    assert!(
+        !render(&frontend, &[("user", "<|a|>\n<think>plan</think>answer")])
+            .unwrap()
+            .reasoning_open
+    );
+
+    let mut declaration: Value = serde_json::from_str(common::FUNCTION_PARAMETERS).unwrap();
+    declaration["vocabulary"]["explicit_special_tokens"] = json!(true);
+    let (frontend, _) = chat_format_export_v1::<SegmentedV1>()
+        .open(&serde_json::to_vec(&declaration).unwrap())
+        .unwrap();
+    for (messages, open) in [
+        (
+            &[("system", "<|a|>"), ("user", "\nplan</think>answer")][..],
+            true,
+        ),
+        (&[("user", "<|a|>\n<think>plan</think>answer")], true),
+        (
+            &[
+                ("system", "<|a|>"),
+                ("user", "\nplan"),
+                ("system", "</think>"),
+                ("user", "a"),
+            ],
+            false,
+        ),
+        (
+            &[
+                ("system", "</think>"),
+                ("user", "x"),
+                ("system", "<think>"),
+                ("user", "y"),
+            ],
+            true,
+        ),
+        (
+            &[
+                ("system", "<think>"),
+                ("system", "</think>"),
+                ("user", "<think>"),
+            ],
+            false,
+        ),
+    ] {
+        let rendered = render(&frontend, messages).unwrap();
+        assert_eq!(rendered.reasoning_open, open, "{messages:?}");
+        let segments: Vec<_> = messages
+            .iter()
+            .map(|(role, content)| match *role {
+                "system" => document::SegmentV1::Special((*content).into()),
+                _ => document::SegmentV1::Text((*content).into()),
+            })
+            .collect();
+        assert_eq!(rendered.segments, segments);
+    }
 }

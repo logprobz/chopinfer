@@ -8,6 +8,14 @@
 //! the messages the encoder reads and returns the encoder's prompt. No Jinja
 //! and no Python runs at serving time.
 //!
+//! The prompt names its special tokens as deepseek-recipe 0.2.0's prompts
+//! do: the template's own and the grounding tokens of assistant content and
+//! reasoning are special segments, and all other text, client text
+//! included, is plain text the host encodes without its added tokens. The
+//! declaration sets `vocabulary.explicit_special_tokens` for that, and names
+//! `<think>`, `</think>` and `｜DSML｜` as `id_only_markers`, so the parser
+//! reads them only from their token IDs.
+//!
 //! The request reaches the encoder as deepseek-recipe 0.2.0 (commit
 //! 93b0fd229c) maps an OpenAI request into messages, and the encoder renders
 //! those messages (plan V4 and V7; each rule, its source and its corpus cases
@@ -71,7 +79,7 @@ pub mod strict_schema;
 
 use frontend_format::toolkit::{
     field_v1, json_truthy, media_kind_v1, media_placeholder_v1, resource_v1, screen_media_text_v1,
-    select_mode_v1, split_media_segments_v1, validate_function_name_v1,
+    select_mode_v1, split_marked_media_segments_v1, validate_function_name_v1,
 };
 use frontend_format::{
     ChatFormatV1, ChatRenderV1, FormatDescriptorV1, FormatRenderRequestV1, FormatRenderedV1,
@@ -109,6 +117,31 @@ fn effort_alias(effort: Option<String>) -> Option<String> {
 
 /// The reasoning keywords this format reads to switch thinking.
 const THINKING_KEYWORDS: [&str; 2] = ["enable_thinking", "thinking"];
+
+/// The markers the parser reads only from their token IDs: `</think>` and
+/// `｜DSML｜`, which deepseek-recipe 0.2.0's output parser matches only as
+/// special tokens (`deepseek-recipe/src/stream/output_parser.rs` lines
+/// 74-94), and `<think>`, which it never reads, so a spelled one in
+/// reasoning is text there too.
+const ID_ONLY_MARKERS: [&str; 3] = [
+    encoding::THINKING_START,
+    encoding::THINKING_END,
+    encoding::DSML,
+];
+
+/// The special tokens a served render writes: the template's (the task
+/// tokens and the latest-reminder token are not served) and the grounding
+/// tokens.
+const SERVED_TOKENS: [&str; 8] = [
+    encoding::BOS,
+    encoding::EOS,
+    encoding::SYSTEM,
+    encoding::USER,
+    encoding::ASSISTANT,
+    encoding::THINKING_START,
+    encoding::THINKING_END,
+    encoding::DSML,
+];
 
 /// The parser section for the markers this renderer writes.
 ///
@@ -210,6 +243,40 @@ fn reasoning_mismatch(descriptor: &FormatDescriptorV1) -> Option<String> {
     None
 }
 
+/// Why `descriptor`'s vocabulary does not declare the special tokens this
+/// renderer names, if it does not: explicit special tokens, the ID-only
+/// markers, and a boundary token for each special token it writes.
+fn vocabulary_mismatch(descriptor: &FormatDescriptorV1) -> Option<String> {
+    let vocabulary = &descriptor.vocabulary;
+    if !vocabulary.explicit_special_tokens {
+        return Some(
+            "does not set vocabulary.explicit_special_tokens; the renderer names every special \
+             token it writes"
+                .into(),
+        );
+    }
+    if vocabulary.id_only_markers != ID_ONLY_MARKERS {
+        return Some(format!(
+            "declares ID-only markers {:?}; the parser reads {ID_ONLY_MARKERS:?} only by ID",
+            vocabulary.id_only_markers
+        ));
+    }
+    SERVED_TOKENS
+        .iter()
+        .chain(&encoding::GROUNDING_TOKENS)
+        .find(|token| {
+            !vocabulary
+                .boundary_tokens
+                .iter()
+                .any(|boundary| boundary.text == **token)
+        })
+        .map(|token| {
+            format!(
+                "declares no boundary token '{token}', which the renderer writes as a special token"
+            )
+        })
+}
+
 /// DeepSeek V4.1 Flash's chat format over its checked declaration.
 #[derive(Debug)]
 pub struct DeepSeekV41Format {
@@ -219,10 +286,13 @@ pub struct DeepSeekV41Format {
 impl ChatFormatV1 for DeepSeekV41Format {
     /// Refuses a declaration this encoder cannot render: reasoning controls
     /// or a parser section other than the ones the renderer writes its prompt
-    /// for, or a served media kind other than images with the encoder's
+    /// for, a vocabulary that does not declare the special tokens it names,
+    /// or a served media kind other than images with the encoder's
     /// placeholder as their pad.
     fn open(descriptor: &FormatDescriptorV1) -> Result<Self, String> {
-        if let Some(mismatch) = reasoning_mismatch(descriptor) {
+        if let Some(mismatch) =
+            reasoning_mismatch(descriptor).or_else(|| vocabulary_mismatch(descriptor))
+        {
             return Err(format!(
                 "DeepSeek V4.1 Flash's chat format: the declaration {mismatch}"
             ));
@@ -288,7 +358,8 @@ impl ChatFormatV1 for DeepSeekV41Format {
             &media_placeholder_v1,
         )
         .map_err(|error| refuse(field_v1(error.0)))?;
-        if prompt.len() > self.descriptor.limits.maximum_prompt_bytes {
+        // The port writes under no byte limit of its own.
+        if prompt.text().len() > self.descriptor.limits.maximum_prompt_bytes {
             return Err(refuse(resource_v1("prompt exceeds the byte limit")));
         }
         let media = order
@@ -296,14 +367,14 @@ impl ChatFormatV1 for DeepSeekV41Format {
             .map(|index| media[index].clone())
             .collect();
         let (prompt, segments, media) =
-            split_media_segments_v1(&self.descriptor, prompt, media).map_err(refuse)?;
+            split_marked_media_segments_v1(&self.descriptor, prompt, media).map_err(refuse)?;
         Ok(FormatRenderedV1 {
             prompt,
             segments,
             media,
             mode,
             effort: effort_name,
-            // The export decides it from the prompt.
+            // The export decides it from the special segments.
             reasoning_open: false,
             parser_state: Vec::new(),
         })

@@ -1857,7 +1857,9 @@ chop_bundle_status_v1 chop_bundle_weight_census_v1(
  *   parser_open starts parsing one request's output and writes an opaque
  *     bundle-owned parser to *parser. It may refuse through emit_error.
  *   parser_push hands the parser a push document: how many bytes of earlier
- *     pushes to keep, and the bytes that follow them. The host withholds a
+ *     pushes to keep, and the bytes that follow them. A push may also carry
+ *     the byte ranges of the tokens generated as the declaration's ID-only
+ *     markers; the push document fixes their fields. The host withholds a
  *     possible client stop and an incomplete character the next token could
  *     complete. It answers with an event document through emit, whose
  *     reasoning, content and tool-call ranges are raw-byte offsets into the

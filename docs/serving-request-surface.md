@@ -27,10 +27,21 @@ served name.
 
 ## Request parameters and defaults
 
-**Output length.** Completions without `max_tokens` generate 16 tokens. Chat
-and Responses requests without an output limit may use the remaining
-context; in chat, `max_completion_tokens` takes precedence over `max_tokens`.
-Explicit `max_tokens: 0` is refused.
+**Output length.** Completions without `max_tokens` generate 16 tokens. A
+chat or Responses request without `max_tokens`, `max_completion_tokens` or
+`max_output_tokens` generates up to the package's declared default
+(`output_tokens` in the frontend descriptor): the length declared for the
+effort its prompt thinks at, else the default, lowered to the context left
+after the prompt. Without a declaration it may use the remaining context.
+DeepSeek declares 65,536 and 131,072 at `max`; GLM 131,072 at `max`, its
+default, and 65,536 at `low` and `high`; Qwen 131,072 at `xhigh`, its
+default, and 65,536 at other efforts and with thinking off; MiMo 65,536.
+An explicit limit is honored within the context; in chat,
+`max_completion_tokens` takes precedence over `max_tokens`. Explicit
+`max_tokens: 0` is refused. A `min_tokens` above the default is refused
+("min_tokens exceeds the default output limit of N tokens"), and a
+Responses request that ends at the default is `incomplete` with
+`max_output_tokens`.
 
 **Sampling.** Defaults come from the package's frontend descriptor
 (`generation_config`); precedence is neutral defaults, model defaults, then
@@ -137,7 +148,11 @@ with a strict tool constrains output to the model's call format. A model
 whose declaration has a `tools.choice` policy may also render no tools for
 `none`, only the named tool for a named choice, end a forced choice's prompt
 with the opening of its calls, refuse a forced choice in thinking mode, and
-serve a forced choice without tools as `auto` instead of refusing it.
+serve a forced choice without tools as `auto` instead of refusing it. Where
+the parser reads a marker only from its token ID (DeepSeek V4.1's
+`｜DSML｜`), the constraint admits that marker only as its token, so a
+constrained call always parses, while text and raw string values may spell
+it in ordinary tokens, which read as text.
 
 **Tool namespaces.** A model whose declaration has `tools.namespaces` names
 a function in a namespace by its qualified name, such as `ns::f`. In chat, a
@@ -215,6 +230,25 @@ frontend declares (none in the maintained models). A message with an extra
 role carries string content only. Any other role is refused with "message role
 must be system, developer, user, assistant, or tool", which also names the
 declared roles when there are any.
+
+**Special-token spellings.** Most models tokenize the rendered prompt as one
+text: a declared prompt special token spelled anywhere in it, client text
+included, is that token, and a special token the model does not admit in
+prompts is refused with "prompt contains a special token the model does not
+admit in prompts".
+DeepSeek V4.1 Flash instead encodes client text as plain text, as
+deepseek-recipe 0.2.0 does: message content and text parts, reasoning, tool
+results, tool schemas, the response format, and tool-call names and
+arguments are ordinary tokens, so `<｜User｜>` or `</think>` typed in a tool
+result cannot end its turn or open another. Only the special tokens its
+template writes, image placeholders, and the grounding tokens (`<｜ref｜>`,
+`<｜box｜>`, `<｜point｜>`, `<｜polygon｜>` and their closes) in assistant
+history are special tokens. It therefore accepts requests it used to refuse
+with 400: the spelling of any other added token in client text, such as
+`<｜ref｜>` or `<｜place▁holder▁no▁5｜>`, and the image placeholder
+`<｜deepseek_image｜>` in text. Its parser reads `<think>`, `</think>` and
+`｜DSML｜` in a completion only from their token IDs, so the same spelling
+generated as ordinary tokens is text.
 
 **Streaming.** `stream_options.include_usage` adds final usage, and
 `continuous_usage_stats` adds cumulative usage to every chunk. Usage reports

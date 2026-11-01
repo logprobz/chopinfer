@@ -832,6 +832,7 @@ dependencies = [
  "runtime-bundle-sdk",
  "runtime-frontend",
  "runtime-frontend-contract",
+ "runtime-grammar",
  "runtime-host",
  "runtime-kv",
  "runtime-server",

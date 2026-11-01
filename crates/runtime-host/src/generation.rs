@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -942,7 +943,7 @@ impl EngineGenerationBackend {
     fn plan_inline_media_v1<'a, E>(
         &self,
         declared: &FrontendMultimodalV1,
-        segments: &'a [PromptSegmentV1],
+        pieces: &'a PromptPiecesV1<'_>,
         media: &[FrontendMediaPartV1],
         maximum_prompt_tokens: Option<usize>,
         mut encode: E,
@@ -973,14 +974,15 @@ impl EngineGenerationBackend {
         }
         let mut text = std::collections::VecDeque::new();
         let mut prompt_tokens = 0_usize;
-        for segment in segments {
-            match segment {
-                PromptSegmentV1::Text(run) => {
+        for piece in &pieces.pieces {
+            match piece {
+                PromptPieceV1::Text(run) => {
                     let tokens = encode(run)?;
                     prompt_tokens = prompt_tokens.saturating_add(tokens.len());
-                    text.push_back((run.as_str(), tokens));
+                    text.push_back((&**run, tokens));
                 }
-                PromptSegmentV1::Media(index) => {
+                PromptPieceV1::Special(_) => prompt_tokens = prompt_tokens.saturating_add(1),
+                PromptPieceV1::Media(index) => {
                     let image = images.get(*index).ok_or(AdmissionError::InvalidPrompt)?;
                     prompt_tokens = prompt_tokens.saturating_add(image.rows as usize);
                 }
@@ -1307,7 +1309,21 @@ impl GenerationBackend for EngineGenerationBackend {
                 .multimodal
                 .as_ref()
                 .ok_or(AdmissionError::InvalidPrompt)?;
-            let encode = |text: &str| {
+            let pieces = PromptPiecesV1::new(
+                &self.policy.declaration().vocabulary,
+                segments,
+                self.tokenizer_input_bytes,
+                self.tokenizer.model_max_length(),
+            )?;
+            let encode = |run: &str| {
+                prompt_text_v1(
+                    &self.tokenizer,
+                    &self.policy,
+                    run,
+                    self.tokenizer_input_bytes,
+                )
+            };
+            let template = |text: &str| {
                 self.tokenizer
                     .encode_with_input_limit(
                         text,
@@ -1325,7 +1341,7 @@ impl GenerationBackend for EngineGenerationBackend {
                 part.kind == FrontendMediaPartKindV1::Image && part.source.starts_with("data:")
             });
             let plan = if inline {
-                self.plan_inline_media_v1(declared, segments, media, maximum_prompt_tokens, encode)?
+                self.plan_inline_media_v1(declared, &pieces, media, maximum_prompt_tokens, encode)?
             } else {
                 InlineMediaPlanV1 {
                     allowance: self.media_request_bytes,
@@ -1350,7 +1366,7 @@ impl GenerationBackend for EngineGenerationBackend {
             let (tokens, inputs, spans, positions) = expand_media_chat_v1(
                 declared,
                 &self.policy.declaration().vocabulary,
-                segments,
+                &pieces,
                 media,
                 |run| match text.front() {
                     Some((planned, _)) if *planned == run => Ok(text
@@ -1359,6 +1375,7 @@ impl GenerationBackend for EngineGenerationBackend {
                         .unwrap_or_default()),
                     _ => encode(run),
                 },
+                template,
                 |part, modality| {
                     let prepared = match cached.pop_front() {
                         Some(prepared) => prepared,
@@ -2429,12 +2446,12 @@ fn admit<E: ModelExecutor>(
         }
     };
     // A forced choice's constraint begins after the prefill the prompt ends
-    // with, which the completion continues.
-    let prefix = chat_state.map_or("", BundleChatStateV1::completion_prefix);
+    // with, which the completion continues, read as the prompt holds it.
+    let prefix = chat_state.map_or_else(Vec::new, BundleChatStateV1::completion_prefix_parts);
     let constraint = match constraint
         .map(|grammar| {
             let gate = constraint_gate_v1(chat_state, declaration);
-            ConstraintState::new(grammar, gate, stop_ids.clone()).with_prefix(prefix.as_bytes())
+            ConstraintState::new(grammar, gate, stop_ids.clone()).with_prefix_parts(&prefix)
         })
         .transpose()
     {
@@ -2713,6 +2730,164 @@ fn prompt_tokenization_error(error: runtime_tokenizer::TokenizerError) -> Admiss
     }
 }
 
+/// One piece of a rendered chat's segments as the host encodes it.
+#[derive(Debug)]
+enum PromptPieceV1<'a> {
+    /// Text: one text segment, or, under explicit special tokens, a maximal
+    /// run of them, which encodes as one run of plain text.
+    Text(Cow<'a, str>),
+    /// A special token, by its identifier.
+    Special(u32),
+    /// The media part with this index.
+    Media(usize),
+}
+
+/// A rendered chat's segments as the host encodes them.
+#[derive(Debug)]
+pub(crate) struct PromptPiecesV1<'a> {
+    pieces: Vec<PromptPieceV1<'a>>,
+    /// Under explicit special tokens, the most tokens the text and the
+    /// special tokens may take together, as a scan of the whole rendered
+    /// text allows; `None` otherwise, where each text segment is held to
+    /// the tokenizer's limits on its own.
+    text_token_limit: Option<usize>,
+}
+
+impl<'a> PromptPiecesV1<'a> {
+    /// Reads `segments` under `vocabulary`. A render that names its special
+    /// tokens (`vocabulary.explicit_special_tokens`) has its text and
+    /// special bytes held to `max_input_bytes` together, and their tokens
+    /// to `max_tokens`, as a scan of the rendered text holds them; each
+    /// maximal run of its text segments is one piece, and each special
+    /// segment is the declared boundary token it spells. Any other render
+    /// is refused a special segment, and each of its text segments is one
+    /// piece.
+    pub(crate) fn new(
+        vocabulary: &FrontendVocabularyV1,
+        segments: &'a [PromptSegmentV1],
+        max_input_bytes: usize,
+        max_tokens: usize,
+    ) -> Result<Self, AdmissionError> {
+        let explicit = vocabulary.explicit_special_tokens;
+        if explicit {
+            let bytes = segments
+                .iter()
+                .map(|segment| match segment {
+                    PromptSegmentV1::Text(text) | PromptSegmentV1::Special(text) => text.len(),
+                    PromptSegmentV1::Media(_) => 0,
+                })
+                .fold(0_usize, usize::saturating_add);
+            if bytes > max_input_bytes {
+                return Err(AdmissionError::InvalidPrompt);
+            }
+        }
+        let mut pieces: Vec<PromptPieceV1<'a>> = Vec::with_capacity(segments.len());
+        for segment in segments {
+            match segment {
+                PromptSegmentV1::Text(text) => match pieces.last_mut() {
+                    Some(PromptPieceV1::Text(run)) if explicit => run.to_mut().push_str(text),
+                    _ => pieces.push(PromptPieceV1::Text(Cow::Borrowed(text))),
+                },
+                PromptSegmentV1::Special(text) if explicit => {
+                    let token = vocabulary
+                        .boundary_tokens
+                        .iter()
+                        .find(|token| token.text == *text)
+                        .ok_or(AdmissionError::InvalidPrompt)?;
+                    pieces.push(PromptPieceV1::Special(token.id));
+                }
+                PromptSegmentV1::Special(_) => return Err(AdmissionError::InvalidPrompt),
+                PromptSegmentV1::Media(index) => pieces.push(PromptPieceV1::Media(*index)),
+            }
+        }
+        Ok(Self {
+            pieces,
+            text_token_limit: explicit.then_some(max_tokens),
+        })
+    }
+
+    /// Encodes the pieces in order: text by `text`, a special token as its
+    /// identifier, and a media part by `media`, which appends its tokens.
+    /// Under explicit special tokens the text and special tokens are then
+    /// held to the token limit together.
+    fn encode<T, M>(&self, mut text: T, mut media: M) -> Result<Vec<u32>, AdmissionError>
+    where
+        T: FnMut(&str) -> Result<Vec<u32>, AdmissionError>,
+        M: FnMut(usize, &mut Vec<u32>) -> Result<(), AdmissionError>,
+    {
+        let mut tokens = Vec::new();
+        let mut text_tokens = 0_usize;
+        for piece in &self.pieces {
+            let before = tokens.len();
+            match piece {
+                PromptPieceV1::Text(run) => tokens.extend(text(run)?),
+                PromptPieceV1::Special(id) => tokens.push(*id),
+                PromptPieceV1::Media(index) => {
+                    media(*index, &mut tokens)?;
+                    continue;
+                }
+            }
+            text_tokens += tokens.len() - before;
+        }
+        if self
+            .text_token_limit
+            .is_some_and(|limit| text_tokens > limit)
+        {
+            return Err(AdmissionError::InvalidPrompt);
+        }
+        Ok(tokens)
+    }
+}
+
+/// How a rendered chat's text segments encode: as plain text under
+/// explicit special tokens, where the render names its special tokens as
+/// segments, and otherwise scanned for the declared prompt special tokens.
+fn prompt_text_v1(
+    tokenizer: &Tokenizer,
+    policy: &EngineModelPolicyV1,
+    text: &str,
+    max_input_bytes: usize,
+) -> Result<Vec<u32>, AdmissionError> {
+    if policy.declaration().vocabulary.explicit_special_tokens {
+        tokenizer.encode_plain_with_input_limit(text, max_input_bytes)
+    } else {
+        tokenizer.encode_with_input_limit(text, &policy.prompt_special_tokens(), max_input_bytes)
+    }
+    .map_err(prompt_tokenization_error)
+}
+
+/// Encodes a render that names its special tokens
+/// (`vocabulary.explicit_special_tokens`): each maximal run of text
+/// segments as plain text, each special segment as the boundary token it
+/// spells, and each media part by `media`, which appends its tokens. The
+/// text and special tokens are held to the byte and token limits once,
+/// together. A policy without explicit special tokens refuses the prompt.
+pub(crate) fn encode_segments_v1<M>(
+    tokenizer: &Tokenizer,
+    policy: &EngineModelPolicyV1,
+    segments: &[PromptSegmentV1],
+    max_input_bytes: usize,
+    media: M,
+) -> Result<Vec<u32>, AdmissionError>
+where
+    M: FnMut(usize, &mut Vec<u32>) -> Result<(), AdmissionError>,
+{
+    let vocabulary = &policy.declaration().vocabulary;
+    if !vocabulary.explicit_special_tokens {
+        return Err(AdmissionError::InvalidPrompt);
+    }
+    PromptPiecesV1::new(
+        vocabulary,
+        segments,
+        max_input_bytes,
+        tokenizer.model_max_length(),
+    )?
+    .encode(
+        |run| prompt_text_v1(tokenizer, policy, run, max_input_bytes),
+        media,
+    )
+}
+
 fn tokenize_prompt(
     tokenizer: &Tokenizer,
     prompt: &PreparedPrompt,
@@ -2720,6 +2895,21 @@ fn tokenize_prompt(
     tokenizer_input_bytes: usize,
 ) -> Result<Vec<u32>, AdmissionError> {
     if let PreparedPrompt::MediaChat { segments, media } = prompt {
+        let pieces = PromptPiecesV1::new(
+            &policy.declaration().vocabulary,
+            segments,
+            tokenizer_input_bytes,
+            tokenizer.model_max_length(),
+        )?;
+        let scan = |text: &str| {
+            tokenizer
+                .encode_with_input_limit(
+                    text,
+                    &policy.prompt_special_tokens(),
+                    tokenizer_input_bytes,
+                )
+                .map_err(prompt_tokenization_error)
+        };
         return expand_media_chat_v1(
             policy
                 .declaration()
@@ -2727,17 +2917,10 @@ fn tokenize_prompt(
                 .as_ref()
                 .ok_or(AdmissionError::InvalidPrompt)?,
             &policy.declaration().vocabulary,
-            segments,
+            &pieces,
             media,
-            |text| {
-                tokenizer
-                    .encode_with_input_limit(
-                        text,
-                        &policy.prompt_special_tokens(),
-                        tokenizer_input_bytes,
-                    )
-                    .map_err(prompt_tokenization_error)
-            },
+            |run| prompt_text_v1(tokenizer, policy, run, tokenizer_input_bytes),
+            scan,
             |_part, _modality| {
                 Err(AdmissionError::Rejected(
                     "media preprocessing is not available in this build".to_owned(),
@@ -2745,6 +2928,15 @@ fn tokenize_prompt(
             },
         )
         .map(|(tokens, ..)| tokens);
+    }
+    if let PreparedPrompt::SegmentedChat(segments) = prompt {
+        return encode_segments_v1(
+            tokenizer,
+            policy,
+            segments,
+            tokenizer_input_bytes,
+            |_, _| Err(AdmissionError::InvalidPrompt),
+        );
     }
     match prompt {
         // Raw prompts may already contain a chat template, just as token-ID
@@ -2763,7 +2955,9 @@ fn tokenize_prompt(
             validate_token_ids(tokenizer, ids)?;
             Ok(ids.clone())
         }
-        PreparedPrompt::MediaChat { .. } => unreachable!("handled above"),
+        PreparedPrompt::MediaChat { .. } | PreparedPrompt::SegmentedChat(_) => {
+            unreachable!("handled above")
+        }
         PreparedPrompt::MediaTokens { tokens, .. } => Ok(tokens.clone()),
     }
     .map_err(prompt_tokenization_error)
@@ -4102,16 +4296,21 @@ pub fn audio_recipe_v1(
     })
 }
 
-fn expand_media_chat_v1<E, P>(
+/// Expands a media chat's pieces into its prompt tokens: text by `encode`,
+/// each media part prepared by `probe` as its rows of pads, between the
+/// declared layout text of its grids, which encodes by `template`.
+fn expand_media_chat_v1<E, T, P>(
     declared: &FrontendMultimodalV1,
     vocabulary: &FrontendVocabularyV1,
-    segments: &[PromptSegmentV1],
+    pieces: &PromptPiecesV1<'_>,
     media: &[FrontendMediaPartV1],
-    mut encode: E,
+    encode: E,
+    mut template: T,
     mut probe: P,
 ) -> Result<ExpandedMediaPromptV1, AdmissionError>
 where
     E: FnMut(&str) -> Result<Vec<u32>, AdmissionError>,
+    T: FnMut(&str) -> Result<Vec<u32>, AdmissionError>,
     P: FnMut(
         &FrontendMediaPartV1,
         &runtime_frontend::FrontendMediaModalityV1,
@@ -4170,62 +4369,54 @@ where
         position_grids.push(position_grid_v1(modality, &input)?);
         inputs.push(input);
     }
-    let mut tokens = Vec::new();
     let mut spans = Vec::new();
     let mut positions = Vec::new();
-    for segment in segments {
-        match segment {
-            PromptSegmentV1::Text(text) => tokens.extend(encode(text)?),
-            PromptSegmentV1::Media(index) => {
-                let input = inputs.get(*index).ok_or(AdmissionError::InvalidPrompt)?;
-                let media_index =
-                    u16::try_from(*index).map_err(|_| AdmissionError::InvalidPrompt)?;
-                let mut append_rows = |rows: u32,
-                                       media_row: u32,
-                                       tokens: &mut Vec<u32>|
-                 -> Result<(), AdmissionError> {
-                    let prompt_row =
-                        u32::try_from(tokens.len()).map_err(|_| AdmissionError::InvalidPrompt)?;
-                    tokens.resize(
-                        tokens
-                            .len()
-                            .checked_add(rows as usize)
-                            .ok_or(AdmissionError::InvalidPrompt)?,
-                        pads[*index],
-                    );
-                    spans.push(MediaSpanV1 {
-                        media: media_index,
-                        prompt_row,
-                        rows,
-                        media_row,
-                    });
-                    Ok(())
-                };
-                if let Some((render, grids)) = &layouts[*index] {
-                    let prefix = render.prefix.concat();
-                    let suffix = render.suffix.concat();
-                    let mut media_row = 0;
-                    for (timestamp, rows) in grids {
-                        tokens.extend(encode(&format!("{timestamp}{prefix}"))?);
-                        append_rows(*rows, media_row, &mut tokens)?;
-                        media_row += rows;
-                        tokens.extend(encode(&suffix)?);
-                    }
-                } else {
-                    let prompt_row =
-                        u32::try_from(tokens.len()).map_err(|_| AdmissionError::InvalidPrompt)?;
-                    append_rows(input.output_rows, 0, &mut tokens)?;
-                    if let Some(grid) = position_grids[*index] {
-                        positions.push(PositionSpanV1 {
-                            prompt_row,
-                            rows: input.output_rows,
-                            grid,
-                        });
-                    }
-                }
+    let tokens = pieces.encode(encode, |index, tokens| {
+        let input = inputs.get(index).ok_or(AdmissionError::InvalidPrompt)?;
+        let media_index = u16::try_from(index).map_err(|_| AdmissionError::InvalidPrompt)?;
+        let mut append_rows =
+            |rows: u32, media_row: u32, tokens: &mut Vec<u32>| -> Result<(), AdmissionError> {
+                let prompt_row =
+                    u32::try_from(tokens.len()).map_err(|_| AdmissionError::InvalidPrompt)?;
+                tokens.resize(
+                    tokens
+                        .len()
+                        .checked_add(rows as usize)
+                        .ok_or(AdmissionError::InvalidPrompt)?,
+                    pads[index],
+                );
+                spans.push(MediaSpanV1 {
+                    media: media_index,
+                    prompt_row,
+                    rows,
+                    media_row,
+                });
+                Ok(())
+            };
+        if let Some((render, grids)) = &layouts[index] {
+            let prefix = render.prefix.concat();
+            let suffix = render.suffix.concat();
+            let mut media_row = 0;
+            for (timestamp, rows) in grids {
+                tokens.extend(template(&format!("{timestamp}{prefix}"))?);
+                append_rows(*rows, media_row, tokens)?;
+                media_row += rows;
+                tokens.extend(template(&suffix)?);
+            }
+        } else {
+            let prompt_row =
+                u32::try_from(tokens.len()).map_err(|_| AdmissionError::InvalidPrompt)?;
+            append_rows(input.output_rows, 0, tokens)?;
+            if let Some(grid) = position_grids[index] {
+                positions.push(PositionSpanV1 {
+                    prompt_row,
+                    rows: input.output_rows,
+                    grid,
+                });
             }
         }
-    }
+        Ok(())
+    })?;
     Ok((tokens, inputs, spans, positions))
 }
 
@@ -6528,6 +6719,8 @@ mod tests {
                 id: 7,
             }],
             prompt_special_tokens: vec!["<pad>".to_owned()],
+            explicit_special_tokens: false,
+            id_only_markers: Vec::new(),
         };
         let mut media = vec![FrontendMediaPartV1 {
             kind: FrontendMediaPartKindV1::Image,
@@ -6540,12 +6733,14 @@ mod tests {
             PromptSegmentV1::Media(0),
             PromptSegmentV1::Text("z".to_owned()),
         ];
+        let pieces = PromptPiecesV1::new(&vocabulary, &segments, 1 << 20, 1 << 20).unwrap();
         let expand = |rows| {
             expand_media_chat_v1(
                 &declared,
                 &vocabulary,
-                &segments,
+                &pieces,
                 &media,
+                |text| Ok(text.bytes().map(u32::from).collect()),
                 |text| Ok(text.bytes().map(u32::from).collect()),
                 move |_, _| {
                     Ok(MediaInputV1 {
@@ -6573,6 +6768,66 @@ mod tests {
             }]
         );
         assert!(expand(5).is_err());
+        // Under explicit special tokens a special segment is its boundary
+        // token, adjacent text segments encode as one run, and the text and
+        // special tokens fit the token limit together.
+        let mut explicit = vocabulary.clone();
+        explicit.explicit_special_tokens = true;
+        explicit.boundary_tokens.push(FrontendBoundaryTokenV1 {
+            text: "<b>".to_owned(),
+            id: 9,
+        });
+        let marked = vec![
+            PromptSegmentV1::Special("<b>".to_owned()),
+            PromptSegmentV1::Text("a".to_owned()),
+            PromptSegmentV1::Text("b".to_owned()),
+            PromptSegmentV1::Media(0),
+            PromptSegmentV1::Text("z".to_owned()),
+        ];
+        let expand_marked = |limit| {
+            let mut runs = Vec::new();
+            let pieces = PromptPiecesV1::new(&explicit, &marked, 1 << 20, limit)?;
+            let (tokens, _, spans, _) = expand_media_chat_v1(
+                &declared,
+                &explicit,
+                &pieces,
+                &media,
+                |text| {
+                    runs.push(text.to_owned());
+                    Ok(text.bytes().map(u32::from).collect())
+                },
+                |_| unreachable!("an image without a grid writes no layout text"),
+                |_, _| {
+                    Ok(MediaInputV1 {
+                        key: [1; 32],
+                        encoder: 0,
+                        geometry: [1, 1, 1, 1],
+                        output_rows: 3,
+                        payload: vec![0_u8; 8].into(),
+                    }
+                    .into())
+                },
+            )?;
+            Ok::<_, AdmissionError>((tokens, spans[0].prompt_row, runs))
+        };
+        assert_eq!(
+            expand_marked(4),
+            Ok((
+                vec![9, 97, 98, 7, 7, 7, 122],
+                3,
+                vec!["ab".to_owned(), "z".to_owned()]
+            ))
+        );
+        assert_eq!(expand_marked(3), Err(AdmissionError::InvalidPrompt));
+        let undeclared = [PromptSegmentV1::Special("<c>".to_owned())];
+        assert_eq!(
+            PromptPiecesV1::new(&explicit, &undeclared, 1 << 20, 4).map(|_| ()),
+            Err(AdmissionError::InvalidPrompt)
+        );
+        assert_eq!(
+            PromptPiecesV1::new(&vocabulary, &marked, 1 << 20, 4).map(|_| ()),
+            Err(AdmissionError::InvalidPrompt)
+        );
         // A learned-delimiter span is still one pad run: the encoder writes
         // its delimiter rows with its cells.
         let mut delimited = declared.clone();
@@ -6581,8 +6836,9 @@ mod tests {
         let (tokens, _, spans, _) = expand_media_chat_v1(
             &delimited,
             &vocabulary,
-            &segments,
+            &pieces,
             &media,
+            |text| Ok(text.bytes().map(u32::from).collect()),
             |text| Ok(text.bytes().map(u32::from).collect()),
             |_, _| {
                 Ok(MediaInputV1 {
@@ -6610,8 +6866,9 @@ mod tests {
         let missing_grids = expand_media_chat_v1(
             &declared,
             &vocabulary,
-            &segments,
+            &pieces,
             &media,
+            |text| Ok(text.bytes().map(u32::from).collect()),
             |text| Ok(text.bytes().map(u32::from).collect()),
             |_, _| {
                 Ok(MediaInputV1 {
@@ -6632,8 +6889,9 @@ mod tests {
             expand_media_chat_v1(
                 &declared,
                 &vocabulary,
-                &segments,
+                &pieces,
                 &media,
+                |text| Ok(text.bytes().map(u32::from).collect()),
                 |text| Ok(text.bytes().map(u32::from).collect()),
                 |_, _| {
                     Ok(PreparedMediaInputV1 {
@@ -6731,6 +6989,8 @@ mod tests {
                 id: 7,
             }],
             prompt_special_tokens: vec!["<pad>".to_owned()],
+            explicit_special_tokens: false,
+            id_only_markers: Vec::new(),
         };
         let part = FrontendMediaPartV1 {
             kind: FrontendMediaPartKindV1::Image,
@@ -6746,14 +7006,16 @@ mod tests {
             PromptSegmentV1::Media(1),
             PromptSegmentV1::Text("q".to_owned()),
         ];
+        let pieces = PromptPiecesV1::new(&vocabulary, &segments, 1 << 20, 1 << 20).unwrap();
         // Patch grids of each image in order, and the rows each reports.
         let expand = |grids: [([u32; 3], u32); 2]| {
             let mut next = grids.into_iter();
             expand_media_chat_v1(
                 &declared,
                 &vocabulary,
-                &segments,
+                &pieces,
                 &media,
+                |text| Ok(text.bytes().map(u32::from).collect()),
                 |text| Ok(text.bytes().map(u32::from).collect()),
                 move |_, _| {
                     let ([t, h, w], rows) = next.next().expect("two images");

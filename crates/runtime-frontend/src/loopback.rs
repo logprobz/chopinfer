@@ -7,8 +7,9 @@
 //! `chop.frontend.v1` documents. A test decoder given no bundle frontend
 //! calls the shared parser directly ([`LibraryParserV1`]), tests compare a
 //! decoder against the shared whole-completion parse
-//! ([`parse_completion_v1`]), and they compare the documents against a chat
-//! format called directly (`LibraryRendererV1`).
+//! ([`parse_completion_v1`], [`parse_marked_completion_v1`]), and they
+//! compare the documents against a chat format called directly
+//! (`LibraryRendererV1`).
 
 use std::sync::Arc;
 
@@ -97,12 +98,14 @@ impl FormatParserV1 for LibraryParserV1 {
             held,
             last,
             stop_floor,
+            marks,
         } = input;
         let events = self.0.push(frontend_format::FormatInputV1 {
             completion,
             held,
             last,
             stop_floor,
+            marks,
         })?;
         Ok(events.into_iter().map(event_v1).collect())
     }
@@ -158,6 +161,20 @@ pub fn parse_completion_v1(
     let descriptor = frontend_format::FormatDescriptorV1::read(descriptor.clone())
         .map_err(|error| error.to_string())?;
     frontend_format::parse_completion_v1(&descriptor, text, mode).map(completion_v1)
+}
+
+/// [`parse_completion_v1`] for a completion whose `marks` are the byte
+/// ranges of its tokens generated as the declaration's ID-only markers, so
+/// a marker spelled by other tokens is text.
+pub fn parse_marked_completion_v1(
+    descriptor: &FrontendDescriptorV1,
+    text: &str,
+    marks: &[std::ops::Range<usize>],
+    mode: PromptModeV1,
+) -> Result<AssistantCompletionV1, String> {
+    let descriptor = frontend_format::FormatDescriptorV1::read(descriptor.clone())
+        .map_err(|error| error.to_string())?;
+    frontend_format::parse_marked_completion_v1(&descriptor, text, marks, mode).map(completion_v1)
 }
 
 fn completion_v1(completion: frontend_format::AssistantCompletionV1) -> AssistantCompletionV1 {
@@ -266,10 +283,13 @@ mod renderer {
     }
 
     /// A chat format called directly, with what its export adds to a
-    /// render: the export decides `reasoning_open` from the prompt with the
-    /// parser section's markers, and refuses a render that leaves parser
-    /// state (`frontend_format::ChatFormatExportV1`). Its tool constraints
-    /// come from the parser section, as the export's do.
+    /// render (`frontend_format::ChatFormatExportV1`): the export refuses a
+    /// render that leaves parser state, and decides `reasoning_open` with
+    /// the parser section's markers. Under
+    /// `vocabulary.explicit_special_tokens` it reads them from the special
+    /// segments alone; otherwise it refuses special segments and reads the
+    /// prompt. Its tool constraints come from the parser section, as the
+    /// export's do.
     struct LibraryChatFormatV1<F> {
         descriptor: Arc<frontend_format::FormatDescriptorV1>,
         format: F,
@@ -298,14 +318,35 @@ mod renderer {
                     None,
                 ));
             }
+            let explicit = self.descriptor.vocabulary.explicit_special_tokens;
+            let special = |segment: &frontend_format::PromptSegmentV1| {
+                matches!(segment, frontend_format::PromptSegmentV1::Special(_))
+            };
+            if !explicit && rendered.segments.iter().any(special) {
+                return Err(frontend_format::FrontendErrorV1::new(
+                    "a chat format render answers special segments only under \
+                     vocabulary.explicit_special_tokens",
+                    None,
+                ));
+            }
             let parser = &self.descriptor.parser;
-            rendered.reasoning_open = frontend_format::toolkit::reasoning_open_v1(
-                rendered.mode,
-                continue_final_message,
-                &parser.reasoning_open,
-                &parser.reasoning_close,
-                &rendered.prompt,
-            );
+            rendered.reasoning_open = if explicit {
+                frontend_format::toolkit::reasoning_open_segments_v1(
+                    rendered.mode,
+                    continue_final_message,
+                    &parser.reasoning_open,
+                    &parser.reasoning_close,
+                    &rendered.segments,
+                )
+            } else {
+                frontend_format::toolkit::reasoning_open_v1(
+                    rendered.mode,
+                    continue_final_message,
+                    &parser.reasoning_open,
+                    &parser.reasoning_close,
+                    &rendered.prompt,
+                )
+            };
             Ok(rendered)
         }
 
@@ -391,6 +432,9 @@ mod renderer {
                         frontend_format::PromptSegmentV1::Text(text) => PromptSegmentV1::Text(text),
                         frontend_format::PromptSegmentV1::Media(index) => {
                             PromptSegmentV1::Media(index)
+                        }
+                        frontend_format::PromptSegmentV1::Special(text) => {
+                            PromptSegmentV1::Special(text)
                         }
                     })
                     .collect(),

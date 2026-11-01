@@ -64,6 +64,17 @@ pub(crate) struct FormatInputV1<'a> {
     /// `None` until the completion passes the request's minimum token
     /// count; then the byte offset an end marker must end after to stop it.
     pub(crate) stop_floor: Option<usize>,
+    /// The byte ranges in `completion` of the tokens generated as the
+    /// declaration's ID-only markers (`vocabulary.id_only_markers`),
+    /// ascending, disjoint and not empty; `None` for a declaration that
+    /// names none, whose markers all read by their spelling.
+    ///
+    /// Each push names every mark of `completion`. A mark covers one whole
+    /// token and is named only once all of its bytes are released, so a
+    /// token released in part crosses without one. A named mark never
+    /// changes, except that a client stop that cuts the completion drops
+    /// the marks past the cut.
+    pub(crate) marks: Option<&'a [Range<usize>]>,
 }
 
 /// One tool-call delta, by the call's index among the delivered calls.

@@ -30,7 +30,7 @@
     "frontend": {
       "directory": false,
       "members": {
-        ".": "b475c825a01c4e1237b264ae5469f780bd11b0ec93680ee724fd6fdb9d826c1f"
+        ".": "0aee2ceb531cbaabd1c9250eb52ee0ab56b729097cb753c60233a3be121a821d"
       },
       "path": "models/mimo26/compiler/src/frontend.json"
     },
@@ -174,7 +174,7 @@
     "media_preprocessing_frontend": {
       "directory": false,
       "members": {
-        ".": "b475c825a01c4e1237b264ae5469f780bd11b0ec93680ee724fd6fdb9d826c1f"
+        ".": "0aee2ceb531cbaabd1c9250eb52ee0ab56b729097cb753c60233a3be121a821d"
       },
       "path": "models/mimo26/compiler/src/frontend.json"
     },
@@ -948,7 +948,7 @@
       },
       "schema": "chopinfer.refrun.preprocessing.v1"
     },
-    "b475c825a01c4e1237b264ae5469f780bd11b0ec93680ee724fd6fdb9d826c1f": {
+    "0aee2ceb531cbaabd1c9250eb52ee0ab56b729097cb753c60233a3be121a821d": {
       "schema": "chop-frontend-openai-v2"
     }
   },

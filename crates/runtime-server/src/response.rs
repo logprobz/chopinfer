@@ -1227,7 +1227,10 @@ fn prepare_prompt(
         _ => {}
     }
     if parsed.use_remaining_context {
-        parsed.prepared.max_new_tokens = state.maximum_context_tokens.saturating_sub(prompt_tokens);
+        let remaining = state.maximum_context_tokens.saturating_sub(prompt_tokens);
+        parsed.prepared.max_new_tokens = parsed
+            .default_output_tokens
+            .map_or(remaining, |default| default.min(remaining));
         if parsed.prepared.max_new_tokens == 0 {
             return Err(ApiError::context_length(
                 "prompt leaves no room for generated tokens",

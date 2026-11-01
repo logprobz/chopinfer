@@ -130,14 +130,25 @@ byte documents:
 - `render`: a chat request in, the prompt out as text segments and
   references to the request's media parts, with the prompt mode, the
   reasoning effort, whether the prompt leaves reasoning open, and parser
-  state. The request carries the client's whole `chat_template_kwargs`
+  state. A format whose declaration sets
+  `vocabulary.explicit_special_tokens` also answers `Special` segments,
+  each one special token of the prompt given by its text: the special
+  tokens its template writes, while client text stays in text segments.
+  The request carries the client's whole `chat_template_kwargs`
   object, so the format reads any keyword its template reads.
 - `constraint`: the grammar a request's tool choice imposes, as a
-  `runtime-grammar` wire document; empty when there is none.
+  `runtime-grammar` wire document; empty when there is none. A grammar may
+  name a vocabulary token by its ID (a token element, which only that token
+  fills and which makes the document layout 2), as a tool grammar writes
+  the declaration's ID-only markers; every other grammar stays layout 1.
 - `parser_open`, `parser_push` and `parser_close`: one parser per request.
   The parser holds the completion's bytes: a push keeps the first `keep`
   bytes of earlier pushes (fewer only when a client stop cuts the
-  completion short before the last push) and appends a suffix. It answers
+  completion short before the last push) and appends a suffix. When the
+  declaration names `vocabulary.id_only_markers`, every push carries marks
+  (a marked push document under its own magic): the ascending, disjoint
+  byte ranges of the tokens generated as those markers, which the parser
+  reads only there, so their spelling in ordinary tokens is text. It answers
   with events and a cursor. Reasoning, content and tool calls carry ranges,
   which are raw-byte offsets into the whole accumulated completion, not
   into the suffix; tool-call argument deltas and the finish carry values.
@@ -152,7 +163,8 @@ closes. The export catches panics and reports them as the call's failure.
 The host checks every answer and treats a bundle frontend as fallible:
 
 - Before render it refuses client text that contains a media placeholder,
-  and it checks media counts and sizes.
+  unless the declaration sets explicit special tokens, under which such
+  text is plain text, and it checks media counts and sizes.
 - Each answer is bounded before it is copied (a refusal and parser state at
   most 1 MiB each).
 - Render: media segments name request media parts at most once and in
@@ -160,7 +172,11 @@ The host checks every answer and treats a bundle frontend as fallible:
   fits `maximum_prompt_bytes`; the effort is a declared effort name in
   every mode; only a thinking
   prompt may leave reasoning open. The host tokenizes the text with the
-  declared tokenizer and prompt special tokens. When the prompt leaves
+  declared tokenizer and prompt special tokens. Under explicit special
+  tokens it instead encodes each run of text segments as plain text,
+  without the added vocabulary, so a special token spelled in client text
+  is that text's ordinary tokens, and each `Special` segment, which must
+  spell a declared boundary token, as that token's ID. When the prompt leaves
   reasoning open, the decoder starts in reasoning and every constraint
   waits for one of the declared `reasoning.end_markers`.
 - Constraint: the wire document decodes under structural checks and a

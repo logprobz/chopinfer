@@ -16,7 +16,8 @@
 //! The library knows nothing of a host. It reads only the component and the
 //! documents a host sends, so it links no transport, engine or device code.
 //! Model tests and benchmarks call [`tool_constraint_v1`],
-//! [`parse_completion_v1`] and [`DeclaredParserV1`] directly.
+//! [`parse_completion_v1`], [`parse_marked_completion_v1`] and
+//! [`DeclaredParserV1`] directly.
 
 mod chat;
 mod chat_format;
@@ -25,6 +26,7 @@ mod descriptor;
 mod export;
 mod format;
 mod format_decode;
+mod marks;
 mod request;
 mod tool_grammar;
 pub mod toolkit;
@@ -40,7 +42,7 @@ pub use format::{
     AssistantCompletionV1, CompletionFinishV1, FormatEventV1, FormatInputV1, FormatParserOptionsV1,
     FormatRenderRequestV1, FormatRenderedV1, FormatToolCallDeltaV1, ParsedToolCallV1,
 };
-pub use format_decode::{DeclaredParserV1, parse_completion_v1};
+pub use format_decode::{DeclaredParserV1, parse_completion_v1, parse_marked_completion_v1};
 pub use request::{
     FrontendContentPartV1, FrontendErrorV1, FrontendJsonV1, FrontendMediaPartKindV1,
     FrontendMediaPartV1, FrontendMessageV1, FrontendRoleV1, FrontendToolCallV1,

@@ -139,7 +139,9 @@ pub fn tool_references_are_refused(frontend: &impl ServerFrontendV1) {
 /// the deepest a grammar document may compile to: 501 and 502 references
 /// under a required choice, 503 and 504 under a named one. A frontend that
 /// answers through its export's documents has the host decode the grammar
-/// document, which refuses one deeper than the wire admits.
+/// document, which refuses one deeper than the wire admits. `call` is fed
+/// as text, so a frontend whose grammar writes ID-only markers as token
+/// elements cannot use it.
 ///
 /// # Panics
 ///

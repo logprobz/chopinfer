@@ -216,6 +216,7 @@ fn expand(probe: &Value, tokenizer: Option<&runtime_tokenizer::Tokenizer>) -> Ex
                     tokens.extend(tokenizer.encode(text, PROMPT_TOKENS).unwrap());
                 }
             }
+            PromptSegmentV1::Special(_) => panic!("Qwen renders name no special token"),
             PromptSegmentV1::Media(index) => {
                 let [t, h, w] = probe_grid(names[*index], recipe);
                 let rows = t * (h / merge) * (w / merge);

@@ -86,6 +86,10 @@ Rust with `frontend-format`, or implement the native frontend contract.
 The host authenticates the declaration and tokenizer, checks every frontend
 answer, tokenizes under declared policies and owns stop/UTF-8 handling.
 Checkpoint chat templates are reference inputs, not executed server code.
+Declare `output_tokens` to bound the chat and Responses requests that set
+no output limit ([output length](serving-request-surface.md#request-parameters-and-defaults)),
+and where a geometry lowers the context, lower those lengths with
+`runtime_frontend_contract::lower_output_tokens_v1`.
 
 Port the upstream template or encoder literally, citing source lines.
 Keep HF render, tokenization and streaming vectors as goldens and run

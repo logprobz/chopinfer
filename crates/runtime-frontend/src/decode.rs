@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use runtime_server::FrontendToolV1;
 
-use crate::checks::{field_v1, malformed_v1, resource_v1, sequence_v1};
+use crate::checks::{boundary_pieces_v1, field_v1, malformed_v1, resource_v1, sequence_v1};
 use crate::descriptor::FrontendDescriptorV1;
 use crate::format::{FormatEventV1, FormatInputV1, FormatParserOptionsV1, FormatParserV1};
 use crate::native::BundleParserSourceV1;
@@ -217,6 +217,13 @@ pub struct CompletionDecoderV1 {
     parser: Option<Box<dyn FormatParserV1>>,
     /// Whether the parser delivered a tool call.
     called: bool,
+    /// The identifiers of the declaration's ID-only markers
+    /// (`vocabulary.id_only_markers`).
+    id_only_ids: Vec<u32>,
+    /// The completion's marks, ascending: the bytes of each generated token
+    /// that is an ID-only marker, and of each ID-only marker a primed
+    /// completion prefix spells.
+    marks: Vec<Range<usize>>,
 }
 
 impl CompletionDecoderV1 {
@@ -226,7 +233,16 @@ impl CompletionDecoderV1 {
         mode: PromptModeV1,
         limits: DecoderLimitsV1,
     ) -> Self {
+        let vocabulary = &descriptor.vocabulary;
+        let id_only_ids = vocabulary
+            .boundary_tokens
+            .iter()
+            .filter(|token| vocabulary.id_only_markers.contains(&token.text))
+            .map(|token| token.id)
+            .collect();
         Self {
+            id_only_ids,
+            marks: Vec::new(),
             descriptor,
             mode,
             limits,
@@ -299,9 +315,27 @@ impl CompletionDecoderV1 {
     /// continues, a forced tool choice's prefill: the parser reads it as the
     /// completion's start, while client stops, the byte limit and the token
     /// accounting begin after it.
+    ///
+    /// The prompt carries the declared boundary tokens the prefill spells,
+    /// the longest first, as those tokens, so the ID-only markers among
+    /// them are marks.
     pub fn prime_completion_prefix(&mut self, text: &str) -> Result<(), String> {
         if !self.tokens.is_empty() || self.parser.is_some() {
             return Err(sequence_v1("a completion prefix must precede generation"));
+        }
+        let start = self.bytes.len();
+        let vocabulary = &self.descriptor.vocabulary;
+        if !vocabulary.id_only_markers.is_empty() {
+            for (piece, special) in boundary_pieces_v1(text, vocabulary) {
+                if special
+                    && vocabulary
+                        .id_only_markers
+                        .iter()
+                        .any(|marker| *marker == text[piece.clone()])
+                {
+                    self.marks.push(start + piece.start..start + piece.end);
+                }
+            }
         }
         self.bytes.extend_from_slice(text.as_bytes());
         self.stable_end = self.bytes.len();
@@ -510,6 +544,10 @@ impl CompletionDecoderV1 {
         }
         let start = self.bytes.len();
         self.bytes.extend_from_slice(&token.bytes);
+        // A skipped or hidden token adds no bytes, and so no mark.
+        if start < end && self.id_only_ids.contains(&token.token_id) {
+            self.marks.push(start..end);
+        }
         self.stable_end += complete_utf8_prefix(&self.bytes[self.stable_end..]);
         self.tokens.push(TokenRangeV1 {
             ordinal: token.ordinal,
@@ -624,11 +662,15 @@ impl CompletionDecoderV1 {
         });
         self.parser()?;
         let parser = self.parser.as_mut().expect("opened format parser");
+        // Only the marks of whole tokens among the released bytes cross.
+        let marks = (!self.descriptor.vocabulary.id_only_markers.is_empty())
+            .then(|| &self.marks[..self.marks.partition_point(|mark| mark.end <= end)]);
         let events = parser.push(FormatInputV1 {
             completion: &self.bytes[..end],
             held: end < self.bytes.len(),
             last,
             stop_floor,
+            marks,
         })?;
         Ok(events.into_iter().map(|event| self.update(event)).collect())
     }
@@ -945,6 +987,175 @@ mod host_tests {
         late.push(GeneratedTokenV1::new(0, 200, b"x".to_vec()))
             .unwrap();
         assert!(late.prime_completion_prefix("<tool_call>").is_err());
+    }
+
+    /// The marks each push named, in order.
+    type RecordedMarksV1 = Arc<std::sync::Mutex<Vec<Option<Vec<Range<usize>>>>>>;
+
+    /// A format parser that records the marks each push names.
+    struct MarkRecorderV1(RecordedMarksV1);
+
+    impl FormatParserV1 for MarkRecorderV1 {
+        fn push(&mut self, input: FormatInputV1<'_>) -> Result<Vec<FormatEventV1>, String> {
+            self.0
+                .lock()
+                .unwrap()
+                .push(input.marks.map(<[Range<usize>]>::to_vec));
+            Ok(Vec::new())
+        }
+
+        fn cursor(&self) -> usize {
+            0
+        }
+    }
+
+    /// The key-value fixture with `<t>` and `</t>` (IDs 4 and 5) read
+    /// only from their token IDs.
+    fn id_only_descriptor() -> Arc<FrontendDescriptorV1> {
+        let mut descriptor =
+            FrontendDescriptorV1::from_component_bytes(test_common::KEY_VALUE.as_bytes()).unwrap();
+        descriptor.vocabulary.id_only_markers = vec!["<t>".into(), "</t>".into()];
+        Arc::new(descriptor)
+    }
+
+    /// Under ID-only markers each push names the marks of the released
+    /// bytes: each generated token whose ID is an ID-only marker, once all
+    /// of its bytes are released, and each ID-only marker a primed
+    /// completion prefix spells. A marker spelled by other tokens, or a
+    /// marker token whose bytes are skipped, has none, and a declaration
+    /// without ID-only markers names no marks at all.
+    #[test]
+    #[allow(clippy::single_range_in_vec_init)]
+    fn a_decoder_marks_its_id_only_marker_tokens() {
+        let pushes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let decoder = |descriptor: Arc<FrontendDescriptorV1>, stops: &[String], prefix: &str| {
+            let limits = DecoderLimitsV1::declared(&descriptor);
+            let mut decoder = if stops.is_empty() {
+                CompletionDecoderV1::new(descriptor, PromptModeV1::Chat, limits)
+            } else {
+                CompletionDecoderV1::with_client_stops(
+                    descriptor,
+                    PromptModeV1::Chat,
+                    limits,
+                    stops,
+                )
+                .unwrap()
+            };
+            decoder.prime_completion_prefix(prefix).unwrap();
+            pushes.lock().unwrap().clear();
+            decoder.parser = Some(Box::new(MarkRecorderV1(Arc::clone(&pushes))));
+            decoder
+        };
+        let last = || pushes.lock().unwrap().last().cloned().unwrap();
+        // `[U]` is a boundary token but not an ID-only marker.
+        let mut marked = decoder(id_only_descriptor(), &[], "x</t>[U]<t>");
+        marked
+            .push(GeneratedTokenV1::new(0, 200, b"a".to_vec()))
+            .unwrap();
+        assert_eq!(last(), Some(vec![1..5, 8..11]));
+        marked
+            .push(GeneratedTokenV1::new(1, 5, b"</t>".to_vec()))
+            .unwrap();
+        marked
+            .push(GeneratedTokenV1::new(2, 200, b"</t>".to_vec()))
+            .unwrap();
+        marked
+            .push(GeneratedTokenV1::new(3, 2, b"[U]".to_vec()))
+            .unwrap();
+        assert_eq!(last(), Some(vec![1..5, 8..11, 12..16]));
+        // A skipped special token adds no bytes and no mark.
+        let mut skipped = decoder(id_only_descriptor(), &[], "");
+        skipped.parser = None;
+        skipped.set_decoding_options(
+            runtime_server::DecodingOptions {
+                skip_special_tokens: true,
+                ..Default::default()
+            },
+            false,
+        );
+        skipped.parser = Some(Box::new(MarkRecorderV1(Arc::clone(&pushes))));
+        skipped
+            .push(GeneratedTokenV1::new(0, 4, b"<t>".to_vec()).with_special(true))
+            .unwrap();
+        skipped
+            .push(GeneratedTokenV1::new(1, 4, b"<t>".to_vec()))
+            .unwrap();
+        assert_eq!(last(), Some(vec![0..3]));
+        // A marker token whose end a possible client stop holds back
+        // crosses without its mark, and with it once it is released whole.
+        let mut held = decoder(id_only_descriptor(), &["t>!".to_owned()], "");
+        held.push(GeneratedTokenV1::new(0, 200, b"a".to_vec()))
+            .unwrap();
+        held.push(GeneratedTokenV1::new(1, 5, b"</t>".to_vec()))
+            .unwrap();
+        assert_eq!(last(), Some(vec![]));
+        held.push(GeneratedTokenV1::new(2, 200, b"b".to_vec()))
+            .unwrap();
+        assert_eq!(last(), Some(vec![1..5]));
+        let unmarked = Arc::new(
+            FrontendDescriptorV1::from_component_bytes(test_common::KEY_VALUE.as_bytes()).unwrap(),
+        );
+        let mut unmarked = decoder(unmarked, &[], "</t>");
+        unmarked
+            .push(GeneratedTokenV1::new(0, 5, b"</t>".to_vec()))
+            .unwrap();
+        assert_eq!(last(), None);
+    }
+
+    /// The format reads a marker spelled by ordinary tokens as text, and
+    /// the marker token as the marker, through the shared parser called
+    /// directly and through a bundle frontend's documents alike.
+    #[test]
+    fn an_ordinary_spelling_of_an_id_only_marker_is_text() {
+        let descriptor = id_only_descriptor();
+        let source = BundleParserSourceV1::from_declaration(&descriptor).unwrap();
+        for source in [None, Some(source)] {
+            let mut decoder = CompletionDecoderV1::new(
+                Arc::clone(&descriptor),
+                PromptModeV1::Thinking,
+                DecoderLimitsV1::declared(&descriptor),
+            );
+            if let Some(source) = source {
+                decoder.set_parser_source(source);
+            }
+            let mut updates = Vec::new();
+            for (ordinal, (id, bytes)) in [
+                (200, &b"plan"[..]),
+                (200, b"</t>"),
+                (200, b"more"),
+                (5, b"</t>"),
+                (200, b"answer"),
+                (1, b"[EOS]"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                updates.extend(
+                    decoder
+                        .push(GeneratedTokenV1::new(ordinal as u64, id, bytes.to_vec()))
+                        .unwrap(),
+                );
+            }
+            let (mut reasoning, mut content) = (String::new(), String::new());
+            for update in &updates {
+                match update {
+                    CompletionUpdateV1::Reasoning(text) => reasoning.push_str(&text.text),
+                    CompletionUpdateV1::Content(text) => content.push_str(&text.text),
+                    _ => {}
+                }
+            }
+            assert_eq!(
+                (reasoning.as_str(), content.as_str()),
+                ("plan</t>more", "answer")
+            );
+            assert!(matches!(
+                updates.last(),
+                Some(CompletionUpdateV1::Finished(CompletedCompletionV1 {
+                    reason: CompletionFinishV1::Stop,
+                    ..
+                }))
+            ));
+        }
     }
 
     /// A thinking completion begins in reasoning unless the render that

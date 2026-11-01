@@ -62,8 +62,9 @@ pub fn multimodal_component_for(geometry: &Geometry) -> Result<Vec<u8>, String> 
 
 /// The frontend component of a package of `geometry`: [`COMPONENT`] with
 /// the geometry's logits width as its vocabulary size and its context as
-/// the total and generated token limits, the tokenizer's own limits kept.
-/// The flash geometry's is [`COMPONENT`] itself.
+/// the total and generated token limits, each declared output length
+/// lowered to that context, the tokenizer's own limits kept. The flash
+/// geometry's is [`COMPONENT`] itself.
 pub fn component_for(geometry: &Geometry) -> Result<Vec<u8>, String> {
     let mut component: serde_json::Value =
         serde_json::from_slice(COMPONENT).map_err(|e| e.to_string())?;
@@ -71,6 +72,7 @@ pub fn component_for(geometry: &Geometry) -> Result<Vec<u8>, String> {
     component["vocabulary"]["size"] = geometry.shape.vocab.into();
     component["context"]["maximum_total_tokens"] = geometry.context_tokens().into();
     component["limits"]["maximum_generated_tokens"] = geometry.context_tokens().into();
+    runtime_frontend_contract::lower_output_tokens_v1(&mut component, geometry.context_tokens());
     if component == original {
         return Ok(COMPONENT.to_vec());
     }
@@ -89,8 +91,10 @@ mod tests {
     /// The serving defaults plan V6 fixes:
     /// temperature and top_p 1.0, thinking on at effort high, and the 1M
     /// context the checkpoint's `max_position_embeddings` gives. The
-    /// checkpoint ships no generation_config.json. An omitted max_tokens
-    /// fills the remaining context, as the transport does for every model.
+    /// checkpoint ships no generation_config.json. A chat or Responses
+    /// request without an output limit generates at most 65,536 tokens, or
+    /// 131,072 when it thinks at effort max (the owner decision of
+    /// 2026-10-31), lowered by the transport to the context left.
     #[test]
     fn the_declaration_holds_the_planned_defaults() {
         let descriptor = descriptor();
@@ -106,6 +110,12 @@ mod tests {
         assert!(descriptor.reasoning.default_enabled);
         assert_eq!(descriptor.reasoning.default_effort, "high");
         assert_eq!(descriptor.context.maximum_total_tokens, 1_048_576);
+        let output = descriptor.output_tokens.expect("declared output lengths");
+        assert_eq!(output.default, 65_536);
+        assert_eq!(
+            output.efforts,
+            std::collections::BTreeMap::from([("max".to_owned(), 131_072)])
+        );
     }
 
     /// The image declaration matches the encoder contract: the arena's rows,
@@ -167,8 +177,9 @@ mod tests {
     }
 
     /// Each compiled geometry's frontend states its own logits width and
-    /// context and keeps everything else of the declaration; flash's is the
-    /// declaration's bytes.
+    /// context, with each output length lowered to that context, and keeps
+    /// everything else of the declaration; flash's is the declaration's
+    /// bytes.
     #[test]
     fn each_geometry_s_frontend_states_its_limits() {
         use model_deepseek41_contract::geometry::{FLASH, GEOMETRIES};
@@ -186,14 +197,49 @@ mod tests {
                 frontend.limits.maximum_generated_tokens as u64,
                 geometry.context_tokens()
             );
+            let output = frontend.output_tokens.as_ref().unwrap();
+            assert_eq!(
+                (
+                    output.for_effort(None) as u64,
+                    output.for_effort(Some("max")) as u64
+                ),
+                (
+                    65_536.min(geometry.context_tokens()),
+                    131_072.min(geometry.context_tokens())
+                )
+            );
             let mut rest: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             let mut expected = declared.clone();
             for value in [&mut rest, &mut expected] {
                 value["vocabulary"]["size"] = 0.into();
                 value["context"]["maximum_total_tokens"] = 0.into();
                 value["limits"]["maximum_generated_tokens"] = 0.into();
+                value["output_tokens"] = serde_json::Value::Null;
             }
             assert_eq!(rest, expected, "{}", geometry.id);
+        }
+    }
+
+    /// A geometry whose context is shorter than a declared output length
+    /// lowers that length to its context and keeps the shorter ones, so its
+    /// frontend still validates.
+    #[test]
+    fn a_shorter_context_lowers_the_declared_output_lengths() {
+        for (context, default, max) in [(98_304, 65_536, 98_304), (32_768, 32_768, 32_768)] {
+            let mut geometry = model_deepseek41_contract::geometry::FLASH;
+            geometry.shape.context = context;
+            let bytes = component_for(&geometry).unwrap();
+            let frontend = FrontendDescriptorV1::from_component_bytes(&bytes).unwrap();
+            assert_eq!(
+                frontend.limits.maximum_generated_tokens as u64,
+                geometry.context_tokens()
+            );
+            let output = frontend.output_tokens.unwrap();
+            assert_eq!(
+                (output.for_effort(None), output.for_effort(Some("max"))),
+                (default, max),
+                "{context}"
+            );
         }
     }
 }

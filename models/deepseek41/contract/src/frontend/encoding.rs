@@ -14,8 +14,23 @@
 //! tool-call arguments up to twice (`encode_arguments_to_dsml`), dictionary
 //! key order, stable sorting, and the truthiness of the values the vendor
 //! tests with `if`.
+//!
+//! The prompt is a [`MarkedPromptV1`]: the vendor's text byte for byte, with
+//! its special tokens named as deepseek-recipe 0.2.0 names them (commit
+//! 93b0fd229c, `deepseek-recipe-encoding/src/lib.rs` lines 8-15). Each
+//! special-token constant the template writes is a special token, those in
+//! the tool instructions and the DSML markup included, and so is each
+//! grounding token in assistant content and reasoning
+//! ([`GROUNDING_TOKENS`]). Everything else is plain text: message content,
+//! tool results, tool schemas, call names and arguments, the response format
+//! and the template's literal text. The vendor's prompt is one string its
+//! tokenizer scans for added tokens, so a spelling in client text there
+//! becomes that token (`explicit-special-tokens` in
+//! `models/deepseek41/frontend-divergences.json`, section `mapping`). The
+//! port charges no byte limit while it writes; the served format checks the
+//! finished prompt.
 
-use frontend_format::toolkit::{json_to_string_v1, json_truthy};
+use frontend_format::toolkit::{MarkedPromptV1, json_to_string_v1, json_truthy};
 use frontend_format::{FrontendJsonEncodingV1, FrontendJsonV1};
 
 /// Lines 29-39 and 426.
@@ -38,6 +53,42 @@ const TASKS: [(&str, &str); 6] = [
     ("domain", "<｜domain｜>"),
     ("title", "<｜title｜>"),
     ("read_url", "<｜read_url｜>"),
+];
+
+/// The special-token constants the template writes (lines 29-50 and 426):
+/// where template text spells one, it is that special token.
+const TEMPLATE_TOKENS: [&str; 15] = [
+    BOS,
+    EOS,
+    THINKING_START,
+    THINKING_END,
+    DSML,
+    USER,
+    ASSISTANT,
+    LATEST_REMINDER,
+    SYSTEM,
+    TASKS[0].1,
+    TASKS[1].1,
+    TASKS[2].1,
+    TASKS[3].1,
+    TASKS[4].1,
+    TASKS[5].1,
+];
+
+/// Not the vendor's: the grounding tokens, each a special token where
+/// assistant content or reasoning spells it, leftmost first, as
+/// deepseek-recipe 0.2.0 renders them (`deepseek-recipe-encoding/src/v4/
+/// mod.rs` lines 20-33, 194-208). Anywhere else, and every other spelling
+/// there, is plain text.
+pub const GROUNDING_TOKENS: [&str; 8] = [
+    "<｜ref｜>",
+    "<｜/ref｜>",
+    "<｜box｜>",
+    "<｜/box｜>",
+    "<｜point｜>",
+    "<｜/point｜>",
+    "<｜polygon｜>",
+    "<｜/polygon｜>",
 ];
 
 /// Lines 64-66, before the schema.
@@ -84,6 +135,57 @@ type Result<T> = std::result::Result<T, EncodingError>;
 
 fn error<T>(message: impl Into<String>) -> Result<T> {
     Err(EncodingError(message.into()))
+}
+
+/// Appends plain text: client text, or template text that writes no special
+/// token.
+fn push_plain(prompt: &mut MarkedPromptV1, text: &str) -> Result<()> {
+    prompt.push_plain(text, usize::MAX).map_err(EncodingError)
+}
+
+/// Appends one special token the template writes.
+fn push_special(prompt: &mut MarkedPromptV1, token: &str) -> Result<()> {
+    prompt
+        .push_special(token, usize::MAX)
+        .map_err(EncodingError)
+}
+
+/// Appends a part of the prompt written apart, with its special tokens.
+fn push_prompt(prompt: &mut MarkedPromptV1, other: &MarkedPromptV1) -> Result<()> {
+    prompt.push_prompt(other, usize::MAX).map_err(EncodingError)
+}
+
+/// Appends template text, each special-token constant it spells
+/// ([`TEMPLATE_TOKENS`]) as that special token.
+fn push_template(prompt: &mut MarkedPromptV1, text: &str) -> Result<()> {
+    push_marked(prompt, text, &TEMPLATE_TOKENS)
+}
+
+/// Appends assistant content or reasoning, each grounding token it spells
+/// ([`GROUNDING_TOKENS`]) as that special token.
+fn push_assistant(prompt: &mut MarkedPromptV1, text: &str) -> Result<()> {
+    push_marked(prompt, text, &GROUNDING_TOKENS)
+}
+
+/// Appends `text` with each of `tokens` in it, leftmost and then longest
+/// first, as a special token, and the rest as plain text.
+fn push_marked(prompt: &mut MarkedPromptV1, text: &str, tokens: &[&str]) -> Result<()> {
+    let (mut plain, mut at) = (0, 0);
+    while let Some(character) = text[at..].chars().next() {
+        let token = tokens
+            .iter()
+            .filter(|token| text[at..].starts_with(**token))
+            .max_by_key(|token| token.len());
+        let Some(token) = token else {
+            at += character.len_utf8();
+            continue;
+        };
+        push_plain(prompt, &text[plain..at])?;
+        push_special(prompt, token)?;
+        at += token.len();
+        plain = at;
+    }
+    push_plain(prompt, &text[plain..])
 }
 
 /// `thinking_mode`: "chat" or "thinking".
@@ -444,45 +546,29 @@ fn sort_tool_results_by_call_order(messages: &mut [Message]) {
     }
 }
 
-/// `_validate_no_image_sp_tokens` (lines 355-367).
-fn validate_no_image_sp_tokens(message: &Message) -> Result<()> {
-    if message
-        .content
-        .as_deref()
-        .is_some_and(|content| content.contains(IMAGE_PLACEHOLDER))
-    {
-        return error(format!(
-            "Message content contains image special token '{IMAGE_PLACEHOLDER}'. Images should be \
-             provided as image content blocks."
-        ));
-    }
-    if message
-        .reasoning_content
-        .as_deref()
-        .is_some_and(|reasoning| reasoning.contains(IMAGE_PLACEHOLDER))
-    {
-        return error(format!(
-            "reasoning_content contains image special token '{IMAGE_PLACEHOLDER}'"
-        ));
-    }
-    Ok(())
-}
-
 /// `process_image_messages` and `_process_image_blocks` (lines 323-396):
 /// each image block becomes a text block of `placeholder(n)` for the n-th
 /// image in prompt order, whose caller index is the n-th of the returned
 /// list.
+///
+/// Not the vendor's: `_validate_no_image_sp_tokens` (lines 355-367, called
+/// at lines 377 and 824-826), which refuses [`IMAGE_PLACEHOLDER`] in a
+/// message's content or reasoning, is not ported. Client text is plain
+/// text, so a spelling of the placeholder in it is text, as deepseek-recipe
+/// 0.2.0 renders client text (`deepseek-recipe/src/protocol/openai/
+/// chat_completion/request/convert.rs` lines 297-308;
+/// `explicit-special-tokens` in `models/deepseek41/frontend-divergences.json`,
+/// section `mapping`).
 fn process_image_messages(
     messages: &mut [Message],
     placeholder: &dyn Fn(usize) -> String,
-) -> Result<Vec<usize>> {
+) -> Vec<usize> {
     let mut images = Vec::new();
     for message in messages {
-        validate_no_image_sp_tokens(message)?;
         let Some(blocks) = message.blocks.as_mut().filter(|blocks| !blocks.is_empty()) else {
             continue;
         };
-        process_image_blocks(blocks, placeholder, &mut images)?;
+        process_image_blocks(blocks, placeholder, &mut images);
         // Lines 387-393: a list content's text is its text blocks joined.
         if message.content.is_none() {
             let texts: Vec<&str> = blocks
@@ -495,15 +581,20 @@ fn process_image_messages(
             message.content = Some(texts.join("\n\n"));
         }
     }
-    Ok(images)
+    images
 }
 
 /// `_process_image_blocks` also descends into list-valued tool results.
+///
+/// Not the vendor's: a text block that spells [`IMAGE_PLACEHOLDER`] is
+/// text, which the vendor refuses (lines 342-348), for the reason
+/// [`process_image_messages`] gives (`explicit-special-tokens` in
+/// `models/deepseek41/frontend-divergences.json`, section `mapping`).
 fn process_image_blocks(
     blocks: &mut [Block],
     placeholder: &dyn Fn(usize) -> String,
     images: &mut Vec<usize>,
-) -> Result<()> {
+) {
     for block in blocks {
         match block {
             Block::Image(index) => {
@@ -514,18 +605,11 @@ fn process_image_blocks(
                 content: ToolContent::Blocks(nested),
                 ..
             } => {
-                process_image_blocks(nested, placeholder, images)?;
-            }
-            Block::Text(text) if text.contains(IMAGE_PLACEHOLDER) => {
-                return error(format!(
-                    "Text block contains image placeholder '{IMAGE_PLACEHOLDER}'. Images \
-                     should be separate content blocks."
-                ));
+                process_image_blocks(nested, placeholder, images);
             }
             _ => {}
         }
     }
-    Ok(())
 }
 
 /// `render_reasoning_effort` (lines 456-474): the effort is checked for
@@ -572,16 +656,22 @@ pub fn budget_of(name: &str) -> Option<i64> {
         .map(|(_, budget)| *budget)
 }
 
-/// `render_tools` (lines 509-521).
-fn render_tools(tools: &[FrontendJsonV1]) -> Result<String> {
+/// `render_tools` (lines 509-521): the instructions with their DSML and
+/// reasoning tokens, then the schemas as plain text.
+fn render_tools(tools: &[FrontendJsonV1]) -> Result<MarkedPromptV1> {
     let schemas = tools.iter().map(to_json).collect::<Result<Vec<_>>>()?;
-    Ok(format!("{TOOLS_HEAD}{}{TOOLS_TAIL}", schemas.join("\n")))
+    let mut prompt = MarkedPromptV1::new();
+    push_template(&mut prompt, TOOLS_HEAD)?;
+    push_plain(&mut prompt, &schemas.join("\n"))?;
+    push_plain(&mut prompt, TOOLS_TAIL)?;
+    Ok(prompt)
 }
 
 /// `encode_arguments_to_dsml` (lines 524-555): the arguments as JSON (read
 /// up to twice, for double-encoded text), else as one string argument
 /// named `arguments`; each a string as written and any other value as JSON.
-fn encode_arguments_to_dsml(call: &ToolCall) -> Result<String> {
+/// The names and values are plain text.
+fn encode_arguments_to_dsml(call: &ToolCall) -> Result<MarkedPromptV1> {
     let mut arguments = FrontendJsonV1::String(call.arguments.clone());
     for _ in 0..2 {
         let FrontendJsonV1::String(text) = &arguments else {
@@ -599,17 +689,22 @@ fn encode_arguments_to_dsml(call: &ToolCall) -> Result<String> {
             FrontendJsonV1::String(call.arguments.clone()),
         )],
     };
-    let mut parameters = Vec::new();
-    for (key, value) in &entries {
+    let mut parameters = MarkedPromptV1::new();
+    for (position, (key, value)) in entries.iter().enumerate() {
         let (string, value) = match value {
             FrontendJsonV1::String(text) => ("true", text.clone()),
             value => ("false", to_json(value)?),
         };
-        parameters.push(format!(
-            "<{DSML} parameter name=\"{key}\" string=\"{string}\">{value}</{DSML} parameter>"
-        ));
+        if position > 0 {
+            push_plain(&mut parameters, "\n")?;
+        }
+        push_template(&mut parameters, &format!("<{DSML} parameter name=\""))?;
+        push_plain(&mut parameters, key)?;
+        push_plain(&mut parameters, &format!("\" string=\"{string}\">"))?;
+        push_plain(&mut parameters, &value)?;
+        push_template(&mut parameters, &format!("</{DSML} parameter>"))?;
     }
-    Ok(parameters.join("\n"))
+    Ok(parameters)
 }
 
 /// `json.loads(text)`, or `None` where Python raises. A repeated key keeps
@@ -661,13 +756,16 @@ fn find_last_user_index(messages: &[Message]) -> isize {
 }
 
 /// `render_message` (lines 585-742): one message and the transition after it.
+/// Client text is plain text, and so is the template's own text but for its
+/// special tokens; assistant content and reasoning mark their grounding
+/// tokens.
 fn render_message(
     index: usize,
     messages: &[Message],
     mode: ThinkingMode,
     drop_thinking: bool,
     effort: Option<&ReasoningEffort>,
-) -> Result<String> {
+) -> Result<MarkedPromptV1> {
     let message = &messages[index];
     let last_user = find_last_user_index(messages);
     let position = index as isize;
@@ -680,34 +778,34 @@ fn render_message(
 
     // Lines 615-619.
     let effort_prompt = render_reasoning_effort(index, mode, effort)?;
-    let mut prompt = String::new();
+    let mut prompt = MarkedPromptV1::new();
     if index == 0 && (!effort_prompt.is_empty() || message.role == Role::System) {
-        prompt.push_str(SYSTEM);
+        push_special(&mut prompt, SYSTEM)?;
     }
-    prompt.push_str(&effort_prompt);
+    push_plain(&mut prompt, &effort_prompt)?;
 
     match message.role {
         // Lines 621-629.
         Role::System => {
             if index > 0 {
-                prompt.push_str(SYSTEM);
+                push_special(&mut prompt, SYSTEM)?;
             }
-            prompt.push_str(message.content.as_deref().unwrap_or_default());
+            push_plain(&mut prompt, message.content.as_deref().unwrap_or_default())?;
             if !tools.is_empty() {
-                prompt.push_str("\n\n");
-                prompt.push_str(&render_tools(&tools)?);
+                push_plain(&mut prompt, "\n\n")?;
+                push_prompt(&mut prompt, &render_tools(&tools)?)?;
             }
             if let Some(format) = &message.response_format
                 && json_truthy(format)
             {
-                prompt.push_str("\n\n");
-                prompt.push_str(RESPONSE_FORMAT);
-                prompt.push_str(&to_json(format)?);
+                push_plain(&mut prompt, "\n\n")?;
+                push_plain(&mut prompt, RESPONSE_FORMAT)?;
+                push_plain(&mut prompt, &to_json(format)?)?;
             }
         }
         // Lines 631-657.
         Role::User => {
-            prompt.push_str(USER);
+            push_special(&mut prompt, USER)?;
             match message.blocks.as_deref() {
                 Some(blocks) if !blocks.is_empty() => {
                     let parts: Vec<String> = blocks
@@ -734,15 +832,15 @@ fn render_message(
                             Block::Image(_) => "[Unsupported image]".to_owned(),
                         })
                         .collect();
-                    prompt.push_str(&parts.join("\n\n"));
+                    push_plain(&mut prompt, &parts.join("\n\n"))?;
                 }
-                _ => prompt.push_str(message.content.as_deref().unwrap_or_default()),
+                _ => push_plain(&mut prompt, message.content.as_deref().unwrap_or_default())?,
             }
         }
         // Lines 659-660.
         Role::LatestReminder => {
-            prompt.push_str(LATEST_REMINDER);
-            prompt.push_str(message.content.as_deref().unwrap_or("None"));
+            push_special(&mut prompt, LATEST_REMINDER)?;
+            push_plain(&mut prompt, message.content.as_deref().unwrap_or("None"))?;
         }
         // Lines 662-663.
         Role::Tool => {
@@ -753,39 +851,42 @@ fn render_message(
         }
         // Lines 665-708.
         Role::Assistant => {
-            let mut tool_content = String::new();
+            let mut tool_content = MarkedPromptV1::new();
             if !calls.is_empty() {
-                let invocations = calls
-                    .iter()
-                    .map(|call| {
-                        let name = qualified((call.namespace.clone(), call.name.clone()))?;
-                        Ok(format!(
-                            "<{DSML} invoke name=\"{name}\">\n{}\n</{DSML} invoke>",
-                            encode_arguments_to_dsml(call)?
-                        ))
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                tool_content = format!(
-                    "\n\n<{DSML} calls>\n{}\n</{DSML} calls>",
-                    invocations.join("\n")
-                );
+                let mut invocations = MarkedPromptV1::new();
+                for (number, call) in calls.iter().enumerate() {
+                    let name = qualified((call.namespace.clone(), call.name.clone()))?;
+                    let arguments = encode_arguments_to_dsml(call)?;
+                    if number > 0 {
+                        push_plain(&mut invocations, "\n")?;
+                    }
+                    push_template(&mut invocations, &format!("<{DSML} invoke name=\""))?;
+                    push_plain(&mut invocations, &name)?;
+                    push_plain(&mut invocations, "\">\n")?;
+                    push_prompt(&mut invocations, &arguments)?;
+                    push_template(&mut invocations, &format!("\n</{DSML} invoke>"))?;
+                }
+                push_template(&mut tool_content, &format!("\n\n<{DSML} calls>\n"))?;
+                push_prompt(&mut tool_content, &invocations)?;
+                push_template(&mut tool_content, &format!("\n</{DSML} calls>"))?;
             }
             let previous_task = index > 0 && messages[index - 1].task.is_some();
-            let mut thinking = String::new();
             if mode == ThinkingMode::Thinking
                 && !previous_task
                 && (!drop_thinking || position > last_user)
             {
-                thinking.push_str(message.reasoning_content.as_deref().unwrap_or_default());
+                push_assistant(
+                    &mut prompt,
+                    message.reasoning_content.as_deref().unwrap_or_default(),
+                )?;
                 if !message.open_reasoning {
-                    thinking.push_str(THINKING_END);
+                    push_special(&mut prompt, THINKING_END)?;
                 }
             }
-            prompt.push_str(&thinking);
-            prompt.push_str(message.content.as_deref().unwrap_or_default());
-            prompt.push_str(&tool_content);
+            push_assistant(&mut prompt, message.content.as_deref().unwrap_or_default())?;
+            push_prompt(&mut prompt, &tool_content)?;
             if !message.wo_eos {
-                prompt.push_str(EOS);
+                push_special(&mut prompt, EOS)?;
             }
         }
     }
@@ -805,26 +906,29 @@ fn render_message(
             ));
         };
         if task != "action" {
-            prompt.push_str(token);
+            push_special(&mut prompt, token)?;
         } else {
-            prompt.push_str(ASSISTANT);
-            prompt.push_str(if mode == ThinkingMode::Thinking {
-                THINKING_START
-            } else {
-                THINKING_END
-            });
-            prompt.push_str(token);
+            push_special(&mut prompt, ASSISTANT)?;
+            push_special(
+                &mut prompt,
+                if mode == ThinkingMode::Thinking {
+                    THINKING_START
+                } else {
+                    THINKING_END
+                },
+            )?;
+            push_special(&mut prompt, token)?;
         }
     } else if message.role == Role::User || (message.role == Role::System && index > 0) {
         // Lines 731-740.
-        prompt.push_str(ASSISTANT);
+        push_special(&mut prompt, ASSISTANT)?;
         let thinking = mode == ThinkingMode::Thinking;
         // Lines 735-738: `not drop_thinking and thinking` or `drop_thinking and thinking and
         // index >= last_user_idx`.
         if thinking && (!drop_thinking || position >= last_user) {
-            prompt.push_str(THINKING_START);
+            push_special(&mut prompt, THINKING_START)?;
         } else {
-            prompt.push_str(THINKING_END);
+            push_special(&mut prompt, THINKING_END)?;
         }
     }
     Ok(prompt)
@@ -859,8 +963,9 @@ fn encode_messages_text(
     mode: ThinkingMode,
     drop_thinking: bool,
     effort: Option<&ReasoningEffort>,
-) -> Result<String> {
-    let mut prompt = BOS.to_owned();
+) -> Result<MarkedPromptV1> {
+    let mut prompt = MarkedPromptV1::new();
+    push_special(&mut prompt, BOS)?;
     let drop_thinking = drop_thinking && !messages.iter().any(|message| !message.tools.is_empty());
     let dropped;
     let messages = if mode == ThinkingMode::Thinking && drop_thinking {
@@ -870,34 +975,30 @@ fn encode_messages_text(
         messages
     };
     for index in 0..messages.len() {
-        prompt.push_str(&render_message(
-            index,
-            messages,
-            mode,
-            drop_thinking,
-            effort,
-        )?);
+        push_prompt(
+            &mut prompt,
+            &render_message(index, messages, mode, drop_thinking, effort)?,
+        )?;
     }
     Ok(prompt)
 }
 
 /// `encode_messages` (lines 810-844) without a context, with
 /// `add_default_bos_token`: the prompt, and the caller's image indices in
-/// prompt order. `placeholder(n)` is the text the n-th image renders as
-/// (the vendor writes [`IMAGE_PLACEHOLDER`]).
+/// prompt order. `placeholder(n)` is the plain text the n-th image renders
+/// as (the vendor writes [`IMAGE_PLACEHOLDER`]). Not the vendor's: no
+/// message is refused for spelling [`IMAGE_PLACEHOLDER`] (lines 824-826;
+/// see [`process_image_messages`]).
 pub fn encode_messages(
     messages: &[Message],
     mode: ThinkingMode,
     drop_thinking: bool,
     effort: Option<&ReasoningEffort>,
     placeholder: &dyn Fn(usize) -> String,
-) -> Result<(String, Vec<usize>)> {
-    for message in messages {
-        validate_no_image_sp_tokens(message)?;
-    }
+) -> Result<(MarkedPromptV1, Vec<usize>)> {
     let mut messages = merge_tool_messages(messages);
     sort_tool_results_by_call_order(&mut messages);
-    let images = process_image_messages(&mut messages, placeholder)?;
+    let images = process_image_messages(&mut messages, placeholder);
     let prompt = encode_messages_text(&messages, mode, drop_thinking, effort)?;
     Ok((prompt, images))
 }

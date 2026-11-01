@@ -388,6 +388,10 @@ pub struct FrontendMediaPartV1 {
 pub enum PromptSegmentV1 {
     Text(String),
     Media(usize),
+    /// One special token of the prompt, given by its text, from a frontend
+    /// whose renders name their special tokens
+    /// ([`ServerFrontendV1::explicit_special_tokens`]).
+    Special(String),
 }
 
 /// One function tool a request offered.
@@ -689,6 +693,14 @@ frontend_with_alias_delegation! {
     fn forced_choice_without_tools_is_auto(&self) -> bool {
         false
     }
+    /// Whether a rendered chat names every special token of its prompt as a
+    /// [`PromptSegmentV1::Special`] segment, so the backend encodes all
+    /// other text as plain text. The transport then hands the backend the
+    /// segments ([`crate::PreparedPrompt::SegmentedChat`]) rather than the
+    /// prompt text.
+    fn explicit_special_tokens(&self) -> bool {
+        false
+    }
     /// The separator of a qualified function name (`namespace`, separator,
     /// name), for a frontend whose prompt format qualifies a function in a
     /// namespace; `None` when names are not qualified. The transport then
@@ -698,6 +710,13 @@ frontend_with_alias_delegation! {
     /// namespace description before the function's on its own line, and
     /// forwards the function object so changed without the namespace.
     fn tool_namespace_separator(&self) -> Option<&str> {
+        None
+    }
+    /// The most tokens a chat or Responses request without an output limit
+    /// generates for the prompt `state` was rendered with, at least one,
+    /// before the context left after the prompt lowers it; `None` keeps the
+    /// context left. A request's explicit limit is always honored.
+    fn default_output_tokens(&self, _state: &Arc<dyn ChatStateV1>) -> Option<usize> {
         None
     }
     /// The largest prompt-plus-completion token count this model serves.

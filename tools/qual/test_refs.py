@@ -3,10 +3,12 @@
 from contextlib import redirect_stderr, redirect_stdout
 import copy
 import difflib
+import inspect
 import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -15,6 +17,7 @@ import unittest
 from unittest.mock import patch
 
 import common
+from common import declared_path
 import declaration
 import refs
 from qual_test_config import clean_checkout
@@ -433,6 +436,168 @@ class AdoptionKeepsTheLockTests(unittest.TestCase):
         self.assertIn("changed: sample/.", errors)
         self.assertIn("dry run", output)
         self.assertEqual(self.lock.read_bytes(), before)
+
+    def test_a_scoped_adopt_refreshes_only_the_named_entries(self):
+        (self.root / "sample.json").write_text('{"changed": true}')
+        (self.root / "shared.json").write_text('["changed"]')
+        code, errors, _ = self.adopt("--entry", "sample", "--replace-sha256", refs.digest(self.lock))
+        self.assertEqual(code, 0, errors)
+        self.assertIn("changed: sample/.", errors)
+        self.assertNotIn("changed: shared", errors)
+        value = json.loads(self.lock.read_text())
+        self.assertEqual(value["entries"]["sample"]["members"], {".": refs.digest(self.root / "sample.json")})
+        self.assertEqual(value["entries"]["shared"], self.previous["entries"]["shared"])
+        shared = self.previous["entries"]["shared"]["members"]["."]
+        self.assertEqual(value["objects"][shared], self.previous["objects"][shared])
+        refs.validate_lock(value, self.config, self.root)
+
+    def test_a_scoped_adopt_refuses_an_undeclared_entry(self):
+        before = self.lock.read_bytes()
+        for name in ("missing", "operator:layer_reference"):
+            code, errors, _ = self.adopt("--entry", name, "--replace-sha256", refs.digest(self.lock))
+            self.assertEqual(code, 2, name)
+            self.assertIn(f"adopt --entry: {name}: not a declared lock entry", errors)
+        self.assertEqual(self.lock.read_bytes(), before)
+
+    def test_a_scoped_adopt_drops_the_objects_a_full_adopt_drops(self):
+        (self.root / "sample.json").write_text('{"changed": true}')
+        code, errors, _ = self.adopt("--entry", "sample", "--replace-sha256", refs.digest(self.lock))
+        self.assertEqual(code, 0, errors)
+        self.assertIn(f"objects: 1 no longer pinned: {self.sample[:12]}", errors)
+        value = json.loads(self.lock.read_text())
+        self.assertNotIn(self.sample, value["objects"])
+        # The configuration's own object, the orphan record, the operator
+        # record and the entry's own fields stay, as a full adopt keeps them.
+        self.assertEqual(json.dumps(self.kept(value), sort_keys=True),
+                         json.dumps(self.kept(self.previous), sort_keys=True))
+
+    def test_a_scoped_adopt_writes_a_full_adopt_s_lock_when_only_its_entries_changed(self):
+        (self.root / "sample.json").write_text('{"changed": true}')
+        scoped = refs.encoded(refs.adoption(self.config, self.previous, self.root, entries=["sample"]),
+                              self.previous)
+        full = refs.encoded(refs.adoption(self.config, self.previous, self.root), self.previous)
+        self.assertEqual(scoped, full)
+        self.assertNotEqual(scoped, self.lock.read_bytes())
+        # Both dry runs report the digest of the same bytes.
+        digests = []
+        for options in (("--dry-run",), ("--dry-run", "--entry", "sample")):
+            code, errors, output = self.adopt(*options)
+            self.assertEqual(code, 0, errors)
+            digests.append(re.search(r"would be written \(([0-9a-f]{64})\)", output).group(1))
+        self.assertEqual(digests[0], digests[1])
+
+    def test_a_scoped_adopt_keeps_the_lock_digest_and_dry_run_rules(self):
+        before = self.lock.read_bytes()
+        (self.root / "sample.json").write_text('{"changed": true}')
+        code, errors, output = self.adopt("--entry", "sample", "--dry-run")
+        self.assertEqual(code, 0, errors)
+        self.assertIn("dry run", output)
+        self.assertEqual(self.lock.read_bytes(), before)
+        code, errors, _ = self.adopt("--entry", "sample")
+        self.assertEqual(code, 2)
+        self.assertIn("supply --replace-sha256", errors)
+        self.assertEqual(self.lock.read_bytes(), before)
+
+    def test_a_scoped_adopt_refuses_an_input_a_runner_proof_binds(self):
+        # A scoped workload:teacher would repin the workload while
+        # reference:teacher kept its binding to the old one, which a full
+        # snapshot refuses as a stale reference. Nothing is read.
+        config = {"model": "synthetic",
+                  "inputs": {**self.config["inputs"], "media_preprocessing_reference": "preprocessing"},
+                  "qualification": {"references": {"teacher": {
+                      "path": "teacher.json", "workload": "teacher.workload.json"}}}}
+        with patch.object(refs, "snapshot", side_effect=AssertionError("an input was read")):
+            for name in ("workload:teacher", "reference:teacher", "media_preprocessing_reference"):
+                with self.assertRaisesRegex(ValueError, f"adopt --entry: {name}: a runner proof binds it, "
+                                                        "so only a full adopt repins it"):
+                    refs.adoption(config, self.previous, self.root, entries=[name])
+
+    def test_a_scoped_adopt_names_every_entry_of_a_shared_path(self):
+        config = {"model": "synthetic", "inputs": {**self.config["inputs"], "sample_copy": "sample.json"}}
+        previous = copy.deepcopy(self.previous)
+        previous["entries"]["sample_copy"] = {"path": "sample.json", "directory": False,
+                                              "members": {".": self.sample}}
+        (self.root / "sample.json").write_text('{"changed": true}')
+        with self.assertRaisesRegex(ValueError, "adopt --entry: sample_copy: pins a file a named entry pins; "
+                                                "name it too"):
+            refs.adoption(config, previous, self.root, entries=["sample"])
+        value = refs.adoption(config, previous, self.root, entries=["sample", "sample_copy"])
+        new = refs.digest(self.root / "sample.json")
+        self.assertEqual({key: value["entries"][key]["members"] for key in ("sample", "sample_copy")},
+                         {"sample": {".": new}, "sample_copy": {".": new}})
+        self.assertNotIn(self.sample, value["objects"])
+        refs.validate_lock(value, config, self.root)
+
+    def test_a_scoped_adopt_names_every_entry_pinning_a_file_of_a_named_directory(self):
+        # A file entry and a directory entry holding that file pin one file
+        # twice; refreshing only one of them would leave two digests for it.
+        (self.root / "captures").mkdir()
+        (self.root / "captures" / "a.json").write_text("{}")
+        (self.root / "captures" / "b.json").write_text("[]")
+        config = {"model": "synthetic",
+                  "inputs": {**self.config["inputs"], "capture_a": "captures/a.json", "captures": "captures"}}
+        previous = refs.adoption(config, self.previous, self.root)
+        (self.root / "captures" / "a.json").write_text('{"changed": true}')
+        for named, other in (("capture_a", "captures"), ("captures", "capture_a")):
+            with self.assertRaisesRegex(ValueError, f"adopt --entry: {other}: pins a file a named entry pins; "
+                                                    "name it too"):
+                refs.adoption(config, previous, self.root, entries=[named])
+        value = refs.adoption(config, previous, self.root, entries=["capture_a", "captures"])
+        new = refs.digest(self.root / "captures" / "a.json")
+        self.assertEqual(value["entries"]["capture_a"]["members"], {".": new})
+        self.assertEqual(value["entries"]["captures"]["members"]["a.json"], new)
+        refs.validate_lock(value, config, self.root)
+
+    def test_a_scoped_adopt_refuses_an_overlap_a_runner_proof_binds(self):
+        # `exact` pins the bytes reference:teacher pins.
+        (self.root / "teacher.json").write_text("{}")
+        config = {"model": "synthetic", "inputs": {**self.config["inputs"], "exact": "teacher.json"},
+                  "qualification": {"references": {"teacher": {
+                      "path": "teacher.json", "workload": "teacher.workload.json"}}}}
+        with patch.object(refs, "snapshot", side_effect=AssertionError("an input was read")):
+            with self.assertRaisesRegex(ValueError, "adopt --entry: reference:teacher: pins a file of a named entry "
+                                                    "and a runner proof binds it, so only a full adopt repins them"):
+                refs.adoption(config, self.previous, self.root, entries=["exact"])
+
+    def test_a_file_a_shipped_lock_pins_twice_is_refreshed_only_with_every_pin(self):
+        # A shipped lock may pin one file by its own entry and inside
+        # directory entries; a scoped adopt of the file entry alone is
+        # refused, naming the others (or those a runner proof binds).
+        overlaps = 0
+        for path in declaration.shipped():
+            if path == declaration.MECHANICS:
+                continue
+            config = declaration.load(path)
+            lock = refs.load_lock(config)
+            if lock is None:
+                continue
+            declared = refs.sources(config)
+            pins = {}
+            for key, entry in lock["entries"].items():
+                base = declared_path(declared[key], refs.ROOT) if key in declared else None
+                if key.startswith("operator:") or base is None:
+                    continue
+                for member in entry["members"]:
+                    pins.setdefault((base if member == "." else base / member).resolve(), set()).add(key)
+            for keys in pins.values():
+                for key in sorted(keys):
+                    others = keys - {key}
+                    if not others or lock["entries"][key]["directory"] or refs.proof_bound(key):
+                        continue
+                    overlaps += 1
+                    label = f"{path.relative_to(declaration.ROOT).as_posix()} {key}"
+                    with self.assertRaises(ValueError, msg=label) as refused:
+                        refs.scoped_entries(config, lock, [key])
+                    bound = [other for other in others if refs.proof_bound(other)]
+                    for other in bound or others:
+                        self.assertIn(other, str(refused.exception), label)
+        self.assertGreater(overlaps, 0)
+
+    def test_proof_inputs_are_the_inputs_snapshot_s_proofs_read(self):
+        source = inspect.getsource(refs.snapshot)
+        read = set(re.findall(r'config\["inputs"\]\["(\w+)"\]', source))
+        read |= set(re.findall(r'config\.get\("inputs", \{\}\)\.get\("(\w+)"\)', source))
+        self.assertEqual(read, set(refs.PROOF_INPUTS))
 
     def test_a_lock_adopt_cannot_keep_whole_is_refused(self):
         def section(value):

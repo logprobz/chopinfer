@@ -27,6 +27,7 @@ gpu-tests = ["runtime-host/linux-cuda-host"]
 bundle-runtime = { workspace = true, features = ["test-support"] }
 frontend-format.workspace = true
 runtime-frontend = { workspace = true, features = ["test-support"] }
+runtime-grammar.workspace = true
 runtime-host = { workspace = true, features = ["test-support"] }
 runtime-server.workspace = true
 runtime-bundle-sdk.workspace = true

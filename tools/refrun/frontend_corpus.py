@@ -30,6 +30,21 @@ fixtures only. A cases module may define `reference_text(text,
 arguments)`, the rewrite its model's processor makes of the template's text
 (`Reference.with_reference_text`); the reference is then the rewritten text.
 
+A Python encoder's render may return `(text, special_ranges)` instead of
+its text: a marked render, whose ranges name the special tokens the encoder
+wrote (`special_ranges`, Python string indices). It tokenizes as a
+pinned recipe's prompt tokenizer encodes a prompt (`marked_token_ids`): each
+range is the added token it spells, and the text between ranges is plain
+text, encoded by a copy of the tokenizer without its added tokens
+(`plain_tokenizer`), so an added-token spelling in client text is ordinary
+tokens. A round trip of a marked render tokenizes its prompt and
+completion with the ranges each holds, cuts the completion only at a range
+that spells a stop token, appends a declared ending as a range, and, since
+the completion's client text is plain, does not count a raw-value marker
+holding one of the declaration's `vocabulary.id_only_markers` as ending a
+value (`argument_failure`). A render that returns its text tokenizes the
+whole text, every added-token spelling in it an added token.
+
 Files (INTERFACES section 3): `corpus.json` holds render vectors with
 `"raw": true` and either `rendered_text` and `token_ids` or a `refusal`;
 `corpus-rounds.json` holds streaming vectors with an optional `separator`;
@@ -539,21 +554,134 @@ def reference_environment(*packages):
     return environment
 
 
+def special_ranges(text, ranges):
+    """The special ranges of a marked render, checked against its `text`, as
+    a tuple of `(start, end)` pairs: half-open ranges of Python string
+    indices (code points, not UTF-8 byte offsets), so `text[start:end]`
+    spells one special token. They must be ascending, disjoint and
+    nonempty, and lie within the text; two may touch."""
+    if not isinstance(ranges, (list, tuple)):
+        raise CorpusError(f"a marked render's special ranges are {type(ranges).__name__}, not a list of pairs")
+    checked, last = [], 0
+    for item in ranges:
+        pair = tuple(item) if isinstance(item, (list, tuple)) else ()
+        if not (len(pair) == 2 and all(isinstance(value, int) and not isinstance(value, bool) for value in pair)
+                and last <= pair[0] < pair[1] <= len(text)):
+            raise CorpusError(f"special range {item!r} is not an ascending, disjoint, nonempty (start, end) pair of "
+                              f"string indices within a render of {len(text)} characters")
+        checked.append(pair)
+        last = pair[1]
+    return tuple(checked)
+
+
+def marked_token_ids(text, ranges, plain, added):
+    """The token ids of a marked render's `text` and `ranges`
+    (`special_ranges`), as a pinned recipe's prompt tokenizer encodes a
+    prompt: `plain(region)` encodes each region before, between and after
+    the ranges, an empty one included, and each range is the id that
+    `added`, the tokenizer's added vocabulary, gives its spelling. A range that
+    spells no added token is refused."""
+    ids, start = [], 0
+    for begin, end in special_ranges(text, ranges):
+        ids += plain(text[start:begin])
+        spelling = text[begin:end]
+        if spelling not in added:
+            raise CorpusError(f"special range ({begin}, {end}) spells {spelling!r}, which is no added token")
+        ids.append(added[spelling])
+        start = end
+    return ids + plain(text[start:])
+
+
+def plain_tokenizer(tokenizer):
+    """A copy of `tokenizer`, a `tokenizers.Tokenizer`, without its added
+    tokens, as a pinned recipe's prompt tokenizer clones the tokenizer with
+    an empty added vocabulary: it reads every added-token spelling as the
+    plain text it is. The copy also truncates and pads nothing, so it adds
+    and drops no token."""
+    from tokenizers import Tokenizer
+
+    document = json.loads(tokenizer.to_str())
+    document.update(added_tokens=[], truncation=None, padding=None)
+    return Tokenizer.from_str(json.dumps(document))
+
+
+def marked_tokenizer(tokenizer):
+    """`tokenize_marked(text, ranges)` for a `tokenizers.Tokenizer`, an HF
+    tokenizer's `backend_tokenizer` (`marked_token_ids`): its
+    `plain_tokenizer` encodes the plain regions without special tokens
+    (`add_special_tokens=False`), and its added vocabulary names the
+    ranges' ids."""
+    plain = plain_tokenizer(tokenizer)
+    added = {token.content: identifier for identifier, token in tokenizer.get_added_tokens_decoder().items()}
+    return lambda text, ranges: marked_token_ids(
+        text, ranges, lambda region: plain.encode(region, add_special_tokens=False).ids, added)
+
+
+def ranges_within(ranges, start, end, name):
+    """The special ranges inside `[start, end)` of their text, relative to
+    `start`, or None for an unmarked text (`ranges` None). A range that
+    straddles either cut is refused: no token spans two texts."""
+    if ranges is None:
+        return None
+    inside = []
+    for begin, stop in ranges:
+        if start <= begin and stop <= end:
+            inside.append((begin - start, stop - start))
+        elif begin < end and stop > start:
+            raise CorpusError(f"{name}: the special range ({begin}, {stop}) straddles the cut at "
+                              f"{start if begin < start else end}")
+    return tuple(inside)
+
+
+def shifted(ranges, offset):
+    return tuple((start + offset, end + offset) for start, end in ranges)
+
+
 class Reference:
     """Renders and tokenizes HF inputs with one template, recording the
     template lines each render runs.
 
-    `render(**hf_input)` returns the prompt text; `tokenize(text)` its ids,
-    and `normalize(text)` the text the tokenizer's normalizer reads, which
-    the ids decode to. `environment` names the interpreter, packages and
-    Unicode version the outcomes come from (`reference_environment`)."""
+    `render(**hf_input)` returns the prompt text, or a marked render
+    `(text, special_ranges)` (`special_ranges`); `tokenize(text)` gives the
+    ids of a text, `tokenize_marked(text, ranges)` those of a marked render
+    (`marked_token_ids`), and `normalize(text)` the text the tokenizer's
+    normalizer reads, which the ids decode to (`normalized`). `environment`
+    names the interpreter, packages and Unicode version the outcomes come
+    from (`reference_environment`)."""
 
-    def __init__(self, coverage, render, tokenize, environment=None, normalize=None):
+    def __init__(self, coverage, render, tokenize, environment=None, normalize=None, tokenize_marked=None):
         self.coverage = coverage
         self.render_text = render
         self.tokenize = tokenize
         self.environment = environment if environment is not None else reference_environment("jinja2")
         self.normalize = normalize if normalize is not None else (lambda text: text)
+        self.tokenize_marked = tokenize_marked
+
+    def token_ids(self, text, ranges=None):
+        """The ids of `text`: tokenized whole, or with its special ranges
+        when `ranges` is not None."""
+        if ranges is None:
+            return self.tokenize(text)
+        if self.tokenize_marked is None:
+            raise CorpusError("this reference tokenizes no marked render")
+        return self.tokenize_marked(text, ranges)
+
+    def normalized(self, text, ranges=None):
+        """The text the ids of `text` decode to and its special ranges:
+        `normalize(text)`, or with `ranges` each plain region normalized and
+        each range as it is, since the plain tokenizer alone normalizes."""
+        if ranges is None:
+            return self.normalize(text), None
+        pieces, result, start, length = [], [], 0, 0
+        for begin, end in ranges:
+            plain = self.normalize(text[start:begin])
+            pieces += [plain, text[begin:end]]
+            length += len(plain)
+            result.append((length, length + end - begin))
+            length += end - begin
+            start = end
+        pieces.append(self.normalize(text[start:]))
+        return "".join(pieces), tuple(result)
 
     @classmethod
     def hf(cls, checkpoint, source):
@@ -575,14 +703,24 @@ class Reference:
 
     def outcome(self, arguments):
         """`{"rendered_text", "token_ids", "lines"}` or `{"refusal", "lines"}`,
-        the refusal naming the exception class and its first message line."""
+        the refusal naming the exception class and its first message line.
+        A marked render's outcome also holds its checked `special_ranges`,
+        which round trips cut with and no vector or file carries."""
         with self.coverage.tracing() as hit:
             try:
-                text = self.render_text(**arguments)
-            except Exception as error:  # Every exception the render raises is the reference refusing.
+                rendered = self.render_text(**arguments)
+            except CorpusError:
+                raise
+            except Exception as error:  # Every other exception the render raises is the reference refusing.
                 message = str(error).split("\n")[0][:200]
                 return {"refusal": {"class": type(error).__name__, "message": message}, "lines": sorted(hit)}
-        return {"rendered_text": text, "token_ids": self.tokenize(text), "lines": sorted(hit)}
+        if isinstance(rendered, str):
+            return {"rendered_text": rendered, "token_ids": self.tokenize(rendered), "lines": sorted(hit)}
+        if not (isinstance(rendered, tuple) and len(rendered) == 2 and isinstance(rendered[0], str)):
+            raise CorpusError(f"a render gives {type(rendered).__name__}, neither its text nor (text, special_ranges)")
+        text, ranges = rendered[0], special_ranges(*rendered)
+        return {"rendered_text": text, "token_ids": self.token_ids(text, ranges), "special_ranges": ranges,
+                "lines": sorted(hit)}
 
     @classmethod
     def python_encoder(cls, checkpoint, source, render):
@@ -590,8 +728,10 @@ class Reference:
         instead of a chat template: `source` runs once into its own
         namespace (`PythonSourceCoverage`), and each render calls
         `render(namespace, **hf_input)`, the cases module's mapping of the HF
-        input onto the encoder's functions. The tokenizer is the
-        checkpoint's, as for a template."""
+        input onto the encoder's functions, which returns the text or a
+        marked render (`special_ranges`). The tokenizer is the checkpoint's,
+        as for a template, and a marked render's plain text is encoded by
+        its copy without added tokens (`marked_tokenizer`)."""
         from transformers import AutoTokenizer
 
         tokenizer = AutoTokenizer.from_pretrained(checkpoint, local_files_only=True)
@@ -600,7 +740,8 @@ class Reference:
         return cls(coverage, lambda **arguments: render(coverage.namespace, **arguments),
                    lambda text: list(tokenizer(text, add_special_tokens=False)["input_ids"]),
                    reference_environment("transformers", "tokenizers"),
-                   normalizer.normalize_str if normalizer is not None else None)
+                   normalizer.normalize_str if normalizer is not None else None,
+                   marked_tokenizer(tokenizer.backend_tokenizer))
 
     def with_reference_text(self, reference_text):
         """This reference with `reference_text(text, arguments)` applied to
@@ -612,12 +753,20 @@ class Reference:
         states that rewrite and cites the processor code it follows, so the
         reference is the text the model reads. It receives the template's
         text and the render's HF input, and must be the identity on text
-        that holds nothing the processor rewrites."""
+        that holds nothing the processor rewrites. A marked render is
+        refused, since a rewrite would move its ranges."""
         if reference_text is None:
             return self
         render = self.render_text
-        return Reference(self.coverage, lambda **arguments: reference_text(render(**arguments), arguments),
-                         self.tokenize, self.environment, self.normalize)
+
+        def rewritten(**arguments):
+            text = render(**arguments)
+            if not isinstance(text, str):
+                raise CorpusError("reference_text rewrites a render's text, and a marked render's ranges index it")
+            return reference_text(text, arguments)
+
+        return Reference(self.coverage, rewritten, self.tokenize, self.environment, self.normalize,
+                         self.tokenize_marked)
 
 
 def refusal_class(outcome):
@@ -789,17 +938,24 @@ def thinking_mode(keywords, declaration):
     return "thinking" if switch else "chat"
 
 
-def argument_failure(message, tools, parser, arguments_of=None):
+def argument_failure(message, tools, parser, arguments_of=None, id_only=()):
     """The first argument of the turn's calls the parser cannot read back
     as sent, as `(kind, detail)`, or None. `tools` are the request's
     offered tools and `parser` the declaration's format.parser section;
     `arguments_of`, a cases module's `turn_arguments`, reads a call's
     arguments as its template writes them, where the HF input keeps them as
     text. The typed grammar writes every value with the close that types
-    it, so only a raw string can lose its value, to a marker it spells."""
+    it, so only a raw string can lose its value, to a marker it spells.
+
+    `id_only` holds the declaration's `vocabulary.id_only_markers` where the
+    completion is a marked render's: the spellings the served parser reads
+    only from their token ids. A marker that holds one ends no value, since
+    a marked render encodes the value, client text, as plain text, so the
+    value spells the marker in ordinary tokens, which is not that marker."""
     functions = {tool["function"].get("name"): tool["function"] for tool in tools or []
                  if isinstance(tool, dict) and isinstance(tool.get("function"), dict)}
-    markers = frontend_cases.raw_markers(parser)
+    markers = [marker for marker in frontend_cases.raw_markers(parser)
+               if not any(spelling in marker for spelling in id_only)]
     typed = (parser or {}).get("tool_grammar") == "xml-typed-parameters-v1"
     for call in message.get("tool_calls") or []:
         function = functions.get(call["function"]["name"]) or {}
@@ -866,7 +1022,14 @@ def round_vectors(model, reference, case):
     text, spells no marker that ends it, and whose completion the
     tokenizer's normalizer leaves as it is. Outside it only the tokenizer
     class yields vectors: a control that expects the normalized turn
-    (`normalized_turn`)."""
+    (`normalized_turn`).
+
+    Of a marked render, the prompt is tokenized with the prefix render's
+    ranges, which must be the history render's ranges before the cut, and
+    the completion with the history render's ranges after it; no range may
+    straddle the cut. The completion ends at the first range that spells a
+    stop token, since a stop's spelling in plain text is ordinary tokens,
+    and a declared ending is appended as a range."""
     request = case["request"]
     transport = model.transport
     reason = round_ineligible(request, transport)
@@ -886,16 +1049,27 @@ def round_vectors(model, reference, case):
     if not rendered.startswith(prompt):
         return [], {}, RoundTripFailure(
             "prefix", "the generation prompt is not a prefix of the turn's history render", mode), None
+    name = f"case {case['id']}"
+    marked = "special_ranges" in full
+    if marked != ("special_ranges" in prefix):
+        raise CorpusError(f"{name}: one of its generation prompt and history render is marked")
+    prompt_ranges = prefix.get("special_ranges")
+    if marked and ranges_within(full["special_ranges"], 0, len(prompt), name) != prompt_ranges:
+        raise CorpusError(f"{name}: its generation prompt has other special ranges than its history render")
     suffix = rendered[len(prompt):]
+    suffix_ranges = ranges_within(full.get("special_ranges"), len(prompt), len(rendered), name)
     stops = frontend_cases.stop_texts(model.declaration)
     last = full_input["messages"][-1]
     base, shape = turn_shape(last, full_input["keywords"], model.declaration)
-    found = [(suffix.find(stop), stop) for stop in stops if stop in suffix]
+    if marked:
+        found = [(start, suffix[start:end]) for start, end in suffix_ranges if suffix[start:end] in stops]
+    else:
+        found = [(suffix.find(stop), stop) for stop in stops if stop in suffix]
     completions = []
     if found:
         position, stop = min(found)
         end = position + len(stop)
-        completions.append((stop, suffix[:end], suffix[end:]))
+        completions.append((stop, suffix[:end], suffix[end:], ranges_within(suffix_ranges, 0, end, name)))
     elif model.endings is None:
         return [], {}, RoundTripFailure(
             "stop", "the turn's history render holds no stop token and the model declares no endings", mode), None
@@ -906,23 +1080,27 @@ def round_vectors(model, reference, case):
         for ending in declared:
             if ending not in stops:
                 raise CorpusError(f"{model.name}: ending {ending!r} is not a declared stop token")
-            completions.append((ending, suffix + ending, None))
+            ranges = suffix_ranges + ((len(suffix), len(suffix) + len(ending)),) if marked else None
+            completions.append((ending, suffix + ending, None, ranges))
         check_continuation(model, reference, full_request, rendered, base, declared)
     expected = model.cases.expected_turn(last, {"prompt": prompt, "request": request})
     if expected is None:
         return [], {}, RoundTripFailure(
             "read-back", "the cases module reads no turn back from this history render", mode), None
-    loss = argument_failure(last, request.get("tools"), model.parser, getattr(model.cases, "turn_arguments", None))
+    id_only = model.declaration["vocabulary"].get("id_only_markers", []) if marked else ()
+    loss = argument_failure(last, request.get("tools"), model.parser, getattr(model.cases, "turn_arguments", None),
+                            id_only)
     if loss:
         kind, detail = loss
         return [], {}, RoundTripFailure(kind, f"the parser cannot read the turn's arguments back: {detail}",
                                         mode), None
     failure = None
-    if any(reference.normalize(completion) != completion for _, completion, _ in completions):
+    if any(reference.normalized(completion, ranges)[0] != completion for _, completion, _, ranges in completions):
         # The bytes sent are lost to the tokenizer, not to the parser: the
         # vectors become a control whose expectation is the turn the
         # normalized text writes, so the parser still reads it back.
-        expected = normalized_turn(model, reference, case, full_request, prompt, suffix, completions)
+        expected = normalized_turn(model, reference, case, full_request, prompt, suffix, completions,
+                                   suffix_ranges)
         failure = RoundTripFailure(
             "tokenizer", "the tokenizer's normalizer changes the completion text the parser reads; "
             "its round trip reads back the normalized turn", mode)
@@ -937,16 +1115,17 @@ def round_vectors(model, reference, case):
         raise CorpusError(f"case {case['id']}: capture normalization would change its round-trip request: "
                           + "; ".join(changes))
     vectors, infos = [], {}
-    prompt_ids = reference.tokenize(prompt)
-    for ending, completion, separator in completions:
+    prompt_ids = reference.token_ids(prompt, prompt_ranges)
+    for ending, completion, separator, ranges in completions:
         identifier = f"{case['id']}-round-{ending_name(ending)}"
-        ids = reference.tokenize(completion)
+        ids = reference.token_ids(completion, ranges)
         vector = {"id": identifier, "request": vector_request, "token_ids": ids, "expect": expect}
         if separator is not None:
             vector["separator"] = separator
         vectors.append(vector)
+        joined = prompt_ranges + shifted(ranges, len(prompt)) if marked else None
         infos[identifier] = {"shape": shape, "ending": ending, "case": case["id"],
-                             "boundary_merges": reference.tokenize(prompt + completion) != prompt_ids + ids}
+                             "boundary_merges": reference.token_ids(prompt + completion, joined) != prompt_ids + ids}
     return vectors, infos, failure, None
 
 
@@ -970,22 +1149,27 @@ def normalized_strings(value, normalize):
     return value
 
 
-def normalized_turn(model, reference, case, request, prompt, suffix, completions):
+def normalized_turn(model, reference, case, request, prompt, suffix, completions, suffix_ranges=None):
     """The turn a round trip reads back when the tokenizer's normalizer
     rewrites its completion: the cases module's reading of the final turn
     with every string normalized. It holds only when that rewrite is all
     that changed: the normalized turn renders after the same prompt as the
     normalized completion, and both texts tokenize to the same ids, so the
-    vector's ids are the original's and only its expectation changes."""
+    vector's ids are the original's and only its expectation changes. Of a
+    marked render, the special ranges are compared too, and only the plain
+    text is normalized (`Reference.normalized`)."""
     messages = request["messages"][:-1] + [normalized_strings(request["messages"][-1], reference.normalize)]
     normalized = {**request, "messages": messages}
     outcome = reference.outcome(model.hf_input(normalized))
     rendered = outcome.get("rendered_text", "")
-    if not rendered.startswith(prompt) or rendered[len(prompt):] != reference.normalize(suffix):
-        raise CorpusError(f"case {case['id']}: the normalized turn does not render as the normalized completion")
-    for _, completion, _ in completions:
-        if reference.tokenize(reference.normalize(completion)) != reference.tokenize(completion):
-            raise CorpusError(f"case {case['id']}: the normalized completion tokenizes to other ids")
+    name = f"case {case['id']}"
+    if (not rendered.startswith(prompt)
+            or (rendered[len(prompt):], ranges_within(outcome.get("special_ranges"), len(prompt), len(rendered), name))
+            != reference.normalized(suffix, suffix_ranges)):
+        raise CorpusError(f"{name}: the normalized turn does not render as the normalized completion")
+    for _, completion, _, ranges in completions:
+        if reference.token_ids(*reference.normalized(completion, ranges)) != reference.token_ids(completion, ranges):
+            raise CorpusError(f"{name}: the normalized completion tokenizes to other ids")
     last = model.hf_input(normalized)["messages"][-1]
     expected = model.cases.expected_turn(last, {"prompt": prompt, "request": normalized})
     if expected is None:
@@ -1469,7 +1653,8 @@ def build_corpus(model, reference, cases, table, refusals=None):
         coverage_cases[case["id"]] = {"features": case["features"], "lines": outcome["lines"],
                                       "reference": "refusal" if "refusal" in outcome else "render",
                                       "divergence": divergence}
-        outcomes[case["id"]] = {key: value for key, value in outcome.items() if key != "lines"}
+        outcomes[case["id"]] = {key: value for key, value in outcome.items()
+                                if key not in ("lines", "special_ranges")}
         if yields_no_round_trip(table, case["features"], "refusal" in vector):
             continue
         found, infos, failure, reason = round_vectors(model, reference, case)

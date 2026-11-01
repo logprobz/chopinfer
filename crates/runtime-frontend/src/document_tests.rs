@@ -654,3 +654,76 @@ fn a_component_at_the_file_cap_opens_either_way() {
             .is_ok()
     );
 }
+
+/// Under explicit special tokens a reasoning close spelled in a continued
+/// turn's plain text closes nothing, so reasoning stays open; a close the
+/// format writes as a special segment closes it. The library path decides
+/// it from the special segments, as the export does, so both paths agree.
+#[test]
+fn a_spelled_reasoning_close_reads_the_same_both_ways_under_explicit_special_tokens() {
+    for mut descriptor in parser_fixtures() {
+        descriptor.vocabulary.explicit_special_tokens = true;
+        let frontend = paired(descriptor.clone());
+        let spelled = format!("x{}", parser(&descriptor).reasoning_close);
+        for (reasoning, open) in [(None, true), (Some("plan"), false)] {
+            let mut turn = message(FrontendRoleV1::Assistant, &spelled);
+            turn.reasoning_content = reasoning.map(str::to_owned);
+            let mut continued = request(vec![message(FrontendRoleV1::User, "q"), turn]);
+            continued.continue_final_message = true;
+            continued.add_generation_prompt = false;
+            continued.enable_thinking = Some(true);
+            let rendered = frontend.render_chat(continued).unwrap();
+            assert!(rendered.prompt.ends_with(&spelled), "{}", rendered.prompt);
+            let state = crate::BundleChatStateV1::from_state(&rendered.state).unwrap();
+            assert_eq!(state.reasoning_open(), open, "{spelled} {reasoning:?}");
+        }
+    }
+}
+
+/// The fixture format with its prompt led by the special segment `[BOS]`,
+/// whatever the declaration says.
+struct LeadingSpecialFormatV1(FixtureFormatV1);
+
+impl ChatFormatV1 for LeadingSpecialFormatV1 {
+    fn open(descriptor: &FormatDescriptorV1) -> Result<Self, String> {
+        FixtureFormatV1::open(descriptor).map(Self)
+    }
+
+    fn opened(&self) -> OpenedV1 {
+        self.0.opened()
+    }
+
+    fn render(
+        &self,
+        request: FormatRenderRequestV1<'_>,
+    ) -> Result<FormatRenderedV1, FrontendErrorV1> {
+        let mut rendered = self.0.render(request)?;
+        rendered.prompt.insert_str(0, "[BOS]");
+        rendered
+            .segments
+            .insert(0, frontend_format::PromptSegmentV1::Special("[BOS]".into()));
+        Ok(rendered)
+    }
+}
+
+/// A special segment crosses only under explicit special tokens: without
+/// the flag both paths refuse it alike, and with it both serve it.
+#[test]
+fn special_segments_are_refused_alike_without_explicit_special_tokens() {
+    let mut descriptor = FrontendDescriptorV1::from_component_bytes(KEY_VALUE.as_bytes()).unwrap();
+    let render = |descriptor: &FrontendDescriptorV1| {
+        PairedFrontendV1::chat_format::<LeadingSpecialFormatV1>(descriptor.clone())
+            .unwrap()
+            .render_chat(request(vec![message(FrontendRoleV1::User, "q")]))
+    };
+    let refusal = render(&descriptor).unwrap_err();
+    assert!(
+        refusal
+            .message
+            .contains("special segments only under vocabulary.explicit_special_tokens"),
+        "{refusal:?}"
+    );
+    descriptor.vocabulary.explicit_special_tokens = true;
+    let rendered = render(&descriptor).unwrap();
+    assert!(rendered.prompt.starts_with("[BOS]"), "{}", rendered.prompt);
+}

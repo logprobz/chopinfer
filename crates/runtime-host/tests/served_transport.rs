@@ -352,7 +352,9 @@ impl GenerationBackend for ReadyBackendV1 {
         let text = match prompt {
             PreparedPrompt::Raw(text) | PreparedPrompt::RenderedChat(text) => text,
             PreparedPrompt::TokenIds(_) => return Err(AdmissionError::InvalidPrompt),
-            PreparedPrompt::MediaChat { .. } | PreparedPrompt::MediaTokens { .. } => {
+            PreparedPrompt::SegmentedChat(_)
+            | PreparedPrompt::MediaChat { .. }
+            | PreparedPrompt::MediaTokens { .. } => {
                 return Err(AdmissionError::InvalidPrompt);
             }
         };

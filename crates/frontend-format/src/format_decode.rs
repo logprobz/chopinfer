@@ -16,19 +16,28 @@
 //! declaration's `format.parser` section: its tool regions stream in the
 //! shared tool-call grammar the section names, and generation that ends
 //! inside one delivers the calls it finished.
+//!
+//! A declaration may name ID-only markers (`vocabulary.id_only_markers`),
+//! and the host then marks the bytes of the tokens generated as them. Every
+//! marker the parser reads, in text and in tool regions, is then read as the
+//! tokens it is made of ([`crate::marks`]), so a marker spelled by ordinary
+//! tokens is text.
 
+use std::borrow::Cow;
+use std::ops::Range;
 use std::str;
 use std::sync::Arc;
 
 use crate::chat::PromptModeV1;
 use crate::chatml_decode::{
-    ChatMlTerminalsV1, RegionCallV1, RegionScanV1, ToolRegionV1, call_arguments_v1,
+    ChatMlTerminalsV1, RegionCallV1, RegionMarksV1, RegionScanV1, ToolRegionV1, call_arguments_v1,
 };
 use crate::descriptor::{FormatDescriptorV1, FrontendParserDeclarationV1, FrontendToolGrammarV1};
 use crate::format::{
     AssistantCompletionV1, CompletionFinishV1, FormatEventV1, FormatInputV1, FormatParserOptionsV1,
     FormatToolCallDeltaV1, ParsedToolCallV1,
 };
+use crate::marks::{MarkMatchV1, SourceMapV1};
 use crate::request::FrontendToolV1;
 use crate::toolkit::{malformed_v1, resource_v1, sequence_v1, validate_function_name_v1};
 
@@ -61,6 +70,8 @@ struct OpenRegionV1 {
     text: String,
     /// Whether `text` is those bytes unchanged, so later bytes extend it.
     exact: bool,
+    /// How `text` maps back to the bytes, when it is not them unchanged.
+    map: Option<SourceMapV1>,
     scan: RegionScanV1,
     /// How many named calls are closed for good and were streamed whole.
     streamed: usize,
@@ -73,6 +84,7 @@ impl OpenRegionV1 {
             end: start,
             text: String::new(),
             exact: true,
+            map: None,
             scan: RegionScanV1::default(),
             streamed: 0,
         }
@@ -92,9 +104,27 @@ impl OpenRegionV1 {
             Err(_) => {
                 self.text.push_str(&String::from_utf8_lossy(added));
                 self.exact = false;
+                self.map = Some(SourceMapV1::new(&bytes[self.start..end]));
             }
         }
         self.end = end;
+    }
+}
+
+/// A tool region's decoded text, with where the region begins in the
+/// completion bytes and how the text maps back to them when it is not those
+/// bytes unchanged.
+#[derive(Clone, Copy)]
+struct RegionTextV1<'a> {
+    start: usize,
+    text: &'a str,
+    map: Option<&'a SourceMapV1>,
+}
+
+impl RegionTextV1<'_> {
+    /// The markers `marks` lets through in this text.
+    fn marks<'a>(&'a self, marks: MarkMatchV1<'a>) -> RegionMarksV1<'a> {
+        RegionMarksV1::new(marks, self.start, self.map)
     }
 }
 
@@ -134,6 +164,25 @@ pub struct DeclaredParserV1 {
     content_text: String,
     /// The open ChatML tool region, read as it grows.
     region: Option<OpenRegionV1>,
+    /// Whether pushes carry marks; the first push decides.
+    marked: Option<bool>,
+    /// The marks among `bytes`, ascending: the byte ranges of the tokens
+    /// generated as the declaration's ID-only markers.
+    marks: Vec<Range<usize>>,
+}
+
+/// What the marks of a parser let through: every marker by its spelling
+/// unless its pushes carry marks.
+fn mark_match_v1<'a>(
+    descriptor: &'a FormatDescriptorV1,
+    marked: Option<bool>,
+    marks: &'a [Range<usize>],
+) -> MarkMatchV1<'a> {
+    if marked == Some(true) {
+        MarkMatchV1::marked(&descriptor.vocabulary.id_only_markers, marks)
+    } else {
+        MarkMatchV1::SPELLED
+    }
 }
 
 impl DeclaredParserV1 {
@@ -142,12 +191,29 @@ impl DeclaredParserV1 {
         // The host only appends, except that a client stop may cut the
         // completion short, so this copy follows it with the bytes it adds.
         let keep = self.bytes.len().min(input.completion.len());
+        let marks = match input.marks {
+            Some(marks) => {
+                self.check_marked(true)?;
+                check_marks_v1(marks, 0, 0, input.completion.len())?;
+                // A named mark never changes; a cut drops the ones past it.
+                let named = marks.partition_point(|mark| mark.end <= keep);
+                let kept = self.marks.partition_point(|mark| mark.end <= keep);
+                if marks[..named] != self.marks[..kept] {
+                    return Err(sequence_v1(
+                        "the marks of the kept bytes are not the marks the parser kept",
+                    ));
+                }
+                Some(&marks[named..])
+            }
+            None => None,
+        };
         self.push_suffix(
             keep,
             &input.completion[keep..],
             input.held,
             input.last,
             input.stop_floor,
+            marks,
         )
     }
 
@@ -160,6 +226,17 @@ impl DeclaredParserV1 {
 
     /// Reads a push that keeps the first `keep` released bytes and appends
     /// `suffix`, as a push across the bundle ABI carries it.
+    ///
+    /// `marks` are the push's marks, whole tokens as [`FormatInputV1::marks`]
+    /// names them: each ends after `keep` and within the bytes `suffix`
+    /// adds. One may start before `keep`, when an earlier push released its
+    /// token in part, without a mark, or when the push cuts through it and
+    /// names it again. The parser keeps its marks that end within the kept
+    /// bytes and drops the rest, which only a cut (`keep` below a mark's
+    /// end) does, and it refuses a mark that overlaps a kept one. A push
+    /// without marks after one with them, or the reverse, and a marked push
+    /// to a parser whose declaration names no ID-only markers, are refused
+    /// as out of sequence.
     pub fn push_suffix(
         &mut self,
         keep: usize,
@@ -167,6 +244,7 @@ impl DeclaredParserV1 {
         held: bool,
         last: bool,
         stop_floor: Option<usize>,
+        marks: Option<&[Range<usize>]>,
     ) -> Result<Vec<FormatEventV1>, String> {
         if self.state == TextStateV1::Complete {
             return Err(malformed_v1("bytes received after terminal completion"));
@@ -174,9 +252,11 @@ impl DeclaredParserV1 {
         if keep > self.bytes.len() {
             return Err(sequence_v1("a push keeps bytes the parser never received"));
         }
-        if keep < self.bytes.len() {
+        let reread = self.take_marks(keep, keep + suffix.len(), marks)?;
+        let changed = (keep < self.bytes.len()).then_some(keep);
+        if let Some(changed) = changed.into_iter().chain(reread).min() {
             let longest = self.terminators().iter().map(|text| text.len()).max();
-            let from = keep.saturating_sub(longest.unwrap_or(1).saturating_sub(1));
+            let from = changed.saturating_sub(longest.unwrap_or(1).saturating_sub(1));
             self.terminator_from
                 .set(self.terminator_from.get().min(from));
         }
@@ -190,6 +270,65 @@ impl DeclaredParserV1 {
         } else {
             self.advance_text(valid_end)
         }
+    }
+
+    /// Refuses a push that carries marks, or none, against what this
+    /// parser's pushes carried.
+    fn check_marked(&self, marked: bool) -> Result<(), String> {
+        if marked && self.descriptor.vocabulary.id_only_markers.is_empty() {
+            return Err(sequence_v1(
+                "a push carries marks, and the declaration names no ID-only markers",
+            ));
+        }
+        match self.marked {
+            Some(true) if !marked => {
+                Err(sequence_v1("a push without marks follows one with marks"))
+            }
+            Some(false) if marked => Err(sequence_v1("a push with marks follows one without")),
+            _ => Ok(()),
+        }
+    }
+
+    /// Keeps the marks that end within the first `keep` bytes and adds
+    /// `marks`, after checking them against the kept marks and the
+    /// `released` bytes the push leaves. Returns where the marks of bytes
+    /// the parser already read changed, if they did; the tool region is then
+    /// read again.
+    fn take_marks(
+        &mut self,
+        keep: usize,
+        released: usize,
+        marks: Option<&[Range<usize>]>,
+    ) -> Result<Option<usize>, String> {
+        self.check_marked(marks.is_some())?;
+        let Some(marks) = marks else {
+            self.marked = Some(false);
+            return Ok(None);
+        };
+        let kept = self.marks.partition_point(|mark| mark.end <= keep);
+        let previous = kept.checked_sub(1).map_or(0, |last| self.marks[last].end);
+        check_marks_v1(marks, previous, keep, released)?;
+        self.marked = Some(true);
+        let reread = self.marks[kept..]
+            .first()
+            .into_iter()
+            .chain(marks.first().filter(|mark| mark.start < keep))
+            .map(|mark| mark.start)
+            .min();
+        self.marks.truncate(kept);
+        self.marks
+            .try_reserve(marks.len())
+            .map_err(|_| resource_v1("completion marks allocation failed"))?;
+        self.marks.extend_from_slice(marks);
+        if reread.is_some() {
+            self.region = None;
+        }
+        Ok(reread)
+    }
+
+    /// What this parser's marks let through as markers.
+    fn mark_match(&self) -> MarkMatchV1<'_> {
+        mark_match_v1(&self.descriptor, self.marked, &self.marks)
     }
 
     /// The shared parser over `descriptor`'s parser section.
@@ -234,6 +373,8 @@ impl DeclaredParserV1 {
             reasoning_text: String::new(),
             content_text: String::new(),
             region: None,
+            marked: None,
+            marks: Vec::new(),
         }
     }
 
@@ -247,18 +388,18 @@ impl DeclaredParserV1 {
         if self.parser.tool_grammar != FrontendToolGrammarV1::XmlTypedParametersV1 {
             return None;
         }
-        let open = ChatMlTerminalsV1::new(&self.parser).tool_open.as_bytes();
+        let open = ChatMlTerminalsV1::new(&self.parser).tool_open;
         let pending = &self.bytes[self.cursor..end];
+        let marks = self.mark_match();
         (1..open.len().min(pending.len() + 1))
             .rev()
             .find(|&length| {
-                let prefix = &open[..length];
-                pending.ends_with(prefix)
-                    && self
-                        .parser
-                        .reserved_markers
-                        .iter()
-                        .any(|marker| find_bytes_v1(prefix, marker.as_bytes()).is_some())
+                let start = end - length;
+                pending.ends_with(&open.as_bytes()[..length])
+                    && marks.admits(start, open, length)
+                    && self.parser.reserved_markers.iter().any(|marker| {
+                        find_marker_v1(&self.bytes, start, end, marker, marks).is_some()
+                    })
             })
             .map(|length| self.open_lead(end - length))
     }
@@ -438,15 +579,21 @@ impl DeclaredParserV1 {
         };
         open.read(&self.bytes, limit);
         let parser = Arc::clone(&self.parser);
+        let text = RegionTextV1 {
+            start,
+            text: &open.text,
+            map: open.map.as_ref(),
+        };
         open.scan.scan(
             ChatMlTerminalsV1::new(&parser),
-            &open.text,
+            text.text,
             &self.tool_schemas,
+            text.marks(self.mark_match()),
         );
         let region = open.scan.region();
         if let Some(used) = region.end {
             let used = source_offset(&self.bytes[start..limit], used);
-            self.deliver_region(start, start + used, region, &open.text, updates)?;
+            self.deliver_region(text, start + used, region, updates)?;
             self.cursor = start + used;
             self.content_start = self.cursor;
             self.after_tools = self.extract_tools;
@@ -456,7 +603,7 @@ impl DeclaredParserV1 {
         }
         if self.stream_tool_calls {
             let settled = open.scan.settled_calls();
-            self.stream_region(region, &open.text, settled, &mut open.streamed, updates)?;
+            self.stream_region(region, text, settled, &mut open.streamed, updates)?;
         }
         let Some((terminator_start, terminator_length)) = end else {
             self.region = Some(open);
@@ -466,7 +613,7 @@ impl DeclaredParserV1 {
         if !self.ends_completion(terminator_end) {
             return Err(malformed_v1("trailing bytes after the completion end"));
         }
-        self.deliver_region(start, terminator_start, region, &open.text, updates)?;
+        self.deliver_region(text, terminator_start, region, updates)?;
         updates.push(FormatEventV1::Finish {
             reason: self.finish_reason(CompletionFinishV1::Stop),
             completion: Some(self.completion()),
@@ -483,15 +630,24 @@ impl DeclaredParserV1 {
         end: usize,
         updates: &mut Vec<FormatEventV1>,
     ) -> Result<(), String> {
-        let text = String::from_utf8_lossy(&self.bytes[start..end]).into_owned();
+        let bytes = &self.bytes[start..end];
+        let decoded = String::from_utf8_lossy(bytes);
+        let map = matches!(decoded, Cow::Owned(_)).then(|| SourceMapV1::new(bytes));
+        let text = decoded.into_owned();
         let parser = Arc::clone(&self.parser);
+        let text = RegionTextV1 {
+            start,
+            text: &text,
+            map: map.as_ref(),
+        };
         let region = crate::chatml_decode::scan_tool_region(
             ChatMlTerminalsV1::new(&parser),
-            &text,
+            text.text,
             &self.tool_schemas,
+            text.marks(self.mark_match()),
         );
         self.region = None;
-        self.deliver_region(start, end, &region, &text, updates)
+        self.deliver_region(text, end, &region, updates)
     }
 
     /// Streams the calls of an open region as far as they can no longer change.
@@ -502,7 +658,7 @@ impl DeclaredParserV1 {
     fn stream_region(
         &mut self,
         region: &ToolRegionV1,
-        text: &str,
+        text: RegionTextV1<'_>,
         settled: usize,
         streamed: &mut usize,
         updates: &mut Vec<FormatEventV1>,
@@ -513,6 +669,7 @@ impl DeclaredParserV1 {
         let descriptor = Arc::clone(&self.descriptor);
         let parser = Arc::clone(&self.parser);
         let terminals = ChatMlTerminalsV1::new(&parser);
+        let marks = text.marks(mark_match_v1(&descriptor, self.marked, &self.marks));
         let mut deltas = Vec::new();
         for (offset, call) in named_calls(region).enumerate().skip(*streamed) {
             validate_function_name_v1(&descriptor, &call.name, "parsed function")?;
@@ -520,11 +677,13 @@ impl DeclaredParserV1 {
                 &descriptor,
                 terminals,
                 call,
-                text,
+                text.text,
                 &self.tool_schemas,
                 !call.closed,
+                marks,
             )?;
-            self.stream_call(
+            Self::stream_call(
+                &mut self.streamed_tools,
                 self.calls.len() + offset,
                 &call.name,
                 &arguments,
@@ -546,25 +705,25 @@ impl DeclaredParserV1 {
     /// Only confirmed final arguments reach the client; a changed prefix is
     /// an error rather than a stream-dependent replacement for the parsed call.
     fn stream_call(
-        &mut self,
+        streamed_tools: &mut Vec<ParsedToolCallV1>,
         index: usize,
         name: &str,
         arguments: &str,
         deltas: &mut Vec<FormatToolCallDeltaV1>,
     ) -> Result<String, String> {
-        if index == self.streamed_tools.len() {
+        if index == streamed_tools.len() {
             deltas.push(FormatToolCallDeltaV1 {
                 index,
                 name: Some(name.to_owned()),
                 arguments: arguments.to_owned(),
             });
-            self.streamed_tools.push(ParsedToolCallV1 {
+            streamed_tools.push(ParsedToolCallV1 {
                 name: name.to_owned(),
                 arguments: arguments.to_owned(),
             });
             return Ok(arguments.to_owned());
         }
-        let sent = &mut self.streamed_tools[index].arguments;
+        let sent = &mut streamed_tools[index].arguments;
         let suffix = match arguments.strip_prefix(sent.as_str()) {
             Some(suffix) => suffix.to_owned(),
             None => {
@@ -589,10 +748,9 @@ impl DeclaredParserV1 {
     /// A request that calls no function gets none: its region was markup.
     fn deliver_region(
         &mut self,
-        start: usize,
+        text: RegionTextV1<'_>,
         end: usize,
         region: &ToolRegionV1,
-        text: &str,
         updates: &mut Vec<FormatEventV1>,
     ) -> Result<(), String> {
         if !self.extract_tools {
@@ -601,6 +759,7 @@ impl DeclaredParserV1 {
         let descriptor = Arc::clone(&self.descriptor);
         let parser = Arc::clone(&self.parser);
         let terminals = ChatMlTerminalsV1::new(&parser);
+        let marks = text.marks(mark_match_v1(&descriptor, self.marked, &self.marks));
         let mut calls = Vec::new();
         let mut deltas = Vec::new();
         for (offset, call) in named_calls(region).enumerate() {
@@ -612,12 +771,14 @@ impl DeclaredParserV1 {
                 &descriptor,
                 terminals,
                 call,
-                text,
+                text.text,
                 &self.tool_schemas,
                 false,
+                marks,
             )?;
             if self.stream_tool_calls {
-                arguments = self.stream_call(
+                arguments = Self::stream_call(
+                    &mut self.streamed_tools,
                     self.calls.len() + offset,
                     &call.name,
                     &arguments,
@@ -635,7 +796,7 @@ impl DeclaredParserV1 {
         if !calls.is_empty() {
             updates.push(FormatEventV1::ToolCalls {
                 calls: calls.clone(),
-                range: start..end,
+                range: text.start..end,
             });
             self.calls.extend(calls);
         }
@@ -666,7 +827,7 @@ impl DeclaredParserV1 {
         let found = terminators
             .iter()
             .filter_map(|text| {
-                self.find_textual_stop(text.as_bytes(), valid_end)
+                self.find_textual_stop(text, valid_end)
                     .map(|position| (position, text.len()))
             })
             .min_by_key(|(position, _)| *position);
@@ -685,20 +846,22 @@ impl DeclaredParserV1 {
     ///
     /// Order decides ties: the marker this state is waiting for is considered
     /// before the ones it forbids, so a boundary that is legitimate here is
-    /// never read as a violation of itself.
+    /// never read as a violation of itself. A marker spelling the marks
+    /// reject is ordinary text, and the search goes on after it.
     fn next_marker(&self, valid_end: usize) -> Option<(usize, MarkerV1, usize)> {
         if self.raw {
             return None;
         }
         let terminals = ChatMlTerminalsV1::new(&self.parser);
-        let haystack = &self.bytes[self.cursor..valid_end];
+        let marks = self.mark_match();
+        let find =
+            |needle: &str| find_marker_v1(&self.bytes, self.cursor, valid_end, needle, marks);
         let mut best: Option<(usize, MarkerV1, usize)> = None;
-        let mut consider = |needle: &[u8], marker: MarkerV1| {
+        let mut consider = |needle: &str, marker: MarkerV1| {
             if needle.is_empty() {
                 return;
             }
-            if let Some(relative) = find_bytes_v1(haystack, needle) {
-                let position = self.cursor + relative;
+            if let Some(position) = find(needle) {
                 let marker = if matches!(marker, MarkerV1::Terminator)
                     && self.find_textual_stop(needle, valid_end) != Some(position)
                 {
@@ -717,21 +880,21 @@ impl DeclaredParserV1 {
         };
         match self.state {
             TextStateV1::Reasoning => {
-                consider(terminals.reasoning_open.as_bytes(), MarkerV1::ThinkStart);
-                consider(terminals.reasoning_close.as_bytes(), MarkerV1::ThinkEnd);
-                consider(terminals.tool_open.as_bytes(), MarkerV1::ToolStart);
+                consider(terminals.reasoning_open, MarkerV1::ThinkStart);
+                consider(terminals.reasoning_close, MarkerV1::ThinkEnd);
+                consider(terminals.tool_open, MarkerV1::ToolStart);
                 for terminator in self.terminators() {
-                    consider(terminator.as_bytes(), MarkerV1::Terminator);
+                    consider(terminator, MarkerV1::Terminator);
                 }
             }
             TextStateV1::Content => {
                 if self.mode == PromptModeV1::Thinking {
-                    consider(terminals.reasoning_close.as_bytes(), MarkerV1::ThinkEnd);
+                    consider(terminals.reasoning_close, MarkerV1::ThinkEnd);
                 }
-                consider(terminals.tool_open.as_bytes(), MarkerV1::ToolStart);
-                consider(self.bare_function_open().as_bytes(), MarkerV1::ToolStart);
+                consider(terminals.tool_open, MarkerV1::ToolStart);
+                consider(self.bare_function_open(), MarkerV1::ToolStart);
                 for terminator in self.terminators() {
-                    consider(terminator.as_bytes(), MarkerV1::Terminator);
+                    consider(terminator, MarkerV1::Terminator);
                 }
             }
             TextStateV1::Tool | TextStateV1::Complete => {}
@@ -752,13 +915,13 @@ impl DeclaredParserV1 {
             // marker containing it, is still refused.
             if expected.iter().any(|marker| {
                 marker.contains(reserved.as_str())
-                    && find_bytes_v1(haystack, reserved.as_bytes()).is_some_and(|position| {
-                        inside_partial_prefix_v1(haystack, position, marker)
+                    && find(reserved).is_some_and(|position| {
+                        self.inside_partial_prefix(position, marker, valid_end)
                     })
             }) {
                 continue;
             }
-            consider(reserved.as_bytes(), MarkerV1::Forbidden);
+            consider(reserved, MarkerV1::Forbidden);
         }
         // A calls open takes the newlines before it.
         best.map(|(position, marker, length)| match marker {
@@ -808,17 +971,34 @@ impl DeclaredParserV1 {
         expected
     }
 
+    /// Whether a marker occurrence at `position` lies inside a trailing
+    /// partial `opener` that the marks let through so far.
+    fn inside_partial_prefix(&self, position: usize, opener: &str, valid_end: usize) -> bool {
+        let marks = self.mark_match();
+        (self.cursor..=position).any(|start| {
+            let candidate = &self.bytes[start..valid_end];
+            candidate.len() < opener.len()
+                && opener.as_bytes().starts_with(candidate)
+                && marks.admits(start, opener, candidate.len())
+        })
+    }
+
     /// How many trailing bytes could still turn out to start a marker,
-    /// including the newlines a calls open would take.
+    /// including the newlines a calls open would take. The bytes of a
+    /// marker the marks already rule out are not held.
     fn longest_marker_prefix(&self, valid_end: usize) -> usize {
         let terminals = ChatMlTerminalsV1::new(&self.parser);
         let haystack = &self.bytes[self.cursor..valid_end];
+        let marks = self.mark_match();
         let mut longest = 0;
-        let mut consider = |needle: &[u8]| {
+        let mut consider = |needle: &str| {
             let maximum = needle.len().min(haystack.len());
             let length = (1..=maximum)
                 .rev()
-                .find(|&length| haystack.ends_with(&needle[..length]))
+                .find(|&length| {
+                    haystack.ends_with(&needle.as_bytes()[..length])
+                        && marks.admits(valid_end - length, needle, length)
+                })
                 .unwrap_or_default();
             longest = longest.max(length);
             length
@@ -826,20 +1006,20 @@ impl DeclaredParserV1 {
         let mut open = 0;
         if !self.raw && matches!(self.state, TextStateV1::Reasoning | TextStateV1::Content) {
             if self.state == TextStateV1::Reasoning {
-                consider(terminals.reasoning_open.as_bytes());
+                consider(terminals.reasoning_open);
             }
             if self.mode == PromptModeV1::Thinking {
-                consider(terminals.reasoning_close.as_bytes());
+                consider(terminals.reasoning_close);
             }
             // A calls open takes the newlines before it, so they are held
             // with any start of it.
-            let prefix = consider(terminals.tool_open.as_bytes());
+            let prefix = consider(terminals.tool_open);
             open = valid_end - self.open_lead(valid_end - prefix);
             if self.state == TextStateV1::Content {
-                consider(self.bare_function_open().as_bytes());
+                consider(self.bare_function_open());
             }
             for terminator in self.terminators() {
-                consider(terminator.as_bytes());
+                consider(terminator);
             }
         }
         longest.max(open)
@@ -847,7 +1027,7 @@ impl DeclaredParserV1 {
 
     // A buffered tool region may still contain a marker from before the
     // minimum. Only matches completed by later tokens can stop generation.
-    fn find_textual_stop(&self, needle: &[u8], valid_end: usize) -> Option<usize> {
+    fn find_textual_stop(&self, needle: &str, valid_end: usize) -> Option<usize> {
         let minimum_end = self.stop_floor?;
         if needle.is_empty() {
             return None;
@@ -862,7 +1042,7 @@ impl DeclaredParserV1 {
             .cursor
             .max(minimum_end.saturating_sub(needle.len() - 1))
             .max(self.terminator_from.get());
-        find_bytes_v1(self.bytes.get(start..valid_end)?, needle).map(|relative| start + relative)
+        find_marker_v1(&self.bytes, start, valid_end, needle, self.mark_match())
     }
 
     /// Whether the answer so far is only whitespace a declaration holds back
@@ -897,10 +1077,34 @@ impl DeclaredParserV1 {
     }
 }
 
-/// Reads one whole completion against the markers a bundle declared.
+/// Reads one whole completion against the markers a bundle declared, as
+/// text without token boundaries: every marker by its spelling.
 pub fn parse_completion_v1(
     descriptor: &FormatDescriptorV1,
     text: &str,
+    mode: PromptModeV1,
+) -> Result<AssistantCompletionV1, String> {
+    parse_whole_v1(descriptor, text, None, mode)
+}
+
+/// [`parse_completion_v1`] for a completion whose `marks` are the byte
+/// ranges of the tokens generated as the declaration's ID-only markers
+/// (`vocabulary.id_only_markers`), ascending, disjoint and not empty
+/// ([`FormatInputV1::marks`]), so a marker spelled by ordinary tokens is
+/// text. A declaration that names no ID-only markers refuses marks.
+pub fn parse_marked_completion_v1(
+    descriptor: &FormatDescriptorV1,
+    text: &str,
+    marks: &[Range<usize>],
+    mode: PromptModeV1,
+) -> Result<AssistantCompletionV1, String> {
+    parse_whole_v1(descriptor, text, Some(marks), mode)
+}
+
+fn parse_whole_v1(
+    descriptor: &FormatDescriptorV1,
+    text: &str,
+    marks: Option<&[Range<usize>]>,
     mode: PromptModeV1,
 ) -> Result<AssistantCompletionV1, String> {
     if text.len() > descriptor.limits.maximum_completion_bytes {
@@ -908,7 +1112,7 @@ pub fn parse_completion_v1(
     }
     // One completion reads the same whole as it does token by token.
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        parse_whole_text_v1(descriptor, text, mode)
+        parse_whole_text_v1(descriptor, text, marks, mode)
     }))
     .unwrap_or_else(|_| Err(malformed_v1("decoder panicked")))
 }
@@ -925,11 +1129,13 @@ const WHOLE_TEXT_TOKEN_V1: u32 = u32::MAX;
 /// released, and the end marker or stop ends the completion.
 /// The calls the served parser reads from `text`, a completion that ends
 /// with a declared stop token after it, with the request's tool schemas
-/// `tools`: the calls a client receives for that generation.
+/// `tools` and the completion's `marks` ([`FormatInputV1::marks`]): the calls
+/// a client receives for that generation.
 pub(crate) fn completion_calls_v1(
     descriptor: &Arc<FormatDescriptorV1>,
     text: &str,
     tools: &[FrontendToolV1],
+    marks: Option<&[Range<usize>]>,
 ) -> Result<Vec<ParsedToolCallV1>, String> {
     let vocabulary = &descriptor.vocabulary;
     let stop = vocabulary.stop_token_ids.first().and_then(|id| {
@@ -958,6 +1164,7 @@ pub(crate) fn completion_calls_v1(
         held: false,
         last: true,
         stop_floor: Some(0),
+        marks,
     })?;
     Ok(events
         .into_iter()
@@ -971,6 +1178,7 @@ pub(crate) fn completion_calls_v1(
 fn parse_whole_text_v1(
     descriptor: &FormatDescriptorV1,
     text: &str,
+    marks: Option<&[Range<usize>]>,
     mode: PromptModeV1,
 ) -> Result<AssistantCompletionV1, String> {
     let mut bytes = text.as_bytes();
@@ -1018,12 +1226,18 @@ fn parse_whole_text_v1(
             tool_schemas: Vec::new(),
         },
     );
+    if let Some(marks) = marks {
+        check_marks_v1(marks, 0, 0, text.len())?;
+    }
+    // The marks of held bytes are held with them.
+    let marks = marks.map(|marks| &marks[..marks.partition_point(|mark| mark.end <= released)]);
     parser
         .push(FormatInputV1 {
             completion: &bytes[..released],
             held: !stop && released < bytes.len(),
             last: stop,
             stop_floor: Some(0),
+            marks,
         })?
         .into_iter()
         .find_map(|event| match event {
@@ -1042,15 +1256,51 @@ fn find_bytes_v1(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-/// Whether a marker occurrence lies inside a trailing partial `opener`.
-fn inside_partial_prefix_v1(haystack: &[u8], marker_position: usize, opener: &str) -> bool {
-    let opener = opener.as_bytes();
-    (0..=marker_position).any(|start| {
-        let candidate = &haystack[start..];
-        candidate.len() < opener.len()
-            && opener.starts_with(candidate)
-            && marker_position < start + candidate.len()
-    })
+/// Checks a list of marks, as a sequence error: each not empty, starting at
+/// or after the end of the one before it (for the first, `previous`), and
+/// ending after the `keep` kept bytes and within the `length` completion
+/// bytes.
+fn check_marks_v1(
+    marks: &[Range<usize>],
+    mut previous: usize,
+    keep: usize,
+    length: usize,
+) -> Result<(), String> {
+    for &Range { start, end } in marks {
+        let refusal = if start >= end {
+            "is empty or inverted".to_owned()
+        } else if start < previous {
+            format!("starts before the mark before it ends, at {previous}")
+        } else if end <= keep {
+            format!("ends within the {keep} kept bytes")
+        } else if end > length {
+            format!("ends past the {length} completion bytes")
+        } else {
+            previous = end;
+            continue;
+        };
+        return Err(sequence_v1(format!("mark {start}..{end} {refusal}")));
+    }
+    Ok(())
+}
+
+/// The first occurrence of `marker` in `bytes[from..end]` that `marks` lets
+/// through, as a completion offset.
+fn find_marker_v1(
+    bytes: &[u8],
+    from: usize,
+    end: usize,
+    marker: &str,
+    marks: MarkMatchV1<'_>,
+) -> Option<usize> {
+    let mut start = from;
+    loop {
+        let position = start + find_bytes_v1(bytes.get(start..end)?, marker.as_bytes())?;
+        if marks.accepts(position, marker) {
+            return Some(position);
+        }
+        start = position + 1;
+    }
 }
 
 /// The calls of a region that named a function; an empty name is no call.

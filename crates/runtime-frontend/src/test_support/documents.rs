@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use runtime_server::{
-    DecodingOptions, FrontendChatRequestV1, FrontendErrorV1, FrontendJsonV1,
+    ChatStateV1, DecodingOptions, FrontendChatRequestV1, FrontendErrorV1, FrontendJsonV1,
     FrontendMediaPartKindV1, FrontendMessageV1, FrontendModelV1, FrontendRenderedChatV1,
     FrontendRoleV1, FrontendToolCallV1, FrontendToolChoiceV1, FrontendToolV1, SamplingDefaults,
     ServerFrontendV1,
@@ -90,6 +90,11 @@ fn assert_same_render(
                 library.extracts_tool_calls(),
                 document.extracts_tool_calls(),
                 "tool extraction"
+            );
+            assert_eq!(
+                library.completion_prefix_parts(),
+                document.completion_prefix_parts(),
+                "completion prefix"
             );
             assert!(library.parser_source().is_none());
             assert!(document.parser_source().is_some());
@@ -180,6 +185,10 @@ impl ServerFrontendV1 for PairedFrontendV1 {
         self.document.forced_choice_without_tools_is_auto()
     }
 
+    fn explicit_special_tokens(&self) -> bool {
+        self.document.explicit_special_tokens()
+    }
+
     fn tool_namespace_separator(&self) -> Option<&str> {
         self.document.tool_namespace_separator()
     }
@@ -190,6 +199,13 @@ impl ServerFrontendV1 for PairedFrontendV1 {
 
     fn tool_references(&self) -> bool {
         self.document.tool_references()
+    }
+
+    fn default_output_tokens(&self, state: &Arc<dyn ChatStateV1>) -> Option<usize> {
+        let library = self.library.default_output_tokens(state);
+        let document = self.document.default_output_tokens(state);
+        assert_eq!(library, document, "default output tokens");
+        document
     }
 
     fn maximum_total_tokens(&self) -> usize {

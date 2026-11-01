@@ -81,8 +81,17 @@ impl FrontendV1 for FakeFrontendV1 {
         };
         let text = |text: &str| document::SegmentV1::Text(text.into());
         let media = document::SegmentV1::Media;
+        let special = |text: &str| document::SegmentV1::Special(text.into());
         let limit = descriptor().limits.maximum_prompt_bytes;
         let pads = |count: usize| count * "[A]".len();
+        // As many of the shortest boundary tokens as fit the explicit limit,
+        // then plain text to `length` bytes in all.
+        let specials = |length: usize| {
+            let count = EXPLICIT_PROMPT_BYTES / "[U]".len();
+            let mut segments = vec![special("[U]"); count];
+            segments.push(text(&"p".repeat(length - count * "[U]".len())));
+            segments
+        };
         Ok(match self.scenario.as_str() {
             "good" => rendered(
                 vec![text("x"), media(0), text("y"), media(1), text("z")],
@@ -93,6 +102,20 @@ impl FrontendV1 for FakeFrontendV1 {
             "media-dropped" => rendered(vec![text("x"), media(1), text("z")], "low"),
             "media-extra" => rendered(vec![media(0), media(1), media(2)], "low"),
             "undeclared-effort" => rendered(vec![media(0), media(1)], "extreme"),
+            "undeclared-special" => rendered(vec![special("[A]"), media(0), media(1)], "low"),
+            "specials" => rendered(
+                vec![
+                    special("[U]"),
+                    text("look"),
+                    media(0),
+                    media(1),
+                    special("</t>"),
+                ],
+                "low",
+            ),
+            "unknown-special" => rendered(vec![special("[X]"), media(0), media(1)], "low"),
+            "specials-at-the-limit" => rendered(specials(EXPLICIT_PROMPT_BYTES), "low"),
+            "specials-past-the-limit" => rendered(specials(EXPLICIT_PROMPT_BYTES + 1), "low"),
             "media-prompt-at-the-limit" => rendered(
                 vec![text(&"p".repeat(limit - pads(2))), media(0), media(1)],
                 "low",
@@ -137,6 +160,10 @@ impl FrontendV1 for FakeFrontendV1 {
                 "good" => Ok(Vec::new()),
                 "constraint-past-the-limit" => Ok(runtime_grammar::Grammar::from_expr(
                     runtime_grammar::Expr::literal(&"g".repeat(2 << 20)),
+                )
+                .encode_wire()),
+                "named-token" => Ok(runtime_grammar::Grammar::from_expr(
+                    runtime_grammar::Expr::Token(5),
                 )
                 .encode_wire()),
                 _ => Ok(b"CHOPGRAMnot a grammar".to_vec()),
@@ -212,11 +239,25 @@ fn descriptor() -> Arc<FrontendDescriptorV1> {
     Arc::new(descriptor)
 }
 
+/// The declared prompt length of a scenario named `explicit:`, whose
+/// declaration names its special tokens. It is long enough that the segments
+/// of a prompt of the shortest boundary tokens outgrow the parser state's
+/// allowance in the render answer cap.
+const EXPLICIT_PROMPT_BYTES: usize = 1 << 20;
+
 fn format(scenario: &str) -> NativeFormatV1 {
     let export = FrontendExportV1::in_process::<FakeFrontendV1>();
     let mut descriptor = descriptor();
     let scenario = if let Some(scenario) = scenario.strip_prefix("tool-images:") {
         Arc::make_mut(&mut descriptor).tools.image_results = true;
+        scenario
+    } else if let Some(scenario) = scenario.strip_prefix("id-only:") {
+        Arc::make_mut(&mut descriptor).vocabulary.id_only_markers = vec!["</t>".into()];
+        scenario
+    } else if let Some(scenario) = scenario.strip_prefix("explicit:") {
+        let descriptor = Arc::make_mut(&mut descriptor);
+        descriptor.vocabulary.explicit_special_tokens = true;
+        descriptor.limits.maximum_prompt_bytes = EXPLICIT_PROMPT_BYTES;
         scenario
     } else {
         scenario
@@ -482,6 +523,7 @@ fn bad_render_answers_are_refused() {
         "media-out-of-order",
         "media-extra",
         "undeclared-effort",
+        "undeclared-special",
         "reasoning-open-in-chat",
         "malformed",
     ] {
@@ -495,6 +537,12 @@ fn bad_render_answers_are_refused() {
         );
         assert_eq!(error.parameter, None);
     }
+    assert!(
+        render("undeclared-special")
+            .unwrap_err()
+            .message
+            .ends_with(": a special segment needs vocabulary.explicit_special_tokens")
+    );
     assert_eq!(
         render("refuse").unwrap_err(),
         FrontendErrorV1::new("no tools here", Some("tools"))
@@ -512,6 +560,54 @@ fn bad_render_answers_are_refused() {
     assert_eq!(
         render("panic").unwrap_err(),
         FrontendErrorV1::new("the bundle frontend panicked", None)
+    );
+}
+
+/// Under explicit special tokens a special segment that spells a declared
+/// boundary token is that token, and its text is part of the prompt; one
+/// that spells no declared boundary token is refused.
+#[test]
+fn a_declared_special_segment_is_read_under_explicit_special_tokens() {
+    let rendered = render("explicit:specials").unwrap();
+    assert_eq!(rendered.prompt, "[U]look[A][A]</t>");
+    assert_eq!(
+        rendered.segments,
+        [
+            PromptSegmentV1::Special("[U]".into()),
+            PromptSegmentV1::Text("look".into()),
+            PromptSegmentV1::Media(0),
+            PromptSegmentV1::Media(1),
+            PromptSegmentV1::Special("</t>".into()),
+        ]
+    );
+    let error = render("explicit:unknown-special").unwrap_err();
+    assert_eq!(
+        error.message,
+        "the bundle frontend answered a malformed render: a special segment names no declared \
+         boundary token"
+    );
+    assert_eq!(error.parameter, None);
+}
+
+/// A render that names its special tokens may fill the declared length
+/// with the shortest of them: the answer cap allows each one's segment and
+/// the text segment after it, so the host checks the prompt's real length,
+/// and one byte more is refused as too long.
+#[test]
+fn a_prompt_of_special_tokens_fits_the_render_answer_cap() {
+    let text = || vec![FrontendContentPartV1::Text("look".into())];
+    let rendered = render_parts("explicit:specials-at-the-limit", text()).unwrap();
+    assert_eq!(rendered.prompt.len(), EXPLICIT_PROMPT_BYTES);
+    assert_eq!(
+        rendered.segments.len(),
+        EXPLICIT_PROMPT_BYTES / "[U]".len() + 1
+    );
+    assert_eq!(
+        render_parts("explicit:specials-past-the-limit", text()).unwrap_err(),
+        FrontendErrorV1::new(
+            resource_v1("prompt exceeds the byte limit"),
+            Some("messages")
+        )
     );
 }
 
@@ -591,6 +687,21 @@ fn constraint_answers_are_checked() {
             .unwrap_err()
             .message
             .starts_with("the bundle frontend answered a malformed constraint")
+    );
+    // A token element names a declared ID-only marker, `</t>` (5), only.
+    assert_eq!(
+        format("id-only:named-token").tool_constraint(&[], &FrontendToolChoiceV1::Required),
+        Ok(Some(runtime_grammar::Grammar::from_expr(
+            runtime_grammar::Expr::Token(5)
+        )))
+    );
+    assert_eq!(
+        format("named-token")
+            .tool_constraint(&[], &FrontendToolChoiceV1::Required)
+            .unwrap_err()
+            .message,
+        "the bundle frontend answered a constraint naming token 5, which is no declared \
+         ID-only marker"
     );
 }
 
@@ -1387,6 +1498,7 @@ fn bad_parser_answers_are_refused_and_end_the_parser() {
                 held: *held,
                 last: *last,
                 stop_floor: Some(0),
+                marks: None,
             });
             if outcome.is_err() {
                 break;
@@ -1403,6 +1515,7 @@ fn bad_parser_answers_are_refused_and_end_the_parser() {
                         held: false,
                         last: false,
                         stop_floor: None,
+                        marks: None,
                     }),
                     Err(sequence_v1("bytes pushed after the format parser failed")),
                     "{}",
@@ -1517,6 +1630,7 @@ fn good_parser_answers_become_format_events() {
         held: false,
         last,
         stop_floor: Some(0),
+        marks: None,
     };
     assert_eq!(
         parser.push(input(false)).unwrap(),

@@ -2,12 +2,15 @@
 //!
 //! A decoder refusal names one family, and a bundle's format words its own
 //! refusals in the same families, so the host and the format read alike. The host keeps its own copy of the wording and of the checks it
-//! makes without the format: a tool name against the declared byte set, and
-//! a backend tool call's arguments as bounded JSON of the declared shape.
+//! makes without the format: a tool name against the declared byte set, a
+//! backend tool call's arguments as bounded JSON of the declared shape, and
+//! the boundary tokens a declared text spells.
+
+use std::ops::Range;
 
 use runtime_server::FrontendJsonV1;
 
-use crate::descriptor::{FrontendDescriptorV1, FrontendLimitsV1};
+use crate::descriptor::{FrontendDescriptorV1, FrontendLimitsV1, FrontendVocabularyV1};
 
 /// One refusal that names a conversation's shape.
 pub(crate) fn sequence_v1(message: impl Into<String>) -> String {
@@ -98,4 +101,46 @@ pub(crate) fn validate_name_v1(
         )));
     }
     Ok(())
+}
+
+/// `text` cut at the declared boundary tokens it spells, the longest one
+/// first at each position: each piece is a byte range of `text`, and
+/// whether it is one boundary token's spelling. The text between two of
+/// them is one piece.
+pub(crate) fn boundary_pieces_v1<'a>(
+    text: &'a str,
+    vocabulary: &'a FrontendVocabularyV1,
+) -> impl Iterator<Item = (Range<usize>, bool)> + 'a {
+    let (mut at, mut plain) = (0, 0);
+    let mut token: Option<Range<usize>> = None;
+    std::iter::from_fn(move || {
+        if let Some(token) = token.take() {
+            return Some((token, true));
+        }
+        while at < text.len() {
+            let longest = vocabulary
+                .boundary_tokens
+                .iter()
+                .map(|boundary| boundary.text.as_str())
+                .filter(|spelling| !spelling.is_empty() && text[at..].starts_with(spelling))
+                .map(str::len)
+                .max();
+            if let Some(length) = longest {
+                let run = plain..at;
+                at += length;
+                plain = at;
+                if run.is_empty() {
+                    return Some((run.end..at, true));
+                }
+                token = Some(run.end..at);
+                return Some((run, false));
+            }
+            at += text[at..].chars().next().map_or(1, char::len_utf8);
+        }
+        (plain < text.len()).then(|| {
+            let run = plain..text.len();
+            plain = text.len();
+            (run, false)
+        })
+    })
 }

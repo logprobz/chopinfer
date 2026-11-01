@@ -59,7 +59,7 @@ pub use descriptor::{
     audio_log_mel_v1_fixed_parameters,
 };
 #[cfg(any(test, feature = "test-support"))]
-pub use loopback::parse_completion_v1;
+pub use loopback::{parse_completion_v1, parse_marked_completion_v1};
 pub use native::BundleParserSourceV1;
 pub use serve::{BundleChatStateV1, BundleFrontendV1};
 pub use tokenizer::{tokenizer_contract_v1, tokenizer_dialect_v1, tokenizer_from_components_v1};

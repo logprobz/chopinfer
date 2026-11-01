@@ -42,7 +42,7 @@
     "frontend": {
       "directory": false,
       "members": {
-        ".": "9b0b2c35a5ab3130a31d0f074b482a64cc40b6657d1033bcf49e333ce442b12d"
+        ".": "6e0a161de21dccf8f14a6b3d84abb46371d0abb624d3192a2f7131ff6e272adb"
       },
       "path": "models/qwen38/compiler/src/frontend.json"
     },
@@ -1881,14 +1881,6 @@
   },
   "model": "qwen38",
   "objects": {
-    "9b0b2c35a5ab3130a31d0f074b482a64cc40b6657d1033bcf49e333ce442b12d": {
-      "production": {
-        "adoption_commit": "e474dd0f082f79da5cd78fe6df9a40b8ee59e10c",
-        "adoption_date": "2026-10-15",
-        "producer": "legacy-unknown"
-      },
-      "schema": "chop-frontend-openai-v2"
-    },
     "e19a10e3a977287afe1c33d889e374ebe02a92fe2099a43258926cb6d8ff6d66": {
       "production": {
         "adoption_commit": "511d3fdaf8dcceb32f0ce7c50830ac510b670f08",
@@ -11189,6 +11181,9 @@
     },
     "a985ec7259e16bdb80f2afe9f1c848212a7cdbb283caaca2e987da237cef59ba": {
       "schema": "legacy-json-object"
+    },
+    "6e0a161de21dccf8f14a6b3d84abb46371d0abb624d3192a2f7131ff6e272adb": {
+      "schema": "chop-frontend-openai-v2"
     }
   },
   "schema": "chopinfer-qual-references/v1"

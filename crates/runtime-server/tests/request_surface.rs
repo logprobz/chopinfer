@@ -41,13 +41,18 @@ const MODEL: &str = "fixture.model.v1";
 const MAXIMUM_TOTAL_TOKENS: usize = 8192;
 const PROMPT_TOKENS: usize = 4;
 
-/// A chat state whose only fact is whether reasoning was asked for.
-#[derive(Clone, Copy, Debug)]
-struct FakeChatStateV1;
+/// A chat state whose only facts are whether reasoning was asked for and at
+/// which effort.
+#[derive(Clone, Debug)]
+struct FakeChatStateV1 {
+    /// The effort the prompt thinks at, for a frontend that declares output
+    /// lengths; `None` for a chat prompt and for every other frontend.
+    thinking_effort: Option<String>,
+}
 
 impl ChatStateV1 for FakeChatStateV1 {
     fn reasoning_enabled(&self) -> bool {
-        false
+        self.thinking_effort.is_some()
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -83,6 +88,18 @@ struct PermissiveFrontendV1 {
     /// While set, the frontend declares media in system and developer
     /// messages.
     system_media: AtomicBool,
+    /// While set, the frontend declares these output lengths, and a request
+    /// whose top-level effort is not `none` renders a prompt that thinks at
+    /// it.
+    output_lengths: Mutex<Option<OutputLengthsV1>>,
+}
+
+/// The output lengths a test frontend declares: the default, and the length
+/// of a prompt that thinks at each listed effort.
+#[derive(Debug)]
+struct OutputLengthsV1 {
+    default: usize,
+    efforts: Vec<(&'static str, usize)>,
 }
 
 impl PermissiveFrontendV1 {
@@ -101,6 +118,7 @@ impl PermissiveFrontendV1 {
             vendor_mapping: AtomicBool::new(false),
             declared_images: AtomicBool::new(false),
             system_media: AtomicBool::new(false),
+            output_lengths: Mutex::new(None),
         })
     }
 
@@ -180,6 +198,19 @@ impl ServerFrontendV1 for PermissiveFrontendV1 {
 
     fn forced_choice_without_tools_is_auto(&self) -> bool {
         self.vendor_mapping.load(Ordering::Relaxed)
+    }
+
+    fn default_output_tokens(&self, state: &Arc<dyn ChatStateV1>) -> Option<usize> {
+        let declared = self.output_lengths.lock().unwrap();
+        let lengths = declared.as_ref()?;
+        let state = state.as_any().downcast_ref::<FakeChatStateV1>()?;
+        Some(
+            state
+                .thinking_effort
+                .as_deref()
+                .and_then(|effort| lengths.efforts.iter().find(|(name, _)| *name == effort))
+                .map_or(lengths.default, |(_, length)| *length),
+        )
     }
 
     fn tool_constraint(
@@ -264,12 +295,20 @@ impl ServerFrontendV1 for PermissiveFrontendV1 {
                 }
             }
         }
+        let thinking_effort = self
+            .output_lengths
+            .lock()
+            .unwrap()
+            .is_some()
+            .then(|| request.reasoning_effort.clone())
+            .flatten()
+            .filter(|effort| effort != "none");
         Ok(FrontendRenderedChatV1 {
             prompt,
             segments,
             media,
             allowed_function_names,
-            state: Arc::new(FakeChatStateV1),
+            state: Arc::new(FakeChatStateV1 { thinking_effort }),
         })
     }
 
@@ -2226,6 +2265,183 @@ async fn default_lengths_models_and_unknown_extensions_follow_the_reference() {
     assert_eq!(response.status, 400);
     assert_eq!(response.json()["error"]["code"], 400);
     assert_eq!(response.json()["error"]["param"], "use_beam_search");
+}
+
+/// A deployment whose frontend declares a default output length of 1000 and
+/// 3000 for a prompt that thinks at effort `high`.
+fn declared_output_lengths() -> InProcessServerV1 {
+    let server = InProcessServerV1::full();
+    *server.frontend.output_lengths.lock().unwrap() = Some(OutputLengthsV1 {
+        default: 1000,
+        efforts: vec![("high", 3000)],
+    });
+    server
+}
+
+/// The output limit of the last request the backend was given.
+fn last_max_new_tokens(server: &InProcessServerV1) -> usize {
+    server
+        .backend
+        .prompts
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .max_new_tokens
+}
+
+/// One user turn with `fields` after the messages.
+fn user_turn(fields: &str) -> String {
+    chat(&format!(
+        r#""messages":[{{"role":"user","content":"hi"}}]{fields}"#
+    ))
+}
+
+/// A chat or Responses request without an output limit generates up to the
+/// frontend's default for the rendered prompt: the length of the effort a
+/// thinking prompt takes when one is declared, else the default, lowered to
+/// the context left. An explicit limit is honored above it, completions keep
+/// their own default, and a frontend that declares none leaves the context.
+#[tokio::test]
+async fn a_declared_default_output_length_caps_requests_without_a_limit() {
+    let server = InProcessServerV1::full();
+    for fields in ["", r#","reasoning_effort":"high""#] {
+        let response = server
+            .post("/v1/chat/completions", &user_turn(fields))
+            .await;
+        assert_eq!(response.status, 200, "{fields}: {}", response.body);
+        assert_eq!(
+            last_max_new_tokens(&server),
+            MAXIMUM_TOTAL_TOKENS - PROMPT_TOKENS,
+            "{fields}"
+        );
+    }
+    let server = declared_output_lengths();
+    for (fields, expected) in [
+        // A chat prompt takes the default, and so does one that thinks at an
+        // effort without its own length.
+        ("", 1000),
+        (r#","reasoning_effort":"none""#, 1000),
+        (r#","reasoning_effort":"low""#, 1000),
+        (r#","reasoning_effort":"high""#, 3000),
+        (r#","max_tokens":5000"#, 5000),
+        (r#","max_completion_tokens":5000"#, 5000),
+        (r#","reasoning_effort":"high","max_tokens":4000"#, 4000),
+        (r#","max_tokens":10"#, 10),
+    ] {
+        let response = server
+            .post("/v1/chat/completions", &user_turn(fields))
+            .await;
+        assert_eq!(response.status, 200, "{fields}: {}", response.body);
+        assert_eq!(last_max_new_tokens(&server), expected, "{fields}");
+    }
+    for (fields, expected) in [
+        ("", 1000),
+        (r#","reasoning":{"effort":"high"}"#, 3000),
+        (r#","max_output_tokens":5000"#, 5000),
+    ] {
+        let body = format!(r#"{{"model":"{MODEL}","input":"hi","store":false{fields}}}"#);
+        let response = server.post("/v1/responses", &body).await;
+        assert_eq!(response.status, 200, "{fields}: {}", response.body);
+        assert_eq!(last_max_new_tokens(&server), expected, "{fields}");
+        assert_eq!(response.json()["max_output_tokens"], expected, "{fields}");
+    }
+    // A response that ends at the default is incomplete, as one that ends at
+    // an explicit limit is.
+    *server.backend.replay.lock().unwrap() = Some(vec![
+        GenerationEvent::Content(VisibleContent {
+            delta: "x".to_owned(),
+            generated_token_count: 1000,
+        }),
+        GenerationEvent::Finished {
+            reason: FinishReason::Length,
+            usage: TokenUsage {
+                prompt_tokens: PROMPT_TOKENS as u64,
+                completion_tokens: 1000,
+                cached_tokens: None,
+            },
+        },
+    ]);
+    let body = format!(r#"{{"model":"{MODEL}","input":"hi","store":false}}"#);
+    let response = server.post("/v1/responses", &body).await;
+    assert_eq!(response.status, 200, "{}", response.body);
+    let response = response.json();
+    assert_eq!(response["status"], "incomplete", "{response}");
+    assert_eq!(
+        response["incomplete_details"]["reason"], "max_output_tokens",
+        "{response}"
+    );
+    let response = server
+        .post("/v1/completions", r#"{"prompt":"hello"}"#)
+        .await;
+    assert_eq!(response.status, 200, "{}", response.body);
+    assert_eq!(last_max_new_tokens(&server), 16);
+    // Where the context left is shorter than the length, the context binds.
+    server
+        .backend
+        .prompt_count
+        .store(MAXIMUM_TOTAL_TOKENS - 600, Ordering::Relaxed);
+    for fields in ["", r#","reasoning_effort":"high""#] {
+        let response = server
+            .post("/v1/chat/completions", &user_turn(fields))
+            .await;
+        assert_eq!(response.status, 200, "{fields}: {}", response.body);
+        assert_eq!(last_max_new_tokens(&server), 600, "{fields}");
+    }
+}
+
+/// A min_tokens above a declared default output length is refused before
+/// the prompt is counted, naming the limit; one within it but above the
+/// context left is refused as before.
+#[tokio::test]
+async fn min_tokens_is_checked_against_a_declared_default_output_length() {
+    let undeclared = InProcessServerV1::full();
+    let response = undeclared
+        .post("/v1/chat/completions", &user_turn(r#","min_tokens":1001"#))
+        .await;
+    assert_eq!(response.status, 200, "{}", response.body);
+    let server = declared_output_lengths();
+    for fields in [
+        r#","min_tokens":1000"#,
+        r#","reasoning_effort":"high","min_tokens":3000"#,
+    ] {
+        let response = server
+            .post("/v1/chat/completions", &user_turn(fields))
+            .await;
+        assert_eq!(response.status, 200, "{fields}: {}", response.body);
+    }
+    let tokenizations = server.backend.tokenizations();
+    let submissions = server.backend.submissions();
+    for (fields, limit) in [
+        (r#","min_tokens":1001"#, 1000),
+        (r#","reasoning_effort":"high","min_tokens":3001"#, 3000),
+    ] {
+        let response = server
+            .post("/v1/chat/completions", &user_turn(fields))
+            .await;
+        assert_eq!(response.status, 400, "{fields}: {}", response.body);
+        let error = &response.json()["error"];
+        assert_eq!(error["param"], "min_tokens", "{fields}");
+        assert_eq!(
+            error["message"],
+            format!("min_tokens exceeds the default output limit of {limit} tokens"),
+            "{fields}"
+        );
+    }
+    assert_eq!(server.backend.tokenizations(), tokenizations);
+    assert_eq!(server.backend.submissions(), submissions);
+    server
+        .backend
+        .prompt_count
+        .store(MAXIMUM_TOTAL_TOKENS - 600, Ordering::Relaxed);
+    let response = server
+        .post("/v1/chat/completions", &user_turn(r#","min_tokens":800"#))
+        .await;
+    assert_eq!(response.status, 400, "{}", response.body);
+    assert_eq!(
+        response.json()["error"]["message"],
+        "min_tokens exceeds remaining context"
+    );
 }
 
 /// A backend that refuses an over-context prompt before preparing it is

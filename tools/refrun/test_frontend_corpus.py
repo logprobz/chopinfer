@@ -6,6 +6,7 @@ id per character.
 """
 import copy
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -1508,6 +1509,25 @@ class TypedArgumentTests(unittest.TestCase):
         # open and the function close inside one are text.
         self.assertIsNone(corpus.argument_failure(turn({"n": "a <p name=\"m\"> b </f>"}), tools, self.PARSER))
 
+    def test_a_marker_holding_an_id_only_spelling_ends_no_raw_value(self):
+        """A marked render's value spells such a marker in ordinary tokens,
+        which the parser does not read as the marker."""
+        def turn(arguments):
+            return {"role": "assistant", "tool_calls": [{"function": {"name": "f", "arguments": arguments}}]}
+
+        tools = [{"type": "function", "function": {"name": "f", "parameters": {
+            "type": "object", "properties": {"n": {"type": "string"}}}}}]
+        parser = {"tool_grammar": "xml-function-parameters-v1", "parameter_open": "<｜M｜ p=\"",
+                  "parameter_close": "</｜M｜ p>\n", "function_close": "</f>"}
+        value = turn({"n": "x</｜M｜ p>y"})
+        self.assertEqual(corpus.argument_failure(value, tools, parser),
+                         ("delimiter", "n is raw text that spells the marker '</｜M｜ p>'"))
+        self.assertIsNone(corpus.argument_failure(value, tools, parser, id_only=["｜M｜"]))
+        self.assertIsNone(corpus.argument_failure(turn({"n": "<｜M｜ p=\""}), tools, parser, id_only=["｜M｜"]))
+        # A marker that holds no ID-only spelling still ends the value.
+        self.assertEqual(corpus.argument_failure(turn({"n": "x</f>"}), tools, parser, id_only=["｜M｜"]),
+                         ("delimiter", "n is raw text that spells the marker '</f>'"))
+
 
 class RoundTripDomainTests(Harness):
     """Accepted arguments outside the parser's lossless domain fail their
@@ -1697,6 +1717,260 @@ class RoundTripDomainTests(Harness):
         with self.assertRaisesRegex(corpus.CorpusError, "does not render as the normalized completion"):
             corpus.generate(model, self.directory / "nfc", divergences=self.table(), template=self.template,
                             reference=self.tokenizer_reference())
+
+
+# The toy template as a Python encoder that marks the special tokens it
+# writes, as a cases module's `encoder_render` returns `(text, ranges)`.
+TOY_MARKED_ENCODER = """\
+import json
+
+
+class TemplateError(Exception):
+    pass
+
+
+def encode(messages, add_generation_prompt, effort=None):
+    text, ranges = "", []
+
+    def write(piece, special=False):
+        nonlocal text
+        if special:
+            ranges.append((len(text), len(text) + len(piece)))
+        text += piece
+
+    write("<sys>", True)
+    write(effort if effort in ("low", "high") else "max")
+    for message in messages:
+        if message["role"] == "user":
+            write("<user>", True)
+            write(message["content"])
+        elif message["role"] == "assistant":
+            write("<asst>", True)
+            write((message.get("reasoning_content") or "") + "|" + (message.get("content") or ""))
+            for call in message.get("tool_calls") or []:
+                write("<call>", True)
+                write(call["function"]["name"] + json.dumps(call["function"]["arguments"], ensure_ascii=False))
+            write("<end>", True)
+            write("\\n")
+        elif message["role"] == "tool":
+            write("<tool>", True)
+            write(message["content"])
+        else:
+            raise TemplateError("unknown role " + message["role"])
+    if add_generation_prompt:
+        write("<asst>", True)
+    return text, ranges
+"""
+
+# The toy tokenizer's added vocabulary: ids past every code point, so no
+# character's id is one of them.
+ADDED = {text: 0x110000 + index for index, text in enumerate(
+    ("<sys>", "<user>", "<asst>", "<call>", "<end>", "<tool>", "<eos>"))}
+
+
+def text_only(text, ranges, generation):
+    """A rewrite of a marked render to its text alone, tokenized whole."""
+    return text
+
+
+def marked_reference(rewrite=None, normalize=None):
+    """The toy marked encoder's reference: one id per character of plain
+    text, after `normalize`, and an `ADDED` id per range. `rewrite(text,
+    ranges, add_generation_prompt)` changes what the render returns."""
+    coverage = PythonSourceCoverage(TOY_MARKED_ENCODER)
+
+    def render(messages, tools, add_generation_prompt, continue_final_message, keywords):
+        text, ranges = coverage.namespace["encode"](messages, add_generation_prompt, keywords.get("reasoning_effort"))
+        return rewrite(text, ranges, add_generation_prompt) if rewrite else (text, ranges)
+
+    def plain(region):
+        return [ord(character) for character in (normalize or (lambda text: text))(region)]
+
+    return corpus.Reference(coverage, render, plain, normalize=normalize,
+                            tokenize_marked=lambda text, ranges: corpus.marked_token_ids(text, ranges, plain, ADDED))
+
+
+GENERATION = {"tools": None, "add_generation_prompt": True, "continue_final_message": False, "keywords": {}}
+
+
+class MarkedTokenizationTests(unittest.TestCase):
+    def test_a_range_is_its_added_token_and_its_spelling_in_plain_text_is_characters(self):
+        def plain(region):
+            regions.append(region)
+            return [ord(character) for character in region]
+
+        regions = []
+        ids = corpus.marked_token_ids("<end>a<end><user>", [(6, 11), [11, 17]], plain, ADDED)
+        self.assertEqual(ids, [*map(ord, "<end>a"), ADDED["<end>"], ADDED["<user>"]])
+        # Every region is encoded, the empty ones between and after ranges too.
+        self.assertEqual(regions, ["<end>a", "", ""])
+        with self.assertRaisesRegex(corpus.CorpusError, r"special range \(0, 1\) spells '<', which is no added token"):
+            corpus.marked_token_ids("<end>", [(0, 1)], plain, ADDED)
+
+    def test_special_ranges_are_ascending_disjoint_nonempty_string_indices(self):
+        self.assertEqual(corpus.special_ranges("abcd", [[0, 2], (2, 4)]), ((0, 2), (2, 4)))
+        self.assertEqual(corpus.special_ranges("", []), ())
+        for ranges in ([(1, 3), (2, 4)], [(2, 3), (0, 1)], [(1, 1)], [(0, 5)], [(-1, 1)], [(False, True)],
+                       [(0, 1, 2)], [(0.0, 1)], ["ab"]):
+            with self.assertRaisesRegex(corpus.CorpusError, "is not an ascending, disjoint, nonempty"):
+                corpus.special_ranges("abcd", ranges)
+        with self.assertRaisesRegex(corpus.CorpusError, "are NoneType, not a list of pairs"):
+            corpus.special_ranges("abcd", None)
+        # Indices count code points, not UTF-8 bytes.
+        self.assertEqual(corpus.marked_token_ids("\u00e9<end>", [(1, 6)], lambda region: [ord(c) for c in region],
+                                                 ADDED), [0xE9, ADDED["<end>"]])
+
+    def test_ranges_within_a_cut_are_relative_and_none_straddles_it(self):
+        ranges = ((0, 2), (4, 6), (6, 9))
+        self.assertEqual(corpus.ranges_within(ranges, 0, 6, "case c"), ((0, 2), (4, 6)))
+        self.assertEqual(corpus.ranges_within(ranges, 6, 10, "case c"), ((0, 3),))
+        self.assertIsNone(corpus.ranges_within(None, 0, 6, "case c"))
+        with self.assertRaisesRegex(corpus.CorpusError, r"case c: the special range \(4, 6\) straddles the cut at 5"):
+            corpus.ranges_within(ranges, 0, 5, "case c")
+        with self.assertRaisesRegex(corpus.CorpusError, r"the special range \(0, 2\) straddles the cut at 1"):
+            corpus.ranges_within(ranges, 1, 9, "case c")
+
+    def test_only_plain_text_is_normalized(self):
+        reference = corpus.Reference(None, None, None, normalize=lambda text: unicodedata.normalize("NFC", text))
+        self.assertEqual(reference.normalized("e\u0301<x>e\u0301", ((2, 5),)), ("\u00e9<x>\u00e9", ((1, 4),)))
+        self.assertEqual(reference.normalized("e\u0301", None), ("\u00e9", None))
+
+    @unittest.skipUnless(importlib.util.find_spec("tokenizers"), "the tokenizers package is not installed")
+    def test_the_plain_tokenizer_reads_an_added_spelling_as_text(self):
+        from tokenizers import Tokenizer, models
+
+        vocabulary = {character: index for index, character in enumerate(dict.fromkeys("<end>hi"))}
+        tokenizer = Tokenizer(models.BPE(vocabulary, []))
+        tokenizer.add_special_tokens(["<end>"])
+        self.assertEqual(tokenizer.encode("hi<end>").ids, [5, 6, 7])
+        self.assertEqual(corpus.plain_tokenizer(tokenizer).encode("hi<end>").ids, [5, 6, 0, 1, 2, 3, 4])
+        marked = corpus.marked_tokenizer(tokenizer)
+        self.assertEqual(marked("hi<end><end>", [(7, 12)]), [5, 6, 0, 1, 2, 3, 4, 7])
+        # The copy leaves the tokenizer its added tokens.
+        self.assertEqual(tokenizer.encode("<end>").ids, [7])
+
+
+class MarkedRenderTests(Harness):
+    """A Python encoder's marked render: its ranges are added tokens, the
+    text between them is plain, and its round trips cut by its ranges."""
+
+    def test_an_outcome_tokenizes_a_marked_render_and_a_text_render_whole(self):
+        reference = marked_reference()
+        outcome = reference.outcome({**GENERATION, "messages": [user("a<user>b")]})
+        self.assertEqual(outcome["rendered_text"], "<sys>max<user>a<user>b<asst>")
+        self.assertEqual(outcome["special_ranges"], ((0, 5), (8, 14), (22, 28)))
+        self.assertEqual(outcome["token_ids"], [ADDED["<sys>"], *map(ord, "max"), ADDED["<user>"],
+                                                *map(ord, "a<user>b"), ADDED["<asst>"]])
+        # A render that returns its text is tokenized whole, as before.
+        outcome = marked_reference(text_only).outcome({**GENERATION, "messages": [user("a<user>b")]})
+        self.assertEqual(outcome, {"rendered_text": "<sys>max<user>a<user>b<asst>",
+                                   "token_ids": list(map(ord, "<sys>max<user>a<user>b<asst>")),
+                                   "lines": outcome["lines"]})
+        refused = reference.outcome({**GENERATION, "messages": [{"role": "critic", "content": "no"}]})
+        self.assertEqual(refused["refusal"], {"class": "TemplateError", "message": "unknown role critic"})
+
+    def test_a_marked_render_needs_a_reference_that_tokenizes_one(self):
+        reference = marked_reference()
+        for broken in (corpus.Reference(reference.coverage, reference.render_text, reference.tokenize),
+                       reference.with_reference_text(lambda text, arguments: text),
+                       marked_reference(lambda text, ranges, generation: [text, ranges]),
+                       marked_reference(lambda text, ranges, generation: (text, [(0, 3)]))):
+            with self.assertRaises(corpus.CorpusError):
+                broken.outcome({**GENERATION, "messages": [user()]})
+
+    def test_a_marked_corpus_writes_no_ranges(self):
+        model = ToyModel(self.directory, cases=WITHOUT_LEGACY)
+        output = self.directory / "marked"
+        corpus.generate(model, output, divergences=self.table(), template=self.template,
+                        reference=marked_reference())
+        vectors = {vector["id"]: vector for vector in json.loads((output / "corpus.json").read_text())}
+        self.assertEqual(vectors["low"]["token_ids"][0], ADDED["<sys>"])
+        for name in ("corpus.json", "corpus-rounds.json", "reference.json", "rounds-report.json"):
+            self.assertNotIn("special_ranges", (output / name).read_text(), name)
+        # The same text rendered as text writes the files it always did.
+        marked = output
+        output = self.directory / "text"
+        corpus.generate(model, output, divergences=self.table(), template=self.template,
+                        reference=marked_reference(text_only))
+        plain = self.generate(model, self.table(), name="template")
+        for name in ("corpus.json", "corpus-rounds.json", "reference.json", "rounds-report.json"):
+            self.assertEqual((output / name).read_text(), (plain / name).read_text(), name)
+        self.assertNotEqual((marked / "corpus.json").read_text(), (plain / "corpus.json").read_text())
+
+    def test_round_trips_tokenize_the_prompt_and_completion_with_their_ranges(self):
+        spelled = {"id": "spelled", "request": {"messages": [user(), {"role": "assistant", "reasoning": "r",
+                                                                      "content": "a<end>b<user>"}]},
+                   "features": ["ends:assistant"]}
+        model = ToyModel(self.directory, cases=[spelled])
+        vectors, infos, failure, reason = corpus.round_vectors(model, marked_reference(), spelled)
+        self.assertEqual((failure, reason), (None, None))
+        (vector,) = vectors
+        # The completion ends at the stop token's range, not at its spelling
+        # in the content, which stays characters.
+        self.assertEqual(vector["token_ids"], [*map(ord, "r|a<end>b<user>"), ADDED["<end>"]])
+        self.assertEqual(vector["separator"], "\n")
+        self.assertEqual(vector["expect"]["content"], "a<end>b<user>")
+        # The prompt is tokenized with its own ranges, so its ids and the
+        # completion's are those of the whole marked text.
+        self.assertFalse(infos["spelled-round-end"]["boundary_merges"])
+        # Rendered as text, the spelling is the first stop token.
+        vectors, infos, _, _ = corpus.round_vectors(model, marked_reference(text_only), spelled)
+        self.assertEqual(vectors[0]["token_ids"], list(map(ord, "r|a<end>")))
+        self.assertEqual(vectors[0]["separator"], "b<user><end>\n")
+
+    def test_a_declared_ending_is_appended_as_its_added_token(self):
+        spelled = {"id": "spelled", "request": {"messages": [user(), {"role": "assistant", "content": "a<user>b"}]},
+                   "features": ["ends:assistant"]}
+        model = ToyModel(self.directory, cases=[spelled], endings={"answer": ["<user>", "<eos>"],
+                                                                   "tool_calls": ["<tool>"]},
+                         stops=("<user>", "<tool>", "<eos>"))
+        vectors, _, failure, _ = corpus.round_vectors(model, marked_reference(), spelled)
+        self.assertIsNone(failure)
+        self.assertEqual({vector["id"]: vector["token_ids"] for vector in vectors},
+                         {f"spelled-round-{name}": [*map(ord, "|a<user>b"), ADDED["<end>"], ord("\n"), ADDED[ending]]
+                          for name, ending in (("user", "<user>"), ("eos", "<eos>"))})
+        self.assertTrue(all("separator" not in vector for vector in vectors))
+
+    def test_a_generation_prompt_must_mark_what_its_history_render_marks(self):
+        answer = next(case for case in CASES if case["id"] == "answer")
+        model = ToyModel(self.directory, cases=[answer])
+        unmarked = marked_reference(lambda text, ranges, generation: (text, ranges[:-1] if generation else ranges))
+        with self.assertRaisesRegex(corpus.CorpusError,
+                                    "case answer: its generation prompt has other special ranges than its history"):
+            corpus.round_vectors(model, unmarked, answer)
+
+    def test_an_id_only_marker_in_a_raw_value_ends_it_only_in_a_text_render(self):
+        string = {"type": "object", "properties": {"n": {"type": "string"}}}
+        cases = [calling("close", string, {"n": "a</v>"}), calling("call-close", string, {"n": "a</call>"})]
+        model = ToyModel(self.directory, cases=cases)
+        model.parser = {"tool_grammar": "xml-key-value-arguments-v1", "parameter_close": "</v>",
+                        "tool_call_close": "</call>"}
+        model.declaration["vocabulary"]["id_only_markers"] = ["</v>"]
+
+        def failures(reference):
+            return {case["id"]: getattr(corpus.round_vectors(model, reference, case)[2], "kind", None)
+                    for case in cases}
+
+        self.assertEqual(failures(marked_reference()), {"close": None, "call-close": "delimiter"})
+        # Tokenized whole, the value's spelling is the marker's token.
+        self.assertEqual(failures(marked_reference(text_only)), {"close": "delimiter", "call-close": "delimiter"})
+        del model.declaration["vocabulary"]["id_only_markers"]
+        self.assertEqual(failures(marked_reference()), {"close": "delimiter", "call-close": "delimiter"})
+
+    def test_a_marked_completion_the_normalizer_rewrites_keeps_its_normalized_round_trip(self):
+        string = {"type": "object", "properties": {"n": {"type": "str"}}}
+        decomposed = calling("decomposed", string, {"n": "\"e\u0301"})
+        composed = calling("composed", string, {"n": "\"\u00e9"})
+        model = ToyModel(self.directory, cases=[decomposed, composed])
+        reference = marked_reference(normalize=lambda text: unicodedata.normalize("NFC", text))
+        control, _, failure, _ = corpus.round_vectors(model, reference, decomposed)
+        self.assertEqual(failure.kind, "tokenizer")
+        twin, _, failure, _ = corpus.round_vectors(model, reference, composed)
+        self.assertIsNone(failure)
+        self.assertEqual(control[0]["token_ids"][-1], ADDED["<end>"])
+        self.assertEqual({key: value for key, value in control[0].items() if key != "id"},
+                         {key: value for key, value in twin[0].items() if key != "id"})
+
 
 if __name__ == "__main__":
     unittest.main()

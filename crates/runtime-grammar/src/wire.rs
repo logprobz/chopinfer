@@ -2,7 +2,8 @@
 //! binary (a bundle's frontend) can be compiled in another (the host).
 //!
 //! The document is little-endian: the 8-byte magic `CHOPGRAM`, a `u32`
-//! layout ([`GRAMMAR_WIRE_LAYOUT_V1`]), a `u32` root rule index, a list of
+//! layout ([`GRAMMAR_WIRE_LAYOUT_V1`], or [`GRAMMAR_WIRE_LAYOUT_TOKENS_V1`]
+//! for a grammar that names tokens), a `u32` root rule index, a list of
 //! rules (one expression each), and a list of special token texts. A list is
 //! a `u32` count and its entries; "bytes" is a `u64` length and that many
 //! bytes; a flag is one byte, 0 or 1. An expression is a one-byte kind, then:
@@ -20,9 +21,15 @@
 //! | 8 | `TextExcluding` | list of bytes |
 //! | 9 | `TextUntil` | bytes end, list of bytes avoid |
 //! | 10 | `OrderedSubset` | list of {flag required, expression}, flag has tail, the tail expression when present, separator expression |
+//! | 11 | `Token` | `u32` token identifier (layout 2 only) |
+//!
+//! A grammar without a token element is written as layout 1, so its document
+//! is the one a build without token elements writes; a grammar with one is
+//! layout 2, which only adds that kind.
 //!
 //! Decoding is closed: it refuses another magic or layout before reading a
-//! field, an unknown kind or flag, truncation, trailing bytes, a root or rule
+//! field, an unknown kind or flag, a token element in a layout-1 document,
+//! a layout-2 document without one, truncation, trailing bytes, a root or rule
 //! reference outside the rules, a class that is not sorted disjoint
 //! non-adjacent scalar ranges, a repetition whose max is below its min or an
 //! unbounded one that states a max, and a repeated special token text. The
@@ -42,8 +49,12 @@
 use crate::expr::{CharClass, Expr, Grammar, GrammarError, RuleId};
 
 const MAGIC: &[u8; 8] = b"CHOPGRAM";
-/// The layout this build writes and reads.
+/// The layout this build writes and reads for a grammar that names no
+/// tokens.
 pub const GRAMMAR_WIRE_LAYOUT_V1: u32 = 1;
+/// The layout this build writes and reads for a grammar with a token
+/// element: layout 1 and the `Token` kind.
+pub const GRAMMAR_WIRE_LAYOUT_TOKENS_V1: u32 = 2;
 /// Deepest compile depth a document may reach (`compile_depth`: the
 /// compiler's recursion through expressions and inlined rules, an ordered
 /// subset counting twice), which also bounds each expression's nesting.
@@ -83,13 +94,19 @@ const RULE: u8 = 7;
 const TEXT_EXCLUDING: u8 = 8;
 const TEXT_UNTIL: u8 = 9;
 const ORDERED_SUBSET: u8 = 10;
+const TOKEN: u8 = 11;
 
 impl Grammar {
-    /// This grammar as a layout-1 wire document.
+    /// This grammar as a wire document: layout 1, or layout 2 when it has a
+    /// token element.
     #[must_use]
     pub fn encode_wire(&self) -> Vec<u8> {
         let mut writer = Writer(MAGIC.to_vec());
-        writer.u32(GRAMMAR_WIRE_LAYOUT_V1);
+        writer.u32(if self.named_tokens().is_empty() {
+            GRAMMAR_WIRE_LAYOUT_V1
+        } else {
+            GRAMMAR_WIRE_LAYOUT_TOKENS_V1
+        });
         writer.u32(self.root.0);
         writer.count(self.rules.len());
         for rule in &self.rules {
@@ -102,16 +119,22 @@ impl Grammar {
     /// Decodes a wire document. See the module documentation for what is
     /// refused, and why no construction budget is.
     pub fn decode_wire(bytes: &[u8]) -> Result<Self, GrammarError> {
-        let mut reader = Reader { bytes, rules: 0 };
+        let mut reader = Reader {
+            bytes,
+            rules: 0,
+            tokens: false,
+        };
         if reader.take(8)? != MAGIC {
             return Err(GrammarError::invalid("not a grammar wire document"));
         }
         let layout = reader.u32()?;
-        if layout != GRAMMAR_WIRE_LAYOUT_V1 {
+        if layout != GRAMMAR_WIRE_LAYOUT_V1 && layout != GRAMMAR_WIRE_LAYOUT_TOKENS_V1 {
             return Err(GrammarError::unsupported(format!(
-                "grammar wire layout {layout}; this build reads layout {GRAMMAR_WIRE_LAYOUT_V1}"
+                "grammar wire layout {layout}; this build reads layouts \
+                 {GRAMMAR_WIRE_LAYOUT_V1} and {GRAMMAR_WIRE_LAYOUT_TOKENS_V1}"
             )));
         }
+        reader.tokens = layout == GRAMMAR_WIRE_LAYOUT_TOKENS_V1;
         let root = reader.u32()?;
         let count = reader.count()?;
         reader.rules = count;
@@ -143,6 +166,13 @@ impl Grammar {
             root: RuleId(root),
             special_tokens,
         };
+        // One encoding per grammar: layout 2 only for a grammar that names
+        // tokens.
+        if reader.tokens && grammar.named_tokens().is_empty() {
+            return Err(GrammarError::invalid(
+                "grammar wire: a layout-2 document names no token",
+            ));
+        }
         let depth = compile_depth(&grammar, &WorkV1::default());
         if depth > GRAMMAR_WIRE_NESTING_MAX_V1 {
             return Err(GrammarError::too_large(format!(
@@ -269,7 +299,8 @@ impl RuleProfile {
                 | Expr::Literal(_)
                 | Expr::Class(_)
                 | Expr::TextExcluding(_)
-                | Expr::TextUntil { .. } => {}
+                | Expr::TextUntil { .. }
+                | Expr::Token(_) => {}
             }
         }
         Self {
@@ -442,6 +473,10 @@ impl Writer {
                 }
                 self.expr(separator);
             }
+            Expr::Token(id) => {
+                self.0.push(TOKEN);
+                self.u32(*id);
+            }
         }
     }
 }
@@ -450,6 +485,8 @@ struct Reader<'a> {
     bytes: &'a [u8],
     /// The rule count, which every reference must stay below.
     rules: usize,
+    /// Whether the layout admits token elements.
+    tokens: bool,
 }
 
 fn truncated() -> GrammarError {
@@ -607,6 +644,7 @@ impl<'a> Reader<'a> {
                     });
                     continue;
                 }
+                TOKEN if self.tokens => Expr::Token(self.u32()?),
                 kind => {
                     return Err(GrammarError::invalid(format!(
                         "grammar wire: unknown expression kind {kind}"

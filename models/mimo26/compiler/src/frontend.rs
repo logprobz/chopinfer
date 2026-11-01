@@ -204,6 +204,7 @@ fn apply_geometry(
     }
     component["context"]["maximum_total_tokens"] = g.context_tokens().into();
     component["limits"]["maximum_generated_tokens"] = g.context_tokens().into();
+    runtime_frontend_contract::lower_output_tokens_v1(component, u64::from(g.context_tokens()));
     if component.get("multimodal").is_none() {
         return Ok(());
     }
@@ -322,6 +323,11 @@ mod tests {
         let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(value["context"]["maximum_total_tokens"], 32768);
         assert_eq!(value["limits"]["maximum_generated_tokens"], 32768);
+        // The declared output length is lowered to the shorter context.
+        assert_eq!(
+            value["output_tokens"],
+            serde_json::json!({"default": 32768})
+        );
         assert_eq!(value["multimodal"]["arena"]["hidden"], geometry.hidden());
         assert_eq!(value["multimodal"]["encoders"][0]["payload_columns"], 6144);
         assert_eq!(value["multimodal"]["encoders"][1]["payload_columns"], 64);

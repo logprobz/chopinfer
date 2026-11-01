@@ -14,7 +14,7 @@
 //! is known, and every declared bound is checked against a ceiling this crate
 //! fixes. There is no migration and no default for a missing section.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::str;
 
@@ -432,6 +432,64 @@ pub struct FrontendLimitsV1 {
     pub maximum_json_values: usize,
 }
 
+/// How many tokens a chat or Responses request that sets no output limit
+/// generates.
+///
+/// When such a request's rendered prompt thinks at an effort `efforts`
+/// lists, the transport generates at most that effort's length, and
+/// otherwise at most `default`, either lowered to the context left after
+/// the prompt. An explicit limit is always honored. A declaration without
+/// this section lets such a request fill the context left.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrontendOutputTokensV1 {
+    /// The length for a chat prompt, and for a thinking prompt at an effort
+    /// `efforts` does not list.
+    pub default: usize,
+    /// The length for a thinking prompt at each listed effort, keyed by
+    /// declared effort name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub efforts: BTreeMap<String, usize>,
+}
+
+impl FrontendOutputTokensV1 {
+    /// The length for a prompt that thinks at `effort`, or for a chat
+    /// prompt when `effort` is `None`: the effort's length when `efforts`
+    /// lists it, else `default`.
+    #[must_use]
+    pub fn for_effort(&self, effort: Option<&str>) -> usize {
+        effort
+            .and_then(|name| self.efforts.get(name))
+            .copied()
+            .unwrap_or(self.default)
+    }
+}
+
+/// Lowers each declared output length of the frontend component
+/// `component` above `maximum` to `maximum`, so the section still validates
+/// once a geometry lowers `limits.maximum_generated_tokens` to `maximum`.
+/// A component without the section is left as it is, and a length that is
+/// not an integer is left for validation to refuse.
+pub fn lower_output_tokens_v1(component: &mut serde_json::Value, maximum: u64) {
+    let Some(output) = component.get_mut("output_tokens") else {
+        return;
+    };
+    let lower = |length: &mut serde_json::Value| {
+        if length.as_u64().is_some_and(|value| value > maximum) {
+            *length = maximum.into();
+        }
+    };
+    if let Some(default) = output.get_mut("default") {
+        lower(default);
+    }
+    if let Some(efforts) = output
+        .get_mut("efforts")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        efforts.values_mut().for_each(lower);
+    }
+}
+
 /// One boundary token, and the identifier the vocabulary gives it.
 ///
 /// A decoder needs both halves: a completion that carries one of these
@@ -455,11 +513,23 @@ pub struct FrontendVocabularyV1 {
     pub stop_token_ids: Vec<u32>,
     /// Every boundary this vocabulary gives a single identifier.
     pub boundary_tokens: Vec<FrontendBoundaryTokenV1>,
-    /// Exactly the special tokens a rendered prompt may carry.
+    /// Exactly the special tokens a scanned prompt may carry: a raw prompt,
+    /// or a chat render without explicit special tokens.
     ///
     /// Every one of these is also a declared boundary token, so nothing a
     /// prompt is allowed to carry is outside the set a decoder polices.
     pub prompt_special_tokens: Vec<String>,
+    /// Whether a chat render names every special token of its prompt as a
+    /// special segment, so the host encodes all other text as plain text
+    /// and a special token's spelling in client text stays ordinary text.
+    /// Absent, the host scans the rendered text for added tokens.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub explicit_special_tokens: bool,
+    /// The boundary tokens the completion parser reads only from their
+    /// token identifiers, so the same spelling generated as ordinary tokens
+    /// is text.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub id_only_markers: Vec<String>,
 }
 
 /// One file this declaration pins by exact identity.
@@ -792,6 +862,11 @@ pub struct FrontendDescriptorV1 {
     pub vocabulary: FrontendVocabularyV1,
     #[serde(default)]
     pub generation_config: runtime_sampling::SamplingDefaults,
+    /// The output length of a chat or Responses request that sets no
+    /// output limit. Absent: such a request may fill the context left
+    /// after its prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<FrontendOutputTokensV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub multimodal: Option<FrontendMultimodalV1>,
     pub response: FrontendResponseV1,
@@ -935,6 +1010,7 @@ impl FrontendDescriptorV1 {
         self.validate_limits()?;
         self.validate_vocabulary()?;
         self.validate_reasoning()?;
+        self.validate_output_tokens()?;
         self.validate_tools()?;
         self.validate_tokenizer()?;
         self.validate_multimodal()?;
@@ -1426,6 +1502,26 @@ impl FrontendDescriptorV1 {
         Ok(())
     }
 
+    fn validate_output_tokens(&self) -> Result<(), FrontendComponentErrorV1> {
+        let Some(output) = &self.output_tokens else {
+            return Ok(());
+        };
+        // The transport lowers each length to the context left after the
+        // prompt, so a length at or past the context is valid.
+        let maximum = self.limits.maximum_generated_tokens;
+        bounded_count(output.default, maximum, "output_tokens.default")?;
+        for (name, &length) in &output.efforts {
+            bounded_identifier(name, "output_tokens effort name")?;
+            if self.reasoning.effort(name).is_none() {
+                return Err(invalid(format!(
+                    "output_tokens effort '{name}' is not a declared effort"
+                )));
+            }
+            bounded_count(length, maximum, &format!("output_tokens.efforts.{name}"))?;
+        }
+        Ok(())
+    }
+
     fn validate_vocabulary(&self) -> Result<(), FrontendComponentErrorV1> {
         let vocabulary = &self.vocabulary;
         if vocabulary.size == 0 || vocabulary.size > MAX_VOCABULARY_SIZE {
@@ -1523,6 +1619,30 @@ impl FrontendDescriptorV1 {
             if !texts.contains(token.as_str()) {
                 return Err(invalid(format!(
                     "prompt special token '{token}' is not a declared boundary token"
+                )));
+            }
+        }
+        if vocabulary.id_only_markers.len() > MAX_MARKERS {
+            return Err(invalid(format!(
+                "{} ID-only markers exceed the limit of {MAX_MARKERS}",
+                vocabulary.id_only_markers.len()
+            )));
+        }
+        let mut seen = BTreeSet::new();
+        for marker in &vocabulary.id_only_markers {
+            if marker.is_empty() {
+                return Err(invalid("an ID-only marker cannot be empty"));
+            }
+            bounded_marker(marker, "ID-only marker")?;
+            if !seen.insert(marker.as_str()) {
+                return Err(invalid(format!(
+                    "ID-only marker '{marker}' is declared twice"
+                )));
+            }
+            // A marker read by its identifier needs one to read it by.
+            if !texts.contains(marker.as_str()) {
+                return Err(invalid(format!(
+                    "ID-only marker '{marker}' is not a declared boundary token"
                 )));
             }
         }

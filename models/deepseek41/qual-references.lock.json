@@ -3,7 +3,7 @@
     "chat_renders": {
       "directory": false,
       "members": {
-        ".": "6550c1c3164b56a1215fcd9b1b5c0f0b63ee418eb4d59c617097208a298877c8"
+        ".": "161b158f839679e42af183e26f0dfa7f895acaee93531979f92647785d226b4a"
       },
       "path": "fixtures/deepseek41/frontend/chat-renders.json"
     },
@@ -57,16 +57,16 @@
     "frontend": {
       "directory": false,
       "members": {
-        ".": "f2b2b332f90469eef8cf93d11fee30947c3abe2f944370c24d5d2662a7d583af"
+        ".": "34e6000d48589a8c42a1dab0b58c980c0a477d0a04d900f4399d23fd943aedfa"
       },
       "path": "models/deepseek41/compiler/src/frontend.json"
     },
     "frontend_capture": {
       "directory": true,
       "members": {
-        "corpus-coverage.json": "64e2c5bc2e95608610c9a3d61f9d6afc5b0a3544c28d1a9df339b2d29740783e",
-        "corpus-rounds.json": "cc653739cddaf7ca4484b023ba93feb1730425146cc8dd5520945c798522b6a9",
-        "corpus.json": "69ce2ecf05172c264bb713adbb64294042f041b8d5321281095c8a58c4cc622b",
+        "corpus-coverage.json": "991c637855cd90c51c6eb37dd03697004b299e2f08d70157d7bd598bf78be9b2",
+        "corpus-rounds.json": "6c467449ebaa4935b228037c6b9483491789c7ef8b800dccaee900b99720fa9f",
+        "corpus.json": "e0d0e16e2fdb12e9886c5472ef85c408267eaac9c4334175f078951e115c0ec5",
         "encoder-tests/LICENSE": "f2c6c602815669d292889e5be8c802f2ed950653b77999b1584e8e6aed25d040",
         "encoder-tests/README.md": "d0ed3e2f6258c01a41cc6a73781889293a124250311839adcf659c494cbd584b",
         "encoder-tests/test_input_1.json": "6a5a86694e47169c8f0c9243a7e24cc5db05447be0d3d3a9891034e913c518de",
@@ -80,8 +80,8 @@
         "encoder-tests/test_output_4.txt": "94433b68370dcc69fa61efc5011b5d0e28685e4716fee1ee77fbbfc0c9935b54",
         "encoder-tests/test_output_5.txt": "4d673091746553d1cb2e40a3fc01dc09a7c53c40627096a3e49c97a269a81f64",
         "tokenizer-golden.json": "68ed31564260e7013fa284531dfe74ae449d8a7e2bd2b042687a2f7d2ac96891",
-        "chat-renders.json": "6550c1c3164b56a1215fcd9b1b5c0f0b63ee418eb4d59c617097208a298877c8",
-        "corpus-recipe.json": "9d7b339157f85fa31a5c125927e4498d822b68f67a8b80bf2c9b6b386d976f4e"
+        "chat-renders.json": "161b158f839679e42af183e26f0dfa7f895acaee93531979f92647785d226b4a",
+        "corpus-recipe.json": "d6fa79f806eecdf57a904ce3c4ad99280909e84904ea339c54e180e7fa2bdc45"
       },
       "path": "fixtures/deepseek41/frontend"
     },
@@ -360,23 +360,23 @@
       },
       "schema": "chopinfer.deepseek41.image-probe-references.v1"
     },
-    "6550c1c3164b56a1215fcd9b1b5c0f0b63ee418eb4d59c617097208a298877c8": {
+    "6c467449ebaa4935b228037c6b9483491789c7ef8b800dccaee900b99720fa9f": {
       "schema": "legacy-json-array"
     },
-    "f2b2b332f90469eef8cf93d11fee30947c3abe2f944370c24d5d2662a7d583af": {
-      "schema": "chop-frontend-openai-v2"
-    },
-    "cc653739cddaf7ca4484b023ba93feb1730425146cc8dd5520945c798522b6a9": {
-      "schema": "legacy-json-array"
-    },
-    "64e2c5bc2e95608610c9a3d61f9d6afc5b0a3544c28d1a9df339b2d29740783e": {
+    "991c637855cd90c51c6eb37dd03697004b299e2f08d70157d7bd598bf78be9b2": {
       "schema": "chop-frontend-corpus-coverage-v1"
     },
-    "69ce2ecf05172c264bb713adbb64294042f041b8d5321281095c8a58c4cc622b": {
+    "d6fa79f806eecdf57a904ce3c4ad99280909e84904ea339c54e180e7fa2bdc45": {
+      "schema": "chop-frontend-recipe-v1"
+    },
+    "e0d0e16e2fdb12e9886c5472ef85c408267eaac9c4334175f078951e115c0ec5": {
       "schema": "legacy-json-array"
     },
-    "9d7b339157f85fa31a5c125927e4498d822b68f67a8b80bf2c9b6b386d976f4e": {
-      "schema": "chop-frontend-recipe-v1"
+    "161b158f839679e42af183e26f0dfa7f895acaee93531979f92647785d226b4a": {
+      "schema": "legacy-json-array"
+    },
+    "34e6000d48589a8c42a1dab0b58c980c0a477d0a04d900f4399d23fd943aedfa": {
+      "schema": "chop-frontend-openai-v2"
     }
   },
   "schema": "chopinfer-qual-references/v1"

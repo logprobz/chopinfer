@@ -18,9 +18,12 @@
 //!   whole and streamed, by the parser the served request opens, by the
 //!   shared parser called directly and through the frontend documents; all
 //!   three answer each push with the same updates, which read back the
-//!   reference turn and finish it once;
+//!   reference turn and finish it once. Under ID-only markers each marker
+//!   token is pushed whole with its ID, and only the other bytes are cut;
 //! - every round-trip completion, and its answer after the reasoning close,
-//!   also parses in one call to the reference turn's content and calls.
+//!   also parses in one call to the reference turn's content and calls,
+//!   with the marks of its ID-only marker tokens when the declaration names
+//!   them.
 //!
 //! `CHOPINFER_FRONTEND_CORPUS_DIR` names a full corpus
 //! (`frontend_corpus generate --output DIR`), which
@@ -31,6 +34,7 @@
 //! two runs' files are an outcome diff: `{"cases": {id: {"rendered_text", "token_ids"} or {"refusal"}},
 //! "checks": {"<kind> <id>": null or the difference}, "failed": [...]}`.
 
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -39,10 +43,11 @@ use runtime_frontend::{
     BundleChatStateV1, BundleFrontendV1, BundleParserSourceV1, CompletedCompletionV1,
     CompletionDecoderV1, CompletionFinishV1, CompletionUpdateV1, DecoderLimitsV1,
     FrontendDescriptorV1, GeneratedTokenV1, PromptModeV1, parse_completion_v1,
-    tokenizer_from_components_v1,
+    parse_marked_completion_v1, tokenizer_from_components_v1,
 };
 use runtime_server::{
-    DecodingOptions, FinishReason, PreparedPrompt, ServerFrontendV1, prepare_chat_request_v1,
+    DecodingOptions, FinishReason, PreparedPrompt, PromptSegmentV1, ServerFrontendV1,
+    prepare_chat_request_v1,
 };
 use serde_json::{Map, Value, json};
 
@@ -59,6 +64,9 @@ pub const CORPUS_DUMP_ENV_V1: &str = "CHOPINFER_FRONTEND_CORPUS_DUMP";
 
 /// The fields of a render vector that are not the request.
 const VECTOR_FIELDS: [&str; 5] = ["id", "raw", "rendered_text", "token_ids", "refusal"];
+
+/// The token ID a split decode gives the ordinary bytes it pushes.
+const ORDINARY_TOKEN_ID: u32 = 42;
 
 /// One model's corpus: what its test runs the corpus files against.
 pub struct FrontendCorpusV1 {
@@ -253,14 +261,17 @@ const PARSER_PATHS: [&str; 3] = ["served", "shared", "document"];
 
 /// Feeds a round trip's completion, which ends in its stop token's text, to
 /// the parser in two chunks at every byte split, with tool calls delivered
-/// whole and streamed. The request is prepared as served, so each decoder
-/// opens in the mode its prompt leaves, with its tools. Every parser path
-/// must answer each push with the same updates (text, tool calls, token
-/// contributions and the terminal update alike), and what they deliver must
-/// be the reference turn, finished once by the last push. The whole
-/// completion, and the answer after the reasoning close, also parse in one
-/// call to the reference turn's content and call names. Returns how many
-/// decodes it compared.
+/// whole and streamed. Under ID-only markers each of the completion's
+/// marker tokens is pushed whole with its ID, and the ordinary bytes
+/// between them as one push each, the one a split falls in cut in two
+/// there; no split falls inside a marker token. The request is prepared as
+/// served, so each decoder opens in the mode its prompt leaves, with its
+/// tools. Every parser path must answer each push with the same updates
+/// (text, tool calls, token contributions and the terminal update alike),
+/// and what they deliver must be the reference turn, finished once by the
+/// last push. The whole completion, and the answer after the reasoning
+/// close, also parse in one call to the reference turn's content and call
+/// names. Returns how many decodes it compared.
 fn splits(
     check: &FrontendCheckV1,
     vector: &StreamingVectorV1,
@@ -287,6 +298,29 @@ fn splits(
         .tokenizer
         .decode_bytes(&vector.token_ids)
         .map_err(|error| error.to_string())?;
+    // Each ID-only marker token, by its ID and its bytes.
+    let vocabulary = &descriptor.vocabulary;
+    let id_only: Vec<u32> = vocabulary
+        .boundary_tokens
+        .iter()
+        .filter(|token| vocabulary.id_only_markers.contains(&token.text))
+        .map(|token| token.id)
+        .collect();
+    let mut markers = Vec::new();
+    let mut at = 0;
+    for id in vector.token_ids.iter().filter(|_| !id_only.is_empty()) {
+        let length = check
+            .tokenizer
+            .token_bytes(*id)
+            .map_err(|error| error.to_string())?
+            .len();
+        if id_only.contains(id) {
+            markers.push((*id, at..at + length));
+        }
+        at += length;
+    }
+    let marks: Option<Vec<Range<usize>>> = (!vocabulary.id_only_markers.is_empty())
+        .then(|| markers.iter().map(|(_, mark)| mark.clone()).collect());
     let expect = &vector.expect;
     let calls: Vec<(String, String)> = expect
         .tool_calls
@@ -298,16 +332,22 @@ fn splits(
         FinishReason::ToolCalls => CompletionFinishV1::ToolCalls,
         FinishReason::Length => CompletionFinishV1::Length,
     };
-    whole(&descriptor, state.mode(), &bytes, vector)?;
+    whole(&descriptor, state.mode(), &bytes, marks.as_deref(), vector)?;
     let mut decodes = 0;
     for stream in [false, true] {
         for split in 1..bytes.len() {
+            if markers
+                .iter()
+                .any(|(_, marker)| marker.start < split && split < marker.end)
+            {
+                continue;
+            }
             let at = format!("stream {stream} split {split}");
-            let chunks = [&bytes[..split], &bytes[split..]];
+            let chunks = split_pushes(&bytes, &markers, split);
             let mut decoders = sources.map(|source| decoder(&descriptor, state, source, stream));
             let mut pushes = Vec::new();
-            for (ordinal, chunk) in chunks.into_iter().enumerate() {
-                let token = GeneratedTokenV1::new(ordinal as u64, 42, chunk.to_vec());
+            for (ordinal, (id, chunk)) in chunks.iter().enumerate() {
+                let token = GeneratedTokenV1::new(ordinal as u64, *id, chunk.to_vec());
                 let answers = decoders
                     .each_mut()
                     .map(|decoder| decoder.push(token.clone()));
@@ -336,7 +376,7 @@ fn splits(
                     delivered.calls, delivered.streamed
                 ));
             }
-            let last = pushes[1].last();
+            let last = pushes.last().and_then(|updates| updates.last());
             match (delivered.finished.as_slice(), last) {
                 ([done], Some(CompletionUpdateV1::Finished(_)))
                     if done.reason == finish && done.generated_token_count == chunks.len() => {}
@@ -353,6 +393,34 @@ fn splits(
         }
     }
     Ok(decodes)
+}
+
+/// The pushes of a completion split at `split`: each of `markers` whole,
+/// with its token ID, and the bytes between them as one push each, cut in
+/// two where `split` falls inside them, with [`ORDINARY_TOKEN_ID`]. Without
+/// markers, the bytes before and after `split`.
+fn split_pushes<'a>(
+    bytes: &'a [u8],
+    markers: &[(u32, Range<usize>)],
+    split: usize,
+) -> Vec<(u32, &'a [u8])> {
+    let mut pushes = Vec::new();
+    let ordinary = |from: usize, to: usize, pushes: &mut Vec<(u32, &'a [u8])>| {
+        let cut = split.clamp(from, to);
+        for run in [from..cut, cut..to] {
+            if !run.is_empty() {
+                pushes.push((ORDINARY_TOKEN_ID, &bytes[run]));
+            }
+        }
+    };
+    let mut at = 0;
+    for (id, marker) in markers {
+        ordinary(at, marker.start, &mut pushes);
+        pushes.push((*id, &bytes[marker.clone()]));
+        at = marker.end;
+    }
+    ordinary(at, bytes.len(), &mut pushes);
+    pushes
 }
 
 /// One decoder of the request `state` holds, through `source` or, without
@@ -386,22 +454,39 @@ fn decoder(
 
 /// Parses a round trip's whole completion in one call, in the mode its
 /// prompt leaves, and the answer after its reasoning close as a completion
-/// that begins in the answer. Both read the reference turn's content and
-/// call names; the one call reads no tool schema, so the arguments are not
+/// that begins in the answer. Under ID-only markers each parse reads the
+/// `marks` of its marker tokens, and the answer begins after the first
+/// close they let through. Both read the reference turn's content and call
+/// names; the one call reads no tool schema, so the arguments are not
 /// compared.
 fn whole(
     descriptor: &FrontendDescriptorV1,
     mode: PromptModeV1,
     bytes: &[u8],
+    marks: Option<&[Range<usize>]>,
     vector: &StreamingVectorV1,
 ) -> Result<(), String> {
     let text = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
     let close = descriptor.format["parser"]["reasoning_close"]
         .as_str()
         .ok_or("the declaration has no format.parser reasoning_close")?;
-    let mut parses = vec![("whole completion", text, mode)];
-    if let Some((_, answer)) = text.split_once(close) {
-        parses.push(("answer", answer, PromptModeV1::Chat));
+    let mut parses = vec![("whole completion", text, marks.map(<[_]>::to_vec), mode)];
+    let cut = match marks {
+        Some(marks) => {
+            marked_occurrence(text, close, &descriptor.vocabulary.id_only_markers, marks)
+        }
+        None => text.find(close),
+    };
+    if let Some(cut) = cut {
+        let end = cut + close.len();
+        let after = marks.map(|marks| {
+            marks
+                .iter()
+                .filter(|mark| mark.start >= end)
+                .map(|mark| mark.start - end..mark.end - end)
+                .collect()
+        });
+        parses.push(("answer", &text[end..], after, PromptModeV1::Chat));
     }
     let names: Vec<&str> = vector
         .expect
@@ -409,9 +494,12 @@ fn whole(
         .iter()
         .map(|call| call.name.as_str())
         .collect();
-    for (part, text, mode) in parses {
-        let parsed = parse_completion_v1(descriptor, text, mode)
-            .map_err(|error| format!("the {part} does not parse in one call: {error}"))?;
+    for (part, text, marks, mode) in parses {
+        let parsed = match marks {
+            Some(marks) => parse_marked_completion_v1(descriptor, text, &marks, mode),
+            None => parse_completion_v1(descriptor, text, mode),
+        }
+        .map_err(|error| format!("the {part} does not parse in one call: {error}"))?;
         let parsed_names: Vec<&str> = parsed
             .tool_calls
             .iter()
@@ -425,6 +513,44 @@ fn whole(
         }
     }
     Ok(())
+}
+
+/// Where `marker` first occurs in `text` as `marks` let it through: each
+/// ID-only spelling of `spellings` in it, leftmost and longest first, is
+/// exactly one mark, and no other byte of it lies in a mark.
+fn marked_occurrence(
+    text: &str,
+    marker: &str,
+    spellings: &[String],
+    marks: &[Range<usize>],
+) -> Option<usize> {
+    text.match_indices(marker).map(|(at, _)| at).find(|&at| {
+        let mut parts = Vec::new();
+        let mut offset = 0;
+        while offset < marker.len() {
+            let longest = spellings
+                .iter()
+                .filter(|spelling| {
+                    !spelling.is_empty()
+                        && marker.as_bytes()[offset..].starts_with(spelling.as_bytes())
+                })
+                .map(String::len)
+                .max();
+            match longest {
+                Some(length) => {
+                    parts.push(at + offset..at + offset + length);
+                    offset += length;
+                }
+                None => offset += 1,
+            }
+        }
+        let within: Vec<_> = marks
+            .iter()
+            .filter(|mark| mark.start < at + marker.len() && at < mark.end)
+            .cloned()
+            .collect();
+        within == parts
+    })
 }
 
 /// Writes each render case's outcome, the prompt text and its token ids or
@@ -449,14 +575,29 @@ fn write_outcomes(
                     json!({"refusal": {"message": error.message, "parameter": error.parameter}})
                 }
                 Ok(prepared) => {
-                    let text = match prepared.prompt {
-                        PreparedPrompt::RenderedChat(text) => text,
-                        PreparedPrompt::MediaChat { segments, media } => check
-                            .media_prompt_text_v1(&segments, &media)
-                            .unwrap_or_else(|error| panic!("{id}: {error}")),
+                    let explicit = check
+                        .frontend
+                        .descriptor()
+                        .vocabulary
+                        .explicit_special_tokens;
+                    let (segments, media) = match prepared.prompt {
+                        PreparedPrompt::RenderedChat(text) => {
+                            (vec![PromptSegmentV1::Text(text)], Vec::new())
+                        }
+                        PreparedPrompt::SegmentedChat(segments) => (segments, Vec::new()),
+                        PreparedPrompt::MediaChat { segments, media } => (segments, media),
                         _ => panic!("{id}: the transport prepared no rendered chat"),
                     };
-                    let ids = check.encode_v1(&text).ok();
+                    let text = check
+                        .media_prompt_text_v1(&segments, &media)
+                        .unwrap_or_else(|error| panic!("{id}: {error}"));
+                    // A render that names its special tokens encodes as the
+                    // host encodes it, and any other as its text scans.
+                    let ids = if explicit {
+                        check.encode_segments_v1(&segments, &media).ok()
+                    } else {
+                        check.encode_v1(&text).ok()
+                    };
                     json!({"rendered_text": text, "token_ids": ids})
                 }
             };
@@ -476,4 +617,62 @@ fn write_outcomes(
     bytes.push(b'\n');
     std::fs::write(path, bytes).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     eprintln!("wrote the corpus outcomes to {}", path.display());
+}
+
+#[cfg(test)]
+#[allow(clippy::single_range_in_vec_init)]
+mod tests {
+    use super::*;
+
+    /// Without markers a split decode pushes the bytes before and after
+    /// the split; with them, each marker token whole with its ID, and the
+    /// ordinary bytes between them as one push each, cut at the split.
+    #[test]
+    fn a_split_keeps_marker_tokens_whole() {
+        let bytes = b"ab</t>cd</t>";
+        let id = ORDINARY_TOKEN_ID;
+        assert_eq!(
+            split_pushes(bytes, &[], 3),
+            [(id, &b"ab<"[..]), (id, &b"/t>cd</t>"[..])]
+        );
+        let markers = [(5, 2..6), (5, 8..12)];
+        assert_eq!(
+            split_pushes(bytes, &markers, 7),
+            [
+                (id, &b"ab"[..]),
+                (5, b"</t>"),
+                (id, b"c"),
+                (id, b"d"),
+                (5, b"</t>")
+            ]
+        );
+        assert_eq!(
+            split_pushes(bytes, &markers, 2),
+            [(id, &b"ab"[..]), (5, b"</t>"), (id, b"cd"), (5, b"</t>")]
+        );
+    }
+
+    /// A marker occurs where each ID-only spelling in it is one mark and
+    /// no other byte of it is marked, so its ordinary spelling is passed
+    /// over.
+    #[test]
+    fn a_marked_occurrence_skips_ordinary_spellings() {
+        let spellings = ["</t>".to_owned(), "|T|".to_owned()];
+        let text = "a</t>b</t>c<|T|x>";
+        assert_eq!(
+            marked_occurrence(text, "</t>", &spellings, &[6..10]),
+            Some(6)
+        );
+        assert_eq!(marked_occurrence(text, "</t>", &spellings, &[]), None);
+        assert_eq!(marked_occurrence(text, "</t>", &spellings, &[1..4]), None);
+        assert_eq!(
+            marked_occurrence(text, "<|T|x>", &spellings, &[12..15]),
+            Some(11)
+        );
+        assert_eq!(
+            marked_occurrence(text, "<|T|x>", &spellings, &[11..15]),
+            None
+        );
+        assert_eq!(marked_occurrence("a\n", "\n", &spellings, &[]), Some(1));
+    }
 }

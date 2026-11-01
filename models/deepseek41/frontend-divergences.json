@@ -211,6 +211,20 @@
       ],
       "blocked_by": "the transport sends valid UTF-8 and OpenAI content",
       "reason": "json.dumps raises only for a lone surrogate, content_blocks is not an OpenAI field, tool result lists hold text and images that become text placeholders, and every user block is text, an image or a result"
+    },
+    {
+      "id": "image-placeholder-refusals",
+      "lines": [
+        345,
+        346,
+        347,
+        359,
+        360,
+        365,
+        366
+      ],
+      "blocked_by": "client text reaches the encoder with its added-token spellings hidden",
+      "reason": "_process_image_blocks and _validate_no_image_sp_tokens refuse the image placeholder typed in a text block, string content or reasoning (lines 342-348, 355-367); the served format encodes client text as plain text and accepts the placeholder there as text (explicit-special-tokens), so the corpus reference hides it, as every added-token spelling of client text, before the encoder writes, and no render reaches those refusals"
     }
   ],
   "inputs": [
@@ -261,6 +275,7 @@
         "json-fenced-answer": "5991fc3e2df9e24cc70926f116543d6e4fbe91db9db1c85ca42b2f00f781d2ed",
         "newline-edged-turn": "51ebd8aaab874ceec52efb9510a27aa9e74d8911f205ee086d69eecd02585290",
         "special-token-in-assistant-turn": "b56121621353a71323f2d4205ac91058faf0170ce7b05815d5e13a9f399cc0c1",
+        "special-tokens-in-final-turn": "28b0bdeb6a7b4287a2e915b8b04dc6b4f2dc130baa85139dba36312641f6c622",
         "vendor-pair-1": "d89b61ce9d3b16b6097c6dd7549c8458ba70e44c5df4addd52a8c58d17bfb3ba"
       }
     },
@@ -353,23 +368,6 @@
         "parameter": "messages"
       },
       "reason": "the transport refuses a file_data that is not a base64 data URL of a declared image format before anything renders, where the encoder renders any file as an image; deepseek-recipe 0.2.0 (93b0fd229c) refuses one in its flat shape as well when it converts the request (deepseek-recipe/src/protocol/image.rs lines 130-152), and a nested one for lacking the flat fields (file-parts)"
-    },
-    {
-      "id": "marker-in-raw-value",
-      "kind": "no-round-trip",
-      "when": [
-        "round-trip:delimiter"
-      ],
-      "reason": "the encoder writes a string argument raw (lines 547-553), and the vendor parser ends a raw value at the first DSML parameter close (lines 897-943), as the served one does; a string argument that spells it reads back cut there. Another parameter's open or the invoke close inside a raw value is text"
-    },
-    {
-      "id": "special-token-in-turn",
-      "kind": "no-round-trip",
-      "when": [
-        "round-trip:read-back",
-        "assistant-content:inline-think"
-      ],
-      "reason": "the vendor parser refuses a turn whose content or reasoning holds a special token or DSML marker (lines 981-983), so no generated turn carries one and none reads back"
     },
     {
       "id": "call-open-newlines",
@@ -602,7 +600,7 @@
         "continued-final-assistant-turn": "3003425242a3c17428cc6a4e894995e7d49e655a6ebbbdc8753418b2b6219261",
         "g0001": "f8352f9a2ad03b9f19074e2b498842e4dec095a7a2e0f410515f2ba7ef5768c1",
         "g0007": "556f730f3477268fcf45a7a3fd01c244a619b8849c003092b6ebf5df63265677",
-        "g0014": "608b4dc009cc7f1b036f3cf6440db1fed778efd424ab275e7f199186b3287390",
+        "g0014": "da63c41f664acd6d38ba307d609abddc2f2e4a1c7ddc3099dff97e5dc8ed6a7f",
         "g0016": "8c002ade446bd00f853ceb41f6289363c8953683f47c920fd1ab8fe2cdc22584",
         "g0029": "ba5c3b4ccb110f8c94d1efcb8d33f51cd341aa7703eb98b46330d969dced19cb",
         "g0033": "f74a82bb91d677cf2748dce135d209be0d6b595769d5118895d65a1c01a7bbf6",
@@ -651,14 +649,16 @@
       "rule": "a call's arguments text is read as JSON up to twice, as the encoder reads it, so JSON text of an object's JSON text renders as that object's parameters; the recipe reads the text once and renders text that is not a JSON object as one string parameter named arguments",
       "source": "encoding.py lines 533-544; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe-encoding/src/v4/mod.rs lines 38-43, deepseek-recipe-encoding/src/v4/dsv41.rs lines 99-111",
       "cases": [
-        "double-encoded-arguments"
+        "double-encoded-arguments",
+        "special-tokens-in-double-encoded-arguments"
       ],
       "recipe_when": [
-        "fixed:double-encoded-arguments",
+        "arguments:double-encoded",
         "recipe:render"
       ],
       "recipe_reviewed": {
-        "double-encoded-arguments": "4749020c1be788d0a107475b6ca7f96f72783e0cb4d6ed512ebb45d7cd3705a9"
+        "double-encoded-arguments": "4749020c1be788d0a107475b6ca7f96f72783e0cb4d6ed512ebb45d7cd3705a9",
+        "special-tokens-in-double-encoded-arguments": "b6aa5c6c2b5772a191a9b0d305dc77d6b5026347bb2243d087e4eef928a70f8f"
       }
     },
     {
@@ -811,42 +811,23 @@
       "recipe_message": "^Required properties must match all properties in the object$"
     },
     {
-      "id": "special-token-spellings",
-      "follows": "encoding.py",
-      "rule": "client text tokenizes as the encoder's prompt text does, so a special token's spelling typed in a message, such as <think> in assistant content, is that special token; the recipe encodes client text as plain text. Following it needs the special ranges carried across the frontend export ABI: the special-token spellings follow-up",
-      "source": "deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 297-308, 545-550, deepseek-recipe-encoding/src/v4/mod.rs lines 210-224; follow-up: special-token spellings in client text",
+      "id": "explicit-special-tokens",
+      "follows": "recipe",
+      "rule": "a render names its special tokens as deepseek-recipe 0.2.0 renders a prompt: each special token the encoder's template writes (the begin-of-sentence, System, User, Assistant and end-of-sentence tokens, and <think>, </think> and ｜DSML｜ wherever it writes them, in the tool instructions, the DSML markup of calls and the forced prefill included), each image's placeholder, and each grounding token (<｜ref｜>, <｜/ref｜>, <｜box｜>, <｜/box｜>, <｜point｜>, <｜/point｜>, <｜polygon｜>, <｜/polygon｜>) that assistant content or reasoning spells, leftmost first. All other text is plain text, which the host encodes without the added vocabulary: message content and text parts, reasoning, tool results, tool schemas, the response format, and call names and arguments, read as JSON first, so a spelling the JSON escapes is plain too. A spelling in client text is that text's ordinary tokens, so a tool result cannot close its turn or open another, an added token the declaration names no boundary token for, such as <｜place▁holder▁no▁5｜>, is accepted, and the image placeholder typed in client text is text where the encoder refuses it. The encoder writes one string its tokenizer scans for added tokens, where a spelling in client text is that token; the corpus reference hides those spellings while the encoder writes (frontend_cases.py Hiding). The parser reads <think>, </think> and ｜DSML｜ only from their token IDs (vocabulary.id_only_markers), as the recipe's parser does given token IDs, so a turn that spells them in plain text reads back as written",
+      "source": "deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe-encoding/src/lib.rs lines 8-15, deepseek-recipe-encoding/src/v4/mod.rs lines 20-33, 194-208, deepseek-recipe-encoding/src/tokenizer.rs lines 90-117, deepseek-recipe/src/stream/output_parser.rs lines 74-94, 365-373; encoding.py lines 342-348, 355-367, 981-983",
       "cases": [
-        "special-token-in-history"
-      ],
-      "recipe_when": [
-        "assistant-content:inline-think",
-        "recipe:tokens"
-      ],
-      "recipe_reviewed": {
-        "g0042": "78af00bfa05a21d6caff2958e94542cec5ebae7618ff556f3ca211b504cc2476",
-        "g0043": "841ff804262c11ddd9cde1c18e4deaef0571d6a04c055471daf7795f1d84f98c",
-        "special-token-in-history": "71628a3ca5ccd5bd243e002da0a12bda7c1a688d32c33d933465062dd5332ae5"
-      }
-    },
-    {
-      "id": "image-placeholder-spelling",
-      "follows": "encoding.py",
-      "rule": "the image placeholder <｜deepseek_image｜> typed in client text is refused, as the encoder refuses it in string content, reasoning and text parts, where it would read as an image; the recipe accepts the request: it encodes client text as plain text and renders it (special-token-spellings), or drops reasoning it does not render (R1)",
-      "source": "encoding.py lines 342-348, 355-367; deepseek-recipe 0.2.0 (93b0fd229c) deepseek-recipe/src/protocol/openai/chat_completion/request/convert.rs lines 297-308; follow-up: special-token spellings in client text",
-      "cases": [
+        "forged-turn-tool-result",
+        "special-tokens-in-system-and-user-text",
+        "special-tokens-in-tool-schema",
+        "special-tokens-in-response-format",
+        "special-tokens-in-call-arguments",
+        "grounding-tokens",
+        "special-token-in-history",
         "image-placeholder-in-content",
         "image-placeholder-in-reasoning",
-        "image-placeholder-in-text-part"
-      ],
-      "recipe_when": [
-        "client-text:image-placeholder",
-        "recipe:accepts"
-      ],
-      "recipe_reviewed": {
-        "image-placeholder-in-content": "cda7ce75be86e0e3180068213d793ef8e5487292d8aca5e580fc80c1ce35d17d",
-        "image-placeholder-in-reasoning": "2dc631b05459433e5c165b6400b623bbd0d7d42f1c7e462e21390c6f4af75f5a",
-        "image-placeholder-in-text-part": "133492b8ec016f1c65b6370a84a671bb1bf1d54c18bb63cd8b7142e93574984c"
-      }
+        "image-placeholder-in-text-part",
+        "prefix-reasoning-spells-close"
+      ]
     }
   ],
   "parser": [

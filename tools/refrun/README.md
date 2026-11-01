@@ -271,6 +271,25 @@ RECORD, such as another platform's wheel or a source build. A model that
 pins a recipe keeps its hash-pinned requirements file and the commands that
 build the environment in its own directory and README.
 
+### Frontend corpus marked renders
+
+A Python encoder's render (`encoder_render` in a cases module) may mark the
+special tokens it writes by returning `(text, special_ranges)`: half-open
+`(start, end)` ranges of Python string indices, which count code points,
+not UTF-8 bytes. The ranges must be ascending, disjoint and nonempty. A
+marked render tokenizes as a pinned recipe's prompt tokenizer encodes a
+prompt: each range becomes the added token it spells, and is refused if it
+spells none, and the text between ranges is encoded by a copy of the
+checkpoint tokenizer without its added tokens (`marked_tokenizer`), so an
+added-token spelling in client text becomes ordinary tokens. A round trip
+tokenizes its prompt and completion with the ranges each holds, ends the
+completion at a range that spells a stop token, and appends a declared
+ending as that token. In a marked round trip, a raw-value marker that holds
+one of the declaration's `vocabulary.id_only_markers` does not end a value:
+the served parser reads those spellings only from their token IDs, and the
+value spells them in ordinary tokens. No corpus file records the ranges, and
+a render that returns its text is tokenized whole, as before.
+
 ## Add an adapter
 
 Start from [adapter.py](adapter.py), the two model adapters

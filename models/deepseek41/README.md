@@ -15,6 +15,23 @@ Pillow `Image.open` and `convert("RGB")` read them, and may arrive as
 URL (deepseek-recipe 0.2.0's mapping, read from OpenAI's nested file object;
 the recipe's flat fields are refused). See [the request surface](../../docs/serving-request-surface.md#media-inputs).
 
+Client text is plain text, as deepseek-recipe 0.2.0 renders a prompt. The
+format names the special tokens of its prompt (`vocabulary.explicit_special_tokens`
+in `frontend.json`): those the encoder's template writes, the tool
+instructions and DSML markup included, each image's placeholder, and the
+grounding tokens (`<｜ref｜>`, `<｜box｜>`, `<｜point｜>`, `<｜polygon｜>` and
+their closes) where assistant content or reasoning spells them. The host
+encodes all other text, message content, tool results, tool schemas, the
+response format and call arguments included, without the added vocabulary,
+so a special token spelled there is ordinary tokens: a tool result cannot
+forge a turn, and an added token or the image placeholder typed in text is
+accepted as text. The parser reads `<think>`, `</think>` and `｜DSML｜` only
+from their token IDs (`vocabulary.id_only_markers`), in a calls block too,
+so the model spelling them in ordinary tokens writes text, and a forced
+call's constraint admits each marker's `｜DSML｜` only as that token. See [the request
+surface](../../docs/serving-request-surface.md#request-parameters-and-defaults)
+and `explicit-special-tokens` in [frontend-divergences.json](frontend-divergences.json).
+
 | Crate | Directory | Holds |
 |---|---|---|
 | `model-deepseek41-contract` | `contract/` | IDs, geometry, projection declarations and kernel contracts the compiler, bundle and lab share |
@@ -626,7 +643,19 @@ outcome for each committed case and round trip, and
 difference exactly: a refusal by its entry's feature tags and the recipe's
 refusal message, which names the failed check (`recipe_message`), and any
 other difference by the fingerprint of both outcomes, reviewed for every
-difference of the full generated corpus (`recipe_reviewed`). Install the recipe
+difference of the full generated corpus (`recipe_reviewed`).
+
+The corpus reference marks each render as the recipe does: the recipe's
+`DeepseekV41Encoding` renders a `RenderedPrompt` whose `special_ranges`
+name its special tokens, and its `PromptTokenizer` encodes each range as its
+added token and the text between them with a copy of the tokenizer without
+the added vocabulary (`deepseek-recipe-encoding/src/lib.rs` lines 8-15,
+`tokenizer.rs` lines 90-117, at the commit below). The pinned encoder
+writes one string, so `encoder_render` in `frontend_cases.py` hides each
+added-token spelling of client text behind a private sentinel while the
+encoder writes, and returns the text with the spellings restored and the
+ranges of those the encoder wrote (`Hiding`); `tools/refrun` tokenizes it
+(`marked_tokenizer`). Install the recipe
 into its own CPU environment, never the GPU runner's, whose package set is
 part of every reference key:
 
@@ -670,21 +699,15 @@ Output parsing (`deepseek-recipe/src/stream/output_parser.rs`):
   calls of both blocks.
 - `</think>` in chat-mode answer text: the recipe drops it (lines 450-458);
   the served parser keeps it as content.
-- `<think>` inside reasoning: the served parser drops it; the recipe keeps
-  it as text.
+- The `<think>` token inside reasoning: the served parser drops it; the
+  recipe keeps it as text. Spelled in ordinary tokens it is text in both,
+  as the corpus shows (`special-tokens-in-final-turn`).
 - DSML markup under `tool_choice` none or without offered tools: the recipe
   returns it as content (`chat_completion/request/convert.rs` line 150); the
   served parser reads it and drops it.
 - A calls block without its `calls` wrapper, or closed in the V4 spelling
   `</｜DSML｜tool_calls>`: the recipe reads its calls (lines 394-405,
   480-494); the served parser refuses the completion.
-- Markers: given a completion's token IDs, as the corpus oracle passes
-  them, the recipe matches `</think>` and `｜DSML｜` only as their special
-  tokens, so their spelling in plain tokens is content; given text without
-  token boundaries (`InferenceChunk::Text`), it matches their spelling
-  (lines 74-94). The served parser matches their spelling. This belongs to
-  the special-token spellings follow-up (`special-token-spellings` in the
-  divergence record).
 - Client stop sequences: the recipe matches them in answer text only (lines
   411-417); the served parser also matches them in reasoning and tool
   arguments.
@@ -706,14 +729,45 @@ Responses API (`deepseek-recipe/src/protocol/openai/responses/request`):
   (`tools.rs` lines 148-186); `/v1/responses` serves function and namespace
   tools only.
 
-Sampling and limits: in thinking mode the recipe fixes the temperature at
-1.0 and raises `top_p` to at least 0.95; outside thinking mode it keeps the
-requested temperature and sets V4.1's `top_p` to 1.0
-(`deepseek-recipe/src/request/options.rs` lines 79-92,
-`protocol/openai/chat_completion/request/mod.rs` lines 7-11). It bounds
-`max_tokens` by mode (`options.rs` lines 230-240). The server keeps the
-request's sampling, `top_p` included in either mode, and its limits; the
-sampling and `max_tokens` follow-up decides whether to follow.
+Sampling and limits: the owner decided on 2026-10-31 that the server keeps
+the request's sampling and declares default output lengths. A chat or
+Responses request without `max_tokens`, `max_completion_tokens` or
+`max_output_tokens` generates at most 65,536 tokens when it thinks at low
+or high effort or with thinking off, and 131,072 when it thinks at max,
+each lowered to the context left after the prompt. An explicit limit is
+honored. The sampling fields a request sets are used as sent, and omitted
+ones take the declared `generation_config` (temperature 1.0, `top_p` 1.0).
+The recipe (`deepseek-recipe/src/` at commit 93b0fd229c) differs as
+follows, and the served behavior is kept:
+
+- Temperature: the recipe fixes it at 1.0 in thinking mode
+  (`protocol/validation.rs` lines 114-118); the server uses the request's.
+- `top_p`: the recipe raises V4.1's to at least 0.95 in thinking mode and
+  sets it to 1.0 outside it (`request/options.rs` lines 79-92); the server
+  uses the request's in either mode.
+- Default length outside thinking mode: 8,192 in the recipe
+  (`request/mod.rs` lines 155-166 and 221-227), 65,536 in the server.
+- Upper bound: the recipe refuses a `max_tokens` above 393,216 in either
+  mode (`request/options.rs` line 96 and lines 230-240,
+  `protocol/validation.rs` lines 93-106); the server takes any limit within
+  the context.
+- A prompt that fills the context: the recipe raises the resolved length
+  to 1 (`request/mod.rs` lines 228-234); the server refuses the request
+  with "prompt leaves no room for generated tokens".
+- `max_completion_tokens`: the recipe's `ChatCompletionRequest` declares no
+  such field and ignores unknown fields
+  (`protocol/openai/chat_completion/request/schema.rs` lines 7 and 17-60),
+  so a request that sets only it takes the recipe's default; the server
+  gives it precedence over `max_tokens`.
+- `top_k`, `min_p` and `repetition_penalty`: that struct declares none of
+  them and `InferenceOptions` carries none (`request/mod.rs` lines 27-55),
+  so the recipe drops them; the server applies them.
+- `presence_penalty` and `frequency_penalty`: the recipe checks them
+  against [-2, 2] and then drops them (`schema.rs` lines 23-25 and 34-36,
+  `protocol/validation.rs` lines 53-62 and 112-124); the server applies
+  them.
+- `n`: the recipe refuses any value but 1 (`protocol/validation.rs` lines
+  48-52); the server serves 1 through 128.
 
 ## Qualification
 

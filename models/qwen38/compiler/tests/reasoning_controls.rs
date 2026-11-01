@@ -128,3 +128,43 @@ fn the_export_opens_only_over_the_templates_reasoning_policy() {
         );
     }
 }
+
+/// One request's reasoning keywords and top-level effort, the mode its
+/// prompt renders in, and the output length it takes.
+type LengthCase<'a> = (&'a [(&'a str, bool)], Option<&'a str>, PromptModeV1, usize);
+
+/// A chat or Responses request without an output limit generates at most
+/// 131,072 tokens when its prompt thinks at effort xhigh, the default, and
+/// 65,536 at the other efforts and with thinking off (the owner decision
+/// of 2026-10-31), before the transport lowers the length to the context
+/// left.
+#[test]
+fn a_request_without_an_output_limit_takes_its_effort_s_declared_length() {
+    let frontend = PairedFrontendV1::chat_format::<Qwen38Format>(descriptor()).unwrap();
+    let cases: &[LengthCase<'_>] = &[
+        (&[], None, PromptModeV1::Thinking, 131_072),
+        (&[], Some("xhigh"), PromptModeV1::Thinking, 131_072),
+        (&[], Some("medium"), PromptModeV1::Thinking, 65_536),
+        (&[], Some("low"), PromptModeV1::Thinking, 65_536),
+        (&[], Some("none"), PromptModeV1::Chat, 65_536),
+        (
+            &[("enable_thinking", false)],
+            None,
+            PromptModeV1::Chat,
+            65_536,
+        ),
+    ];
+    for &(keywords, effort, mode, expected) in cases {
+        let label = format!("{keywords:?} {effort:?}");
+        let rendered = frontend
+            .render_chat(ask(keywords, effort, None))
+            .unwrap_or_else(|error| panic!("{label}: {}", error.message));
+        let state = BundleChatStateV1::from_state(&rendered.state).unwrap();
+        assert_eq!(state.mode(), mode, "{label}");
+        assert_eq!(
+            frontend.default_output_tokens(&rendered.state),
+            Some(expected),
+            "{label}"
+        );
+    }
+}

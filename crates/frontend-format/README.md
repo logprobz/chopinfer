@@ -25,8 +25,8 @@ cannot wait for an SDK revision with that family implements `FrontendV1`.
 The library depends only on the ABI documents (`runtime-bundle-abi`), the
 declaration (`runtime-frontend-contract`), `runtime-grammar` and serde. It
 links no transport, host or device code, and names no model. Model tests and
-benchmarks call `tool_constraint_v1`, `parse_completion_v1` and
-`DeclaredParserV1` directly.
+benchmarks call `tool_constraint_v1`, `parse_completion_v1`,
+`parse_marked_completion_v1` and `DeclaredParserV1` directly.
 
 ## The format section
 
@@ -139,8 +139,28 @@ it refuses the completion. A whole-text parse (`parse_completion_v1`) reads
 a completion as one token carrying all of it and agrees with the incremental
 parse.
 
+A declaration may name ID-only markers (`vocabulary.id_only_markers`):
+boundary tokens the parser reads only from their token IDs. The host then
+marks each push with the byte ranges of the tokens generated as them
+(`FormatInputV1::marks`, a marked push document across the ABI). Every
+marker the parser reads, in text and inside a tool region, is read as the
+tokens it is made of: an occurrence is the marker only when each ID-only
+spelling in it is exactly one mark and no other byte of it lies in a mark.
+The same spelling from ordinary tokens is text, so a reasoning close in
+reasoning stays reasoning, a reserved marker in content stays content, and
+a parameter close inside a raw value stays in the value. Text without
+marks reads by spelling, as before. A parser's pushes all carry marks or
+none, and a push that keeps fewer bytes drops the marks past them.
+`parse_marked_completion_v1` is the whole-text parse with marks.
+
 The tool-choice grammar a request's `tool_choice` imposes writes calls in
 the same family, so a forced call reads back as the parser reads any call.
+Under ID-only markers it writes each ID-only spelling in a marker as a token
+element (`runtime_grammar::Expr::Token`), which only that token fills, and
+the token appears nowhere else: free text and raw values may spell a marker
+in ordinary tokens, which the parser reads as text, and a forced call
+cannot end without the call. A forced choice's prefill reaches the
+constraint as the prompt holds it, its boundary tokens as tokens.
 
 A declaration may also state how a tool choice changes the render, in the
 host-read `tools.choice` section: `none_omits_tools`,
@@ -148,7 +168,10 @@ host-read `tools.choice` section: `none_omits_tools`,
 `required` or named choice, and `forced_refused_in_thinking`. The host
 applies it around the render. The prefill must begin the parser section's
 `tool_call_open`; the completion's parser and the forced choice's
-constraint read it as the completion's start. A declaration without the
+constraint read it as the completion's start. Under explicit special tokens
+the host appends it as text and special segments, each declared boundary
+token's spelling in it, longest first, a special segment, since the
+prefill is template text. A declaration without the
 section renders every offered tool for every choice, and the constraint
 alone forces a call.
 
@@ -200,15 +223,34 @@ and constraints agree with the prompt the same way for every model. The
 shared parser reads no parser state, so the export refuses a render that
 leaves some.
 
+### Marked prompts
+
+A declaration that sets `vocabulary.explicit_special_tokens` renders a
+prompt that names its special tokens. The renderer writes a
+`toolkit::MarkedPromptV1`: each special token its template writes with
+`push_special`, and every other piece, client text included, with
+`push_plain`. `split_marked_media_segments_v1` cuts it into text, media and
+special segments, each special segment a declared boundary token. The host
+encodes the text segments as plain text, without the added vocabulary, and
+each special segment as its token's ID, so a special token spelled in
+client text stays ordinary text, and media pads in client text are not
+refused. A model's corpus checks such a render against a reference that
+marks its special tokens the same way
+([marked renders](../../tools/refrun/README.md#frontend-corpus-marked-renders)).
+The export refuses special segments from a declaration without
+the flag, and under it reads the reasoning markers from the special
+segments alone (`toolkit::reasoning_open_segments_v1`).
+
 ## The toolkit
 
 `frontend_format::toolkit` holds the model-neutral pieces a renderer is
 written with:
 
-- prompt writing under `maximum_prompt_bytes` (`append_v1`), name checks,
-  and media segments: a private placeholder per item, client text screened
-  for it and for media pads, and the finished prompt split into text and
-  media segments;
+- prompt writing under `maximum_prompt_bytes` (`append_v1`,
+  `MarkedPromptV1`), name checks, and media segments: a private placeholder
+  per item, client text screened for it and for media pads, and the finished
+  prompt split into text and media segments, and special segments for a
+  marked prompt;
 - the conversation as a renderer reads it from a request, and the checks it
   passes before anything is written (`chat_message_v1`, `validate_chat_v1`);
 - bounded JSON reading and the declared JSON encodings
@@ -221,7 +263,8 @@ written with:
 - tool objects as a template writes them (`json_truthy`,
   `defers_loading_v1`, `write_tool_object_v1`);
 - the reasoning controls (`select_mode_v1`, `preserve_thinking_v1`,
-  `reasoning_open_v1`) and the refusal messages, including
+  `reasoning_open_v1`, `reasoning_open_segments_v1`) and the refusal
+  messages, including
   `TOOL_REFERENCES_UNSUPPORTED_V1` for a format that reads no
   `tool_reference` part.
 
@@ -245,5 +288,6 @@ The `test-support` feature adds what format and host tests share: the
 parser fixture declarations (`test_support::fixtures::KEY_VALUE` and
 `FUNCTION_PARAMETERS`, one on each parser family), `FixtureFormatV1`, a
 minimal chat format with one documented layout for tests that need a prompt
-but assert nothing about a model's, and the chat-capture readers model tests
-use.
+but assert nothing about a model's (it writes a marked prompt when the
+declaration sets explicit special tokens), and the chat-capture readers
+model tests use.

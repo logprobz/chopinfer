@@ -134,3 +134,35 @@ fn the_export_opens_only_over_the_templates_reasoning_policy() {
         );
     }
 }
+
+/// One request's reasoning keywords and top-level effort, and the mode its
+/// prompt renders in.
+type ModeCase<'a> = (&'a [(&'a str, bool)], Option<&'a str>, PromptModeV1);
+
+/// A chat or Responses request without an output limit generates at most
+/// 65,536 tokens, thinking or not (the owner decision of 2026-10-31), before
+/// the transport lowers the length to the context left: MiMo declares one
+/// effort, so no effort has a length of its own.
+#[test]
+fn a_request_without_an_output_limit_takes_the_declared_length() {
+    let frontend = frontend();
+    let cases: &[ModeCase<'_>] = &[
+        (&[], None, PromptModeV1::Thinking),
+        (&[], Some("low"), PromptModeV1::Thinking),
+        (&[], Some("none"), PromptModeV1::Chat),
+        (&[("enable_thinking", false)], None, PromptModeV1::Chat),
+    ];
+    for &(keywords, effort, mode) in cases {
+        let label = format!("{keywords:?} {effort:?}");
+        let rendered = frontend
+            .render_chat(ask(keywords, effort, None))
+            .unwrap_or_else(|error| panic!("{label}: {}", error.message));
+        let state = BundleChatStateV1::from_state(&rendered.state).unwrap();
+        assert_eq!(state.mode(), mode, "{label}");
+        assert_eq!(
+            frontend.default_output_tokens(&rendered.state),
+            Some(65_536),
+            "{label}"
+        );
+    }
+}

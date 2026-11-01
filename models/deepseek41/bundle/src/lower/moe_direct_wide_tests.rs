@@ -160,9 +160,11 @@ fn every_wide_router_binds_the_named_producer_and_disjoint_metadata_tail() {
             assert_eq!(down.len(), 1, "wide down at {rows} rows");
             assert!(down[0].launch.symbol.contains("_moe_strip2_"));
             let direct = ops.moe.as_ref().unwrap().direct(phase).unwrap();
+            // The knob entries read width-1 tile scales in place; wider
+            // banks expand first.
             for width in [1, 2, 4] {
-                assert!(direct.inplace_scales(true, width));
-                assert!(direct.inplace_scales(false, width));
+                assert_eq!(direct.inplace_scales(true, width), width == 1);
+                assert_eq!(direct.inplace_scales(false, width), width == 1);
             }
         }
     }

@@ -2,8 +2,8 @@
   "schema": "chopinfer-tuning-v1",
   "target": {"compute_capability": 120, "sm_count": 188},
   "rows": [
-    {"op": "moe.absorb.decode", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [32, 32], "schedule": "absorb", "knobs": {"keep": false, "loads": false, "retire": false, "stream": false}},
-    {"op": "moe.absorb.verify", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [32, 32], "schedule": "absorb", "knobs": {"keep": false, "loads": false, "retire": false, "stream": false}},
+    {"op": "moe.absorb.decode", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [32, 32], "schedule": "absorb", "knobs": {"keep": true, "loads": true, "retire": true, "stream": true}},
+    {"op": "moe.absorb.verify", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [32, 32], "schedule": "absorb", "knobs": {"keep": true, "loads": true, "retire": true, "stream": true}},
     {"op": "moe.active_gate_up.decode", "weights": "mxfp4", "shape": {"experts": 384, "ranks": 4, "top_k": 6}, "bucket": 32, "rows": [1, 1], "schedule": "active", "knobs": {}},
     {"op": "moe.active_gate_up.prefill", "weights": "mxfp4", "shape": {"experts": 384, "ranks": 4, "top_k": 6}, "bucket": 32, "rows": [1, 1], "schedule": "active", "knobs": {}},
     {"op": "moe.active_gate_up.verify", "weights": "mxfp4", "shape": {"experts": 384, "ranks": 4, "top_k": 6}, "bucket": 32, "rows": [1, 1], "schedule": "active", "knobs": {}},
@@ -183,6 +183,6 @@
     {"op": "moe.strip2.prefill", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [32, 32], "schedule": "strip2", "knobs": {}},
     {"op": "moe.strip2.verify", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [16, 16], "schedule": "strip2", "knobs": {}},
     {"op": "moe.strip2.verify", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [32, 32], "schedule": "strip2", "knobs": {}},
-    {"op": "moe.wide.verify", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [33, 64], "schedule": "wide", "knobs": {"keep": false, "loads": false, "retire": false, "stream": false}}
+    {"op": "moe.wide.verify", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [33, 64], "schedule": "wide", "knobs": {"keep": true, "loads": true, "retire": true, "stream": true}}
   ]
 }

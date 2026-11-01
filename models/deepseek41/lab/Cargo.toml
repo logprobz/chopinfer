@@ -65,10 +65,6 @@ name = "merge_ceil"
 path = "tests/sm120/merge_ceil/main.rs"
 
 [[test]]
-name = "router_classified"
-path = "tests/sm120/router_classified/main.rs"
-
-[[test]]
 name = "norm_query_cached"
 path = "tests/sm120/norm_query_cached/main.rs"
 

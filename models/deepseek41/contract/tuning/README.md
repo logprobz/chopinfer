@@ -139,6 +139,28 @@ Every schedule retains E4M3 ceil-UE8M0 activations, UE8M0 scales per K32,
 four K32 MMAs per K128 chain and ascending F32 reduction. Those policies
 are numerical identity. They cannot be changed by a tuning row.
 
+## Direct MoE knobs
+
+The rows that select the direct MoE's absorbing path carry four required
+boolean knobs: `moe.absorb.decode` and `moe.absorb.verify` (the 32-row
+absorbing queues), `moe.wide.verify` (the fused 33- to 64-row queues) and
+`moe.direct_wide.verify` (the wide verify queues of 65 to 192 rows). They
+choose the cache policies of that path's gate queue, two-strip down queue
+and finishers (`kernels_sm120::moe::chained::knobs`):
+
+| Knob | Encoding |
+| --- | --- |
+| `stream` | The queues' weight code loads skip L1 with an L2 evict_first policy. |
+| `keep` | The queues' K-block partial stores carry an L2 evict_last policy. |
+| `retire` | The finishers discard each partial line from L2 once read. |
+| `loads` | The gate finisher issues every partial load before its first add. |
+
+Every knob keeps each loaded value, product, add and stored output, so no
+knob is numerical identity. The three rows of the 32- to 64-row buckets
+serve all four knobs, adopted as one set from the `moe_direct_*` candidate
+options. The wide verify row sets none: those buckets keep the plain route
+because they have no served step-time measurement.
+
 ## Whole-bucket evaluation
 
 Decode graph buckets are 1, 2, 4, 8, 16 and 32. The weighted verify widths

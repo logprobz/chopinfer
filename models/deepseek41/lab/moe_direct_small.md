@@ -178,16 +178,22 @@ reading partials that stayed in L2; the queues' own times do not change.
 
 ## Served-body candidates
 
-Four model options, all off by default, select the candidate kernels for
-the backbone bank's 32- to 64-row buckets and the wide verify buckets of
-65 to 192 rows on Flash TP4 (`bundle/src/sm120/moe_direct.rs`), from two
-knob modules (`routed_moe_direct_knobs`): `moe_direct_stream`,
-`moe_direct_keep`, `moe_direct_retire` and `moe_direct_loads` are the
-knobs above on the served bodies (`cuda/moe/chained_knobs.cuh`). Off, the
-package prepares and launches the served entries, whose cubins did not
-change. The four go to served step-time acceptance. Only the
-raw and width-1 tile-scale entries exist; with a bank of width 2 or 4 the
-candidates expand its scales first and launch the raw entries.
+Four model options, `moe_direct_stream`, `moe_direct_keep`,
+`moe_direct_retire` and `moe_direct_loads`, selected the knobs above on the
+served bodies (`cuda/moe/chained_knobs.cuh`) for the backbone bank's 32- to
+64-row buckets and the wide verify buckets of 65 to 192 rows on Flash TP4
+(`bundle/src/sm120/moe_direct.rs`), from two knob modules
+(`routed_moe_direct_knobs`). With all four on, served exactness passed at
+C8 to C32 and on the wide verify buckets, and served step time improved
+4.25% at C8, 5.68% at C16 and 3.60% at C32, with C1 neutral (the
+[model README](../README.md#kernel-selection-and-storage) gives the
+cells). On 2026-11-01 the set was adopted for the 32- to 64-row buckets:
+the MoE table's rows for them (`moe.absorb` and `moe.wide`) carry the four
+knobs, and the options were removed. The wide verify buckets keep the plain
+route, with no knob in their row (`moe.direct_wide`), because they have no
+served step-time measurement. Only the raw and width-1 tile-scale entries
+exist; with a bank of width 2 or 4 the knob entries expand its scales first
+and launch the raw entries.
 
 Proposal 3 was measured as a fifth option, `moe_direct_gate_tickets`,
 since removed: the gate queue took the gate finisher's outputs and a
@@ -368,7 +374,11 @@ the lab cubin with `build_family lab/moe_small_l2 $OUT`. Then
 `CHOPINFER_MOE_WIDE_SWAP` set to a knob set's tag (`l2k`, `l2sk`, `l2skr`,
 `l2skrl`, `l2skrf`, `l2skre`, `l2skrlf`, `l2skrlfe`) and, for timing,
 `CHOPINFER_MOE_WIDE_FLUSH=read` and `CHOPINFER_MOE_WIDE_LAUNCHES=1`, with
-the same served export as both reference and candidate. The option
-candidates export with `CHOPINFER_MOE_GRAPH_KNOBS`, a comma list of
-`stream`, `keep`, `retire` and `loads`, and pair against the served
-export.
+the same served export as both reference and candidate. Since the knob
+set's adoption the served export at these row counts launches the knob
+entries, whose symbols the lab twins do not name, so these swaps no longer
+apply to it, and the
+knob-free export the option candidates paired against
+(`CHOPINFER_MOE_GRAPH_KNOBS`) is gone with the options. The results above
+stand as recorded; the wide queues still pair against the 8192-row chains
+(`CHOPINFER_MOE_GRAPH_ARM=wide` against `=chains`).

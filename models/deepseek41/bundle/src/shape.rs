@@ -31,10 +31,6 @@ pub struct Shape {
     /// Whether decode and verify steps' complete all-reduces take the phased
     /// F32 rounding entries (the `phased_decode_reduce` candidate option).
     pub phased_decode_reduce: bool,
-    /// The direct MoE candidate knobs (the `moe_direct_*` options); none
-    /// serves the qualified path. `sm120::moe_direct` turns them into
-    /// kernel knobs.
-    pub moe_knobs: model_deepseek41_contract::execution_options::MoeDirect,
     /// Whether drafter Markov steps of two or more items run the staged
     /// step over each position's base logits in place (the
     /// `dspark_markov_staged` candidate option).
@@ -70,7 +66,6 @@ impl Shape {
             wide_verify: false,
             wide_draft: false,
             phased_decode_reduce: false,
-            moe_knobs: Default::default(),
             dspark_hc_draft_rows: false,
             dspark_moe_direct: false,
             dspark_confidence_staged: false,
@@ -115,16 +110,6 @@ impl Shape {
     /// (`model_deepseek41_contract::execution_options::PHASED_DECODE_REDUCE`).
     pub fn with_phased_decode_reduce(mut self, enabled: bool) -> Shape {
         self.phased_decode_reduce = enabled;
-        self
-    }
-
-    /// This shape with the direct MoE candidate knobs
-    /// (`model_deepseek41_contract::execution_options::MoeDirect`).
-    pub fn with_moe_knobs(
-        mut self,
-        options: model_deepseek41_contract::execution_options::MoeDirect,
-    ) -> Shape {
-        self.moe_knobs = options;
         self
     }
 

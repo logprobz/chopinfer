@@ -128,6 +128,29 @@ The fold families share admission, copy, packed-fetch and merge helpers where
 the compiler preserves their bytes. Activation, scale, chain and reduction
 policies remain separate numerical identities, not tuning knobs.
 
+The direct MoE's absorbing path at its 32- to 64-row buckets on Flash TP4
+(the backbone bank's 32-row decode and verify buckets and its fused 33- to
+64-row verify buckets) serves four cache policies from the MoE table's
+[direct MoE knobs](contract/tuning/README.md#direct-moe-knobs):
+its queues stream their weight codes past L1 with an L2 evict_first policy
+and store their K-block partials with an L2 evict_last policy, its
+finishers discard each partial line from L2 once read, and its gate
+finisher issues every partial load before its first add. They keep every
+loaded value, product, add and output. The set replaced the
+`moe_direct_stream`, `moe_direct_keep`, `moe_direct_retire` and
+`moe_direct_loads` candidate options on 2026-11-01, adopted together after
+served exactness passed at C8 to C32 and on the wide verify buckets. Served
+step time with all four on improved 4.25% at C8 with 8 items and 32 verify
+rows (spread 0.09), 5.68% at C16 with 16 items and 64 verify rows (spread
+2.01) and 3.60% at C32 with 32 items and 32 verify rows (spread 0.54, after
+a discarded lead visit with a clear first-visit control); C1 with one item
+and 6 verify rows, which the knobs do not reach, was neutral at 0.06%. With
+`wide_verify`, the wide verify buckets of 65 to 192 rows keep the plain
+route and their table row sets no knob, because they have no served
+step-time measurement. The knob entries read raw or width-1 tile scales; a
+bank the census encodes at width 2 or 4 expands its scales first. See the
+[lab qualification](lab/moe_direct_small.md#served-body-candidates).
+
 Every MXFP8 dense projection stores E4M3 codes in
 `mxfp8-fold-packed-8x128-v1`. It needs no create-time packed duplicate.
 The 2026-10-23 TP4 comparison with 65,536 KV pages kept AR and DSpark outputs
@@ -212,10 +235,6 @@ them. A non-default value is unqualified.
 | `dspark_hc_fusion` | `false` | Candidate: the drafter's stage boundaries fuse their all-reduce round, expansion, next mixer and input norm where the finish route admits the forward's rows (7 to 12 items), as the backbone's do ([drafter cost](lab/drafter-cost.md)). Fixed-batch GPU replays at C1 to C12 and C16 matched bitwise. Not adopted: the pair's served A/B on 2026-11-01 was invalid, and its estimated gain (about 0.8% at C1, 0.4 to 0.5% at C8 and C16) is below the 1.5% bar. |
 | `dspark_markov_staged` | `false` | Candidate: drafter Markov steps of two or more items load each thread's weight chain into registers before the dependency wait and read each position's logits in place, with no row copy ([drafter cost](lab/drafter-cost.md)). Bitwise lab pairs and fixed-batch GPU replays matched. Not adopted: its served single-option A/B on 2026-11-01 gained 2.14% in C16 step time but lost 0.70% in C8 decode request throughput, a resolved regression. |
 | `dspark_moe_direct` | `false` | Candidate: drafter forwards whose block rows the drafter table admits (`moe.direct_drafter.verify`) run the routed experts through the direct path instead of the expert chains ([drafter cost](lab/drafter-cost.md)). Fixed-batch GPU replays at C1 to C12 and C16 matched bitwise. Not adopted: no served A/B was run, since its estimated gain of about 0.15% is below the 1.5% bar. |
-| `moe_direct_keep` | `false` | Candidate: on Flash TP4, the direct MoE's 32- to 64-row and wide verify buckets' queues store their K-block partials with an L2 evict_last policy. With the stream, retire and loads options this is the robust knob set, bitwise equal to the default in the kernel-lab MoE pairs and faster in the lab with served-like routing ([lab](lab/moe_direct_small.md#served-body-candidates)); served step-time acceptance remains required. |
-| `moe_direct_loads` | `false` | Candidate: the same buckets' gate finisher issues every partial load before its first add. Part of the robust knob set. |
-| `moe_direct_retire` | `false` | Candidate: the same buckets' finishers discard each partial line from L2 once read. Part of the robust knob set. |
-| `moe_direct_stream` | `false` | Candidate: the same buckets' queues stream their weight codes past L1 with an L2 evict_first policy. Part of the robust knob set. |
 | `phased_decode_reduce` | `false` | Candidate: Flash TP4 decode and verify all-reduces whose round no HC boundary takes launch the phased F32 rounding entries, over comm state of their own, instead of the F32 reduce-scatter, all-gather and round row. They give the same bits, in the lab at 11 row counts from 1 to 192 and in fixed-batch replays ([decode reductions](lab/decode-reductions.md#fixed-batch-replays)); the deferred pairs and prefill are unchanged. Not adopted: served A/Bs on 2026-11-01 gained 0.12% and 0.68% in C1 and C8 step time and were neutral at C16 and C32, below the 1.5% bar. |
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |

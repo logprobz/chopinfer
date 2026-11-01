@@ -24,6 +24,12 @@ keeps its twin's body, parameters, launch bounds and register count; only
 the capacity and symbol change. The 1- to 64-row entries, their locks and
 their selection are unchanged.
 
+The direct MoE knob set adopted on 2026-11-01 for the 32- to 64-row buckets
+([served-body candidates](moe_direct_small.md#served-body-candidates)) does
+not reach these buckets: their MoE table row (`moe.direct_wide`) sets no
+knob, as they have no served step-time measurement under it, so these
+entries serve unchanged.
+
 The arithmetic is that of the direct path. Each 128-K chain starts at +0;
 the finishers fold chains by ascending K block with `__fadd_rn`, then apply
 the existing clamp, SiLU, route weighting and BF16 epilogue and the fused

@@ -501,7 +501,12 @@ mod tests {
                     crate::shared_overlap::checked_units(&stages, &launches, &readonly, false)
                         .unwrap();
                     if selected {
-                        assert!(launches.last().unwrap().symbol.ends_with("_down_finish_v1"));
+                        let last = &launches.last().unwrap().symbol;
+                        assert!(
+                            last.ends_with("_down_finish_v1")
+                                || last.ends_with("_down_finish_policy_r_v1"),
+                            "{last}"
+                        );
                         assert!(
                             launches
                                 .iter()

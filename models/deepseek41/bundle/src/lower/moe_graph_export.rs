@@ -285,27 +285,10 @@ fn export_wide_moe_graphs() {
         Some("wide" | "chains") => true,
         Some(other) => panic!("unknown MoE graph arm {other}"),
     };
-    // CHOPINFER_MOE_GRAPH_KNOBS optionally lists the direct MoE candidate
-    // knobs to set (`stream`, `keep`, `retire`, `loads`).
-    let mut knobs = model_deepseek41_contract::execution_options::MoeDirect::default();
-    for knob in std::env::var("CHOPINFER_MOE_GRAPH_KNOBS")
-        .unwrap_or_default()
-        .split(',')
-        .filter(|k| !k.is_empty())
-    {
-        *match knob {
-            "stream" => &mut knobs.stream,
-            "keep" => &mut knobs.keep,
-            "retire" => &mut knobs.retire,
-            "loads" => &mut knobs.loads,
-            other => panic!("unknown MoE knob {other}"),
-        } = true;
-    }
     let shape = Shape::new(&FLASH, Ranks::TP4)
         .unwrap()
         .with_verify_rows(verify_rows)
-        .with_wide_verify(wide_verify)
-        .with_moe_knobs(knobs);
+        .with_wide_verify(wide_verify);
     let kernels = crate::Kernels::new(&shape).unwrap();
     let mut ops = Ops::prepare_set(
         &kernels,

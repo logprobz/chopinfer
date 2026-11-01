@@ -936,7 +936,6 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         .with_wide_verify(config.execution.wide_verify)
         .with_wide_draft(config.execution.wide_draft)
         .with_phased_decode_reduce(config.execution.phased_decode_reduce)
-        .with_moe_knobs(config.execution.moe_direct)
         .with_dspark_markov_staged(config.execution.dspark_markov_staged)
         .with_dspark_hc_fusion(config.execution.dspark_hc_fusion)
         .with_dspark_confidence_staged(config.execution.dspark_confidence_staged)

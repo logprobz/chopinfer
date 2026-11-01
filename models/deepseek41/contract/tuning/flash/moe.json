@@ -2,8 +2,8 @@
   "schema": "chopinfer-tuning-v1",
   "target": {"compute_capability": 120, "sm_count": 188},
   "rows": [
-    {"op": "moe.absorb.decode", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [32, 32], "schedule": "absorb", "knobs": {}},
-    {"op": "moe.absorb.verify", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [32, 32], "schedule": "absorb", "knobs": {}},
+    {"op": "moe.absorb.decode", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [32, 32], "schedule": "absorb", "knobs": {"keep": true, "loads": true, "retire": true, "stream": true}},
+    {"op": "moe.absorb.verify", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [32, 32], "schedule": "absorb", "knobs": {"keep": true, "loads": true, "retire": true, "stream": true}},
     {"op": "moe.active_gate_up.decode", "weights": "mxfp4", "shape": {"experts": 384, "ranks": 4, "top_k": 6}, "bucket": 32, "rows": [1, 1], "schedule": "active", "knobs": {}},
     {"op": "moe.active_gate_up.prefill", "weights": "mxfp4", "shape": {"experts": 384, "ranks": 4, "top_k": 6}, "bucket": 32, "rows": [1, 1], "schedule": "active", "knobs": {}},
     {"op": "moe.active_gate_up.verify", "weights": "mxfp4", "shape": {"experts": 384, "ranks": 4, "top_k": 6}, "bucket": 32, "rows": [1, 1], "schedule": "active", "knobs": {}},
@@ -106,7 +106,7 @@
     {"op": "moe.direct_drafter.verify", "weights": "mxfp4", "shape": {"experts": 128, "top_k": 3}, "bucket": 64, "rows": [50, 50], "schedule": "direct", "knobs": {"order": 24}},
     {"op": "moe.direct_drafter.verify", "weights": "mxfp4", "shape": {"experts": 128, "top_k": 3}, "bucket": 64, "rows": [55, 55], "schedule": "direct", "knobs": {"order": 25}},
     {"op": "moe.direct_drafter.verify", "weights": "mxfp4", "shape": {"experts": 128, "top_k": 3}, "bucket": 64, "rows": [60, 60], "schedule": "direct", "knobs": {"order": 26}},
-    {"op": "moe.direct_wide.verify", "weights": "mxfp4", "shape": {"experts": 384, "ranks": 4, "top_k": 6}, "bucket": 192, "rows": [65, 192], "schedule": "direct", "knobs": {}},
+    {"op": "moe.direct_wide.verify", "weights": "mxfp4", "shape": {"experts": 384, "ranks": 4, "top_k": 6}, "bucket": 192, "rows": [65, 192], "schedule": "direct", "knobs": {"keep": false, "loads": false, "retire": false, "stream": false}},
     {"op": "moe.gate_finish.decode", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [1, 1], "schedule": "gate_finish", "knobs": {}},
     {"op": "moe.gate_finish.decode", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [8, 8], "schedule": "gate_finish", "knobs": {}},
     {"op": "moe.gate_finish.decode", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [16, 16], "schedule": "gate_finish", "knobs": {}},
@@ -183,6 +183,6 @@
     {"op": "moe.strip2.prefill", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [32, 32], "schedule": "strip2", "knobs": {}},
     {"op": "moe.strip2.verify", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [16, 16], "schedule": "strip2", "knobs": {}},
     {"op": "moe.strip2.verify", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [32, 32], "schedule": "strip2", "knobs": {}},
-    {"op": "moe.wide.verify", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [33, 64], "schedule": "wide", "knobs": {}}
+    {"op": "moe.wide.verify", "weights": "mxfp4", "shape": {"experts": 384}, "bucket": 64, "rows": [33, 64], "schedule": "wide", "knobs": {"keep": true, "loads": true, "retire": true, "stream": true}}
   ]
 }

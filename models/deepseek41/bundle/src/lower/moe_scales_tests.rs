@@ -659,6 +659,15 @@ fn tile_scales_preserve_the_serving_schedule_and_raw_fallbacks() {
         }
         for (phase, gate, down) in phases {
             let gate = gate && !(phase.rows() == 1 && width == 4);
+            // The absorbing path's knob entries read only width-1 tile
+            // scales in place. At this shape's 32 verify rows the 32-row
+            // buckets are its only absorbing buckets.
+            let knobs = matches!(phase, Phase::Decode(32) | Phase::Verify { rows: 32, .. });
+            let (gate, down) = if knobs && width > 1 {
+                (false, false)
+            } else {
+                (gate, down)
+            };
             let selected = [gate, down];
             let stages = [
                 Stage::Route(0),

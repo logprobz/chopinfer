@@ -16,8 +16,6 @@ use kernel_core::properties::Invariance;
 use crate::Profile;
 
 pub const HEADER: &str = "latent/sources.cuh";
-/// The merges that quantize their rows ([`Entry::merge_ceil_spec`]).
-pub const MERGE_CEIL_HEADER: &str = "latent/sources_merge_ceil.cuh";
 pub const KEYS: u32 = 64;
 pub const MERGE_THREADS: u32 = 128;
 
@@ -127,47 +125,6 @@ impl Entry {
                 format!("chop_latent_sources_{}_heads_merge_v1", self.name)
             }
         }
-    }
-
-    /// The symbol of [`Self::merge_ceil_spec`].
-    pub fn merge_ceil_symbol(&self) -> String {
-        let merge = self.merge_symbol();
-        format!("{}_ceil_v1", merge.strip_suffix("_v1").unwrap_or(&merge))
-    }
-
-    /// The final merge followed, in each CTA, by the E4M3 ceil groups of its
-    /// head's columns with amax floor `floor_bits`, each row's flags ORed
-    /// into `status` at `status_row_offset` (`latent/sources_merge_ceil.cuh`):
-    /// the merge and then the row-sliced decode quantizer, in one launch
-    /// with the merge's plan and arguments followed by the codes, scales,
-    /// status and status row offset.
-    pub fn merge_ceil_spec(&self, floor_bits: u32) -> Result<EntrySpec, Refusal> {
-        self.contract()?;
-        let s = shape(self.query)?;
-        if s.partial || s.latent % 32 != 0 {
-            return Err(Refusal(
-                "a quantizing merge needs normalized output in whole 32-column groups",
-            ));
-        }
-        let mut params = self.merge_params()?;
-        params.extend([
-            ptr("codes", "uint8_t"),
-            ptr("scales", "uint8_t"),
-            ptr("status", "uint32_t"),
-            u64p("status_row_offset"),
-        ]);
-        let sinks = if s.sink { "sinks" } else { "nullptr" };
-        let rope = if s.tail != 0 { "cos_sin" } else { "nullptr" };
-        Ok(EntrySpec::new(
-            self.merge_ceil_symbol(),
-            params,
-            format!(
-                "chop::latent::sources::merge_ceil<{},{floor_bits}u>(workspace,live_rows,{sinks},{rope},out,codes,scales,status,status_row_offset);",
-                self.traits()?
-            ),
-            MERGE_THREADS,
-            1,
-        ))
     }
 
     /// Lab-only negative control: add the sink once per split instead of
@@ -519,34 +476,6 @@ pub fn cubin_spec(profile: Profile, entries: &[Entry]) -> Result<CubinSpec, Refu
     })
 }
 
-/// The cubin `name` of `entries`' quantizing merges
-/// ([`Entry::merge_ceil_spec`]) at amax floor `floor_bits`.
-pub fn merge_ceil_cubin_spec(
-    name: &str,
-    entries: &[Entry],
-    floor_bits: u32,
-) -> Result<CubinSpec, Refusal> {
-    if entries.is_empty() {
-        return Err(Refusal("a quantizing merge cubin needs entries"));
-    }
-    let mut specs: Vec<EntrySpec> = Vec::new();
-    for entry in entries {
-        let spec = entry.merge_ceil_spec(floor_bits)?;
-        if specs.iter().any(|s| s.symbol == spec.symbol) {
-            return Err(Refusal("duplicate quantizing merge entry"));
-        }
-        specs.push(spec);
-    }
-    Ok(CubinSpec {
-        name: name.into(),
-        sources_root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("cuda"),
-        include_dirs: vec![PathBuf::from(".")],
-        headers: vec![format!("#include \"{MERGE_CEIL_HEADER}\"")],
-        defines: vec![],
-        entries: specs,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -686,46 +615,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             old_symbols
         );
-    }
-
-    #[test]
-    fn quantizing_merges_extend_the_merge_abi_and_refuse_partial_output() {
-        for heads in [1, 16, 64] {
-            for reference in entries(PROFILE, query(heads, 512)).unwrap() {
-                let spec = reference.merge_ceil_spec(0x38d1_b717).unwrap();
-                let merge = reference.merge_params().unwrap();
-                assert_eq!(spec.symbol, reference.merge_ceil_symbol());
-                assert_eq!(
-                    spec.symbol,
-                    reference
-                        .merge_symbol()
-                        .replace("_merge_v1", "_merge_ceil_v1")
-                );
-                assert_eq!(spec.params[..merge.len()], merge[..]);
-                assert_eq!(
-                    spec.params[merge.len()..],
-                    [
-                        ptr("codes", "uint8_t"),
-                        ptr("scales", "uint8_t"),
-                        ptr("status", "uint32_t"),
-                        u64p("status_row_offset"),
-                    ]
-                );
-                assert!(spec.body.contains(",953267991u>("), "{}", spec.body);
-                let mut partial = reference.clone();
-                if let LatentAttentionQuery::Attention { output, .. } = &mut partial.query {
-                    *output = LatentAttentionOutput::Partial;
-                }
-                assert!(partial.merge_ceil_spec(0).is_err());
-            }
-        }
-        let entries = entries(PROFILE, query(16, 512)).unwrap();
-        let cubin = merge_ceil_cubin_spec("merge_ceil", &entries, 1).unwrap();
-        assert_eq!(cubin.entries.len(), entries.len());
-        assert_eq!(cubin.headers, [format!("#include \"{MERGE_CEIL_HEADER}\"")]);
-        assert!(merge_ceil_cubin_spec("merge_ceil", &[], 1).is_err());
-        let doubled = [entries[0].clone(), entries[0].clone()];
-        assert!(merge_ceil_cubin_spec("merge_ceil", &doubled, 1).is_err());
     }
 
     #[test]

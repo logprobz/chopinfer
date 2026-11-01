@@ -445,6 +445,7 @@ pub struct KvPool {
     next_transfer: u64,
     transfer_refs: Vec<u32>,
     transfer_only_pages: usize,
+    anchor_only_pages: usize,
     free_blocks: Vec<BlockId>,
     sequences: Vec<SequenceSlot>,
     free_sequences: Vec<usize>,
@@ -485,6 +486,7 @@ impl Clone for KvPool {
             next_transfer: self.next_transfer,
             transfer_refs: self.transfer_refs.clone(),
             transfer_only_pages: self.transfer_only_pages,
+            anchor_only_pages: self.anchor_only_pages,
             free_blocks: self.free_blocks.clone(),
             sequences: self.sequences.clone(),
             free_sequences: self.free_sequences.clone(),
@@ -516,6 +518,7 @@ impl PartialEq for KvPool {
             && self.next_transfer == other.next_transfer
             && self.transfer_refs == other.transfer_refs
             && self.transfer_only_pages == other.transfer_only_pages
+            && self.anchor_only_pages == other.anchor_only_pages
             && self.blocks == other.blocks
             && self.free_blocks == other.free_blocks
             && self.sequences == other.sequences
@@ -603,6 +606,7 @@ impl KvPool {
             transfer_pages: BTreeMap::new(),
             transfer_refs: vec![0; geometry.block_capacity],
             transfer_only_pages: 0,
+            anchor_only_pages: 0,
             next_transfer: 1,
             free_blocks,
             sequences,
@@ -1138,8 +1142,7 @@ impl KvPool {
             state.push(page);
         }
         for block in blocks.iter().chain(&state) {
-            self.retain_block(*block);
-            self.anchor_refs[block.index()] += 1;
+            self.retain_anchor_block(*block);
         }
         self.anchor_page_work += (blocks.len() + state.len()) as u64;
         self.anchor_chains.entry(chain).or_default().insert(key);
@@ -1277,8 +1280,7 @@ impl KvPool {
             }
         }
         for block in anchor.state.iter().rev().chain(anchor.blocks.iter().rev()) {
-            self.anchor_refs[block.index()] -= 1;
-            self.release_block(*block);
+            self.release_anchor_block(*block);
         }
         self.anchor_page_work += (anchor.state.len() + anchor.blocks.len()) as u64;
         true
@@ -1296,14 +1298,19 @@ impl KvPool {
             .insert((anchor.tier, self.anchor_clock, key), key);
     }
 
-    fn set_block_references(&mut self, block: BlockId, refs: u32, transfers: u32) {
+    fn set_block_references(&mut self, block: BlockId, refs: u32, transfers: u32, anchors: u32) {
         let index = block.index();
         self.transfer_only_pages -= usize::from(
             self.transfer_refs[index] > 0 && self.blocks[index] == self.transfer_refs[index],
         );
+        self.anchor_only_pages -= usize::from(
+            self.anchor_refs[index] > 0 && self.blocks[index] == self.anchor_refs[index],
+        );
         self.blocks[index] = refs;
         self.transfer_refs[index] = transfers;
+        self.anchor_refs[index] = anchors;
         self.transfer_only_pages += usize::from(transfers > 0 && refs == transfers);
+        self.anchor_only_pages += usize::from(anchors > 0 && refs == anchors);
     }
 
     fn retain_block(&mut self, block: BlockId) {
@@ -1311,6 +1318,7 @@ impl KvPool {
             block,
             self.blocks[block.index()] + 1,
             self.transfer_refs[block.index()],
+            self.anchor_refs[block.index()],
         );
     }
 
@@ -1319,6 +1327,28 @@ impl KvPool {
             block,
             self.blocks[block.index()] - 1,
             self.transfer_refs[block.index()],
+            self.anchor_refs[block.index()],
+        );
+        if self.blocks[block.index()] == 0 {
+            self.free_blocks.push(block);
+        }
+    }
+
+    fn retain_anchor_block(&mut self, block: BlockId) {
+        self.set_block_references(
+            block,
+            self.blocks[block.index()] + 1,
+            self.transfer_refs[block.index()],
+            self.anchor_refs[block.index()] + 1,
+        );
+    }
+
+    fn release_anchor_block(&mut self, block: BlockId) {
+        self.set_block_references(
+            block,
+            self.blocks[block.index()] - 1,
+            self.transfer_refs[block.index()],
+            self.anchor_refs[block.index()] - 1,
         );
         if self.blocks[block.index()] == 0 {
             self.free_blocks.push(block);
@@ -1607,7 +1637,7 @@ impl KvPool {
             }
             self.metrics.appended(append.additional_tokens());
             for block in &append.allocated {
-                self.blocks[block.index()] = 1;
+                self.set_block_references(*block, 1, 0, 0);
             }
             self.sequences[slot].blocks = append.block_table;
             self.sequences[slot].tokens = append.new_tokens;
@@ -1794,7 +1824,7 @@ impl KvPool {
                 .map_or(0, |table| append.block_table.len() - table.len());
             let (used, unused) = append.allocated.split_at(append.allocated.len() - dropped);
             for block in used {
-                self.blocks[block.index()] = 1;
+                self.set_block_references(*block, 1, 0, 0);
             }
             for block in unused.iter().rev() {
                 self.free_blocks.push(*block);
@@ -1908,19 +1938,10 @@ impl KvPool {
 
     #[must_use]
     pub fn stats(&self) -> KvStats {
-        let cached_blocks = if self.anchors.is_empty() {
-            0
-        } else {
-            self.anchor_refs
-                .iter()
-                .zip(&self.blocks)
-                .filter(|(anchor, total)| **anchor > 0 && anchor == total)
-                .count()
-        };
         KvStats {
             block_capacity: self.geometry.block_capacity,
             free_blocks: self.free_blocks.len(),
-            cached_blocks,
+            cached_blocks: self.anchor_only_pages,
             anchors: self.anchors.len(),
             active_sequences: self.active_sequences,
         }
@@ -1944,6 +1965,13 @@ impl KvPool {
                     .iter()
                     .zip(&self.transfer_refs)
                     .filter(|(refs, transfers)| **transfers > 0 && refs == transfers)
+                    .count()
+            || self.anchor_only_pages
+                != self
+                    .blocks
+                    .iter()
+                    .zip(&self.anchor_refs)
+                    .filter(|(refs, anchors)| **anchors > 0 && refs == anchors)
                     .count()
         {
             return Err(KvError::InvariantViolation);

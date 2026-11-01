@@ -43,6 +43,91 @@ fn content_capture(
 }
 
 #[test]
+fn cached_blocks_follow_anchor_sequence_and_transfer_ownership() {
+    fn assert_stats(pool: &KvPool, cached: usize, used: usize) {
+        pool.audit().unwrap();
+        assert_eq!(pool.stats().cached_blocks(), cached);
+        assert_eq!(pool.stats().used_blocks(), used);
+    }
+
+    let mut pool = KvPool::new(KvGeometry::new(4, 8).unwrap(), 4).unwrap();
+    assert_stats(&pool, 0, 0);
+    let tokens = chain(&prompt(6));
+    let key = tokens.key_at(6).unwrap();
+    let prefix_key = tokens.key_at(5).unwrap();
+    let source = pool.create_sequence(16).unwrap();
+    assert_stats(&pool, 0, 0);
+    pool.append(source, 6).unwrap();
+    assert_stats(&pool, 0, 2);
+    let source_blocks = pool.snapshot(source).unwrap().into_blocks();
+    capture(&mut pool, &tokens, source, 1).unwrap();
+    assert_stats(&pool, 1, 2);
+    pool.insert_prefix_anchor(prefix_key, tokens.chain(1).unwrap(), source, 5, 0)
+        .unwrap()
+        .unwrap();
+    assert_stats(&pool, 1, 2);
+
+    let child = pool.fork(source, 16).unwrap();
+    assert_stats(&pool, 1, 2);
+    pool.release(source).unwrap();
+    assert_stats(&pool, 1, 2);
+    let prepared = pool.prepare_append_batch(&[(child, 1)]).unwrap();
+    assert_eq!(
+        prepared.appends()[0].copy().unwrap().source(),
+        source_blocks[1]
+    );
+    assert_stats(&pool, 1, 3);
+    pool.commit_prepared(prepared.id()).unwrap();
+    assert_stats(&pool, 2, 2);
+    pool.release(child).unwrap();
+    assert_stats(&pool, 3, 0);
+    assert!(pool.remove_anchor(prefix_key).unwrap());
+    assert_stats(&pool, 3, 0);
+
+    let cloned = pool.clone();
+    assert_stats(&cloned, 3, 0);
+    assert_eq!(pool, cloned);
+    let page = pool.page_allocation(source_blocks[1]).unwrap();
+    let lease = pool.retain_transfer_pages(&[page]).unwrap();
+    assert_stats(&pool, 2, 1);
+    pool.release_transfer_pages(&lease).unwrap();
+    assert_stats(&pool, 3, 0);
+
+    let hit = pool.resume_anchor(key, 16).unwrap();
+    assert_stats(&pool, 0, 3);
+    pool.finish_restore(hit.handle()).unwrap();
+    assert_stats(&pool, 1, 2);
+    let prepared = pool.prepare_append_batch(&[(hit.handle(), 3)]).unwrap();
+    assert!(prepared.appends()[0].copy().is_some());
+    assert_eq!(prepared.appends()[0].newly_allocated().len(), 2);
+    assert_stats(&pool, 1, 4);
+    pool.rollback_prepared(prepared.id()).unwrap();
+    assert_stats(&pool, 1, 2);
+
+    let prepared = pool.prepare_append_batch(&[(hit.handle(), 3)]).unwrap();
+    assert_stats(&pool, 1, 4);
+    let commit = pool
+        .preflight_commit_prepared(prepared.id(), &[hit.handle()])
+        .unwrap();
+    pool.apply_prepared_commit(commit).unwrap();
+    assert_stats(&pool, 3, 0);
+
+    let pressure = pool.create_sequence(24).unwrap();
+    assert_stats(&pool, 3, 0);
+    pool.append(pressure, 24).unwrap();
+    assert!(pool.anchor_pages(key).is_none());
+    assert_eq!(pool.metrics().snapshot().prefix_cache_evictions, 1);
+    assert_stats(&pool, 0, 6);
+    pool.release(pressure).unwrap();
+    assert_stats(&pool, 0, 0);
+
+    let reload = pool.create_initialized_sequence(6, 16, 1).unwrap();
+    assert_stats(&pool, 0, 3);
+    pool.release(reload.handle()).unwrap();
+    assert_stats(&pool, 0, 0);
+}
+
+#[test]
 fn chain_digests_name_tokens_media_and_the_exact_boundary() {
     let tokens = prompt(10);
     let first = chain(&tokens);

@@ -422,23 +422,24 @@ C1, C8 and C16. It saves 4.7, 4.0 and 1.2 us at the 1-, 2- and 4-row
 autoregressive decode buckets (about 0.36, 0.31 and 0.10 ms a step),
 which DSpark steps do not run.
 
-So the F32-output form should not serve 5 to 192 rows. Two directions
-keep the order and the single rounding:
+So the F32-output form should not serve 5 to 192 rows, and this branch
+pursues neither direction that keeps the order and the single rounding:
 
-- At 1 to 4 rows, the deferred phased form above, for autoregressive
+- At 1 to 4 rows, the deferred phased form above pays for autoregressive
   decode ([decode reductions](decode-reductions.md#phased-f32-timing)
-  estimated about 0.35 ms of a C1 decode step).
-- At the DSpark widths, the HC boundary could take the rounding entry's
-  BF16 rows instead of rounding the F32 sum itself. The HC mixes convert
-  the sum with the same `cvt.rn.bf16.f32` before any other arithmetic,
-  and the rounding entry's owner rounds the same sum once with the same
-  instruction, so a fused HC producer that reads those BF16 rows
-  computes the same bits. At the rounding entry's measured advantage
-  (0.8 us slower at 6 rows, 2.8 faster at 32 and 7.1 at 64) that is
-  about 0.06 ms slower at C1 and 0.21 and 0.54 ms faster at C8 and C16,
-  before the HC entries' own saving from reading half the bytes. It
-  needs BF16-input variants of the shared HC producers that take the
-  round (`crates/kernels-sm120/cuda/sinkhorn_hc/`), which are
+  estimated about 0.35 ms of a C1 decode step); it exists as the
+  `phased_decode_defer` candidate on another branch.
+- Follow-up for the DSpark widths: the HC boundary could take the
+  rounding entry's BF16 rows instead of rounding the F32 sum itself. The
+  HC mixes convert the sum with the same `cvt.rn.bf16.f32` before any
+  other arithmetic, and the rounding entry's owner rounds the same sum
+  once with the same instruction, so a fused HC producer that reads
+  those BF16 rows computes the same bits. At the rounding entry's
+  measured advantage (0.8 us slower at 6 rows, 2.8 faster at 32 and 7.1
+  at 64) that is about 0.06 ms slower at C1 and 0.21 and 0.54 ms faster
+  at C8 and C16, before the HC entries' own saving from reading half the
+  bytes. It needs BF16-input variants of the shared HC producers that
+  take the round (`crates/kernels-sm120/cuda/sinkhorn_hc/`), which are
   model-neutral as well, and their own lab pairs.
 
 ## Estimates at C1, C8 and C16

@@ -8,8 +8,11 @@
 //! `wide_verify` candidate is swept beside it as `tp4-dspark-rows192-wide`,
 //! the same override with the option on, the `phased_decode_reduce`
 //! candidate as `tp4-dspark-rows192-phased`, whose decode buckets and verify
-//! widths reach every phased form, and the `verify_row_fusions` candidate as
-//! `tp4-dspark-rows192-rowfuse`. Separate names keep their
+//! widths reach every phased form, the `verify_row_fusions` candidate as
+//! `tp4-dspark-rows192-rowfuse`, and both `wide_verify` and
+//! `verify_row_fusions` as `tp4-dspark-rows192-wide-rowfuse`, the pair an
+//! adopted `verify_row_fusions` would serve beside the declared
+//! `wide_verify`. Separate names keep their
 //! allowlist entries apart from the default profile, whose full sweep
 //! refuses entries it never reaches; entries for the shapes they share
 //! name `tp4-dspark*`.
@@ -35,12 +38,16 @@ const WIDE_PROFILE: &str = "tp4-dspark-rows192-wide";
 const PHASED_PROFILE: &str = "tp4-dspark-rows192-phased";
 /// The override with the `verify_row_fusions` candidate on.
 const ROW_FUSIONS_PROFILE: &str = "tp4-dspark-rows192-rowfuse";
-/// Every override, and the candidate option each turns on.
-const OVERRIDES: [(&str, Option<&str>); 4] = [
-    (PROFILE, None),
-    (WIDE_PROFILE, Some(WIDE_VERIFY)),
-    (PHASED_PROFILE, Some(PHASED_DECODE_REDUCE)),
-    (ROW_FUSIONS_PROFILE, Some(VERIFY_ROW_FUSIONS)),
+/// The override with the `wide_verify` and `verify_row_fusions` candidates
+/// on.
+const WIDE_ROW_FUSIONS_PROFILE: &str = "tp4-dspark-rows192-wide-rowfuse";
+/// Every override, and the candidate options each turns on.
+const OVERRIDES: [(&str, &[&str]); 5] = [
+    (PROFILE, &[]),
+    (WIDE_PROFILE, &[WIDE_VERIFY]),
+    (PHASED_PROFILE, &[PHASED_DECODE_REDUCE]),
+    (ROW_FUSIONS_PROFILE, &[VERIFY_ROW_FUSIONS]),
+    (WIDE_ROW_FUSIONS_PROFILE, &[WIDE_VERIFY, VERIFY_ROW_FUSIONS]),
 ];
 /// The profile the override raises.
 const BASE: &str = "tp4-dspark";
@@ -84,9 +91,9 @@ impl Startup for Wide {
             let mut wide = document["profiles"][BASE].clone();
             assert!(wide.is_object(), "{BASE} is a profile");
             wide["speculation"]["rows"] = ROWS.into();
-            for (profile, option) in OVERRIDES {
+            for (profile, options) in OVERRIDES {
                 let mut serving = wide.clone();
-                if let Some(option) = option {
+                for option in options {
                     serving["model_options"][option] = "true".into();
                 }
                 document["profiles"][profile] = serving;
@@ -102,10 +109,10 @@ impl Startup for Wide {
             .find(|serving| serving.profile == BASE)
             .expect("the DSpark profile")
             .clone();
-        for (at, (profile, option)) in OVERRIDES.into_iter().enumerate() {
+        for (at, (profile, options)) in OVERRIDES.into_iter().enumerate() {
             let mut wide = base.clone();
             wide.profile = profile.into();
-            if let Some(option) = option {
+            for &option in options {
                 wide.model_options.insert(option.into(), "true".into());
             }
             servings.insert(at, wide);
@@ -188,6 +195,7 @@ fn the_override_starts_beside_the_profiles() {
         ("tp4_dspark_rows192_wide", WIDE_PROFILE),
         ("tp4_dspark_rows192_phased", PHASED_PROFILE),
         ("tp4_dspark_rows192_rowfuse", ROW_FUSIONS_PROFILE),
+        ("tp4_dspark_rows192_wide_rowfuse", WIDE_ROW_FUSIONS_PROFILE),
         ("tp4_ar", "tp4-ar"),
         ("tp4_dspark", BASE),
     ]);
@@ -260,6 +268,15 @@ mod wide_route_sweep {
     fn tp4_dspark_rows192_rowfuse() {
         route_guard::sweep::<Wide>(
             ROW_FUSIONS_PROFILE,
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
+            env!("CARGO_PKG_NAME"),
+        );
+    }
+
+    #[test]
+    fn tp4_dspark_rows192_wide_rowfuse() {
+        route_guard::sweep::<Wide>(
+            WIDE_ROW_FUSIONS_PROFILE,
             include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
             env!("CARGO_PKG_NAME"),
         );

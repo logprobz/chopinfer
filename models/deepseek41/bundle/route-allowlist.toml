@@ -5,8 +5,10 @@
 # verify rows (fake_host_tests/conformance/wide.rs), whose envelope repeats
 # the profile's shapes, tp4-dspark-rows192-wide, the same override with
 # the `wide_verify` candidate on, tp4-dspark-rows192-phased, with the
-# `phased_decode_reduce` candidate on, and tp4-dspark-rows192-rowfuse, with
-# the `verify_row_fusions` candidate on.
+# `phased_decode_reduce` candidate on, tp4-dspark-rows192-rowfuse, with
+# the `verify_row_fusions` candidate on, and
+# tp4-dspark-rows192-wide-rowfuse, with both `wide_verify` and
+# `verify_row_fusions` on.
 
 [[allow]]
 profiles = ["tp4-ar", "tp4-dspark*"]
@@ -59,7 +61,7 @@ reason = "Cached input and query norms cover measured row buckets; intervening d
 task = "NORM-cached-range"
 
 [[allow]]
-profiles = ["tp4-dspark-rows192-rowfuse"]
+profiles = ["tp4-dspark-rows192-rowfuse", "tp4-dspark-rows192-wide-rowfuse"]
 phase = "verify"
 family = "rmsnorm_quantize"
 entry = "rmsnorm_quantize/fallback/chop_norm_quantize_deepseek41_query_v1"

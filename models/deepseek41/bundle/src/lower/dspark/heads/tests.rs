@@ -452,27 +452,21 @@ fn hidden_width(shape: &Shape) -> u64 {
     u64::from(shape.geometry.shape.hidden) * 4
 }
 
-/// With the `f32_row_tiles` option the drafter's vocabulary projection runs
-/// the head's row tiles: the decode site's through 32 rows and the verify
-/// site's head tile above, to the instance's narrow verify rows. Without
-/// the option, and above those rows, it keeps its own routes.
+/// The drafter's vocabulary projection runs the head's row tiles: the
+/// decode site's through 32 rows and the verify site's head tile above, to
+/// the instance's narrow verify rows. Above those rows it keeps its own
+/// routes.
 #[test]
-fn row_tile_option_runs_the_drafter_vocabulary_in_row_tiles() {
+fn drafter_vocabulary_runs_in_row_tiles() {
     use bundle_runtime::geometry::Ranks;
     use model_deepseek41_contract::geometry::FLASH;
     use runtime_bundle_abi::BundleDeviceBufferHandleV1;
     let tp4 = Shape::new(&FLASH, Ranks::TP4).unwrap();
     for (shape, last) in [
-        (tp4.with_verify_rows(192).with_f32_row_tiles(false), 0),
-        (
-            tp4.with_verify_rows(192)
-                .with_wide_verify(true)
-                .with_f32_row_tiles(false),
-            0,
-        ),
-        (tp4.with_verify_rows(192).with_f32_row_tiles(true), 64),
-        (tp4.with_verify_rows(48).with_f32_row_tiles(true), 48),
-        (tp4.with_f32_row_tiles(true), 32),
+        (tp4.with_verify_rows(192), 64),
+        (tp4.with_verify_rows(192).with_wide_verify(true), 64),
+        (tp4.with_verify_rows(48), 48),
+        (tp4, 32),
     ] {
         let kernels = crate::Kernels::new(&shape).unwrap();
         let heads = Heads::prepare(

@@ -1,4 +1,4 @@
-//! Compare routed and reference graphs with the same loaded module catalog.
+//! Compare routed and reference journals with the same loaded module catalog.
 use super::*;
 
 fn projection(line: &str) -> bool {
@@ -10,103 +10,44 @@ fn projection(line: &str) -> bool {
 fn run_case(reference: bool) -> Vec<String> {
     crate::sm120::head_last::with_reference(|| run_without_last(reference))
 }
+/// Decode and verify heads run the head's row tiles, so the reuse head
+/// serves the prefill heads of 9 to 32 rows: prefills of one to 32
+/// one-token prompts.
 fn run_without_last(reference: bool) -> Vec<String> {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
-    host.speculation.set(Some((5, 48)));
-    // Decode and narrow verify heads run the head's row tiles by default;
-    // without them they take the reuse head compared here.
-    let mut instance = super::create_with_options(
-        &host,
-        32,
-        &[(
-            model_deepseek41_contract::execution_options::F32_ROW_TILES,
-            false.into(),
-        )],
-    );
-    for slot in 0..32 {
+    let mut instance = create(&host, 32);
+    let mut records = Vec::new();
+    let mut first = 1;
+    for rows in [1u32, 8, 9, 16, 24, 32] {
+        let from = host.device.journal.borrow().len();
         step(
             &mut instance,
-            &prompt(slot + 1, slot, 0, 1, true),
+            &super::head_last::prompts(first, rows),
             &mut Views::default(),
         );
-    }
-    let mut ends = [1u64; 32];
-    let mut records = Vec::new();
-    let mut captured = std::collections::BTreeSet::new();
-    for (rows, width) in [
-        (1u32, 1u32),
-        (8, 1),
-        (16, 1),
-        (32, 1),
-        (6, 6),
-        (8, 4),
-        (24, 4),
-        (32, 4),
-        (32, 2),
-    ] {
-        let count = rows / width;
-        let from = host.device.journal.borrow().len();
-        if width == 1 {
-            let items = (0..count)
-                .map(|i| (u64::from(i) + 1, u64::from(i), ends[i as usize], 7))
-                .collect::<Vec<_>>();
-            step(&mut instance, &decode(&items), &mut Views::default());
-        } else {
-            let tokens = vec![7; width as usize];
-            let items = (0..count)
-                .map(|i| {
-                    (
-                        u64::from(i) + 1,
-                        u64::from(i),
-                        ends[i as usize],
-                        tokens.as_slice(),
-                    )
-                })
-                .collect::<Vec<_>>();
-            instance
-                .execute(&verify(&items), &mut Views::default())
-                .unwrap();
-            instance
-                .commit_accepted(
-                    &(1..=count)
-                        .map(|i| kept(u64::from(i), width))
-                        .collect::<Vec<_>>(),
-                )
-                .unwrap();
-        }
         let lines = host.device.journal.borrow()[from..].to_vec();
-        let changed = lines
+        let changed: Vec<_> = lines
             .iter()
             .filter(|l| {
                 l.starts_with("launch ") && (l.contains("_reuse32_") || l.contains("r2s3w0f0"))
             })
-            .count();
-        // One verify graph serves every item count of its rows: a repeated
-        // key replays the graph checked at its capture.
-        let first = captured.insert((rows, width > 1));
-        if !first {
-            assert_eq!(changed, 0, "rows={rows} width={width}");
-            assert!(lines.iter().any(|line| line.starts_with("replay ")));
-        } else if reference || rows <= 8 {
-            assert_eq!(changed, 0, "rows={rows}");
+            .collect();
+        if reference || rows <= 8 {
+            assert!(changed.is_empty(), "rows={rows}");
         } else {
-            assert!(changed >= 4, "row bucket must reach the reuse head");
-        }
-        if first && !reference && rows == 32 {
             assert_eq!(
-                changed, 4,
-                "one head per rank (WO_a and WO_b at 32 rows run their cluster folds)"
+                changed.iter().filter(|l| l.contains("_head_f32_")).count(),
+                4,
+                "rows={rows}: one reuse head per rank"
             );
         }
-        records.push(format!("case rows={rows} width={width}"));
+        records.push(format!("case rows={rows}"));
         records.extend(lines);
-        for end in &mut ends[..count as usize] {
-            *end += u64::from(width);
+        for request in first..first + u64::from(rows) {
+            instance.retire_request(request).unwrap();
         }
-    }
-    for id in 1..=32 {
-        instance.retire_request(id).unwrap();
+        first += u64::from(rows);
     }
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
@@ -125,7 +66,7 @@ fn run_without_last(reference: bool) -> Vec<String> {
 }
 
 #[test]
-fn reuse_preserves_non_projection_launches_and_graph_bindings() {
+fn reuse_preserves_non_projection_launches_and_bindings() {
     let before = crate::sm120::projection_reuse::with_reference(|| run_case(true));
     let after = run_case(false);
     let retained = |lines: Vec<String>| {

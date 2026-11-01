@@ -38,7 +38,7 @@ pub struct Heads {
     norm: Prepared<RmsNormBuffers<View>>,
     vocabulary: Prepared<ProjectionBuffers<View>>,
     /// The vocabulary projection's exact F32 row tiles, at the rows they
-    /// serve (the `f32_row_tiles` option).
+    /// serve.
     vocabulary_rows: Vec<exact_f32::rows::Rows>,
     embedding: Vec<Prepared<EmbeddingBuffers<View>>>,
     /// The gather, widening and reduction in one launch through immutable

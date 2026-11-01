@@ -163,21 +163,16 @@ fn target_programs_lower_at_wide_verify_rows() {
     assert_eq!(host.acquired.get(), host.released.get());
 }
 
-/// With the `f32_row_tiles` option, verify steps of 33 to 64 rows run the
-/// head's and the compressor's measured row tiles in place of their cached
-/// separate spans and the index weights' split route; the router keeps its
-/// spans.
+/// Verify steps of 33 to 64 rows run the head's and the compressor's
+/// measured row tiles and the index weights' split route; the router keeps
+/// its cached separate spans.
 #[test]
-fn row_tile_option_replaces_the_head_and_compressor_spans() {
-    use model_deepseek41_contract::execution_options::F32_ROW_TILES;
+fn narrow_verify_rows_run_the_head_and_compressor_tiles() {
     let (host, mut instance) = create_with_options(
         Shape::new(&FLASH, Ranks::TP4).unwrap(),
         16,
         128,
-        &[
-            (DSPARK_GRAPH_HANDLES_PER_RANK, 0.into()),
-            (F32_ROW_TILES, true.into()),
-        ],
+        &[(DSPARK_GRAPH_HANDLES_PER_RANK, 0.into())],
     );
     for slot in 0..16 {
         execute(
@@ -228,22 +223,17 @@ fn row_tile_option_replaces_the_head_and_compressor_spans() {
     assert_eq!(host.acquired.get(), host.released.get());
 }
 
-/// With the `f32_row_tiles` option, verify steps of 32 rows or fewer run
-/// the head's decode row tiles, and the drafter's head runs the head's row
-/// tiles at its own rows: the decode site's through 32 rows (five rows an
-/// item, or three in the packed depth-three heads of three to eight
-/// items) and the verify site's above.
+/// Verify steps of 32 rows or fewer run the head's decode row tiles, and
+/// the drafter's head runs the head's row tiles at its own rows: the
+/// decode site's through 32 rows (five rows an item, or three in the packed
+/// depth-three heads of three to eight items) and the verify site's above.
 #[test]
-fn row_tile_option_runs_the_head_decode_tiles() {
-    use model_deepseek41_contract::execution_options::F32_ROW_TILES;
+fn small_verify_rows_run_the_head_decode_tiles() {
     let (host, mut instance) = create_with_options(
         Shape::new(&FLASH, Ranks::TP4).unwrap(),
         16,
         128,
-        &[
-            (DSPARK_GRAPH_HANDLES_PER_RANK, 0.into()),
-            (F32_ROW_TILES, true.into()),
-        ],
+        &[(DSPARK_GRAPH_HANDLES_PER_RANK, 0.into())],
     );
     for slot in 0..16 {
         execute(

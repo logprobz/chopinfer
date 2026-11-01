@@ -126,32 +126,28 @@ mod tests {
         }
     }
 
+    /// Flash TP4 instances load the decode tiles, and the verify tiles
+    /// when they admit more than 32 verify rows; no other topology loads
+    /// either.
     #[test]
-    fn default_instances_do_not_load_the_row_tiles() {
+    fn instances_load_the_row_tiles_they_serve() {
         use bundle_runtime::geometry::Ranks;
         use model_deepseek41_contract::geometry::FLASH;
         let tp4 = crate::shape::Shape::new(&FLASH, Ranks::TP4).unwrap();
         for rows in [32, 33, 64, 65, 128, 192] {
-            for (wide, tiles) in [(false, false), (true, false), (false, true), (true, true)] {
-                let shape = tp4
-                    .with_verify_rows(rows)
-                    .with_wide_verify(wide)
-                    .with_f32_row_tiles(tiles);
+            for wide in [false, true] {
+                let shape = tp4.with_verify_rows(rows).with_wide_verify(wide);
                 assert_eq!(
                     crate::Kernels::loads(f32_verify_rows::VERIFY.cubin, &shape),
-                    (wide && rows > 64) || (tiles && rows > 32)
+                    rows > 32
                 );
-                assert_eq!(
-                    crate::Kernels::loads(f32_verify_rows::DECODE.cubin, &shape),
-                    tiles
-                );
+                assert!(crate::Kernels::loads(f32_verify_rows::DECODE.cubin, &shape));
             }
         }
         let shape = crate::shape::Shape::new(&FLASH, Ranks::TP2)
             .unwrap()
             .with_verify_rows(192)
-            .with_wide_verify(true)
-            .with_f32_row_tiles(true);
+            .with_wide_verify(true);
         for site in f32_verify_rows::SITES {
             assert!(!crate::Kernels::loads(site.cubin, &shape));
         }

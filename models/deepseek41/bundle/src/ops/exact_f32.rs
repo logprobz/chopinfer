@@ -303,7 +303,6 @@ pub(crate) struct ExactF32Ops {
     projections: Vec<(F32Dense, Prepared<ProjectionBuffers<View>>)>,
     cached_router: Option<cached::Wide>,
     cached_compressor: Option<cached::Wide>,
-    cached_index_weights: Option<cached::Wide>,
     rows_router: Option<rows::Rows>,
     rows_compressor: Option<rows::Rows>,
 }
@@ -382,16 +381,6 @@ impl ExactF32Ops {
             shape.dims().hidden,
             target && !shape.geometry.shape.csa.kv_sources.is_empty(),
         )?;
-        // With the `f32_row_tiles` option the index weights keep the split
-        // route, which the lab measured faster than the spans.
-        let cached_index_weights = cached::prepare(
-            shape,
-            asks,
-            "f32.indexer.weights wide verify",
-            shape.geometry.shape.indexer.heads,
-            shape.dims().hidden,
-            target && !shape.geometry.shape.csa.index_sources.is_empty() && !shape.f32_row_tiles,
-        )?;
         let rows_router = rows::prepare(
             shape,
             asks,
@@ -413,7 +402,6 @@ impl ExactF32Ops {
             projections,
             cached_router,
             cached_compressor,
-            cached_index_weights,
             rows_router,
             rows_compressor,
         })
@@ -431,7 +419,8 @@ impl ExactF32Ops {
         match id {
             "moe.router" => self.cached_router(phase),
             "compressor.kv" | "compressor.gate" => self.cached_compressor.as_ref(),
-            "indexer.weights" => self.cached_index_weights.as_ref(),
+            // The index weights keep the split route, which the lab measured
+            // faster than the separate spans.
             _ => None,
         }
         .filter(|op| op.for_phase(phase))

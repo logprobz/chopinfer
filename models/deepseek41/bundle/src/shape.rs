@@ -59,10 +59,6 @@ pub struct Shape {
     /// route through the drafter table (the `dspark_hc_draft_rows`
     /// candidate option, which takes effect with `dspark_hc_fusion`).
     pub dspark_hc_draft_rows: bool,
-    /// Whether verify steps of at most `DECODE_BATCH` rows run the decode
-    /// row fusions, and the drafter's small window writes the parallel
-    /// decode ceil entry (the `verify_row_fusions` candidate option).
-    pub verify_row_fusions: bool,
 }
 
 impl Shape {
@@ -84,7 +80,6 @@ impl Shape {
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
-            verify_row_fusions: false,
         })
     }
 
@@ -179,35 +174,23 @@ impl Shape {
         self
     }
 
-    /// This shape with the decode row fusions at verify steps of at most
-    /// `DECODE_BATCH` rows on or off
-    /// (`model_deepseek41_contract::execution_options::VERIFY_ROW_FUSIONS`).
-    pub fn with_verify_row_fusions(mut self, enabled: bool) -> Shape {
-        self.verify_row_fusions = enabled;
-        self
-    }
-
     /// Whether `phase` runs the decode row fusions: the fused query norm
     /// and ceil and the fused window write, prepared for `DECODE_BATCH`
-    /// rows of every phase. Decode steps run them; verify steps of the
-    /// rows `latent.row_fusions.verify` admits, or of at most
-    /// `DECODE_BATCH` rows with the `verify_row_fusions` option.
+    /// rows of every phase. Decode steps run them, and verify steps of the
+    /// rows `latent.row_fusions.verify` admits.
     pub(crate) fn row_fusions(&self, phase: crate::program::Phase) -> bool {
         match phase {
             crate::program::Phase::Decode(_) => true,
-            crate::program::Phase::Verify { rows, .. } => {
-                (self.verify_row_fusions && rows <= DECODE_BATCH) || self.row_fusion_rows(rows)
-            }
+            crate::program::Phase::Verify { rows, .. } => self.row_fusion_rows(rows),
             crate::program::Phase::Prefill { .. } => false,
         }
     }
 
     /// Whether the drafter prepares its small window writes on the
-    /// parallel decode ceil entry: with a `latent.row_fusions.verify` row
-    /// (`Self::row_fusion_rows` selects the writes), or with the
-    /// `verify_row_fusions` option (writes of at most the draft rows).
+    /// parallel decode ceil entry, for the writes `Self::row_fusion_rows`
+    /// admits: with a `latent.row_fusions.verify` row.
     pub(crate) fn fuses_verify_rows(&self) -> bool {
-        self.verify_row_fusions || (1..=DECODE_BATCH).any(|rows| self.row_fusion_rows(rows))
+        (1..=DECODE_BATCH).any(|rows| self.row_fusion_rows(rows))
     }
 
     /// Whether `latent.row_fusions.verify` admits `rows` rows: verify steps

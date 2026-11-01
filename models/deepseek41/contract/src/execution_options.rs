@@ -63,11 +63,6 @@ pub const DSPARK_MOE_DIRECT: &str = "dspark_moe_direct";
 /// the drafter table (`hc.draft_admit.verify`), so their stage boundaries
 /// fuse as the measured rows' do.
 pub const DSPARK_HC_DRAFT_ROWS: &str = "dspark_hc_draft_rows";
-/// Candidate: verify steps of at most `serving::DECODE_BATCH` rows run the
-/// decode steps' fused query norm and ceil and fused window norm, RoPE,
-/// ceil and store, and the drafter's window writes of at most its draft
-/// rows quantize with the parallel decode ceil entry.
-pub const VERIFY_ROW_FUSIONS: &str = "verify_row_fusions";
 pub const DEFAULT_PLANS: usize = 16;
 pub const MAX_PLANS: usize = 64;
 /// The served warmup fits within 512 graph handles per rank, leaving room
@@ -90,7 +85,6 @@ pub struct Options {
     pub dspark_confidence_staged: bool,
     pub dspark_moe_direct: bool,
     pub dspark_hc_draft_rows: bool,
-    pub verify_row_fusions: bool,
 }
 
 /// The direct MoE candidate knobs; all off serves the qualified path.
@@ -101,7 +95,7 @@ pub struct MoeDirect {
     pub retire: bool,
     pub loads: bool,
 }
-pub fn declarations() -> [ModelOptionV1; 19] {
+pub fn declarations() -> [ModelOptionV1; 18] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -179,10 +173,6 @@ pub fn declarations() -> [ModelOptionV1; 19] {
                 maximum: i64::from(u32::MAX),
             },
         ),
-        (
-            VERIFY_ROW_FUSIONS,
-            OptionDefinitionV1::Boolean { default: false },
-        ),
         (WIDE_DRAFT, OptionDefinitionV1::Boolean { default: false }),
         (WIDE_VERIFY, OptionDefinitionV1::Boolean { default: false }),
     ]
@@ -248,7 +238,6 @@ impl Options {
             dspark_confidence_staged: flag(DSPARK_CONFIDENCE_STAGED),
             dspark_hc_fusion: flag(DSPARK_HC_FUSION),
             dspark_markov_staged: flag(DSPARK_MARKOV_STAGED),
-            verify_row_fusions: flag(VERIFY_ROW_FUSIONS),
         })
     }
 }
@@ -317,7 +306,6 @@ mod tests {
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
-            verify_row_fusions: false,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -346,7 +334,6 @@ mod tests {
             (DSPARK_CONFIDENCE_STAGED.into(), "true".into()),
             (DSPARK_HC_FUSION.into(), "true".into()),
             (DSPARK_MARKOV_STAGED.into(), "true".into()),
-            (VERIFY_ROW_FUSIONS.into(), "true".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -372,7 +359,6 @@ mod tests {
                 dspark_confidence_staged: true,
                 dspark_hc_fusion: true,
                 dspark_markov_staged: true,
-                verify_row_fusions: true,
             }
         );
         assert!(!declaration.is_qualified(&resolved));
@@ -417,7 +403,6 @@ mod tests {
             (DSPARK_CONFIDENCE_STAGED, "1"),
             (DSPARK_HC_FUSION, "1"),
             (DSPARK_MARKOV_STAGED, "1"),
-            (VERIFY_ROW_FUSIONS, "1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),
         ] {

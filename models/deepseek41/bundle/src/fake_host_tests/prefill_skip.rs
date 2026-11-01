@@ -241,41 +241,16 @@ fn exact_prefill_profiles_execute_capture_restore_and_continue() {
     }
 }
 
-/// A prefix endpoint's capture, restore and return to the chunk grid, as
-/// an AR and a DSpark instance journal it. The DSpark capture catches the
-/// drafter up outside any target step, so the lifetime is also pinned with
-/// the `verify_row_fusions` option, whose small drafter window writes that
-/// catch-up selects by row count.
 #[test]
 fn shared_prefix_endpoint_captures_restores_and_returns_to_the_grid() {
-    use model_deepseek41_contract::execution_options::VERIFY_ROW_FUSIONS;
     let mut mismatches = Vec::new();
-    for (dspark, options, name, expected) in [
-        (
-            false,
-            &[][..],
-            "flash-tp4-ar-shared-anchor.journal",
-            (68792, 0x982e03f4c49988d2),
-        ),
-        (
-            true,
-            &[],
-            "flash-tp4-dspark-shared-anchor.journal",
-            (71714, 0x87f6864c155ff0eb),
-        ),
-        (
-            true,
-            &[(VERIFY_ROW_FUSIONS, serde_json::Value::from(true))],
-            "flash-tp4-dspark-shared-anchor-rowfuse.journal",
-            (71714, 0xfd54f3b3045f4c5b),
-        ),
-    ] {
+    for dspark in [false, true] {
         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
         host.drafter.set(dspark);
         if dspark {
             host.speculation.set(Some((5, 32)));
         }
-        let mut instance = create_profile_with_options(&host, 8192, true, options);
+        let mut instance = create_profile(&host, 8192, true);
         assert_eq!(instance.prefill_cuts_policy().unwrap().chunk_tokens, 8192);
         let request = runtime_bundle_sdk::prefill::encode_with_cuts(
             &prompt(1, 0, 0, 4032, false),
@@ -332,6 +307,17 @@ fn shared_prefix_endpoint_captures_restores_and_returns_to_the_grid() {
         instance.retire_request(2).unwrap();
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
+        let (name, expected) = if dspark {
+            (
+                "flash-tp4-dspark-shared-anchor.journal",
+                (71714, 0x87f6864c155ff0eb),
+            )
+        } else {
+            (
+                "flash-tp4-ar-shared-anchor.journal",
+                (68792, 0x982e03f4c49988d2),
+            )
+        };
         if let Err(error) =
             bundle_runtime::fake_host::check_journal(&host.device.journal.borrow(), expected, name)
         {

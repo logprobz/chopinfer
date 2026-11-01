@@ -18,7 +18,8 @@ use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
 // The decode buckets and the verify steps of one, two and four DSpark items
-// (six rows each) that the `verify_row_fusions` option admits.
+// (six rows each), of which the verify row fusions serve the six-row one
+// (`latent.row_fusions.verify`).
 const ROWS: [u32; 9] = [1, 2, 4, 6, 8, 12, 16, 24, DECODE_BATCH];
 const PATTERNS: [&str; 17] = [
     "finite",

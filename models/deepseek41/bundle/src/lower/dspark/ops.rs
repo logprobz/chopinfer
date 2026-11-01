@@ -146,8 +146,7 @@ pub struct Prepared {
     /// With the verify row fusions (`Shape::fuses_verify_rows`), the ring
     /// and block writes prepared for at most `draft_rows` rows, whose
     /// quantizer is the parallel decode ceil entry instead of the prefill
-    /// one. Writes of the rows `Shape::row_fusion_rows` admits take them,
-    /// or with the `verify_row_fusions` option every write they hold.
+    /// one. Writes of the rows `Shape::row_fusion_rows` admits take them.
     draft_writes: Option<[Op<LatentWindowWriteBuffers<View>>; 2]>,
     draft_rows: u32,
     attention: Op<LatentSourcesBuffers<View>>,
@@ -560,10 +559,7 @@ impl Prepared {
         };
         let block = usize::from(v.first.is_some());
         let op = match &self.draft_writes {
-            Some(small)
-                if count <= self.draft_rows
-                    && (self.shape.verify_row_fusions || self.shape.row_fusion_rows(count)) =>
-            {
+            Some(small) if count <= self.draft_rows && self.shape.row_fusion_rows(count) => {
                 &small[block]
             }
             _ if block == 1 => &self.block_write,

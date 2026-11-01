@@ -17,9 +17,10 @@ use serde_json::json;
 use std::{collections::BTreeMap, path::PathBuf};
 
 const ROWS: [u32; 6] = [1, 2, 4, 8, 16, DECODE_BATCH];
-// With the verify steps of one, two and four DSpark items (six rows each)
-// that the `verify_row_fusions` option admits for the cases without a
-// widen, whose partial rounding launches at whole row buckets.
+// With the verify steps of one, two and four DSpark items (six rows each),
+// of which the verify row fusions serve the six-row one
+// (`latent.row_fusions.verify`), for the cases without a widen, whose
+// partial rounding launches at whole row buckets.
 const VERIFY_ROWS: [u32; 9] = [1, 2, 4, 6, 8, 12, 16, 24, DECODE_BATCH];
 const PATTERNS: [&str; 14] = [
     "finite",

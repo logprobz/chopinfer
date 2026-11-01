@@ -1,6 +1,12 @@
 //! Site schemas reject choices that a consumer would silently ignore.
 use kernel_build::tuning::{Row, TuningError};
 
+/// The cache-policy knobs of the direct MoE's absorbing path
+/// (`kernels_sm120::moe::chained::knobs`), set on the rows that select it:
+/// the 32-row absorbing queues, the fused 33- to 64-row queues and the
+/// wide verify queues.
+const MOE_DIRECT_KNOBS: [&str; 4] = ["keep", "loads", "retire", "stream"];
+
 pub(super) fn validate(row: &Row) -> Result<(), TuningError> {
     let (schedules, counts, flags): (&[&str], &[&str], &[&str]) = match row.key.op.as_str() {
         "dense_fold.attention_kv_cluster.decode"
@@ -106,14 +112,14 @@ pub(super) fn validate(row: &Row) -> Result<(), TuningError> {
         "latent.staging.decode" | "latent.staging.verify" => {
             (&["staged"], &["head_group", "stage_keys"], &["packed"])
         }
-        "moe.absorb.decode" | "moe.absorb.verify" => (&["absorb"], &[], &[]),
+        "moe.absorb.decode" | "moe.absorb.verify" => (&["absorb"], &[], &MOE_DIRECT_KNOBS),
         "moe.active_gate_up.decode"
         | "moe.active_gate_up.prefill"
         | "moe.active_gate_up.verify" => (&["active"], &[], &[]),
         "moe.compact_down.decode" | "moe.compact_gate_up.decode" => (&["compact"], &[], &[]),
         "moe.direct_admit.decode" => (&["direct"], &["order"], &[]),
         "moe.direct_admit.verify" => (&["direct", "gap", "wide"], &["order"], &[]),
-        "moe.direct_wide.verify" => (&["direct"], &[], &[]),
+        "moe.direct_wide.verify" => (&["direct"], &[], &MOE_DIRECT_KNOBS),
         "moe.direct_drafter.verify" => (&["direct"], &["order"], &[]),
         "moe.gate_finish.decode" | "moe.gate_finish.verify" => (&["gate_finish"], &[], &[]),
         "moe.gate_grid.decode" | "moe.gate_grid.verify" => (&["gate_grid"], &[], &[]),
@@ -132,7 +138,7 @@ pub(super) fn validate(row: &Row) -> Result<(), TuningError> {
         "moe.router_wide.verify" => (&["router_wide"], &[], &[]),
         "moe.small.decode" | "moe.small.prefill" | "moe.small.verify" => (&["small"], &[], &[]),
         "moe.strip2.decode" | "moe.strip2.prefill" | "moe.strip2.verify" => (&["strip2"], &[], &[]),
-        "moe.wide.verify" => (&["wide"], &[], &[]),
+        "moe.wide.verify" => (&["wide"], &[], &MOE_DIRECT_KNOBS),
         "norm.activation_capacity.decode"
         | "norm.ceil_capacity_bf16.decode"
         | "norm.ceil_capacity_f32.decode"

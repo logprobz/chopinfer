@@ -89,7 +89,7 @@ pub(super) fn prepare_set(
     .map_err(Refused::Rule)?;
     let maximum_rows =
         shape.verify_rows_within(model_deepseek41_contract::verify_bounds::MOE_DIRECT);
-    let knobs = knobs_of(shape, set);
+    let options = knobs_of(shape, set);
     let wide = wide_rows(shape, set);
     let wide_entry = if wide.is_empty() {
         None
@@ -111,7 +111,7 @@ pub(super) fn prepare_set(
                     super::moe_router_finish::qualified(set, phase, rows) || wide,
                     super::moe_router_finish::r2(set, phase, rows) || wide,
                     &tiles,
-                    knobs,
+                    options,
                 )?,
             ))
         });
@@ -120,46 +120,120 @@ pub(super) fn prepare_set(
         Ok((
             ExecutionPhase::Verify,
             rows,
-            prepare_wide(entry, rows, scaling, knobs)?,
+            prepare_wide(
+                entry,
+                rows,
+                scaling,
+                union(
+                    wide_knobs(shape, set, rows),
+                    options.expect("wide rows serve the row-tiled backbone bank"),
+                ),
+            )?,
         ))
     });
     narrow.chain(wide).collect()
 }
 
-/// The direct MoE candidate knobs `set` takes: the shape's
-/// (`moe_direct_*` options) for the backbone bank with its gate/up bank
-/// in quad-lane row tiles, and none otherwise.
-fn knobs_of(shape: &crate::shape::Shape, set: Experts) -> Knobs {
+/// The direct MoE candidate knobs `set` takes beside the tuning table's
+/// (`path_knobs`, `wide_knobs`): the shape's (`moe_direct_*` options) for
+/// the backbone bank with its gate/up bank in quad-lane row tiles, and
+/// `None` for every other bank, which takes no knobs.
+fn knobs_of(shape: &crate::shape::Shape, set: Experts) -> Option<Knobs> {
     let g = shape.geometry;
-    if set == model_deepseek41_contract::moe::expert_sets(g)[0]
+    (set == model_deepseek41_contract::moe::expert_sets(g)[0]
         && super::moe_row_tiles_op::layout(g, shape.ranks(), set)
-            == model_deepseek41_contract::weight_plan::RoutedLayout::Lanes
-    {
-        let options = shape.moe_knobs;
-        Knobs {
-            stream: options.stream,
-            keep: options.keep,
-            retire: options.retire,
-            loads: options.loads,
-        }
-    } else {
-        Knobs::default()
+            == model_deepseek41_contract::weight_plan::RoutedLayout::Lanes)
+        .then(|| {
+            let options = shape.moe_knobs;
+            Knobs {
+                stream: options.stream,
+                keep: options.keep,
+                retire: options.retire,
+                loads: options.loads,
+            }
+        })
+}
+
+/// The knobs a tuning row sets (`moe.absorb`, `moe.wide` and
+/// `moe.direct_wide`), which the site schema requires.
+fn row_knobs(row: &kernel_build::tuning::Row) -> Knobs {
+    let flag = |name: &str| row.knobs[name].flag().expect("validated knob flag");
+    Knobs {
+        stream: flag("stream"),
+        keep: flag("keep"),
+        retire: flag("retire"),
+        loads: flag("loads"),
     }
 }
 
-/// Whether an instance of `shape` launches knob candidates
+/// The tuning table's knobs of an absorbing bucket of at most 64 rows: the
+/// fused 33- to 64-row queues' row (`moe.wide`) where `wide`, and the
+/// absorbing queues' row (`moe.absorb`) otherwise.
+fn path_knobs(experts: u32, phase: ExecutionPhase, rows: u32, wide: bool) -> Knobs {
+    super::moe::choice(
+        &model_deepseek41_contract::geometry::FLASH,
+        if wide { "wide" } else { "absorb" },
+        phase,
+        &[("experts", experts)],
+        64,
+        rows,
+    )
+    .map(row_knobs)
+    .expect("absorbing bucket row")
+}
+
+/// The tuning table's knobs of the wide verify bucket of `rows`
+/// (`moe.direct_wide`), which `wide_rows` admitted for `set`.
+fn wide_knobs(shape: &crate::shape::Shape, set: Experts, rows: u32) -> Knobs {
+    super::moe::choice(
+        shape.geometry,
+        "direct_wide",
+        ExecutionPhase::Verify,
+        &[
+            ("experts", set.count),
+            ("ranks", shape.ranks()),
+            ("top_k", set.top_k),
+        ],
+        super::moe_direct_wide::CAPACITY,
+        rows,
+    )
+    .map(row_knobs)
+    .expect("wide direct bucket row")
+}
+
+/// Every knob either set sets.
+fn union(a: Knobs, b: Knobs) -> Knobs {
+    Knobs {
+        stream: a.stream || b.stream,
+        keep: a.keep || b.keep,
+        retire: a.retire || b.retire,
+        loads: a.loads || b.loads,
+    }
+}
+
+/// Whether a knob set launches a knob module's entries: loads alone takes
+/// the served all-loads-first finisher.
+fn launches_knob_entries(k: Knobs) -> bool {
+    k.stream || k.keep || k.retire
+}
+
+/// Whether an instance of `shape` launches knob entries
 /// (`moe_direct_knobs`): at a direct bucket of at most 64 rows that runs
 /// the absorbing path (`wide` false), or at a wide verify bucket (`wide`
-/// true). Loads alone takes the served all-loads-first finisher.
+/// true).
 pub(crate) fn takes_knobs(shape: &crate::shape::Shape, wide: bool) -> bool {
     let g = shape.geometry;
     let set = model_deepseek41_contract::moe::expert_sets(g)[0];
-    let k = knobs_of(shape, set);
-    if !(k.stream || k.keep || k.retire) || !super::moe::streamed_qualified(g, shape.ranks()) {
+    let Some(options) = knobs_of(shape, set) else {
+        return false;
+    };
+    if !super::moe::streamed_qualified(g, shape.ranks()) {
         return false;
     }
     if wide {
-        return !wide_rows(shape, set).is_empty();
+        return wide_rows(shape, set)
+            .into_iter()
+            .any(|rows| launches_knob_entries(union(wide_knobs(shape, set, rows), options)));
     }
     let maximum_rows =
         shape.verify_rows_within(model_deepseek41_contract::verify_bounds::MOE_DIRECT);
@@ -167,12 +241,17 @@ pub(crate) fn takes_knobs(shape: &crate::shape::Shape, wide: bool) -> bool {
         .into_iter()
         .any(|(phase, rows)| {
             let wide = super::moe_router_finish::wide(set, phase, rows, maximum_rows);
-            absorbing_path(
-                set.count,
-                phase,
-                rows,
-                super::moe_router_finish::qualified(set, phase, rows) || wide,
-            )
+            let fused_router = super::moe_router_finish::qualified(set, phase, rows) || wide;
+            absorbing_path(set.count, phase, rows, fused_router)
+                && launches_knob_entries(union(
+                    path_knobs(
+                        set.count,
+                        phase,
+                        rows,
+                        fused_router && stage_selected("wide", set.count, phase, rows),
+                    ),
+                    options,
+                ))
         })
 }
 
@@ -272,7 +351,8 @@ pub(crate) fn wide_route_tags(shape: &crate::shape::Shape) -> Vec<kernel_core::r
 /// of this op. Its queues read encoded scale banks in place, so no scale
 /// expansion precedes them.
 ///
-/// Under knobs (`knobs_of`) each launch is its knob candidate
+/// Under knobs (the tuning table's `wide_knobs` and the options'
+/// `knobs_of`) each launch is its knob entry
 /// (`kernels_sm120::moe::chained::knobs`).
 fn prepare_wide(wide: &Entry, rows: u32, scaling: u32, k: Knobs) -> Result<Prepared, Refused> {
     use kernels_sm120::moe::chained::wide as queues;
@@ -386,7 +466,7 @@ fn prepare(
     fused_router: bool,
     r2: bool,
     tiles: &std::collections::BTreeMap<String, kernel_build::EntrySpec>,
-    knobs: Knobs,
+    options: Option<Knobs>,
 ) -> Result<Prepared, Refused> {
     let wide = fused_router && stage_selected("wide", entry.experts(), phase, rows);
     let absorb_queues = absorbs(entry, phase, rows) || wide;
@@ -396,10 +476,11 @@ fn prepare(
         absorb_queues && strip2_down,
         absorbing_path(entry.experts(), phase, rows, fused_router)
     );
-    let knobs = if absorb_queues && strip2_down {
-        knobs
-    } else {
-        Knobs::default()
+    let knobs = match options {
+        Some(options) if absorb_queues && strip2_down => {
+            union(path_knobs(entry.experts(), phase, rows, wide), options)
+        }
+        _ => Knobs::default(),
     };
     let scratch = entry.workspace_bytes(rows)?;
     let routed_offset = if fused_router {

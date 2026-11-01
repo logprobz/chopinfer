@@ -3,10 +3,11 @@
 Where a DSpark step's GPU time goes at one to sixteen concurrent
 sequences on native Flash TP4, what earlier fusion work did about it, and
 which fusions that keep every value and every add are left. Proposals 1
-to 4 are built as candidate options (`verify_row_fusions`, which holds
-the first two, `attention_merge_ceil` and `router_prepare_fusion`), and
-proposal 5 as a lab prototype; [estimates](#estimates-at-c1-c8-and-c16)
-puts their expected gains side by side.
+to 3 are built as candidate options (`verify_row_fusions`, which holds
+the first two, and `attention_merge_ceil`), proposal 4 was built and
+retired as slower, and proposal 5 was prototyped in the lab;
+[estimates](#estimates-at-c1-c8-and-c16) puts their expected gains side
+by side.
 
 ## Method
 
@@ -150,7 +151,7 @@ The built candidates' measured estimates replace these
 | 1 | Decode row fusions at verify rows of at most 32 | -120 to -123 | 0 to 0.05 | 0.15 | built (below) |
 | 2 | Drafter window ceil: the parallel ceil32 or the fused window | 0 to -12 | 0.06 | 0.06 | built (below) |
 | 3 | Attention heads merge and output ceil in one kernel | -40 to -43 | 0.05 to 0.07 | 0.12 to 0.17 | built (below) |
-| 4 | Router finish prepare into the router producer | -40 | up to 0.08 | up to 0.12 | built, slower (below) |
+| 4 | Router finish prepare into the router producer | -40 | up to 0.08 | up to 0.12 | built, slower, retired (below) |
 | 5 | Reduce-scatter and all-gather in one launch | -88 | 0.13 to 0.26 | 0.26 to 0.5 | prototype, slower above 4 rows (below) |
 | 6 | Drafter HC on the target's producer and finisher | 0 | 0.05 | 0.08 | unchecked |
 
@@ -298,32 +299,32 @@ without it in every step frame and logits row (13 rows). The host
 refuses to destroy an instance after an AR trace, so the two AR
 recordings were compared directly.
 
-## Classifying router producer candidate
+## Classifying router producer (retired)
 
-The `router_prepare_fusion` model option, off by default, serves
-proposal 4. The classifying producer (`gemm/exact_f32_classified.cuh`,
-lock family `f32_router_classified`) is the cached exact F32 decode
+Proposal 4 was built as the `router_prepare_fusion` candidate option,
+measured and retired on 2026-11-01: its option, kernel, lock, journals,
+sweep profile and lab pair were removed, and this section keeps the
+measurements. The classifying producer was the cached exact F32 decode
 regrouped into eight CTAs of five warps (the 40 chains of K 5120), one
 cluster per token block and feature tile, since the runtime's portable
 cluster limit of eight cannot hold the served ten CTAs of four warps.
 Each warp stages and checks its chain, the CTA and then the cluster AND
 the row flags through distributed shared memory, rows outside the domain
 are zeroed in shared memory (the zeros decode stages for them) and take
-the SIMT path, and block (0,0,0) resets the finish's ticket. Each target
-layer of a step of at most 32 rows launches it in place of the prepare
-and the producer; the drafter's router and wider steps keep both.
+the SIMT path, and block (0,0,0) reset the finish's ticket. Each target
+layer of a step of at most 32 rows launched it in place of the prepare
+and the producer; the drafter's router and wider steps kept both.
 
-The lab pair (`router_classified`) passed 260 bitwise cases (13 row
+The lab pair passed 260 bitwise cases (13 row
 counts, 10 patterns, tensor and tile-out weights) and detected both
 negative controls on each of two GPUs on 2026-10-31, with clean
-sanitizers. It is slower: in chains of 16, 7.42 against 6.91 us a layer
-at 6 rows and 22.4 against 14.5 us at 32 rows, about 0.020 ms a step at
-C1 and 0.32 ms at C8; C16's 64-row steps do not take it. The regrouped
-grid and its cluster exchange cost more than the launch saved, and the
-lab does not separate the two. The option should not be adopted, and no
-fixed-batch replays were run for it. Computing the row domain where the
-router's input rows are produced, upstream of the producer, would avoid
-the cluster.
+sanitizers. It was slower: in chains of 16, 7.42 against 6.91 us a
+layer at 6 rows and 22.4 against 14.5 us at 32 rows, about 0.020 ms a
+step at C1 and 0.32 ms at C8; C16's 64-row steps did not take it. The
+regrouped grid and its cluster exchange cost more than the launch saved,
+and the lab did not separate the two. No fixed-batch replays were run
+for it. Computing the row domain where the router's input rows are
+produced, upstream of the producer, would avoid the cluster.
 
 ## One-launch deferred reduction
 
@@ -457,7 +458,7 @@ served step-time evidence, which adoption still needs.
 | `verify_row_fusions`, target query and window chains | 0 to 0.05 | 0.15 | 0 | served advances; steps above 32 rows keep the chains |
 | `verify_row_fusions`, drafter window ceil | 0.063 | 0.066 | 0.13 | served advances of the serial and parallel ceil32 |
 | `attention_merge_ceil` | -0.011 | -0.022 | 0.024 | lab chains, 43, 43 and 46 merges a step |
-| `router_prepare_fusion` | -0.020 | -0.32 | 0 | lab chains; 64-row steps keep both launches |
+| `router_prepare_fusion` (retired) | -0.020 | -0.32 | 0 | lab chains; 64-row steps keep both launches |
 | Deferred phased F32 reduction (prototype) | -0.11 | -0.20 | -0.28 | lab calls, 77 reductions a step |
 | Rounding entry read by the HC boundary (not built) | -0.06 | 0.21 | 0.54 | lab calls of the comm entry alone |
 
@@ -471,14 +472,12 @@ step (13.68 ms busy) and 0.7 percent of a C8 step (30.33 ms).
 
 The candidates' lab pairs run on one GPU each through their ignored
 `bitwise_graph_live_rows_and_timing_on_gpu` tests (`ceil_parallel`,
-`merge_ceil`, `router_classified`), each after its ignored
-`frozen_modules_are_complete` stages the frozen modules: with
-`CHOPINFER_CEIL_ARTIFACTS`, `CHOPINFER_MERGE_CEIL` or
-`CHOPINFER_ROUTER_CLASSIFIED` naming the directory and the matching
-`_EXPORT` variable set, and the kernel lab's `probe_sm120.cubin` in it
-(`CHOPINFER_CEIL_TIMING_PROBE` for the ceil pairs). The merge and router
-pairs' `sanitized_twin_on_gpu` and `sanitized_producer_on_gpu` run under
-compute-sanitizer.
+`merge_ceil`), each after its ignored `frozen_modules_are_complete`
+stages the frozen modules: with `CHOPINFER_CEIL_ARTIFACTS` or
+`CHOPINFER_MERGE_CEIL` naming the directory and the matching `_EXPORT`
+variable set, and the kernel lab's `probe_sm120.cubin` in it
+(`CHOPINFER_CEIL_TIMING_PROBE` for the ceil pairs). The merge pair's
+`sanitized_twin_on_gpu` runs under compute-sanitizer.
 
 Stage the frozen lab artifacts outside the tree with
 `CHOPINFER_NORM_EXPORT=1`, `CHOPINFER_NORM_ARTIFACTS` naming the

@@ -197,7 +197,6 @@ them. A non-default value is unqualified.
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit and each reused plan template again and refuse a differing plan. |
 | `prefill_upper_skip` | `true` | Use upper-skip prefill; requires nonzero guaranteed chunk ends. |
-| `router_prepare_fusion` | `false` | Candidate: Flash TP4 decode and verify steps of at most 32 rows fold each target layer's router finish prepare into the router F32 producer, which classifies its own rows in one cluster of eight CTAs. Bitwise in the lab but slower there, by about 0.5 us a layer at 6 rows and 8 us at 32 ([small-kernel latency](lab/small-kernel-latency.md#classifying-router-producer-candidate)); not proposed for adoption. |
 | `shared_overlap_max_rows` | `4294967295` | Largest graph bucket that overlaps shared-expert and eligible window-KV work. Positive values only; the default covers every admitted bucket. |
 | `text_config.candidate_topk_blocks` | `2048` | Candidate block pool, checked with index top-k and the partial newest block. |
 | `text_config.index_topk` | `512` | Index selection top-k, from 1 to 512. |

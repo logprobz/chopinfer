@@ -365,8 +365,8 @@ and the contracts `row.router-softmax-topk.v1`,
 `row.moe-shared-expert-sigmoid-combine.v1`.
 
 The router writes global expert IDs and weights `[tokens, 10]`: the ten
-largest logits (ties to the lower expert) and their softmax weights
-renormalized over the ten. A rank keeps the routes whose expert lies in
+largest logits (+0 above -0, ties to the lower expert, as `Ties::LowerIndex`
+orders keys) and their softmax weights renormalized over the ten. A rank keeps the routes whose expert lies in
 `[rank * 128, rank * 128 + 128)`; the rank is a launch scalar, so every rank
 runs the same graph. Route metadata has the MiMo layout over the 128 local
 experts, with `sorted_rows` padded to 16 rows per expert. A routed row keeps
@@ -412,10 +412,10 @@ weight and two activation stages of 16 KB.
 
 `route_parallel.cuh` distributes route rows across CTAs instead of placing
 all rows on one SM. One warp selects each row (`select_route_warp`, with the
-one-CTA route's comparisons, expert-ID tie breaking and serial weight sum); a
-release/acquire completion ticket publishes the selected IDs, and the final
-CTA builds the stable expert ordering, 16-row padding, counts and active
-list. The ticket reuses the zero-initialized GEMM semaphore buffer and resets
+one-CTA route's comparisons, signed-zero and expert-ID tie breaking and
+serial weight sum); a release/acquire completion ticket publishes the
+selected IDs, and the final CTA builds the stable expert ordering, 16-row
+padding, counts and active list. The ticket reuses the zero-initialized GEMM semaphore buffer and resets
 on each invocation, including empty replay.
 
 - Qwen3.8 runs `chop_moe_qwen38_decode_route_parallel_t32_v1` for its 32-row
@@ -426,7 +426,9 @@ on each invocation, including empty replay.
 Live counts above the capacity trap. Kernel-lab checks
 (`tests/qwen38_route_parallel.rs`) cover every live count, empty and
 decreasing-count replay, ties, negative scores, NaN rows and maximum padding;
-IDs, weight bits and metadata must equal the one-CTA route.
+IDs, weight bits and metadata must equal the one-CTA route. Rows whose order
+turns on signed zeros, with a -0 before an equal +0 in one lane, must match
+the f64 oracle on that model's router and every decode route.
 
 ## Chained expert GEMM
 

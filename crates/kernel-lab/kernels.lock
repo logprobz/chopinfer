@@ -44945,7 +44945,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "source_closure_sha256": "347c0f52bb53560af45f13e504abda523e6bad2b623d6eec9233ea5efcee1186",
+    "source_closure_sha256": "331bbcd52c104b51255ec11a591e96f5aecf87789fc969299dc7af1c01a99187",
     "cubin_sha256": "545ccd006cf300955c9b6eb7baeb2ceb611efe4c4c5add9cf6fdc5c30352b250",
     "resources": [
       {
@@ -45124,7 +45124,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "source_closure_sha256": "2d7fd807e1ff2924738dc5f7855a248861d6080dd96fc9ef2205872f0f4a4d14",
+    "source_closure_sha256": "695599a156f382bc5e323c5c96a09f3222c6668dbd4a4b566e13ab5b5af3af59",
     "cubin_sha256": "aed75d4c58d7870cd6241c6b9092f6c237268aaff58e6ec9185d74e6fcca65ed",
     "resources": [
       {
@@ -45718,7 +45718,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "source_closure_sha256": "605fb834df45859b813b287dfe42dc165ba2d5b57ffb24a409ced810f5059eaf",
+    "source_closure_sha256": "715b741467597f377b90c37badc199802b22cd86b5e0946acaf51082928c8f56",
     "cubin_sha256": "ac1515f6e6ad974815f17c602646e89fdd33bff3aefc988ebfd812ee82a3389f",
     "resources": [
       {
@@ -45897,7 +45897,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "source_closure_sha256": "45fd2de1b45dff66664669bc39583f2acfb1c8bb65037b629bb8b03f9791aca0",
+    "source_closure_sha256": "e24630fa40e236d86cfeec7f1643a0ff652bead2ab896fb83029147d842d6ebd",
     "cubin_sha256": "cf23489dd7562ad205f202ce39a533681bbab9cc15e82e15691579a328f9604b",
     "resources": [
       {
@@ -48955,7 +48955,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "source_closure_sha256": "4e862518823a16344b4e227f0d619cd1d943d967ee208f2fc4077feb6a12356a",
+    "source_closure_sha256": "1fe309cdd50c2f32a75ff277d1fdfd0289af37a262e35db258b232c4e3071405",
     "cubin_sha256": "4cf82ec11dbd31f0a8d922eccecfd45a861953bb2732c598e77c4052f50004f7",
     "resources": [
       {
@@ -49134,7 +49134,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "source_closure_sha256": "97d0edbbf1407831e9267d771f46052014adf542b913b70372c7a37be451ba05",
+    "source_closure_sha256": "fccc3995189e25178254c3338591e640fe24a21d1dfcb672ea4fdd1a6666f586",
     "cubin_sha256": "baed2f4d307adf8ecd09a727c05a58120af210ccc1ec070d9ad9a8160eeb11a7",
     "resources": [
       {
@@ -49728,7 +49728,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "source_closure_sha256": "ea4063d308b3afa8a42353c1fa8b5f12f4225838dc326619b0d4ef3d396d023b",
+    "source_closure_sha256": "dec89c7a5d53695ba44e0f0d0d26980a9e794e6d79e6d6a3d85432aa879e12f6",
     "cubin_sha256": "8705058aa6abc60dd162f774982d34426daa53e5c21b2cd407fc04a81d3d2b7e",
     "resources": [
       {
@@ -49907,7 +49907,7 @@
         "allowed_local_bytes": 0
       }
     ],
-    "source_closure_sha256": "31d8052c415e6b9cb37d47937ea0b310c398e28a61fe796cd4a63d9b3f141ea2",
+    "source_closure_sha256": "dd34e21378bad037f7a4d81bbf90b8c4d99793cdf4025c6b172b65b4e56793ea",
     "cubin_sha256": "80690453e1fbcff4fe1bab57490ce950d0cf58da587d70dde3cf73e08e4104a4",
     "resources": [
       {
@@ -61664,12 +61664,12 @@
         "allowed_local_bytes": 0
       }
     ],
-    "source_closure_sha256": "058d4cd6a658acad849a5eeabf3b2bd18a6027bbf258d750853391ef14902e01",
-    "cubin_sha256": "cf47e14006fb1035950709cc651e318dce645dfd02e8795edeb4a4fa5e570638",
+    "source_closure_sha256": "d6ea58b837a97973638b8a130dd7bf5219b2fe6a94aa9431ac201ad9dd689048",
+    "cubin_sha256": "c2ae4fb7f660a7e82383d4ed017ec4ebcd41fcde43578436cf32a4364f6dcb2f",
     "resources": [
       {
         "symbol": "chop_moe_qwen38_router_v1",
-        "registers": 60,
+        "registers": 63,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -61678,7 +61678,7 @@
       },
       {
         "symbol": "chop_moe_qwen38_decode_route_t1_v1",
-        "registers": 68,
+        "registers": 66,
         "shared_static_bytes": 2208,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -61687,7 +61687,7 @@
       },
       {
         "symbol": "chop_moe_qwen38_decode_route_t2_v1",
-        "registers": 70,
+        "registers": 67,
         "shared_static_bytes": 2208,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -61696,7 +61696,7 @@
       },
       {
         "symbol": "chop_moe_qwen38_decode_route_t4_v1",
-        "registers": 70,
+        "registers": 67,
         "shared_static_bytes": 2848,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -61705,7 +61705,7 @@
       },
       {
         "symbol": "chop_moe_qwen38_decode_route_t8_v1",
-        "registers": 70,
+        "registers": 67,
         "shared_static_bytes": 3488,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -61714,7 +61714,7 @@
       },
       {
         "symbol": "chop_moe_qwen38_decode_route_t16_v1",
-        "registers": 70,
+        "registers": 67,
         "shared_static_bytes": 4768,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -61854,12 +61854,12 @@
         "allowed_local_bytes": 0
       }
     ],
-    "source_closure_sha256": "1d0eeb5a9c54d8fa4e8a3922a9c5c10f7b0b4cf6ffe99e278754b968e59e7a35",
-    "cubin_sha256": "f52ecf43517b3735dc9664991d827d971070264fd7c39b97e02478fe08f01c9c",
+    "source_closure_sha256": "0aca62d4be4fdbb7fc50b68a568410e5260e6a45701b2acfcd050efe46236614",
+    "cubin_sha256": "cd61c711e14714ac3854a757c0799e3cabd96f6701eb199e7d245d87e55faaeb",
     "resources": [
       {
         "symbol": "chop_moe_qwen38_decode_route_parallel_t32_v1",
-        "registers": 68,
+        "registers": 64,
         "shared_static_bytes": 5156,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -63924,12 +63924,12 @@
         "allowed_local_bytes": 0
       }
     ],
-    "source_closure_sha256": "b59816c4ecff298511110ac4829c1f368f6d5fd8445c9f86bbd73398d98c1bb1",
-    "cubin_sha256": "5b729367cf9a59fe300bf6d1c0d8596a2eac3cbb02c4c93ff4a41b4fed0604a6",
+    "source_closure_sha256": "ac7eb507e539a8576b5fc47bcef60e3b50ae5136ccbfc40cdcdfe91d93449a5b",
+    "cubin_sha256": "3db8abc0c6a98989d73dfd7df0c287dd9d3b40d1b94555e928744ca2ed38bfac",
     "resources": [
       {
         "symbol": "chop_moe_qwen38_tp2_decode_route_t1_v1",
-        "registers": 68,
+        "registers": 66,
         "shared_static_bytes": 3264,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -63938,7 +63938,7 @@
       },
       {
         "symbol": "chop_moe_qwen38_tp2_decode_route_t2_v1",
-        "registers": 70,
+        "registers": 67,
         "shared_static_bytes": 3264,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -63947,7 +63947,7 @@
       },
       {
         "symbol": "chop_moe_qwen38_tp2_decode_route_t4_v1",
-        "registers": 70,
+        "registers": 67,
         "shared_static_bytes": 4416,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -63956,7 +63956,7 @@
       },
       {
         "symbol": "chop_moe_qwen38_tp2_decode_route_t8_v1",
-        "registers": 70,
+        "registers": 67,
         "shared_static_bytes": 5568,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -63965,7 +63965,7 @@
       },
       {
         "symbol": "chop_moe_qwen38_tp2_decode_route_t16_v1",
-        "registers": 70,
+        "registers": 67,
         "shared_static_bytes": 7872,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -64105,12 +64105,12 @@
         "allowed_local_bytes": 0
       }
     ],
-    "source_closure_sha256": "897776b4d82e591a212d8d5dbb5a56bc36b400c000ce9374977a31cc825d1f04",
-    "cubin_sha256": "e61c838b69f6f2d9660c6bbbc83ce076b93ed99b78d493590a8f3a04f37d105b",
+    "source_closure_sha256": "210b03270baabba7a14ce2e853574ffd5bf8974563cd046480c584618f60bec4",
+    "cubin_sha256": "8b8bfb538242a7a9c8a54c6f226fc9cedcf19aa7eb9f5388662be2fe8d939fb3",
     "resources": [
       {
         "symbol": "chop_moe_qwen38_tp2_decode_route_parallel_t32_v1",
-        "registers": 68,
+        "registers": 64,
         "shared_static_bytes": 9284,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -145190,8 +145190,8 @@
         "allowed_local_bytes": 0
       }
     ],
-    "source_closure_sha256": "ff7aa7b91aa55e31d25bfa3799d08604bfb9df253fcdc8f01d716e360df993c4",
-    "cubin_sha256": "f51bd5423392805672ab29246430f39c318fb68c093d00b8118abad5b3cccb1b",
+    "source_closure_sha256": "e6170daf8d5a276f5e92b1ac060aa4a730ca02076d967bf256ae36e107856c35",
+    "cubin_sha256": "ba1c57540f06f9aff7310dc3da430ec116eb8cc790e3a34f8b35882bcc59763b",
     "resources": [
       {
         "symbol": "chop_route_grouped_parallel_lab_v1",

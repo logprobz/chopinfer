@@ -9,6 +9,8 @@ namespace chop::moe {
 template<int Experts>
 struct SqrtSoftplusRowBias {
   static constexpr bool serial_sum = true, select_negative_infinity = true;
+  // A square root is at least +0, so one plus a correction is never -0.
+  static constexpr bool signed_zero_keys = false;
   const float* bias;
   const float* alternate_bias;
   const uint8_t* bias_select;

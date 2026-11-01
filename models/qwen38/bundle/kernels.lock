@@ -4135,12 +4135,12 @@
         "allowed_local_bytes": 0
       }
     ],
-    "source_closure_sha256": "058d4cd6a658acad849a5eeabf3b2bd18a6027bbf258d750853391ef14902e01",
-    "cubin_sha256": "cf47e14006fb1035950709cc651e318dce645dfd02e8795edeb4a4fa5e570638",
+    "source_closure_sha256": "d6ea58b837a97973638b8a130dd7bf5219b2fe6a94aa9431ac201ad9dd689048",
+    "cubin_sha256": "c2ae4fb7f660a7e82383d4ed017ec4ebcd41fcde43578436cf32a4364f6dcb2f",
     "resources": [
       {
         "symbol": "chop_moe_qwen38_router_v1",
-        "registers": 60,
+        "registers": 63,
         "shared_static_bytes": 0,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -4149,7 +4149,7 @@
       },
       {
         "symbol": "chop_moe_qwen38_decode_route_t1_v1",
-        "registers": 68,
+        "registers": 66,
         "shared_static_bytes": 2208,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -4158,7 +4158,7 @@
       },
       {
         "symbol": "chop_moe_qwen38_decode_route_t2_v1",
-        "registers": 70,
+        "registers": 67,
         "shared_static_bytes": 2208,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -4167,7 +4167,7 @@
       },
       {
         "symbol": "chop_moe_qwen38_decode_route_t4_v1",
-        "registers": 70,
+        "registers": 67,
         "shared_static_bytes": 2848,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -4176,7 +4176,7 @@
       },
       {
         "symbol": "chop_moe_qwen38_decode_route_t8_v1",
-        "registers": 70,
+        "registers": 67,
         "shared_static_bytes": 3488,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -4185,7 +4185,7 @@
       },
       {
         "symbol": "chop_moe_qwen38_decode_route_t16_v1",
-        "registers": 70,
+        "registers": 67,
         "shared_static_bytes": 4768,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -4325,12 +4325,12 @@
         "allowed_local_bytes": 0
       }
     ],
-    "source_closure_sha256": "1d0eeb5a9c54d8fa4e8a3922a9c5c10f7b0b4cf6ffe99e278754b968e59e7a35",
-    "cubin_sha256": "f52ecf43517b3735dc9664991d827d971070264fd7c39b97e02478fe08f01c9c",
+    "source_closure_sha256": "0aca62d4be4fdbb7fc50b68a568410e5260e6a45701b2acfcd050efe46236614",
+    "cubin_sha256": "cd61c711e14714ac3854a757c0799e3cabd96f6701eb199e7d245d87e55faaeb",
     "resources": [
       {
         "symbol": "chop_moe_qwen38_decode_route_parallel_t32_v1",
-        "registers": 68,
+        "registers": 64,
         "shared_static_bytes": 5156,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -6395,12 +6395,12 @@
         "allowed_local_bytes": 0
       }
     ],
-    "source_closure_sha256": "b59816c4ecff298511110ac4829c1f368f6d5fd8445c9f86bbd73398d98c1bb1",
-    "cubin_sha256": "5b729367cf9a59fe300bf6d1c0d8596a2eac3cbb02c4c93ff4a41b4fed0604a6",
+    "source_closure_sha256": "ac7eb507e539a8576b5fc47bcef60e3b50ae5136ccbfc40cdcdfe91d93449a5b",
+    "cubin_sha256": "3db8abc0c6a98989d73dfd7df0c287dd9d3b40d1b94555e928744ca2ed38bfac",
     "resources": [
       {
         "symbol": "chop_moe_qwen38_tp2_decode_route_t1_v1",
-        "registers": 68,
+        "registers": 66,
         "shared_static_bytes": 3264,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -6409,7 +6409,7 @@
       },
       {
         "symbol": "chop_moe_qwen38_tp2_decode_route_t2_v1",
-        "registers": 70,
+        "registers": 67,
         "shared_static_bytes": 3264,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -6418,7 +6418,7 @@
       },
       {
         "symbol": "chop_moe_qwen38_tp2_decode_route_t4_v1",
-        "registers": 70,
+        "registers": 67,
         "shared_static_bytes": 4416,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -6427,7 +6427,7 @@
       },
       {
         "symbol": "chop_moe_qwen38_tp2_decode_route_t8_v1",
-        "registers": 70,
+        "registers": 67,
         "shared_static_bytes": 5568,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -6436,7 +6436,7 @@
       },
       {
         "symbol": "chop_moe_qwen38_tp2_decode_route_t16_v1",
-        "registers": 70,
+        "registers": 67,
         "shared_static_bytes": 7872,
         "local_bytes": 0,
         "stack_bytes": 0,
@@ -6576,12 +6576,12 @@
         "allowed_local_bytes": 0
       }
     ],
-    "source_closure_sha256": "897776b4d82e591a212d8d5dbb5a56bc36b400c000ce9374977a31cc825d1f04",
-    "cubin_sha256": "e61c838b69f6f2d9660c6bbbc83ce076b93ed99b78d493590a8f3a04f37d105b",
+    "source_closure_sha256": "210b03270baabba7a14ce2e853574ffd5bf8974563cd046480c584618f60bec4",
+    "cubin_sha256": "8b8bfb538242a7a9c8a54c6f226fc9cedcf19aa7eb9f5388662be2fe8d939fb3",
     "resources": [
       {
         "symbol": "chop_moe_qwen38_tp2_decode_route_parallel_t32_v1",
-        "registers": 68,
+        "registers": 64,
         "shared_static_bytes": 9284,
         "local_bytes": 0,
         "stack_bytes": 0,

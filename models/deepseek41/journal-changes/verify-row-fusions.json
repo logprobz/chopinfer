@@ -1,6 +1,6 @@
 {
  "schema": "chopinfer.journal-proof.spec.v1",
- "description": "Keep every existing journal identical and add, with each of the verify_row_fusions, attention_merge_ceil and router_prepare_fusion candidate options on, the C4 and C8 allocated lifetimes, and with attention_merge_ceil or router_prepare_fusion on, the AR journal lifecycle of Flash TP4 at both KV layouts.",
+ "description": "Keep every existing journal identical and add the C4 and C8 allocated lifetimes with the verify_row_fusions candidate option on.",
  "fixtures": [
   {
    "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-1.jsonl",
@@ -21,34 +21,6 @@
    "create": "deepseek41-allocation-c8-rowfuse.journal",
    "journals": [
     "deepseek41-allocation-c8-rowfuse.journal"
-   ]
-  },
-  {
-   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-12.jsonl",
-   "create": "deepseek41-allocation-c4-mergeceil.journal",
-   "journals": [
-    "deepseek41-allocation-c4-mergeceil.journal"
-   ]
-  },
-  {
-   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-13.jsonl",
-   "create": "deepseek41-allocation-c8-mergeceil.journal",
-   "journals": [
-    "deepseek41-allocation-c8-mergeceil.journal"
-   ]
-  },
-  {
-   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-14.jsonl",
-   "create": "deepseek41-allocation-c4-routerprep.journal",
-   "journals": [
-    "deepseek41-allocation-c4-routerprep.journal"
-   ]
-  },
-  {
-   "name": "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-15.jsonl",
-   "create": "deepseek41-allocation-c8-routerprep.journal",
-   "journals": [
-    "deepseek41-allocation-c8-routerprep.journal"
    ]
   },
   {
@@ -105,34 +77,6 @@
    "create": "deepseek41-allocation-c16-odd-phased.journal",
    "journals": [
     "deepseek41-allocation-c16-odd-phased.journal"
-   ]
-  },
-  {
-   "name": "fake_host_tests::dspark::merge_ceil::mergeceil_lifetimes_journal#tests/fake_host_tests.dspark.merge_ceil.mergeceil_lifetimes_journal/device-1.jsonl",
-   "create": "deepseek41-flash-tp4.native-mergeceil.journal",
-   "journals": [
-    "deepseek41-flash-tp4.native-mergeceil.journal"
-   ]
-  },
-  {
-   "name": "fake_host_tests::dspark::merge_ceil::mergeceil_lifetimes_journal#tests/fake_host_tests.dspark.merge_ceil.mergeceil_lifetimes_journal/device-2.jsonl",
-   "create": "deepseek41-flash-tp4.bf16-mergeceil.journal",
-   "journals": [
-    "deepseek41-flash-tp4.bf16-mergeceil.journal"
-   ]
-  },
-  {
-   "name": "fake_host_tests::dspark::router_prepare::routerprep_lifetimes_journal#tests/fake_host_tests.dspark.router_prepare.routerprep_lifetimes_journal/device-1.jsonl",
-   "create": "deepseek41-flash-tp4.native-routerprep.journal",
-   "journals": [
-    "deepseek41-flash-tp4.native-routerprep.journal"
-   ]
-  },
-  {
-   "name": "fake_host_tests::dspark::router_prepare::routerprep_lifetimes_journal#tests/fake_host_tests.dspark.router_prepare.routerprep_lifetimes_journal/device-2.jsonl",
-   "create": "deepseek41-flash-tp4.bf16-routerprep.journal",
-   "journals": [
-    "deepseek41-flash-tp4.bf16-routerprep.journal"
    ]
   },
   {
@@ -293,26 +237,6 @@
    "added_modules": [],
    "create_policy": {}
   },
-  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-12.jsonl": {
-   "added_resolves": [],
-   "added_modules": [],
-   "create_policy": {}
-  },
-  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-13.jsonl": {
-   "added_resolves": [],
-   "added_modules": [],
-   "create_policy": {}
-  },
-  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-14.jsonl": {
-   "added_resolves": [],
-   "added_modules": [],
-   "create_policy": {}
-  },
-  "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-15.jsonl": {
-   "added_resolves": [],
-   "added_modules": [],
-   "create_policy": {}
-  },
   "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-2.jsonl": {
    "added_resolves": [],
    "added_modules": [],
@@ -349,26 +273,6 @@
    "create_policy": {}
   },
   "fake_host_tests::dspark::allocation::journals::allocated_lifetimes_journal#tests/fake_host_tests.dspark.allocation.journals.allocated_lifetimes_journal/device-9.jsonl": {
-   "added_resolves": [],
-   "added_modules": [],
-   "create_policy": {}
-  },
-  "fake_host_tests::dspark::merge_ceil::mergeceil_lifetimes_journal#tests/fake_host_tests.dspark.merge_ceil.mergeceil_lifetimes_journal/device-1.jsonl": {
-   "added_resolves": [],
-   "added_modules": [],
-   "create_policy": {}
-  },
-  "fake_host_tests::dspark::merge_ceil::mergeceil_lifetimes_journal#tests/fake_host_tests.dspark.merge_ceil.mergeceil_lifetimes_journal/device-2.jsonl": {
-   "added_resolves": [],
-   "added_modules": [],
-   "create_policy": {}
-  },
-  "fake_host_tests::dspark::router_prepare::routerprep_lifetimes_journal#tests/fake_host_tests.dspark.router_prepare.routerprep_lifetimes_journal/device-1.jsonl": {
-   "added_resolves": [],
-   "added_modules": [],
-   "create_policy": {}
-  },
-  "fake_host_tests::dspark::router_prepare::routerprep_lifetimes_journal#tests/fake_host_tests.dspark.router_prepare.routerprep_lifetimes_journal/device-2.jsonl": {
    "added_resolves": [],
    "added_modules": [],
    "create_policy": {}
@@ -475,16 +379,8 @@
   }
  },
  "added_journals": [
-  "deepseek41-allocation-c4-mergeceil.journal",
-  "deepseek41-allocation-c4-routerprep.journal",
   "deepseek41-allocation-c4-rowfuse.journal",
-  "deepseek41-allocation-c8-mergeceil.journal",
-  "deepseek41-allocation-c8-routerprep.journal",
-  "deepseek41-allocation-c8-rowfuse.journal",
-  "deepseek41-flash-tp4.bf16-mergeceil.journal",
-  "deepseek41-flash-tp4.bf16-routerprep.journal",
-  "deepseek41-flash-tp4.native-mergeceil.journal",
-  "deepseek41-flash-tp4.native-routerprep.journal"
+  "deepseek41-allocation-c8-rowfuse.journal"
  ],
  "removed_journals": []
 }

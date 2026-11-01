@@ -145,6 +145,8 @@ pub fn backend(engines: &Engines, shape: Shape) -> (Box<dyn Backend>, Served) {
 /// The KDA entries the lowering runs: the prefill delta rule's prepare and
 /// scan under the streamed schedule (bitwise the staged pair's), every other
 /// stage's one entry. Registering both prefill schedules would tie them.
+/// The staged cubin still holds the staged pair, which loads with it
+/// (`Engines::kda` keeps both catalogs) but never launches.
 fn kda_entries(engines: &Engines) -> Vec<channel_decay::Entry> {
     engines
         .kda

@@ -1264,6 +1264,27 @@ class Tuner(unittest.TestCase):
                 tune.check_fallbacks('window', [{'route': {'fallback_launches': 1,
                                                          'families': {'unrelated': 1}}}], allow)
 
+    def test_scoped_fallbacks_admit_only_steps_that_carry_their_phases(self):
+        allow = {'prefill_fold': {'reason': 'Prefill cone tails pending', 'phases': ['prefill']},
+                 'cache': 'Cache range pending'}
+        def step(families, **rows):
+            return {**rows, 'route': {'fallback_launches': sum(families.values()), 'families': families}}
+        prefill = step({'prefill_fold': 4}, prefill_tokens=73)
+        mixed = step({'prefill_fold': 2, 'cache': 1}, prefill_tokens=73, verify_rows=160)
+        decode = step({'cache': 3}, decode_rows=2)
+        self.assertEqual(tune.step_phases(mixed), {'prefill', 'verify'})
+        self.assertEqual(tune.check_fallbacks('window', [prefill, mixed, decode], allow),
+                         {'fallback_launches': 10, 'families': {'prefill_fold': 6, 'cache': 4}})
+        for rows, kind in (({'verify_rows': 160}, 'verify'), ({'decode_rows': 1}, 'decode'), ({}, 'empty')):
+            with self.assertRaisesRegex(RuntimeError, rf'prefill_fold outside its allowed phases \(prefill\): 4 launches in a {kind} step'):
+                tune.check_fallbacks('window', [prefill, step({'prefill_fold': 4}, **rows)], allow)
+        for bad in ({'reason': 'x', 'phases': []}, {'reason': 'x', 'phases': ['warmup']},
+                    {'reason': 'x', 'phases': ['prefill', 'prefill']}, {'phases': ['prefill']},
+                    {'reason': ' ', 'phases': ['prefill']}, {'reason': 'x', 'phases': 'prefill'},
+                    {'reason': 'x', 'phases': ['verify'], 'rows': [65, 192]}):
+            with self.assertRaisesRegex(RuntimeError, 'allow_fallbacks'):
+                tune.check_fallbacks('window', [prefill], {'prefill_fold': bad})
+
     def test_fallback_gate_requires_complete_counts_and_justified_families(self):
         steps = [{'route': {'fallback_launches': 3, 'families': {'projection': 3}}}]
         with self.assertRaisesRegex(RuntimeError, 'unallowed fallback'):

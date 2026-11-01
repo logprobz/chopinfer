@@ -407,6 +407,7 @@ def main():
     if len(names) > 1 and not model.get('keeper', True):
         raise ValueError('multi-install jobs require keeper staging')
     if 'allow_fallbacks' in model:
+        tune.fallback_scopes('allow_fallbacks', model['allow_fallbacks'])
         config['allow_fallbacks'] = model['allow_fallbacks']
     cold_files = []
     cold = model.get('cold_engram', workload.get('cold_engram'))

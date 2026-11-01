@@ -721,7 +721,12 @@ Adding a model:
    and selected entries. Counts combine execute and commit callbacks, include
    graph replays and add no device synchronization or readback. The tune runner
    enables these counters and rejects missing evidence or a nonzero family
-   without a reason in the job's `allow_fallbacks` object.
+   without a reason in the job's `allow_fallbacks` object. A family's value
+   is its reason, or `{"reason": ..., "phases": [...]}` to admit it only in
+   steps that carry one of those phases (`prefill`, `verify`, `decode`: the
+   prompt tokens, verify rows and plain decode rows of the step record; a
+   mixed step carries several). Scope a prefill-only gap to `prefill`, so a
+   verify or decode step that takes it still fails the window.
    The optional `ranks` census retains tagged entry counts and untagged symbol
    counts for each logical rank, through capture and replay. Symbols acquired
    outside the shared acquisition helpers are reported under `unknown`; a

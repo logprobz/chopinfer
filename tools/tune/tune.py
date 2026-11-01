@@ -516,10 +516,41 @@ def check_allocations(name, steps, enabled, required):
     return count
 
 
-def check_fallbacks(name, steps, allow):
-    """A served window needs complete route evidence and explained fallbacks."""
-    if not isinstance(allow, dict) or any(not isinstance(reason, str) or not reason.strip() for reason in allow.values()):
+STEP_PHASES = ('prefill', 'verify', 'decode')
+
+
+def step_phases(step):
+    """The kinds of rows a step record carries: prompt tokens, verify rows
+    and plain decode rows. A mixed step carries several."""
+    return {phase for phase, key in zip(STEP_PHASES, ('prefill_tokens', 'verify_rows', 'decode_rows'))
+            if step.get(key)}
+
+
+def fallback_scopes(name, allow):
+    """Each allowed family's step phases, None for every step. A family's
+    value is its reason, or {"reason": ..., "phases": [...]} admitting it
+    only in steps that carry one of those phases."""
+    if not isinstance(allow, dict):
         raise RuntimeError(f'{name}: allow_fallbacks needs a reason per family')
+    scopes = {}
+    for family, value in allow.items():
+        phases = None
+        if isinstance(value, dict):
+            listed = value.get('phases')
+            if set(value) != {'reason', 'phases'} or not isinstance(listed, list) or not listed \
+                    or len(set(listed)) != len(listed) or not set(listed) <= set(STEP_PHASES):
+                raise RuntimeError(f'{name}: allow_fallbacks {family} needs a reason and phases from {STEP_PHASES}')
+            value, phases = value['reason'], set(listed)
+        if not isinstance(value, str) or not value.strip():
+            raise RuntimeError(f'{name}: allow_fallbacks needs a reason per family')
+        scopes[family] = phases
+    return scopes
+
+
+def check_fallbacks(name, steps, allow):
+    """A served window needs complete route evidence and explained fallbacks,
+    each in a step of a phase its allowance admits."""
+    scopes = fallback_scopes(name, allow)
     if not steps or any(not isinstance(step.get('route'), dict) for step in steps):
         raise RuntimeError(f'{name}: missing route counters')
     families = {}
@@ -534,8 +565,13 @@ def check_fallbacks(name, steps, allow):
             raise RuntimeError(f'{name}: inconsistent route counters')
         total += count
         for family, n in counts.items():
-            if n and family not in allow:
+            if n and family not in scopes:
                 raise RuntimeError(f'{name}: unallowed fallback family {family}: {n} launches')
+            phases = scopes.get(family)
+            if n and phases is not None and not phases & step_phases(step):
+                kinds = '/'.join(p for p in STEP_PHASES if p in step_phases(step)) or 'empty'
+                raise RuntimeError(f'{name}: fallback family {family} outside its allowed phases '
+                                   f'({", ".join(p for p in STEP_PHASES if p in phases)}): {n} launches in a {kinds} step')
             families[family] = families.get(family, 0) + n
     return {'fallback_launches': total, 'families': families}
 

@@ -420,7 +420,6 @@ pub(crate) mod tests {
             (PHASED_DECODE_REDUCE, true.into()),
             (VERIFY_ROW_FUSIONS, true.into()),
             (ATTENTION_MERGE_CEIL, true.into()),
-            (ROUTER_PREPARE_FUSION, true.into()),
         ] {
             changed = with_option(changed, name, value);
         }
@@ -437,7 +436,6 @@ pub(crate) mod tests {
                 phased_decode_reduce: true,
                 verify_row_fusions: true,
                 attention_merge_ceil: true,
-                router_prepare_fusion: true,
             }
         );
         for (name, value) in [

@@ -38,11 +38,6 @@ pub struct Shape {
     /// merge the attention heads and quantize WO_a's input in one launch
     /// (the `attention_merge_ceil` candidate option).
     pub attention_merge_ceil: bool,
-    /// Whether steps of at most 32 rows with a fused router finish launch
-    /// the router producer that classifies its own rows in place of the
-    /// finish's prepare and the producer (the `router_prepare_fusion`
-    /// candidate option).
-    pub router_prepare_fusion: bool,
 }
 
 impl Shape {
@@ -59,7 +54,6 @@ impl Shape {
             phased_decode_reduce: false,
             verify_row_fusions: false,
             attention_merge_ceil: false,
-            router_prepare_fusion: false,
         })
     }
 
@@ -103,14 +97,6 @@ impl Shape {
     /// (`model_deepseek41_contract::execution_options::ATTENTION_MERGE_CEIL`).
     pub fn with_attention_merge_ceil(mut self, enabled: bool) -> Shape {
         self.attention_merge_ceil = enabled;
-        self
-    }
-
-    /// This shape with the router producer that classifies its own rows
-    /// on or off
-    /// (`model_deepseek41_contract::execution_options::ROUTER_PREPARE_FUSION`).
-    pub fn with_router_prepare_fusion(mut self, enabled: bool) -> Shape {
-        self.router_prepare_fusion = enabled;
         self
     }
 

@@ -4,22 +4,16 @@ use crate::config::Configuration;
 use model_glm5next_contract::contract::KV_LAYOUT_FP8_MTP;
 use model_glm5next_contract::quantization::FP8_BLOCK128;
 
-/// Unset selects the qualified default; `0` disables it and `1` opts in.
-pub const SWITCH: &str = "CHOPINFER_GLM5NEXT_PREFILL_DMA";
 pub const MIN_ROWS: u32 = 512;
 
 fn default_for(kv: &[u8], layout: &str, cp: u32, comm_epilogue: bool) -> bool {
     kv == KV_LAYOUT_FP8_MTP && layout == FP8_BLOCK128.id && cp == 1 && !comm_epilogue
 }
 
-fn select(value: Option<&str>, qualified: bool) -> bool {
-    match value {
-        None => qualified,
-        Some("1") => true,
-        Some(_) => false,
-    }
-}
-
+/// Whether an instance of `config` runs its eligible prefills over ordered
+/// DMA: the qualified configuration's, block-FP8 with FP8 MTP KV at CP1
+/// without the comm epilogue. Every other configuration keeps the
+/// collective.
 pub(crate) fn requested(config: &Configuration) -> bool {
     let qualified = default_for(
         config.format.layout_id,
@@ -28,13 +22,9 @@ pub(crate) fn requested(config: &Configuration) -> bool {
         config.comm_epilogue,
     );
     #[cfg(test)]
-    return IN_TESTS.get().unwrap_or_else(|| select(None, qualified));
+    return IN_TESTS.get().unwrap_or(qualified);
     #[cfg(not(test))]
-    match std::env::var(SWITCH) {
-        Ok(value) => select(Some(&value), qualified),
-        Err(std::env::VarError::NotPresent) => select(None, qualified),
-        Err(std::env::VarError::NotUnicode(_)) => false,
-    }
+    qualified
 }
 
 #[cfg(test)]
@@ -74,17 +64,6 @@ mod tests {
             (KV_LAYOUT_FP8_MTP, FP8_BLOCK128.id, 1, true),
         ] {
             assert!(!default_for(kv, layout, cp, epilogue));
-        }
-    }
-
-    #[test]
-    fn explicit_switches_preserve_opt_out_and_opt_in() {
-        for qualified in [false, true] {
-            assert_eq!(select(None, qualified), qualified);
-            assert!(select(Some("1"), qualified));
-            for value in ["0", "", "false", "invalid"] {
-                assert!(!select(Some(value), qualified));
-            }
         }
     }
 }

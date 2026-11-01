@@ -765,6 +765,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
     };
     let config = decode(bytes, log)?;
     let prefill_dma = crate::prefill_dma::requested(&config);
+    // The served policy never selects these; a test's explicit selection can.
     if prefill_dma && (config.context_parallel.size() != 1 || config.comm_epilogue) {
         log("prefill DMA currently requires CP1 without the comm epilogue");
         return Err(BundleStatusV1::Unsupported.into());

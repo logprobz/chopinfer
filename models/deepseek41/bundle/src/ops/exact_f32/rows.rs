@@ -104,10 +104,13 @@ pub(crate) struct Rows {
 }
 
 /// The tiles of `steps` for the projection of `n` outputs from `k` inputs
-/// at `rows`, or `None` where no measured tile serves them.
+/// that serve `rows`, or `None` where no measured tile serves them. With
+/// `from`, the op holds every measured tile from that row on, so the
+/// instance configures each of them alike, but it serves `rows` alone.
 fn prepare_tiles(
     steps: Steps,
     rows: Option<[u32; 2]>,
+    from: Option<u32>,
     asks: Option<(&crate::ops::Asks, &str)>,
     n: u32,
     k: u32,
@@ -115,7 +118,8 @@ fn prepare_tiles(
     let Some(rows) = rows else {
         return Ok(None);
     };
-    let op = match crate::Kernels::rows_projection(steps, n, k, rows) {
+    let first = from.map_or(rows[0], |from| from.min(rows[0]));
+    let op = match crate::Kernels::rows_projection(steps, n, k, [first, rows[1]]) {
         Ok(op) => op,
         Err(Refused::Unsupported) => return Ok(None),
         Err(error) => return Err(error),
@@ -130,6 +134,9 @@ fn prepare_tiles(
 
 /// The verify row tiles of the target's projection of `n` outputs from
 /// `k` inputs, or `None` where no measured tile serves the admitted rows.
+/// They hold the site's tiles from its first row, 33, at every admitted
+/// range: the wide verify buckets alone serve none of the 33- to 64-row
+/// tiles, which the instance still configures.
 pub(crate) fn prepare(
     shape: &crate::shape::Shape,
     asks: &crate::ops::Asks,
@@ -138,9 +145,11 @@ pub(crate) fn prepare(
     k: u32,
     target: bool,
 ) -> Result<Option<Rows>, Refused> {
+    use model_deepseek41_contract::serving::DECODE_BATCH;
     prepare_tiles(
         Steps::Verify,
         admitted(shape).filter(|_| target),
+        Some(DECODE_BATCH + 1),
         Some((asks, name)),
         n,
         k,
@@ -160,6 +169,7 @@ pub(crate) fn prepare_decode(
     prepare_tiles(
         Steps::Decode,
         decode_admitted(shape).filter(|_| target),
+        None,
         Some((asks, name)),
         n,
         k,
@@ -190,7 +200,7 @@ pub(crate) fn prepare_drafter(
         (Steps::Verify, narrow),
         (Steps::Verify, wide),
     ] {
-        tiles.extend(prepare_tiles(steps, rows, None, n, k)?);
+        tiles.extend(prepare_tiles(steps, rows, None, None, n, k)?);
     }
     Ok(tiles)
 }
@@ -313,6 +323,17 @@ mod tests {
                     assert!(!op.for_phase(Phase::Decode(rows)));
                     assert!(!op.for_phase(Phase::Prefill { rows }));
                 }
+            }
+            // The compressor's op still holds, and the instance configures,
+            // its 33- to 64-row tile, which it serves at no row here.
+            let narrow =
+                crate::Kernels::rows_projection(Steps::Verify, 512, 5120, [33, 64]).unwrap();
+            let held = prepare(&shape, &asks, "compressor", 512, 5120, true)
+                .unwrap()
+                .unwrap();
+            assert!(narrow.info().symbols.iter().any(|(_, shared)| *shared > 0));
+            for symbol in &narrow.info().symbols {
+                assert!(held.info().symbols.contains(symbol), "{symbol:?}");
             }
         }
     }

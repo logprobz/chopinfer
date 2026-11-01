@@ -99,7 +99,7 @@ fn allocated_lifetimes_journal() {
             5,
             "-odd-wide",
             &[WIDE_VERIFY],
-            (191802, 0x64bd42c3caef55c0),
+            (191806, 0x3fc23092499e338a),
         ),
         (
             32,
@@ -107,7 +107,7 @@ fn allocated_lifetimes_journal() {
             5,
             "-maximum-wide",
             &[WIDE_VERIFY],
-            (344540, 0x07785bc19d29a6ff),
+            (344544, 0x4a0b9dbbab2a004d),
         ),
         (
             4,
@@ -131,7 +131,7 @@ fn allocated_lifetimes_journal() {
             5,
             "-odd-wide-draft",
             &[WIDE_VERIFY, WIDE_DRAFT],
-            (191702, 0x7ec0e494350dc4a8),
+            (191706, 0x0c1f4b48329803ea),
         ),
         (
             32,
@@ -139,7 +139,7 @@ fn allocated_lifetimes_journal() {
             5,
             "-maximum-wide-draft",
             &[WIDE_VERIFY, WIDE_DRAFT],
-            (343532, 0xf9ee11d6af367dda),
+            (343536, 0xa83e54b9d1652410),
         ),
         (
             8,

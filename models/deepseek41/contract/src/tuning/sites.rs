@@ -102,6 +102,7 @@ pub(super) fn validate(row: &Row) -> Result<(), TuningError> {
             (&["selected_cache"], &["head_group"], &[])
         }
         "latent.paired.prefill" => (&["paired"], &[], &[]),
+        "latent.row_fusions.verify" => (&["fused"], &[], &[]),
         "latent.sources.decode" | "latent.sources.verify" => (&["independent_heads"], &[], &[]),
         "latent.staging.decode" | "latent.staging.verify" => {
             (&["staged"], &["head_group", "stage_keys"], &["packed"])
@@ -281,6 +282,8 @@ fn validate_values(row: &Row) -> Result<(), TuningError> {
             [2, 4, 8].contains(&count("tile")) && [8, 16, 32].contains(&count("warps"))
         }
         "hc.finish_twin.verify" => [8, 16, 32].contains(&count("warps")),
+        // The fused entries are prepared for the decode batch's rows.
+        "latent.row_fusions.verify" => row.key.bucket == crate::serving::DECODE_BATCH,
         "latent.cache.decode" => count("head_group") == 0,
         "latent.cache.verify" => [0, 1, 2, 4, 8].contains(&count("head_group")),
         "latent.staging.decode" | "latent.staging.verify" => {

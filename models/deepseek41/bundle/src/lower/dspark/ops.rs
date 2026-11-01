@@ -143,9 +143,10 @@ pub struct Prepared {
     hidden_quantize: Op<BlockQuantizeBuffers<View>>,
     ring_write: Op<LatentWindowWriteBuffers<View>>,
     block_write: Op<LatentWindowWriteBuffers<View>>,
-    /// With the `verify_row_fusions` option, the ring and block writes
-    /// prepared for at most `draft_rows` rows, whose quantizer is the
-    /// parallel decode ceil entry instead of the prefill one.
+    /// With the verify row fusions (`Shape::fuses_verify_rows`), the ring
+    /// and block writes prepared for at most `draft_rows` rows, whose
+    /// quantizer is the parallel decode ceil entry instead of the prefill
+    /// one.
     draft_writes: Option<[Op<LatentWindowWriteBuffers<View>>; 2]>,
     draft_rows: u32,
     attention: Op<LatentSourcesBuffers<View>>,
@@ -226,7 +227,7 @@ impl Prepared {
         let block_write = backend.latent_window_write(&block, need)?;
         let draft_rows = model_deepseek41_contract::dspark_options::SMALL_DRAFT_ROWS
             .max(shape.verify_rows_within(model_deepseek41_contract::verify_bounds::ROW_BUCKETS));
-        let draft_writes = if shape.verify_row_fusions {
+        let draft_writes = if shape.fuses_verify_rows() {
             let small = Need::rows(draft_rows);
             Some([
                 backend.latent_window_write(&ring, small)?,

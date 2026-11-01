@@ -189,16 +189,41 @@ impl Shape {
 
     /// Whether `phase` runs the decode row fusions: the fused query norm
     /// and ceil and the fused window write, prepared for `DECODE_BATCH`
-    /// rows of every phase. Decode steps run them; verify steps of at
-    /// most `DECODE_BATCH` rows with the `verify_row_fusions` option.
+    /// rows of every phase. Decode steps run them; verify steps of the
+    /// rows `latent.row_fusions.verify` admits, or of at most
+    /// `DECODE_BATCH` rows with the `verify_row_fusions` option.
     pub(crate) fn row_fusions(&self, phase: crate::program::Phase) -> bool {
         match phase {
             crate::program::Phase::Decode(_) => true,
             crate::program::Phase::Verify { rows, .. } => {
-                self.verify_row_fusions && rows <= DECODE_BATCH
+                (self.verify_row_fusions && rows <= DECODE_BATCH) || self.fused_verify_rows(rows)
             }
             crate::program::Phase::Prefill { .. } => false,
         }
+    }
+
+    /// Whether any verify step runs the decode row fusions, which also
+    /// quantize the drafter's window writes of at most its draft rows with
+    /// the parallel decode ceil entry.
+    pub(crate) fn fuses_verify_rows(&self) -> bool {
+        self.verify_row_fusions || (1..=DECODE_BATCH).any(|rows| self.fused_verify_rows(rows))
+    }
+
+    /// Whether `latent.row_fusions.verify` admits verify steps of `rows`
+    /// rows to the decode row fusions. Its bucket is `DECODE_BATCH`, the
+    /// rows the fused entries are prepared for.
+    fn fused_verify_rows(&self, rows: u32) -> bool {
+        use model_deepseek41_contract::tuning::{Family, select};
+        select(
+            self.geometry,
+            Family::Latent,
+            "latent.row_fusions.verify",
+            "none",
+            &[("ranks", self.ranks())],
+            DECODE_BATCH,
+            rows,
+        )
+        .is_some()
     }
 
     /// The prepared row bound of a Flash TP4 decode-route family whose

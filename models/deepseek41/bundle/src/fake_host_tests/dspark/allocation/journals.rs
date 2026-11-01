@@ -89,9 +89,9 @@ fn allocated_lifetimes_journal() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let mut mismatches = Vec::new();
     for (items, width, depth, suffix, options, expected) in [
-        (4, 16, 5, "", &[][..], (69334, 0x94b43e6c45e6f09b)),
+        (4, 16, 5, "", &[][..], (69334, 0x97009e6ff4b56ef3)),
         (8, 32, 5, "", &[], (106926, 0x8d92d278eff57bef)),
-        (4, 12, 3, "-d3", &[], (69502, 0xdedf204e99d57b9b)),
+        (4, 12, 3, "-d3", &[], (69502, 0xf3563cf8a337e753)),
         (16, 65, 5, "-odd", &[], (190434, 0xa53d7eeecf401235)),
         (32, 192, 5, "-maximum", &[], (343172, 0x423f402926f10c51)),
         (
@@ -116,7 +116,7 @@ fn allocated_lifetimes_journal() {
             5,
             "-phased",
             &[PHASED_DECODE_REDUCE],
-            (69358, 0xfdbd662fbe69bdf6),
+            (69358, 0x227f917f14837e3e),
         ),
         (
             16,
@@ -180,9 +180,9 @@ fn allocated_lifetimes_journal() {
             5,
             "-hc-draft-rows",
             &[DSPARK_HC_FUSION, DSPARK_HC_DRAFT_ROWS],
-            (69262, 0x4db4a4e157875315),
+            (69262, 0x1485da7370037915),
         ),
-        (4, 16, 5, "-drafter", &drafter, (69206, 0xf7b1328155f83920)),
+        (4, 16, 5, "-drafter", &drafter, (69206, 0x9649bad3b349d138)),
         (
             4,
             16,

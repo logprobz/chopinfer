@@ -66,13 +66,13 @@ reason = "Cached input and query norms cover measured row buckets; intervening d
 task = "NORM-cached-range"
 
 [[allow]]
-profiles = ["tp4-dspark-rows192-rowfuse", "tp4-dspark-rows192-wide-rowfuse"]
+profiles = ["tp4-dspark*"]
 phase = "verify"
 family = "rmsnorm_quantize"
 entry = "rmsnorm_quantize/fallback/chop_norm_quantize_deepseek41_query_v1"
 symbol = "chop_norm_quantize_deepseek41_query_v1"
-rows = [[2, 5], [7, 32]]
-reason = "With the verify_row_fusions candidate, verify steps of at most 32 rows run the decode steps' fused query norm and ceil; its cached entry covers Decode-2/4, so these verify rows take its general entry, as the decode buckets between them do (NORM-cached-range)"
+rows = [[2, 37]]
+reason = "Verify steps of the rows latent.row_fusions.verify admits (1 to 6), and of at most 32 rows with the verify_row_fusions candidate, run the decode steps' fused query norm and ceil, as do the drafter's forwards of those rows; its cached entries cover rows 1 and 6, so the other verify rows take its general entry, as the decode buckets between them do, and so do the drafter's five-row forwards, which every verify step with one drafting item runs, beside up to 31 decode items (NORM-cached-range)"
 task = "VERIFY-row-fusions"
 
 [[allow]]

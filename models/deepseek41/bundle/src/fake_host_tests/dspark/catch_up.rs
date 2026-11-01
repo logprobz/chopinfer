@@ -135,14 +135,14 @@ fn catch_up_graphs_reuse_exact_rows_across_slots_and_commits() {
 }
 
 /// A prefix capture catches the drafter up outside any target step
-/// (`instance/prefix.rs`), and with the `verify_row_fusions` option its
-/// window writes of at most the draft rows take the parallel ceil32 entry,
-/// as a step's do. The eager lifetime (a short prefill, its capture, a
-/// restore into another slot and a drafted verify step) with the option is
-/// the one without it up to the verify step but for those launches, some
-/// of them inside the capture. Both lifetimes are pinned, each checked
-/// before the next starts so that its journal binds to its own device; the
-/// verify step's fusions are `verify_rows`' to check.
+/// (`instance/prefix.rs`), and its window writes of the rows
+/// `latent.row_fusions.verify` admits (at most six) take the parallel
+/// ceil32 entry, as a step's do. The eager lifetime (a short prefill, its
+/// capture, a restore into another slot and a drafted verify step) is the
+/// same with the `verify_row_fusions` option, which the row has made the
+/// default. Both lifetimes are pinned, each checked before the next starts
+/// so that its journal binds to its own device; the verify step's fusions
+/// are `verify_rows`' to check.
 #[test]
 fn prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions() {
     use model_deepseek41_contract::execution_options::{
@@ -191,7 +191,7 @@ fn prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions() {
     let (served, capture, step) = run(
         false,
         "flash-tp4-dspark-prefix-capture.journal",
-        (40596, 0x207ddbc5c00ec41b),
+        (40104, 0x00ca4ee0728ce1b9),
     );
     let (fused, fused_capture, fused_step) = run(
         true,
@@ -199,22 +199,14 @@ fn prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions() {
         (40104, 0x00ca4ee0728ce1b9),
     );
     assert_eq!((&capture, step), (&fused_capture, fused_step));
-    let mut changed = Vec::new();
-    for (at, (a, b)) in served[..step].iter().zip(&fused[..step]).enumerate() {
-        if a != b {
-            assert!(a.starts_with("launch ") && a.contains(SERIAL), "{at}: {a}");
-            assert_eq!(
-                *b,
-                a.replacen(SERIAL, PARALLEL, 1)
-                    .replacen("block_x: 32,", "block_x: 512,", 1),
-                "{at}"
-            );
-            changed.push(at);
-        }
-    }
+    assert_eq!(served, fused);
     // The capture's catch-up writes the three prompt rows in 12 small
-    // window writes over the four ranks; nothing else before the step
-    // changes.
-    assert_eq!(changed.len(), 12);
-    assert!(changed.iter().all(|at| capture.contains(at)), "{changed:?}");
+    // window writes over the four ranks.
+    let launches = |name: &str| {
+        served[capture.clone()]
+            .iter()
+            .filter(|line| line.starts_with("launch ") && line.contains(name))
+            .count()
+    };
+    assert_eq!((launches(SERIAL), launches(PARALLEL)), (0, 12));
 }

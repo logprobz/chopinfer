@@ -96,7 +96,7 @@ const UNTUNED: &[&str] = &[
     "latent.query.verify f32 ranks=4 buckets=49..64 rows=1..48",
     "latent.row_fusions.verify none ranks=1 buckets=32 rows=all",
     "latent.row_fusions.verify none ranks=2 buckets=32 rows=all",
-    "latent.row_fusions.verify none ranks=4 buckets=32 rows=all",
+    "latent.row_fusions.verify none ranks=4 buckets=32 rows=7..32",
     "latent.sources.decode fp8 ranks=1 buckets=32 rows=all",
     "latent.sources.decode fp8 ranks=2 buckets=32 rows=all",
     "latent.sources.prefill fp8 ranks=1 buckets=8192 rows=all",

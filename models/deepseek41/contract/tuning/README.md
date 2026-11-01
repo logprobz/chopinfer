@@ -191,11 +191,14 @@ The F32 head's projection-reuse choice belongs to `reuse.json`.
 `latent.row_fusions.verify` (weights `none`, shape `ranks`, bucket 32)
 admits verify steps of its rows to the decode row fusions: the fused query
 norm and ceil and the fused window norm, RoPE, ceil and store that decode
-steps launch, prepared for 32 rows. A shape with a row also quantizes the
-drafter's window writes of at most its draft rows with the parallel decode
+steps launch, prepared for 32 rows. The drafter's window writes of the
+rows a row admits, counted per write, quantize with the parallel decode
 ceil entry instead of the serial one. The fused entries keep every value
 and every add of the chains they replace, in the same order, so the row is
-not numerical identity. A missing row keeps the chains.
+not numerical identity. A missing row keeps the chains. Flash TP4 serves
+the row at rows 1 to 6, adopted on 2026-11-01 from the
+`verify_row_fusions` candidate option, which ran the fusions through 32
+rows: served timing resolved a gain only at six-row verify steps.
 
 Exact F32 rows take precedence over bands. Blocked and wide overrides retain
 their existing order, followed by head reuse, head-last and optional bounded

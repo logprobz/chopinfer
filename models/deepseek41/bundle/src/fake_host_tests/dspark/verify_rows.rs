@@ -322,176 +322,137 @@ fn row_tile_option_runs_the_head_decode_tiles() {
     assert_eq!(host.acquired.get(), host.released.get());
 }
 
-/// With the `verify_row_fusions` option, verify steps of at most 32 rows
-/// run the decode steps' fused query norm and ceil, the target's and the
-/// drafter's, and the target's fused window write, in place of the query
-/// norm and its ceil and the window's norm/RoPE, ceil and store; every
-/// other launch keeps its order. Wider steps keep the chains. At every
-/// width the drafter's window writes of at most 64 rows quantize with the
-/// parallel decode ceil entry in place of the prefill one, with the same
-/// rows and every other launch unchanged.
+/// Verify steps of the rows `latent.row_fusions.verify` admits, at most
+/// six, run the decode steps' fused query norm and ceil, the target's and,
+/// when its own rows fit, the drafter's, and the target's fused window
+/// write, in place of the query norm and its ceil and the window's
+/// norm/RoPE, ceil and store. Wider steps keep the chains. At every width
+/// the drafter's window writes of at most six rows quantize with the
+/// parallel decode ceil entry and wider ones with the prefill one. The
+/// pinned journals hold every other launch.
 #[test]
-fn row_fusion_option_fuses_the_query_and_window_chains_through_32_rows() {
-    let steps = [(1, 6), (2, 12), (8, 32), (16, 33), (16, 64)];
-    let pairs = row_fusion_pairs(&[], 16, 128, &steps);
-    assert!(pairs.drafted > 0 && pairs.windows.iter().sum::<usize>() > 0);
+fn verify_steps_fuse_the_query_and_window_chains_through_6_rows() {
+    let steps = [(1, 6), (2, 6), (2, 12), (8, 32), (16, 33), (16, 64)];
+    let fusions = row_fusions(&[], 16, 128, &steps);
+    assert!(fusions.drafted > 0);
+    assert!(fusions.windows[..2].iter().all(|&windows| windows > 0));
 }
 
-/// The same pairing beside the `wide_verify` option at the package's 192
-/// verify rows, both instances with it on: through 32 rows the chains fuse
-/// as without it, and at 33 to 192 rows, where `wide_verify` serves the
-/// wide buckets and no chain fuses, only the drafter's small window writes
-/// change their quantizer, which some steps above 64 rows launch.
+/// The same beside the `wide_verify` option at the package's 192 verify
+/// rows: through six rows the chains fuse as without it, and at 7 to 192
+/// rows, where `wide_verify` serves the wide buckets above 64, no chain
+/// fuses.
 #[test]
-fn row_fusion_option_beside_wide_verify_changes_only_small_drafter_writes_above_32_rows() {
+fn row_fusions_beside_wide_verify_keep_the_chains_above_6_rows() {
     use model_deepseek41_contract::execution_options::WIDE_VERIFY;
     let steps: Vec<_> = [(1, 6), (8, 32), (16, 64)]
         .into_iter()
         .chain(WIDE_STEPS)
         .collect();
-    let pairs = row_fusion_pairs(&[(WIDE_VERIFY, true.into())], 32, 192, &steps);
-    assert!(pairs.drafted > 0);
-    let wide: usize = steps
-        .iter()
-        .zip(&pairs.windows)
-        .filter(|((_, rows), _)| *rows > 64)
-        .map(|(_, windows)| windows)
-        .sum();
-    assert!(
-        wide > 0,
-        "no step above 64 rows wrote a small drafter window"
-    );
+    let fusions = row_fusions(&[(WIDE_VERIFY, true.into())], 32, 192, &steps);
+    assert!(fusions.drafted > 0);
 }
 
-/// What [`row_fusion_pairs`] saw: the steps whose drafter fused its
-/// queries, and each step's small drafter window writes.
-struct RowFusionPairs {
+/// What [`row_fusions`] saw: the steps whose drafter fused its queries,
+/// and each step's drafter window writes with the parallel entry.
+struct RowFusions {
     drafted: usize,
     windows: Vec<usize>,
 }
 
-/// Runs `steps` (items, rows) on two eager instances of `items` slots and
-/// `verify_tokens` verify rows with `options`, one with
-/// `verify_row_fusions` off and one with it on, and checks each pair of
-/// steps as `row_fusion_option_fuses_the_query_and_window_chains_through_32_rows`
+/// Runs `steps` (items, rows) on an eager instance of `items` slots and
+/// `verify_tokens` verify rows with `options`, and checks each step as
+/// `verify_steps_fuse_the_query_and_window_chains_through_6_rows`
 /// describes.
-fn row_fusion_pairs(
+fn row_fusions(
     options: &[(&str, serde_json::Value)],
     items: u32,
     verify_tokens: u32,
     steps: &[(u32, u32)],
-) -> RowFusionPairs {
-    use model_deepseek41_contract::execution_options::VERIFY_ROW_FUSIONS;
-    let create = |fused: bool| {
-        let mut all = vec![
-            (DSPARK_GRAPH_HANDLES_PER_RANK, 0.into()),
-            (VERIFY_ROW_FUSIONS, fused.into()),
-        ];
-        all.extend(options.iter().cloned());
-        create_with_options(
-            Shape::new(&FLASH, Ranks::TP4).unwrap(),
-            items,
-            verify_tokens,
-            &all,
-        )
-    };
-    let (served_host, mut served) = create(false);
-    let (fused_host, mut fused) = create(true);
-    for (host, instance) in [(&served_host, &mut served), (&fused_host, &mut fused)] {
-        for slot in 0..u64::from(items) {
-            execute(
-                instance,
-                host,
-                &super::super::prompt(slot + 1, slot, 0, 3, true),
-            );
-            instance.commit().unwrap();
-        }
+) -> RowFusions {
+    let mut all = vec![(DSPARK_GRAPH_HANDLES_PER_RANK, 0.into())];
+    all.extend(options.iter().cloned());
+    let (host, mut instance) = create_with_options(
+        Shape::new(&FLASH, Ranks::TP4).unwrap(),
+        items,
+        verify_tokens,
+        &all,
+    );
+    for slot in 0..u64::from(items) {
+        execute(
+            &mut instance,
+            &host,
+            &super::super::prompt(slot + 1, slot, 0, 3, true),
+        );
+        instance.commit().unwrap();
     }
     let symbol = |line: &String| line.split_whitespace().nth(2).unwrap().to_owned();
     // The drafter's window quantizers, whose groups compute the same codes,
-    // scales and status (`journal-changes/wide-verify-ceil.md`).
+    // scales and status (`journal-changes/wide-verify-ceil.md`); a write's
+    // grid is its rows.
     const SERIAL: &str = "chop_deepseek41_latent_ceil32_v1";
     const PARALLEL: &str = "chop_deepseek41_latent_ceil32_parallel_v1";
+    const FUSED_ROWS: u32 = 6;
     let grid = |line: &String| -> u32 {
         let at = line.find("grid_x: ").unwrap() + 8;
         line[at..].split(',').next().unwrap().parse().unwrap()
     };
-    let launches = |step: &[String]| -> Vec<String> {
-        step.iter()
-            .filter(|line| line.starts_with("launch "))
-            .map(|line| match symbol(line) {
-                s if s == SERIAL && grid(line) <= 64 => PARALLEL.into(),
-                s => s,
-            })
-            .collect()
-    };
-    let serial = |step: &[String]| {
-        step.iter()
-            .filter(|line| line.starts_with("launch ") && symbol(line) == SERIAL)
-            .map(grid)
-            .collect::<Vec<_>>()
-    };
-    let mut pairs = RowFusionPairs {
+    let mut fusions = RowFusions {
         drafted: 0,
         windows: Vec::new(),
     };
     for &(count, rows) in steps {
-        let (a, step_a, accepted_a) = verify_step(&mut served, &served_host, count, rows);
-        let (b, step_b, accepted_b) = verify_step(&mut fused, &fused_host, count, rows);
-        // The served step's small drafter windows quantize serially; the
-        // fused step's never do. `launches` names both arms' parallel.
-        let small = serial(&step_a).into_iter().filter(|&r| r <= 64).count();
-        assert!(serial(&step_b).iter().all(|&r| r > 64), "{rows} rows");
-        pairs.windows.push(small);
-        let (all_a, all_b) = (launches(&step_a), launches(&step_b));
-        let (target_a, target_b): (Vec<_>, Vec<_>) = (
-            a.iter().map(symbol).collect(),
-            b.iter().map(symbol).collect(),
-        );
-        let (before_a, before_b) = (
-            &all_a[..all_a.len() - a.len()],
-            &all_b[..all_b.len() - b.len()],
-        );
-        if rows > 32 {
-            assert_eq!((before_a, &target_a), (before_b, &target_b), "{rows} rows");
-        } else {
-            // The drafter fuses its queries when its own rows fit; its
-            // window keeps its chain.
-            if before_b
+        let (target, step, accepted) = verify_step(&mut instance, &host, count, rows);
+        let launches: Vec<_> = step
+            .iter()
+            .filter(|line| line.starts_with("launch "))
+            .collect();
+        let (before, target_launches) = launches.split_at(launches.len() - target.len());
+        assert!(
+            launches
                 .iter()
-                .any(|s| s.starts_with("chop_norm_quantize_deepseek41_query"))
-            {
-                assert_eq!(
-                    fused_queries(before_a, before_b, false),
-                    3 * 4,
-                    "{rows} rows"
-                );
-                pairs.drafted += 1;
-            } else {
-                assert_eq!(before_a, before_b, "{rows} rows");
-            }
-            assert_eq!(fused_queries(&target_a, &target_b, true), 40 * 4);
-        }
-        served.commit_accepted(&accepted_a).unwrap();
-        fused.commit_accepted(&accepted_b).unwrap();
+                .filter(|line| symbol(line) == SERIAL)
+                .all(|line| grid(line) > FUSED_ROWS),
+            "{rows} rows"
+        );
+        let small: Vec<_> = before
+            .iter()
+            .filter(|line| symbol(line) == PARALLEL)
+            .collect();
+        assert!(
+            small.iter().all(|line| grid(line) <= FUSED_ROWS),
+            "{rows} rows"
+        );
+        fusions.windows.push(small.len());
+        let before: Vec<_> = before.iter().map(|line| symbol(line)).collect();
+        let target: Vec<_> = target_launches.iter().map(|line| symbol(line)).collect();
+        let fused = rows <= FUSED_ROWS;
+        assert_eq!(
+            fused_chains(&target, true),
+            if fused { 40 * 4 } else { 0 },
+            "{rows} rows"
+        );
+        // The drafter fuses its queries when its own rows fit; its window
+        // keeps its write.
+        let drafter = fused_chains(&before, false);
+        assert!(drafter == 0 || drafter == 3 * 4, "{rows} rows");
+        fusions.drafted += usize::from(drafter > 0);
+        instance.commit_accepted(&accepted).unwrap();
     }
-    for (host, instance) in [(&served_host, &mut served), (&fused_host, &mut fused)] {
-        for request in 1..=u64::from(items) {
-            instance.retire_request(request).unwrap();
-        }
-        instance.destroy().unwrap();
-        assert_eq!(host.acquired.get(), host.released.get());
+    for request in 1..=u64::from(items) {
+        instance.retire_request(request).unwrap();
     }
-    pairs
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
+    fusions
 }
 
-/// Checks that `fused` is `served` with each query norm and the query ceil
-/// after it replaced by one fused query norm and ceil and, with `window`,
-/// each window norm/RoPE, ceil and store by one fused window write, and
-/// returns the number of fused queries (with `window`, as many windows).
-fn fused_queries(served: &[String], fused: &[String], window: bool) -> usize {
+/// The fused query norms and ceils among `launches`, after checking that
+/// none of them also runs the query norm and, with `window`, that each runs
+/// one fused window write and no window norm/RoPE, ceil or store. Without
+/// any fused query every query runs the chain and no window fuses.
+fn fused_chains(launches: &[String], window: bool) -> usize {
     const QUERY_NORM: &str = "chop_deepseek41_q_norm_f32_v1";
-    const QUERY_CEIL: &str = "chop_deepseek41_dense_ceil_f32_w1280_parallel_v1";
     const FUSED_QUERY: &str = "chop_norm_quantize_deepseek41_query";
     const WINDOW: [&str; 3] = [
         "chop_deepseek41_latent_window_rope_v1",
@@ -499,60 +460,21 @@ fn fused_queries(served: &[String], fused: &[String], window: bool) -> usize {
         "chop_deepseek41_latent_window_store_v1",
     ];
     const FUSED_WINDOW: &str = "chop_deepseek41_window_fused_native_v1";
-    let count =
-        |launches: &[String], name: &str| launches.iter().filter(|s| s.starts_with(name)).count();
-    let queries = count(served, QUERY_NORM);
-    assert_eq!(count(fused, FUSED_QUERY), queries);
-    assert_eq!(count(fused, QUERY_NORM) + count(served, FUSED_QUERY), 0);
-    assert_eq!(
-        count(fused, QUERY_CEIL),
-        count(served, QUERY_CEIL) - queries
-    );
-    let windows = if window {
-        let windows = count(served, WINDOW[2]);
-        assert_eq!(windows, queries);
-        assert_eq!(count(fused, FUSED_WINDOW), windows);
-        for name in WINDOW {
-            assert_eq!(
-                (count(served, name), count(fused, name)),
-                (windows, 0),
-                "{name}"
-            );
-        }
-        windows
-    } else {
-        assert_eq!(count(fused, FUSED_WINDOW), 0);
-        0
-    };
-    assert_eq!(fused.len(), served.len() - queries - 2 * windows);
-    // The served sequence with each fused chain's launches folded into its
-    // first one, which the fused launch takes the place of.
-    let mut folded = Vec::with_capacity(fused.len());
-    let mut after_query = false;
-    for name in served {
-        if after_query && name == QUERY_CEIL {
-            after_query = false;
-            continue;
-        }
-        if window && (name == WINDOW[1] || name == WINDOW[2]) {
-            continue;
-        }
-        after_query |= name == QUERY_NORM;
-        folded.push(match name.as_str() {
-            QUERY_NORM => "query",
-            n if window && n == WINDOW[0] => "window",
-            n => n,
-        });
+    let count = |name: &str| launches.iter().filter(|s| s.starts_with(name)).count();
+    let queries = count(FUSED_QUERY);
+    if queries == 0 {
+        assert_eq!(count(FUSED_WINDOW), 0);
+        return 0;
     }
-    let renamed: Vec<_> = fused
-        .iter()
-        .map(|name| match name.as_str() {
-            n if n.starts_with(FUSED_QUERY) => "query",
-            FUSED_WINDOW => "window",
-            n => n,
-        })
-        .collect();
-    assert_eq!(folded, renamed);
+    assert_eq!(count(QUERY_NORM), 0);
+    if window {
+        assert_eq!(count(FUSED_WINDOW), queries);
+        for name in WINDOW {
+            assert_eq!(count(name), 0, "{name}");
+        }
+    } else {
+        assert_eq!(count(FUSED_WINDOW), 0);
+    }
     queries
 }
 

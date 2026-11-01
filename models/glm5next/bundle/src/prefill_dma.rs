@@ -39,9 +39,9 @@ pub(crate) fn requested(config: &Configuration) -> bool {
 
 #[cfg(test)]
 thread_local! {
-    // Existing journals exercise the legacy transport. The automatic policy
-    // has a separate full-program comparison against the qualified opt-in.
-    static IN_TESTS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(Some(false)) };
+    // Tests and route sweeps follow the served policy. The transport audits
+    // select the legacy collective or the DMA explicitly to compare them.
+    static IN_TESTS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
 #[cfg(test)]

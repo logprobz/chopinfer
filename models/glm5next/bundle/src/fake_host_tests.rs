@@ -276,6 +276,12 @@ impl FakeHost {
         // and the phased all-reduce's from their locks.
         let device = FakeDevice::default();
         *device.modelled.borrow_mut() = Some(crate::sm120::device::model(spinning_resources()));
+        // The ordered prefill DMA's owner sum launches without programmatic
+        // serialization, on every host whose configuration serves it.
+        device
+            .ordinary_symbols
+            .borrow_mut()
+            .insert(prefill_dma::SUM.into());
         Rc::new(Backend::new(Self {
             device,
             format,

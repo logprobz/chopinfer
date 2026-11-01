@@ -126,20 +126,6 @@ impl Lowering<'_> {
                 }
             }
         }
-        // With the router_prepare_fusion option the producer classifies its
-        // own rows and resets the ticket in place of the finish's prepare.
-        if point == Point::RouterPrepare
-            && op.router_spans(self.buffers.workspace)?.is_none()
-            && crate::Kernels::router_prepare_fusion(self.shape, phase.rows())
-            && partial
-                .as_ref()
-                .is_some_and(|p| crate::Kernels::router_classifies(&p.launch.symbol))
-            && let Some(producer) = partial
-        {
-            return crate::Kernels::classified_router(calls, producer)
-                .map(|router| Some(vec![router]))
-                .map_err(|e| format!("classifying router of layer {layer}: {e}"));
-        }
         calls.extend(partial);
         Ok(Some(calls))
     }

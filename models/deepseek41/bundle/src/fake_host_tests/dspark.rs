@@ -23,7 +23,6 @@ mod prefetch;
 mod results;
 mod retention;
 mod round_trips;
-mod router_prepare;
 mod undrafted;
 mod verify_rows;
 pub(super) use host::MappedHost;

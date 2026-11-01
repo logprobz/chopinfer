@@ -215,8 +215,6 @@ pub mod ring_gather;
 pub mod ring_gather_entries;
 #[allow(dead_code, reason = "the build script compiles the cubin specs")]
 mod routed_sum;
-pub mod router_classified;
-mod router_classified_serving;
 pub mod router_norm;
 pub mod router_norm_entries;
 pub(crate) mod router_prefill;
@@ -1033,8 +1031,7 @@ impl crate::Kernels {
     /// vision encoder's, which only an encoder instance loads. The exact F32
     /// row tiles load only where an instance admits them.
     /// Streamed MoE modules load only for the qualified topology, and the
-    /// quantizing attention merges and the classifying router producer
-    /// only with their candidate options.
+    /// quantizing attention merges only with their candidate option.
     pub fn loads(cubin: &str, shape: &crate::shape::Shape) -> bool {
         (![
             projection_reuse::HEAD_CUBIN,
@@ -1066,7 +1063,6 @@ impl crate::Kernels {
             && (!ceil_split::is_cubin(cubin) || ceil_split::serves(shape.geometry, shape.ranks()))
             && (cubin != query_window::CUBIN || query_window::serves(shape.geometry, shape.ranks()))
             && (cubin != latent_merge_ceil::CUBIN || Self::merge_ceil_serves(shape))
-            && (cubin != router_classified::CUBIN || Self::router_prepare_fusion(shape, 1))
             && cubin != acceptance_entries::CUBIN
             && cubin != allocate_entries::CUBIN
             && cubin != allocated_acceptance_entries::CUBIN

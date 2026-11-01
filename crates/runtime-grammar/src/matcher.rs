@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
 use crate::automaton::Automaton;
-use crate::expr::{Grammar, GrammarError};
+use crate::expr::{Grammar, GrammarError, TOKEN_ESCAPE};
 use crate::mask::{MaskCache, MaskKey, Scanner};
 use crate::stack::{Config, MAX_DEPTH};
 use crate::vocab::TokenVocabulary;
@@ -26,6 +26,9 @@ pub struct CompiledGrammar {
     compilation_usage: crate::CompileUsage,
     vocabulary: Arc<TokenVocabulary>,
     special: Box<[u32]>,
+    /// The tokens the grammar's token elements name, by identifier, each
+    /// with the bytes its element reads: these tokens match only there.
+    tokens: Box<[(u32, [u8; 2])]>,
     cache: MaskCache,
     max_call_growth: u32,
 }
@@ -41,6 +44,20 @@ impl CompiledGrammar {
             .collect::<Vec<_>>();
         special.sort_unstable();
         special.dedup();
+        let mut tokens = automaton
+            .tokens
+            .iter()
+            .enumerate()
+            .map(|(index, &id)| {
+                if id as usize >= vocabulary.size() {
+                    return Err(GrammarError::invalid(format!(
+                        "the grammar names token {id}, outside its vocabulary"
+                    )));
+                }
+                Ok((id, [TOKEN_ESCAPE, index as u8]))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        tokens.sort_unstable_by_key(|&(id, _)| id);
         let cache = MaskCache::new(&automaton, &vocabulary);
         let max_call_growth = automaton.max_call_growth();
         Ok(Self {
@@ -49,8 +66,24 @@ impl CompiledGrammar {
             automaton,
             vocabulary,
             special: special.into_boxed_slice(),
+            tokens: tokens.into_boxed_slice(),
             cache,
         })
+    }
+
+    /// Whether a token element of the grammar names `token_id`, so the token
+    /// matches only there.
+    #[must_use]
+    pub fn names_token(&self, token_id: u32) -> bool {
+        self.named(token_id).is_some()
+    }
+
+    /// The bytes the token element naming `token_id` reads.
+    fn named(&self, token_id: u32) -> Option<&[u8]> {
+        self.tokens
+            .binary_search_by_key(&token_id, |&(id, _)| id)
+            .ok()
+            .map(|index| &self.tokens[index].1[..])
     }
 
     /// Costs charged by automaton compilation, independent of tokenizer size.
@@ -157,6 +190,7 @@ impl CompiledGrammar {
         crate::heap::arc_bytes::<Self>()
             + self.automaton.retained_bytes()
             + crate::heap::vec_bytes::<u32>(self.special.len())
+            + crate::heap::vec_bytes::<(u32, [u8; 2])>(self.tokens.len())
             + self.cache.retained_bytes()
     }
 
@@ -223,6 +257,9 @@ impl GrammarMatcher {
     }
 
     fn token_bytes(&self, token_id: u32) -> Option<&[u8]> {
+        if let Some(bytes) = self.grammar.named(token_id) {
+            return Some(bytes);
+        }
         let vocabulary = &self.grammar.vocabulary;
         vocabulary.ordinary_bytes(token_id).or_else(|| {
             self.grammar
@@ -275,8 +312,15 @@ impl GrammarMatcher {
     }
 
     /// Advances over raw bytes; used by tests and callers that feed text.
+    /// Byte 0xFF, which no text holds, is refused, so bytes never fill a
+    /// token element.
     pub fn accept_bytes(&mut self, bytes: &[u8]) -> Result<(), GrammarError> {
         self.check()?;
+        if bytes.contains(&TOKEN_ESCAPE) {
+            return Err(GrammarError::invalid(
+                "bytes hold 0xFF, which no text holds",
+            ));
+        }
         let next = self.checked_config(self.config.step_bytes(&self.grammar.automaton, bytes))?;
         if next.is_dead() {
             return Err(GrammarError::invalid(
@@ -356,6 +400,15 @@ impl GrammarMatcher {
                 out[token as usize / 32] |= 1 << (token % 32);
             }
         }
+        // A named token matches only as its element, wherever its own bytes
+        // would fit.
+        for &(token, _) in grammar.tokens.iter() {
+            let bit = 1 << (token % 32);
+            out[token as usize / 32] &= !bit;
+            if self.accepts_token(token)? {
+                out[token as usize / 32] |= bit;
+            }
+        }
         Ok(())
     }
 }
@@ -378,6 +431,16 @@ struct Checkpoint {
     matcher: Config,
     gate: Option<Arc<[u32]>>,
     terminated: bool,
+}
+
+/// One run of the text a constraint's prefix holds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PrefixPart<'a> {
+    /// Text.
+    Text(&'a [u8]),
+    /// One token and its text: read as the token where a token element of
+    /// the grammar names it, and as its text otherwise.
+    Token(u32, &'a [u8]),
 }
 
 /// One request's constraint: an optional gate that must open first, the
@@ -419,8 +482,17 @@ impl ConstraintState {
     /// This constraint advanced over `bytes` the prompt ends with, which the
     /// completion continues: a forced tool choice's prefill. A gated
     /// constraint begins where its gate opens, so it takes no prefix.
-    pub fn with_prefix(mut self, bytes: &[u8]) -> Result<Self, GrammarError> {
-        if bytes.is_empty() {
+    pub fn with_prefix(self, bytes: &[u8]) -> Result<Self, GrammarError> {
+        self.with_prefix_parts(&[PrefixPart::Text(bytes)])
+    }
+
+    /// [`Self::with_prefix`] over a prefix whose `parts` include tokens of
+    /// the prompt, which a token element reads as the tokens they are.
+    pub fn with_prefix_parts(mut self, parts: &[PrefixPart<'_>]) -> Result<Self, GrammarError> {
+        if parts
+            .iter()
+            .all(|part| matches!(part, PrefixPart::Text(text) if text.is_empty()))
+        {
             return Ok(self);
         }
         if self.gate.is_some() {
@@ -428,7 +500,18 @@ impl ConstraintState {
                 "a gated constraint cannot take a prefix",
             ));
         }
-        self.matcher.accept_bytes(bytes)?;
+        for part in parts {
+            match *part {
+                PrefixPart::Token(id, _) if self.matcher.grammar.names_token(id) => {
+                    self.matcher.accept_token(id)?;
+                }
+                PrefixPart::Text(text) | PrefixPart::Token(_, text) => {
+                    if !text.is_empty() {
+                        self.matcher.accept_bytes(text)?;
+                    }
+                }
+            }
+        }
         Ok(self)
     }
 

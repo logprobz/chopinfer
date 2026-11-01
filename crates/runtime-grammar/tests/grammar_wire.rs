@@ -6,10 +6,10 @@ use std::sync::Arc;
 
 use common::{Rng, STOP, adversarial_vocabulary, allowed, compile};
 use runtime_grammar::{
-    CharClass, CompiledGrammar, ConstraintState, Expr, GRAMMAR_WIRE_LAYOUT_V1,
-    GRAMMAR_WIRE_NESTING_MAX_V1, Grammar, GrammarBuilder, GrammarError, JsonOptions, MAX_SCALAR,
-    RuleId, SchemaCompiler, TokenVocabulary, VocabularyToken, choice_grammar, json_object_grammar,
-    json_schema_grammar, regex_grammar,
+    CharClass, CompiledGrammar, ConstraintState, Expr, GRAMMAR_WIRE_LAYOUT_TOKENS_V1,
+    GRAMMAR_WIRE_LAYOUT_V1, GRAMMAR_WIRE_NESTING_MAX_V1, Grammar, GrammarBuilder, GrammarError,
+    JsonOptions, MAX_SCALAR, RuleId, SchemaCompiler, TokenVocabulary, VocabularyToken,
+    choice_grammar, json_object_grammar, json_schema_grammar, regex_grammar,
 };
 use serde_json::{Value, json};
 
@@ -462,7 +462,7 @@ fn decoding_refuses_malformed_documents() {
     let mut magic = valid.clone();
     magic[0] = b'X';
     assert!(invalid(&magic).contains("not a grammar wire document"));
-    for layout in [0, GRAMMAR_WIRE_LAYOUT_V1 + 1] {
+    for layout in [0, GRAMMAR_WIRE_LAYOUT_TOKENS_V1 + 1] {
         let mut other = valid.clone();
         other[8..12].copy_from_slice(&layout.to_le_bytes());
         match Grammar::decode_wire(&other) {
@@ -673,4 +673,40 @@ fn local_grammars_that_compile_decode_and_compile_alike() {
         });
         assert_eq!(masks[0], masks[1], "{name}");
     }
+}
+
+/// A grammar with a token element is a layout-2 document that decodes to
+/// the same grammar, and its token kind is refused in a layout-1 document;
+/// a grammar without one is written as layout 1.
+#[test]
+fn a_token_element_is_written_as_layout_two() {
+    let grammar = Grammar::from_expr(Expr::seq([
+        Expr::literal("<"),
+        Expr::Token(7),
+        Expr::literal(">"),
+    ]));
+    assert_eq!(grammar.named_tokens(), [7]);
+    let encoded = grammar.encode_wire();
+    assert_eq!(encoded[8..12], GRAMMAR_WIRE_LAYOUT_TOKENS_V1.to_le_bytes());
+    assert_eq!(Grammar::decode_wire(&encoded).unwrap(), grammar);
+    for cut in 0..encoded.len() {
+        assert!(Grammar::decode_wire(&encoded[..cut]).is_err(), "{cut}");
+    }
+    let mut token = vec![11];
+    token.extend_from_slice(&7_u32.to_le_bytes());
+    let layout_one = document(0, &[token.clone()], &[]);
+    assert!(invalid(&layout_one).contains("unknown expression kind 11"));
+    let mut layout_two = layout_one;
+    layout_two[8..12].copy_from_slice(&GRAMMAR_WIRE_LAYOUT_TOKENS_V1.to_le_bytes());
+    assert_eq!(
+        Grammar::decode_wire(&layout_two).unwrap(),
+        Grammar::from_expr(Expr::Token(7))
+    );
+    let plain = tool_grammar();
+    assert!(plain.named_tokens().is_empty());
+    let mut encoded = plain.encode_wire();
+    assert_eq!(encoded[8..12], GRAMMAR_WIRE_LAYOUT_V1.to_le_bytes());
+    // Each grammar has one encoding: layout 2 only with a token element.
+    encoded[8..12].copy_from_slice(&GRAMMAR_WIRE_LAYOUT_TOKENS_V1.to_le_bytes());
+    assert!(invalid(&encoded).contains("a layout-2 document names no token"));
 }

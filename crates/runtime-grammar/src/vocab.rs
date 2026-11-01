@@ -4,7 +4,7 @@
 //! records where its subtree ends, so a scan that rejects a prefix skips every
 //! token under it in one step.
 
-use crate::expr::GrammarError;
+use crate::expr::{GrammarError, TOKEN_ESCAPE};
 
 /// One vocabulary entry as the tokenizer decodes it.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -69,7 +69,9 @@ impl TokenVocabulary {
 
     /// Builds the trie for a vocabulary `size` wide; `tokens[id]` describes
     /// token `id`, and identifiers past `tokens` (logits padding) have no
-    /// bytes.
+    /// bytes. A token holding byte 0xFF, which no UTF-8 text holds, never
+    /// matches grammar bytes, so only a token element reads the escape its
+    /// element is written with.
     pub fn new(size: usize, tokens: Vec<VocabularyToken>) -> Result<Self, GrammarError> {
         if tokens.len() > size || size == 0 || u32::try_from(size).is_err() {
             return Err(GrammarError::invalid(
@@ -83,7 +85,7 @@ impl TokenVocabulary {
         let mut whitespace_prefixes = Vec::new();
         for (id, token) in tokens.into_iter().enumerate() {
             let id = id as u32;
-            if token.bytes.is_empty() {
+            if token.bytes.is_empty() || token.bytes.contains(&TOKEN_ESCAPE) {
                 bytes.push(None);
             } else if token.special {
                 special.push((id, token.bytes.into_boxed_slice()));
@@ -254,5 +256,32 @@ mod tests {
         assert_eq!(vocabulary.ordinary_bytes(6), None);
         assert_eq!(vocabulary.special_bytes(6), Some(&b"<s>"[..]));
         assert_eq!(vocabulary.mask_words(), 1);
+    }
+
+    /// A token holding byte 0xFF, ordinary or special, is in no trie node,
+    /// has no bytes to match, and leaves the depth bound alone.
+    #[test]
+    fn a_token_holding_the_escape_byte_never_matches() {
+        let tokens = vec![
+            token("a"),
+            VocabularyToken {
+                bytes: vec![b'a', TOKEN_ESCAPE, b'b'],
+                special: false,
+            },
+            VocabularyToken {
+                bytes: vec![TOKEN_ESCAPE],
+                special: false,
+            },
+            VocabularyToken {
+                bytes: vec![TOKEN_ESCAPE, 0],
+                special: true,
+            },
+        ];
+        let vocabulary = TokenVocabulary::new(4, tokens).unwrap();
+        assert_eq!(vocabulary.node_tokens, [0]);
+        assert_eq!(vocabulary.ordinary_bytes(1), None);
+        assert_eq!(vocabulary.ordinary_bytes(2), None);
+        assert_eq!(vocabulary.special_bytes(3), None);
+        assert_eq!(vocabulary.max_depth, 1);
     }
 }

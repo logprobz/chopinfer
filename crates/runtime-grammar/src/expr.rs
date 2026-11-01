@@ -137,7 +137,21 @@ pub enum Expr {
         tail: Option<Box<Expr>>,
         separator: Box<Expr>,
     },
+    /// The vocabulary token with this identifier, read by its identifier:
+    /// ordinary tokens that spell its text never match here, and in a
+    /// grammar that names it the token matches nowhere else. This is how a
+    /// marker a parser reads only as one token is written. A grammar names
+    /// at most [`GRAMMAR_TOKENS_MAX`] distinct tokens.
+    Token(u32),
 }
+
+/// Most distinct tokens one grammar's [`Expr::Token`] elements name.
+pub const GRAMMAR_TOKENS_MAX: usize = 256;
+
+/// The byte a token element reads before its index among the grammar's
+/// named tokens. UTF-8 never holds it, so no token that grammar text admits
+/// holds it either, and a literal may not.
+pub(crate) const TOKEN_ESCAPE: u8 = 0xFF;
 
 impl Expr {
     #[must_use]
@@ -263,7 +277,7 @@ impl Grammar {
         let mut pending = self.rules.iter().collect::<Vec<_>>();
         while let Some(expr) = pending.pop() {
             bytes += match expr {
-                Expr::Empty | Expr::Nothing | Expr::Rule(_) => 0,
+                Expr::Empty | Expr::Nothing | Expr::Rule(_) | Expr::Token(_) => 0,
                 Expr::Literal(bytes) => bytes.capacity(),
                 Expr::Class(class) => vec_bytes::<(u32, u32)>(class.ranges.capacity()),
                 Expr::Seq(items) | Expr::Alt(items) => {
@@ -292,6 +306,40 @@ impl Grammar {
             };
         }
         bytes
+    }
+
+    /// The tokens this grammar's token elements ([`Expr::Token`]) name,
+    /// ascending and once each.
+    #[must_use]
+    pub fn named_tokens(&self) -> Vec<u32> {
+        let mut named = Vec::new();
+        let mut pending = self.rules.iter().collect::<Vec<_>>();
+        while let Some(expr) = pending.pop() {
+            match expr {
+                Expr::Token(id) => named.push(*id),
+                Expr::Seq(items) | Expr::Alt(items) => pending.extend(items),
+                Expr::Repeat { expr, .. } => pending.push(expr),
+                Expr::OrderedSubset {
+                    items,
+                    tail,
+                    separator,
+                } => {
+                    pending.extend(items.iter().map(|(item, _)| item));
+                    pending.extend(tail.as_deref());
+                    pending.push(separator);
+                }
+                Expr::Empty
+                | Expr::Nothing
+                | Expr::Literal(_)
+                | Expr::Class(_)
+                | Expr::Rule(_)
+                | Expr::TextExcluding(_)
+                | Expr::TextUntil { .. } => {}
+            }
+        }
+        named.sort_unstable();
+        named.dedup();
+        named
     }
 
     /// The text of special tokens this grammar admits wherever their bytes

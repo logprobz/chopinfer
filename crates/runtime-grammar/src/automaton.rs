@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 
 use crate::budget::Budget;
-use crate::expr::{Expr, Grammar, GrammarError, RuleId};
+use crate::expr::{Expr, GRAMMAR_TOKENS_MAX, Grammar, GrammarError, RuleId, TOKEN_ESCAPE};
 use crate::utf8::scalar_range_sequences;
 
 /// No state: the input so far matches nothing.
@@ -44,6 +44,9 @@ pub(crate) struct Automaton {
     pub(crate) rules: Vec<CompiledRule>,
     pub(crate) root: u32,
     whitespace: Vec<Option<(u32, usize)>>,
+    /// The tokens the grammar's token elements name, by the index each
+    /// element reads after [`TOKEN_ESCAPE`].
+    pub(crate) tokens: Vec<u32>,
 }
 
 impl Automaton {
@@ -62,6 +65,7 @@ impl Automaton {
             + vec_bytes::<CompiledRule>(self.rules.capacity())
             + self.rules.len() * 256
             + vec_bytes::<Option<(u32, usize)>>(self.whitespace.capacity())
+            + vec_bytes::<u32>(self.tokens.capacity())
     }
 
     #[inline]
@@ -300,11 +304,13 @@ impl Automaton {
             expanding: Vec::new(),
             expanded: HashMap::new(),
             optional: HashMap::new(),
+            tokens: Vec::new(),
         };
         let mut nfas = Vec::with_capacity(order.len());
         for &id in &order {
             nfas.push(builder.build_rule(id)?);
         }
+        let tokens = builder.tokens;
         let nfa = builder.states;
         let mut states = Vec::new();
         let mut rules = Vec::with_capacity(order.len());
@@ -319,6 +325,7 @@ impl Automaton {
             rules,
             root: 0,
             whitespace: Vec::new(),
+            tokens,
         };
         // Reserve work for partition refinement and its predecessor scans.
         budget.charge(
@@ -605,7 +612,8 @@ fn collect_references(
         | Expr::Literal(_)
         | Expr::Class(_)
         | Expr::TextExcluding(_)
-        | Expr::TextUntil { .. } => {}
+        | Expr::TextUntil { .. }
+        | Expr::Token(_) => {}
     }
     Ok(())
 }
@@ -639,6 +647,8 @@ struct NfaBuilder<'a> {
     /// continue to, `optional[j]` starts up to `j` more of them; with the
     /// unshared count of one of them.
     optional: HashMap<(&'a Expr, u32), (Vec<u32>, Unshared)>,
+    /// The tokens token elements name so far, in the order first named.
+    tokens: Vec<u32>,
 }
 
 /// The states the construction that builds every use of an expression
@@ -738,15 +748,29 @@ impl<'a> NfaBuilder<'a> {
             Expr::Empty => Ok((next, Unshared::new(1, true))),
             Expr::Nothing => Ok((self.add()?, Unshared::new(1, false))),
             Expr::Literal(bytes) => {
-                let mut current = next;
-                for &byte in bytes.iter().rev() {
-                    let state = self.add()?;
-                    self.states[state as usize]
-                        .bytes
-                        .push((byte, byte, current));
-                    current = state;
+                if bytes.contains(&TOKEN_ESCAPE) {
+                    return Err(GrammarError::invalid(
+                        "a literal holds byte 0xFF, which no UTF-8 text holds",
+                    ));
                 }
-                Ok((current, Unshared::new(bytes.len() + 1, true)))
+                self.literal(bytes, next)
+            }
+            // A token element reads the escape byte and the token's index,
+            // which only the named token supplies (`CompiledGrammar`).
+            Expr::Token(id) => {
+                let index = match self.tokens.iter().position(|token| token == id) {
+                    Some(index) => index,
+                    None if self.tokens.len() < GRAMMAR_TOKENS_MAX => {
+                        self.tokens.push(*id);
+                        self.tokens.len() - 1
+                    }
+                    None => {
+                        return Err(GrammarError::too_large(format!(
+                            "a grammar names more than {GRAMMAR_TOKENS_MAX} tokens"
+                        )));
+                    }
+                };
+                self.literal(&[TOKEN_ESCAPE, index as u8], next)
             }
             Expr::Class(class) => {
                 let first = self.states.len();
@@ -866,6 +890,19 @@ impl<'a> NfaBuilder<'a> {
                 separator,
             } => self.ordered_subset(items, tail.as_deref(), separator, next),
         }
+    }
+
+    /// The start of `bytes` continuing to `next`.
+    fn literal(&mut self, bytes: &[u8], next: u32) -> Result<(u32, Unshared), GrammarError> {
+        let mut current = next;
+        for &byte in bytes.iter().rev() {
+            let state = self.add()?;
+            self.states[state as usize]
+                .bytes
+                .push((byte, byte, current));
+            current = state;
+        }
+        Ok((current, Unshared::new(bytes.len() + 1, true)))
     }
 
     /// A state that admits up to `count` copies of `expr` and then continues
@@ -1539,7 +1576,8 @@ mod tests {
         let empty = || Words::from([Vec::new()]);
         match expr {
             Expr::Empty => empty(),
-            Expr::Nothing => Words::new(),
+            // The generated grammars name no tokens.
+            Expr::Nothing | Expr::Token(_) => Words::new(),
             Expr::Literal(bytes) => Words::from_iter((bytes.len() <= limit).then(|| bytes.clone())),
             Expr::Class(class) => (0..=127_u8)
                 .filter(|&byte| limit > 0 && class.contains(u32::from(byte)))

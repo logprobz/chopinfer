@@ -289,6 +289,8 @@ impl Budget {
                 Expr::Literal(bytes) => {
                     self.expression_charge(bytes.len() * copies, bytes.len() * 2 * copies)?
                 }
+                // Built as a two-byte literal.
+                Expr::Token(_) => self.expression_charge(2 * copies, 4 * copies)?,
                 Expr::Class(class) => self.expression_charge(
                     class.ranges().len() * copies,
                     class.ranges().len() * 16 * copies,

@@ -419,8 +419,6 @@ pub(crate) mod tests {
             (WIDE_DRAFT, true.into()),
             (F32_ROW_TILES, true.into()),
             (PHASED_DECODE_REDUCE, true.into()),
-            (MOE_DIRECT_STREAM, true.into()),
-            (MOE_DIRECT_RETIRE, true.into()),
             (DSPARK_HC_DRAFT_ROWS, true.into()),
             (DSPARK_MOE_DIRECT, true.into()),
             (DSPARK_CONFIDENCE_STAGED, true.into()),
@@ -441,11 +439,6 @@ pub(crate) mod tests {
                 wide_draft: true,
                 f32_row_tiles: true,
                 phased_decode_reduce: true,
-                moe_direct: MoeDirect {
-                    stream: true,
-                    retire: true,
-                    ..MoeDirect::default()
-                },
                 dspark_hc_draft_rows: true,
                 dspark_moe_direct: true,
                 dspark_confidence_staged: true,

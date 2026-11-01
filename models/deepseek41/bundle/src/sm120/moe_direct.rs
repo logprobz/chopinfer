@@ -107,7 +107,7 @@ fn prepare_set_from(
     .map_err(Refused::Rule)?;
     let maximum_rows =
         shape.verify_rows_within(model_deepseek41_contract::verify_bounds::MOE_DIRECT);
-    let options = knobs_of(shape, set);
+    let knobs = takes_knobs_bank(shape, set);
     let wide = wide_rows(shape, set);
     let wide_entry = if wide.is_empty() {
         None
@@ -129,7 +129,7 @@ fn prepare_set_from(
                     super::moe_router_finish::qualified(set, phase, rows) || wide,
                     super::moe_router_finish::r2(set, phase, rows) || wide,
                     &tiles,
-                    options.map(|options| (source, options)),
+                    knobs.then_some(source),
                 )?,
             ))
         });
@@ -138,38 +138,21 @@ fn prepare_set_from(
         Ok((
             ExecutionPhase::Verify,
             rows,
-            prepare_wide(
-                entry,
-                rows,
-                scaling,
-                union(
-                    wide_knobs(source, shape, set, rows),
-                    options.expect("wide rows serve the row-tiled backbone bank"),
-                ),
-            )?,
+            prepare_wide(entry, rows, scaling, wide_knobs(source, shape, set, rows))?,
         ))
     });
     narrow.chain(wide).collect()
 }
 
-/// The direct MoE candidate knobs `set` takes beside the tuning table's
-/// (`path_knobs`, `wide_knobs`): the shape's (`moe_direct_*` options) for
-/// the backbone bank with its gate/up bank in quad-lane row tiles, and
-/// `None` for every other bank, which takes no knobs.
-fn knobs_of(shape: &crate::shape::Shape, set: Experts) -> Option<Knobs> {
+/// Whether `set` takes the tuning table's knobs (`path_knobs`,
+/// `wide_knobs`): the backbone bank with its gate/up bank in quad-lane row
+/// tiles, whose absorbing gate queue the knob entries replace. Every other
+/// bank takes none.
+fn takes_knobs_bank(shape: &crate::shape::Shape, set: Experts) -> bool {
     let g = shape.geometry;
-    (set == model_deepseek41_contract::moe::expert_sets(g)[0]
+    set == model_deepseek41_contract::moe::expert_sets(g)[0]
         && super::moe_row_tiles_op::layout(g, shape.ranks(), set)
-            == model_deepseek41_contract::weight_plan::RoutedLayout::Lanes)
-        .then(|| {
-            let options = shape.moe_knobs;
-            Knobs {
-                stream: options.stream,
-                keep: options.keep,
-                retire: options.retire,
-                loads: options.loads,
-            }
-        })
+            == model_deepseek41_contract::weight_plan::RoutedLayout::Lanes
 }
 
 /// The knobs a tuning row sets (`moe.absorb`, `moe.wide` and
@@ -235,16 +218,6 @@ fn wide_knobs(source: KnobSource, shape: &crate::shape::Shape, set: Experts, row
     .expect("wide direct bucket row")
 }
 
-/// Every knob either set sets.
-fn union(a: Knobs, b: Knobs) -> Knobs {
-    Knobs {
-        stream: a.stream || b.stream,
-        keep: a.keep || b.keep,
-        retire: a.retire || b.retire,
-        loads: a.loads || b.loads,
-    }
-}
-
 /// Whether a knob set launches a knob module's entries: loads alone takes
 /// the served all-loads-first finisher.
 fn launches_knob_entries(k: Knobs) -> bool {
@@ -258,19 +231,13 @@ fn launches_knob_entries(k: Knobs) -> bool {
 pub(crate) fn takes_knobs(shape: &crate::shape::Shape, wide: bool) -> bool {
     let g = shape.geometry;
     let set = model_deepseek41_contract::moe::expert_sets(g)[0];
-    let Some(options) = knobs_of(shape, set) else {
-        return false;
-    };
-    if !super::moe::streamed_qualified(g, shape.ranks()) {
+    if !takes_knobs_bank(shape, set) || !super::moe::streamed_qualified(g, shape.ranks()) {
         return false;
     }
     if wide {
-        return wide_rows(shape, set).into_iter().any(|rows| {
-            launches_knob_entries(union(
-                wide_knobs(KnobSource::Table, shape, set, rows),
-                options,
-            ))
-        });
+        return wide_rows(shape, set)
+            .into_iter()
+            .any(|rows| launches_knob_entries(wide_knobs(KnobSource::Table, shape, set, rows)));
     }
     let maximum_rows =
         shape.verify_rows_within(model_deepseek41_contract::verify_bounds::MOE_DIRECT);
@@ -280,15 +247,12 @@ pub(crate) fn takes_knobs(shape: &crate::shape::Shape, wide: bool) -> bool {
             let wide = super::moe_router_finish::wide(set, phase, rows, maximum_rows);
             let fused_router = super::moe_router_finish::qualified(set, phase, rows) || wide;
             absorbing_path(set.count, phase, rows, fused_router)
-                && launches_knob_entries(union(
-                    path_knobs(
-                        KnobSource::Table,
-                        set.count,
-                        phase,
-                        rows,
-                        fused_router && stage_selected("wide", set.count, phase, rows),
-                    ),
-                    options,
+                && launches_knob_entries(path_knobs(
+                    KnobSource::Table,
+                    set.count,
+                    phase,
+                    rows,
+                    fused_router && stage_selected("wide", set.count, phase, rows),
                 ))
         })
 }
@@ -413,8 +377,8 @@ pub(crate) fn wide_route_tags(shape: &crate::shape::Shape) -> Vec<kernel_core::r
 /// of this op. Its queues read encoded scale banks in place, so no scale
 /// expansion precedes them.
 ///
-/// Under knobs (the tuning table's `wide_knobs` and the options'
-/// `knobs_of`) each launch is its knob entry
+/// Under the tuning table's knobs (`wide_knobs`) each launch is its knob
+/// entry
 /// (`kernels_sm120::moe::chained::knobs`).
 fn prepare_wide(wide: &Entry, rows: u32, scaling: u32, k: Knobs) -> Result<Prepared, Refused> {
     use kernels_sm120::moe::chained::wide as queues;
@@ -528,21 +492,20 @@ fn prepare(
     fused_router: bool,
     r2: bool,
     tiles: &std::collections::BTreeMap<String, kernel_build::EntrySpec>,
-    options: Option<(KnobSource, Knobs)>,
+    source: Option<KnobSource>,
 ) -> Result<Prepared, Refused> {
     let wide = fused_router && stage_selected("wide", entry.experts(), phase, rows);
     let absorb_queues = absorbs(entry, phase, rows) || wide;
     let strip2_down = strips2(entry, phase, rows) || wide;
-    // The knob candidates replace the absorbing path's launches only.
+    // The knob entries replace the absorbing path's launches only.
     debug_assert_eq!(
         absorb_queues && strip2_down,
         absorbing_path(entry.experts(), phase, rows, fused_router)
     );
-    let knobs = match options {
-        Some((source, options)) if absorb_queues && strip2_down => union(
-            path_knobs(source, entry.experts(), phase, rows, wide),
-            options,
-        ),
+    let knobs = match source {
+        Some(source) if absorb_queues && strip2_down => {
+            path_knobs(source, entry.experts(), phase, rows, wide)
+        }
         _ => Knobs::default(),
     };
     let scratch = entry.workspace_bytes(rows)?;
@@ -692,7 +655,7 @@ fn prepare(
                 spec.symbol
             )));
         }
-        // Each knob candidate keeps its served launch's plan.
+        // Each knob entry keeps its knob-free launch's plan.
         if !knobs.served() {
             match stage {
                 Some(Stage::GateSmall) => {
@@ -887,12 +850,10 @@ mod tests {
     /// launches at the backbone's 32- to 64-row buckets with its knob
     /// entries, each with its knob-free launch's plan and bindings; every
     /// other launch and bucket, the wide verify buckets included, keeps its
-    /// entry. No `moe_direct_*` option changes a launch at those buckets
-    /// beside the table's set.
+    /// entry.
     #[test]
     fn table_knobs_replace_only_the_absorbing_launches() {
         use kernel_core::contract::Argument;
-        use model_deepseek41_contract::execution_options::MoeDirect;
         let base = crate::shape::Shape::new(&FLASH, Ranks::TP4)
             .unwrap()
             .with_verify_rows(192)
@@ -938,11 +899,6 @@ mod tests {
                 (l.symbol, l.plan, args)
             })
             .collect::<Vec<_>>()
-        };
-        let all = |ops: &[(ExecutionPhase, u32, Prepared)]| {
-            ops.iter()
-                .map(|(phase, rows, op)| (*phase, *rows, lowered(op)))
-                .collect::<Vec<_>>()
         };
         for set in model_deepseek41_contract::moe::expert_sets(&FLASH) {
             let served = prepare_set(&base, set).unwrap();
@@ -996,21 +952,6 @@ mod tests {
             }
             // 32 rows of both phases and 64 verify rows.
             assert_eq!(absorbing > 0, set.count == 384);
-            let narrow = |ops: &[(ExecutionPhase, u32, Prepared)]| {
-                let mut all = all(ops);
-                all.retain(|(_, rows, _)| *rows <= 64);
-                all
-            };
-            for bits in 1..16u32 {
-                let option = MoeDirect {
-                    stream: bits & 1 != 0,
-                    keep: bits & 2 != 0,
-                    retire: bits & 4 != 0,
-                    loads: bits & 8 != 0,
-                };
-                let ops = prepare_set(&base.with_moe_knobs(option), set).unwrap();
-                assert_eq!(narrow(&ops), narrow(&served), "{option:?}");
-            }
         }
     }
 

@@ -27,18 +27,6 @@ pub const F32_ROW_TILES: &str = "f32_row_tiles";
 /// Candidate: Flash TP4 decode and verify all-reduces whose round no HC
 /// boundary defers take the phased F32 rounding entries.
 pub const PHASED_DECODE_REDUCE: &str = "phased_decode_reduce";
-/// Candidate: the Flash TP4 direct MoE's absorbing queues stream their weight codes
-/// past L1 with an L2 evict_first policy.
-pub const MOE_DIRECT_STREAM: &str = "moe_direct_stream";
-/// Candidate: the direct MoE's absorbing queues store their K-block
-/// partials with an L2 evict_last policy.
-pub const MOE_DIRECT_KEEP: &str = "moe_direct_keep";
-/// Candidate: the direct MoE's finishers discard each partial line from L2
-/// once read.
-pub const MOE_DIRECT_RETIRE: &str = "moe_direct_retire";
-/// Candidate: the direct MoE's gate finisher issues every partial load
-/// before its first add (`kernels_sm120::moe::chained::knobs`).
-pub const MOE_DIRECT_LOADS: &str = "moe_direct_loads";
 /// Candidate: DSpark drafter Markov steps of two or more items load each
 /// thread's rank-256 weight chain into registers before the dependency
 /// wait and read each position's base logits in place, so no row copy
@@ -79,7 +67,6 @@ pub struct Options {
     pub wide_draft: bool,
     pub f32_row_tiles: bool,
     pub phased_decode_reduce: bool,
-    pub moe_direct: MoeDirect,
     pub dspark_markov_staged: bool,
     pub dspark_hc_fusion: bool,
     pub dspark_confidence_staged: bool,
@@ -87,15 +74,7 @@ pub struct Options {
     pub dspark_hc_draft_rows: bool,
 }
 
-/// The direct MoE candidate knobs; all off serves the qualified path.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct MoeDirect {
-    pub stream: bool,
-    pub keep: bool,
-    pub retire: bool,
-    pub loads: bool,
-}
-pub fn declarations() -> [ModelOptionV1; 18] {
+pub fn declarations() -> [ModelOptionV1; 14] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -131,22 +110,6 @@ pub fn declarations() -> [ModelOptionV1; 18] {
         ),
         (
             F32_ROW_TILES,
-            OptionDefinitionV1::Boolean { default: false },
-        ),
-        (
-            MOE_DIRECT_KEEP,
-            OptionDefinitionV1::Boolean { default: false },
-        ),
-        (
-            MOE_DIRECT_LOADS,
-            OptionDefinitionV1::Boolean { default: false },
-        ),
-        (
-            MOE_DIRECT_RETIRE,
-            OptionDefinitionV1::Boolean { default: false },
-        ),
-        (
-            MOE_DIRECT_STREAM,
             OptionDefinitionV1::Boolean { default: false },
         ),
         (
@@ -227,12 +190,6 @@ impl Options {
             wide_draft,
             f32_row_tiles: flag(F32_ROW_TILES),
             phased_decode_reduce: flag(PHASED_DECODE_REDUCE),
-            moe_direct: MoeDirect {
-                stream: flag(MOE_DIRECT_STREAM),
-                keep: flag(MOE_DIRECT_KEEP),
-                retire: flag(MOE_DIRECT_RETIRE),
-                loads: flag(MOE_DIRECT_LOADS),
-            },
             dspark_hc_draft_rows: flag(DSPARK_HC_DRAFT_ROWS),
             dspark_moe_direct: flag(DSPARK_MOE_DIRECT),
             dspark_confidence_staged: flag(DSPARK_CONFIDENCE_STAGED),
@@ -259,6 +216,23 @@ mod tests {
         for value in ["false", "true"] {
             let options = BTreeMap::from([("dspark_main_compact".into(), value.into())]);
             assert!(declaration().resolve(&options).is_err());
+        }
+    }
+
+    /// The direct MoE knob set is served from the tuning table; its four
+    /// candidate options are gone.
+    #[test]
+    fn removed_moe_direct_options_are_rejected() {
+        for name in [
+            "moe_direct_keep",
+            "moe_direct_loads",
+            "moe_direct_retire",
+            "moe_direct_stream",
+        ] {
+            for value in ["false", "true"] {
+                let options = BTreeMap::from([(name.into(), value.into())]);
+                assert!(declaration().resolve(&options).is_err(), "{name}={value}");
+            }
         }
     }
 
@@ -300,7 +274,6 @@ mod tests {
             wide_draft: false,
             f32_row_tiles: false,
             phased_decode_reduce: false,
-            moe_direct: MoeDirect::default(),
             dspark_hc_draft_rows: false,
             dspark_moe_direct: false,
             dspark_confidence_staged: false,
@@ -325,10 +298,6 @@ mod tests {
             (WIDE_DRAFT.into(), "true".into()),
             (F32_ROW_TILES.into(), "true".into()),
             (PHASED_DECODE_REDUCE.into(), "true".into()),
-            (MOE_DIRECT_STREAM.into(), "true".into()),
-            (MOE_DIRECT_KEEP.into(), "true".into()),
-            (MOE_DIRECT_RETIRE.into(), "true".into()),
-            (MOE_DIRECT_LOADS.into(), "true".into()),
             (DSPARK_HC_DRAFT_ROWS.into(), "true".into()),
             (DSPARK_MOE_DIRECT.into(), "true".into()),
             (DSPARK_CONFIDENCE_STAGED.into(), "true".into()),
@@ -348,12 +317,6 @@ mod tests {
                 wide_draft: true,
                 f32_row_tiles: true,
                 phased_decode_reduce: true,
-                moe_direct: MoeDirect {
-                    stream: true,
-                    keep: true,
-                    retire: true,
-                    loads: true,
-                },
                 dspark_hc_draft_rows: true,
                 dspark_moe_direct: true,
                 dspark_confidence_staged: true,
@@ -362,21 +325,6 @@ mod tests {
             }
         );
         assert!(!declaration.is_qualified(&resolved));
-        for name in [
-            MOE_DIRECT_STREAM,
-            MOE_DIRECT_KEEP,
-            MOE_DIRECT_RETIRE,
-            MOE_DIRECT_LOADS,
-        ] {
-            let one = declaration
-                .resolve(&BTreeMap::from([(name.into(), "true".into())]))
-                .unwrap();
-            assert!(!declaration.is_qualified(&one));
-            assert_ne!(
-                Options::read(&one).unwrap().moe_direct,
-                MoeDirect::default()
-            );
-        }
     }
 
     #[test]
@@ -394,10 +342,6 @@ mod tests {
             (WIDE_DRAFT, "1"),
             (F32_ROW_TILES, "1"),
             (PHASED_DECODE_REDUCE, "1"),
-            (MOE_DIRECT_STREAM, "\"true\""),
-            (MOE_DIRECT_KEEP, "0"),
-            (MOE_DIRECT_RETIRE, "1"),
-            (MOE_DIRECT_LOADS, "1"),
             (DSPARK_HC_DRAFT_ROWS, "1"),
             (DSPARK_MOE_DIRECT, "1"),
             (DSPARK_CONFIDENCE_STAGED, "1"),

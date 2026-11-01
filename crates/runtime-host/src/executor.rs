@@ -14,6 +14,7 @@ use runtime_bundle_abi::device_results::{
 use runtime_engine::AcceptedPrefix;
 pub use submission::PendingBundleExecutionV1;
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -710,11 +711,11 @@ impl LogitsRowSinkV1 for CollectingSinkV1<'_> {
             .any(|item| !item.prompt_targets().is_empty())
         {
             self.collect_pending()?;
-            let mut owned = Vec::new();
+            let mut row_items = Vec::new();
             for item in self.expected {
                 for (index, target) in item.prompt_targets().iter().copied().enumerate() {
-                    owned.push((
-                        item.clone(),
+                    row_items.push((
+                        Cow::Borrowed(item),
                         target,
                         true,
                         item.expects_logits() && index + 1 == item.prompt_targets().len(),
@@ -737,24 +738,26 @@ impl LogitsRowSinkV1 for CollectingSinkV1<'_> {
                     };
                     for row in 0..item.draft().map_or(1, |draft| draft.tokens() + 1) {
                         let expanded = if let Some(drafts) = draft_tokens {
-                            item.clone().with_sampling(
-                                item.sampling()
-                                    .ok_or_else(|| {
-                                        refused(
-                                            BundleStatusV1::InvalidArgument,
-                                            "a verify row without sampling parameters",
-                                        )
-                                    })?
-                                    .for_verify_row(drafts, row),
+                            Cow::Owned(
+                                item.clone().with_sampling(
+                                    item.sampling()
+                                        .ok_or_else(|| {
+                                            refused(
+                                                BundleStatusV1::InvalidArgument,
+                                                "a verify row without sampling parameters",
+                                            )
+                                        })?
+                                        .for_verify_row(drafts, row),
+                                ),
                             )
                         } else {
-                            item.clone()
+                            Cow::Borrowed(item)
                         };
-                        owned.push((expanded, None, false, true));
+                        row_items.push((expanded, None, false, true));
                     }
                 }
             }
-            let expected = owned
+            let expected = row_items
                 .iter()
                 .map(|(item, target, prompt, output)| DevicePromptRowV1 {
                     item,

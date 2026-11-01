@@ -53,6 +53,7 @@
 //! product into its subtraction and report `STATUS_MALFORMED`, which the
 //! served entries never write.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, VecDeque};
 
 use crate::sampling_records::decode_output;
@@ -658,7 +659,7 @@ impl DeviceSamplingSession {
                 let parameters = SamplingParameters::new(0.0)
                     .and_then(|settings| settings.with_top_logprobs(row.item.prompt_top_logprobs()))
                     .map_err(|_| BundleStatusV1::InvalidArgument)?;
-                scoring_items.push(
+                scoring_items.push(Cow::Owned(
                     ModelBatchItem::new(row.item.request_id(), row.item.phase(), Vec::new(), true)
                         .with_sampling(SamplingWork {
                             parameters,
@@ -668,12 +669,12 @@ impl DeviceSamplingSession {
                             stop_ids: Vec::new(),
                             constraint: None,
                         }),
-                );
+                ));
             } else {
-                scoring_items.push(row.item.clone());
+                scoring_items.push(Cow::Borrowed(row.item));
             }
         }
-        let scoring_refs = scoring_items.iter().collect::<Vec<_>>();
+        let scoring_refs = scoring_items.iter().map(Cow::as_ref).collect::<Vec<_>>();
         let raw_scores = self.sample_with_dispatch(logits, view, &scoring_refs, dispatch)?;
         let element_bytes = match view.element_type {
             BUNDLE_LOGITS_ELEMENT_V1_F32 => 4_usize,
@@ -713,18 +714,17 @@ impl DeviceSamplingSession {
             }
         }
         if rows.iter().any(|row| row.target.is_some() && row.output) {
-            let output_items = rows
+            let output_refs = rows
                 .iter()
-                .zip(scoring_items)
+                .zip(&scoring_items)
                 .map(|(row, scoring)| {
                     if row.target.is_some() && row.output {
-                        row.item.clone()
+                        row.item
                     } else {
-                        scoring
+                        scoring.as_ref()
                     }
                 })
                 .collect::<Vec<_>>();
-            let output_refs = output_items.iter().collect::<Vec<_>>();
             for (row, sample) in rows.iter().zip(self.sample(logits, view, &output_refs)?) {
                 if row.target.is_some() && row.output {
                     generated.push(sample);

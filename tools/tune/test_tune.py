@@ -1324,6 +1324,42 @@ class Tuner(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'allow_fallbacks'):
                 tune.check_fallbacks('window', [prefill], {'prefill_fold': bad})
 
+    def test_arm_fallbacks_admit_a_candidate_route_in_its_own_windows_only(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        own = {'norm': {'reason': 'The candidate takes the general norm entry', 'phases': ['prefill', 'decode']}}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config, _ = ab_fixture(root, concurrencies=[1], speculation_mode='off', max_depth=0,
+                                   arms=[{'label': 'a'}, {'label': 'b', 'allow_fallbacks': own}])
+            config['allow_fallbacks'] = {'norm': {'reason': 'Prefill norm range pending', 'phases': ['prefill']}}
+            config['tokens'] = {'default': 64}
+            seal = {'config': config, 'install': {'install': 'install-head', 'revision': 'synthetic'}}
+            steps = [{'batch': i, 'prefill_items': 0, 'decode_rows': 1, 'verify_items': 0, 'verify_rows': 0,
+                      'completed_unix_ns': 1_000_000_000 + i * 10_000_000, 'execution_us': 1000,
+                      'route': {'fallback_launches': 2, 'families': {'norm': 2}}} for i in range(21)]
+            window = {'steps': steps, 'cold_steps': steps, 'started': 2, 'ended': 17, 'window_seconds': 15,
+                      'cached_prompt_tokens': 0, 'priming': priming_fixture(1), 'replacement_submissions': 1,
+                      'prefill_share': 0, 'tokens': 20, 'faults': {'complete': True, 'major_faults': 0},
+                      'acceptance': None, 'energy': {}, 'requests': []}
+            visits = {visit['arm']: visit for visit in tune.visits(config)}
+            with patch.object(tune, 'SEAL', seal, create=True), patch.object(tune, 'closed_loop', return_value=window):
+                for label in ('a', 'b'):
+                    record = {'windows': {}, 'confidence': {'enabled': False}}
+                    state = {'tokens': [[1]], 'processes': {visits[label]['label']: record}, 'exact': {}}
+                    run = lambda: tune.run_ab_windows(SimpleNamespace(dry=True), visits[label], state, None, root / label)
+                    if label == 'a':
+                        with self.assertRaisesRegex(RuntimeError, r'norm outside its allowed phases \(prefill\): 2 launches in a decode step'):
+                            run()
+                    else:
+                        run()
+                        row, = record['windows'].values()
+                        self.assertEqual(row['fallback_launches'], 42)
+            for bad in ({'norm': ''}, {'norm': {'reason': 'x', 'phases': ['warmup']}}, ['norm']):
+                config['model']['arms'][1]['allow_fallbacks'] = bad
+                with self.assertRaisesRegex(RuntimeError, 'b arm: allow_fallbacks'):
+                    tune.arms(config)
+
     def test_fallback_gate_requires_complete_counts_and_justified_families(self):
         steps = [{'route': {'fallback_launches': 3, 'families': {'projection': 3}}}]
         with self.assertRaisesRegex(RuntimeError, 'unallowed fallback'):

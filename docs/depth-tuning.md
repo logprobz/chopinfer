@@ -269,6 +269,13 @@ keeper baseline and may only unset controls, since the queue's keeper spec
 does not carry an environment. Later arms may set controls. Their native
 keeper identity checks remain mandatory.
 
+An arm can also carry its own `allow_fallbacks`, in the job's form: in that
+arm's windows only, each family it names replaces the job's allowance for the
+family, or adds the family if the job has none. Use it for a candidate whose
+expected route takes a fallback the baseline must not (for example a norm
+entry in verify steps), so the same launches still fail the baseline's
+windows.
+
 For sweep, costs and exact modes, a depth schedule is fixed for a server's lifetime, so the job runs one
 server per arm and reuses it for every window: by default one arm per depth,
 the deepest first. Each server borrows its weights from the weight keeper

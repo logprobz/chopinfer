@@ -547,6 +547,16 @@ def fallback_scopes(name, allow):
     return scopes
 
 
+def arm_fallbacks(config, arm):
+    """The allowances an arm's windows check: the job's, with the arm's own
+    `allow_fallbacks` adding a family or replacing its job allowance for
+    that arm only, so a candidate's expected route stays a failure in its
+    baseline's windows."""
+    own = arm.get('allow_fallbacks', {})
+    fallback_scopes(f"{arm['label']} arm", own)
+    return {**config.get('allow_fallbacks', {}), **own}
+
+
 def check_fallbacks(name, steps, allow):
     """A served window needs complete route evidence and explained fallbacks,
     each in a step of a phase its allowance admits."""
@@ -760,11 +770,13 @@ def arms(config):
                                                   *arm_arguments(config, arm)]):
                 raise ValueError('AR jobs cannot pass speculation or draft flags')
             arm_environment(config, arm)
+            arm_fallbacks(config, arm)
         return declared
     if model.get('arms'):
         declared = []
         for arm in model['arms']:
             arm_environment(config, arm)
+            arm_fallbacks(config, arm)
             if 'depths' in arm:
                 # A production schedule (for example a profile's default)
                 # instead of one uniform depth; `depth` is its deepest entry.
@@ -994,7 +1006,7 @@ def run_ab_windows(server, arm, state, power, root, cold=None):
                             inputs, tokens, config['sampling'], seeds, power,
                             before_measure=cold.prepare if cold else None, one_cohort=bool(matched))
             check_depth(name, w['steps'], arm.get('depths', arm['depth']))
-            route = check_fallbacks(name, w['cold_steps'] if cold else w['steps'], config.get('allow_fallbacks', {}))
+            route = check_fallbacks(name, w['cold_steps'] if cold else w['steps'], arm_fallbacks(config, arm))
             full = full_concurrency(w['steps'], c)
             if not full['steps'] and not cold:
                 raise RuntimeError(f'{name}: no full-concurrency steps')
@@ -1259,7 +1271,7 @@ def run_windows(server, arm, state, power, root, passes, reference):
                 w = window(server, f'{name}-{tag}-g{g}', kind, [list(x) for x in inputs[g * c:(g + 1) * c]], tokens,
                            f'tune-{label}-{name}-{tag}-g{g}', config['sampling'])
                 check_depth(f'{label} {name} {tag} group {g}', w['steps'], arm.get('depths', depth))
-                w['route'] = check_fallbacks(name, w['steps'], config.get('allow_fallbacks', {}))
+                w['route'] = check_fallbacks(name, w['steps'], arm_fallbacks(config, arm))
                 w['allocated_steps'] = check_allocations(
                     f'{label} {name} {tag} group {g}', w['steps'], record['confidence']['enabled'],
                     allocation_possible(config, arm, c))

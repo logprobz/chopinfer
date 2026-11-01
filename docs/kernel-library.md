@@ -727,6 +727,8 @@ Adding a model:
    prompt tokens, verify rows and plain decode rows of the step record; a
    mixed step carries several). Scope a prefill-only gap to `prefill`, so a
    verify or decode step that takes it still fails the window.
+   An arm's own `allow_fallbacks` replaces a family's job allowance in that
+   arm's windows only ([depth tuning](depth-tuning.md)).
    The optional `ranks` census retains tagged entry counts and untagged symbol
    counts for each logical rank, through capture and replay. Symbols acquired
    outside the shared acquisition helpers are reported under `unknown`; a

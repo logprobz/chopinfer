@@ -1,4 +1,7 @@
 //! Exact HC producer bottleneck, default-on after fixed-batch qualification.
+//! The opt-out stays: the fixed-batch comparison's HC arms
+//! (`tools/dev/fixed-batch-logits.py`) set it, and the lifecycle journal
+//! pins its off program.
 pub const SWITCH: &str = "CHOPINFER_QWEN38_HC_PRECOMPUTE";
 #[cfg(test)]
 thread_local! {

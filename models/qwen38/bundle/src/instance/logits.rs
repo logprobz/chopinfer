@@ -6,7 +6,8 @@ use super::*;
 /// after fixed-batch device runs matched the gather bit for bit
 /// in the same configuration; `0` keeps the rank-0 gather. The host defers
 /// views by default; `CHOPINFER_SAMPLING_DEFER_VIEWS=0` serializes their
-/// sampling.
+/// sampling. The opt-out stays: the fixed-batch comparison's gather arm
+/// (`tools/dev/fixed-batch-logits.py`) sets it as the owned arm's reference.
 pub const ROW_OWNED_LOGITS: &str = "CHOPINFER_QWEN38_ROW_OWNED_LOGITS";
 
 #[cfg(test)]

@@ -653,15 +653,13 @@ impl Prepared {
             workspace: bind.view(base.buffers.workspace),
             live_rows: bind.view(base.inputs.live_tokens),
         };
-        let attention = bind
-            .launch_within(
-                &self.attention,
-                &buffers,
-                base.buffers.workspace,
-                Counts::rows(phase.rows()),
-            )
-            .map_err(|e| e.to_string())?;
-        base.with_merge_ceil(phase, layer, attention)
+        bind.launch_within(
+            &self.attention,
+            &buffers,
+            base.buffers.workspace,
+            Counts::rows(phase.rows()),
+        )
+        .map_err(|e| e.to_string())
     }
 }
 

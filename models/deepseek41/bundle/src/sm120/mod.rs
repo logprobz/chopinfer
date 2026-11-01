@@ -55,8 +55,6 @@ pub(crate) mod latent_cache;
 )]
 pub(crate) mod latent_cache_groups;
 pub mod latent_decode;
-pub mod latent_merge_ceil;
-mod latent_merge_ceil_serving;
 mod latent_query_serving;
 pub mod latent_scheduled;
 pub mod markov_row;
@@ -1030,8 +1028,7 @@ impl crate::Kernels {
     /// apart, `allocation_cubin`), and the
     /// vision encoder's, which only an encoder instance loads. The exact F32
     /// row tiles load only where an instance admits them.
-    /// Streamed MoE modules load only for the qualified topology, and the
-    /// quantizing attention merges only with their candidate option.
+    /// Streamed MoE modules load only for the qualified topology.
     pub fn loads(cubin: &str, shape: &crate::shape::Shape) -> bool {
         (![
             projection_reuse::HEAD_CUBIN,
@@ -1062,7 +1059,6 @@ impl crate::Kernels {
                 || crate::ops::exact_f32::rows::admitted(shape).is_some())
             && (!ceil_split::is_cubin(cubin) || ceil_split::serves(shape.geometry, shape.ranks()))
             && (cubin != query_window::CUBIN || query_window::serves(shape.geometry, shape.ranks()))
-            && (cubin != latent_merge_ceil::CUBIN || Self::merge_ceil_serves(shape))
             && cubin != acceptance_entries::CUBIN
             && cubin != allocate_entries::CUBIN
             && cubin != allocated_acceptance_entries::CUBIN

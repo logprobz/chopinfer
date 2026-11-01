@@ -86,7 +86,6 @@ mod latent_cache;
 mod latent_cache_groups;
 #[allow(dead_code)]
 mod latent_decode;
-mod latent_merge_ceil;
 #[allow(dead_code)]
 mod latent_scheduled;
 #[allow(dead_code, reason = "the bundle dispatches the row step")]
@@ -553,7 +552,6 @@ pub fn selection(
             owners.push((prefill_tma_scales::CUBIN.into(), geometry.id));
             owners.push((dense_dual::CUBIN.into(), geometry.id));
             owners.push((query_window::CUBIN.into(), geometry.id));
-            owners.push((latent_merge_ceil::CUBIN.into(), geometry.id));
         }
         owners.push((f32_split::cubin_name(geometry), geometry.id));
         for features in f32_prefill::TILE_FEATURES {
@@ -647,7 +645,6 @@ pub fn selection(
         window_fused::cubin().expect("fused window cubin"),
     ));
     specs.extend(query_window::cubins(geometries).expect("query window twin cubin"));
-    specs.extend(latent_merge_ceil::cubins(geometries).expect("quantizing merge cubin"));
     specs.extend(ceil_parallel::cubins(geometries).expect("parallel ceil cubins"));
     specs.extend(ceil_cached::cubins(geometries).expect("cached ceil cubins"));
     specs.extend(ceil_prefill::cubins(geometries).expect("prefill ceil cubins"));

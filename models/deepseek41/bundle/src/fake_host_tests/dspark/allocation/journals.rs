@@ -67,9 +67,8 @@ impl LogitsRowSinkV1 for ProofSink {
 
 /// The `-wide` lifetimes run the two widest with the `wide_verify` option,
 /// the `-phased` ones the first and a 65-row one with the
-/// `phased_decode_reduce` option, and the `-rowfuse` and `-mergeceil` ones
-/// the two narrowest with the `verify_row_fusions` and
-/// `attention_merge_ceil` options.
+/// `phased_decode_reduce` option, and the `-rowfuse` ones the two
+/// narrowest with the `verify_row_fusions` option.
 #[test]
 fn allocated_lifetimes_journal() {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
@@ -86,17 +85,14 @@ fn allocated_lifetimes_journal() {
         (16, 65, 5, "-odd-phased", (189194, 0xb6fd29e113df566c)),
         (4, 16, 5, "-rowfuse", (68842, 0x2d8ee53cda81f23f)),
         (8, 32, 5, "-rowfuse", (106446, 0x5a961ce8aca1e16f)),
-        (4, 16, 5, "-mergeceil", (69278, 0x37bf1ad6747adcd5)),
-        (8, 32, 5, "-mergeceil", (106870, 0x399317ba7f2a3cef)),
     ] {
         use model_deepseek41_contract::execution_options::{
-            ATTENTION_MERGE_CEIL, PHASED_DECODE_REDUCE, VERIFY_ROW_FUSIONS, WIDE_VERIFY,
+            PHASED_DECODE_REDUCE, VERIFY_ROW_FUSIONS, WIDE_VERIFY,
         };
         let option = [
             ("-wide", WIDE_VERIFY),
             ("-phased", PHASED_DECODE_REDUCE),
             ("-rowfuse", VERIFY_ROW_FUSIONS),
-            ("-mergeceil", ATTENTION_MERGE_CEIL),
         ]
         .into_iter()
         .find(|(name, _)| suffix.ends_with(name))

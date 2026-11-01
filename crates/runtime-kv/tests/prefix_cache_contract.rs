@@ -21,7 +21,7 @@ fn capture(
     source: runtime_kv::SequenceHandle,
     state_pages: usize,
 ) -> Option<Vec<runtime_kv::BlockId>> {
-    let boundary = pool.snapshot(source).unwrap().tokens();
+    let boundary = pool.sequence_tokens(source).unwrap();
     pool.insert_anchor(
         tokens.key_at(boundary).unwrap(),
         tokens.chain(boundary / tokens.block_tokens()).unwrap(),
@@ -37,7 +37,7 @@ fn content_capture(
     source: runtime_kv::SequenceHandle,
     state_pages: usize,
 ) -> Option<Vec<runtime_kv::BlockId>> {
-    let boundary = pool.snapshot(source).unwrap().tokens();
+    let boundary = pool.sequence_tokens(source).unwrap();
     pool.insert_content_anchor(tokens, source, boundary, state_pages)
         .expect("a live source can be anchored")
 }
@@ -485,7 +485,7 @@ fn conversation_turn(pool: &mut KvPool, history: &[u32], pages: usize) {
         }
         None => pool.create_sequence(tokens).unwrap(),
     };
-    let committed = pool.snapshot(source).unwrap().tokens();
+    let committed = pool.sequence_tokens(source).unwrap();
     pool.append(source, tokens - committed).unwrap();
     pool.insert_content_anchor(&identity, source, tokens, pages)
         .unwrap()
@@ -990,7 +990,7 @@ fn a_branch_restore_moves_a_spaced_ancestor_to_the_live_tier() {
             model.restore(key, branch);
             hit.handle()
         };
-        let committed = pool.snapshot(source).unwrap().tokens();
+        let committed = pool.sequence_tokens(source).unwrap();
         pool.append(source, depth - committed).unwrap();
         content_capture(&mut pool, &identity, source, 1).unwrap();
         model.insert((identity, depth));

@@ -1909,6 +1909,12 @@ impl KvPool {
         self.active_sequences -= 1;
     }
 
+    /// Returns the committed token count without copying the sequence's page table.
+    pub fn sequence_tokens(&self, handle: SequenceHandle) -> Result<usize, KvError> {
+        let slot = self.validate(handle)?;
+        Ok(self.sequences[slot].tokens)
+    }
+
     pub fn snapshot(&self, handle: SequenceHandle) -> Result<SequenceSnapshot, KvError> {
         let slot = self.validate(handle)?;
         let sequence = &self.sequences[slot];

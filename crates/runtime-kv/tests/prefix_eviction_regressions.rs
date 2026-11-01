@@ -250,13 +250,13 @@ fn scheduler_turn(
         points.push(prompt);
     }
     for point in points {
-        let committed = pool.snapshot(handle).unwrap().tokens();
+        let committed = pool.sequence_tokens(handle).unwrap();
         pool.append(handle, point - committed).unwrap();
         let _ = pool
             .insert_content_anchor(&chain, handle, point, snapshot)
             .unwrap();
     }
-    let committed = pool.snapshot(handle).unwrap().tokens();
+    let committed = pool.sequence_tokens(handle).unwrap();
     pool.append(handle, prompt - committed + outputs).unwrap();
     pool.release(handle).unwrap();
     hit

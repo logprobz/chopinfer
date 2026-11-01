@@ -883,7 +883,7 @@ mod storm {
                     if let Some(seq) = seq {
                         let n = 1 + rng.below(9) as usize;
                         if append(&mut p, &mut env, seq, n, &mut rng)
-                            || p.snapshot(seq).unwrap().tokens() > 0
+                            || p.sequence_tokens(seq).unwrap() > 0
                         {
                             live.push(seq);
                         } else {
@@ -912,7 +912,7 @@ mod storm {
                     let mut kb = [0u8; 32];
                     kb[..8].copy_from_slice(&key.to_le_bytes());
                     let k = PrefixCacheKeyV1::new(kb);
-                    let tokens = p.snapshot(seq).unwrap().tokens();
+                    let tokens = p.sequence_tokens(seq).unwrap();
                     if tokens == 0 {
                         p.release(seq).unwrap();
                         continue;

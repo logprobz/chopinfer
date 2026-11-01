@@ -2855,7 +2855,7 @@ impl Scheduler {
             if record.state.is_terminal()
                 || record.handle != Some(append.handle())
                 || append.additional_tokens() != item.phase.appended_tokens()
-                || self.kv.snapshot(append.handle()).is_err()
+                || self.kv.sequence_tokens(append.handle()).is_err()
             {
                 return Err(ScheduleError::InvariantViolation);
             }
@@ -3456,11 +3456,7 @@ impl Scheduler {
         let (Some(handle), None) = (record.handle, record.restore.as_ref()) else {
             return Err(ScheduleError::InvariantViolation);
         };
-        let tokens = self
-            .kv
-            .snapshot(handle)
-            .map_err(ScheduleError::Kv)?
-            .tokens();
+        let tokens = self.kv.sequence_tokens(handle).map_err(ScheduleError::Kv)?;
         self.captures
             .try_reserve(1)
             .map_err(|_| ScheduleError::MetadataAllocationFailed)?;
@@ -3584,9 +3580,8 @@ impl Scheduler {
         if !capture.interior
             && self
                 .kv
-                .snapshot(capture.handle)
+                .sequence_tokens(capture.handle)
                 .map_err(ScheduleError::Kv)?
-                .tokens()
                 != capture.tokens
         {
             return Err(ScheduleError::InvariantViolation);
@@ -3710,11 +3705,7 @@ impl Scheduler {
     pub fn kv_tokens(&self, id: RequestId) -> Result<usize, ScheduleError> {
         let record = self.record(id)?;
         match record.handle {
-            Some(handle) => self
-                .kv
-                .snapshot(handle)
-                .map(|snapshot| snapshot.tokens())
-                .map_err(ScheduleError::Kv),
+            Some(handle) => self.kv.sequence_tokens(handle).map_err(ScheduleError::Kv),
             None => Ok(0),
         }
     }
@@ -3839,11 +3830,7 @@ impl Scheduler {
                 }
                 continue;
             };
-            let tokens = self
-                .kv
-                .snapshot(handle)
-                .map_err(ScheduleError::Kv)?
-                .tokens();
+            let tokens = self.kv.sequence_tokens(handle).map_err(ScheduleError::Kv)?;
             // The reservation covers the committed KV, in pages net of the
             // shared prefix pages reserved once, plus snapshot pins until the
             // restore and the copy of a shared tail until the first commit.
@@ -5077,7 +5064,7 @@ mod tests {
                 )],
             )
             .unwrap();
-        assert_eq!(scheduler.kv.snapshot(capture.handle).unwrap().tokens(), 5);
+        assert_eq!(scheduler.kv.sequence_tokens(capture.handle).unwrap(), 5);
         let chain = Arc::new(PrefixChainV1::new(4, vec![1; 5].into(), vec![]).unwrap());
         capture.tokens = 5;
         capture.key = chain.key_at(5).unwrap();
@@ -5193,7 +5180,7 @@ mod tests {
                 writes.push((capture.tokens, pages[0]));
                 scheduler.end_prefix_capture(&capture).unwrap();
                 if capture.interior {
-                    assert_eq!(scheduler.kv.snapshot(source).unwrap().tokens(), 8);
+                    assert_eq!(scheduler.kv.sequence_tokens(source).unwrap(), 8);
                 }
                 scheduler.kv.audit().unwrap();
             }

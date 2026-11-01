@@ -96,8 +96,8 @@ fn kept_counts_apply_per_handle() {
     let first = pool.create_sequence(16).unwrap();
     let second = pool.create_sequence(16).unwrap();
     commit_kept(&mut pool, &[(first, 5), (second, 5)], &[(second, 2)]);
-    assert_eq!(pool.snapshot(first).unwrap().tokens(), 5);
-    assert_eq!(pool.snapshot(second).unwrap().tokens(), 2);
+    assert_eq!(pool.sequence_tokens(first).unwrap(), 5);
+    assert_eq!(pool.sequence_tokens(second).unwrap(), 2);
     assert_eq!(pool.stats().free_blocks(), 16 - 3 - 1);
 }
 
@@ -177,8 +177,8 @@ fn a_kept_commit_that_copies_every_owner_of_a_tail_frees_the_old_tail() {
             &[(source, 1), (child, 3)],
         );
         assert_eq!(pool.block_ref_count(shared_tail).unwrap(), 0);
-        assert_eq!(pool.snapshot(source).unwrap().tokens(), 3);
-        assert_eq!(pool.snapshot(child).unwrap().tokens(), 5);
+        assert_eq!(pool.sequence_tokens(source).unwrap(), 3);
+        assert_eq!(pool.sequence_tokens(child).unwrap(), 5);
         assert_eq!(pool.stats().free_blocks(), 6 - 1 - 2);
         pool.release(source).unwrap();
         pool.release(child).unwrap();

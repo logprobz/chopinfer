@@ -247,7 +247,11 @@ of at most the draft rows, which select the parallel
 `latent_ceil32_parallel_v1` the target's window takes; its groups compute
 the same codes, scales and status. Wider writes, such as the 85-row
 catch-up writes at C8, keep the serial entry. In the C4 and C8 allocated
-journals the 36 serial launches become parallel ones.
+journals the 36 serial launches become parallel ones. The drafter's
+catch-up picks its writer by row count wherever it runs, so the option
+also changes the catch-up of DSpark prefill steps and of a prefix
+capture, which runs outside any target step; their journals are pinned
+with the option ([verify row fusions journals](../journal-changes/verify-row-fusions.md)).
 
 The serial and parallel ceil lab pairs (`ceil_parallel`) now also run 3,
 5 and 12 rows. On 2026-10-31, on two idle GPUs, each GPU passed 4,695

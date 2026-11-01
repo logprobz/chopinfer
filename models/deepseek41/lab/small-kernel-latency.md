@@ -151,7 +151,7 @@ The built candidates' measured estimates replace these
 | 2 | Drafter window ceil: the parallel ceil32 or the fused window | 0 to -12 | 0.06 | 0.06 | built (below) |
 | 3 | Attention heads merge and output ceil in one kernel | -40 to -43 | 0.05 to 0.07 | 0.12 to 0.17 | built (below) |
 | 4 | Router finish prepare into the router producer | -40 | up to 0.08 | up to 0.12 | built, slower (below) |
-| 5 | Reduce-scatter and all-gather in one launch | -88 | 0.13 to 0.26 | 0.26 to 0.5 | lab prototype (below) |
+| 5 | Reduce-scatter and all-gather in one launch | -88 | 0.13 to 0.26 | 0.26 to 0.5 | prototype, slower above 4 rows (below) |
 | 6 | Drafter HC on the target's producer and finisher | 0 | 0.05 | 0.08 | unchecked |
 
 1. The decode steps' fused query norm and ceil (5.30 us at 32 rows in
@@ -226,8 +226,16 @@ the event timer on these GPUs, and the samples sit on that step: the
 fused window took 10.24 us against 12.29 us for the chain at every row
 count from 1 to 32 with a read flush, and the fused query matched the
 chain's 10.24 us except one step slower at 1, 2 and 12 rows on one GPU.
-The estimates in the proposals therefore come from the served graphs. The option goes to served step-time acceptance at C1
-to C8 before any adoption.
+The estimates in the proposals therefore come from the served graphs.
+
+On 2026-11-01, Flash TP4 packages of the candidate commit with the
+option on replayed 13-step fixed-batch traces on four GPUs bit for bit
+against the same package's recording without options (package-comparison
+mode): verify traces at one request with 5 and 6 rows a step (67 logits
+rows), at 16 requests with 16 and 32 rows (304) and at 16 requests with
+48 and 64 rows (688), the last covering the drafter's window ceil alone.
+The option goes to served step-time acceptance at C1 to C16 before any
+adoption.
 
 ## Drafter window ceil
 
@@ -283,6 +291,13 @@ serve. At 43, 43 and 46 merges a step that is 0.011 and 0.022 ms slower
 at C1 and C8 and 0.024 ms faster at C16, within what the chain timing
 resolves, so served step time decides.
 
+On 2026-11-01 the same fixed-batch traces as `verify_row_fusions`' (5 to
+64 rows a step) replayed bit for bit with this option on, and a
+one-request AR decode trace recorded with it equalled its recording
+without it in every step frame and logits row (13 rows). The host
+refuses to destroy an instance after an AR trace, so the two AR
+recordings were compared directly.
+
 ## Classifying router producer candidate
 
 The `router_prepare_fusion` model option, off by default, serves
@@ -310,6 +325,125 @@ fixed-batch replays were run for it. Computing the row domain where the
 router's input rows are produced, upstream of the producer, would avoid
 the cluster.
 
+## One-launch deferred reduction
+
+Proposal 5's kernel already exists and is model-neutral. The phased F32
+all-reduce (`kernels-sm120`'s `comm/allreduce_phased_f32.cuh` and
+`comm::phased_f32`) runs the reduce-scatter and the all-gather in one
+launch: each element's owner sums the ranks' F32 partials in rank order
+from zero and the F32 sums are pushed to every rank, one destination at a
+time. Its F32-output entries (`chop_comm_allreduce_phased_f32_v1`, and
+`chop_comm_allreduce_phased_oneshot_f32_v1` for calls of up to 262,144
+elements) give the bits of the composed pair
+(`chop_comm_reduce_scatter_f32_v1` then
+`chop_comm_allgather_scattered_f32_v1`); kernel-lab's `comm_phased_f32`
+tests check that at 1 to 8,192 rows of 4,096 and catch its mutants,
+generations, replays and epoch-tag reuse. Its rounding entries are what
+the `phased_decode_reduce` candidate serves where a step issues the
+complete sequence ([decode reductions](decode-reductions.md)). Where the
+next HC boundary takes the round, which is 77 of each rank's 81 target
+reductions at the 6-, 32- and 64-row steps of C1, C8 and C16, the
+composed pair stays: the rounding entries write BF16 rows, and this
+bundle's comm cubin holds no F32-output entry (glm5next's package holds
+all four).
+
+Design. A deferred phased form launches the F32-output entry of the row
+count's phased protocol and geometry (16 sending CTAs, the one-shot at
+1 to 4 rows and the two-shot above, with 32 summing workers above 32
+rows)
+into every rank's F32 sum region, which the composed form already keeps
+on every rank for its all-gather, and leaves the round to the next HC
+mix exactly as now. `PreparedOp::defer_bf16_round` promises that the
+deferred calls are the step's calls before its round, so the form's
+complete step would be that entry followed by the round row, and
+`phased_decode_reduce`'s rounding entries would keep serving complete
+steps from their own op, as its alternate op does today. In
+`kernels-sm120` that is one more form of the rounded all-reduce
+(`backend/rounded_all_reduce.rs`) behind a registration, on the phased
+state and the composed form's sum region, with no CUDA change and
+nothing model-specific, so it stays model-neutral in
+`crates/kernels-sm120/cuda/comm/` and the backend. The bundle would add
+the two F32 entries to its phased cubin (new lock files only), admit
+their grids at create as it admits the rounding entries' (every CTA must
+be resident on every rank) and register the form behind a candidate
+option or as part of `phased_decode_reduce`.
+
+Bitwise risk. Low, and of the kind the lab can settle. The entry sums
+every element in the same order from zero as the pair, so the F32 sums
+match in every bit; the round stays the HC mix's single
+`cvt.rn.bf16.f32` of the same sum, so precision and the number of
+roundings do not change. The prototype passes no live count, so it sums
+every row as the pair does. The HC producers and finishers that read
+the sum return at rows past the live count, so passing it would likely
+be safe and skip dead rows, but would leave their sums stale; the
+prototype does not rely on that. The protocol's own risks (residency,
+programmatic dependent launch, epoch tags) are those of the rounding
+entries `phased_decode_reduce` already serves on the same state.
+
+Prototype. The lab's `bf16_partials` test holds it (`phased_deferred`):
+a wrapper of the candidate registration's rounded all-reduce whose
+deferred round follows the F32-output entry of the same protocol,
+senders and workers, writing every rank's sum region, loaded from
+kernel-lab's locked `comm_phased_f32_sm120` cubin
+(`CHOPINFER_PHASED_F32_CUBIN`).
+`phased_deferred::phased_deferred_matches_the_deferred_pair_on_gpu`
+compares every rank's F32 sum of every row with the deferred pair's and
+with the host's rank-ordered F32 sum, at the 11 parity row counts and
+at 6, 10 and 13 rows, on the 11 adversarial patterns of
+`phased_parity`, with every row live and with the last row dead, and in
+graph replay. `timing::phased_deferred_timing`
+(`CHOPINFER_KERNEL_BENCH=1`) times the pair, a second graph of the pair
+as the A/A control, the prototype and the phased rounding entry at the
+bench's 16 row counts, after checking the prototype's sums against the
+pair's at each.
+
+On 2026-11-01, on four exclusive GPUs at an enforced 250 W limit that
+no sample changed, the parity test passed all 297 cases (14 row counts,
+11 patterns, every row live and the last row dead) and every graph
+replay: each rank's F32 sum of every row equalled the deferred pair's and
+the host's rank-ordered sum, and nothing past the rows was written. The
+cases held 1.2 million NaN sums (the GPU's canonical NaN in both forms,
+whose payload the host's sum does not share), 5.4 million infinite and
+3.0 million subnormal sums. The design keeps the exact rank order and
+the single rounding.
+
+It does not pay where it would serve. Per call (slowest-rank median)
+against the pair, the prototype was faster at 1, 2 and 4 rows (6.9
+against 11.6 us, 7.9 against 11.8 and 11.0 against 12.2), slower at 5
+to 16 rows by 1.2 to 2.1 us, unresolved at 24 and 31, and slower at 32
+rows (31.9 against 29.3), 48, 64 (54.6 against 51.0), 96, 128 and 192
+(156.8 against 135.6); every other comparison resolved past the A/A
+bound. The rounding entry of the same protocol and geometry, slower
+than the pair at 5 to 8 rows, beat it from 12 rows on (26.5 against 29.3
+us at 32 rows, 44.0 against 51.0 at 64 and 121.8 against 135.6 at 192).
+The two entries differ only in gathering F32 rather than BF16 rows,
+twice the bytes, so the F32 gather is what loses to the pair's
+all-gather. At the served widths the
+deferred form would cost 1.4 us a reduction at 6 rows, 2.7 at 32 and
+3.6 at 64: about 0.11, 0.20 and 0.28 ms a step over 77 reductions at
+C1, C8 and C16. It saves 4.7, 4.0 and 1.2 us at the 1-, 2- and 4-row
+autoregressive decode buckets (about 0.36, 0.31 and 0.10 ms a step),
+which DSpark steps do not run.
+
+So the F32-output form should not serve 5 to 192 rows. Two directions
+keep the order and the single rounding:
+
+- At 1 to 4 rows, the deferred phased form above, for autoregressive
+  decode ([decode reductions](decode-reductions.md#phased-f32-timing)
+  estimated about 0.35 ms of a C1 decode step).
+- At the DSpark widths, the HC boundary could take the rounding entry's
+  BF16 rows instead of rounding the F32 sum itself. The HC mixes convert
+  the sum with the same `cvt.rn.bf16.f32` before any other arithmetic,
+  and the rounding entry's owner rounds the same sum once with the same
+  instruction, so a fused HC producer that reads those BF16 rows
+  computes the same bits. At the rounding entry's measured advantage
+  (0.8 us slower at 6 rows, 2.8 faster at 32 and 7.1 at 64) that is
+  about 0.06 ms slower at C1 and 0.21 and 0.54 ms faster at C8 and C16,
+  before the HC entries' own saving from reading half the bytes. It
+  needs BF16-input variants of the shared HC producers that take the
+  round (`crates/kernels-sm120/cuda/sinkhorn_hc/`), which are
+  model-neutral as well, and their own lab pairs.
+
 ## Estimates at C1, C8 and C16
 
 Expected savings per step on device 0, in ms (negative is slower), from
@@ -324,9 +458,12 @@ served step-time evidence, which adoption still needs.
 | `verify_row_fusions`, drafter window ceil | 0.063 | 0.066 | 0.13 | served advances of the serial and parallel ceil32 |
 | `attention_merge_ceil` | -0.011 | -0.022 | 0.024 | lab chains, 43, 43 and 46 merges a step |
 | `router_prepare_fusion` | -0.020 | -0.32 | 0 | lab chains; 64-row steps keep both launches |
+| Deferred phased F32 reduction (prototype) | -0.11 | -0.20 | -0.28 | lab calls, 77 reductions a step |
+| Rounding entry read by the HC boundary (not built) | -0.06 | 0.21 | 0.54 | lab calls of the comm entry alone |
 
 The C16 inventory is 2,087 launches and 50.2 ms busy a step, so the
-largest of these is about a quarter of a percent of a C16 step and the
+largest built candidate's gain is about a quarter of a percent of a C16
+step and the
 two `verify_row_fusions` parts together at most about 0.8 percent of a C1
 step (13.68 ms busy) and 0.7 percent of a C8 step (30.33 ms).
 

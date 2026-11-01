@@ -186,7 +186,7 @@ them. A non-default value is unqualified.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `attention_merge_ceil` | `false` | Candidate: Flash TP4 decode steps and verify steps of at most 64 rows launch each attention heads merge whose WO_a folds row status, the target's and the drafter's, as its quantizing twin, which also writes the codes, scales and status of the sliced quantizer that no longer launches. Bitwise in the lab; its chain timings there differ from the pair by about half a microsecond a layer either way ([small-kernel latency](lab/small-kernel-latency.md#quantizing-attention-merge-candidate)). Served step-time acceptance decides. |
+| `attention_merge_ceil` | `false` | Candidate: Flash TP4 decode steps and verify steps of at most 64 rows launch each attention heads merge whose WO_a folds row status, the target's and the drafter's, as its quantizing twin, which also writes the codes, scales and status of the sliced quantizer that no longer launches. Bitwise in the lab and in fixed-batch replays; its chain timings there differ from the pair by about half a microsecond a layer either way ([small-kernel latency](lab/small-kernel-latency.md#quantizing-attention-merge-candidate)). Served step-time acceptance decides. |
 | `diagnostic_step_logs` | `false` | Emit DSpark phase, prefetch, Engram, commit and drafter-confidence JSON records. |
 | `dspark_coupled_drafts` | `true` | Couple sampled drafts to the target sampler's noise. |
 | `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |
@@ -204,7 +204,7 @@ them. A non-default value is unqualified.
 | `text_config.indexer_mma` | `true` | Use the guarded native Flash index scorer where eligible. |
 | `text_config.indexer_prefill_tile` | `true` | Enable the qualified Flash tiled indexer routes. |
 | `verify_graph_rows` | `64` | Widest graphed verify step; wider admitted steps run eagerly. |
-| `verify_row_fusions` | `false` | Candidate: Flash TP4 verify steps of at most 32 rows launch the decode steps' fused query norm and ceil and fused window norm, RoPE, ceil and store, and the drafter's window writes of at most the draft rows quantize with the parallel ceil32 entry instead of the serial one. Bitwise in the lab ([small-kernel latency](lab/small-kernel-latency.md#verify-row-fusions-candidate)); served step-time acceptance remains required before adoption. |
+| `verify_row_fusions` | `false` | Candidate: Flash TP4 verify steps of at most 32 rows launch the decode steps' fused query norm and ceil and fused window norm, RoPE, ceil and store, and the drafter's window writes of at most the draft rows quantize with the parallel ceil32 entry instead of the serial one. Bitwise in the lab and in fixed-batch replays ([small-kernel latency](lab/small-kernel-latency.md#verify-row-fusions-candidate)); served step-time acceptance remains required before adoption. |
 | `wide_verify` | `false` | Candidate: Flash TP4 eager verify steps of 65 to 192 rows prepare their row-local stages and HC boundaries at the wide verify buckets (128 rows and the verify rows) and launch the decode entries a 64-row step uses, fold their dense projections through wide folds at those buckets, run their routed experts through the wide direct MoE queues, and run the vocabulary head, router and compressor in their measured exact F32 row tiles. Fixed-batch GPU replays and kernel-lab MoE pairs matched the default bitwise; served step-time acceptance remains required before adoption. |
 
 TP4 native-KV single-item DMA prefill overlaps both prepared Engram gathers

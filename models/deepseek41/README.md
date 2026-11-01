@@ -186,7 +186,6 @@ them. A non-default value is unqualified.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `attention_merge_ceil` | `false` | Candidate: Flash TP4 decode steps and verify steps of at most 64 rows launch each attention heads merge whose WO_a folds row status, the target's and the drafter's, as its quantizing twin, which also writes the codes, scales and status of the sliced quantizer that no longer launches. Bitwise in the lab and in fixed-batch replays; its chain timings there differ from the pair by about half a microsecond a layer either way ([small-kernel latency](lab/small-kernel-latency.md#quantizing-attention-merge-candidate)). Served step-time acceptance decides. |
 | `diagnostic_step_logs` | `false` | Emit DSpark phase, prefetch, Engram, commit and drafter-confidence JSON records. |
 | `dspark_coupled_drafts` | `true` | Couple sampled drafts to the target sampler's noise. |
 | `dspark_draft_chunk_items` | `12` | Drafting items per forward, from 1 to 32. |

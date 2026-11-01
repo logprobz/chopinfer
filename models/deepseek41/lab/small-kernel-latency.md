@@ -3,9 +3,9 @@
 Where a DSpark step's GPU time goes at one to sixteen concurrent
 sequences on native Flash TP4, what earlier fusion work did about it, and
 which fusions that keep every value and every add are left. Proposals 1
-to 3 are built as candidate options (`verify_row_fusions`, which holds
-the first two, and `attention_merge_ceil`), proposal 4 was built and
-retired as slower, and proposal 5 was prototyped in the lab;
+and 2 are built as the `verify_row_fusions` candidate option, proposals
+3 and 4 were built, measured and retired (one neutral, one slower), and
+proposal 5 was prototyped in the lab;
 [estimates](#estimates-at-c1-c8-and-c16) puts their expected gains side
 by side.
 
@@ -150,7 +150,7 @@ The built candidates' measured estimates replace these
 | ---: | --- | ---: | ---: | ---: | --- |
 | 1 | Decode row fusions at verify rows of at most 32 | -120 to -123 | 0 to 0.05 | 0.15 | built (below) |
 | 2 | Drafter window ceil: the parallel ceil32 or the fused window | 0 to -12 | 0.06 | 0.06 | built (below) |
-| 3 | Attention heads merge and output ceil in one kernel | -40 to -43 | 0.05 to 0.07 | 0.12 to 0.17 | built (below) |
+| 3 | Attention heads merge and output ceil in one kernel | -40 to -43 | 0.05 to 0.07 | 0.12 to 0.17 | built, neutral, retired (below) |
 | 4 | Router finish prepare into the router producer | -40 | up to 0.08 | up to 0.12 | built, slower, retired (below) |
 | 5 | Reduce-scatter and all-gather in one launch | -88 | 0.13 to 0.26 | 0.26 to 0.5 | prototype, slower above 4 rows (below) |
 | 6 | Drafter HC on the target's producer and finisher | 0 | 0.05 | 0.08 | unchecked |
@@ -259,27 +259,23 @@ against the target's parallel 1.99, 2.56 and 2.74 us. At the 6.1, 6 and
 12 launches per step the option moves, that saves about 0.063, 0.066 and
 0.13 ms a step.
 
-## Quantizing attention merge candidate
+## Quantizing attention merge (retired)
 
-The `attention_merge_ceil` model option, off by default, serves proposal
-3. Each merge entry of the latent sources has a quantizing twin
-(`latent/sources_merge_ceil.cuh`, lock family `latent_merge_ceil`): the
-merge stores every BF16 output exactly as before, then after a block
-barrier each warp quantizes its head's 32-column groups with the
-parallel ceil's group function, stores codes and scale codes and ORs
-its flags into the row status, as the sliced quantizer does. The twin
-takes the merge's plan, arguments and bindings followed by the codes,
-scales and status buffers and a row offset. Where WO_a runs as a status
-fold, every decode and verify attention, the target's and the
-drafter's, launches the twin, and the sliced quantizer no longer
-launches. Verify steps above 64 rows, past the sliced quantizer's
-capacity, keep the pair. Only an instance with the option loads the
-cubin. The fake-host tests pair instances with the option off and on at
-6, 12, 32, 33, 64 and 65 verify rows and 1, 2 and 8 decode rows: every
-other launch keeps its symbol, grid and arguments.
+Proposal 3 was built as the `attention_merge_ceil` candidate option,
+measured and retired on 2026-11-01 because it was neutral within the
+lab's resolution at C1 to C16 and added code without a gain: its option,
+kernels, lock, journals, sweep profile and lab pair were removed, and
+this section keeps the measurements. Each merge entry of the latent
+sources had a quantizing twin: the merge stored every BF16 output
+exactly as before, then after a block barrier each warp quantized its
+head's 32-column groups with the parallel ceil's group function, stored
+codes and scale codes and ORed its flags into the row status, as the
+sliced quantizer does. Where WO_a ran as a status fold, every decode and
+verify attention of at most 64 rows, the target's and the drafter's,
+launched the twin in place of the merge and the sliced quantizer.
 
-The lab pair (`merge_ceil`) compares each twin with the served merge
-and sliced quantizer. On 2026-10-31, on two idle GPUs, each GPU passed
+The lab pair compared each twin with the served merge and sliced
+quantizer. On 2026-10-31, on two idle GPUs, each GPU passed
 2,492 bitwise cases (14 patterns, every decode twin at 11 row counts up
 to its 32 rows and every verify twin at 14 up to 64) and detected all 56
 negative controls; compute-sanitizer
@@ -290,10 +286,10 @@ launches the twin took 3.84 against 3.58 us a layer at 6 rows with the
 against 10.11 us at 64 rows with the 16-group quantizer C8 and C16
 serve. At 43, 43 and 46 merges a step that is 0.011 and 0.022 ms slower
 at C1 and C8 and 0.024 ms faster at C16, within what the chain timing
-resolves, so served step time decides.
+resolves.
 
 On 2026-11-01 the same fixed-batch traces as `verify_row_fusions`' (5 to
-64 rows a step) replayed bit for bit with this option on, and a
+64 rows a step) replayed bit for bit with the option on, and a
 one-request AR decode trace recorded with it equalled its recording
 without it in every step frame and logits row (13 rows). The host
 refuses to destroy an instance after an AR trace, so the two AR
@@ -457,7 +453,7 @@ served step-time evidence, which adoption still needs.
 | --- | ---: | ---: | ---: | --- |
 | `verify_row_fusions`, target query and window chains | 0 to 0.05 | 0.15 | 0 | served advances; steps above 32 rows keep the chains |
 | `verify_row_fusions`, drafter window ceil | 0.063 | 0.066 | 0.13 | served advances of the serial and parallel ceil32 |
-| `attention_merge_ceil` | -0.011 | -0.022 | 0.024 | lab chains, 43, 43 and 46 merges a step |
+| `attention_merge_ceil` (retired) | -0.011 | -0.022 | 0.024 | lab chains, 43, 43 and 46 merges a step |
 | `router_prepare_fusion` (retired) | -0.020 | -0.32 | 0 | lab chains; 64-row steps keep both launches |
 | Deferred phased F32 reduction (prototype) | -0.11 | -0.20 | -0.28 | lab calls, 77 reductions a step |
 | Rounding entry read by the HC boundary (not built) | -0.06 | 0.21 | 0.54 | lab calls of the comm entry alone |
@@ -470,14 +466,12 @@ step (13.68 ms busy) and 0.7 percent of a C8 step (30.33 ms).
 
 ## Rerunning
 
-The candidates' lab pairs run on one GPU each through their ignored
-`bitwise_graph_live_rows_and_timing_on_gpu` tests (`ceil_parallel`,
-`merge_ceil`), each after its ignored `frozen_modules_are_complete`
-stages the frozen modules: with `CHOPINFER_CEIL_ARTIFACTS` or
-`CHOPINFER_MERGE_CEIL` naming the directory and the matching `_EXPORT`
-variable set, and the kernel lab's `probe_sm120.cubin` in it
-(`CHOPINFER_CEIL_TIMING_PROBE` for the ceil pairs). The merge pair's
-`sanitized_twin_on_gpu` runs under compute-sanitizer.
+The ceil pairs (`ceil_parallel`) run on one GPU through the ignored
+`bitwise_graph_live_rows_and_timing_on_gpu`, after the ignored
+`frozen_modules_are_complete` stages the frozen modules with
+`CHOPINFER_CEIL_ARTIFACTS` naming the directory, `CHOPINFER_CEIL_EXPORT`
+set and `CHOPINFER_CEIL_TIMING_PROBE` naming the kernel lab's
+`probe_sm120.cubin`.
 
 Stage the frozen lab artifacts outside the tree with
 `CHOPINFER_NORM_EXPORT=1`, `CHOPINFER_NORM_ARTIFACTS` naming the

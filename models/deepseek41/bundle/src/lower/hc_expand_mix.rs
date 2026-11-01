@@ -24,6 +24,23 @@ pub(super) fn successor(g: &Geometry, layer: u32, sublayer: Sublayer) -> Option<
     }
 }
 impl Lowering<'_> {
+    /// The sublayer after `(layer, sublayer)` whose mixer its boundary may
+    /// run: the backbone's `successor`, and with the `dspark_hc_fusion`
+    /// candidate a drafter stage's MoE sublayer after its attention and the
+    /// next stage's attention after its MoE. The stages between preserve
+    /// the streams as a backbone layer's do (the next stage's ring gather
+    /// writes only its window); the last stage's expansion feeds the head.
+    pub(super) fn hc_successor(&self, layer: u32, sublayer: Sublayer) -> Option<(u32, Sublayer)> {
+        let g = self.shape.geometry;
+        let end = g.layers() + g.dspark_stages();
+        if self.shape.dspark_hc_fusion && layer >= g.layers() && layer < end {
+            return match sublayer {
+                Sublayer::Attention => Some((layer, Sublayer::Mlp)),
+                Sublayer::Mlp => (layer + 1 < end).then_some((layer + 1, Sublayer::Attention)),
+            };
+        }
+        successor(g, layer, sublayer)
+    }
     fn has_expand_mix(&self, phase: Phase) -> bool {
         self.ops.hc.as_ref().is_some_and(|ops| {
             ops.has_expand_mix()
@@ -48,8 +65,7 @@ impl Lowering<'_> {
             Sublayer::Mlp => Some((layer, Sublayer::Attention)),
             Sublayer::Attention => layer.checked_sub(1).map(|l| (l, Sublayer::Mlp)),
         };
-        previous
-            .is_some_and(|(l, s)| successor(self.shape.geometry, l, s) == Some((layer, sublayer)))
+        previous.is_some_and(|(l, s)| self.hc_successor(l, s) == Some((layer, sublayer)))
     }
     pub(super) fn finish_norm_was_fused(
         &self,
@@ -95,8 +111,7 @@ impl Lowering<'_> {
         if !self.has_expand_mix(phase) && !prefill {
             return Ok(None);
         }
-        let Some((next_layer, next_sublayer)) = successor(self.shape.geometry, layer, sublayer)
-        else {
+        let Some((next_layer, next_sublayer)) = self.hc_successor(layer, sublayer) else {
             return Ok(None);
         };
         let s = &self.buffers.scratch;
@@ -149,8 +164,7 @@ impl Lowering<'_> {
         if !hc.has_round_expand_mix() {
             return Ok(None);
         }
-        let Some((next_layer, next_sublayer)) = successor(self.shape.geometry, layer, sublayer)
-        else {
+        let Some((next_layer, next_sublayer)) = self.hc_successor(layer, sublayer) else {
             return Ok(None);
         };
         let Some(reduce) = self.ops.reduce.as_ref() else {

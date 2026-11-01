@@ -38,6 +38,27 @@ pub struct Shape {
     /// serves the qualified path. `sm120::moe_direct` turns them into
     /// kernel knobs.
     pub moe_knobs: model_deepseek41_contract::execution_options::MoeDirect,
+    /// Whether drafter Markov steps of two or more items run the staged
+    /// step over each position's base logits in place (the
+    /// `dspark_markov_staged` candidate option).
+    pub dspark_markov_staged: bool,
+    /// Whether a drafter stage's sublayer boundaries, after its attention
+    /// and into the next stage, fuse the round, expansion, next mixer and
+    /// input norm at admitted rows (the `dspark_hc_fusion` candidate
+    /// option).
+    pub dspark_hc_fusion: bool,
+    /// Whether drafter confidence heads stage their weight chains before
+    /// the dependency wait and their row operands in shared memory (the
+    /// `dspark_confidence_staged` candidate option).
+    pub dspark_confidence_staged: bool,
+    /// Whether drafter forwards run the routed experts through the direct
+    /// path at the rows the drafter table admits (the `dspark_moe_direct`
+    /// candidate option).
+    pub dspark_moe_direct: bool,
+    /// Whether drafter forwards of one to six items admit the HC finish
+    /// route through the drafter table (the `dspark_hc_draft_rows`
+    /// candidate option, which takes effect with `dspark_hc_fusion`).
+    pub dspark_hc_draft_rows: bool,
 }
 
 impl Shape {
@@ -54,6 +75,11 @@ impl Shape {
             f32_row_tiles: false,
             phased_decode_reduce: false,
             moe_knobs: Default::default(),
+            dspark_hc_draft_rows: false,
+            dspark_moe_direct: false,
+            dspark_confidence_staged: false,
+            dspark_hc_fusion: false,
+            dspark_markov_staged: false,
         })
     }
 
@@ -110,6 +136,41 @@ impl Shape {
         options: model_deepseek41_contract::execution_options::MoeDirect,
     ) -> Shape {
         self.moe_knobs = options;
+        self
+    }
+
+    /// This shape with the staged drafter Markov step on or off
+    /// (`model_deepseek41_contract::execution_options::DSPARK_MARKOV_STAGED`).
+    pub fn with_dspark_markov_staged(mut self, enabled: bool) -> Shape {
+        self.dspark_markov_staged = enabled;
+        self
+    }
+
+    /// This shape with the `dspark_hc_fusion` candidate on or off
+    /// (`model_deepseek41_contract::execution_options::DSPARK_HC_FUSION`).
+    pub fn with_dspark_hc_fusion(mut self, enabled: bool) -> Shape {
+        self.dspark_hc_fusion = enabled;
+        self
+    }
+
+    /// This shape with the `dspark_confidence_staged` candidate on or off
+    /// (`model_deepseek41_contract::execution_options::DSPARK_CONFIDENCE_STAGED`).
+    pub fn with_dspark_confidence_staged(mut self, enabled: bool) -> Shape {
+        self.dspark_confidence_staged = enabled;
+        self
+    }
+
+    /// This shape with the `dspark_moe_direct` candidate on or off
+    /// (`model_deepseek41_contract::execution_options::DSPARK_MOE_DIRECT`).
+    pub fn with_dspark_moe_direct(mut self, enabled: bool) -> Shape {
+        self.dspark_moe_direct = enabled;
+        self
+    }
+
+    /// This shape with the `dspark_hc_draft_rows` candidate on or off
+    /// (`model_deepseek41_contract::execution_options::DSPARK_HC_DRAFT_ROWS`).
+    pub fn with_dspark_hc_draft_rows(mut self, enabled: bool) -> Shape {
+        self.dspark_hc_draft_rows = enabled;
         self
     }
 

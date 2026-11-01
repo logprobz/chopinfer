@@ -73,6 +73,7 @@ pub(super) fn validate(row: &Row) -> Result<(), TuningError> {
         | "hc.draft_mix.verify"
         | "hc.finish_admit.decode"
         | "hc.finish_admit.verify"
+        | "hc.draft_admit.verify"
         | "hc.wide_mix.verify"
         | "norm.input_admit.prefill"
         | "norm.query_admit.prefill"
@@ -80,8 +81,12 @@ pub(super) fn validate(row: &Row) -> Result<(), TuningError> {
         "hc.expand_mix.prefill" | "hc.lagged_mix.prefill" => {
             (&["pipeline"], &["chains", "tile"], &[])
         }
-        "hc.finish_chain.verify" | "hc.round_chain.decode" => (&["chain"], &["warps"], &[]),
-        "hc.finish_cols.verify" => (&["cols"], &["tile", "warps"], &["transposed"]),
+        "hc.finish_chain.verify" | "hc.round_chain.decode" | "hc.draft_chain.verify" => {
+            (&["chain"], &["warps"], &[])
+        }
+        "hc.finish_cols.verify" | "hc.draft_cols.verify" => {
+            (&["cols"], &["tile", "warps"], &["transposed"])
+        }
         "hc.finish_pair.verify" => (&["pair"], &[], &[]),
         "hc.finish_rows.verify" => (&["rows"], &["tile"], &[]),
         "hc.finish_twin.verify" => (&["twin"], &["warps"], &[]),
@@ -109,6 +114,7 @@ pub(super) fn validate(row: &Row) -> Result<(), TuningError> {
         "moe.direct_admit.decode" => (&["direct"], &["order"], &[]),
         "moe.direct_admit.verify" => (&["direct", "gap", "wide"], &["order"], &[]),
         "moe.direct_wide.verify" => (&["direct"], &[], &[]),
+        "moe.direct_drafter.verify" => (&["direct"], &["order"], &[]),
         "moe.gate_finish.decode" | "moe.gate_finish.verify" => (&["gate_finish"], &[], &[]),
         "moe.gate_grid.decode" | "moe.gate_grid.verify" => (&["gate_grid"], &[], &[]),
         "moe.gate_resident.decode" | "moe.gate_resident.prefill" | "moe.gate_resident.verify" => {
@@ -267,9 +273,11 @@ fn validate_values(row: &Row) -> Result<(), TuningError> {
         }
         "hc.expand_mix.prefill" => matches!((count("tile"), count("chains")), (4, 4) | (8, 8)),
         "hc.lagged_mix.prefill" => count("tile") == 8 && [4, 8].contains(&count("chains")),
-        "hc.finish_chain.verify" | "hc.round_chain.decode" => [4, 8].contains(&count("warps")),
+        "hc.finish_chain.verify" | "hc.round_chain.decode" | "hc.draft_chain.verify" => {
+            [4, 8].contains(&count("warps"))
+        }
         "hc.finish_rows.verify" => [2, 4, 8].contains(&count("tile")),
-        "hc.finish_cols.verify" => {
+        "hc.finish_cols.verify" | "hc.draft_cols.verify" => {
             [2, 4, 8].contains(&count("tile")) && [8, 16, 32].contains(&count("warps"))
         }
         "hc.finish_twin.verify" => [8, 16, 32].contains(&count("warps")),

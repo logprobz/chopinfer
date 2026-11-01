@@ -97,6 +97,28 @@ fn finish_selected(
         capacity,
     )
 }
+/// The drafter's verify rows the drafter table admits to the finish route
+/// (`hc.draft_admit.verify`, the `dspark_hc_draft_rows` candidate), within
+/// the prepared finish rows.
+fn draft_finish_selected(
+    g: &model_deepseek41_contract::geometry::Geometry,
+    phase: Phase,
+    finish_rows: u32,
+) -> bool {
+    g.id == model_deepseek41_contract::geometry::FLASH.id
+        && matches!(phase, Phase::Verify { .. })
+        && phase.rows() <= finish_rows
+        && model_deepseek41_contract::tuning::select(
+            g,
+            model_deepseek41_contract::tuning::Family::Hc,
+            "hc.draft_admit.verify",
+            "f32",
+            &[("groups", g.shape.hc.streams), ("width", g.shape.hidden)],
+            model_deepseek41_contract::verify_bounds::HC_FINISH,
+            phase.rows(),
+        )
+        .is_some()
+}
 fn wide_selected(
     g: &model_deepseek41_contract::geometry::Geometry,
     phase: Phase,
@@ -168,6 +190,9 @@ pub(crate) struct HcOps {
     draft_mix: Prepared<LaggedMixCollapseBuffers<View>>,
     verify_mix: Option<Prepared<LaggedMixCollapseBuffers<View>>>,
     finish_rows: u32,
+    /// A drafter's operations with the `dspark_hc_draft_rows` candidate,
+    /// whose finish route also admits the drafter table's rows.
+    draft_rows: bool,
     expand: Prepared<StreamExpandBuffers<View>>,
     head: Prepared<WeightedStreamHeadBuffers<View>>,
     fused: Option<Prepared<SinkhornExpandMixBuffers<View>>>,
@@ -250,6 +275,7 @@ impl HcOps {
         Ok(HcOps {
             geometry: g,
             finish_rows,
+            draft_rows: !target && shape.dspark_hc_draft_rows,
             wide: if target {
                 Self::prepare_wide(shape, asks)?
             } else {
@@ -517,7 +543,9 @@ impl HcOps {
     // rounded expansion mixer and input norm it replaces, memcheck clean,
     // and saves 1.07..1.12 ms per step cold (0.75..0.85 hot), 77 of 77 sites.
     pub(crate) fn has_finish_norm(&self, phase: Phase) -> bool {
-        finish_selected(self.geometry, phase, self.finish_rows) && self.finish_norm.is_some()
+        (finish_selected(self.geometry, phase, self.finish_rows)
+            || self.draft_rows && draft_finish_selected(self.geometry, phase, self.finish_rows))
+            && self.finish_norm.is_some()
             || self.wide_finish(phase).is_some()
     }
 

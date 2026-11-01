@@ -23,18 +23,25 @@ use model_deepseek41_contract::moe::Experts;
 // Full graphs, poisoned replays and clean eager/graph memcheck preserve
 // the result. Local-fold candidates remain unselected. A separate measured
 // router epilogue may fuse projection reduction, selection and metadata.
-fn buckets(set: Experts, maximum_verify_rows: u32) -> Vec<(ExecutionPhase, u32)> {
+fn buckets(set: Experts, maximum_verify_rows: u32, drafter: bool) -> Vec<(ExecutionPhase, u32)> {
     let mut out = Vec::new();
     for phase in [ExecutionPhase::Decode, ExecutionPhase::Verify] {
         for rows in 1..=64 {
-            let Some(row) = super::moe::choice(
-                &model_deepseek41_contract::geometry::FLASH,
-                "direct_admit",
-                phase,
-                &[("experts", set.count), ("top_k", set.top_k)],
-                64,
-                rows,
-            ) else {
+            let select = |site| {
+                super::moe::choice(
+                    &model_deepseek41_contract::geometry::FLASH,
+                    site,
+                    phase,
+                    &[("experts", set.count), ("top_k", set.top_k)],
+                    64,
+                    rows,
+                )
+            };
+            let Some(row) = select("direct_admit").or_else(|| {
+                (drafter && phase == ExecutionPhase::Verify)
+                    .then(|| select("direct_drafter"))
+                    .flatten()
+            }) else {
                 continue;
             };
             if row.schedule == "wide" && rows > maximum_verify_rows {
@@ -89,23 +96,25 @@ pub(super) fn prepare_set(
     } else {
         Some(super::moe_direct_wide::entry(shape.geometry).map_err(Refused::Rule)?)
     };
-    let narrow = buckets(set, maximum_rows).into_iter().map(|(phase, rows)| {
-        let wide = super::moe_router_finish::wide(set, phase, rows, maximum_rows);
-        Ok((
-            phase,
-            rows,
-            prepare(
-                &entry,
-                rows,
+    let narrow = buckets(set, maximum_rows, drafter_rows(shape, set))
+        .into_iter()
+        .map(|(phase, rows)| {
+            let wide = super::moe_router_finish::wide(set, phase, rows, maximum_rows);
+            Ok((
                 phase,
-                scaling,
-                super::moe_router_finish::qualified(set, phase, rows) || wide,
-                super::moe_router_finish::r2(set, phase, rows) || wide,
-                &tiles,
-                knobs,
-            )?,
-        ))
-    });
+                rows,
+                prepare(
+                    &entry,
+                    rows,
+                    phase,
+                    scaling,
+                    super::moe_router_finish::qualified(set, phase, rows) || wide,
+                    super::moe_router_finish::r2(set, phase, rows) || wide,
+                    &tiles,
+                    knobs,
+                )?,
+            ))
+        });
     let wide = wide.into_iter().map(|rows| {
         let entry = wide_entry.as_ref().expect("wide direct entry");
         Ok((
@@ -154,15 +163,17 @@ pub(crate) fn takes_knobs(shape: &crate::shape::Shape, wide: bool) -> bool {
     }
     let maximum_rows =
         shape.verify_rows_within(model_deepseek41_contract::verify_bounds::MOE_DIRECT);
-    buckets(set, maximum_rows).into_iter().any(|(phase, rows)| {
-        let wide = super::moe_router_finish::wide(set, phase, rows, maximum_rows);
-        absorbing_path(
-            set.count,
-            phase,
-            rows,
-            super::moe_router_finish::qualified(set, phase, rows) || wide,
-        )
-    })
+    buckets(set, maximum_rows, drafter_rows(shape, set))
+        .into_iter()
+        .any(|(phase, rows)| {
+            let wide = super::moe_router_finish::wide(set, phase, rows, maximum_rows);
+            absorbing_path(
+                set.count,
+                phase,
+                rows,
+                super::moe_router_finish::qualified(set, phase, rows) || wide,
+            )
+        })
 }
 
 /// Whether a bucket runs the absorbing path: the absorbing gate small
@@ -171,6 +182,17 @@ fn absorbing_path(experts: u32, phase: ExecutionPhase, rows: u32, fused_router: 
     fused_router && stage_selected("wide", experts, phase, rows)
         || stage_selected("absorb", experts, phase, rows)
             && stage_selected("strip2", experts, phase, rows)
+}
+
+/// Whether `set` is the drafter's bank of a shape with the
+/// `dspark_moe_direct` candidate option, whose verify forwards also take
+/// the direct path at the rows the drafter table admits
+/// (`moe.direct_drafter.verify`) instead of the expert chains.
+fn drafter_rows(shape: &crate::shape::Shape, set: Experts) -> bool {
+    let g = shape.geometry;
+    shape.dspark_moe_direct
+        && set.count == g.shape.dspark.experts
+        && set.top_k == g.shape.dspark.top_k
 }
 
 /// The verify rows above the direct buckets that the backbone bank serves
@@ -866,6 +888,37 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The `dspark_moe_direct` candidate adds the drafter table's verify
+    /// rows to the drafter bank only; the backbone bank keeps its buckets.
+    #[test]
+    fn drafter_direct_rows_join_only_the_drafter_bank() {
+        let shape = crate::shape::Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let candidate = shape.with_dspark_moe_direct(true);
+        let sets = model_deepseek41_contract::moe::expert_sets(&FLASH);
+        let rows = |shape: &crate::shape::Shape, set| {
+            prepare_set(shape, set)
+                .unwrap()
+                .into_iter()
+                .map(|(phase, rows, _)| (phase, rows))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(rows(&shape, sets[0]), rows(&candidate, sets[0]));
+        let (served, drafter) = (rows(&shape, sets[1]), rows(&candidate, sets[1]));
+        let added: Vec<_> = drafter.iter().filter(|r| !served.contains(r)).collect();
+        assert!(served.iter().all(|r| drafter.contains(r)));
+        assert_eq!(
+            added,
+            (10..=60)
+                .step_by(5)
+                .map(|rows| (ExecutionPhase::Verify, rows))
+                .collect::<Vec<_>>()
+                .iter()
+                .collect::<Vec<_>>()
+        );
+        assert!(!drafter_rows(&candidate, sets[0]) && drafter_rows(&candidate, sets[1]));
+        assert!(!drafter_rows(&shape, sets[1]));
     }
 
     #[test]

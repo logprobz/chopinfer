@@ -421,6 +421,11 @@ pub(crate) mod tests {
             (PHASED_DECODE_REDUCE, true.into()),
             (MOE_DIRECT_STREAM, true.into()),
             (MOE_DIRECT_RETIRE, true.into()),
+            (DSPARK_HC_DRAFT_ROWS, true.into()),
+            (DSPARK_MOE_DIRECT, true.into()),
+            (DSPARK_CONFIDENCE_STAGED, true.into()),
+            (DSPARK_HC_FUSION, true.into()),
+            (DSPARK_MARKOV_STAGED, true.into()),
         ] {
             changed = with_option(changed, name, value);
         }
@@ -441,6 +446,11 @@ pub(crate) mod tests {
                     retire: true,
                     ..MoeDirect::default()
                 },
+                dspark_hc_draft_rows: true,
+                dspark_moe_direct: true,
+                dspark_confidence_staged: true,
+                dspark_hc_fusion: true,
+                dspark_markov_staged: true,
             }
         );
         for (name, value) in [

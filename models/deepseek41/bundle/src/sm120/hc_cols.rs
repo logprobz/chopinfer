@@ -45,6 +45,22 @@ pub fn buckets() -> Vec<finish_split::Bucket> {
         .collect()
 }
 
+/// The column pair at the drafter table's rows (`hc.draft_cols.verify`),
+/// registered only with the `dspark_hc_draft_rows` candidate.
+pub fn draft_buckets() -> Vec<finish_split::Bucket> {
+    (1..=64)
+        .filter_map(|rows| {
+            let row = super::hc_finish_norm::choice(&FLASH, "hc.draft_cols.verify", 64, rows)?;
+            Some(finish_split::Bucket {
+                rows,
+                tile: row.knobs["tile"].count().expect("HC column tile"),
+                transposed: row.knobs["transposed"].flag().expect("HC transpose"),
+                warps: row.knobs["warps"].count().expect("HC finish warps"),
+            })
+        })
+        .collect()
+}
+
 pub fn producer() -> round_cols::Entry {
     round_cols::Entry {
         reference: super::hc_round_chain::entry(&FLASH),

@@ -31,23 +31,41 @@ pub fn cubins(geometries: &[Geometry]) -> Result<Vec<(&'static str, CubinSpec)>,
 /// Flash buckets (`twin_buckets`), and both launches replaced by the
 /// column-block producer and split finish at `hc_cols::buckets`. The
 /// column pair replaced the one-launch boundary (`hc_completion`) at C1 and
-/// C8, its last buckets.
+/// C8, its last buckets. With `draft_rows` (the `dspark_hc_draft_rows`
+/// candidate) the pair, its chain producer and the column pair also cover
+/// the drafter table's rows (`draft_buckets`), which only a drafter's
+/// finish admission reaches.
 pub fn register(
     backend: kernels_sm120::backend::Sm120,
     g: &Geometry,
+    draft_rows: bool,
 ) -> kernels_sm120::backend::Sm120 {
-    let backend = register_pair(backend, g);
+    let backend = register_pair_with(backend, g, draft_rows);
     if g.id == model_deepseek41_contract::geometry::FLASH.id {
+        let mut cols = super::hc_cols::buckets();
+        if draft_rows {
+            cols.extend(super::hc_cols::draft_buckets());
+            cols.sort_by_key(|b| b.rows);
+        }
         backend
             .with_sinkhorn_finish_norm_twin(super::hc_finish_twin::served(), twin_buckets())
             .with_sinkhorn_finish_norm_cols(
                 super::hc_cols::producer(),
                 super::hc_cols::finish(),
-                super::hc_cols::buckets(),
+                cols,
             )
     } else {
         backend
     }
+}
+
+/// The drafter table's rows of the finish pair and their chain producer's
+/// warps (`hc.draft_admit.verify`, `hc.draft_chain.verify`).
+pub(crate) fn draft_buckets() -> Vec<(u32, u32)> {
+    counted_buckets("hc.draft_chain.verify", 64, "warps")
+        .into_iter()
+        .filter(|&(rows, _)| selected_rows("hc.draft_admit.verify", 64).contains(&rows))
+        .collect()
 }
 
 /// Measured (row bucket, warp count) pairs of the two-CTA tail: DSpark's
@@ -62,10 +80,27 @@ pub fn register_pair(
     backend: kernels_sm120::backend::Sm120,
     g: &Geometry,
 ) -> kernels_sm120::backend::Sm120 {
+    register_pair_with(backend, g, false)
+}
+
+fn register_pair_with(
+    backend: kernels_sm120::backend::Sm120,
+    g: &Geometry,
+    draft_rows: bool,
+) -> kernels_sm120::backend::Sm120 {
     if g.id == model_deepseek41_contract::geometry::FLASH.id {
+        let (mut pairs, mut chains) = (pair_buckets(), chain_buckets());
+        if draft_rows {
+            for (rows, warps) in draft_buckets() {
+                pairs.push(rows);
+                chains.push((rows, warps));
+            }
+            pairs.sort_unstable();
+            chains.sort_unstable();
+        }
         backend
-            .with_sinkhorn_finish_norm(entry(g), pair_buckets())
-            .with_sinkhorn_finish_norm_chain(super::hc_round_chain::entry(g), chain_buckets())
+            .with_sinkhorn_finish_norm(entry(g), pairs)
+            .with_sinkhorn_finish_norm_chain(super::hc_round_chain::entry(g), chains)
             .with_sinkhorn_finish_norm_rows(super::hc_round_rows::entry(g), row_buckets())
     } else {
         backend

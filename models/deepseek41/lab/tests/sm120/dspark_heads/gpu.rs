@@ -21,6 +21,9 @@ mod probe;
 #[path = "parallel.rs"]
 mod parallel;
 
+#[path = "staged.rs"]
+mod staged;
+
 // More than two eight-row passes of the tiled Markov step.
 const ROWS: u32 = 19;
 

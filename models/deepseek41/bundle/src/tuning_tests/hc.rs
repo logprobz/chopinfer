@@ -67,6 +67,17 @@ fn domains() -> std::collections::BTreeSet<Key> {
             verify_bounds::HC_FINISH,
         );
     }
+    // The drafter's finish admission and forms (the `dspark_hc_draft_rows`
+    // candidate).
+    for site in ["draft_admit", "draft_chain", "draft_cols"] {
+        add(
+            &mut out,
+            &format!("hc.{site}.verify"),
+            "f32",
+            &shape,
+            verify_bounds::HC_FINISH,
+        );
+    }
     // The wide verify sites (`sm120::hc_wide`), keyed by the widest wide
     // verify bucket.
     for site in ["finish_admit", "finish_cols", "finish_pair"] {
@@ -124,6 +135,9 @@ const UNTUNED: &[&str] = &[
     "hc.decode_mix.decode f32 groups=4,width=5120 t32: 2..=7,9..=32",
     "hc.decode_mix.prefill f32 groups=4,width=5120 t32: 1..=32",
     "hc.decode_mix.verify f32 groups=4,width=5120 t32: 1..=3,5,7,9..=11,13..=15,17..=31",
+    "hc.draft_admit.verify f32 groups=4,width=5120 t64: 1..=4,6..=9,11..=14,16..=19,21..=24,26..=29,31..=64",
+    "hc.draft_chain.verify f32 groups=4,width=5120 t64: 1..=4,6..=9,11..=14,16..=19,21..=24,26..=29,31..=64",
+    "hc.draft_cols.verify f32 groups=4,width=5120 t64: 1..=4,6..=9,11..=14,16..=19,21..=24,26..=29,31..=64",
     "hc.draft_mix.decode f32 groups=4,width=5120 t60: 1..=32",
     "hc.draft_mix.prefill f32 groups=4,width=5120 t60: 1..=32",
     "hc.draft_mix.verify f32 groups=4,width=5120 t60: 1..=32",

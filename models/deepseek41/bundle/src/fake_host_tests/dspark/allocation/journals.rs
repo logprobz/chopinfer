@@ -67,51 +67,126 @@ impl LogitsRowSinkV1 for ProofSink {
 
 /// The `-wide` lifetimes run the two widest with the `wide_verify` option,
 /// the `-phased` ones the first and a 65-row one with the
-/// `phased_decode_reduce` option, and the `-wide-draft` ones the two widest
-/// with `wide_verify` and `wide_draft`: their 16 and 32 items draft in one
-/// forward each.
+/// `phased_decode_reduce` option, the `-wide-draft` ones the two widest
+/// with `wide_verify` and `wide_draft` (their 16 and 32 items draft in one
+/// forward each), and the drafter ones the C8 lifetime with each drafter
+/// candidate option, the C4 one with `dspark_hc_fusion` and
+/// `dspark_hc_draft_rows`, and the C4 one with all five.
 #[test]
 fn allocated_lifetimes_journal() {
+    use model_deepseek41_contract::execution_options::{
+        DSPARK_CONFIDENCE_STAGED, DSPARK_HC_DRAFT_ROWS, DSPARK_HC_FUSION, DSPARK_MARKOV_STAGED,
+        DSPARK_MOE_DIRECT, PHASED_DECODE_REDUCE, WIDE_DRAFT, WIDE_VERIFY,
+    };
+    let drafter = [
+        DSPARK_MARKOV_STAGED,
+        DSPARK_HC_FUSION,
+        DSPARK_CONFIDENCE_STAGED,
+        DSPARK_MOE_DIRECT,
+        DSPARK_HC_DRAFT_ROWS,
+    ];
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let mut mismatches = Vec::new();
-    for (items, width, depth, suffix, expected) in [
-        (4, 16, 5, "", (69334, 0x94b43e6c45e6f09b)),
-        (8, 32, 5, "", (106926, 0x8d92d278eff57bef)),
-        (4, 12, 3, "-d3", (69502, 0xdedf204e99d57b9b)),
-        (16, 65, 5, "-odd", (190434, 0xa53d7eeecf401235)),
-        (32, 192, 5, "-maximum", (343172, 0x423f402926f10c51)),
-        (16, 65, 5, "-odd-wide", (191802, 0x64bd42c3caef55c0)),
-        (32, 192, 5, "-maximum-wide", (344540, 0x07785bc19d29a6ff)),
-        (4, 16, 5, "-phased", (69358, 0xfdbd662fbe69bdf6)),
-        (16, 65, 5, "-odd-phased", (189194, 0xb6fd29e113df566c)),
-        (16, 65, 5, "-odd-wide-draft", (191702, 0x7ec0e494350dc4a8)),
+    for (items, width, depth, suffix, options, expected) in [
+        (4, 16, 5, "", &[][..], (69334, 0x94b43e6c45e6f09b)),
+        (8, 32, 5, "", &[], (106926, 0x8d92d278eff57bef)),
+        (4, 12, 3, "-d3", &[], (69502, 0xdedf204e99d57b9b)),
+        (16, 65, 5, "-odd", &[], (190434, 0xa53d7eeecf401235)),
+        (32, 192, 5, "-maximum", &[], (343172, 0x423f402926f10c51)),
+        (
+            16,
+            65,
+            5,
+            "-odd-wide",
+            &[WIDE_VERIFY],
+            (191802, 0x64bd42c3caef55c0),
+        ),
+        (
+            32,
+            192,
+            5,
+            "-maximum-wide",
+            &[WIDE_VERIFY],
+            (344540, 0x07785bc19d29a6ff),
+        ),
+        (
+            4,
+            16,
+            5,
+            "-phased",
+            &[PHASED_DECODE_REDUCE],
+            (69358, 0xfdbd662fbe69bdf6),
+        ),
+        (
+            16,
+            65,
+            5,
+            "-odd-phased",
+            &[PHASED_DECODE_REDUCE],
+            (189194, 0xb6fd29e113df566c),
+        ),
+        (
+            16,
+            65,
+            5,
+            "-odd-wide-draft",
+            &[WIDE_VERIFY, WIDE_DRAFT],
+            (191702, 0x7ec0e494350dc4a8),
+        ),
         (
             32,
             192,
             5,
             "-maximum-wide-draft",
+            &[WIDE_VERIFY, WIDE_DRAFT],
             (343532, 0xf9ee11d6af367dda),
         ),
+        (
+            8,
+            32,
+            5,
+            "-markov-staged",
+            &drafter[..1],
+            (106918, 0xec2cda8f7c64a88f),
+        ),
+        (
+            8,
+            32,
+            5,
+            "-hc-fusion",
+            &drafter[1..2],
+            (106854, 0x85c7e7bd95972561),
+        ),
+        (
+            8,
+            32,
+            5,
+            "-confidence-staged",
+            &drafter[2..3],
+            (106938, 0x0156530484d50f83),
+        ),
+        (
+            8,
+            32,
+            5,
+            "-moe-direct",
+            &drafter[3..4],
+            (106866, 0x39dbc028f5685113),
+        ),
+        (
+            4,
+            16,
+            5,
+            "-hc-draft-rows",
+            &[DSPARK_HC_FUSION, DSPARK_HC_DRAFT_ROWS],
+            (69262, 0x4db4a4e157875315),
+        ),
+        (4, 16, 5, "-drafter", &drafter, (69206, 0xf7b1328155f83920)),
     ] {
-        use model_deepseek41_contract::execution_options::{
-            PHASED_DECODE_REDUCE, WIDE_DRAFT, WIDE_VERIFY,
-        };
-        let options: &[&str] = if suffix.ends_with("-wide") {
-            &[WIDE_VERIFY]
-        } else if suffix.ends_with("-wide-draft") {
-            &[WIDE_VERIFY, WIDE_DRAFT]
-        } else if suffix.ends_with("-phased") {
-            &[PHASED_DECODE_REDUCE]
-        } else {
-            &[]
-        };
         let (host, mut instance) = if options.is_empty() {
             create_with_limits(shape, 32, 192)
         } else {
-            let options = options
-                .iter()
-                .map(|&option| (option, true.into()))
-                .collect::<Vec<_>>();
+            let options: Vec<_> = options.iter().map(|&o| (o, true.into())).collect();
             create_with_options(shape, 32, 192, &options)
         };
         for slot in 0..items {

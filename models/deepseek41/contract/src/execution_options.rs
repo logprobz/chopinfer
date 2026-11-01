@@ -39,6 +39,30 @@ pub const MOE_DIRECT_RETIRE: &str = "moe_direct_retire";
 /// Candidate: the direct MoE's gate finisher issues every partial load
 /// before its first add (`kernels_sm120::moe::chained::knobs`).
 pub const MOE_DIRECT_LOADS: &str = "moe_direct_loads";
+/// Candidate: DSpark drafter Markov steps of two or more items load each
+/// thread's rank-256 weight chain into registers before the dependency
+/// wait and read each position's base logits in place, so no row copy
+/// precedes the step.
+pub const DSPARK_MARKOV_STAGED: &str = "dspark_markov_staged";
+/// Candidate: a DSpark drafter stage's sublayer boundaries, after its
+/// attention and into the next stage, fuse their all-reduce round,
+/// expansion, next mixer and input norm where the measured finish route
+/// admits the forward's rows, as the backbone's do.
+pub const DSPARK_HC_FUSION: &str = "dspark_hc_fusion";
+/// Candidate: DSpark drafter confidence heads load each thread's weight
+/// chain into registers before the dependency wait and stage each row's
+/// operands in shared memory with coalesced loads, keeping every chain,
+/// fold and score.
+pub const DSPARK_CONFIDENCE_STAGED: &str = "dspark_confidence_staged";
+/// Candidate: DSpark drafter verify forwards whose rows the measured
+/// drafter table admits (`moe.direct_drafter.verify`) run the routed
+/// experts through the direct path instead of the expert chains.
+pub const DSPARK_MOE_DIRECT: &str = "dspark_moe_direct";
+/// Candidate, with `dspark_hc_fusion`: DSpark drafter forwards of one
+/// to six items (5 to 30 block rows) admit the HC finish route through
+/// the drafter table (`hc.draft_admit.verify`), so their stage boundaries
+/// fuse as the measured rows' do.
+pub const DSPARK_HC_DRAFT_ROWS: &str = "dspark_hc_draft_rows";
 pub const DEFAULT_PLANS: usize = 16;
 pub const MAX_PLANS: usize = 64;
 /// The served warmup fits within 512 graph handles per rank, leaving room
@@ -56,6 +80,11 @@ pub struct Options {
     pub f32_row_tiles: bool,
     pub phased_decode_reduce: bool,
     pub moe_direct: MoeDirect,
+    pub dspark_markov_staged: bool,
+    pub dspark_hc_fusion: bool,
+    pub dspark_confidence_staged: bool,
+    pub dspark_moe_direct: bool,
+    pub dspark_hc_draft_rows: bool,
 }
 
 /// The direct MoE candidate knobs; all off serves the qualified path.
@@ -66,11 +95,14 @@ pub struct MoeDirect {
     pub retire: bool,
     pub loads: bool,
 }
-
-pub fn declarations() -> [ModelOptionV1; 13] {
+pub fn declarations() -> [ModelOptionV1; 18] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            DSPARK_CONFIDENCE_STAGED,
             OptionDefinitionV1::Boolean { default: false },
         ),
         (
@@ -80,6 +112,22 @@ pub fn declarations() -> [ModelOptionV1; 13] {
                 minimum: 0,
                 maximum: i64::MAX,
             },
+        ),
+        (
+            DSPARK_HC_DRAFT_ROWS,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            DSPARK_HC_FUSION,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            DSPARK_MARKOV_STAGED,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            DSPARK_MOE_DIRECT,
+            OptionDefinitionV1::Boolean { default: false },
         ),
         (
             F32_ROW_TILES,
@@ -185,6 +233,11 @@ impl Options {
                 retire: flag(MOE_DIRECT_RETIRE),
                 loads: flag(MOE_DIRECT_LOADS),
             },
+            dspark_hc_draft_rows: flag(DSPARK_HC_DRAFT_ROWS),
+            dspark_moe_direct: flag(DSPARK_MOE_DIRECT),
+            dspark_confidence_staged: flag(DSPARK_CONFIDENCE_STAGED),
+            dspark_hc_fusion: flag(DSPARK_HC_FUSION),
+            dspark_markov_staged: flag(DSPARK_MARKOV_STAGED),
         })
     }
 }
@@ -248,6 +301,11 @@ mod tests {
             f32_row_tiles: false,
             phased_decode_reduce: false,
             moe_direct: MoeDirect::default(),
+            dspark_hc_draft_rows: false,
+            dspark_moe_direct: false,
+            dspark_confidence_staged: false,
+            dspark_hc_fusion: false,
+            dspark_markov_staged: false,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -271,6 +329,11 @@ mod tests {
             (MOE_DIRECT_KEEP.into(), "true".into()),
             (MOE_DIRECT_RETIRE.into(), "true".into()),
             (MOE_DIRECT_LOADS.into(), "true".into()),
+            (DSPARK_HC_DRAFT_ROWS.into(), "true".into()),
+            (DSPARK_MOE_DIRECT.into(), "true".into()),
+            (DSPARK_CONFIDENCE_STAGED.into(), "true".into()),
+            (DSPARK_HC_FUSION.into(), "true".into()),
+            (DSPARK_MARKOV_STAGED.into(), "true".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -291,6 +354,11 @@ mod tests {
                     retire: true,
                     loads: true,
                 },
+                dspark_hc_draft_rows: true,
+                dspark_moe_direct: true,
+                dspark_confidence_staged: true,
+                dspark_hc_fusion: true,
+                dspark_markov_staged: true,
             }
         );
         assert!(!declaration.is_qualified(&resolved));
@@ -330,6 +398,11 @@ mod tests {
             (MOE_DIRECT_KEEP, "0"),
             (MOE_DIRECT_RETIRE, "1"),
             (MOE_DIRECT_LOADS, "1"),
+            (DSPARK_HC_DRAFT_ROWS, "1"),
+            (DSPARK_MOE_DIRECT, "1"),
+            (DSPARK_CONFIDENCE_STAGED, "1"),
+            (DSPARK_HC_FUSION, "1"),
+            (DSPARK_MARKOV_STAGED, "1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),
         ] {

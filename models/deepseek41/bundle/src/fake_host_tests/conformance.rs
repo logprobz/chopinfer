@@ -16,6 +16,7 @@ use model_deepseek41_contract::serving::DECODE_BATCH;
 use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
 
 mod allocated;
+mod drafter;
 mod templated;
 mod wide;
 

@@ -9,6 +9,7 @@ pub mod ceil_parallel;
 pub mod ceil_prefill;
 pub mod ceil_split;
 pub mod confidence_parallel;
+pub mod confidence_staged;
 pub mod dense_dual;
 mod dense_dual_serving;
 pub mod dspark;
@@ -58,6 +59,7 @@ pub mod latent_decode;
 mod latent_query_serving;
 pub mod latent_scheduled;
 pub mod markov_row;
+pub mod markov_staged;
 pub mod markov_tiled;
 pub(crate) mod moe_floor;
 pub mod mxfp8_fold;
@@ -474,6 +476,42 @@ impl crate::Kernels {
             .flat_map(|rows| rows.map(|row| row..=row))
             .collect()
         })
+    }
+
+    /// The staged drafter Markov step (`dspark::markov_staged`, the
+    /// `dspark_markov_staged` candidate), base rows `base_stride` elements
+    /// apart.
+    pub(crate) fn dspark_markov_staged(
+        shape: &crate::shape::Shape,
+        op: &model_deepseek41_contract::own_ops::dspark::MarkovStep,
+        base_stride: u32,
+        need: kernel_core::backend::Need,
+    ) -> Result<
+        kernel_core::backend::Prepared<
+            model_deepseek41_contract::own_ops::dspark::MarkovStepBuffers<
+                kernel_core::backend::View,
+            >,
+        >,
+        kernel_core::backend::Refused,
+    > {
+        dspark::markov_staged(shape.geometry, op, base_stride, need)
+    }
+
+    /// The staged drafter confidence head (`dspark::confidence_staged`, the
+    /// `dspark_confidence_staged` candidate).
+    pub(crate) fn dspark_confidence_staged(
+        shape: &crate::shape::Shape,
+        op: &model_deepseek41_contract::own_ops::dspark::ConfidenceHead,
+        need: kernel_core::backend::Need,
+    ) -> Result<
+        kernel_core::backend::Prepared<
+            model_deepseek41_contract::own_ops::dspark::ConfidenceHeadBuffers<
+                kernel_core::backend::View,
+            >,
+        >,
+        kernel_core::backend::Refused,
+    > {
+        dspark::confidence_staged(shape.geometry, op, need)
     }
 
     pub(crate) fn drafter_f32_backend(
@@ -1002,8 +1040,10 @@ impl crate::Kernels {
             || cubin == allocate_entries::CUBIN
             || cubin == allocated_acceptance_entries::CUBIN
             || cubin == confidence_parallel::CUBIN
+            || cubin == confidence_staged::CUBIN
             || cubin == markov_tiled::CUBIN
             || cubin == markov_row::CUBIN
+            || cubin == markov_staged::CUBIN
             || cubin == dspark_argmax::CUBIN
             || cubin == dspark_projection::CUBIN
             || cubin == dspark_noise::CUBIN
@@ -1058,6 +1098,8 @@ impl crate::Kernels {
                 .is_empty())
             && (cubin != f32_verify::CUBIN
                 || f32_verify::enabled(shape.geometry, shape.ranks(), shape.verify_rows))
+            && (cubin != markov_staged::CUBIN || shape.dspark_markov_staged)
+            && (cubin != confidence_staged::CUBIN || shape.dspark_confidence_staged)
             && (cubin != f32_verify_rows::VERIFY.cubin
                 || crate::ops::exact_f32::rows::admitted(shape).is_some())
             && (cubin != f32_verify_rows::DECODE.cubin
@@ -1182,7 +1224,7 @@ impl crate::Kernels {
         let sm120 = hc_expand_mix::register(sm120, shape.geometry);
         let sm120 = hc_round_expand_mix::register(sm120, shape.geometry);
         let sm120 = hc_round_chain::register(sm120, shape.geometry, shape.ranks());
-        let sm120 = hc_finish_norm::register(sm120, shape.geometry);
+        let sm120 = hc_finish_norm::register(sm120, shape.geometry, shape.dspark_hc_draft_rows);
         let sm120 = replicated_embedding::register(sm120, shape.geometry, shape.ranks());
         let sm120 = latent_scheduled::register_sources(sm120, shape.geometry, shape.ranks())?;
         let sm120 = indexer::register(sm120, shape.geometry);

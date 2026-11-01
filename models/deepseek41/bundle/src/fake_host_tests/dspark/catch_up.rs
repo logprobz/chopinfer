@@ -140,8 +140,9 @@ fn catch_up_graphs_reuse_exact_rows_across_slots_and_commits() {
 /// as a step's do. The eager lifetime (a short prefill, its capture, a
 /// restore into another slot and a drafted verify step) with the option is
 /// the one without it up to the verify step but for those launches, some
-/// of them inside the capture, and its journal is pinned; the verify
-/// step's fusions are `verify_rows`' to check.
+/// of them inside the capture. Both lifetimes are pinned, each checked
+/// before the next starts so that its journal binds to its own device; the
+/// verify step's fusions are `verify_rows`' to check.
 #[test]
 fn prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions() {
     use model_deepseek41_contract::execution_options::{
@@ -149,7 +150,7 @@ fn prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions() {
     };
     const SERIAL: &str = "chop_deepseek41_latent_ceil32_v1 ";
     const PARALLEL: &str = "chop_deepseek41_latent_ceil32_parallel_v1 ";
-    let run = |fused: bool| {
+    let run = |fused: bool, name: &str, pin: (usize, u64)| {
         let (host, mut instance) = create_with_options(
             Shape::new(&FLASH, Ranks::TP4).unwrap(),
             4,
@@ -182,10 +183,21 @@ fn prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions() {
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
         let lines = host.journal.borrow().clone();
+        if let Err(error) = bundle_runtime::fake_host::check_journal(&lines, pin, name) {
+            panic!("{name}: {error}");
+        }
         (lines, capture, step)
     };
-    let (served, capture, step) = run(false);
-    let (fused, fused_capture, fused_step) = run(true);
+    let (served, capture, step) = run(
+        false,
+        "flash-tp4-dspark-prefix-capture.journal",
+        (40596, 0x207ddbc5c00ec41b),
+    );
+    let (fused, fused_capture, fused_step) = run(
+        true,
+        "flash-tp4-dspark-prefix-capture-rowfuse.journal",
+        (40104, 0x00ca4ee0728ce1b9),
+    );
     assert_eq!((&capture, step), (&fused_capture, fused_step));
     let mut changed = Vec::new();
     for (at, (a, b)) in served[..step].iter().zip(&fused[..step]).enumerate() {
@@ -205,10 +217,4 @@ fn prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions() {
     // changes.
     assert_eq!(changed.len(), 12);
     assert!(changed.iter().all(|at| capture.contains(at)), "{changed:?}");
-    let name = "flash-tp4-dspark-prefix-capture-rowfuse.journal";
-    if let Err(error) =
-        bundle_runtime::fake_host::check_journal(&fused, (40104, 0x00ca4ee0728ce1b9), name)
-    {
-        panic!("{name}: {error}");
-    }
 }

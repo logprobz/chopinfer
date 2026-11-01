@@ -148,7 +148,11 @@ with a strict tool constrains output to the model's call format. A model
 whose declaration has a `tools.choice` policy may also render no tools for
 `none`, only the named tool for a named choice, end a forced choice's prompt
 with the opening of its calls, refuse a forced choice in thinking mode, and
-serve a forced choice without tools as `auto` instead of refusing it.
+serve a forced choice without tools as `auto` instead of refusing it. Where
+the parser reads a marker only from its token ID (DeepSeek V4.1's
+`｜DSML｜`), the constraint admits that marker only as its token, so a
+constrained call always parses, while text and raw string values may spell
+it in ordinary tokens, which read as text.
 
 **Tool namespaces.** A model whose declaration has `tools.namespaces` names
 a function in a namespace by its qualified name, such as `ns::f`. In chat, a

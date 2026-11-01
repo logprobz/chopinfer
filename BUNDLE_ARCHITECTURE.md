@@ -137,7 +137,10 @@ byte documents:
   The request carries the client's whole `chat_template_kwargs`
   object, so the format reads any keyword its template reads.
 - `constraint`: the grammar a request's tool choice imposes, as a
-  `runtime-grammar` wire document; empty when there is none.
+  `runtime-grammar` wire document; empty when there is none. A grammar may
+  name a vocabulary token by its ID (a token element, which only that token
+  fills and which makes the document layout 2), as a tool grammar writes
+  the declaration's ID-only markers; every other grammar stays layout 1.
 - `parser_open`, `parser_push` and `parser_close`: one parser per request.
   The parser holds the completion's bytes: a push keeps the first `keep`
   bytes of earlier pushes (fewer only when a client stop cuts the

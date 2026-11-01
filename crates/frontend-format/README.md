@@ -155,6 +155,12 @@ none, and a push that keeps fewer bytes drops the marks past them.
 
 The tool-choice grammar a request's `tool_choice` imposes writes calls in
 the same family, so a forced call reads back as the parser reads any call.
+Under ID-only markers it writes each ID-only spelling in a marker as a token
+element (`runtime_grammar::Expr::Token`), which only that token fills, and
+the token appears nowhere else: free text and raw values may spell a marker
+in ordinary tokens, which the parser reads as text, and a forced call
+cannot end without the call. A forced choice's prefill reaches the
+constraint as the prompt holds it, its boundary tokens as tokens.
 
 A declaration may also state how a tool choice changes the render, in the
 host-read `tools.choice` section: `none_omits_tools`,

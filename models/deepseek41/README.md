@@ -27,7 +27,8 @@ so a special token spelled there is ordinary tokens: a tool result cannot
 forge a turn, and an added token or the image placeholder typed in text is
 accepted as text. The parser reads `<think>`, `</think>` and `｜DSML｜` only
 from their token IDs (`vocabulary.id_only_markers`), in a calls block too,
-so the model spelling them in ordinary tokens writes text. See [the request
+so the model spelling them in ordinary tokens writes text, and a forced
+call's constraint admits each marker's `｜DSML｜` only as that token. See [the request
 surface](../../docs/serving-request-surface.md#request-parameters-and-defaults)
 and `explicit-special-tokens` in [frontend-divergences.json](frontend-divergences.json).
 

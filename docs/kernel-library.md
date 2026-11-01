@@ -751,7 +751,9 @@ gate its exact fallback counts. Its device time remains unattributed.
 Exit codes are 0 for covered evidence, 1 for unallowed fallbacks and 2 for
 invalid, missing or ambiguous evidence. A model's range allowlist also
 needs `--profile`, `--phase` and `--rows` where those constraints apply;
-a job's family list instead supplies explicit reasons for that workload.
+a job's family list instead supplies explicit reasons for that workload,
+and a family scoped to step phases covers evidence only under a `--phase`
+it names.
 The serving-step profile report accepts `--route-classes` and `--route-allow`
 to run this check after reading the export.
 

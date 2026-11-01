@@ -14,6 +14,7 @@ from fnmatch import fnmatchcase
 
 
 MAPPED_GATHER_SYMBOL = 'host.gather_mapped_rows'
+PHASES = ('prefill', 'decode', 'verify')
 
 
 class EvidenceError(ValueError):
@@ -111,10 +112,19 @@ def allowances(path):
     if 'allow_fallbacks' in value:
         result = []
         for family, reason in value['allow_fallbacks'].items():
+            # A tune job's family may be scoped to step phases; here it
+            # admits evidence only under a --phase it names.
+            scope = {}
+            if isinstance(reason, dict):
+                phases = reason.get('phases')
+                if set(reason) != {'reason', 'phases'} or not isinstance(phases, list) or not phases \
+                        or not set(phases) <= set(PHASES):
+                    raise EvidenceError(f'allow_fallbacks {family} needs a reason and phases from {PHASES}')
+                reason, scope = reason['reason'], {'phases': phases}
             if not isinstance(reason, str) or not reason.strip():
                 raise EvidenceError('allow_fallbacks needs a reason for every family')
             result.append({'family': family, 'symbol': '*', 'entry': '*',
-                           'reason': reason, 'task': 'tune-window'})
+                           'reason': reason, 'task': 'tune-window', **scope})
         return result
     result = value.get('allow', [])
     for allow in result:
@@ -133,6 +143,8 @@ def allowed(tag, allow, profile, phase, rows, active):
         if 'profiles' in item and (profile is None or not any(fnmatchcase(profile, p) for p in item['profiles'])):
             continue
         if 'phase' in item and item['phase'] != phase:
+            continue
+        if 'phases' in item and phase not in item['phases']:
             continue
         if 'rows' in item and (rows is None or not any(lo <= rows <= hi for lo, hi in item['rows'])):
             continue
@@ -216,7 +228,7 @@ def main(argv=None):
     for name in ('journal', 'nsys', 'steps'):
         parser.add_argument('--' + name, type=pathlib.Path, action='append', default=[])
     parser.add_argument('--profile')
-    parser.add_argument('--phase', choices=('prefill', 'decode', 'verify'))
+    parser.add_argument('--phase', choices=PHASES)
     parser.add_argument('--rows', type=int)
     args = parser.parse_args(argv)
     if not (args.journal or args.nsys or args.steps):

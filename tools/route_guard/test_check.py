@@ -41,6 +41,20 @@ class CheckTests(unittest.TestCase):
         allow.write_text(json.dumps({'allow_fallbacks': {'projection': ''}}))
         self.assertEqual(self.run_check('--journal', path, '--allow', allow), 2)
 
+    def test_phase_scoped_job_allowance_admits_only_its_phases(self):
+        path = self.root / 'journal'
+        path.write_text('launch 4 shared config arguments\n')
+        allow = self.root / 'allow.json'
+        allow.write_text(json.dumps({'allow_fallbacks': {
+            'projection': {'reason': 'Prefill range pending', 'phases': ['prefill']}}}))
+        self.assertEqual(self.run_check('--journal', path, '--allow', allow, '--phase', 'prefill'), 0)
+        self.assertEqual(self.run_check('--journal', path, '--allow', allow, '--phase', 'verify'), 1)
+        self.assertEqual(self.run_check('--journal', path, '--allow', allow), 1)
+        for scope in ({'reason': 'Prefill range pending'}, {'reason': '', 'phases': ['prefill']},
+                      {'reason': 'Pending', 'phases': ['draft']}, {'reason': 'Pending', 'phases': []}):
+            allow.write_text(json.dumps({'allow_fallbacks': {'projection': scope}}))
+            self.assertEqual(self.run_check('--journal', path, '--allow', allow, '--phase', 'prefill'), 2)
+
     def test_sqlite_uses_string_table_and_device_duration(self):
         path = self.root / 'capture.sqlite'
         with sqlite3.connect(path) as db:

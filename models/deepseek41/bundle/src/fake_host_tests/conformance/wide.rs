@@ -7,9 +7,13 @@
 //! budget stays at 64 rows and every wider step runs eagerly. The
 //! `wide_verify` candidate is swept beside it as `tp4-dspark-rows192-wide`,
 //! the same override with the option on, the `wide_draft` candidate as
-//! `tp4-dspark-rows192-wide-draft`, with both options, and the
+//! `tp4-dspark-rows192-wide-draft`, with both options, the
 //! `phased_decode_reduce` candidate as `tp4-dspark-rows192-phased`, whose
-//! decode buckets and verify widths reach every phased form. The
+//! decode buckets and verify widths reach every phased form, the
+//! `verify_row_fusions` candidate as `tp4-dspark-rows192-rowfuse`, and both
+//! `wide_verify` and `verify_row_fusions` as
+//! `tp4-dspark-rows192-wide-rowfuse`, the pair an adopted
+//! `verify_row_fusions` would serve beside the declared `wide_verify`. The
 //! `f32_row_tiles` candidate is swept as `tp4-dspark-tiles`, the profile
 //! itself with the option on. Separate names keep their allowlist entries
 //! apart from the default profile, whose full sweep refuses entries it
@@ -22,7 +26,9 @@ use super::*;
 use bundle_runtime::fake_host::conformance::route_guard;
 use conformance::Startup;
 use model_deepseek41_contract::{
-    execution_options::{F32_ROW_TILES, PHASED_DECODE_REDUCE, WIDE_DRAFT, WIDE_VERIFY},
+    execution_options::{
+        F32_ROW_TILES, PHASED_DECODE_REDUCE, VERIFY_ROW_FUSIONS, WIDE_DRAFT, WIDE_VERIFY,
+    },
     serving::MAX_VERIFY_ROWS,
 };
 use runtime_bundle_sdk::warmup::VerifyShape;
@@ -36,12 +42,19 @@ const WIDE_PROFILE: &str = "tp4-dspark-rows192-wide";
 const WIDE_DRAFT_PROFILE: &str = "tp4-dspark-rows192-wide-draft";
 /// The override with the `phased_decode_reduce` candidate on.
 const PHASED_PROFILE: &str = "tp4-dspark-rows192-phased";
+/// The override with the `verify_row_fusions` candidate on.
+const ROW_FUSIONS_PROFILE: &str = "tp4-dspark-rows192-rowfuse";
+/// The override with the `wide_verify` and `verify_row_fusions` candidates
+/// on.
+const WIDE_ROW_FUSIONS_PROFILE: &str = "tp4-dspark-rows192-wide-rowfuse";
 /// Every override, and the candidate options each turns on.
-const OVERRIDES: [(&str, &[&str]); 4] = [
+const OVERRIDES: [(&str, &[&str]); 6] = [
     (PROFILE, &[]),
     (WIDE_PROFILE, &[WIDE_VERIFY]),
     (WIDE_DRAFT_PROFILE, &[WIDE_VERIFY, WIDE_DRAFT]),
     (PHASED_PROFILE, &[PHASED_DECODE_REDUCE]),
+    (ROW_FUSIONS_PROFILE, &[VERIFY_ROW_FUSIONS]),
+    (WIDE_ROW_FUSIONS_PROFILE, &[WIDE_VERIFY, VERIFY_ROW_FUSIONS]),
 ];
 /// The profile with the `f32_row_tiles` candidate on.
 const TILES_PROFILE: &str = "tp4-dspark-tiles";
@@ -195,7 +208,7 @@ impl Startup for Wide {
     }
 }
 
-/// The overrides and the tiles profile are five more configurations beside
+/// The overrides and the tiles profile are seven more configurations beside
 /// the package's profiles, and their instances start like served ones:
 /// create, prefix description and the host's startup warmup, at 192 verify
 /// rows for the raised ones.
@@ -206,6 +219,8 @@ fn the_override_starts_beside_the_profiles() {
         ("tp4_dspark_rows192_wide", WIDE_PROFILE),
         ("tp4_dspark_rows192_wide_draft", WIDE_DRAFT_PROFILE),
         ("tp4_dspark_rows192_phased", PHASED_PROFILE),
+        ("tp4_dspark_rows192_rowfuse", ROW_FUSIONS_PROFILE),
+        ("tp4_dspark_rows192_wide_rowfuse", WIDE_ROW_FUSIONS_PROFILE),
         ("tp4_dspark_tiles", TILES_PROFILE),
         ("tp4_ar", "tp4-ar"),
         ("tp4_dspark", BASE),
@@ -280,6 +295,24 @@ mod wide_route_sweep {
     fn tp4_dspark_rows192_phased() {
         route_guard::sweep::<Wide>(
             PHASED_PROFILE,
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
+            env!("CARGO_PKG_NAME"),
+        );
+    }
+
+    #[test]
+    fn tp4_dspark_rows192_rowfuse() {
+        route_guard::sweep::<Wide>(
+            ROW_FUSIONS_PROFILE,
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
+            env!("CARGO_PKG_NAME"),
+        );
+    }
+
+    #[test]
+    fn tp4_dspark_rows192_wide_rowfuse() {
+        route_guard::sweep::<Wide>(
+            WIDE_ROW_FUSIONS_PROFILE,
             include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
             env!("CARGO_PKG_NAME"),
         );

@@ -13,11 +13,15 @@ use runtime_cuda::{DeviceBuffer, Function, Stream};
 use serde_json::json;
 use std::{collections::BTreeMap, path::PathBuf};
 
-/// Decode buckets, drafter forwards and wide verify rows. Each pair runs
-/// only the rows its parallel entry holds ([`Entry::rows`]).
-const ROWS: [u32; 11] = [
+/// Decode buckets, drafter forwards and wide verify rows, including the
+/// drafter's window writes at C1 (three catch-up and five block rows). Each
+/// pair runs only the rows its parallel entry holds ([`Entry::rows`]).
+const ROWS: [u32; 14] = [
     1,
+    3,
+    5,
     8,
+    12,
     DECODE_BATCH,
     30,
     33,

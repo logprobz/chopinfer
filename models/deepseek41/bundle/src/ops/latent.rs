@@ -75,7 +75,10 @@ pub(crate) struct GlueOps {
     query_rope_wide_rows: Vec<(u32, Prepared<LatentQueryRopeBuffers<View>>)>,
     /// The circular write into the ring and the circular key lists.
     window_write: RowBuckets<LatentWindowWriteBuffers<View>>,
+    /// The fused write of the phases that run the decode row fusions
+    /// (`Shape::row_fusions`).
     decode_window_write: Prepared<LatentWindowWriteBuffers<View>>,
+    shape: Shape,
     window_keys: Prepared<LatentWindowKeyBuffers<View>>,
     /// A prefill's gather of the retained ring prefix into its staged
     /// window, its write into the staged window and its staged key lists.
@@ -292,6 +295,7 @@ impl GlueOps {
             query_rope_wide_rows,
             window_write,
             decode_window_write,
+            shape: *shape,
             window_keys,
             stage,
             staged_write,
@@ -420,7 +424,7 @@ impl GlueOps {
         let mut bind = Bind::default();
         let buffers = window_write_buffers(&mut bind, views, first, None);
         let op = match first {
-            None if matches!(phase, crate::program::Phase::Decode(_)) => &self.decode_window_write,
+            None if self.shape.row_fusions(phase) => &self.decode_window_write,
             None => self.window_write.at_phase(phase),
             Some(_) => &self.staged_write,
         };

@@ -17,6 +17,10 @@ use serde_json::json;
 use std::{collections::BTreeMap, path::PathBuf};
 
 const ROWS: [u32; 6] = [1, 2, 4, 8, 16, DECODE_BATCH];
+// With the verify steps of one, two and four DSpark items (six rows each)
+// that the `verify_row_fusions` option admits for the cases without a
+// widen, whose partial rounding launches at whole row buckets.
+const VERIFY_ROWS: [u32; 9] = [1, 2, 4, 6, 8, 12, 16, 24, DECODE_BATCH];
 const PATTERNS: [&str; 14] = [
     "finite",
     "zero",
@@ -80,6 +84,14 @@ impl Case {
             plans.push(rounding::plan(rows).map_err(|e| e.to_string())?);
         }
         Ok(plans)
+    }
+    /// The row counts this case runs.
+    fn rows(&self) -> &'static [u32] {
+        if self.widen.is_some() {
+            &ROWS
+        } else {
+            &VERIFY_ROWS
+        }
     }
     fn symbols(&self) -> Vec<&str> {
         let mut out = vec![
@@ -227,7 +239,7 @@ fn compare(expected: &[Vec<u8>], actual: &[Vec<u8>]) -> LabResult<()> {
 
 fn validate_cases() -> LabResult<()> {
     for case in cases() {
-        for rows in ROWS {
+        for &rows in case.rows() {
             let plans = case.plans(rows)?;
             for live in live_counts(rows) {
                 validate_replay(rows, live, DECODE_BATCH, &plans)?;
@@ -369,7 +381,7 @@ fn weights(c: &Case, pattern: &str) -> Vec<u8> {
 #[test]
 fn case_parameters_match_allocations_and_reject_oversized_live_counts() {
     for case in cases() {
-        for rows in ROWS {
+        for &rows in case.rows() {
             let plans = case.plans(rows).unwrap();
             for live in live_counts(rows) {
                 validate_replay(rows, live, DECODE_BATCH, &plans).unwrap();
@@ -462,7 +474,7 @@ fn compare_on_gpu(s: &Session) -> LabResult<()> {
             .map(|(m, symbol)| m.function(symbol).map_err(|e| e.to_string()))
             .collect::<LabResult<Vec<_>>>()?;
         let eps = c.fused.query.norm.epsilon_bits;
-        for rows in ROWS {
+        for &rows in c.rows() {
             let row_mark = failures.len();
             let label = format!("{} rows={rows}", c.label());
             let plans = c.plans(rows)?;
@@ -643,9 +655,10 @@ fn compare_on_gpu(s: &Session) -> LabResult<()> {
             }
         }
     }
-    assert_eq!(bitwise, cases().len() * ROWS.len() * PATTERNS.len());
-    assert_eq!(negative, cases().len() * ROWS.len() * 5);
-    assert_eq!(arithmetic_negative, cases().len() * ROWS.len());
+    let rows: usize = cases().iter().map(|c| c.rows().len()).sum();
+    assert_eq!(bitwise, rows * PATTERNS.len());
+    assert_eq!(negative, rows * 5);
+    assert_eq!(arithmetic_negative, rows);
     s.receipt(
         "norm-quantize",
         BTreeMap::from([
@@ -757,8 +770,9 @@ fn frozen_modules_are_complete() {
             serde_json::to_vec_pretty(&manifest).unwrap(),
         )
         .unwrap();
-        let coverage = json!({"entries": cases().iter().map(|c| json!({"label":c.label(),"new":c.fused.symbol,"width":c.width()})).collect::<Vec<_>>(), "rows": ROWS, "patterns": PATTERNS,
-            "bitwise_cases":cases().len()*ROWS.len()*PATTERNS.len(), "timing_cases":cases().len()*ROWS.len(), "negative_controls":cases().len()*ROWS.len()*5,"window":super::window_fused::coverage()});
+        let rows: usize = cases().iter().map(|c| c.rows().len()).sum();
+        let coverage = json!({"entries": cases().iter().map(|c| json!({"label":c.label(),"new":c.fused.symbol,"width":c.width(),"rows":c.rows()})).collect::<Vec<_>>(), "patterns": PATTERNS,
+            "bitwise_cases":rows*PATTERNS.len(), "timing_cases":rows, "negative_controls":rows*5,"window":super::window_fused::coverage()});
         std::fs::write(
             dir.join("coverage.json"),
             serde_json::to_vec_pretty(&coverage).unwrap(),

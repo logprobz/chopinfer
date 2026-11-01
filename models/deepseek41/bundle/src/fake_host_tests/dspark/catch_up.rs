@@ -133,3 +133,82 @@ fn catch_up_graphs_reuse_exact_rows_across_slots_and_commits() {
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
 }
+
+/// A prefix capture catches the drafter up outside any target step
+/// (`instance/prefix.rs`), and with the `verify_row_fusions` option its
+/// window writes of at most the draft rows take the parallel ceil32 entry,
+/// as a step's do. The eager lifetime (a short prefill, its capture, a
+/// restore into another slot and a drafted verify step) with the option is
+/// the one without it up to the verify step but for those launches, some
+/// of them inside the capture, and its journal is pinned; the verify
+/// step's fusions are `verify_rows`' to check.
+#[test]
+fn prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions() {
+    use model_deepseek41_contract::execution_options::{
+        DSPARK_GRAPH_HANDLES_PER_RANK, VERIFY_ROW_FUSIONS,
+    };
+    const SERIAL: &str = "chop_deepseek41_latent_ceil32_v1 ";
+    const PARALLEL: &str = "chop_deepseek41_latent_ceil32_parallel_v1 ";
+    let run = |fused: bool| {
+        let (host, mut instance) = create_with_options(
+            Shape::new(&FLASH, Ranks::TP4).unwrap(),
+            4,
+            32,
+            &[
+                (DSPARK_GRAPH_HANDLES_PER_RANK, 0.into()),
+                (VERIFY_ROW_FUSIONS, fused.into()),
+            ],
+        );
+        execute(
+            &mut instance,
+            &host,
+            &super::super::prompt(1, 0, 0, 3, true),
+        );
+        instance.commit().unwrap();
+        let pages = (0..instance.describe_prefix_state().unwrap())
+            .map(|page| 40 + page)
+            .collect::<Vec<_>>();
+        let start = host.journal.borrow().len();
+        instance.capture_prefix_state(1, 3, &pages).unwrap();
+        let capture = start..host.journal.borrow().len();
+        instance.retire_request(1).unwrap();
+        instance
+            .restore_prefix_state_in_slot(2, &[0, 1, 2], &pages, 1)
+            .unwrap();
+        let step = host.journal.borrow().len();
+        execute(&mut instance, &host, &verify(2, 1, 3, 5));
+        instance.commit_accepted(&[kept(2, 3)]).unwrap();
+        instance.retire_request(2).unwrap();
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+        let lines = host.journal.borrow().clone();
+        (lines, capture, step)
+    };
+    let (served, capture, step) = run(false);
+    let (fused, fused_capture, fused_step) = run(true);
+    assert_eq!((&capture, step), (&fused_capture, fused_step));
+    let mut changed = Vec::new();
+    for (at, (a, b)) in served[..step].iter().zip(&fused[..step]).enumerate() {
+        if a != b {
+            assert!(a.starts_with("launch ") && a.contains(SERIAL), "{at}: {a}");
+            assert_eq!(
+                *b,
+                a.replacen(SERIAL, PARALLEL, 1)
+                    .replacen("block_x: 32,", "block_x: 512,", 1),
+                "{at}"
+            );
+            changed.push(at);
+        }
+    }
+    // The capture's catch-up writes the three prompt rows in 12 small
+    // window writes over the four ranks; nothing else before the step
+    // changes.
+    assert_eq!(changed.len(), 12);
+    assert!(changed.iter().all(|at| capture.contains(at)), "{changed:?}");
+    let name = "flash-tp4-dspark-prefix-capture-rowfuse.journal";
+    if let Err(error) =
+        bundle_runtime::fake_host::check_journal(&fused, (40104, 0x00ca4ee0728ce1b9), name)
+    {
+        panic!("{name}: {error}");
+    }
+}

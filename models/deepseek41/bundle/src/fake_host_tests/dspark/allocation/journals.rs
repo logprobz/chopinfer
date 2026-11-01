@@ -71,12 +71,13 @@ impl LogitsRowSinkV1 for ProofSink {
 /// with `wide_verify` and `wide_draft` (their 16 and 32 items draft in one
 /// forward each), and the drafter ones the C8 lifetime with each drafter
 /// candidate option, the C4 one with `dspark_hc_fusion` and
-/// `dspark_hc_draft_rows`, and the C4 one with all five.
+/// `dspark_hc_draft_rows`, and the C4 one with all five; the `-rowfuse` ones
+/// run the two narrowest with the `verify_row_fusions` option.
 #[test]
 fn allocated_lifetimes_journal() {
     use model_deepseek41_contract::execution_options::{
         DSPARK_CONFIDENCE_STAGED, DSPARK_HC_DRAFT_ROWS, DSPARK_HC_FUSION, DSPARK_MARKOV_STAGED,
-        DSPARK_MOE_DIRECT, PHASED_DECODE_REDUCE, WIDE_DRAFT, WIDE_VERIFY,
+        DSPARK_MOE_DIRECT, PHASED_DECODE_REDUCE, VERIFY_ROW_FUSIONS, WIDE_DRAFT, WIDE_VERIFY,
     };
     let drafter = [
         DSPARK_MARKOV_STAGED,
@@ -182,6 +183,22 @@ fn allocated_lifetimes_journal() {
             (69262, 0x4db4a4e157875315),
         ),
         (4, 16, 5, "-drafter", &drafter, (69206, 0xf7b1328155f83920)),
+        (
+            4,
+            16,
+            5,
+            "-rowfuse",
+            &[VERIFY_ROW_FUSIONS],
+            (68842, 0x2d8ee53cda81f23f),
+        ),
+        (
+            8,
+            32,
+            5,
+            "-rowfuse",
+            &[VERIFY_ROW_FUSIONS],
+            (106446, 0x5a961ce8aca1e16f),
+        ),
     ] {
         let (host, mut instance) = if options.is_empty() {
             create_with_limits(shape, 32, 192)

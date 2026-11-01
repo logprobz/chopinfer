@@ -517,7 +517,7 @@ mod tests {
         let checkpoint = FLASH.check_runtime(&config).unwrap();
         assert_eq!(checkpoint.index_topk, 512);
         let options = FLASH.model_options(checkpoint);
-        assert_eq!(options.len(), 27);
+        assert_eq!(options.len(), 28);
         assert_eq!(options[0].name, "diagnostic_step_logs");
         assert_eq!(options[1].name, "dspark_confidence_staged");
         assert_eq!(options[2].name, "dspark_coupled_drafts");
@@ -531,8 +531,9 @@ mod tests {
         assert_eq!(options[20].name, "text_config.candidate_topk_blocks");
         assert_eq!(options[21].name, "text_config.index_topk");
         assert_eq!(options[22].name, "text_config.indexer_mma");
-        assert_eq!(options[25].name, "wide_draft");
-        assert_eq!(options[26].name, "wide_verify");
+        assert_eq!(options[25].name, "verify_row_fusions");
+        assert_eq!(options[26].name, "wide_draft");
+        assert_eq!(options[27].name, "wide_verify");
         for name in [
             "moe_direct_keep",
             "moe_direct_loads",

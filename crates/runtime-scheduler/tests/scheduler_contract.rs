@@ -95,6 +95,41 @@ fn dropped_preflight_token_can_be_rolled_back_and_retried() {
 }
 
 #[test]
+fn read_only_queries_keep_prepared_commit_valid() {
+    let mut scheduler = scheduler(1, 8, 4, 4);
+    let id = RequestId::new(1);
+    scheduler.submit(spec(1, 2, 2)).unwrap();
+    let batch = scheduler.next_batch().unwrap().unwrap();
+    let before = scheduler.kv_stats();
+    let prepared = scheduler
+        .preflight_commit_batch(batch.id(), &outcomes_for(&batch))
+        .unwrap();
+
+    assert_eq!(scheduler.request_state(id).unwrap(), RequestState::Admitted);
+    assert_eq!(scheduler.kv_tokens(id).unwrap(), 0);
+    assert_eq!(scheduler.emitted_tokens(id).unwrap(), 0);
+    assert!(scheduler.kv_blocks(id).unwrap().is_empty());
+    assert_eq!(scheduler.cached_tokens(id).unwrap(), 0);
+    assert_eq!(scheduler.preemptions(id).unwrap(), 0);
+    assert_eq!(scheduler.terminal_count(), 0);
+    assert!(scheduler.pending_prefix_restores().is_empty());
+    assert_eq!(scheduler.kv_stats(), before);
+    scheduler.audit().unwrap();
+
+    assert!(
+        scheduler
+            .apply_prepared_commit(prepared)
+            .unwrap()
+            .completed()
+            .is_empty()
+    );
+    assert_eq!(scheduler.request_state(id).unwrap(), RequestState::Decoding);
+    assert_eq!(scheduler.kv_tokens(id).unwrap(), 2);
+    assert_eq!(scheduler.emitted_tokens(id).unwrap(), 1);
+    scheduler.audit().unwrap();
+}
+
+#[test]
 fn foreign_scheduler_token_is_rejected_without_consuming_either_batch() {
     let mut first = scheduler(1, 4, 4, 4);
     let mut second = scheduler(1, 4, 4, 4);

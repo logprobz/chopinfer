@@ -277,14 +277,17 @@ mod tests {
     #[test]
     fn row_tiles_follow_the_wide_verify_buckets() {
         let asks = Asks::default();
-        let tp4 = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let tp4 = Shape::new(&FLASH, Ranks::TP4)
+            .unwrap()
+            .with_f32_row_tiles(false);
         for shape in [
             tp4.with_verify_rows(192),
             tp4.with_verify_rows(64).with_wide_verify(true),
             Shape::new(&FLASH, Ranks::TP2)
                 .unwrap()
                 .with_verify_rows(192)
-                .with_wide_verify(true),
+                .with_wide_verify(true)
+                .with_f32_row_tiles(false),
         ] {
             assert!(admitted(&shape).is_none());
             assert!(
@@ -401,8 +404,10 @@ mod tests {
         let asks = Asks::default();
         let tp4 = Shape::new(&FLASH, Ranks::TP4).unwrap();
         for shape in [
-            tp4,
-            tp4.with_verify_rows(192).with_wide_verify(true),
+            tp4.with_f32_row_tiles(false),
+            tp4.with_verify_rows(192)
+                .with_wide_verify(true)
+                .with_f32_row_tiles(false),
             Shape::new(&FLASH, Ranks::TP2)
                 .unwrap()
                 .with_f32_row_tiles(true),
@@ -453,8 +458,10 @@ mod tests {
     fn drafter_row_tiles_follow_the_option() {
         let tp4 = Shape::new(&FLASH, Ranks::TP4).unwrap();
         for shape in [
-            tp4.with_verify_rows(192),
-            tp4.with_verify_rows(192).with_wide_verify(true),
+            tp4.with_verify_rows(192).with_f32_row_tiles(false),
+            tp4.with_verify_rows(192)
+                .with_wide_verify(true)
+                .with_f32_row_tiles(false),
             Shape::new(&FLASH, Ranks::TP2)
                 .unwrap()
                 .with_verify_rows(64)

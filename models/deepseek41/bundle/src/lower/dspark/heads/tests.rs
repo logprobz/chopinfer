@@ -463,8 +463,13 @@ fn row_tile_option_runs_the_drafter_vocabulary_in_row_tiles() {
     use runtime_bundle_abi::BundleDeviceBufferHandleV1;
     let tp4 = Shape::new(&FLASH, Ranks::TP4).unwrap();
     for (shape, last) in [
-        (tp4.with_verify_rows(192), 0),
-        (tp4.with_verify_rows(192).with_wide_verify(true), 0),
+        (tp4.with_verify_rows(192).with_f32_row_tiles(false), 0),
+        (
+            tp4.with_verify_rows(192)
+                .with_wide_verify(true)
+                .with_f32_row_tiles(false),
+            0,
+        ),
         (tp4.with_verify_rows(192).with_f32_row_tiles(true), 64),
         (tp4.with_verify_rows(48).with_f32_row_tiles(true), 48),
         (tp4.with_f32_row_tiles(true), 32),

@@ -43,6 +43,21 @@ fn launch_of(step: &[String], stream: u32, symbol: &str) -> Option<usize> {
         .position(|line| line.starts_with(&format!("launch {stream} {symbol} ")))
 }
 
+/// Whether `line` launches a Flash TP4 vocabulary head on `stream`: its
+/// row tiles through 64 rows or its split route above.
+fn launches_head(line: &str, stream: u32) -> bool {
+    line.strip_prefix(&format!("launch {stream} "))
+        .is_some_and(|launch| {
+            [
+                "chop_deepseek41_decode_f32_n32320_k5120_rows_",
+                "chop_deepseek41_verify_f32_n32320_k5120_rows_",
+                "chop_deepseek41_head_f32",
+            ]
+            .iter()
+            .any(|symbol| launch.starts_with(symbol))
+        })
+}
+
 /// The buffer slot of every device buffer `line`'s launch binds.
 fn bound_buffers(line: &str) -> Vec<u32> {
     line.split("BundleDeviceBufferHandleV1 { raw: ")
@@ -204,9 +219,7 @@ fn allocated_steps_compute_the_width_and_keep_the_reserved_layout() {
             let prefix = format!("launch {stream} ");
             let head = target
                 .iter()
-                .position(|line| {
-                    line.starts_with(&prefix) && line.contains("chop_deepseek41_head_f32")
-                })
+                .position(|line| launches_head(line, stream))
                 .unwrap_or_else(|| panic!("rank {rank} captures its head"));
             let gathers = target[..head]
                 .iter()
@@ -235,10 +248,7 @@ fn allocated_steps_compute_the_width_and_keep_the_reserved_layout() {
             assert_eq!(lines(target, "captured", stream), 0, "rank {rank}");
             assert!(lines(target, "replay", stream) > 0, "rank {rank}");
             assert!(
-                !target
-                    .iter()
-                    .any(|line| line.starts_with(&format!("launch {stream} "))
-                        && line.contains("chop_deepseek41_head_f32")),
+                !target.iter().any(|line| launches_head(line, stream)),
                 "rank {rank} replays its head"
             );
         }
@@ -322,16 +332,25 @@ fn allocated_heads_route_by_computed_rows_at_narrow_target_widths() {
         let target = &step[hash..accepted];
         for stream in host.rank_streams.borrow().values() {
             for symbol in &wide {
+                assert!(
+                    launch_of(target, *stream, symbol).is_none(),
+                    "width {width}, reserved {reserved}, stream {stream}, symbol {symbol}"
+                );
+            }
+            // The computed rows pick the decode site's tiles; the reserved
+            // rows would pick the verify site's.
+            for (site, tiled) in [("decode", true), ("verify", false)] {
+                let symbol = format!("chop_deepseek41_{site}_f32_n32320_k5120_rows_prepare_v1");
                 assert_eq!(
-                    launch_of(target, *stream, symbol).is_some(),
-                    width > 32,
+                    launch_of(target, *stream, &symbol).is_some(),
+                    tiled,
                     "width {width}, reserved {reserved}, stream {stream}, symbol {symbol}"
                 );
             }
             let old_head = target
                 .iter()
                 .any(|line| line.starts_with(&format!("launch {stream} chop_deepseek41_head_f32")));
-            assert_eq!(old_head, width <= 32, "width {width}, reserved {reserved}");
+            assert!(!old_head, "width {width}, reserved {reserved}");
         }
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
@@ -574,9 +593,7 @@ fn compact_allocation_scores_only_computed_rows_and_keeps_reserved_samples() {
                 for stream in host.rank_streams.borrow().values() {
                     let head: Vec<_> = journal[start + hash..]
                         .iter()
-                        .filter(|line| {
-                            line.starts_with(&format!("launch {stream} chop_deepseek41_head_f32"))
-                        })
+                        .filter(|line| launches_head(line, *stream))
                         .collect();
                     assert!(!head.is_empty());
                     assert!(

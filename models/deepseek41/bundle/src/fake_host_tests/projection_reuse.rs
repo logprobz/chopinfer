@@ -14,7 +14,16 @@ fn run_without_last(reference: bool) -> Vec<String> {
     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
     let host = FakeHost::new(shape, KV_LAYOUTS[0]);
     host.speculation.set(Some((5, 48)));
-    let mut instance = create(&host, 32);
+    // Decode and narrow verify heads run the head's row tiles by default;
+    // without them they take the reuse head compared here.
+    let mut instance = super::create_with_options(
+        &host,
+        32,
+        &[(
+            model_deepseek41_contract::execution_options::F32_ROW_TILES,
+            false.into(),
+        )],
+    );
     for slot in 0..32 {
         step(
             &mut instance,

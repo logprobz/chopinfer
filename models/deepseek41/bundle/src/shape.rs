@@ -29,7 +29,7 @@ pub struct Shape {
     /// verify buckets (the `wide_draft` candidate option).
     pub wide_draft: bool,
     /// Whether Flash TP4 steps of 64 rows or fewer run the measured exact
-    /// F32 row tiles (the `f32_row_tiles` candidate option).
+    /// F32 row tiles (the `f32_row_tiles` option, on by default).
     pub f32_row_tiles: bool,
     /// Whether decode and verify steps' complete all-reduces take the phased
     /// F32 rounding entries (the `phased_decode_reduce` candidate option).
@@ -72,7 +72,7 @@ impl Shape {
             verify_rows: DECODE_BATCH,
             wide_verify: false,
             wide_draft: false,
-            f32_row_tiles: false,
+            f32_row_tiles: true,
             phased_decode_reduce: false,
             moe_knobs: Default::default(),
             dspark_hc_draft_rows: false,

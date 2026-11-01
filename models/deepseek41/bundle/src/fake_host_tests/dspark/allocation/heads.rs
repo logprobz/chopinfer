@@ -78,10 +78,9 @@ fn assert_heads(host: &Host, lines: &[String], positions: usize) {
             positions,
             "every computed position needs its hidden state and Markov confidence launch"
         );
-        let vocabulary = format!("launch {stream} chop_deepseek41_head_f32");
         let heads: Vec<_> = lines
             .iter()
-            .filter(|line| line.starts_with(&vocabulary))
+            .filter(|line| launches_head(line, *stream))
             .collect();
         assert!(!heads.is_empty());
         assert!(

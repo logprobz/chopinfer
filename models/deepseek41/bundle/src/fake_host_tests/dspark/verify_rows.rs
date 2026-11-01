@@ -72,30 +72,30 @@ fn target_programs_lower_at_wide_verify_rows() {
                     count_symbol("chop_position_query_deepseek41_parallel_v1"),
                     8 * 4
                 );
+                // The head and the compressor run their row tiles, the
+                // index weights their split route; the router keeps its
+                // spans.
                 assert_eq!(
                     count_symbol(
-                        "chop_deepseek41_verify_f32_n32320_k5120_v1_cached_decode_v1_spans_m64_compute_v1"
+                        "chop_deepseek41_verify_f32_n32320_k5120_rows_f256_r32_w32x32_s2_k64_v1"
                     ),
                     4
                 );
                 assert_eq!(
                     count_symbol(
-                        "chop_deepseek41_verify_f32_n384_k5120_v1_cached_decode_v1_spans_m64_compute_v1"
-                    ),
-                    40 * 4
-                );
-                assert_eq!(
-                    count_symbol(
-                        "chop_deepseek41_verify_f32_n512_k5120_v1_cached_decode_v1_spans_m64_compute_v1"
+                        "chop_deepseek41_verify_f32_n512_k5120_rows_f64_r32_w32x16_s3_k64_z8_v1"
                     ),
                     7 * 4
                 );
-                assert_eq!(
-                    count_symbol(
-                        "chop_deepseek41_verify_f32_n32_k5120_v1_cached_decode_v1_spans_m64_compute_v1"
-                    ),
-                    8 * 4
-                );
+                for (n, launches) in [(32320, 0), (384, 40 * 4), (512, 0), (32, 0)] {
+                    assert_eq!(
+                        count_symbol(&format!(
+                            "chop_deepseek41_verify_f32_n{n}_k5120_v1_cached_decode_v1_spans_m64_compute_v1"
+                        )),
+                        launches,
+                        "n{n} spans"
+                    );
+                }
                 assert!(
                     !target
                         .iter()

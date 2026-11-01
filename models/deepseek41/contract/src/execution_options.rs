@@ -18,11 +18,11 @@ pub const WIDE_VERIFY: &str = "wide_verify";
 /// verify bucket holds (five block rows an item), on the wide verify
 /// buckets, instead of chunks of at most twelve.
 pub const WIDE_DRAFT: &str = "wide_draft";
-/// Candidate: Flash TP4 steps of 64 rows or fewer run the measured whole-K
-/// exact F32 row tiles of the vocabulary head (`f32.rows.decode` at decode
-/// and verify widths of 32 rows or fewer, `f32.rows.verify` above), the
-/// DSpark drafter's head alike and the compressor's at 33 to 64 verify rows,
-/// where the index weights take the split route.
+/// On by default: Flash TP4 steps of 64 rows or fewer run the measured
+/// whole-K exact F32 row tiles of the vocabulary head (`f32.rows.decode` at
+/// decode and verify widths of 32 rows or fewer, `f32.rows.verify` above),
+/// the DSpark drafter's head alike and the compressor's at 33 to 64 verify
+/// rows, where the index weights take the split route.
 pub const F32_ROW_TILES: &str = "f32_row_tiles";
 /// Candidate: Flash TP4 decode and verify all-reduces whose round no HC
 /// boundary defers take the phased F32 rounding entries.
@@ -129,10 +129,7 @@ pub fn declarations() -> [ModelOptionV1; 18] {
             DSPARK_MOE_DIRECT,
             OptionDefinitionV1::Boolean { default: false },
         ),
-        (
-            F32_ROW_TILES,
-            OptionDefinitionV1::Boolean { default: false },
-        ),
+        (F32_ROW_TILES, OptionDefinitionV1::Boolean { default: true }),
         (
             MOE_DIRECT_KEEP,
             OptionDefinitionV1::Boolean { default: false },
@@ -298,7 +295,7 @@ mod tests {
             diagnostic_step_logs: false,
             wide_verify: false,
             wide_draft: false,
-            f32_row_tiles: false,
+            f32_row_tiles: true,
             phased_decode_reduce: false,
             moe_direct: MoeDirect::default(),
             dspark_hc_draft_rows: false,
@@ -323,7 +320,7 @@ mod tests {
             (DIAGNOSTIC_STEP_LOGS.into(), "true".into()),
             (WIDE_VERIFY.into(), "true".into()),
             (WIDE_DRAFT.into(), "true".into()),
-            (F32_ROW_TILES.into(), "true".into()),
+            (F32_ROW_TILES.into(), "false".into()),
             (PHASED_DECODE_REDUCE.into(), "true".into()),
             (MOE_DIRECT_STREAM.into(), "true".into()),
             (MOE_DIRECT_KEEP.into(), "true".into()),
@@ -346,7 +343,7 @@ mod tests {
                 diagnostic_step_logs: true,
                 wide_verify: true,
                 wide_draft: true,
-                f32_row_tiles: true,
+                f32_row_tiles: false,
                 phased_decode_reduce: true,
                 moe_direct: MoeDirect {
                     stream: true,

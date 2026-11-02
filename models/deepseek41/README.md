@@ -106,9 +106,9 @@ media, taps and hosts without the needed service. Every host gather has an
 route allowlist. See [Engram gathers](lab/prefill-engram.md) and
 [prefill communication](prefill-communication.md).
 
-The Engram codes and scales occupy about 203 GB of mapped checkpoint
-tables in the host page cache. The weight plan keeps `prewarm: false`, and
-the serving profiles keep mapped-view prewarm off. On 2026-11-01, four GPUs
+The Engram codes and scales are about 203 GB of checkpoint tables, mapped
+from the file and read through the host page cache. The weight plan keeps
+`prewarm: false`. On 2026-11-01, four GPUs
 at 250 W each with 251 GB of host RAM measured mean GPU gather waits of
 0.04, 0.06, 0.08 and 0.03 ms per step at C1, C8, C16 and C32 with warm
 tables (0.1-0.3% of a step). Evicted tables caused up to 1,150 major faults
@@ -118,33 +118,23 @@ warm has not been timed at this size.
 
 `serve --prewarm-mapped-views off|on|auto` defaults to `off`. `auto` warms
 the tables in the background after readiness if `MemAvailable` can hold
-the mapped bytes plus the 16 GiB margin (`CHOPINFER_PREWARM_MARGIN_BYTES`);
-it declines when RAM is short or unreadable. `on` warms even with short
-RAM, after a warning. A live server job that runs an external sequential
-read of the tables before `serve` can drop that read and pass
-`--prewarm-mapped-views auto`. If traffic must not meet cold rows, wait for
-the `mapped prewarm: {...}` JSON done line with `stopped: false`, or for the
-required residency gauge ratio when visible. Readiness alone does not mean
-the tables are warm. A waiter must also accept the two other terminal
-outcomes: `mapped prewarm: warning host-ram-short: ...; not warming (auto)`
-(including `mapped prewarm: warning host-ram-short: MemAvailable is unreadable; not warming (auto)`),
-and `mapped prewarm: failed: ...; serving continues`. Neither establishes
-warm tables. When residency is hidden, only the done line signals completion;
-its `resident_bytes` is null, and warming still works.
+the mapped bytes plus the 16 GiB margin.
 
-The sampler runs in every server that maps views, even with the option off,
-reads no file bytes and samples every 60 seconds. Its gauges are
+A live server job can drop its external sequential read of the tables
+before `serve` and pass `--prewarm-mapped-views auto`. If traffic must not
+meet cold rows, wait for the first `mapped prewarm:` line other than the
+`warming anyway (on)` warning. The JSON done line with `stopped: false`
+signals completion; auto decline (short or unreadable RAM), warm failure
+and worker spawn failure do not. When residency is visible, the required
+gauge ratio can also establish warm tables; when hidden, use the done line.
+
+The sampler runs whatever the option and publishes
 `chop_mapped_view_bytes`, `chop_mapped_view_resident_bytes`,
 `chop_mapped_view_residency_visible` and
-`chop_mapped_view_residency_sample_seconds`. The byte gauges count whole
-pages, not raw tensor bytes. All four are absent without mapped views or
-before the first sample; resident bytes are also absent when residency is
-hidden. Run as the checkpoint's owner on a mount that is neither idmapped
-nor overlay to see residency, or with write access on a read-write mount.
+`chop_mapped_view_residency_sample_seconds`.
 See [mapped-view monitoring](../../docs/operations-observability.md#weight-loading-counters)
-for the full visibility rule, warnings and alerts. Keep the option off for
-cold-cache measurements, and build both timing A/B arms from a base that
-includes the sampler.
+for the full visibility rule, endings and warnings, and
+[example alerts](../../docs/operations-observability.md#example-alerts).
 
 ## Kernel selection and storage
 

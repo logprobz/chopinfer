@@ -203,10 +203,11 @@ delay readiness, so early traffic can still meet cold rows. `auto` warms
 only when `MemAvailable` holds the mapped bytes plus the margin, including
 an exact fit; it declines if that value is unreadable. `on` warms anyway,
 logging `mapped prewarm: warning host-ram-short: ...; warming anyway (on)`
-when RAM is short. This option needs no `--checkpoint`; with no mapped
-views, either enabled mode logs `mapped prewarm: no mapped views`.
+when RAM is short. This option needs no `--checkpoint`.
 
-A job waiting for the background warm must handle all three final outcomes:
+A job waiting for the background warm should wait for the first
+`mapped prewarm:` line other than the `warming anyway (on)` warning, then
+handle its ending:
 
 - `mapped prewarm: {...}` is the JSON done line, with `mode`, `bytes`,
   `seconds`, `resident_bytes`, `available_bytes`, `margin_bytes` and `stopped`.
@@ -217,8 +218,12 @@ A job waiting for the background warm must handle all three final outcomes:
   the warm was declined. An unreadable RAM value produces
   `mapped prewarm: warning host-ram-short: MemAvailable is unreadable; not warming (auto)`.
 - `mapped prewarm: failed: ...; serving continues` means the warm failed.
+- `mapped prewarm: could not start worker: ...; serving continues` means
+  the background thread could not start, so no warm ran.
+- `mapped prewarm: no mapped views` means an enabled mode found nothing
+  to warm.
 
-Decline and failure are terminal outcomes, not evidence of warm tables.
+Decline, failure and worker spawn failure do not establish warm tables.
 When residency is visible, a job can instead wait for its required ratio
 of `chop_mapped_view_resident_bytes / chop_mapped_view_bytes`. When hidden,
 only the done line can signal completion. Warming does not require visible
@@ -242,7 +247,8 @@ read-write mount. A writer on a read-only mount and root relying only on
 `CAP_FOWNER` are conservatively reported hidden even when the kernel would
 show them. The [documented container](developer-preview.md#checkpoint-and-cache-permissions)
 runs as UID 10001 with a read-only checkpoint it does not own, so residency
-is hidden unless it runs as the checkpoint's owner on a plain mount.
+is hidden. Running it as the checkpoint's owner with `--user` makes residency
+visible on the documented read-only bind mount; keep that mount read-only.
 
 Keep the option `off` for cold-cache measurements. Since the sampler runs
 even with `off`, timing A/Bs should build both arms from a base that includes
@@ -251,8 +257,8 @@ it. On 2026-11-01, DeepSeek V4.1 Flash with four GPUs at 250 W each and
 0.03 ms per step at C1, C8, C16 and C32 with warm tables (0.1-0.3% of a
 step). Evicted tables caused up to 1,150 major faults per visit and
 multi-millisecond gather waits. An external sequential read restored 99%
-residency in about 60-70 seconds. This measures the external read, not the
-background warm introduced here.
+residency in about 60-70 seconds. The in-process background warm has not
+been timed at this size.
 
 On 2026-10-21, the loader changes were compared with the round-8 serving
 baseline using DeepSeek V4.1 Flash, TP4, release binaries, four GPUs capped at
@@ -467,6 +473,9 @@ groups:
       - alert: ChopinferMappedResidencyHidden
         expr: chop_mapped_view_residency_visible == 0
 ```
+
+Drop `ChopinferMappedResidencyHidden` where hidden residency is expected,
+such as a container that does not own the checkpoint.
 
 `ChopinferWorkerFailed` requires an independent, always-running supervisor
 collector. The `chopinfer_supervisor_*` series above are site collector

@@ -194,7 +194,7 @@ class PreparationProcess(unittest.TestCase):
         warm, models, log = self.launch(self.checkpoint, cache, "experiment-A",
                                        extra=("--prewarm-mapped-views", "auto"))
         self.assertEqual(models["data"][0]["id"], "experiment-A")
-        resolved = next(line for line in log.splitlines() if "resolved serve:" in line)
+        resolved = self.resolved_serve(log)
         self.assertIn("prewarm_mapped_views: Auto", resolved)
         self.assertIn("mapped prewarm: no mapped views", log)
         self.assertEqual(cold["package_identity"], warm["package_identity"])

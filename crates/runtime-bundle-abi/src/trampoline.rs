@@ -3541,6 +3541,42 @@ macro_rules! export_prefill_cuts_api_v1 {
     };
 }
 
+/// Export an instance's anchor-item allowance on its guaranteed grid
+/// (`prefill::PREFILL_ANCHORS_API_SYMBOL_V2`). Zero keeps every prompt-end
+/// anchor at a chunk end; a nonzero allowance needs an enabled cuts policy.
+#[macro_export]
+macro_rules! export_prefill_anchors_api_v2 {
+    ($table:ident, $describe:expr $(,)?) => {
+        pub static $table: $crate::prefill::BundlePrefillAnchorsApiV2 = {
+            extern "C" fn __bundle_describe_prefill_anchors_v2(
+                handle: $crate::BundleHandleV1,
+            ) -> $crate::prefill::BundlePrefillAnchorsV2 {
+                ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| ($describe)(handle)))
+                    .unwrap_or_else(|_| {
+                        $crate::prefill::BundlePrefillAnchorsV2::failure(
+                            $crate::BundleStatusV1::InternalError,
+                        )
+                    })
+            }
+
+            $crate::prefill::BundlePrefillAnchorsApiV2 {
+                struct_size: ::core::mem::size_of::<$crate::prefill::BundlePrefillAnchorsApiV2>()
+                    as u32,
+                abi_version: $crate::BUNDLE_ABI_VERSION_V1,
+                describe_prefill_anchors_v2: Some(__bundle_describe_prefill_anchors_v2),
+            }
+        };
+
+        // SAFETY-REVIEWED: this optional C export returns a static immutable table.
+        #[allow(unsafe_code)]
+        #[unsafe(no_mangle)]
+        pub extern "C" fn chop_bundle_prefill_anchors_api_v2()
+        -> *const $crate::prefill::BundlePrefillAnchorsApiV2 {
+            &$table
+        }
+    };
+}
+
 /// Decodes the lent values one native custom-operation entry received.
 ///
 /// This is the callback half of the custom-operation boundary, for an operation

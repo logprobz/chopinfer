@@ -172,6 +172,29 @@ fn c_header_and_rust_layouts_match() {
             offset_of!(abi::prefill::BundlePrefillApiV1, execute_prefill_v1),
         ],
     );
+    assert_layout(
+        &c_layouts,
+        "prefill-anchors",
+        size_of::<abi::prefill::BundlePrefillAnchorsV2>(),
+        &[
+            offset_of!(abi::prefill::BundlePrefillAnchorsV2, struct_size),
+            offset_of!(abi::prefill::BundlePrefillAnchorsV2, status),
+            offset_of!(abi::prefill::BundlePrefillAnchorsV2, anchor_items),
+        ],
+    );
+    assert_layout(
+        &c_layouts,
+        "prefill-anchors-api",
+        size_of::<abi::prefill::BundlePrefillAnchorsApiV2>(),
+        &[
+            offset_of!(abi::prefill::BundlePrefillAnchorsApiV2, struct_size),
+            offset_of!(abi::prefill::BundlePrefillAnchorsApiV2, abi_version),
+            offset_of!(
+                abi::prefill::BundlePrefillAnchorsApiV2,
+                describe_prefill_anchors_v2
+            ),
+        ],
+    );
 
     assert_layout(
         &c_layouts,
@@ -2831,6 +2854,112 @@ fn optional_prefill_cuts_preserve_both_legacy_directions() {
     );
 }
 
+abi::export_prefill_anchors_api_v2!(FIXTURE_PREFILL_ANCHORS_API, |handle| {
+    assert_eq!(handle, HANDLE);
+    abi::prefill::BundlePrefillAnchorsV2::kept(
+        FIXTURE_ANCHOR_ITEMS.load(std::sync::atomic::Ordering::Relaxed),
+    )
+},);
+
+static FIXTURE_ANCHOR_ITEMS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The anchors export is optional: absent, the manifest's anchor items
+/// apply. Present, it reports the instance's allowance, and a nonzero
+/// allowance without an enabled cuts policy is refused.
+#[test]
+fn optional_prefill_anchors_v2_report_the_instance_allowance() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    let cuts = || {
+        fixture_api()
+            .with_prefill_api(FIXTURE_PREFILL_API)
+            .unwrap()
+            .with_prefill_cuts_api(FIXTURE_PREFILL_CUTS_API)
+            .unwrap()
+    };
+    reset_calls();
+    let mut absent = cuts().create(fixture_table(), &[]).unwrap();
+    assert_eq!(absent.prefill_anchor_items(), Ok(None));
+    absent.destroy().unwrap();
+    for items in [0, 3] {
+        reset_calls();
+        FIXTURE_ANCHOR_ITEMS.store(items, std::sync::atomic::Ordering::Relaxed);
+        let mut instance = cuts()
+            .with_prefill_anchors_api(FIXTURE_PREFILL_ANCHORS_API)
+            .unwrap()
+            .create(fixture_table(), &[])
+            .unwrap();
+        assert_eq!(instance.prefill_anchor_items(), Ok(Some(items)));
+        assert_eq!(
+            instance.prefill_anchor_policy(),
+            Ok(Some(abi::prefill::BundlePrefillAnchorsV2::kept(items)))
+        );
+        instance.destroy().unwrap();
+        // Absent and disabled cuts both require a zero allowance.
+        extern "C" fn disabled(_: abi::BundleHandleV1) -> abi::prefill::BundlePrefillPolicyV1 {
+            abi::prefill::BundlePrefillPolicyV1::disabled()
+        }
+        for disabled_cuts in [false, true] {
+            reset_calls();
+            let mut api = fixture_api().with_prefill_api(FIXTURE_PREFILL_API).unwrap();
+            if disabled_cuts {
+                api = api
+                    .with_prefill_cuts_api(abi::prefill::BundlePrefillApiV1 {
+                        describe_prefill_v1: Some(disabled),
+                        ..FIXTURE_PREFILL_CUTS_API
+                    })
+                    .unwrap();
+            }
+            let mut grid = api
+                .with_prefill_anchors_api(FIXTURE_PREFILL_ANCHORS_API)
+                .unwrap()
+                .create(fixture_table(), &[])
+                .unwrap();
+            assert_eq!(
+                grid.prefill_anchor_items(),
+                if items == 0 {
+                    Ok(Some(0))
+                } else {
+                    Err(BundleAbiError::InvalidRange("prefill anchors policy"))
+                }
+            );
+            grid.destroy().unwrap();
+        }
+    }
+    FIXTURE_ANCHOR_ITEMS.store(0, std::sync::atomic::Ordering::Relaxed);
+    for invalid in [
+        abi::prefill::BundlePrefillAnchorsApiV2 {
+            struct_size: 8,
+            ..FIXTURE_PREFILL_ANCHORS_API
+        },
+        abi::prefill::BundlePrefillAnchorsApiV2 {
+            abi_version: abi::BUNDLE_ABI_VERSION_V1 + 1,
+            ..FIXTURE_PREFILL_ANCHORS_API
+        },
+        abi::prefill::BundlePrefillAnchorsApiV2 {
+            describe_prefill_anchors_v2: None,
+            ..FIXTURE_PREFILL_ANCHORS_API
+        },
+    ] {
+        assert!(fixture_api().with_prefill_anchors_api(invalid).is_err());
+    }
+    assert_eq!(
+        chop_bundle_prefill_anchors_api_v2(),
+        &FIXTURE_PREFILL_ANCHORS_API as *const _
+    );
+    assert_eq!(
+        FIXTURE_PREFILL_ANCHORS_API
+            .describe_prefill_anchors_v2
+            .unwrap()(abi::BundleHandleV1::from_raw(0)),
+        abi::prefill::BundlePrefillAnchorsV2::failure(abi::BundleStatusV1::InternalError)
+    );
+    let header = include_str!("../../../include/chop_bundle_v1.h");
+    assert!(header.contains("chop_bundle_prefill_anchors_api_v2(void)"));
+    assert_eq!(
+        abi::prefill::PREFILL_ANCHORS_API_SYMBOL_V2,
+        b"chop_bundle_prefill_anchors_api_v2\0"
+    );
+}
+
 fn fixture_create(
     host_services: HostServicesV1,
     configuration: &[u8],
@@ -4057,6 +4186,8 @@ int main(void) {
   printf("api-prefix-state-slot %zu %zu %zu\n", sizeof(chop_bundle_api_with_prefix_state_slot_v1), P(chop_bundle_api_with_prefix_state_slot_v1, base), P(chop_bundle_api_with_prefix_state_slot_v1, restore_prefix_state_in_slot_v1));
   printf("prefill-policy %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_prefill_policy_v1), P(chop_bundle_prefill_policy_v1, struct_size), P(chop_bundle_prefill_policy_v1, status), P(chop_bundle_prefill_policy_v1, chunk_tokens), P(chop_bundle_prefill_policy_v1, reserved));
   printf("prefill-api %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_prefill_table_v1), P(chop_bundle_prefill_table_v1, struct_size), P(chop_bundle_prefill_table_v1, abi_version), P(chop_bundle_prefill_table_v1, describe_prefill_v1), P(chop_bundle_prefill_table_v1, execute_prefill_v1));
+  printf("prefill-anchors %zu %zu %zu %zu\n", sizeof(chop_bundle_prefill_anchors_v2), P(chop_bundle_prefill_anchors_v2, struct_size), P(chop_bundle_prefill_anchors_v2, status), P(chop_bundle_prefill_anchors_v2, anchor_items));
+  printf("prefill-anchors-api %zu %zu %zu %zu\n", sizeof(chop_bundle_prefill_anchors_table_v2), P(chop_bundle_prefill_anchors_table_v2, struct_size), P(chop_bundle_prefill_anchors_table_v2, abi_version), P(chop_bundle_prefill_anchors_table_v2, describe_prefill_anchors_v2));
   printf("weight-plan-sink %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_weight_plan_sink_v1), P(chop_bundle_weight_plan_sink_v1, struct_size), P(chop_bundle_weight_plan_sink_v1, layout), P(chop_bundle_weight_plan_sink_v1, context), P(chop_bundle_weight_plan_sink_v1, emit), P(chop_bundle_weight_plan_sink_v1, emit_error));
   printf("weight-transform-call %zu %zu %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_weight_transform_call_v1), P(chop_bundle_weight_transform_call_v1, struct_size), P(chop_bundle_weight_transform_call_v1, transform), P(chop_bundle_weight_transform_call_v1, params), P(chop_bundle_weight_transform_call_v1, sources), P(chop_bundle_weight_transform_call_v1, source_count), P(chop_bundle_weight_transform_call_v1, output_offset), P(chop_bundle_weight_transform_call_v1, output));
   printf("frontend-sink %zu %zu %zu %zu %zu %zu\n", sizeof(chop_bundle_frontend_sink_v1), P(chop_bundle_frontend_sink_v1, struct_size), P(chop_bundle_frontend_sink_v1, layout), P(chop_bundle_frontend_sink_v1, context), P(chop_bundle_frontend_sink_v1, emit), P(chop_bundle_frontend_sink_v1, emit_error));
@@ -5147,4 +5278,13 @@ fn mapped_only_sampling_is_not_a_recoverable_validation_refusal() {
     assert_eq!(sink.calls, 1);
     assert_eq!(instance.last_execute_refusal(), None);
     instance.destroy().unwrap();
+}
+
+#[test]
+fn public_header_keeps_prefill_anchors_v1_retired() {
+    let header = include_str!("../../../include/chop_bundle_v1.h");
+    assert!(!header.contains("chop_bundle_prefill_anchors_api_v1"));
+    assert!(!header.contains("chop_bundle_prefill_anchors_v1"));
+    assert!(header.contains("chop_bundle_prefill_anchors_api_v2(void)"));
+    assert!(header.contains("chop_bundle_prefill_cuts_api_v1(void)"));
 }

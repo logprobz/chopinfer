@@ -112,3 +112,32 @@ fn kv_records_deterministic_prefix_cache_misses_hits_and_evictions() {
     }
     pool.audit().unwrap();
 }
+
+#[test]
+fn reply_metrics_split_buckets_and_detach_with_the_pool() {
+    use runtime_kv::{ReplyHistoryCounter as Count, ReplyHistoryRows as Rows};
+    let metrics = KvMetrics::default();
+    let pool =
+        KvPool::new_with_metrics(KvGeometry::new(4, 8).unwrap(), 2, metrics.clone()).unwrap();
+    metrics.reply_history_gauges(true, 100, 2);
+    metrics.reply_history_count(Count::CompleteReply, 3);
+    metrics.reply_history_rows(Rows::Eligible, 32_766, 32_770);
+    metrics.reply_history_rows(Rows::Repeated, 4, 12);
+    let copy = pool.clone();
+    assert_eq!(
+        copy.metrics().snapshot().reply_history,
+        metrics.snapshot().reply_history
+    );
+    metrics.reply_history_count(Count::CompleteReply, 1);
+    assert_eq!(
+        copy.metrics().snapshot().reply_history.counters[Count::CompleteReply as usize],
+        3
+    );
+    assert_eq!(
+        metrics.snapshot().reply_history.rows[Rows::Eligible as usize],
+        [2, 2, 0, 0, 0]
+    );
+    let text = metrics.snapshot().prometheus();
+    assert!(text.contains("chop_reply_history_enabled 1"));
+    assert!(text.contains("chop_prefix_cache_recomputed_generated_tokens_total 8"));
+}

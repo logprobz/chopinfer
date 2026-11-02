@@ -50,6 +50,7 @@ mod kernel;
 mod kv_cache_dtype;
 mod media_cache;
 mod media_memory;
+mod models;
 pub mod offload;
 mod overlap;
 pub mod page_cache;

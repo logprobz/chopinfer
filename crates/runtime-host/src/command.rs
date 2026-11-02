@@ -1102,6 +1102,9 @@ fn parse_named_command_v1(
         "profiles" => Ok(HostCommandV1::Display {
             text: crate::profiles::inspect(&arguments[1..])?,
         }),
+        "models" => Ok(HostCommandV1::Display {
+            text: crate::models::run_v1(&arguments[1..])?,
+        }),
         "bundle" => parse_bundle_command_v1(&arguments[1..]),
         "kernel" => parse_kernel_command_v1(&arguments[1..]),
         "fixed-batch" => {
@@ -2106,6 +2109,194 @@ fn describe_serve_options_v1() -> String {
         "environment": environment,
     })
     .to_string()
+}
+
+/// The effective serving settings of a parsed serve command: each setting
+/// keyed by the serve flag that sets it, without `--`, and valued as that
+/// flag's value. `models --json` reports a profile's and `serve --check` a
+/// start's, so the two compare directly. A setting appears where it applies,
+/// and one whose default no flag value names (an unbounded queue, the
+/// package's verify rows) only when a flag sets it.
+pub(crate) fn effective_settings_v1(
+    command: &HostCommandV1,
+) -> std::collections::BTreeMap<String, String> {
+    use runtime_scheduler::{PrefillBudget, PrefillTarget};
+    let mut settings = std::collections::BTreeMap::new();
+    let HostCommandV1::Serve {
+        serving,
+        speculative_tokens,
+        speculative_rows,
+        speculation_mode,
+        draft_cost_model,
+        verify_widths,
+        verify_confidence,
+        model_options,
+        ..
+    } = command
+    else {
+        return settings;
+    };
+    let mut set = |flag: &str, value: String| {
+        settings.insert(flag.to_owned(), value);
+    };
+    let on_off = |on: bool| if on { "on" } else { "off" }.to_owned();
+    let share = |millionths: u32| (f64::from(millionths) / 1_000_000.0).to_string();
+    let list = |items: Vec<String>| items.join(",");
+    set("max-sequences", serving.maximum_sequences.to_string());
+    for (flag, value) in [
+        ("max-batch-tokens", serving.maximum_batch_tokens),
+        ("prefill-chunk-tokens", serving.prefill_chunk_tokens),
+        ("max-context-tokens", serving.maximum_context_tokens),
+        ("queue-depth", serving.queue_depth),
+    ] {
+        if let Some(value) = value {
+            set(flag, value.to_string());
+        }
+    }
+    set("queue-wait-ms", serving.queue_wait_ms.to_string());
+    match serving.admission {
+        AdmissionPolicy::Reserved => set("admission", "reserved".into()),
+        AdmissionPolicy::Optimistic(optimistic) => {
+            set("admission", "optimistic".into());
+            set(
+                "admission-watermark",
+                share(optimistic.watermark_millionths()),
+            );
+            set(
+                "max-preemptions",
+                optimistic.maximum_preemptions().to_string(),
+            );
+        }
+    }
+    set(
+        "gpu-memory-utilization",
+        share(serving.gpu_memory_utilization_millionths),
+    );
+    set(
+        "graph-memory-reserve-mib",
+        (serving.graph_memory_reserve_bytes >> 20).to_string(),
+    );
+    if let Some(pages) = serving.kv_pages {
+        set("kv-pages", pages.to_string());
+    }
+    set(
+        "context-parallel-size",
+        serving.context_parallel_size.to_string(),
+    );
+    set("kv-cache-dtype", serving.kv_cache_dtype.name().into());
+    set("prefix-cache", on_off(serving.prefix_cache));
+    set(
+        "kv-offload-gib",
+        (serving.kv_offload.budget_bytes >> 30).to_string(),
+    );
+    if serving.kv_offload.budget_bytes > 0 {
+        set(
+            "kv-offload-min-tokens",
+            serving.kv_offload.minimum_tokens.to_string(),
+        );
+        if let Some(rate) = serving.kv_offload.bytes_per_second {
+            set("kv-offload-gbps", (rate as f64 / 1e9).to_string());
+        }
+    }
+    match serving.prefill_budget {
+        PrefillBudget::Fixed => set("prefill-budget", "fixed".into()),
+        PrefillBudget::DecodeAware(target) => {
+            set("prefill-budget", "decode-aware".into());
+            match target {
+                PrefillTarget::ItlMillis(millis) => {
+                    set("prefill-itl-target-ms", millis.to_string());
+                }
+                PrefillTarget::DecodeSteps(steps) => {
+                    set("prefill-decode-steps", steps.to_string());
+                }
+            }
+        }
+        PrefillBudget::Tbt(policy) => {
+            set("prefill-budget", "tbt".into());
+            set("decode-tbt-target-ms", policy.target_millis().to_string());
+            set(
+                "mixed-min-prefill-tokens",
+                policy.min_prefill_tokens().to_string(),
+            );
+            set("mixed-decode-steps", policy.decode_steps().to_string());
+        }
+    }
+    set(
+        "prefill-timing-cuts",
+        serving.prefill_timing_cuts.name().into(),
+    );
+    set("speculative-tokens", speculative_tokens.to_string());
+    if *speculative_tokens == 0 {
+        return settings;
+    }
+    let mode = match speculation_mode {
+        SpeculationMode::Fixed => "fixed",
+        SpeculationMode::Balanced(_) => "balanced",
+        SpeculationMode::Adaptive => "adaptive",
+        SpeculationMode::Table(_) => "table",
+    };
+    set("speculation", mode.into());
+    match speculation_mode {
+        SpeculationMode::Table(costs) => set(
+            "speculation-costs",
+            list(
+                costs
+                    .entries()
+                    .iter()
+                    .map(|cost| {
+                        format!(
+                            "{}:{}:{}:{}:{}",
+                            cost.items, cost.base_us, cost.step_us, cost.drafting_us, cost.row_us
+                        )
+                    })
+                    .collect(),
+            ),
+        ),
+        SpeculationMode::Balanced(depths) => {
+            if !depths.entries().is_empty() {
+                set(
+                    "speculation-depths",
+                    list(
+                        depths
+                            .entries()
+                            .iter()
+                            .map(|(items, depth)| format!("{items}:{depth}"))
+                            .collect(),
+                    ),
+                );
+            }
+            set(
+                "speculation-confidence",
+                verify_confidence.as_deref().map_or_else(
+                    || "off".to_owned(),
+                    crate::confidence::VerifyConfidence::text,
+                ),
+            );
+        }
+        SpeculationMode::Fixed | SpeculationMode::Adaptive => {}
+    }
+    if !verify_widths.widths().is_empty() {
+        set(
+            "speculation-widths",
+            list(verify_widths.widths().iter().map(u16::to_string).collect()),
+        );
+    }
+    if let Some(rows) = speculative_rows {
+        set("speculative-rows", rows.to_string());
+    }
+    if let Some(rows) = model_options.get(runtime_bundle_abi::VERIFY_GRAPH_ROWS_OPTION_V1) {
+        set("speculation-graph-rows", rows.clone());
+    }
+    set(
+        "draft-cost",
+        match draft_cost_model {
+            DraftCostModel::PerToken => "per-token",
+            DraftCostModel::PerBlock => "per-block",
+        }
+        .into(),
+    );
+    set("verify-warmup", on_off(serving.verify_warmup));
+    settings
 }
 
 fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCommandErrorV1> {
@@ -12614,5 +12805,54 @@ mod serve_option_tests {
                 .to_string()
                 .contains("unsupported argument '--describe-options'")
         );
+    }
+
+    /// Every setting [`effective_settings_v1`] reports for a model profile
+    /// is one its flag sets again: the value given explicitly over the
+    /// profile resolves to the same settings.
+    #[test]
+    fn effective_settings_are_flag_values_that_resolve_to_themselves() {
+        let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../models");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&models).unwrap().flatten() {
+            let path = entry.path().join("profiles.json");
+            if !path.is_file() {
+                continue;
+            }
+            let file = crate::profiles::Profiles::read(&path).unwrap();
+            for (name, profile) in &file.profiles {
+                let defaults = crate::profiles::direct_defaults(profile);
+                let settings =
+                    effective_settings_v1(&crate::profiles::direct_command(&defaults).unwrap());
+                assert_eq!(
+                    settings["speculative-tokens"],
+                    profile.speculation.tokens.to_string()
+                );
+                for (key, value) in &settings {
+                    let explicit = [format!("--{key}"), value.clone()];
+                    let command = crate::profiles::direct_command(
+                        &crate::profiles::apply_defaults(&defaults, &explicit),
+                    )
+                    .unwrap_or_else(|e| panic!("{name} --{key} {value}: {e}"));
+                    assert_eq!(
+                        effective_settings_v1(&command),
+                        settings,
+                        "{name} --{key} {value}"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 0);
+        // A host default that no flag value names is absent.
+        let settings = effective_settings_v1(
+            &parse_host_command_v1(&words(&["serve", "--bundle", "a"])).unwrap(),
+        );
+        for absent in ["queue-depth", "speculative-rows", "speculation", "kv-pages"] {
+            assert!(!settings.contains_key(absent), "{absent}");
+        }
+        assert_eq!(settings["graph-memory-reserve-mib"], "1024");
+        assert_eq!(settings["prefill-budget"], "fixed");
+        assert_eq!(settings["context-parallel-size"], "1");
     }
 }

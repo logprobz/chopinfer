@@ -139,7 +139,7 @@ impl Profiles {
         Self::parse(&bytes)
     }
 
-    fn parse(bytes: &[u8]) -> Result<Self, HostCommandErrorV1> {
+    pub fn parse(bytes: &[u8]) -> Result<Self, HostCommandErrorV1> {
         let value: serde_json::Value =
             serde_json::from_slice(bytes).map_err(|e| error(format!("profile JSON: {e}")))?;
         if value["schema"] == "chopinfer-serve-profiles-v1" {
@@ -297,7 +297,7 @@ impl Profile {
 
     /// The profile's model options as `--model-option` values: a string as
     /// itself, any other value as its JSON text.
-    fn model_option_texts(&self) -> BTreeMap<String, String> {
+    pub(crate) fn model_option_texts(&self) -> BTreeMap<String, String> {
         self.model_options
             .iter()
             .map(|(name, value)| {
@@ -768,10 +768,41 @@ pub(crate) fn serving_options(arguments: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// The model selection and preparation options of `arguments`, which
+/// `serve --model` applies itself: what [`serving_options`] leaves out.
+pub(crate) fn preparation_options(arguments: &[String]) -> Vec<String> {
+    options(arguments)
+        .into_iter()
+        .filter(|(flag, _)| MODEL_OPTIONS.contains(&flag.as_str()))
+        .flat_map(|(flag, values)| std::iter::once(flag).chain(values))
+        .collect()
+}
+
 /// Options a direct package's serving profile does not set: the package and
 /// topology are the model's selection, and the served name is the
 /// package's. The profile's device map stays a default.
 const SELECTION_OPTIONS: &[&str] = &["--bundle", "--topology", "--served-model-name"];
+
+/// The serving profile a family helper named, checked as a profile file's
+/// entries are.
+pub(crate) fn direct_entry(
+    profile: &runtime_bundle::preparation::DirectProfile,
+) -> Result<Profile, HostCommandErrorV1> {
+    let entry: Profile = serde_json::from_value(profile.profile.clone())
+        .map_err(|e| error(format!("serving profile {}: {e}", profile.name)))?;
+    entry.validate()?;
+    Ok(entry)
+}
+
+/// The options a profile supplies a direct package as defaults: all but
+/// the selection options.
+pub(crate) fn direct_defaults(profile: &Profile) -> Vec<String> {
+    options(&profile.arguments(""))
+        .into_iter()
+        .filter(|(flag, _)| !SELECTION_OPTIONS.contains(&flag.as_str()))
+        .flat_map(|(flag, values)| std::iter::once(flag).chain(values))
+        .collect()
+}
 
 /// `serve` arguments for a direct package at `bundle`: the family's serving
 /// profile as defaults under the invocation's `explicit` serve options.
@@ -781,20 +812,14 @@ pub(crate) fn direct_arguments(
     explicit: &[String],
     bundle: &Path,
 ) -> Result<Resolution, HostCommandErrorV1> {
-    let entry: Profile = serde_json::from_value(profile.profile.clone())
-        .map_err(|e| error(format!("serving profile {}: {e}", profile.name)))?;
-    entry.validate()?;
+    let entry = direct_entry(profile)?;
     if entry.tensor_parallel != ranks as usize {
         return Err(error(format!(
             "serving profile {} serves {} ranks, not {ranks}",
             profile.name, entry.tensor_parallel
         )));
     }
-    let defaults: Vec<String> = options(&entry.arguments(""))
-        .into_iter()
-        .filter(|(flag, _)| !SELECTION_OPTIONS.contains(&flag.as_str()))
-        .flat_map(|(flag, values)| std::iter::once(flag).chain(values))
-        .collect();
+    let defaults = direct_defaults(&entry);
     let mut arguments = vec!["serve".to_owned()];
     arguments.extend(apply_defaults(&defaults, explicit));
     arguments.extend([
@@ -809,6 +834,145 @@ pub(crate) fn direct_arguments(
         profile: Some(profile.name.clone()),
         drafter: Some(entry.speculation.drafter.clone()),
         qualified_max_sequences: entry.qualified_max_sequences,
+    })
+}
+
+/// The serve command a direct package serves with `arguments`, which hold no
+/// model selection or preparation options.
+pub(crate) fn direct_command(
+    arguments: &[String],
+) -> Result<crate::HostCommandV1, HostCommandErrorV1> {
+    let mut words = vec!["serve".to_owned()];
+    words.extend_from_slice(arguments);
+    words.extend(["--bundle".to_owned(), "/direct-package".to_owned()]);
+    crate::parse_host_command_v1(&words)
+}
+
+/// How `serve --model` serves another of the family's profiles than the one
+/// it picks: explicit options over the pick.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct Translation {
+    pub arguments: Vec<String>,
+    /// Model options the pick sets and the other profile leaves to the
+    /// package; the arguments keep the pick's, and a launcher resets them to
+    /// the package defaults.
+    pub inherited_model_options: Vec<String>,
+}
+
+/// The explicit `serve --model` options that serve `target` where the family
+/// picks `pick` at the same rank count, or why none do. A target drafts as
+/// the pick does or not at all, since the package carries the pick's drafter.
+pub(crate) fn translate(pick: &Profile, target: &Profile) -> Result<Translation, String> {
+    translatable(pick, target)?;
+    translate_options(pick, &direct_defaults(target))
+}
+
+/// Why `target` cannot serve over `pick` whatever its options, if it
+/// cannot: it serves another rank count, or another drafter than the
+/// package carries.
+pub(crate) fn translatable(pick: &Profile, target: &Profile) -> Result<(), String> {
+    if pick.tensor_parallel != target.tensor_parallel {
+        return Err(format!(
+            "it serves {} ranks and the pick {}",
+            target.tensor_parallel, pick.tensor_parallel
+        ));
+    }
+    let drafter = target.speculation.drafter.as_str();
+    if drafter != "none" && drafter != pick.speculation.drafter {
+        return Err(format!(
+            "it drafts with {drafter}, but the package serve --model prepares for this checkpoint {}",
+            match pick.speculation.drafter.as_str() {
+                "none" => "has no drafter".to_owned(),
+                other => format!("drafts with {other}"),
+            }
+        ));
+    }
+    Ok(())
+}
+
+/// The explicit `serve --model` options over `pick` that serve exactly what
+/// `target`, direct serve options without model selection, serves:
+/// `target` without its device map, which the launcher sets, and with an
+/// explicit value for each setting the pick sets and `target` leaves at its
+/// default. That value is `target`'s own effective one; a setting whose
+/// default no flag value names makes the translation fail. The result is
+/// accepted only when it serves `target`'s exact configuration, model
+/// options the pick sets and `target` omits aside.
+pub(crate) fn translate_options(pick: &Profile, target: &[String]) -> Result<Translation, String> {
+    let reference = direct_command(target).map_err(|e| format!("it is refused: {e}"))?;
+    let resets = crate::command::effective_settings_v1(&reference);
+    let defaults = direct_defaults(pick);
+    let mut arguments: Vec<String> = options(target)
+        .into_iter()
+        .filter(|(flag, _)| flag != "--devices")
+        .flat_map(|(flag, values)| std::iter::once(flag).chain(values))
+        .collect();
+    loop {
+        let explicit: std::collections::BTreeSet<String> = options(&arguments)
+            .into_iter()
+            .map(|(flag, _)| flag)
+            .collect();
+        let inherited = options(&apply_defaults(&defaults, &arguments))
+            .into_iter()
+            .find(|(flag, _)| {
+                flag != "--devices" && flag != "--model-option" && !explicit.contains(flag)
+            });
+        let Some((flag, values)) = inherited else {
+            break;
+        };
+        let Some(reset) = resets.get(flag.trim_start_matches("--")) else {
+            return Err(format!(
+                "the pick sets {flag} {}, and no flag value restores the default it leaves",
+                values.join(" ")
+            ));
+        };
+        arguments.extend([flag, reset.clone()]);
+    }
+    let named: std::collections::BTreeSet<String> = options(&arguments)
+        .into_iter()
+        .filter(|(flag, _)| flag == "--model-option")
+        .filter_map(|(_, values)| {
+            let value = values.into_iter().next()?;
+            Some(value.split_once('=')?.0.to_owned())
+        })
+        .collect();
+    let inherited_model_options: Vec<String> = pick
+        .model_options
+        .keys()
+        .filter(|name| !named.contains(*name))
+        .cloned()
+        .collect();
+    let mut served = direct_command(&apply_defaults(&defaults, &arguments))
+        .map_err(|e| format!("its options over the pick are refused: {e}"))?;
+    let mut reference = reference;
+    for command in [&mut served, &mut reference] {
+        if let crate::HostCommandV1::Serve { model_options, .. } = command {
+            for name in &inherited_model_options {
+                model_options.remove(name);
+            }
+        }
+    }
+    if served != reference {
+        let (ours, theirs) = (
+            crate::command::effective_settings_v1(&served),
+            crate::command::effective_settings_v1(&reference),
+        );
+        let setting = ours
+            .keys()
+            .chain(theirs.keys())
+            .find(|key| ours.get(*key) != theirs.get(*key));
+        return Err(match setting {
+            Some(key) => format!(
+                "over the pick it would serve --{key} {}, not {}",
+                ours.get(key).map_or("unset", String::as_str),
+                theirs.get(key).map_or("unset", String::as_str)
+            ),
+            None => "over the pick it would serve other options than its own".to_owned(),
+        });
+    }
+    Ok(Translation {
+        arguments,
+        inherited_model_options,
     })
 }
 
@@ -2351,6 +2515,282 @@ mod model_options_tests {
         assert_eq!(
             apply_defaults(&defaults, &explicit),
             ["--model-option", "b=2", "--model-option", "a=3"]
+        );
+    }
+}
+
+#[cfg(test)]
+mod translate_tests {
+    use super::*;
+
+    /// A profile at four ranks: autoregressive, with `changes` applied.
+    fn profile(changes: serde_json::Value) -> Profile {
+        let mut entry = serde_json::json!({
+            "bundle_id": "fixture.v1", "topology": "fixture-tp4", "tensor_parallel": 4,
+            "devices_required": 4, "devices": [0, 1, 2, 3],
+            "speculation": {"mode": "fixed", "tokens": 0, "draft_cost": "per-token",
+                            "drafter": "none"},
+            "max_sequences": 32, "qualified_max_sequences": null,
+            "qualification": "CPU fixture only", "kv_cache_dtype": "auto",
+            "prefix_cache": true, "max_batch_tokens": 8192, "prefill_chunk_tokens": 2048,
+            "queue_depth": null, "gpu_memory_utilization": 1.0,
+            "graph_memory_reserve_mib": 320, "status": "experimental",
+            "evidence": ["fixture"],
+        });
+        for (field, value) in changes.as_object().unwrap() {
+            entry[field] = value.clone();
+        }
+        let profile: Profile = serde_json::from_value(entry).unwrap();
+        profile.validate().unwrap();
+        profile
+    }
+
+    /// A drafting profile with a TBT prefill budget.
+    fn drafting(changes: serde_json::Value) -> Profile {
+        let mut base = serde_json::json!({
+            "speculation": {"mode": "adaptive", "tokens": 7, "draft_cost": "per-block",
+                            "drafter": "block"},
+            "prefill_budget": "tbt", "decode_tbt_target_ms": 150,
+            "graph_memory_reserve_mib": 384,
+        });
+        for (field, value) in changes.as_object().unwrap() {
+            base[field] = value.clone();
+        }
+        profile(base)
+    }
+
+    /// The serve command `pick` serves under `arguments`, as `serve --model`
+    /// resolves it, beside the one `target` serves on its own.
+    fn served(pick: &Profile, arguments: &[String]) -> crate::HostCommandV1 {
+        direct_command(&apply_defaults(&direct_defaults(pick), arguments)).unwrap()
+    }
+
+    fn flags(arguments: &[String]) -> Vec<String> {
+        options(arguments)
+            .into_iter()
+            .map(|(flag, _)| flag)
+            .collect()
+    }
+
+    /// An autoregressive profile over a drafting pick with a TBT budget
+    /// resets the budget, which drops the pick's TBT target, and serves
+    /// exactly its own configuration.
+    #[test]
+    fn an_autoregressive_profile_resets_the_picks_tbt_budget() {
+        let pick = drafting(serde_json::json!({}));
+        let target = profile(serde_json::json!({}));
+        let translation = translate(&pick, &target).unwrap();
+        let joined = translation.arguments.join(" ");
+        assert!(joined.contains("--prefill-budget fixed"), "{joined}");
+        assert!(joined.contains("--speculative-tokens 0"), "{joined}");
+        assert!(!flags(&translation.arguments).contains(&"--devices".to_owned()));
+        assert!(translation.inherited_model_options.is_empty());
+        let reference = direct_command(&direct_defaults(&target)).unwrap();
+        assert_eq!(served(&pick, &translation.arguments), reference);
+        assert_eq!(
+            crate::command::effective_settings_v1(&reference)["prefill-budget"],
+            "fixed"
+        );
+    }
+
+    /// A balanced pick with model options and adaptive cuts: the target's
+    /// configuration is served without the TBT target, and the model option
+    /// only the pick sets is inherited, for a launcher to reset.
+    #[test]
+    fn an_option_only_the_pick_sets_is_inherited() {
+        let pick = drafting(serde_json::json!({
+            "speculation": {"mode": "balanced", "tokens": 5, "draft_cost": "per-block",
+                            "drafter": "block", "depths": "1:5,8:3,16:0", "widths": "6,8,16,32",
+                            "rows": 64, "graph_rows": 64},
+            "decode_tbt_target_ms": 750, "prefill_timing_cuts": "adaptive",
+            "model_options": {"chunk": "8192", "skip": "true", "draft_items": "12"},
+        }));
+        let target = profile(serde_json::json!({
+            "prefill_timing_cuts": "off",
+            "model_options": {"chunk": "8192", "skip": "true"},
+        }));
+        let translation = translate(&pick, &target).unwrap();
+        assert_eq!(translation.inherited_model_options, ["draft_items"]);
+        let merged = apply_defaults(&direct_defaults(&pick), &translation.arguments);
+        for absent in [
+            "--decode-tbt-target-ms",
+            "--speculation-depths",
+            "--speculation-widths",
+            "--speculative-rows",
+            "--speculation-graph-rows",
+        ] {
+            assert!(!flags(&merged).contains(&absent.to_owned()), "{merged:?}");
+        }
+        let crate::HostCommandV1::Serve {
+            serving,
+            model_options,
+            ..
+        } = served(&pick, &translation.arguments)
+        else {
+            panic!("serve");
+        };
+        assert_eq!(
+            serving.prefill_budget,
+            runtime_scheduler::PrefillBudget::Fixed
+        );
+        assert_eq!(serving.prefill_timing_cuts.name(), "off");
+        assert_eq!(model_options["draft_items"], "12");
+        assert_eq!(model_options["chunk"], "8192");
+    }
+
+    /// The package carries the pick's drafter: a profile drafting with
+    /// another cannot serve over it, and one sharing it or none can.
+    #[test]
+    fn a_profile_with_another_drafter_is_unavailable() {
+        let pick = drafting(serde_json::json!({}));
+        let other = drafting(serde_json::json!({
+            "speculation": {"mode": "adaptive", "tokens": 3, "draft_cost": "per-token",
+                            "drafter": "layer"},
+        }));
+        let reason = translate(&pick, &other).unwrap_err();
+        assert!(
+            reason.contains("drafts with layer") && reason.contains("drafts with block"),
+            "{reason}"
+        );
+        let autoregressive = profile(serde_json::json!({}));
+        let reason = translate(&autoregressive, &pick).unwrap_err();
+        assert!(reason.contains("has no drafter"), "{reason}");
+        let wider = drafting(serde_json::json!({"max_sequences": 16}));
+        assert!(translate(&pick, &wider).is_ok());
+    }
+
+    /// A setting the pick sets whose default no flag value names (here an
+    /// unbounded queue) makes the profile unavailable, naming it; one with a
+    /// value is reset to the target's own.
+    #[test]
+    fn settings_reset_to_the_targets_value_or_refuse() {
+        let pick = profile(serde_json::json!({"queue_depth": 8}));
+        let target = profile(serde_json::json!({}));
+        let reason = translate(&pick, &target).unwrap_err();
+        assert!(reason.contains("--queue-depth 8"), "{reason}");
+        let pick = drafting(serde_json::json!({
+            "speculation": {"mode": "balanced", "tokens": 5, "draft_cost": "per-block",
+                            "drafter": "block", "confidence": {
+                                "contract": "fixture.drafter-confidence.v1", "floor": 1,
+                                "greedy": [[1, 0], [1, 0], [1, 0], [1, 0], [1, 0]],
+                                "sampled": [[1, 0], [1, 0], [1, 0], [1, 0], [1, 0]]}},
+            "context_parallel_size": 2,
+        }));
+        let mut target = drafting(serde_json::json!({
+            "speculation": {"mode": "balanced", "tokens": 5, "draft_cost": "per-block",
+                            "drafter": "block"},
+        }));
+        target.graph_memory_reserve_mib = None;
+        let translation = translate(&pick, &target).unwrap();
+        let joined = translation.arguments.join(" ");
+        for reset in [
+            "--speculation-confidence off",
+            "--context-parallel-size 1",
+            "--graph-memory-reserve-mib 1024",
+        ] {
+            assert!(joined.contains(reset), "{reset}: {joined}");
+        }
+        assert_eq!(
+            served(&pick, &translation.arguments),
+            direct_command(&direct_defaults(&target)).unwrap()
+        );
+    }
+
+    /// The profile `serve --model` picks at `ranks` among `file`'s for a
+    /// checkpoint whose first plannable drafter is `drafter`: the family
+    /// helpers' rule (`tp<ranks>-<drafter>`, else the only such entry).
+    fn candidate<'a>(file: &'a Profiles, ranks: usize, drafter: &str) -> Option<&'a str> {
+        let matching: Vec<&String> = file
+            .profiles
+            .iter()
+            .filter(|(_, profile)| {
+                profile.tensor_parallel == ranks && profile.speculation.drafter == drafter
+            })
+            .map(|(name, _)| name)
+            .collect();
+        let preferred = format!(
+            "tp{ranks}-{}",
+            if drafter == "none" { "ar" } else { drafter }
+        );
+        matching
+            .iter()
+            .find(|name| ***name == preferred)
+            .or(match matching.as_slice() {
+                [only] => Some(only),
+                _ => None,
+            })
+            .map(|name| name.as_str())
+    }
+
+    /// For every model's profiles, every rank count and every profile
+    /// `serve --model` can pick there, each other profile at that count
+    /// either serves exactly its own configuration over the pick or is
+    /// unavailable with a reason.
+    #[test]
+    fn every_model_profile_translates_exactly_or_says_why_not() {
+        let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../models");
+        let (mut translated, mut unavailable) = (0, 0);
+        for entry in std::fs::read_dir(&models).unwrap().flatten() {
+            let path = entry.path().join("profiles.json");
+            if !path.is_file() {
+                continue;
+            }
+            let file = Profiles::read(&path).unwrap();
+            let sizes: std::collections::BTreeSet<usize> = file
+                .profiles
+                .values()
+                .map(|profile| profile.tensor_parallel)
+                .collect();
+            for ranks in sizes {
+                let drafters: std::collections::BTreeSet<&str> = file
+                    .profiles
+                    .values()
+                    .filter(|profile| profile.tensor_parallel == ranks)
+                    .map(|profile| profile.speculation.drafter.as_str())
+                    .collect();
+                for pick_name in drafters
+                    .into_iter()
+                    .filter_map(|drafter| candidate(&file, ranks, drafter))
+                {
+                    let pick = file.get(pick_name).unwrap();
+                    for (name, target) in &file.profiles {
+                        if target.tensor_parallel != ranks || name == pick_name {
+                            continue;
+                        }
+                        let context = format!("{}: {name} over {pick_name}", path.display());
+                        match translate(pick, target) {
+                            Ok(translation) => {
+                                let mut served = served(pick, &translation.arguments);
+                                let mut reference =
+                                    direct_command(&direct_defaults(target)).unwrap();
+                                for command in [&mut served, &mut reference] {
+                                    if let crate::HostCommandV1::Serve { model_options, .. } =
+                                        command
+                                    {
+                                        for option in &translation.inherited_model_options {
+                                            model_options.remove(option);
+                                        }
+                                    }
+                                }
+                                assert_eq!(served, reference, "{context}");
+                                for option in &translation.inherited_model_options {
+                                    assert!(pick.model_options.contains_key(option));
+                                    assert!(!target.model_options.contains_key(option));
+                                }
+                                translated += 1;
+                            }
+                            Err(reason) => {
+                                assert!(!reason.is_empty(), "{context}");
+                                unavailable += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            translated > 0 && unavailable > 0,
+            "{translated} {unavailable}"
         );
     }
 }

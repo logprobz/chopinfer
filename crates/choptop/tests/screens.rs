@@ -809,13 +809,53 @@ fn loader_fixture(name: &str) -> String {
     .unwrap()
 }
 
+/// The GPU processes the loader reads at `NOW`: MiMo's process 48211 on
+/// all four GPUs and the desktop's Xorg on GPU 0, with the stray python3
+/// still on GPU 3 when `stray`. The process query of GPU `failed` fails.
+fn read_gpus(app: &mut App, stray: bool, failed: Option<u32>) {
+    let process = |pid, memory, kind, ticks, name: &str| Process {
+        pid,
+        memory: Some(memory),
+        kind,
+        owner: Owner {
+            start_ticks: Some(ticks),
+            name: Some(name.to_owned()),
+            ..Owner::default()
+        },
+    };
+    let reading = |index: u32| {
+        let mut processes = vec![process(
+            48211,
+            89_012 * MIB,
+            Kind::Compute,
+            48211,
+            "chopinfer",
+        )];
+        if index == 0 {
+            processes.push(process(2210, 96 * MIB, Kind::Graphics, 3, "Xorg"));
+        }
+        if stray && index == 3 {
+            processes.push(process(51877, 1_434 * MIB, Kind::Compute, 7, "python3"));
+        }
+        Reading {
+            at: NOW,
+            processes: (Some(index) != failed).then_some(processes),
+            answered: true,
+            ..Reading::default()
+        }
+    };
+    app.live.gpu(&Report::Polled((0..4).map(reading).collect()));
+}
+
 /// The fleet's GPUs with the loader opened on MiMo (process 48211 on all
 /// four), the catalog read from `tests/fixtures/loader`, checkpoints for
-/// Qwen, MiMo and DeepSeek, and two recent launches.
+/// Qwen, MiMo and DeepSeek, and two recent launches. The stray python3 has
+/// left GPU 3 by the time the loader reads it.
 fn loader() -> App {
     use crossterm::event::KeyCode;
     let mut app = fleet();
     with_gpus(&mut app, false);
+    read_gpus(&mut app, false, None);
     // The loading Qwen process has gone; the scan the loader reads is the
     // rest.
     let found = app

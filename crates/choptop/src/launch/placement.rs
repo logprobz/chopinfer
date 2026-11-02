@@ -258,7 +258,7 @@ mod tests {
             uuid: Some(uuid(index)),
             memory_total: Some(96 << 30),
             occupancy,
-            beside: Vec::new(),
+            graphics: Vec::new(),
         }
     }
 

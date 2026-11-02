@@ -8,7 +8,7 @@ use super::{footer, header};
 use crate::app::App;
 use crate::catalog::{Availability, Checkpoint, Fetch, Pick, Profile};
 use crate::launch::command::{self, API_KEY, Origin};
-use crate::launch::occupancy::{Holder, Occupancy};
+use crate::launch::occupancy::{self, Holder, Occupancy};
 use crate::loader::options::{From, Group, Line, Row, Tone};
 use crate::loader::{FLASH_SECONDS, Loader, Pane, Target};
 
@@ -608,8 +608,32 @@ fn placement_pane(buffer: &mut Buffer, app: &App, area: Area, alone_: bool) {
                 if on { Color::Yellow } else { Color::Dim },
             ),
         };
+        // A graphics process keeps running beside a launch; it is named on
+        // the row, a free GPU's too.
+        let graphics = match gpu.graphics.as_slice() {
+            [] => String::new(),
+            [one] => format!(
+                " + {}",
+                sanitize(one.owner.name.as_deref().unwrap_or("graphics"))
+            ),
+            many => format!(" + {} graphics", many.len()),
+        };
         if width > 15 {
-            buffer.put(x + 13, row, &pad(&text, owner_width), Style::fg(color));
+            let room = owner_width.saturating_sub(graphics.chars().count());
+            let text = pad(&text, text.chars().count().min(room));
+            let column = buffer.put(x + 13, row, &text, Style::fg(color));
+            buffer.put(
+                column,
+                row,
+                &pad(
+                    &graphics,
+                    graphics
+                        .chars()
+                        .count()
+                        .min(owner_width - text.chars().count()),
+                ),
+                Style::fg(if on { Color::Yellow } else { Color::Dim }),
+            );
         }
         row += 1;
     }
@@ -851,6 +875,17 @@ fn pane_help(app: &App, lines: &[(Row, Line)]) -> (String, String, Color) {
         }
         Pane::Placement => {
             let size = loader.plan.tensor_parallel.unwrap_or(1);
+            let graphics = loader
+                .plan
+                .gpus
+                .get(loader.gpu_cursor)
+                .map(|gpu| {
+                    gpu.graphics
+                        .iter()
+                        .map(occupancy::described)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
             match loader
                 .plan
                 .gpus
@@ -866,7 +901,17 @@ fn pane_help(app: &App, lines: &[(Row, Line)]) -> (String, String, Color) {
                 ),
                 Some((index, Occupancy::Blocked(what))) => (
                     format!("GPU {index}"),
-                    sanitize(&format!("held by {what}, which choptop leaves running.")),
+                    sanitize(&format!(
+                        "held by {what}, which choptop does not stop, so a launch cannot use it."
+                    )),
+                    Color::Yellow,
+                ),
+                Some((index, _)) if !graphics.is_empty() => (
+                    format!("GPU {index}"),
+                    sanitize(&format!(
+                        "{} keeps running beside a launch here and holds its memory; a desktop's display often runs on GPU 0.",
+                        graphics.join(", ")
+                    )),
                     Color::Yellow,
                 ),
                 _ => (

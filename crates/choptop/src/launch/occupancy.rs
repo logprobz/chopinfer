@@ -4,6 +4,11 @@
 //! unknown and cannot be picked; a failed or missing process list is never
 //! read as an empty GPU.
 //!
+//! Any compute process that is not a serve row blocks its GPU, even beside
+//! a serve process a switch would stop. A graphics process, such as a
+//! desktop's display server, does not: the GPU stays free or held, and the
+//! process is carried along for the loader to show and warn about.
+//!
 //! The readings are the latest the GPU poller and the scanner delivered,
 //! kept in [`Live`] as they arrive: pausing holds the list's frame, not
 //! these.
@@ -174,8 +179,8 @@ pub struct Gpu {
     /// Bytes.
     pub memory_total: Option<u64>,
     pub occupancy: Occupancy,
-    /// Other processes on it that choptop leaves running.
-    pub beside: Vec<String>,
+    /// Graphics processes on it, which keep running beside a launch.
+    pub graphics: Vec<Process>,
 }
 
 /// Who holds a port.
@@ -295,7 +300,7 @@ fn unknown(live: &Live, index: usize, interval: f64, now: f64) -> Option<String>
 }
 
 /// `pid 51877 (python3, 1.4 GiB)`.
-fn described(process: &Process) -> String {
+pub fn described(process: &Process) -> String {
     let name = process.owner.name.as_deref().unwrap_or("-");
     match process.memory {
         Some(memory) => format!("pid {} ({name}, {})", process.pid, bytes(memory as f64)),
@@ -334,7 +339,7 @@ pub fn occupancy(inputs: &Inputs) -> Vec<Gpu> {
                 uuid: device.uuid.clone(),
                 memory_total: device.memory_total,
                 occupancy: Occupancy::Free,
-                beside: Vec::new(),
+                graphics: Vec::new(),
             };
             match fresh[index] {
                 None => {
@@ -343,7 +348,7 @@ pub fn occupancy(inputs: &Inputs) -> Vec<Gpu> {
                     );
                 }
                 Some(processes) => {
-                    (gpu.occupancy, gpu.beside) = holders(inputs, &serves, processes);
+                    (gpu.occupancy, gpu.graphics) = holders(inputs, &serves, processes);
                 }
             }
             gpu
@@ -420,12 +425,12 @@ pub fn occupancy(inputs: &Inputs) -> Vec<Gpu> {
     gpus
 }
 
-/// Who holds a GPU with these `processes`, and the others beside them.
-fn holders(inputs: &Inputs, serves: &[Serve], processes: &[Process]) -> (Occupancy, Vec<String>) {
+/// Who holds a GPU with these `processes`, and the graphics processes on
+/// it.
+fn holders(inputs: &Inputs, serves: &[Serve], processes: &[Process]) -> (Occupancy, Vec<Process>) {
     let mut holders = Vec::new();
     let mut blocked = None;
-    let mut strangers = Vec::new();
-    let mut beside = Vec::new();
+    let mut graphics = Vec::new();
     for process in processes {
         let owner = &process.owner;
         if let Some(position) = inputs.launch_of(process.pid, owner.start_ticks) {
@@ -448,23 +453,20 @@ fn holders(inputs: &Inputs, serves: &[Serve], processes: &[Process]) -> (Occupan
             };
             blocked.get_or_insert(what);
         } else if process.kind == Kind::Graphics {
-            beside.push(described(process));
+            graphics.push(process.clone());
         } else {
-            strangers.push(described(process));
+            // Any other compute process: choptop does not stop it, and a
+            // launch would share the GPU with it.
+            blocked.get_or_insert_with(|| described(process));
         }
-    }
-    if let Some(what) = blocked {
-        return (Occupancy::Blocked(what), beside);
     }
     holders.dedup();
-    if holders.is_empty() {
-        if let Some(stranger) = strangers.first() {
-            return (Occupancy::Blocked(stranger.clone()), beside);
-        }
-        return (Occupancy::Free, beside);
-    }
-    beside.extend(strangers);
-    (Occupancy::Held(holders), beside)
+    let occupancy = match blocked {
+        Some(what) => Occupancy::Blocked(what),
+        None if holders.is_empty() => Occupancy::Free,
+        None => Occupancy::Held(holders),
+    };
+    (occupancy, graphics)
 }
 
 /// Who holds each port: pending launches, discovered instances, and a
@@ -737,28 +739,34 @@ pub(crate) mod tests {
             ports: vec![8311],
             starting: false,
         };
+        // A graphics process beside a serve process leaves it held, and is
+        // carried along.
         assert_eq!(
             gpus[0].occupancy,
-            Occupancy::Held(vec![Holder::Serve(serve.clone())])
-        );
-        assert_eq!(gpus[0].beside, ["pid 2210 (Xorg, 1.5 GiB)"]);
-        // A stranger beside a serve process is left running, and said so.
-        assert_eq!(
-            gpus[1].occupancy,
             Occupancy::Held(vec![Holder::Serve(serve)])
         );
-        assert_eq!(gpus[1].beside, ["pid 51877 (python3, 1.5 GiB)"]);
+        assert_eq!(described(&gpus[0].graphics[0]), "pid 2210 (Xorg, 1.5 GiB)");
+        // A compute process that is not serve blocks the GPU, even beside a
+        // serve process a switch would stop.
+        assert_eq!(
+            gpus[1].occupancy,
+            Occupancy::Blocked("pid 51877 (python3, 1.5 GiB)".into())
+        );
+        assert!(gpus[1].graphics.is_empty());
         assert_eq!(
             gpus[2].occupancy,
             Occupancy::Blocked("docker glm-tp4".into())
         );
-        // A process that is not serve holds a GPU alone.
+        // So does one alone.
         assert_eq!(
             gpus[3].occupancy,
             Occupancy::Blocked("pid 51877 (python3, 1.5 GiB)".into())
         );
-        // A desktop's graphics process does not.
+        // A GPU with only a desktop's graphics process is free, and says
+        // which process is there.
         assert_eq!(gpus[4].occupancy, Occupancy::Free);
+        assert_eq!(gpus[4].graphics.len(), 1);
+        assert_eq!(gpus[4].graphics[0].pid, 2210);
         let ports = ports(&Inputs {
             live: &live,
             instances: &registry.instances,
@@ -768,6 +776,71 @@ pub(crate) mod tests {
         });
         assert!(matches!(&ports[&8311], PortHolder::Serve(serve) if serve.pid == 48211));
         assert_eq!(ports.get(&8600), None);
+    }
+
+    /// GPU 0 of a host with `processes` on it. Serve process 48211 of this
+    /// user is found when it is one of them; found elsewhere, it would be
+    /// loading, which leaves every GPU unknown.
+    fn alone(processes: Vec<Process>) -> Gpu {
+        let mut live = Live::default();
+        live.gpu(&Report::Opened {
+            driver: None,
+            devices: devices(1),
+        });
+        let serving = processes.iter().any(|process| process.pid == 48211);
+        live.scan(&discover::Report::Scan {
+            found: serving
+                .then(|| serve_process(48211, &["127.0.0.1:8310"], None))
+                .into_iter()
+                .collect(),
+            events: Vec::new(),
+        });
+        live.gpu(&polled(1.0, vec![Some(processes)]));
+        occupancy(&Inputs {
+            live: &live,
+            instances: &[],
+            reservations: &[],
+            interval: 1.0,
+            now: 1.0,
+        })
+        .remove(0)
+    }
+
+    #[test]
+    fn a_compute_process_that_is_not_serve_blocks_even_beside_serve() {
+        for kind in [Kind::Compute, Kind::Both] {
+            let gpu = alone(vec![on_gpu(48211), other(51877, "python3", kind)]);
+            assert_eq!(
+                gpu.occupancy,
+                Occupancy::Blocked("pid 51877 (python3, 1.5 GiB)".into()),
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_graphics_process_does_not_block_and_is_carried_as_a_warning() {
+        let gpu = alone(vec![on_gpu(48211), other(2210, "Xorg", Kind::Graphics)]);
+        assert!(
+            matches!(&gpu.occupancy, Occupancy::Held(holders) if matches!(&holders[..], [Holder::Serve(serve)] if serve.pid == 48211))
+        );
+        assert_eq!(
+            gpu.graphics
+                .iter()
+                .map(|process| process.pid)
+                .collect::<Vec<_>>(),
+            [2210]
+        );
+    }
+
+    #[test]
+    fn a_gpu_with_only_graphics_processes_is_free_and_names_them() {
+        let gpu = alone(vec![other(2210, "Xorg", Kind::Graphics)]);
+        assert_eq!(gpu.occupancy, Occupancy::Free);
+        assert_eq!(described(&gpu.graphics[0]), "pid 2210 (Xorg, 1.5 GiB)");
+        let empty = alone(Vec::new());
+        assert_eq!(empty.occupancy, Occupancy::Free);
+        assert!(empty.graphics.is_empty());
     }
 
     fn reservation(

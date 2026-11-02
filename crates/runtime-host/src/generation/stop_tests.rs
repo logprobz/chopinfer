@@ -650,6 +650,82 @@ fn ignored_eos_does_not_become_an_engine_confirmed_stop() {
     }
 }
 
+#[test]
+fn a_refused_token_names_the_decoder_reason_ordinal_and_id() {
+    let tokenizer = tokenizer();
+    // The declaration calls token 4 "<t>", but this tokenizer decodes it
+    // to byte 1, so the decoder refuses that token's boundary spelling.
+    let tokens = vec![X, 4];
+    for speculative in [false, true] {
+        for sampled in [false, true] {
+            let mut engine = engine(tokens.clone(), sampled, speculative);
+            let id = RequestId::new(1);
+            engine
+                .submit(
+                    EngineRequest::new(
+                        id,
+                        vec![X],
+                        8,
+                        SamplingParameters::new(0.0).unwrap(),
+                        0,
+                        vec![EOS],
+                        ModelVocabulary::new(259).unwrap(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            let (mut generation, mut receiver) = active(0, &[]);
+            generation
+                .decoder
+                .set_decoding_options(Default::default(), false);
+            let mut active = BTreeMap::from([(id, generation)]);
+            for _ in 0..8 {
+                engine.step().unwrap();
+                for event in engine.drain_events() {
+                    assert!(handle_engine_event(
+                        &tokenizer,
+                        &mut engine,
+                        &mut active,
+                        event
+                    ));
+                }
+                if active.is_empty() {
+                    break;
+                }
+            }
+            assert!(active.is_empty());
+            let mut failures = Vec::new();
+            while let Ok(event) = receiver.try_recv() {
+                match event {
+                    GenerationEvent::Failed {
+                        message,
+                        code,
+                        refusal,
+                    } => failures.push((message, code, refusal)),
+                    GenerationEvent::Finished { .. } => {
+                        panic!("refused output finished successfully")
+                    }
+                    _ => {}
+                }
+            }
+            assert_eq!(
+                failures,
+                vec![(
+                    DECODE_MESSAGE.to_owned(),
+                    Some("invalid_model_output".to_owned()),
+                    Some(Box::new(OutputRefusal {
+                        reason:
+                            "malformed completion: special token ID has mismatched decoded bytes"
+                                .to_owned(),
+                        token_ordinal: Some(1),
+                        token_id: Some(tokens[1]),
+                    })),
+                )]
+            );
+        }
+    }
+}
+
 fn client_stop_metrics(maximum: usize) {
     let tokenizer = tokenizer();
     for streamed in [false, true] {

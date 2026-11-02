@@ -1516,6 +1516,28 @@ fn emit_row_v1(
         .synchronize_stream(handles.stream)
         .map_err(status_of_v1)?;
 
+    #[cfg(feature = "fake-host-services")]
+    if let Some(directory) = std::env::var_os("TP4_FIXTURE_CONTROL_DIR")
+        && let Ok(token) =
+            std::fs::read_to_string(std::path::PathBuf::from(directory).join("emit-token"))
+    {
+        let token = token
+            .trim()
+            .parse::<usize>()
+            .map_err(|_| BundleStatusV1::InvalidArgument)?;
+        if token >= row.len() / 4 {
+            return Err(BundleStatusV1::InvalidArgument);
+        }
+        for (id, value) in row.chunks_exact_mut(4).enumerate() {
+            let logit = if id == token {
+                1_000.0_f32
+            } else {
+                -1_000.0_f32
+            };
+            value.copy_from_slice(&logit.to_le_bytes());
+        }
+    }
+
     // Delivering the row is the last thing that can fail, so an execution that
     // refuses after this point does not exist: nothing is pending until here.
     sink.emit(step.request_id, &row).map_err(|error| {

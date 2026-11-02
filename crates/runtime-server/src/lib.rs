@@ -53,7 +53,7 @@ pub use backend::{
     DecodingOptions, EventSender, FinishReason, GeneratedTokenLogprob, GenerationBackend,
     GenerationEvent, LocalReplicaPool, LocalReplicaPoolError, MediaInputV1, MediaPayloadSourceV1,
     MediaPayloadV1, MediaSpanV1, NO_AVAILABLE_LOCAL_REPLICAS_REASON,
-    NO_READY_LOCAL_REPLICAS_REASON, PositionSpanV1, PreparedPrompt, PreparedRequest,
+    NO_READY_LOCAL_REPLICAS_REASON, OutputRefusal, PositionSpanV1, PreparedPrompt, PreparedRequest,
     PromptTokenLogprob, ReasoningContent, RequestedLogprobs, TokenLogprob, TokenUsage,
     ToolCallDelta, VisibleContent,
 };

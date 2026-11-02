@@ -5,7 +5,8 @@ default level, routine bundle traces appear only at debug and then exactly as
 the bundle wrote them, warn drops startup chatter, and the summary line
 reports what the server saw. The TP4 fixture's control directory refuses a
 batch (`refuse`), fails the worker (`fail`), slows each execute (`delay-ms`)
-and appends every step-shape record it logs to `emitted.jsonl`.
+or selects an output token (`emit-token`), and appends every step-shape
+record it logs to `emitted.jsonl`.
 """
 import concurrent.futures
 import http.client
@@ -186,7 +187,9 @@ class RequestLogging(unittest.TestCase):
     def check_failure_lines(self, lines):
         for line in lines:
             self.assertEqual(set(line), FIELDS | ({"json_error"} if "json_error" in line else set())
-                             | ({"served"} if "served" in line else set()), line)
+                             | ({"served"} if "served" in line else set())
+                             | ({"output_refusal"} if "output_refusal" in line else set()), line)
+            self.assertNotIn("output_refusal", line)
             self.assertTrue(line["peer"].startswith("127.0.0.1:"), line)
         malformed, unknown, capacity, refused = lines
         self.assertEqual((malformed["status"], malformed["level"]), (400, "warn"))
@@ -209,6 +212,36 @@ class RequestLogging(unittest.TestCase):
         emitted = (self.control / "emitted.jsonl").read_text()
         self.assertIn(STEP_SHAPE, emitted)
         self.assertNotIn(STEP_SHAPE, self.log.read_text())
+
+    def test_a_refused_output_names_its_reason_and_token(self):
+        self.start()
+        declaration = json.loads((self.package / "components/frontend.json").read_text())
+        token_id = next(token["id"] for token in declaration["vocabulary"]["boundary_tokens"]
+                        if token["text"] == "</arg_value>")
+        control = self.control / "emit-token"
+        control.write_text(str(token_id))
+        try:
+            status, body = self.request("POST", "/v1/chat/completions", {
+                "model": self.model,
+                "messages": [{"role": "user", "content": "canary-7f3e9b"}],
+                "max_tokens": 4, "temperature": 0, "stream": True,
+            })
+        finally:
+            control.unlink()
+        self.assertEqual(status, 200, body)
+        chunks = [json.loads(line[6:]) for line in body.splitlines()
+                  if line.startswith("data: ") and line != "data: [DONE]"]
+        self.assertIn("error", chunks[-1], chunks)
+        self.assertEqual(chunks[-1]["error"]["code"], "invalid_model_output", chunks)
+        self.assertNotIn("output_refusal", chunks[-1]["error"])
+        line, = self.failures(1)
+        self.assertEqual(line["code"], "invalid_model_output")
+        self.assertEqual(line["message"], "backend failure")
+        self.assertEqual(line["output_refusal"], {
+            "reason": "malformed completion: completion contains an unexpected reserved boundary",
+            "token_ordinal": 0, "token_id": token_id,
+        })
+        self.assertNotIn("canary-7f3e9b", json.dumps(line))
 
     def test_warn_keeps_failures_and_drops_startup_lines(self):
         self.start("--log-level", "warn")

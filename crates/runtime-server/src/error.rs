@@ -4,6 +4,7 @@ use axum::response::{IntoResponse, Response};
 use serde_json::json;
 use std::borrow::Cow;
 
+use crate::OutputRefusal;
 use crate::request_log::{FailureDetail, JsonErrorPosition};
 
 pub(crate) const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
@@ -33,6 +34,7 @@ pub(crate) struct ErrorLog {
 #[derive(Debug, Default)]
 pub(crate) struct ErrorLogDetail {
     pub(crate) json_error: Option<JsonErrorPosition>,
+    pub(crate) output_refusal: Option<OutputRefusal>,
     /// The model name an unknown-model refusal was asked for, bounded.
     pub(crate) requested_model: Option<String>,
     /// The refusal ended a request whose client had already left.
@@ -161,6 +163,13 @@ impl ApiError {
         self
     }
 
+    /// Adds log-safe output facts without changing the client's error.
+    pub(crate) fn with_output_refusal(mut self, mut refusal: OutputRefusal) -> Self {
+        refusal.reason = bounded_log_text(&refusal.reason, 256);
+        self.log.detail_mut().output_refusal = Some(refusal);
+        self
+    }
+
     /// What the request-failure line reports: the literal message, or the
     /// constructor's summary for a formatted one.
     pub(crate) fn failure_detail(&self) -> FailureDetail {
@@ -178,6 +187,7 @@ impl ApiError {
                 Cow::Owned(_) => self.log.summary,
             },
             json_error: detail.and_then(|detail| detail.json_error),
+            output_refusal: detail.and_then(|detail| detail.output_refusal.clone()),
             requested_model: detail.and_then(|detail| detail.requested_model.clone()),
             disconnected: detail.is_some_and(|detail| detail.disconnected),
             routine: detail.is_some_and(|detail| detail.shutdown),
@@ -249,6 +259,37 @@ mod tests {
         // A multibyte character that would cross the limit is left out whole.
         assert_eq!(bounded_log_text("ab\u{00e9}", 3), "ab");
         assert_eq!(bounded_log_text("ab\u{00e9}", 4), "ab\u{00e9}");
+    }
+
+    #[test]
+    fn output_refusals_are_bounded_and_only_reach_the_log() {
+        let error = ApiError::backend(
+            "model output could not be decoded".to_owned(),
+            Some("invalid_model_output".to_owned()),
+        );
+        let client = error.value();
+        let error = error.with_output_refusal(crate::OutputRefusal {
+            reason: format!("fixed\n\r\u{2028}{}canary-7f3a", "\u{00e9}".repeat(200)),
+            token_ordinal: Some(7),
+            token_id: Some(42),
+        });
+        assert_eq!(error.value(), client);
+        let detail = error.failure_detail();
+        assert_eq!(detail.message, "backend failure");
+        assert_eq!(detail.code.as_deref(), Some("invalid_model_output"));
+        let refusal = detail.output_refusal.unwrap();
+        assert_eq!(refusal.reason.len(), 256);
+        assert!(refusal.reason.starts_with("fixed???"));
+        assert!(!refusal.reason.contains(['\n', '\r', '\u{2028}']));
+        assert!(!refusal.reason.contains("canary"));
+        assert_eq!(refusal.token_ordinal, Some(7));
+        assert_eq!(refusal.token_id, Some(42));
+        assert!(
+            ApiError::backend("other failure", None)
+                .failure_detail()
+                .output_refusal
+                .is_none()
+        );
     }
 
     #[test]

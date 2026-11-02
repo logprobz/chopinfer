@@ -6,8 +6,9 @@
 //! Responses adapter for its requests, and a sweep for requests cut off by a
 //! worker failure or a forced stop. Each record writes at most one line.
 //!
-//! Lines never carry prompt text, generated text or token IDs, and every
-//! field a client controls is cut to a byte limit when it is stored. A line
+//! Lines never carry prompt or generated text. Only `output_refusal` carries
+//! a token ID: the one refused token. Every field a client controls is cut
+//! to a byte limit when it is stored. A line
 //! is formatted on the caller's thread and queued; one writer thread drains
 //! the queue, so a handler never waits on stderr. Each level has its own
 //! rate limit so a flood of client refusals cannot crowd out server faults,
@@ -27,6 +28,7 @@ use axum::response::Response;
 use runtime_log::Level;
 use serde_json::{Map, Value, json};
 
+use crate::OutputRefusal;
 use crate::error::bounded_log_text;
 
 pub(crate) const FAILURE_SCHEMA: &str = "chopinfer.request-failure.v1";
@@ -133,6 +135,7 @@ pub(crate) struct FailureDetail {
     /// A fixed message, never text a request supplied.
     pub(crate) message: &'static str,
     pub(crate) json_error: Option<JsonErrorPosition>,
+    pub(crate) output_refusal: Option<OutputRefusal>,
     pub(crate) requested_model: Option<String>,
     /// The refusal ended the request because the client left.
     pub(crate) disconnected: bool,
@@ -152,6 +155,7 @@ impl FailureDetail {
             param: None,
             message: status.canonical_reason().unwrap_or("HTTP error"),
             json_error: None,
+            output_refusal: None,
             requested_model: None,
             disconnected: false,
             routine: false,
@@ -177,6 +181,7 @@ impl FailureDetail {
                 "generation failed"
             },
             json_error: None,
+            output_refusal: None,
             requested_model: None,
             disconnected: false,
             routine: shutdown,
@@ -580,6 +585,16 @@ impl RequestRecord {
             line.insert(
                 "json_error".to_owned(),
                 json!({"category": position.category, "line": position.line, "column": position.column}),
+            );
+        }
+        if let Some(refusal) = detail.output_refusal {
+            line.insert(
+                "output_refusal".to_owned(),
+                json!({
+                    "reason": refusal.reason,
+                    "token_ordinal": refusal.token_ordinal,
+                    "token_id": refusal.token_id,
+                }),
             );
         }
         if let Some(model) = detail.requested_model {

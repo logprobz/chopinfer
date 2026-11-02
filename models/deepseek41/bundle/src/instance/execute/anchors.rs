@@ -23,6 +23,7 @@
 //! item cut at the anchor (`dspark::transfers::anchor_copies`). Snapshots
 //! hold no drafter rings; a restore rebuilds them from the raw rows.
 
+use crate::instance::Instance;
 use bundle_runtime::inputs::PhaseInputs;
 use bundle_runtime::resources::{Held, allocate_span};
 use bundle_runtime::state::{Extent, Holder, RequestState};
@@ -36,6 +37,66 @@ use runtime_bundle_abi::{
 /// The request state buffers whose spares the step writes.
 const RING: &str = "window.ring";
 const TAIL: &str = "compressor.tail";
+
+/// Request-dependent anchor work, rebuilt for each run and never kept in
+/// a plan or template. Seeds precede every slot write on each rank stream.
+#[derive(Debug, Default)]
+pub(super) struct Step {
+    pub seeds: Vec<Vec<(Span, Span)>>,
+    /// (request, absolute anchor tokens), in spare order for the ledger.
+    pub kept: Vec<(u64, u64)>,
+}
+
+impl Step {
+    pub(super) fn prepare(instance: &Instance, inputs: &PhaseInputs) -> Result<Self, String> {
+        let anchors = anchors(inputs, instance.anchor_spare_count())?;
+        Self::from_anchors(instance, inputs, &anchors)
+    }
+
+    /// Builds this step's slot seeds and ledger request/boundary pairs.
+    /// The kept plan stores none of this request-dependent data.
+    fn from_anchors(
+        instance: &Instance,
+        inputs: &PhaseInputs,
+        anchors: &[Anchor],
+    ) -> Result<Self, String> {
+        if anchors.is_empty() {
+            return Ok(Self::default());
+        }
+        let cells = ring_cells(instance.config.shape.geometry);
+        let mut seeds = Vec::with_capacity(instance.buffers.len());
+        for (rank, buffers) in instance.buffers.iter().enumerate() {
+            let held: Vec<_> = buffers
+                .state
+                .buffers
+                .iter()
+                .map(|&(_, span)| span)
+                .collect();
+            let mut copies = Vec::new();
+            for anchor in anchors {
+                let slot = u32::try_from(inputs.slot_ids[anchor.item])
+                    .map_err(|_| "an anchor item has no state slot")?;
+                copies.extend(seed_copies(
+                    &instance.state,
+                    instance.extent,
+                    &held,
+                    &instance.anchor_spares[rank],
+                    slot,
+                    anchor,
+                    cells,
+                )?);
+            }
+            seeds.push(copies);
+        }
+        Ok(Self {
+            seeds,
+            kept: anchors
+                .iter()
+                .map(|anchor| (anchor.request, u64::from(anchor.tokens)))
+                .collect(),
+        })
+    }
+}
 
 /// One rank's anchor spares.
 #[derive(Clone, Debug)]

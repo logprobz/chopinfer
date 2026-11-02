@@ -4,12 +4,23 @@
 //! prompt-ending prefill items whose rounded end lies inside them keep it
 //! there, in a cuts envelope, as the scheduler sends them. Every other case
 //! runs as served. The servings stay the profiles' own; the option is the
-//! instance's override.
+//! instance's override. The quick tier also verifies reused anchored
+//! templates against fresh lowering and requires anchored template hits.
 use super::*;
 use bundle_runtime::fake_host::conformance::route_guard;
 use conformance::Startup;
+use model_deepseek41_contract::execution_options::PREFILL_PLAN_CACHE_VERIFY;
+use std::collections::BTreeMap;
+use std::sync::Mutex;
 
 const ANCHOR_ITEMS: u32 = model_deepseek41_contract::execution_options::MAX_ANCHOR_ITEMS;
+
+/// Anchored template hits whose launches were compared with fresh lowering.
+static VERIFIED_HITS: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
+
+fn verify_templates() -> bool {
+    std::env::var("CHOPINFER_ROUTE_SWEEP").map_or(true, |tier| tier == "quick")
+}
 
 struct Anchored(Served);
 
@@ -44,6 +55,17 @@ impl Startup for Anchored {
             anchored("anchor-restored-packed", 761, &[139, 300]),
             anchored("anchor-short", 829, &[71]),
         ]);
+        if verify_templates() {
+            // Four quick-tier workers each see this anchored structure at
+            // least twice, at different absolute boundaries.
+            envelope.cuts.extend((0..8).map(|shift| {
+                anchored(
+                    &format!("anchor-template-repeat-{shift}"),
+                    829 + 128 * shift,
+                    &[68],
+                )
+            }));
+        }
         envelope
     }
     fn check_allocated_route_shapes(
@@ -62,7 +84,13 @@ impl Startup for Anchored {
         self.0.route_device()
     }
     fn new(serving: &conformance::Serving) -> Self {
-        Self(Served::new(serving))
+        let mut serving = serving.clone();
+        if verify_templates() {
+            serving
+                .model_options
+                .insert(PREFILL_PLAN_CACHE_VERIFY.into(), "true".into());
+        }
+        Self(Served::new(&serving))
     }
     fn create(&self) -> Result<BundleInstanceV1, BundleAbiError> {
         self.0.create_with(Some(ANCHOR_ITEMS))
@@ -135,7 +163,22 @@ impl Startup for Anchored {
             .unwrap();
         let encoded = runtime_bundle_sdk::prefill::encode_with_cuts(&batch, &boundaries)
             .expect("anchored prefill boundaries");
-        instance.execute_prefill_cuts(&encoded, sink)
+        let verified = anchors > 0 && verify_templates();
+        let before = if verified {
+            crate::instance::execute::plan_templates::counts(instance.handle()).hits
+        } else {
+            0
+        };
+        let result = instance.execute_prefill_cuts(&encoded, sink);
+        if verified && result.is_ok() {
+            let hits = crate::instance::execute::plan_templates::counts(instance.handle()).hits;
+            *VERIFIED_HITS
+                .lock()
+                .unwrap()
+                .entry(self.0.serving.profile.clone())
+                .or_default() += hits - before;
+        }
+        result
     }
     fn execute_allocated_step(
         &self,
@@ -202,11 +245,24 @@ mod anchor_route_sweep {
 
     // CI gives each profile its own process and RSS budget.
     fn sweep(profile: &str) {
+        VERIFIED_HITS.lock().unwrap().insert(profile.into(), 0);
         route_guard::sweep::<Anchored>(
             profile,
             include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/route-allowlist.toml")),
             env!("CARGO_PKG_NAME"),
         );
+        if verify_templates() {
+            let hits = VERIFIED_HITS
+                .lock()
+                .unwrap()
+                .get(profile)
+                .copied()
+                .unwrap_or(0);
+            println!(
+                "{profile}: {hits} reused anchored templates, each compared with a fresh plan"
+            );
+            assert!(hits > 0, "{profile}: the sweep reused no anchored template");
+        }
     }
 
     #[test]

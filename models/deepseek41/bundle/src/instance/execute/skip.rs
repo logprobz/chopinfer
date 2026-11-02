@@ -77,9 +77,6 @@ pub(crate) fn engram_reuses() -> u64 {
 }
 
 pub(super) struct Plan {
-    /// Each rank's copies before the step writes its slots: the anchor
-    /// spares' seeds (`seeds`).
-    seeds: Vec<Vec<Copy>>,
     body: Programs,
     /// The body's index selections, the only launches that read the
     /// positions: a kept template lowers them again (`patch`).
@@ -87,8 +84,6 @@ pub(super) struct Plan {
     dma: Option<dma::Plan>,
     head: Programs,
     copies: Vec<Vec<Copy>>,
-    /// The (request, tokens) each anchor item keeps in its spare.
-    kept: Vec<(u64, u64)>,
     /// A kept template's Engram plan, made at its first step with prepared
     /// gathers (`engram`); none for a plan not kept.
     engram: Option<OnceCell<Engram>>,
@@ -179,15 +174,17 @@ impl Layout {
     /// The part of the layout a plan's launches other than its index
     /// selections depend on: the items' packed rows, the cone and the
     /// retained feature rows, without the absolute endpoints and feature
-    /// positions, which lowering only checks against each other. `None`
-    /// when the plan keeps anchors, whose spare seeds follow the items'
-    /// slots.
-    pub(super) fn structure(&self) -> Option<Structure> {
-        if !self.anchors.is_empty() {
-            return None;
-        }
-        Some(Structure {
+    /// positions, which lowering only checks against each other. Anchors
+    /// contribute only their packed rows and spare indices; their slot
+    /// seeds and ledger ownership are rebuilt outside the kept plan.
+    pub(super) fn structure(&self) -> Structure {
+        Structure {
             items: self.items.iter().map(|item| item.rows.clone()).collect(),
+            anchors: self
+                .anchors
+                .iter()
+                .map(|anchor| (anchor.row, anchor.spare))
+                .collect(),
             cone: prefill_cone::Plan {
                 endpoints: Vec::new(),
                 ..self.cone.clone()
@@ -197,7 +194,7 @@ impl Layout {
                 .iter()
                 .map(|feature| (feature.packed_start, feature.rows))
                 .collect(),
-        })
+        }
     }
 }
 
@@ -205,6 +202,7 @@ impl Layout {
 #[derive(Debug, Eq, PartialEq)]
 pub(super) struct Structure {
     items: Vec<Range<u32>>,
+    anchors: Vec<(u32, u32)>,
     cone: prefill_cone::Plan,
     features: Vec<(u32, u32)>,
 }
@@ -307,7 +305,6 @@ impl Plan {
     /// The plan of `run`, whose layout is `layout`.
     pub(super) fn lower(instance: &Instance, run: &Run, layout: &Layout) -> Result<Self, String> {
         let g = instance.config.shape.geometry;
-        let inputs = &run.inputs;
         let (anchors, cone, features) = (&layout.anchors, &layout.cone, &layout.features);
         let cells = super::anchors::ring_cells(g);
         let ring_buffer = instance
@@ -317,7 +314,6 @@ impl Plan {
             .position(|buffer| buffer.name == "window.ring")
             .ok_or("the request state has no window rings")?;
         let full_stages = crate::program::stages(g, run.phase);
-        let mut seeds = Vec::new();
         let mut body = (Vec::new(), Vec::new(), Vec::new());
         let mut sites = Vec::new();
         let mut head = (Vec::new(), Vec::new(), Vec::new());
@@ -326,29 +322,6 @@ impl Plan {
             let full = DeviceInputs::within(instance.arenas[PREFILL][rank], &run.layout);
             let base = lowering(instance, run, rank, &full, None);
             let mut program = (Vec::new(), Vec::new(), Vec::new());
-            let mut rank_seeds = Vec::new();
-            if !anchors.is_empty() {
-                let held: Vec<_> = buffers
-                    .state
-                    .buffers
-                    .iter()
-                    .map(|&(_, span)| span)
-                    .collect();
-                for anchor in anchors {
-                    let slot = u32::try_from(inputs.slot_ids[anchor.item])
-                        .map_err(|_| "an anchor item has no state slot")?;
-                    rank_seeds.extend(super::anchors::seed_copies(
-                        &instance.state,
-                        instance.extent,
-                        &held,
-                        &instance.anchor_spares[rank],
-                        slot,
-                        anchor,
-                        cells,
-                    )?);
-                }
-            }
-            seeds.push(rank_seeds);
             // After a layer's window write into the slots, write the same
             // key rows within a ring of each anchor into its spare ring.
             // `part` holds the lowering's packed rows, from its transient
@@ -619,16 +592,11 @@ impl Plan {
             .map_err(|e| format!("prefill head collectives: {e:?}"))?;
         let dma = dma::Plan::prepare(instance, run, &body)?;
         Ok(Self {
-            seeds,
             body,
             sites,
             dma,
             head,
             copies,
-            kept: anchors
-                .iter()
-                .map(|anchor| (anchor.request, u64::from(anchor.tokens)))
-                .collect(),
             engram: None,
         })
     }
@@ -641,8 +609,6 @@ impl Plan {
             _ => false,
         };
         Ok(dma
-            && self.seeds == other.seeds
-            && self.kept == other.kept
             && self.copies == other.copies
             && super::plan_cache::same_programs(&self.body, &other.body)?
             && super::plan_cache::same_programs(&self.head, &other.head)?)
@@ -779,19 +745,6 @@ impl Plan {
             plan.check_dma_collectives(&self.body.0, &self.body.1)?;
         }
         Ok(())
-    }
-
-    /// The (request, tokens) each anchor item keeps in its spare, in spare
-    /// order, for the step's ledger.
-    pub(super) fn kept(&self) -> &[(u64, u64)] {
-        &self.kept
-    }
-
-    /// Rank `rank`'s copies, as (destination, source), that seed the anchor
-    /// spares from the slots. They precede every write of the step to the
-    /// slots, the compressor tails' own seed copies included.
-    pub(super) fn seeds(&self, rank: usize) -> &[Copy] {
-        self.seeds.get(rank).map_or(&[], Vec::as_slice)
     }
 
     pub(super) fn execute(

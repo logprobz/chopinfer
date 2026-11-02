@@ -360,10 +360,10 @@ fn templates_patch_their_step_values_and_key_their_structure() {
     }
 }
 
-/// Plans that keep anchors are never kept, and an instance keeps up to 64
-/// templates.
+/// Plans that keep anchors share a template across requests and slots,
+/// and an instance keeps up to 64 templates.
 #[test]
-fn anchored_plans_keep_no_templates_and_instances_keep_64() {
+fn anchored_plans_share_templates_and_instances_keep_64() {
     let host = host(true);
     let instance = super::prefill_skip::create_profile_with_options(
         &host,
@@ -390,11 +390,8 @@ fn anchored_plans_keep_no_templates_and_instances_keep_64() {
         .encode()
         .unwrap()
     };
-    for (request, slot) in [(1, 0), (2, 1)] {
-        assert_eq!(
-            outcome(&instance, &anchored(request, slot)),
-            Outcome::Lowered
-        );
+    for (request, slot, expected) in [(1, 0, Outcome::Kept), (2, 1, Outcome::Reused)] {
+        assert_eq!(outcome(&instance, &anchored(request, slot)), expected);
     }
     let mut instance = instance;
     instance.destroy().unwrap();

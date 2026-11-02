@@ -89,6 +89,9 @@ pub(super) struct Run {
     phase: Phase,
     /// Each rank's compressor tail entries, uploaded with the inputs.
     tails: Vec<TailUpload>,
+    /// Slot seeds and ledger ownership of this run's anchors, never kept
+    /// in its reusable plan.
+    anchors: anchors::Step,
     /// The window write's inputs, uploaded to every rank.
     window: WindowUpload,
     /// The selections' per-row inputs, uploaded to every rank.
@@ -719,6 +722,14 @@ impl Instance {
             inputs.live_tokens()
         };
         let index = index_upload(self.config.shape.geometry, self.steps.get(), inputs, live);
+        let anchors = if skipping {
+            anchors::Step::prepare(self, inputs).map_err(|error| {
+                self.log(&error);
+                BundleStatusV1::InternalError
+            })?
+        } else {
+            anchors::Step::default()
+        };
         advance_step();
         let mut run = Run {
             execution: Execution::Standard,
@@ -740,6 +751,7 @@ impl Instance {
             collectives,
             stages,
             tails,
+            anchors,
             phase,
         };
         let planned = (|| {
@@ -1004,8 +1016,8 @@ impl Instance {
                 }
                 // Anchor spares copy the slots' state before any write of
                 // the step reaches it, the tails' seed copies below included.
-                if let Some(plan) = run.execution.skip() {
-                    for &(destination, source) in plan.seeds(rank) {
+                if let Some(seeds) = run.anchors.seeds.get(rank) {
+                    for &(destination, source) in seeds {
                         self.services
                             .copy_device_to_device(stream, destination, source)?;
                     }
@@ -1253,7 +1265,7 @@ impl Instance {
         if self.anchor_spares.is_empty() {
             0
         } else {
-            self.config.execution.prefill_anchor_items
+            super::prefill::anchor_allowance(&self.config)
         }
     }
 
@@ -1596,8 +1608,7 @@ impl Instance {
         // An upper-skip prefill names the anchors its spares keep.
         let kept = runs
             .iter()
-            .filter_map(|run| run.execution.skip())
-            .flat_map(|plan| plan.kept().iter().copied())
+            .flat_map(|run| run.anchors.kept.iter().copied())
             .collect();
         if self.ledger.preview(&items).is_err() || self.ledger.begin(&items, kept).is_err() {
             return BundleStatusV1::InvalidArgument;

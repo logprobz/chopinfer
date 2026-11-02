@@ -8,18 +8,21 @@ use runtime_bundle_abi::{BundleHandleV1, BundleStatusV1, ExecuteResultSinkV1};
 
 runtime_bundle_abi::export_prefill_cuts_api_v1!(PREFILL_CUTS_API, describe_cuts, execute_cuts,);
 
-impl Instance {
-    pub(super) fn prefill_anchor_allowance(&self) -> u32 {
-        let shape = self.config.shape;
-        if self.config.prefill.skip
-            && self.config.prefill.scheduler_cuts()
-            && shape.geometry.id == model_deepseek41_contract::geometry::FLASH.id
-            && shape.ranks() == 4
-        {
-            self.config.execution.prefill_anchor_items
-        } else {
-            0
-        }
+/// The instance's allocated and exported allowance, bounded by its served
+/// sequence count rather than the package maximum or allocation bucket.
+pub(super) fn anchor_allowance(config: &crate::config::Configuration) -> u32 {
+    let shape = config.shape;
+    if config.prefill.skip
+        && config.prefill.scheduler_cuts()
+        && shape.geometry.id == model_deepseek41_contract::geometry::FLASH.id
+        && shape.ranks() == 4
+    {
+        config
+            .execution
+            .prefill_anchor_items
+            .min(config.create.items.get())
+    } else {
+        0
     }
 }
 
@@ -27,7 +30,7 @@ pub(crate) fn describe_anchors(handle: BundleHandleV1) -> BundlePrefillAnchorsV2
     let mut anchors = 0;
     let status = Instance::instances().with(|table| {
         with_instance(table, handle, |instance| {
-            anchors = instance.prefill_anchor_allowance();
+            anchors = anchor_allowance(&instance.config);
             BundleStatusV1::Success
         })
     });

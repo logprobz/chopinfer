@@ -40,6 +40,7 @@ mod norm_quantize;
 mod phased_decode_reduce;
 mod position_valid;
 mod prefill_anchor;
+mod prefill_anchor_templates;
 mod prefill_attention;
 mod prefill_cache;
 mod prefill_cache_capacity;

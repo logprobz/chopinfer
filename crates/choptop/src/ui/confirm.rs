@@ -20,6 +20,9 @@ const GAP: usize = 4;
 /// Most rows the profile's qualification takes in the start dialog.
 const QUALIFICATION_ROWS: usize = 4;
 
+/// The indent of a line a narrow dialog breaks off a longer one.
+const FLOW_INDENT: usize = 5;
+
 fn cyan() -> Style {
     Style::fg(Color::Cyan).bold()
 }
@@ -49,30 +52,174 @@ fn path_lines(path: &str, width: usize) -> Vec<String> {
     lines
 }
 
-pub fn draw(buffer: &mut Buffer, app: &App, dialog: &Dialog) {
-    let (width, title, lines) = match dialog {
-        Dialog::Start(confirm) => {
-            let lines = start_lines(app, confirm);
-            let rows = lines.rows();
-            let lines = lines
-                .fit(room(buffer.height))
-                .unwrap_or_else(|| too_short(confirm, rows, buffer.height));
-            (START_WIDTH, confirm.title(), lines)
+/// `line` broken at spaces into lines of at most `width` characters, a
+/// word longer than that broken anywhere, each line after the first
+/// indented by [`FLOW_INDENT`] cells. A line that fits stays as it is.
+fn flow(line: Line, width: usize) -> Vec<Line> {
+    if length(&line) <= width {
+        return vec![line];
+    }
+    let width = width.max(FLOW_INDENT + 1);
+    let characters = line
+        .iter()
+        .flat_map(|(text, style)| text.chars().map(move |character| (character, *style)))
+        .collect::<Vec<_>>();
+    let indent = vec![(' ', Style::PLAIN); FLOW_INDENT];
+    let mut lines = Vec::new();
+    let mut current = Vec::new();
+    // Whether the current line has no word yet.
+    let mut fresh = true;
+    let mut index = 0;
+    while index < characters.len() {
+        let from = index;
+        let start = from
+            + characters[from..]
+                .iter()
+                .take_while(|(character, _)| *character == ' ')
+                .count();
+        let letters = characters[start..]
+            .iter()
+            .take_while(|(character, _)| *character != ' ')
+            .count();
+        let mut word = &characters[start..start + letters];
+        index = start + letters;
+        if word.is_empty() {
+            break;
         }
-        Dialog::Stop(stop) => (
-            STOP_WIDTH,
-            format!("Stop {}", sanitize(&stop.label)),
-            stop_lines(stop),
-        ),
-    };
-    overlay(buffer, width, &title, lines);
+        if !fresh && current.len() + (start - from) + word.len() > width {
+            lines.push(std::mem::replace(&mut current, indent.clone()));
+            fresh = true;
+        }
+        // The spaces before a word stay, but for the first word of a line
+        // broken off.
+        if !fresh || lines.is_empty() {
+            current.extend_from_slice(&characters[from..start]);
+        }
+        while current.len() + word.len() > width {
+            let take = width.saturating_sub(current.len());
+            current.extend_from_slice(&word[..take]);
+            word = &word[take..];
+            lines.push(std::mem::replace(&mut current, indent.clone()));
+            fresh = true;
+        }
+        if !word.is_empty() {
+            current.extend_from_slice(word);
+            fresh = false;
+        }
+    }
+    if !fresh || lines.is_empty() {
+        lines.push(current);
+    }
+    lines.into_iter().map(pieces).collect()
 }
 
-/// Whether the start dialog shows everything `confirm` stops and checks
-/// on a terminal `height` rows tall. When it does not, the dialog says so
-/// instead, and Enter does not start.
-pub fn start_fits(app: &App, confirm: &Confirm, height: u16) -> bool {
-    start_lines(app, confirm).rows() <= usize::from(height)
+/// Every line of `lines` flowed to `width`.
+fn flowed(lines: Vec<Line>, width: usize) -> Vec<Line> {
+    lines
+        .into_iter()
+        .flat_map(|line| flow(line, width))
+        .collect()
+}
+
+/// `characters` as pieces, one for each run of a style.
+fn pieces(characters: Vec<(char, Style)>) -> Line {
+    let mut line: Line = Vec::new();
+    for (character, style) in characters {
+        match line.last_mut() {
+            Some((text, last)) if *last == style => text.push(character),
+            _ => line.push((character.to_string(), style)),
+        }
+    }
+    line
+}
+
+/// The characters `line` shows, without trailing spaces.
+fn length(line: &Line) -> usize {
+    line.iter()
+        .map(|(text, _)| text.as_str())
+        .collect::<String>()
+        .trim_end()
+        .chars()
+        .count()
+}
+
+/// A dialog as a terminal draws it.
+struct Layout {
+    /// The box's width.
+    width: u16,
+    title: String,
+    lines: Vec<Line>,
+    /// Whether every line the dialog must show is drawn, uncut.
+    whole: bool,
+}
+
+/// `dialog` on a terminal `width` by `height`: in a box as wide as the
+/// terminal allows, its lines broken to fit, and when its rows do not fit,
+/// how many it needs instead.
+fn layout(app: &App, dialog: &Dialog, width: u16, height: u16) -> Layout {
+    let room = room(height);
+    let (width, title, lines, whole) = match dialog {
+        Dialog::Start(confirm) => {
+            let width = START_WIDTH.min(width.saturating_sub(2));
+            let inner = usize::from(width.saturating_sub(2));
+            let lines = start_lines(app, confirm, inner);
+            let rows = lines.rows();
+            let (lines, whole) = match lines.fit(room) {
+                Some(lines) => (lines, true),
+                None => {
+                    let back = " back to the loader";
+                    let what = ("this start stops and checks", "starts", back);
+                    (
+                        too_short(model_line(confirm), what, rows, height, inner),
+                        false,
+                    )
+                }
+            };
+            (width, confirm.title(), lines, whole)
+        }
+        Dialog::Stop(stop) => {
+            let width = STOP_WIDTH.min(width.saturating_sub(2));
+            let inner = usize::from(width.saturating_sub(2));
+            let lines = flowed(stop_lines(stop), inner);
+            let rows = lines.len() + 4;
+            let (lines, whole) = if lines.len() <= room {
+                (lines, true)
+            } else {
+                let (enter, back) = if stop.waiting {
+                    ("cancels it", " keep it queued")
+                } else {
+                    ("stops it", " keep it running")
+                };
+                let what = ("about this stop", enter, back);
+                (
+                    too_short(stop_label(stop), what, rows, height, inner),
+                    false,
+                )
+            };
+            let title = format!("Stop {}", sanitize(&stop.label));
+            (width, title, lines, whole)
+        }
+    };
+    let inner = usize::from(width.saturating_sub(2));
+    let whole = whole && lines.iter().all(|line| length(line) <= inner);
+    Layout {
+        width,
+        title,
+        lines,
+        whole,
+    }
+}
+
+pub fn draw(buffer: &mut Buffer, app: &App, dialog: &Dialog) {
+    let layout = layout(app, dialog, buffer.width, buffer.height);
+    overlay(buffer, layout.width, &layout.title, layout.lines);
+}
+
+/// Whether a terminal `width` by `height` draws `dialog` whole, every line
+/// it must show uncut. When it does not, the dialog says so instead, and
+/// Enter does not confirm it.
+pub fn whole(app: &App, dialog: &Dialog, width: u16, height: u16) -> bool {
+    layout(app, dialog, width, height).whole
 }
 
 /// The rows a dialog's lines can take on a terminal `height` rows tall.
@@ -100,13 +247,7 @@ fn overlay(buffer: &mut Buffer, width: u16, title: &str, mut lines: Vec<Line>) {
     let room = usize::from(width.saturating_sub(2));
     for (index, line) in lines.iter().take(usize::from(height - 2)).enumerate() {
         let row = y + 1 + index as u16;
-        let length = line
-            .iter()
-            .map(|(text, _)| text.as_str())
-            .collect::<String>()
-            .trim_end()
-            .chars()
-            .count();
+        let length = length(line);
         let mut left = if length > room {
             room.saturating_sub(3)
         } else {
@@ -171,28 +312,36 @@ impl StartLines {
     }
 }
 
-/// The start dialog on a terminal too short to show every stop and check:
-/// how many `rows` it needs, and no Enter.
-fn too_short(confirm: &Confirm, rows: usize, height: u16) -> Vec<Line> {
-    vec![
+/// A dialog on a terminal too short to show everything `what` names,
+/// under its `head` line where there is room: how many `rows` it needs
+/// before Enter does what `what` says, and only Esc, which `what` says the
+/// meaning of. Its lines are flowed to `inner`.
+fn too_short(
+    head: Line,
+    (what, enter, back): (&str, &str, &str),
+    rows: usize,
+    height: u16,
+    inner: usize,
+) -> Vec<Line> {
+    let mut lines = vec![
         Vec::new(),
-        model_line(confirm),
+        head,
         Vec::new(),
         vec![(
-            "   The terminal is too short to show everything this start stops and checks."
-                .to_owned(),
+            format!("   The terminal is too short to show everything {what}."),
             Style::fg(Color::Yellow),
         )],
         vec![(
-            format!("   Enter starts once it is {rows} rows tall; it is {height}."),
+            format!("   Enter {enter} once it is {rows} rows tall; it is {height}."),
             Style::PLAIN,
         )],
         Vec::new(),
-        vec![
-            (" Esc".to_owned(), cyan()),
-            (" back to the loader".to_owned(), Style::PLAIN),
-        ],
-    ]
+        vec![(" Esc".to_owned(), cyan()), (back.to_owned(), Style::PLAIN)],
+    ];
+    if flowed(lines.clone(), inner).len() > room(height) {
+        lines.drain(1..3);
+    }
+    flowed(lines, inner)
 }
 
 /// The served model name, the profile and the instances.
@@ -218,10 +367,10 @@ fn model_line(confirm: &Confirm) -> Line {
     ]
 }
 
-fn start_lines(app: &App, confirm: &Confirm) -> StartLines {
+/// The start dialog's lines for a box `inner` cells wide inside.
+fn start_lines(app: &App, confirm: &Confirm, inner: usize) -> StartLines {
     let dim = Style::fg(Color::Dim);
     let yellow = Style::fg(Color::Yellow);
-    let inner = usize::from(START_WIDTH - 2);
     let start = &confirm.start;
     let mut lines: Vec<Line> = vec![Vec::new(), model_line(confirm), Vec::new()];
     // Each column as wide as its widest entry and the gap, so a TP4 or TP8
@@ -247,20 +396,28 @@ fn start_lines(app: &App, confirm: &Confirm) -> StartLines {
     };
     let (gpus, listen) = (width(|row| &row.1), width(|row| &row.2));
     for ((letter, on, at), log) in rows.iter().zip(&confirm.logs) {
-        lines.push(vec![
+        let mut row = vec![
             (format!(" {letter}  "), cyan()),
             (format!("{on:<gpus$}"), Style::PLAIN),
             (format!("{at:<listen$}"), Style::PLAIN),
-            (format!("log {}", sanitize(log)), dim),
-        ]);
+        ];
+        let log = format!("log {}", sanitize(log));
+        // On a narrow terminal the log goes below.
+        if length(&row) + log.chars().count() <= inner {
+            row.push((log, dim));
+            lines.push(row);
+        } else {
+            lines.push(row);
+            lines.push(vec![(format!("     {log}"), dim)]);
+        }
     }
     let state = sanitize(app.logs.strip_suffix("/logs").unwrap_or(&app.logs));
     let stay = "logs and launch records stay in";
-    if stay.len() + 1 + state.chars().count() <= inner - 4 {
+    if stay.len() + 1 + state.chars().count() <= inner.saturating_sub(4) {
         lines.push(vec![(format!("    {stay} {state}"), dim)]);
     } else {
         lines.push(vec![(format!("    {stay}"), dim)]);
-        for part in path_lines(&state, inner - 6) {
+        for part in path_lines(&state, inner.saturating_sub(6)) {
             lines.push(vec![(format!("      {part}"), dim)]);
         }
     }
@@ -294,7 +451,7 @@ fn start_lines(app: &App, confirm: &Confirm) -> StartLines {
     }
     lines.push(Vec::new());
     lines.push(vec![(" Check".to_owned(), cyan())]);
-    let width = inner - 8;
+    let width = inner.saturating_sub(8);
     let mut qualification = Vec::new();
     if let Some(text) = &confirm.qualification {
         wrapped(&mut qualification, text, width, yellow);
@@ -320,10 +477,21 @@ fn start_lines(app: &App, confirm: &Confirm) -> StartLines {
         (" back to the loader".to_owned(), Style::PLAIN),
     ]);
     StartLines {
-        head: lines,
+        head: flowed(lines, inner),
         qualification,
-        tail,
+        tail: flowed(tail, inner),
     }
+}
+
+/// What the stop dialog stops.
+fn stop_label(stop: &StopConfirm) -> Line {
+    vec![
+        (
+            format!(" {}  ", sanitize(&stop.label)),
+            Style::fg(Color::White).bold(),
+        ),
+        (sanitize(&stop.what), Style::PLAIN),
+    ]
 }
 
 fn stop_lines(stop: &StopConfirm) -> Vec<Line> {
@@ -348,13 +516,7 @@ fn stop_lines(stop: &StopConfirm) -> Vec<Line> {
     };
     vec![
         Vec::new(),
-        vec![
-            (
-                format!(" {}  ", sanitize(&stop.label)),
-                Style::fg(Color::White).bold(),
-            ),
-            (sanitize(&stop.what), Style::PLAIN),
-        ],
+        stop_label(stop),
         Vec::new(),
         vec![(how, Style::PLAIN)],
         vec![(after.to_owned(), dim)],
@@ -393,6 +555,27 @@ mod tests {
         );
         assert_eq!(buffer.cell(31, 3).unwrap().style, dim);
         assert!(text.lines().nth(4).unwrap().starts_with("     │fits "));
+    }
+
+    #[test]
+    fn a_line_too_wide_breaks_at_spaces_then_anywhere() {
+        let dim = Style::fg(Color::Dim);
+        let line = vec![
+            ("   abc def".to_owned(), Style::PLAIN),
+            (" ghijklmnop".to_owned(), dim),
+        ];
+        assert_eq!(flow(line.clone(), 21), vec![line.clone()]);
+        assert_eq!(
+            flow(line, 12),
+            [
+                vec![("   abc def".to_owned(), Style::PLAIN)],
+                vec![
+                    ("     ".to_owned(), Style::PLAIN),
+                    ("ghijklm".to_owned(), dim)
+                ],
+                vec![("     ".to_owned(), Style::PLAIN), ("nop".to_owned(), dim)],
+            ]
+        );
     }
 
     #[test]

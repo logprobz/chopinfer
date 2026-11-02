@@ -490,6 +490,7 @@ fn run_loop(
                 },
                 Event::Mouse(mouse) => dirty |= app.mouse(mouse, now()) != Action::Nothing,
                 Event::Resize(_, _) => {
+                    app.resized();
                     previous = None;
                     dirty = true;
                 }

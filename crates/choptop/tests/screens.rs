@@ -1811,6 +1811,54 @@ fn a_long_qualification_leaves_room_for_every_stop_and_check() {
 }
 
 #[test]
+fn enter_confirms_only_a_dialog_the_last_frame_drew_whole() {
+    use choptop::app::{Dialog, StopConfirm, Stoppable};
+    use crossterm::event::KeyCode;
+    let refused = |app: &mut App| {
+        press(app, KeyCode::Enter);
+        app.dialog.is_some() && app.pending.is_none()
+    };
+    let mut app = dspark_confirming();
+    // No frame has drawn it yet.
+    assert!(refused(&mut app));
+    // Too narrow for anything but the size the screen needs.
+    app.settle(59, 38);
+    let screen = ui::draw(&app, 59, 38, NOW).text();
+    assert!(
+        screen.starts_with("needs 60x12; terminal is 59x38"),
+        "{screen}"
+    );
+    assert!(refused(&mut app));
+    // At 80 columns every line breaks to fit.
+    app.settle(80, 38);
+    check("confirm-tp4-dspark-80x38", &app, 80, 38);
+    // The terminal changed size since that frame.
+    app.resized();
+    assert!(refused(&mut app));
+    app.settle(80, 38);
+    press(&mut app, KeyCode::Enter);
+    assert!(app.dialog.is_none() && app.pending.is_some());
+    // X's dialog, on a launch that is not there, so nothing could stop.
+    let mut app = fleet();
+    with_gpus(&mut app, false);
+    app.dialog = Some(Dialog::Stop(Box::new(StopConfirm {
+        label: "proc 48211".to_owned(),
+        what: "MiMo-V2.6-Flash at 127.0.0.1:8311 on GPUs 0,1,2,3".to_owned(),
+        gpus: vec![0, 1, 2, 3],
+        target: Stoppable::Launch(u64::MAX),
+        waiting: false,
+    })));
+    for (width, height) in [(59, 38), (60, 12)] {
+        app.settle(width, height);
+        press(&mut app, KeyCode::Enter);
+        assert!(app.dialog.is_some(), "{width}x{height}");
+    }
+    check("stop-too-short-60x12", &app, 60, 12);
+    app.settle(60, 13);
+    check("stop-60x13", &app, 60, 13);
+}
+
+#[test]
 fn the_start_and_stop_dialogs() {
     use choptop::app::{Dialog, StopConfirm, Stoppable};
     let app = confirming();

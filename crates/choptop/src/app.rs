@@ -162,6 +162,10 @@ pub struct App {
     /// The terminal height at the last [`App::settle`], which clicks are
     /// mapped with.
     height: u16,
+    /// The terminal size of the last frame if it showed the open dialog
+    /// with no help over it: `None` before the first frame, and from a
+    /// resize or a dialog opening until the next frame.
+    drawn: Option<(u16, u16)>,
     /// The monitor's GPU table at the last [`App::settle`], as
     /// `(x, y, width, height)`.
     gpu_table: Option<(u16, u16, u16, u16)>,
@@ -201,6 +205,7 @@ impl App {
             clock: 0.0,
             trail: Vec::new(),
             height: 0,
+            drawn: None,
             gpu_table: None,
             last_click: None,
         }
@@ -567,7 +572,7 @@ impl App {
             },
         );
         match confirm {
-            Ok(confirm) => self.dialog = Some(Dialog::Start(Box::new(confirm))),
+            Ok(confirm) => self.ask(Dialog::Start(Box::new(confirm))),
             Err(why) => self.refuse_start(&why),
         }
     }
@@ -630,7 +635,7 @@ impl App {
         } else {
             format!(" on GPUs {}", indices(&gpus))
         };
-        self.dialog = Some(Dialog::Stop(Box::new(StopConfirm {
+        self.ask(Dialog::Stop(Box::new(StopConfirm {
             label: instance.label(),
             what: format!("{name}{at}{on}"),
             gpus,
@@ -639,16 +644,22 @@ impl App {
         })));
     }
 
-    /// Whether the last frame showed everything `dialog` stops and checks,
-    /// so Enter may confirm it. Before the first frame the height is not
-    /// known.
-    fn shows_all(&self, dialog: &Dialog) -> bool {
-        match dialog {
-            Dialog::Start(confirm) => {
-                self.height == 0 || crate::ui::confirm::start_fits(self, confirm, self.height)
-            }
-            Dialog::Stop(_) => true,
-        }
+    /// Opens `dialog`, which Enter confirms only once a frame has drawn it.
+    fn ask(&mut self, dialog: Dialog) {
+        self.dialog = Some(dialog);
+        self.drawn = None;
+    }
+
+    /// Whether the last frame drew `dialog` whole, so Enter may confirm it.
+    fn drawn_whole(&self, dialog: &Dialog) -> bool {
+        self.drawn
+            .is_some_and(|(width, height)| crate::ui::draws_whole(self, dialog, width, height))
+    }
+
+    /// The terminal changed size: until the next frame, Enter confirms no
+    /// dialog.
+    pub fn resized(&mut self) {
+        self.drawn = None;
     }
 
     /// Enter in a confirm dialog.
@@ -892,6 +903,7 @@ impl App {
     /// on a terminal `width` by `height`. Called before each frame.
     pub fn settle(&mut self, width: u16, height: u16) {
         self.height = height;
+        self.drawn = (!self.help).then_some((width, height));
         let room = table_rows(self.rows().len(), height);
         self.scroll = first_row(self.scroll, self.selected_index(), room);
         let count = self.gpus.devices.len();
@@ -958,11 +970,16 @@ impl App {
         }
         if let Some(dialog) = self.dialog.take() {
             match event.code {
-                KeyCode::Enter if self.shows_all(&dialog) => return self.confirm(dialog),
+                KeyCode::Enter if self.drawn_whole(&dialog) => return self.confirm(dialog),
                 KeyCode::Esc => {}
-                _ => {
+                code => {
                     self.dialog = Some(dialog);
-                    return Action::Nothing;
+                    // Enter on a dialog not drawn whole draws it again.
+                    return if code == KeyCode::Enter {
+                        Action::Redraw
+                    } else {
+                        Action::Nothing
+                    };
                 }
             }
             return Action::Redraw;
@@ -1147,6 +1164,12 @@ mod tests {
 
     fn press(app: &mut App, code: KeyCode) -> Action {
         app.key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    /// Enter on the open dialog once a frame has drawn it.
+    fn enter(app: &mut App) -> Action {
+        app.settle(132, 38);
+        press(app, KeyCode::Enter)
     }
 
     #[test]
@@ -1727,7 +1750,7 @@ mod tests {
         let at = app.clock;
         read_reports(app, at, app.live.found.clone());
         app.dialog = Some(Dialog::Start(Box::new(confirm)));
-        assert_eq!(press(app, KeyCode::Enter), Action::Read);
+        assert_eq!(enter(app), Action::Read);
         app.asked(at);
         app.supervise(at);
         assert!(app.dialog.is_none());
@@ -2258,7 +2281,7 @@ mod tests {
                     assert!(app.dialog.is_some(), "{:?}", app.loader.flash);
                     // Enter after expiration must request another read.
                     app.clock = 10.0;
-                    assert_eq!(press(&mut app, KeyCode::Enter), Action::Read);
+                    assert_eq!(enter(&mut app), Action::Read);
                     app.asked(10.0);
                     app.supervise(10.1);
                     assert!(app.pending.is_some());
@@ -2857,7 +2880,7 @@ mod tests {
             ],
             Vec::new(),
         ))));
-        assert_eq!(press(&mut app, KeyCode::Enter), Action::Read);
+        assert_eq!(enter(&mut app), Action::Read);
         pollers.ask(&mut app);
         pollers.until(&mut app, 10.0, |app| {
             app.launches.launches.len() == 2
@@ -2932,7 +2955,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             qwen.iter().copied().map(Target::Launch).collect::<Vec<_>>()
         );
-        assert_eq!(press(&mut app, KeyCode::Enter), Action::Read);
+        assert_eq!(enter(&mut app), Action::Read);
         pollers.ask(&mut app);
         pollers.until(&mut app, 5.0, |app| app.launches.launches.len() == 3);
         let deepseek = newest(&app);
@@ -3216,7 +3239,7 @@ mod tests {
         press(&mut app, KeyCode::Char('X'));
         app.asked(2.0);
         app.supervise(2.1);
-        press(&mut app, KeyCode::Enter);
+        enter(&mut app);
         assert_eq!(app.current().unwrap().state(2.1), State::Stopping);
         position(
             &app,
@@ -3261,7 +3284,7 @@ mod tests {
         app.supervise(0.5);
         assert_eq!(app.launches.get(id).unwrap().phase, Phase::Running);
         let label = app.launches.get(id).unwrap().label();
-        assert_eq!(press(&mut app, KeyCode::Enter), Action::Redraw);
+        assert_eq!(enter(&mut app), Action::Redraw);
         assert_eq!(app.launches.get(id).unwrap().phase, Phase::Running);
         assert!(
             !events(&app).iter().any(|event| event.contains("stopping:")),
@@ -3282,7 +3305,7 @@ mod tests {
         read_reports(&mut app, 0.7, Vec::new());
         app.supervise(0.8);
         assert!(matches!(&app.dialog, Some(Dialog::Stop(stop)) if !stop.waiting));
-        assert_eq!(press(&mut app, KeyCode::Enter), Action::Redraw);
+        assert_eq!(enter(&mut app), Action::Redraw);
         position(
             &app,
             &label,

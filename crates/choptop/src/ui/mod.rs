@@ -12,7 +12,7 @@ pub mod widgets;
 use buffer::{Buffer, Color, Style};
 use widgets::{boxed, pad};
 
-use crate::app::{App, View};
+use crate::app::{App, Dialog, View};
 use crate::instances::{Instance, State, Tone};
 use crate::stats::{HistogramOf, Snapshot, Window};
 
@@ -47,6 +47,12 @@ pub fn draw(app: &App, width: u16, height: u16, now: f64) -> Buffer {
         help(&mut buffer, app.view, app.read_only);
     }
     buffer
+}
+
+/// Whether a frame `width` by `height` draws `dialog` whole: the frame is
+/// drawn at all, and so is every line the dialog must show, uncut.
+pub fn draws_whole(app: &App, dialog: &Dialog, width: u16, height: u16) -> bool {
+    width >= MINIMUM.0 && height >= MINIMUM.1 && confirm::whole(app, dialog, width, height)
 }
 
 pub fn tone_color(tone: Tone) -> Color {

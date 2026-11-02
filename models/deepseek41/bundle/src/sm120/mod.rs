@@ -984,6 +984,22 @@ impl crate::Kernels {
         })
     }
 
+    /// The selected prefill route's full row count, retained launch count and
+    /// whether the last grid tile is padded. The lab shares this selector.
+    pub(crate) fn prefill_tail_partition(rows: u32, symbol: &str) -> Option<(u32, usize, bool)> {
+        let partition = mxfp8_fold::prefill_tail_partition(rows, symbol)?;
+        Some((
+            partition.full_rows,
+            partition.full_launches,
+            partition.padded,
+        ))
+    }
+
+    /// The row tile of the staged dense prefill route.
+    pub(crate) const fn dense_prefill_tile() -> u32 {
+        kernels_sm120::gemm::mxfp8_prefill::TILE
+    }
+
     /// The largest separately prepared dense decode bucket.
     pub(crate) fn dense_decode_capacity() -> u32 {
         mxfp8_fold::SMALL_CAPACITY

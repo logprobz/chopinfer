@@ -725,6 +725,34 @@ pub fn prefill_tail_policy(
     }
 }
 
+/// The selected baseline's remainder, shared by serving and the lab probe.
+/// Registrations stay identical with the candidate enabled. Inspect the actual
+/// selected symbol so measured matrix, compact and staged-scale routes survive.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PrefillTailPartition {
+    pub full_rows: u32,
+    pub full_launches: usize,
+    pub padded: bool,
+}
+
+pub fn prefill_tail_partition(rows: u32, last_symbol: &str) -> Option<PrefillTailPartition> {
+    use kernels_sm120::gemm::mxfp8_prefill::TILE;
+    if rows <= SMALL_CAPACITY || rows % TILE == 0 {
+        return None;
+    }
+    let symbol = last_symbol
+        .strip_suffix("_packed_v1")
+        .unwrap_or(last_symbol);
+    let generic = rows < TILE;
+    let padded = symbol.ends_with("_prefill_tma_v1");
+    let split = symbol.ends_with("_prefill_tma_v1_split_tail_v1");
+    (generic || padded || split).then_some(PrefillTailPartition {
+        full_rows: rows / TILE * TILE,
+        full_launches: if generic { 0 } else { 2 },
+        padded,
+    })
+}
+
 /// Select an exact-row registration from the 64-row fold catalog. Decode,
 /// verify and qualified short prefills share these offers; their precedence
 /// and prepared query bounds remain with the callers.

@@ -231,6 +231,7 @@ pub(crate) trait SlicedQuantize: Send + Sync {
 pub(crate) struct DenseOps {
     pub(crate) dual: Option<super::dense_dual::Op>,
     short_prefill: bool,
+    tail_queries: Vec<(&'static str, Mxfp8FoldGemmQuery)>,
     wide_engram: Vec<(u32, Prepared<Mxfp8FoldGemmBuffers<View>>)>,
     /// Row-local folds by projection and decode or verify bucket.
     local: Vec<(&'static str, u32, Prepared<Mxfp8FoldGemmBuffers<View>>)>,
@@ -427,6 +428,14 @@ impl DenseOps {
         Ok(DenseOps {
             dual: super::dense_dual::Op::prepare(shape, asks)?,
             short_prefill,
+            tail_queries: if short_prefill::tail_folds_enabled(shape) {
+                projections(shape)
+                    .into_iter()
+                    .map(|d| (d.id, d.query))
+                    .collect()
+            } else {
+                Vec::new()
+            },
             wide_engram: Vec::new(),
             local,
             fused,
@@ -774,6 +783,14 @@ impl DenseOps {
         bind.launch(op.at_phase(phase), &buffers, Counts::rows(rows))
     }
 
+    pub(crate) fn tail_workspace(&self) -> u64 {
+        short_prefill::workspace(self, false)
+    }
+
+    pub(crate) fn tail_shared_workspace(&self) -> u64 {
+        short_prefill::workspace(self, true)
+    }
+
     pub(crate) fn project(
         &self,
         id: &str,
@@ -856,10 +873,28 @@ impl DenseOps {
         {
             return fold_stream::launch(op, bind, buffers, None, views.stream, rows);
         }
-        match workspace {
+        let calls = match workspace {
             Some(workspace) => bind.launch_within(op, &buffers, workspace, Counts::rows(rows)),
             None => bind.launch_independent(op, &buffers, Counts::rows(rows)),
+        }?;
+        if phase.prefill()
+            && let Some((_, query)) = self.tail_queries.iter().find(|(of, _)| *of == id)
+            && let Some(partition) = calls
+                .last()
+                .and_then(|last| crate::Kernels::prefill_tail_partition(rows, &last.launch.symbol))
+        {
+            return short_prefill::project(
+                self,
+                id,
+                *query,
+                rows,
+                views,
+                workspace.ok_or(Refusal("prefill tail folds require workspace"))?,
+                calls,
+                partition,
+            );
         }
+        Ok(calls)
     }
 
     pub(crate) fn project_pair(

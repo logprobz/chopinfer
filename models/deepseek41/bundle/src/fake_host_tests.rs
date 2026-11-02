@@ -54,6 +54,7 @@ mod prefill_reduce;
 #[cfg(feature = "diagnostic-taps")]
 mod prefill_selected;
 mod prefill_skip;
+mod prefill_tail_folds;
 mod prefill_tma;
 mod prefill_tma_scales;
 mod producer_epilogues;

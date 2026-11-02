@@ -795,11 +795,23 @@ fn check(name: &str, app: &App, width: u16, height: u16) {
     }
 }
 
+/// `code` on a terminal of a size not known.
 fn press(app: &mut App, code: crossterm::event::KeyCode) {
-    app.key(crossterm::event::KeyEvent::new(
-        code,
-        crossterm::event::KeyModifiers::NONE,
-    ));
+    app.key(
+        crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE),
+        None,
+    );
+}
+
+/// Enter on a terminal `width` by `height`.
+fn enter(app: &mut App, width: u16, height: u16) {
+    app.key(
+        crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        ),
+        Some((width, height)),
+    );
 }
 
 fn loader_fixture(name: &str) -> String {
@@ -1312,7 +1324,7 @@ fn the_monitor_without_gpm_or_without_a_driver() {
 #[test]
 fn an_instance_names_its_gpus_and_they_lead_back_to_it() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE));
+    let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), None);
     let mut app = fleet();
     with_gpus(&mut app, true);
     app.view = View::Detail;
@@ -1789,7 +1801,6 @@ fn dspark_confirming() -> App {
 #[test]
 fn a_long_qualification_leaves_room_for_every_stop_and_check() {
     use choptop::app::Dialog;
-    use crossterm::event::KeyCode;
     let mut app = dspark_confirming();
     let Some(Dialog::Start(confirm)) = &app.dialog else {
         panic!("no start dialog: {:?}", app.loader.flash);
@@ -1801,11 +1812,11 @@ fn a_long_qualification_leaves_room_for_every_stop_and_check() {
     // does not start.
     app.settle(132, 20);
     check("confirm-too-short-132x20", &app, 132, 20);
-    press(&mut app, KeyCode::Enter);
+    enter(&mut app, 132, 20);
     assert!(app.dialog.is_some());
     assert!(app.pending.is_none());
     app.settle(132, 38);
-    press(&mut app, KeyCode::Enter);
+    enter(&mut app, 132, 38);
     assert!(app.dialog.is_none());
     assert!(app.pending.is_some());
 }
@@ -1813,14 +1824,13 @@ fn a_long_qualification_leaves_room_for_every_stop_and_check() {
 #[test]
 fn enter_confirms_only_a_dialog_the_last_frame_drew_whole() {
     use choptop::app::{Dialog, StopConfirm, Stoppable};
-    use crossterm::event::KeyCode;
-    let refused = |app: &mut App| {
-        press(app, KeyCode::Enter);
+    let refused = |app: &mut App, width, height| {
+        enter(app, width, height);
         app.dialog.is_some() && app.pending.is_none()
     };
     let mut app = dspark_confirming();
     // No frame has drawn it yet.
-    assert!(refused(&mut app));
+    assert!(refused(&mut app, 132, 38));
     // Too narrow for anything but the size the screen needs.
     app.settle(59, 38);
     let screen = ui::draw(&app, 59, 38, NOW).text();
@@ -1828,15 +1838,15 @@ fn enter_confirms_only_a_dialog_the_last_frame_drew_whole() {
         screen.starts_with("needs 60x12; terminal is 59x38"),
         "{screen}"
     );
-    assert!(refused(&mut app));
+    assert!(refused(&mut app, 59, 38));
     // At 80 columns every line breaks to fit.
     app.settle(80, 38);
     check("confirm-tp4-dspark-80x38", &app, 80, 38);
     // The terminal changed size since that frame.
     app.resized();
-    assert!(refused(&mut app));
+    assert!(refused(&mut app, 80, 38));
     app.settle(80, 38);
-    press(&mut app, KeyCode::Enter);
+    enter(&mut app, 80, 38);
     assert!(app.dialog.is_none() && app.pending.is_some());
     // X's dialog, on a launch that is not there, so nothing could stop.
     let mut app = fleet();
@@ -1850,12 +1860,66 @@ fn enter_confirms_only_a_dialog_the_last_frame_drew_whole() {
     })));
     for (width, height) in [(59, 38), (60, 12)] {
         app.settle(width, height);
-        press(&mut app, KeyCode::Enter);
+        enter(&mut app, width, height);
         assert!(app.dialog.is_some(), "{width}x{height}");
     }
     check("stop-too-short-60x12", &app, 60, 12);
     app.settle(60, 13);
     check("stop-60x13", &app, 60, 13);
+}
+
+#[test]
+fn enter_after_the_terminal_shrank_waits_for_a_frame_at_its_size() {
+    use choptop::app::{Action, Dialog, StopConfirm, Stoppable};
+    use choptop::tui::handle;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    let enter = || Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    for start in [true, false] {
+        for resize_first in [false, true] {
+            let case = format!("start {start}, resize read first {resize_first}");
+            let mut app = if start {
+                dspark_confirming()
+            } else {
+                // X's dialog, on a launch that is not there, so nothing
+                // could stop.
+                let mut app = fleet();
+                with_gpus(&mut app, false);
+                app.dialog = Some(Dialog::Stop(Box::new(StopConfirm {
+                    label: "proc 48211".to_owned(),
+                    what: "MiMo-V2.6-Flash at 127.0.0.1:8311 on GPUs 0,1,2,3".to_owned(),
+                    gpus: vec![0, 1, 2, 3],
+                    target: Stoppable::Launch(u64::MAX),
+                    waiting: false,
+                })));
+                app
+            };
+            app.settle(132, 38);
+            // The terminal is 59x38 now, and its resize is read before or
+            // after an Enter typed since.
+            let batch = if resize_first {
+                [Event::Resize(59, 38), enter()]
+            } else {
+                [enter(), Event::Resize(59, 38)]
+            };
+            for event in batch {
+                handle(&mut app, event, || Some((59, 38)), NOW);
+            }
+            assert!(app.dialog.is_some() && app.pending.is_none(), "{case}");
+            // Back at 132x38, Enter waits for a frame at that size.
+            let action = handle(&mut app, enter(), || Some((132, 38)), NOW);
+            assert_eq!(action, Action::Redraw, "{case}");
+            assert!(app.dialog.is_some(), "{case}");
+            app.settle(132, 38);
+            handle(&mut app, enter(), || Some((132, 38)), NOW);
+            assert!(app.dialog.is_none(), "{case}");
+            assert_eq!(app.pending.is_some(), start, "{case}");
+        }
+    }
+    // A size that cannot be read confirms nothing.
+    let mut app = dspark_confirming();
+    app.settle(132, 38);
+    handle(&mut app, enter(), || None, NOW);
+    assert!(app.dialog.is_some() && app.pending.is_none());
 }
 
 #[test]

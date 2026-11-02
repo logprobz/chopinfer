@@ -432,6 +432,30 @@ struct Inbox<'a> {
     catalog: &'a Receiver<catalog::Reply>,
 }
 
+/// Hands input `event` to `app` at `now`. A key goes with the terminal's
+/// size as `size` reads it then, not as the last resize said: a resize can
+/// be read after a key typed since, and Enter must not confirm a dialog
+/// that a frame of another size drew.
+pub fn handle(
+    app: &mut App,
+    event: Event,
+    size: impl FnOnce() -> Option<(u16, u16)>,
+    now: f64,
+) -> Action {
+    match event {
+        Event::Key(key) if key.kind == KeyEventKind::Press => app.key(key, size()),
+        Event::Mouse(mouse) => match app.mouse(mouse, now) {
+            Action::Nothing => Action::Nothing,
+            _ => Action::Redraw,
+        },
+        Event::Resize(_, _) => {
+            app.resized();
+            Action::Redraw
+        }
+        _ => Action::Nothing,
+    }
+}
+
 fn run_loop(
     app: &mut App,
     workers: &mut Workers,
@@ -466,35 +490,29 @@ fn run_loop(
             Err(RecvTimeoutError::Disconnected) => break,
         };
         for event in first.into_iter().chain(input.try_iter()) {
-            match event {
-                Event::Key(key) if key.kind == KeyEventKind::Press => match app.key(key) {
-                    Action::Quit => break 'running,
-                    Action::Rescan => {
-                        workers.command(Command::Force);
-                        app.registry
-                            .note(now(), "choptop", "rescan requested", Tone::Normal);
-                        dirty = true;
-                    }
-                    Action::Read => {
-                        // A start or stop goes on from a GPU reading and a
-                        // scan begun after this, even while paused.
-                        app.asked(now());
-                        if let Some(poller) = gpu_poller {
-                            poller.poll_now();
-                        }
-                        workers.command(Command::Force);
-                        dirty = true;
-                    }
-                    Action::Redraw => dirty = true,
-                    Action::Nothing => {}
-                },
-                Event::Mouse(mouse) => dirty |= app.mouse(mouse, now()) != Action::Nothing,
-                Event::Resize(_, _) => {
-                    app.resized();
-                    previous = None;
+            if matches!(event, Event::Resize(..)) {
+                previous = None;
+            }
+            match handle(app, event, || crossterm::terminal::size().ok(), now()) {
+                Action::Quit => break 'running,
+                Action::Rescan => {
+                    workers.command(Command::Force);
+                    app.registry
+                        .note(now(), "choptop", "rescan requested", Tone::Normal);
                     dirty = true;
                 }
-                _ => {}
+                Action::Read => {
+                    // A start or stop goes on from a GPU reading and a
+                    // scan begun after this, even while paused.
+                    app.asked(now());
+                    if let Some(poller) = gpu_poller {
+                        poller.poll_now();
+                    }
+                    workers.command(Command::Force);
+                    dirty = true;
+                }
+                Action::Redraw => dirty = true,
+                Action::Nothing => {}
             }
         }
         for report in reports.try_iter() {

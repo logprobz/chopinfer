@@ -650,8 +650,14 @@ impl App {
         self.drawn = None;
     }
 
-    /// Whether the last frame drew `dialog` whole, so Enter may confirm it.
-    fn drawn_whole(&self, dialog: &Dialog) -> bool {
+    /// Whether the last frame drew `dialog` whole on a terminal the size
+    /// `terminal` still is, so Enter may confirm it. A frame of another
+    /// size, or a size not known, no longer counts: a new frame must draw
+    /// the dialog.
+    fn drawn_whole(&mut self, dialog: &Dialog, terminal: Option<(u16, u16)>) -> bool {
+        if terminal.is_none() || self.drawn != terminal {
+            self.drawn = None;
+        }
         self.drawn
             .is_some_and(|(width, height)| crate::ui::draws_whole(self, dialog, width, height))
     }
@@ -959,7 +965,9 @@ impl App {
         self.select(next);
     }
 
-    pub fn key(&mut self, event: KeyEvent) -> Action {
+    /// A key pressed on a terminal `terminal` in size, `None` when that
+    /// cannot be read.
+    pub fn key(&mut self, event: KeyEvent, terminal: Option<(u16, u16)>) -> Action {
         let control = event.modifiers.contains(KeyModifiers::CONTROL);
         if control && matches!(event.code, KeyCode::Char('c')) {
             return Action::Quit;
@@ -970,7 +978,9 @@ impl App {
         }
         if let Some(dialog) = self.dialog.take() {
             match event.code {
-                KeyCode::Enter if self.drawn_whole(&dialog) => return self.confirm(dialog),
+                KeyCode::Enter if self.drawn_whole(&dialog, terminal) => {
+                    return self.confirm(dialog);
+                }
                 KeyCode::Esc => {}
                 code => {
                     self.dialog = Some(dialog);
@@ -1162,14 +1172,19 @@ mod tests {
         App::new(registry, 1.0, 15.0, vec!["--target"])
     }
 
+    /// `code` on a terminal of a size not known.
     fn press(app: &mut App, code: KeyCode) -> Action {
-        app.key(KeyEvent::new(code, KeyModifiers::NONE))
+        app.key(KeyEvent::new(code, KeyModifiers::NONE), None)
     }
 
-    /// Enter on the open dialog once a frame has drawn it.
+    /// Enter on the open dialog once a frame has drawn it on a terminal
+    /// still that size.
     fn enter(app: &mut App) -> Action {
         app.settle(132, 38);
-        press(app, KeyCode::Enter)
+        app.key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            Some((132, 38)),
+        )
     }
 
     #[test]
@@ -1203,7 +1218,10 @@ mod tests {
         assert!(!app.help);
         assert_eq!(press(&mut app, KeyCode::Char('q')), Action::Quit);
         assert_eq!(
-            app.key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            app.key(
+                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                None
+            ),
             Action::Quit
         );
         assert_eq!(press(&mut app, KeyCode::Char('x')), Action::Nothing);

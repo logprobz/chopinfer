@@ -1132,6 +1132,83 @@ fn origin_style(origin: Origin) -> Style {
     }
 }
 
+/// A row of the command box: its pieces and their styles.
+type CommandLine = Vec<(String, Style)>;
+
+/// One instance's block: `A  ` and its tokens wrapped to `inner` columns,
+/// each row after the first indented by five. A token longer than a row
+/// goes on across rows, so nothing of it is cut.
+fn block(letter: char, tokens: Vec<(String, Origin)>, inner: usize) -> Vec<CommandLine> {
+    const INDENT: usize = 5;
+    let mut lines = Vec::new();
+    let mut line = vec![(format!("{letter}  "), Style::fg(Color::Cyan).bold())];
+    let mut used = 3;
+    for (token, origin) in tokens {
+        let token = sanitize(&token).chars().collect::<Vec<_>>();
+        let style = origin_style(origin);
+        if line.len() > 1 {
+            if used + 1 + token.len() > inner {
+                lines.push(std::mem::take(&mut line));
+                line.push((" ".repeat(INDENT), Style::PLAIN));
+                used = INDENT;
+            } else {
+                line.push((" ".to_owned(), Style::PLAIN));
+                used += 1;
+            }
+        }
+        let mut rest = &token[..];
+        loop {
+            let room = inner.saturating_sub(used).max(1);
+            if rest.len() <= room {
+                line.push((rest.iter().collect(), style));
+                used += rest.len();
+                break;
+            }
+            line.push((rest[..room].iter().collect(), style));
+            lines.push(std::mem::take(&mut line));
+            line.push((" ".repeat(INDENT), Style::PLAIN));
+            used = INDENT;
+            rest = &rest[room..];
+        }
+    }
+    lines.push(line);
+    lines
+}
+
+/// The command box's rows from each instance's block in `rows` rows: all
+/// of them when they fit, else the first and `same` for the rest. A block
+/// cut short ends in a row that says how many rows are not shown.
+fn fit(blocks: Vec<Vec<CommandLine>>, same: Option<String>, rows: usize) -> Vec<CommandLine> {
+    if blocks.iter().map(Vec::len).sum::<usize>() <= rows {
+        return blocks.into_iter().flatten().collect();
+    }
+    let Some(mut lines) = blocks.into_iter().next() else {
+        return Vec::new();
+    };
+    let room = rows.saturating_sub(usize::from(same.is_some()));
+    if lines.len() > room {
+        let kept = room.saturating_sub(1);
+        let more = lines.len() - kept;
+        lines.truncate(kept);
+        if room > 0 {
+            lines.push(vec![(
+                format!(
+                    "     ... {more} more row{} of this command",
+                    if more == 1 { "" } else { "s" }
+                ),
+                Style::fg(Color::Dim),
+            )]);
+        }
+    }
+    if let Some(same) = same {
+        lines.push(vec![
+            ("   ".to_owned(), Style::PLAIN),
+            (same, Style::fg(Color::Dim)),
+        ]);
+    }
+    lines
+}
+
 fn command_box(buffer: &mut Buffer, app: &App, area: Area, now: f64) {
     let loader = &app.loader;
     let plan = &loader.plan;
@@ -1181,27 +1258,6 @@ fn command_box(buffer: &mut Buffer, app: &App, area: Area, now: f64) {
             |name| sanitize(&name.to_string_lossy()),
         );
     let arguments = plan.command.clone().unwrap_or_else(|| draft(app));
-    let wrapped = |letter: char, tokens: Vec<(String, Origin)>| {
-        let mut lines: Vec<Vec<(String, Style)>> = Vec::new();
-        let mut line = vec![(format!("{letter}  "), Style::fg(Color::Cyan).bold())];
-        let mut used = 3;
-        for (token, origin) in tokens {
-            let token = sanitize(&token);
-            let length = token.chars().count();
-            if used + 1 + length > inner && line.len() > 1 {
-                lines.push(std::mem::take(&mut line));
-                line.push(("     ".to_owned(), Style::PLAIN));
-                used = 5;
-            } else if line.len() > 1 {
-                line.push((" ".to_owned(), Style::PLAIN));
-                used += 1;
-            }
-            used += length;
-            line.push((token, origin_style(origin)));
-        }
-        lines.push(line);
-        lines
-    };
     let mut lines: Vec<Vec<(String, Style)>> = Vec::new();
     if instances.is_empty() {
         lines.push(vec![(
@@ -1212,7 +1268,7 @@ fn command_box(buffer: &mut Buffer, app: &App, area: Area, now: f64) {
         let blocks = instances
             .iter()
             .map(|planned| {
-                wrapped(
+                block(
                     planned.letter,
                     command::tokens(
                         &program,
@@ -1222,39 +1278,38 @@ fn command_box(buffer: &mut Buffer, app: &App, area: Area, now: f64) {
                         &planned.listen(),
                         &[API_KEY],
                     ),
+                    inner,
                 )
             })
             .collect::<Vec<_>>();
-        let total = blocks.iter().map(Vec::len).sum::<usize>();
-        if total <= rows {
-            blocks.into_iter().for_each(|block| lines.extend(block));
-        } else {
-            let others = usize::from(instances.len() > 1);
-            lines.extend(blocks[0].iter().take(rows.saturating_sub(others)).cloned());
-            if others > 0 {
-                let rest = instances[1..]
+        let others = instances[1..]
+            .iter()
+            .map(|planned| {
+                format!(
+                    "{} on GPUs {} at {}",
+                    planned.letter,
+                    planned
+                        .gpus
+                        .iter()
+                        .map(u32::to_string)
+                        .collect::<Vec<_>>()
+                        .join(","),
+                    planned.listen()
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut same = format!("the same for {}", others.join(", "));
+        if same.chars().count() + 3 > inner {
+            same = format!(
+                "the same for {}, each on its own GPUs and port",
+                instances[1..]
                     .iter()
-                    .map(|planned| {
-                        format!(
-                            "{} on GPUs {} at {}",
-                            planned.letter,
-                            planned
-                                .gpus
-                                .iter()
-                                .map(u32::to_string)
-                                .collect::<Vec<_>>()
-                                .join(","),
-                            planned.listen()
-                        )
-                    })
+                    .map(|planned| planned.letter.to_string())
                     .collect::<Vec<_>>()
-                    .join(", ");
-                lines.push(vec![
-                    ("   ".to_owned(), Style::PLAIN),
-                    (format!("the same for {rest}"), Style::fg(Color::Dim)),
-                ]);
-            }
+                    .join(", ")
+            );
         }
+        lines = fit(blocks, (!others.is_empty()).then_some(same), rows);
     }
     for (index, line) in lines.iter().take(rows).enumerate() {
         let mut column = x + 2;
@@ -1362,6 +1417,74 @@ fn command_box(buffer: &mut Buffer, app: &App, area: Area, now: f64) {
             summary_y,
             &text.chars().take(room).collect::<String>(),
             style,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn texts(lines: &[CommandLine]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|line| line.iter().map(|(text, _)| text.as_str()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn a_token_longer_than_a_row_goes_on_across_rows() {
+        let path = format!("/models/{}", "q".repeat(70));
+        let tokens = vec![
+            ("CUDA_VISIBLE_DEVICES=0,1".to_owned(), Origin::Environment),
+            ("chopinfer serve".to_owned(), Origin::Base),
+            (format!("--model {path}"), Origin::Base),
+            ("--served-model-name Qwen".to_owned(), Origin::Set),
+        ];
+        let shown = texts(&block('A', tokens, 40));
+        assert_eq!(
+            shown,
+            [
+                "A  CUDA_VISIBLE_DEVICES=0,1".to_owned(),
+                "     chopinfer serve".to_owned(),
+                format!("     --model /models/{}", "q".repeat(19)),
+                format!("     {}", "q".repeat(35)),
+                format!("     {}", "q".repeat(16)),
+                "     --served-model-name Qwen".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_command_longer_than_the_box_says_how_much_is_not_shown() {
+        let row = |text: &str| vec![(text.to_owned(), Style::PLAIN)];
+        let a = (0..5)
+            .map(|number| row(&format!("a{number}")))
+            .collect::<Vec<_>>();
+        let b = vec![row("b0")];
+        let same = || Some("the same for B".to_owned());
+        assert_eq!(
+            texts(&fit(vec![a.clone(), b.clone()], same(), 4)),
+            [
+                "a0",
+                "a1",
+                "     ... 3 more rows of this command",
+                "   the same for B"
+            ]
+        );
+        assert_eq!(
+            texts(&fit(vec![a.clone()], None, 4)),
+            ["a0", "a1", "a2", "     ... 2 more rows of this command"]
+        );
+        // What fits is shown whole.
+        assert_eq!(
+            texts(&fit(vec![a[..2].to_vec(), b.clone()], same(), 4)),
+            ["a0", "a1", "b0"]
+        );
+        // A first block that fits is shown whole before the others' line.
+        assert_eq!(
+            texts(&fit(vec![a[..3].to_vec(), b.clone(), b], same(), 4)),
+            ["a0", "a1", "a2", "   the same for B"]
         );
     }
 }

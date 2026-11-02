@@ -3523,16 +3523,11 @@ impl ServedEngineV1 {
             .with_model_options(&self.model_options)
             .map_err(|e| e.to_string())?;
         same_selection_v1(&expected, loaded.manifest(), &self.selection)?;
-        let batch_wire = batch_wire_capability_v1(loaded.manifest());
-        let batch_wire = if self.speculation.is_some() {
-            if batch_wire == crate::executor::BatchWireCapabilityV1::V3Media {
-                crate::executor::BatchWireCapabilityV1::V3MediaSpeculative
-            } else {
-                crate::executor::BatchWireCapabilityV1::V3Speculative
-            }
-        } else {
-            batch_wire
-        };
+        let batch_wire = crate::executor::serving_batch_wire_capability_v1(
+            loaded.manifest(),
+            self.speculation.is_some(),
+            0,
+        );
         require_speculation_callback_v1(
             self.speculation.is_some(),
             loaded.library().supports_speculation(),
@@ -3689,6 +3684,32 @@ impl ServedEngineV1 {
             u8::from(aligned_prompt_capture)
         );
         let config = config.with_aligned_prompt_capture(aligned_prompt_capture);
+        let anchor_policy = instance
+            .prefill_anchor_policy()
+            .map_err(|error| format!("invalid bundle prefill anchors declaration: {error}"))?;
+        let anchor_items = grid_anchor_items_v1(
+            anchor_policy.map(|policy| policy.anchor_items),
+            loaded
+                .manifest()
+                .batch_limits()
+                .map_or(0, runtime_bundle::BundleBatchLimitsV1::maximum_sequences),
+        )?;
+        let config = match anchor_items {
+            None => config,
+            Some(items) => {
+                if items > 0 {
+                    runtime_log::info_stdout!(
+                        "prefill anchor items: {items} per step on the guaranteed grid"
+                    );
+                }
+                config.with_grid_anchor_items(items)
+            }
+        };
+        let batch_wire = crate::executor::serving_batch_wire_capability_v1(
+            loaded.manifest(),
+            self.speculation.is_some(),
+            anchor_items.unwrap_or(0),
+        );
         let snapshot_pages = if prefix_capability
             && (self.prefix_cache || (offload_capability && self.kv_offload.budget_bytes != 0))
         {
@@ -6473,6 +6494,24 @@ impl ArgumentsV1 {
 const MAXIMUM_PREFILL_ITL_TARGET_MS_V1: usize = 60_000;
 /// The largest `--prefill-decode-steps`.
 const MAXIMUM_PREFILL_DECODE_STEPS_V1: usize = 64;
+
+/// Bounds the instance's grid anchor allowance by the bundle's sequence limit.
+/// An absent export leaves the grid allowance unset; manifest anchors are separate.
+fn grid_anchor_items_v1(
+    declared: Option<u32>,
+    maximum_sequences: u32,
+) -> Result<Option<usize>, String> {
+    match declared {
+        Some(items) if items > maximum_sequences => Err(format!(
+            "the bundle keeps {items} prefill anchor items a step, more than its \
+             {maximum_sequences} sequences"
+        )),
+        Some(items) => usize::try_from(items)
+            .map(Some)
+            .map_err(|_| "prefill anchor items do not fit this host".to_owned()),
+        None => Ok(None),
+    }
+}
 
 /// Applies the target flags of `--prefill-budget decode-aware` or `tbt`.
 /// The prefill budget of `parsed`. With `profile_pending` (`serve --model`,
@@ -11442,6 +11481,113 @@ mod tests {
             assert!(DeveloperServingEnvelopeV1::new(prompt_tokens, generated_tokens).is_err());
         }
         assert!(DeveloperServingEnvelopeV1::new(usize::MAX, 1).is_err());
+    }
+
+    #[test]
+    fn instance_grid_anchor_items_stay_within_the_bundle_sequences() {
+        assert_eq!(super::grid_anchor_items_v1(None, 32), Ok(None));
+        assert_eq!(super::grid_anchor_items_v1(None, 0), Ok(None));
+        assert_eq!(super::grid_anchor_items_v1(Some(0), 0), Ok(Some(0)));
+        assert_eq!(super::grid_anchor_items_v1(Some(0), 32), Ok(Some(0)));
+        assert_eq!(super::grid_anchor_items_v1(Some(8), 32), Ok(Some(8)));
+        assert_eq!(super::grid_anchor_items_v1(Some(32), 32), Ok(Some(32)));
+        let error = super::grid_anchor_items_v1(Some(33), 32).unwrap_err();
+        assert!(error.contains("33 prefill anchor items"), "{error}");
+        assert!(error.contains("32 sequences"), "{error}");
+        assert!(super::grid_anchor_items_v1(Some(1), 0).is_err());
+    }
+
+    #[test]
+    fn instance_grid_anchor_items_select_a_v3_wire() {
+        use crate::executor::{
+            BATCH_REQUEST_MAGIC_V3, BATCH_WIRE_V2_CAPABILITY_V1, BatchWireCapabilityV1,
+            MEDIA_INPUTS_CAPABILITY_V1, PROMPT_ROWS_CAPABILITY_V1,
+            encode_batch_request_with_capability_v1, serving_batch_wire_capability_v1,
+        };
+
+        let cases = [
+            (None, false, BatchWireCapabilityV1::V1),
+            (
+                Some(BATCH_WIRE_V2_CAPABILITY_V1),
+                false,
+                BatchWireCapabilityV1::V2CopyOnWrite,
+            ),
+            (
+                Some(PROMPT_ROWS_CAPABILITY_V1),
+                false,
+                BatchWireCapabilityV1::V2PromptRows,
+            ),
+            (
+                Some(MEDIA_INPUTS_CAPABILITY_V1),
+                false,
+                BatchWireCapabilityV1::V3Media,
+            ),
+            (
+                Some(MEDIA_INPUTS_CAPABILITY_V1),
+                true,
+                BatchWireCapabilityV1::V3MediaSpeculative,
+            ),
+            (None, true, BatchWireCapabilityV1::V3Speculative),
+        ];
+        for (capability, speculative, without_anchors) in cases {
+            let mut capabilities: Vec<_> = capability.into_iter().map(id).collect();
+            if speculative {
+                capabilities.push(id("chop.speculative.v1"));
+            }
+            let mut manifest = manifest_requiring(
+                vec![topology("tp4", 4)],
+                64,
+                DECLARED_ROWS_V1,
+                &"0".repeat(64),
+                capabilities,
+            )
+            .with_batch_limits(BundleBatchLimitsV1::new(32, 8192).unwrap())
+            .unwrap();
+            if speculative {
+                manifest = manifest
+                    .with_speculation(
+                        runtime_bundle::BundleSpeculationV1::new(
+                            3,
+                            true,
+                            8,
+                            vec![4, 8],
+                            Some(id("weights")),
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap();
+            }
+            assert_eq!(manifest.batch_limits().unwrap().anchor_items(), 0);
+            assert_eq!(
+                serving_batch_wire_capability_v1(&manifest, speculative, 0),
+                without_anchors
+            );
+            let allowance = super::grid_anchor_items_v1(Some(8), 32).unwrap().unwrap();
+            let wire = serving_batch_wire_capability_v1(&manifest, speculative, allowance);
+            let expected = match without_anchors {
+                BatchWireCapabilityV1::V1
+                | BatchWireCapabilityV1::V2CopyOnWrite
+                | BatchWireCapabilityV1::V2PromptRows => BatchWireCapabilityV1::V3Speculative,
+                wire => wire,
+            };
+            assert_eq!(wire, expected, "{capability:?}, speculative={speculative}");
+
+            let items = [runtime_engine::ModelBatchItem::new(
+                runtime_engine::RequestId::new(1),
+                runtime_scheduler::BatchPhase::Prefill { tokens: 13 },
+                vec![1; 13],
+                true,
+            )
+            .with_anchor(true)];
+            let mut pool = runtime_kv::KvPool::new(KvGeometry::new(4, 8).unwrap(), 1).unwrap();
+            let sequence = pool.create_sequence(16).unwrap();
+            let plan = pool.prepare_append_batch(&[(sequence, 13)]).unwrap();
+            let encoded = encode_batch_request_with_capability_v1(&items, &plan, wire).unwrap();
+            assert!(encoded.starts_with(BATCH_REQUEST_MAGIC_V3));
+            let decoded = runtime_bundle_sdk::BatchCodecV1::decode(&encoded).unwrap();
+            // The SDK decodes BATCH_ITEM_FLAG_ANCHOR_V3 through this accessor.
+            assert!(decoded.items()[0].anchor());
+        }
     }
 
     /// A bundle that declares anchor items keeps its kept-anchor flags on a

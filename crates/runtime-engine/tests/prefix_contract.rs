@@ -854,6 +854,57 @@ fn guaranteed_response_ar_keeps_only_prefill_anchors() {
 }
 
 #[test]
+fn a_guaranteed_grid_keeps_its_anchor_only_with_an_instance_allowance() {
+    let config = |anchors| {
+        EngineConfig::new(
+            SchedulerConfig::new(4, 32, 32, 16, 1)
+                .unwrap()
+                .with_prefill_granule(ANCHOR_GRANULE)
+                .unwrap()
+                .with_prefill_cuts(true)
+                .with_guaranteed_prefill_chunks(16)
+                .unwrap(),
+            KvGeometry::new(4, 64).unwrap(),
+            ModelVocabulary::new(VOCABULARY).unwrap(),
+            128,
+            4,
+        )
+        .unwrap()
+        .with_prefix_cache(1)
+        .with_grid_anchor_items(anchors)
+    };
+    let first = words(13, 2);
+    let mut second = first.clone();
+    second.extend(words(9, 6));
+    let (mut steps, mut captures) = (Vec::new(), Vec::new());
+    for anchors in [0, 1] {
+        let mut engine = Engine::new(config(anchors), FoldingExecutor::default()).unwrap();
+        let (tokens, cached) = run(&mut engine, 1, &first, 2);
+        assert_eq!(cached, None);
+        assert_eq!(tokens, cold(&first, 2));
+        // The grid captures the rounded end and the prompt end either way:
+        // from two chunks, or from one chunk that kept the anchor at 8.
+        assert_eq!(
+            engine.executor().captures,
+            [(RequestId::new(1), 8), (RequestId::new(1), 13)]
+        );
+        captures.push(engine.executor().captures.clone());
+        assert_eq!(engine.executor().anchor_items, anchors);
+        steps.push(engine.executor().executions);
+        let (tokens, cached) = run(&mut engine, 2, &second, 3);
+        assert_eq!(cached, Some(13));
+        assert_eq!(engine.executor().restores, [(RequestId::new(2), 13)]);
+        assert_eq!(tokens, cold(&second, 3));
+    }
+    assert_eq!(captures[0], captures[1]);
+    assert_eq!(
+        steps[1] + 1,
+        steps[0],
+        "the kept anchor saves the separate tail step"
+    );
+}
+
+#[test]
 fn guaranteed_response_speculation_keeps_only_prefill_anchors() {
     response_ends_only_reuse_prefill(true);
 }

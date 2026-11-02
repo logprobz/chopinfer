@@ -161,6 +161,33 @@ pub fn batch_wire_capability_v1(manifest: &BundleManifestV1) -> BatchWireCapabil
     }
 }
 
+/// Selects the serving wire after negotiating speculation and grid anchors.
+pub(crate) fn serving_batch_wire_capability_v1(
+    manifest: &BundleManifestV1,
+    speculative: bool,
+    grid_anchor_items: usize,
+) -> BatchWireCapabilityV1 {
+    let wire = batch_wire_capability_v1(manifest);
+    if speculative {
+        if wire == BatchWireCapabilityV1::V3Media {
+            BatchWireCapabilityV1::V3MediaSpeculative
+        } else {
+            BatchWireCapabilityV1::V3Speculative
+        }
+    } else if grid_anchor_items > 0
+        && matches!(
+            wire,
+            BatchWireCapabilityV1::V1
+                | BatchWireCapabilityV1::V2CopyOnWrite
+                | BatchWireCapabilityV1::V2PromptRows
+        )
+    {
+        BatchWireCapabilityV1::V3Speculative
+    } else {
+        wire
+    }
+}
+
 /// Whether one verified manifest reads explicit 3-axis positions.
 #[must_use]
 pub fn position_axes_capability_v1(manifest: &BundleManifestV1) -> bool {

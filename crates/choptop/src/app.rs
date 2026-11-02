@@ -261,8 +261,19 @@ impl App {
             View::Monitor => self.gpu_instance(),
             _ => self.current().map(|row| row.id),
         };
+        // A launch that holds no GPU yet, waiting or loading, has its
+        // reservation's.
+        let reserved = |id: u64| match self.registry.get(id)?.launch? {
+            (_, Launched::Exited(_)) => None,
+            (launch, _) => self
+                .launches
+                .get(launch)
+                .map(|launch| launch.record.gpus.clone()),
+        };
         let gpus = row
             .map(|id| self.gpus.of_instance(&self.registry.instances, id))
+            .filter(|gpus| !gpus.is_empty())
+            .or_else(|| row.and_then(reserved))
             .filter(|gpus| !gpus.is_empty());
         let choice = row
             .and_then(|id| self.registry.get(id))
@@ -3311,6 +3322,55 @@ mod tests {
         assert_eq!(app.current().unwrap().state(2.0), State::Exited(Some(1)));
         assert_eq!(press(&mut app, KeyCode::Char('X')), Action::Redraw);
         assert!(app.registry.get(row).is_none() && app.launches.get(id).is_none());
+    }
+
+    #[test]
+    fn l_on_a_launch_that_holds_no_gpu_yet_picks_its_reserved_gpus() {
+        for running in [false, true] {
+            let root = scratch(if running {
+                "l-reserved-running"
+            } else {
+                "l-reserved-waiting"
+            });
+            let binary = root.join("sleeps");
+            write_script(
+                &binary,
+                &format!(
+                    "#!/bin/sh\n{CLOSE}{}",
+                    crate::launch::process::tests::UNTIL_TERM
+                ),
+            );
+            let mut app = launching(&root, &binary);
+            app.catalog = crate::loader::tests::catalog();
+            app.catalog.binary = Ok(binary);
+            run(
+                &mut app,
+                confirm(&[('A', &[2, 3], 8310, Vec::new())], Vec::new()),
+            );
+            let id = newest(&app);
+            if running {
+                read_reports(&mut app, 0.1, Vec::new());
+                app.supervise(0.1);
+            }
+            assert_eq!(
+                app.launches.get(id).unwrap().phase,
+                if running {
+                    Phase::Running
+                } else {
+                    Phase::Waiting
+                }
+            );
+            // No GPU reading shows its process.
+            read_reports(&mut app, 0.2, Vec::new());
+            app.selected = Some(app.registry.launch_row(id).unwrap().id);
+            assert_eq!(press(&mut app, KeyCode::Char('l')), Action::Redraw);
+            app.tick(0.3);
+            assert_eq!(
+                app.loader.picked,
+                std::collections::BTreeSet::from([2, 3]),
+                "running: {running}"
+            );
+        }
     }
 
     #[test]

@@ -46,8 +46,8 @@
           "max_sequences": 32,
           "qualified_max_sequences": null,
           "qualification": "Not qualified.",
-          "settings": {"decode-tbt-target-ms": "750", "prefill-budget": "tbt", "speculation": "balanced"},
-          "model_options": {"dspark_draft_chunk_items": "12", "prefill_upper_skip": true}
+          "settings": {"decode-tbt-target-ms": "750", "mixed-decode-steps": "4", "mixed-min-prefill-tokens": "256", "prefill-budget": "tbt", "speculation": "balanced"},
+          "model_options": {"dspark_draft_chunk_items": "12", "prefill_upper_skip": "true"}
         }
       ]
     }

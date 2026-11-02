@@ -175,8 +175,11 @@ pub struct Profile {
     /// `None` for an experimental profile.
     pub qualified_max_sequences: Option<u64>,
     pub qualification: String,
-    /// Effective serve settings, keyed by flag name without dashes.
+    /// Effective serve settings, keyed by flag name without dashes. Only
+    /// the settings a profile governs are here, some only when they apply:
+    /// a key missing is not governed here, not a different value.
     pub settings: BTreeMap<String, String>,
+    /// Model options in `--model-option` form.
     pub model_options: BTreeMap<String, String>,
 }
 
@@ -225,8 +228,8 @@ impl Models {
                                 Some(_) => Some(number(profile, "qualified_max_sequences")?),
                             },
                             qualification: string(profile, "qualification")?,
-                            settings: scalars(profile, "settings")?,
-                            model_options: scalars(profile, "model_options")?,
+                            settings: texts(profile, "settings")?,
+                            model_options: texts(profile, "model_options")?,
                         })
                     })
                     .collect::<Result<Vec<_>, String>>()?;
@@ -299,6 +302,15 @@ pub struct Pick {
 impl Pick {
     pub fn parse(text: &str) -> Result<Self, String> {
         let document = document(text, "chopinfer.models-pick.v1")?;
+        let model = optional_string(&document, "model")?;
+        // With no helper for the checkpoint there may be no sizes at all.
+        if model.is_none() && !document.contains_key("sizes") {
+            return Ok(Self {
+                model,
+                refusal: optional_string(&document, "refusal")?,
+                sizes: Vec::new(),
+            });
+        }
         let sizes = objects(&document, "sizes")?
             .into_iter()
             .map(|size| {
@@ -331,7 +343,7 @@ impl Pick {
             })
             .collect::<Result<Vec<_>, String>>()?;
         Ok(Self {
-            model: optional_string(&document, "model")?,
+            model,
             refusal: optional_string(&document, "refusal")?,
             sizes,
         })
@@ -365,6 +377,7 @@ pub fn parse_command(text: &str) -> Result<Vec<String>, String> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CheckedOption {
     pub name: String,
+    /// In `--model-option` form, as the package's default.
     pub value: String,
     pub default: String,
     pub default_is_qualified: bool,
@@ -374,7 +387,10 @@ pub struct CheckedOption {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Check {
     pub profile: String,
+    /// Effective settings, read as [`Profile`]'s are: a key on one side
+    /// only is not governed there.
     pub settings: BTreeMap<String, String>,
+    /// Every model option, the ones the host sets itself included.
     pub model_options: Vec<CheckedOption>,
     pub warnings: Vec<String>,
 }
@@ -387,15 +403,15 @@ impl Check {
             .map(|option| {
                 Ok(CheckedOption {
                     name: string(option, "name")?,
-                    value: scalar(option, "value")?,
-                    default: scalar(option, "default")?,
+                    value: string(option, "value")?,
+                    default: string(option, "default")?,
                     default_is_qualified: boolean(option, "default_is_qualified")?,
                 })
             })
             .collect::<Result<Vec<_>, String>>()?;
         Ok(Self {
             profile: string(&document, "profile")?,
-            settings: scalars(&document, "settings")?,
+            settings: texts(&document, "settings")?,
             model_options,
             warnings: strings(&document, "warnings")?,
         })
@@ -625,34 +641,18 @@ fn objects<'a>(object: &'a Object, name: &str) -> Result<Vec<&'a Object>, String
         .collect()
 }
 
-/// Text, a number or a switch as text: `"8192"`, `8192` and `true` read as
-/// `8192` and `true`.
-fn scalar_text(value: &Value) -> Option<String> {
-    match value {
-        Value::String(text) => Some(text.clone()),
-        Value::Number(number) => Some(number.to_string()),
-        Value::Bool(value) => Some(value.to_string()),
-        _ => None,
-    }
-}
-
-fn scalar(object: &Object, name: &str) -> Result<String, String> {
-    object
-        .get(name)
-        .and_then(scalar_text)
-        .ok_or_else(|| format!("{name} is missing or not a value"))
-}
-
-fn scalars(object: &Object, name: &str) -> Result<BTreeMap<String, String>, String> {
+/// An object of text values, as settings and model options are written.
+fn texts(object: &Object, name: &str) -> Result<BTreeMap<String, String>, String> {
     object
         .get(name)
         .and_then(Value::as_object)
         .ok_or_else(|| format!("{name} is missing or not an object"))?
         .iter()
         .map(|(key, value)| {
-            scalar_text(value)
-                .map(|text| (key.clone(), text))
-                .ok_or_else(|| format!("{name}.{key} is not a value"))
+            value
+                .as_str()
+                .map(|text| (key.clone(), text.to_owned()))
+                .ok_or_else(|| format!("{name}.{key} is not text"))
         })
         .collect()
 }
@@ -1003,7 +1003,7 @@ impl Checkpoints {
 
     fn parse(text: &str) -> Result<BTreeMap<String, PathBuf>, String> {
         let document = document(text, CHECKPOINTS_SCHEMA)?;
-        Ok(scalars(&document, "checkpoints")?
+        Ok(texts(&document, "checkpoints")?
             .into_iter()
             .map(|(model, directory)| (model, PathBuf::from(directory)))
             .collect())
@@ -1396,8 +1396,11 @@ mod tests {
             .unwrap()
             .profile("tp4-dspark")
             .unwrap();
-        // A switch written as JSON reads as the text --model-option takes.
+        // Model options are in --model-option form.
         assert_eq!(dspark.model_options["prefill_upper_skip"], "true");
+        // Only the settings a profile governs, some only where they apply.
+        assert_eq!(dspark.settings["decode-tbt-target-ms"], "750");
+        assert!(!mtp.settings.contains_key("decode-tbt-target-ms"));
         assert_eq!(dspark.model_options["dspark_draft_chunk_items"], "12");
         assert_eq!(
             models.errors,
@@ -1429,12 +1432,34 @@ mod tests {
         );
         assert!(matches!(
             &four.profile("tp4-mtp").unwrap().availability,
-            Availability::Unavailable(reason) if reason.contains("no MTP head")
+            Availability::Unavailable(reason) if reason.contains("drafts with mtp")
         ));
+        // A refused size marks its profiles unavailable for the refusal.
         let two = pick.size(2).unwrap();
         assert_eq!(two.pick, None);
         assert!(two.refusal.as_deref().unwrap().contains("does not fit"));
-        assert!(pick.size(8).is_none());
+        assert!(matches!(
+            &two.profile("tp2-ar").unwrap().availability,
+            Availability::Unavailable(reason) if reason.contains("does not fit")
+        ));
+        // A pick renamed for this geometry is listed at its size.
+        let eight = pick.size(8).unwrap();
+        assert_eq!(eight.pick.as_deref(), Some("tp8-dspark-wide"));
+        assert!(eight.profile("tp8-dspark-wide").is_some());
+        assert!(pick.size(1).is_none());
+    }
+
+    #[test]
+    fn reads_a_checkpoint_no_helper_takes() {
+        let text = r#"{"schema": "chopinfer.models-pick.v1", "model": null,
+            "refusal": "no installed model helper accepts this checkpoint", "sizes": []}"#;
+        let pick = Pick::parse(text).unwrap();
+        assert_eq!(pick.model, None);
+        assert!(pick.refusal.as_deref().unwrap().contains("no installed"));
+        assert!(pick.sizes.is_empty());
+        let bare = text.replacen(", \"sizes\": []", "", 1);
+        assert_ne!(bare, text);
+        assert_eq!(Pick::parse(&bare).unwrap(), pick);
     }
 
     #[test]

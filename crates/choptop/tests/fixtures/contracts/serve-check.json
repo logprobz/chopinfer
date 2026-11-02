@@ -1,11 +1,12 @@
 {
   "schema": "chopinfer.serve-check.v1",
   "profile": "tp4-dspark",
-  "settings": {"max-sequences": "48", "prefill-budget": "fixed", "speculative-tokens": "0"},
+  "settings": {"admission": "optimistic", "decode-tbt-target-ms": "750", "max-sequences": "48", "mixed-decode-steps": "4", "mixed-min-prefill-tokens": "256", "prefill-budget": "tbt", "speculative-tokens": "5"},
   "model_options": [
-    {"name": "dspark_draft_chunk_items", "value": 12, "default": 12, "default_is_qualified": true},
-    {"name": "prefill_upper_skip", "value": false, "default": true, "default_is_qualified": true},
-    {"name": "wide_verify", "value": "off", "default": "off", "default_is_qualified": false}
+    {"name": "dspark_draft_chunk_items", "value": "12", "default": "12", "default_is_qualified": true},
+    {"name": "prefill_upper_skip", "value": "false", "default": "true", "default_is_qualified": true},
+    {"name": "verify_allocation", "value": "confidence", "default": "fixed", "default_is_qualified": false},
+    {"name": "verify_graph_rows", "value": "64", "default": "64", "default_is_qualified": true}
   ],
   "warnings": ["--max-sequences 48 is above the profile's evidence (32)"]
 }

@@ -23,13 +23,7 @@ pub(crate) fn run(groups: &[Replay]) -> Result<serde_json::Value, String> {
         return Err("row replay requires one to eight groups".into());
     }
     let started = std::time::Instant::now();
-    let mappings = super::super::REGISTRY
-        .lock()
-        .map_err(|_| "mapped row registry is poisoned")?
-        .values()
-        .filter_map(Weak::upgrade)
-        .filter(|mapping| mapping.key.identity.is_some())
-        .collect::<Vec<_>>();
+    let mappings = crate::host_rows::authenticated_mappings_v1();
     let mut ids = 0;
     let mut copies = 0;
     for group in groups {

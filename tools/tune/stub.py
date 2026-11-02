@@ -50,8 +50,8 @@ def stub(args):
     label = Path(args.directory).parent.name
     if args.kv_pages is None:
         args.kv_pages = int(os.environ.get('TUNE_STUB_DEFAULT_KV_PAGES', '4096'))
-        if os.environ.get('TUNE_STUB_KV_CHANGE_LABEL') == label:
-            args.kv_pages += 1
+    if os.environ.get('TUNE_STUB_KV_CHANGE_LABEL') == label:
+        args.kv_pages += 1
     perturb = (os.environ.get('TUNE_STUB_PERTURB') == label
                or os.environ.get('TUNE_STUB_PERTURB_INSTALL') == args.install_name)
     perturb_token = os.environ.get('TUNE_STUB_TOKEN_INSTALL') == args.install_name

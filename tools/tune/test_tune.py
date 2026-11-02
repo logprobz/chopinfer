@@ -672,6 +672,7 @@ class Tuner(unittest.TestCase):
                        CHOPINFER_TEST_CHECKPOINT=str(root / 'checkpoint'))
             for name, controls, error in [
                     ('weights', {'TUNE_STUB_LOADED_INSTALL': 'head'}, 'expected borrowed'),
+                    ('kv', {'TUNE_STUB_KV_CHANGE_LABEL': 'a'}, 'expected 64 per rank'),
                     ('allocation', {'TUNE_STUB_IGNORE_FULL_ALLOCATION': '16'}, 'no full-C16 allocated steps')]:
                 out = root / name
                 result = subprocess.run([sys.executable, '-B', str(staged / 'harness/tune.py'), '--dry-run',

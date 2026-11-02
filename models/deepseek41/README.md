@@ -332,11 +332,23 @@ CPU tests compare fake-host result metadata and committed request state,
 pin routes and spans, and sweep both served profiles with the option on
 and off. Each tail piece must match option-off lowering at the same row
 count. Direct-step allowances cover every selected remainder independently
-of inherited cone gaps. Internal single/chunk and packed output-cone tails
-have separate candidate allowances; preserved full launches newly exposed
-by changed fallback totals have explicit accounting exceptions. These CPU
-checks do not establish GPU arithmetic equality. The candidate is not
-adopted, and no performance claim follows from them.
+of inherited cone gaps. Internal output-cone tails have candidate allowances;
+preserved full launches newly exposed by changed fallback totals have explicit
+accounting exceptions. These CPU checks do not establish GPU arithmetic
+equality. The candidate is not adopted, and no performance claim follows
+from them.
+
+On 2026-11-02, exhaustive CPU fake-host execution of packed-2 rows 2 through
+8192 and packed-32 rows 32 through 8192 corrected the simulated packed-cone
+ranges. For n1024, n1280, n5120 and n8192, respectively, AR needs 619, 268,
+1494 and 334 additional gap rows; DSpark needs 928, 406, 1510 and 350.
+Each projection's admit and packed symbols share the same row sets. The AR
+n1280 allowances combine single/chunk and packed cone rows because the
+seed-20759 full capture samples none of its packed gaps. Its metadata re-audit
+cannot prove unsampled rows; the exhaustive packed execution supplies that
+evidence. DSpark retains feature rows as additional dependency roots, changing
+the backward output cones. The audit compares fallback counts across widths,
+so a fallback launch alone does not establish an allowance gap.
 
 The ignored lab probe compares the current route with the partition at
 85, 127, 789, 831, 853, 1557 and 1599 rows for the Flash TP4 q/kv/o,

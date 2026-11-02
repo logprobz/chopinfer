@@ -652,6 +652,306 @@ print(json.dumps(reply), flush=True)
         self.assertEqual(relative["package_identity"], absolute["package_identity"])
         self.assertEqual(absolute["measurements"]["decisions"], ["reused completed direct package"])
 
+    def host_run(self, *args):
+        return subprocess.run([self.host, *args], env=self.environment, text=True,
+                              capture_output=True, timeout=HANG_SECONDS)
+
+    def host_document(self, *args, schema):
+        result = self.host_run(*args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        document = json.loads(result.stdout)
+        self.assertEqual(document["schema"], schema)
+        return document, result.stderr
+
+    def test_serve_describes_its_options_and_environment(self):
+        document, _ = self.host_document("serve", "--describe-options", schema="chopinfer.serve-options.v1")
+        self.assertEqual(set(document), {"schema", "options", "environment"})
+        groups = {"model", "scheduling", "memory", "speculation", "prefill", "cache", "server", "media",
+                  "logging", "debug"}
+        for option in document["options"]:
+            self.assertEqual(set(option), {"flag", "value", "choices", "group", "help", "model_launch", "repeatable"})
+            self.assertIn(option["value"], {"N", "F", "TEXT", "DIR", "FILE", "JSON", "none"})
+            self.assertIn(option["group"], groups)
+        flags = {option["flag"]: option for option in document["options"]}
+        self.assertEqual(flags["--max-sequences"]["value"], "N")
+        self.assertEqual(flags["--prefix-cache"]["choices"], ["on", "off"])
+        self.assertTrue(flags["--model-option"]["repeatable"])
+        self.assertFalse(flags["--bundle"]["model_launch"])
+        self.assertFalse(flags["--profile"]["model_launch"])
+        self.assertEqual([entry["name"] for entry in document["environment"]],
+                         ["CHOPINFER_API_KEY", "CHOPINFER_LOG_LEVEL", "CHOPINFER_LOG_SUMMARY_SECONDS",
+                          "CHOPINFER_MODEL_OPTIONS"])
+        for entry in document["environment"]:
+            self.assertEqual(set(entry), {"name", "value", "secret", "help"})
+
+    def test_models_list_profiles_and_pick_and_command_serve_them(self):
+        catalog, _ = self.host_document("models", "--json", schema="chopinfer.models.v1")
+        self.assertEqual(catalog["errors"], [])
+        [model] = catalog["models"]
+        self.assertEqual((model["model"], model["helper"], model["served_model_name"]),
+                         ("fixture", "chopinfer-model-fixture", "fixture"))
+        profiles = {profile["name"]: profile for profile in model["profiles"]}
+        self.assertEqual(set(profiles), {"tp4-ar", "tp4-mtp", "tp4-dflash"})
+        for profile in profiles.values():
+            self.assertEqual(set(profile), {"name", "status", "tensor_parallel", "drafter", "speculative_tokens",
+                                            "max_sequences", "qualified_max_sequences", "qualification",
+                                            "settings", "model_options"})
+            self.assertTrue(all(isinstance(value, str) for value in profile["settings"].values()))
+        self.assertEqual(profiles["tp4-dflash"]["settings"]["prefill-budget"], "tbt")
+        self.assertEqual(profiles["tp4-dflash"]["settings"]["decode-tbt-target-ms"], "150")
+        self.assertEqual(profiles["tp4-ar"]["settings"]["speculative-tokens"], "0")
+        self.assertEqual((profiles["tp4-mtp"]["drafter"], profiles["tp4-mtp"]["status"]), ("mtp", "experimental"))
+
+        pick, _ = self.host_document("models", "pick", "--model", self.checkpoint, "--json",
+                                     schema="chopinfer.models-pick.v1")
+        self.assertEqual((pick["model"], pick["refusal"]), ("fixture", None))
+        [size] = pick["sizes"]
+        self.assertEqual((size["tensor_parallel"], size["pick"], size["refusal"]), (4, "tp4-mtp", None))
+        entries = {entry["name"]: entry for entry in size["profiles"]}
+        self.assertEqual(entries["tp4-mtp"], {"name": "tp4-mtp", "available": True, "arguments": [],
+                                              "inherited_model_options": []})
+        self.assertEqual(set(entries["tp4-ar"]), {"name", "available", "arguments", "inherited_model_options"})
+        self.assertIn("--speculative-tokens", entries["tp4-ar"]["arguments"])
+        self.assertEqual(set(entries["tp4-dflash"]), {"name", "available", "reason"})
+        self.assertFalse(entries["tp4-dflash"]["available"])
+        self.assertIn("drafts with dflash", entries["tp4-dflash"]["reason"])
+        # Over a DFlash pick, the autoregressive profile resets its TBT budget.
+        dflash = self.root / "catalog-dflash-checkpoint"
+        subprocess.run([self.helper, "fixture-source", dflash, "dflash,none"], check=True, timeout=HANG_SECONDS)
+        over, _ = self.host_document("models", "pick", "--model", dflash, "--json", schema="chopinfer.models-pick.v1")
+        entries = {entry["name"]: entry for entry in over["sizes"][0]["profiles"]}
+        self.assertEqual(over["sizes"][0]["pick"], "tp4-dflash")
+        arguments = entries["tp4-ar"]["arguments"]
+        self.assertEqual(arguments[arguments.index("--prefill-budget") + 1], "fixed")
+        self.assertFalse(entries["tp4-mtp"]["available"])
+        refused, _ = self.host_document("models", "pick", "--model", self.root / "no-such-checkpoint", "--json",
+                                        schema="chopinfer.models-pick.v1")
+        self.assertEqual((refused["model"], refused["sizes"]), (None, []))
+        self.assertIn("no-such-checkpoint", refused["refusal"])
+
+        base = ["serve", "--model", str(self.checkpoint), "--tensor-parallel-size", "4"]
+        command, _ = self.host_document("models", "command", "--model", self.checkpoint, "--tensor-parallel-size", "4",
+                                        "--profile", "tp4-mtp", schema="chopinfer.models-command.v1")
+        self.assertEqual(command["arguments"], base)
+        command, _ = self.host_document("models", "command", "--model", self.checkpoint, "--tensor-parallel-size", "4",
+                                        "--profile", "tp4-ar", "--", "--max-sequences", "1", "--prefix-cache", "off",
+                                        schema="chopinfer.models-command.v1")
+        arguments = command["arguments"]
+        self.assertEqual(arguments[:5], base)
+        self.assertEqual(arguments.count("--max-sequences"), 1)
+        self.assertNotIn("--listen", arguments)
+        self.assertNotIn("--devices", arguments)
+        for options, reason in ((["--max-sequences", "1", "--max-sequences", "2"], "given more than once"),
+                                (["--listen", "127.0.0.1:0"], "leaves --listen")):
+            result = self.host_run("models", "command", "--model", self.checkpoint, "--tensor-parallel-size", "4",
+                                   "--profile", "tp4-ar", "--", *options)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(reason, result.stderr)
+        result = self.host_run("models", "command", "--model", self.checkpoint, "--tensor-parallel-size", "4",
+                               "--profile", "tp4-dflash")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("is unavailable", result.stderr)
+
+        # A check of each resolves exactly the settings the catalog lists.
+        cache = self.root / "catalog-cache"
+        for name, options in (("tp4-mtp", base[1:]), ("tp4-ar", command["arguments"][1:])):
+            check, log = self.host_document("serve", *options, "--model-cache-dir", cache, "--check",
+                                            schema="chopinfer.serve-check.v1")
+            self.assertEqual(set(check), {"schema", "profile", "settings", "model_options", "warnings"})
+            self.assertEqual(check["profile"], "tp4-mtp")
+            expected = dict(profiles[name]["settings"])
+            if name == "tp4-ar":
+                expected.update({"max-sequences": "1", "prefix-cache": "off"})
+            self.assertEqual(check["settings"], expected)
+            self.assertEqual(check["model_options"], [])
+            self.assertNotIn("startup module load:", log)
+            self.assertNotIn("startup readiness:", log)
+
+    def test_a_check_reports_model_options_and_their_defaults(self):
+        checkpoint = self.copy_checkpoint("check-options-checkpoint")
+        config = json.loads((checkpoint / "config.json").read_text())
+        config["scratch_multiplier"] = 1
+        (checkpoint / "config.json").write_text(json.dumps(config))
+        cache = self.root / "check-cache"
+        check, _ = self.host_document("serve", "--model", checkpoint, "--model-cache-dir", cache,
+                                      "--tensor-parallel-size", "4", "--check", schema="chopinfer.serve-check.v1")
+        self.assertEqual(check["model_options"], [{"name": "scratch_multiplier", "value": "1", "default": "1",
+                                                   "default_is_qualified": False}])
+        self.assertTrue(any("scratch_multiplier" in warning for warning in check["warnings"]), check["warnings"])
+        check, _ = self.host_document("serve", "--model", checkpoint, "--model-cache-dir", cache, "--check",
+                                      "--model-option", "scratch_multiplier=2", "--max-sequences", "2",
+                                      schema="chopinfer.serve-check.v1")
+        self.assertEqual(check["model_options"][0]["value"], "2")
+        self.assertEqual(check["settings"]["max-sequences"], "2")
+
+    def refusal_message(self, stderr):
+        # The host's refusal is its last report: the program name and the
+        # message, with the usage text a usage error carries.
+        text = "\n" + stderr
+        at = text.rfind("\nchopinfer: ")
+        self.assertGreaterEqual(at, 0, stderr)
+        return text[at + 1:]
+
+    def test_a_check_refuses_what_serving_refuses_with_the_same_message(self):
+        checkpoint = self.copy_checkpoint("parity-checkpoint")
+        config = json.loads((checkpoint / "config.json").read_text())
+        config["scratch_multiplier"] = 1
+        (checkpoint / "config.json").write_text(json.dumps(config))
+        cache = self.root / "parity-cache"
+        directory_file = self.root / "parity-not-a-directory"
+        directory_file.write_text("")
+        malformed = self.root / "parity-malformed-tokens.json"
+        malformed.write_text("{")
+        empty = self.root / "parity-empty-tokens.json"
+        empty.write_text('{"sequences": []}')
+        # One invocation per check a check runs that the fixture can reach:
+        # the preparation path's, the shared preflight's, and each check made
+        # after the native module opens that needs neither it nor a device.
+        cases = [
+            ([], {"CHOPINFER_DEBUG_REFERENCE_TOKENS": "unused"}, "CHOPINFER_DEBUG_REFERENCE_TOKENS"),
+            (["--max-tokenizer-input-bytes", "0"], {}, "invalid token or batch bound"),
+            (["--queue-depth", "18446744073709551615"], {}, "--queue-depth exceeds"),
+            (["--kv-cache-dtype", "fp8"], {}, "declares no fp8 KV layout"),
+            (["--speculative-tokens", "4"], {}, "exceeds the bundle maximum"),
+            (["--speculative-rows", "2"], {}, "--speculative-rows must exceed"),
+            (["--speculation-graph-rows", "4"], {}, "verify_graph_rows"),
+            (["--model-option", "scratch_multiplier=5"], {}, "allowed range"),
+            (["--context-parallel-size", "3"], {}, "--context-parallel-size 3"),
+            (["--allowed-local-media-path", str(self.root / "parity-missing")], {}, "cannot be resolved"),
+            (["--allowed-local-media-path", str(directory_file)], {}, "must name a directory"),
+            (["--max-batch-tokens", "8", "--prefill-chunk-tokens", "16"], {}, "exceeds the effective batch budget"),
+            ([], {"CHOPINFER_BATCH_REFUSAL_MAX_CONSECUTIVE": "many"}, "CHOPINFER_BATCH_REFUSAL_MAX_CONSECUTIVE"),
+            # What the generation worker refuses as it starts.
+            ([], {"CHOPINFER_NVTX_RANGES": "1"}, "requires the profiling preload helper"),
+            (["--debug-reference-tokens", str(self.root / "parity-missing-tokens.json")], {}, "cannot read"),
+            (["--debug-reference-tokens", str(malformed)], {}, "invalid reference token file"),
+            (["--debug-reference-tokens", str(empty)], {}, "needs nonempty sequences"),
+        ]
+        base = [self.host, "serve", "--model", checkpoint, "--model-cache-dir", cache, "--tensor-parallel-size", "4",
+                "--listen", "127.0.0.1:0", "--fake-host-services"]
+
+        def agree(base, options, variables, reason):
+            environment = dict(self.environment, **variables)
+            check = subprocess.run([*base, *options, "--check"], env=environment, text=True, capture_output=True,
+                                   timeout=HANG_SECONDS)
+            served = subprocess.run([*base, *options], env=environment, text=True, capture_output=True,
+                                    timeout=HANG_SECONDS)
+            for result in (check, served):
+                self.assertNotEqual(result.returncode, 0, (options, variables, result.stderr))
+                self.assertNotIn('"status":"listening"', result.stdout)
+            self.assertEqual(check.stdout, "")
+            self.assertNotIn("startup module load:", check.stderr)
+            message = self.refusal_message(check.stderr)
+            self.assertIn(reason, message)
+            self.assertEqual(message, self.refusal_message(served.stderr), (options, variables))
+
+        for options, variables, reason in cases:
+            agree(base, options, variables, reason)
+        # A package served by --bundle reads the warmup switch only as its
+        # transport starts; serve --model reads it before package work.
+        prepared = subprocess.run([*base, "--check"], env=self.environment, text=True, capture_output=True,
+                                  timeout=HANG_SECONDS)
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        package = next(json.loads(line.split(": ", 1)[1]) for line in prepared.stderr.splitlines()
+                       if line.startswith("startup direct_package: "))
+        bundle = [self.host, "serve", "--bundle", package["bundle"], "--checkpoint", checkpoint,
+                  "--listen", "127.0.0.1:0", "--fake-host-services"]
+        for options, variables, reason in (
+                ([], {"CHOPINFER_DEV_SKIP_WARMUP": "2"}, "CHOPINFER_DEV_SKIP_WARMUP must be 0 or 1"),
+                (["--debug-reference-tokens", str(empty)], {}, "needs nonempty sequences")):
+            agree(bundle, options, variables, reason)
+
+        def edited(name, edit):
+            # A copy of the package whose manifest says what `edit` makes it say.
+            target = self.root / name
+            shutil.copytree(package["bundle"], target)
+            manifest = json.loads((target / "manifest.json").read_text())
+            edit(manifest)
+            (target / "manifest.json").write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":"),
+                                                             ensure_ascii=False))
+            return [self.host, "serve", "--bundle", target, "--checkpoint", checkpoint, "--listen", "127.0.0.1:0"]
+
+        def requiring(*capabilities):
+            def edit(manifest):
+                required = manifest["resource_requirements"]["required_capabilities"]
+                required.extend(capabilities)
+                required.sort()
+            return edit
+
+        # An operation this host cannot resolve for its architecture is refused
+        # before the module is mapped.
+        def elsewhere(manifest):
+            manifest["target"]["architectures"] = sorted(manifest["target"]["architectures"] + ["sm_90"])
+            for implementation in manifest["implementations"]:
+                implementation["detail"]["target_architecture"] = "sm_90"
+        agree(edited("parity-elsewhere", elsewhere), ["--fake-host-services"], {},
+              "this host cannot run the selected bundle's operation")
+
+        # What prefix caching needs of the package beside the module's
+        # callbacks: request state for a state-slot restore, and copy-on-write
+        # batch records, which a package without media, prompt rows or a
+        # drafter does not read.
+        def without(*capabilities):
+            def edit(manifest):
+                required = manifest["resource_requirements"]["required_capabilities"]
+                required[:] = [name for name in required if name not in capabilities]
+                if "chop.speculative.v1" in capabilities:
+                    del manifest["speculation"]
+            return edit
+
+        def both(*edits):
+            def edit(manifest):
+                for each in edits:
+                    each(manifest)
+            return edit
+        slot = "chop.prefix-cache.state-slot.v1"
+        slot_reason = f"the selected bundle requires {slot} without a prefix cache and request state"
+        for name, edit, reason in (
+                ("parity-slot-without-prefix-cache", both(without("chop.prefix-cache.v1"), requiring(slot)),
+                 slot_reason),
+                ("parity-slot-without-state", requiring(slot), slot_reason),
+                ("parity-first-batch-records",
+                 without("chop.media-inputs.v1", "chop.prompt-rows.v2", "chop.speculative.v1"),
+                 "requires prefix caching without request retirement and copy-on-write batch records")):
+            agree(edited(name, edit), ["--fake-host-services"], {}, reason)
+        # What the instance's configuration refuses before the module plans or
+        # creates anything: planned images without a checkpoint, and
+        # capabilities without the limits they serve with.
+        agree([self.host, "serve", "--bundle", package["bundle"], "--listen", "127.0.0.1:0", "--fake-host-services"],
+              [], {}, "serve it with --checkpoint DIR")
+        for name, capabilities, reason in (
+                ("parity-per-item-state", ["chop.state-per-item.v1", "chop.served-items.v1"],
+                 "per-item state requires bundle batch limits"),
+                ("parity-served-context", ["chop.served-context.v1"],
+                 "served context requires served items and batch limits")):
+            agree(edited(name, requiring(*capabilities)), ["--fake-host-services"], {}, reason)
+        # What the build and the backend decide: host-memory services have one
+        # device per rank and no device sampler, and this build, which links no
+        # device driver, serves a package on host memory of a fixed size.
+        reference = self.root / "parity-reference-tokens.json"
+        reference.write_text('{"sequences": [[1, 2]]}')
+        for invocation in (base, bundle):
+            agree(invocation, ["--devices", "4,5,6,7"], {}, "--devices ordinal 4 for rank 0 is out of range")
+        agree(base, ["--debug-reference-tokens", str(reference)], {}, "which these services lack")
+
+        def large(manifest):
+            manifest["resource_requirements"]["minimum_device_memory_bytes"] = 2 << 30
+        agree(edited("parity-large", large), [], {}, "this chopinfer build links no device driver")
+        # A context past what one sequence holds is refused without a device;
+        # serving names the capacity its devices acquired, which only a start
+        # can know, so the messages agree up to that capacity.
+        options = ["--max-context-tokens", "100000000"]
+        check = subprocess.run([*base, *options, "--check"], env=self.environment, text=True, capture_output=True,
+                               timeout=HANG_SECONDS)
+        served = subprocess.run([*base, *options], env=self.environment, text=True, capture_output=True,
+                                timeout=HANG_SECONDS)
+        self.assertNotEqual(check.returncode, 0)
+        self.assertNotEqual(served.returncode, 0)
+        self.assertNotIn("startup module load:", check.stderr)
+        common = "chopinfer: the requested context of 100000000 token(s) exceeds the "
+        self.assertTrue(self.refusal_message(check.stderr).startswith(common), check.stderr)
+        self.assertTrue(self.refusal_message(served.stderr).startswith(common), served.stderr)
+
     def test_discovery_refuses_unsafe_missing_and_ambiguous_providers(self):
         for scenario in ["missing", "ambiguous", "writable", "symlink"]:
             install = self.root / scenario

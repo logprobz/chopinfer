@@ -120,6 +120,9 @@ impl prep::helper::Provider for Family {
     fn profiles(&self) -> Vec<String> {
         vec!["fixture-tp4".into()]
     }
+    fn serving_profiles(&self) -> Option<&str> {
+        Some(PROFILES)
+    }
     fn probe(&self, path: &Path, ranks: u32) -> Result<()> {
         self.open(path, ranks)
     }

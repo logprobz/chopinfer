@@ -35,6 +35,17 @@ impl KvCacheDtypeV1 {
             _ => None,
         }
     }
+
+    /// The `--kv-cache-dtype` value that selects it.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Bf16 => "bf16",
+            Self::Fp8 => "fp8",
+            Self::Mixed => "mixed",
+        }
+    }
 }
 
 /// The serving KV layout resolved for one manifest at startup.

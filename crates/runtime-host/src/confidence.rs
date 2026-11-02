@@ -62,6 +62,26 @@ impl VerifyConfidence {
         self.allocation.positions()
     }
 
+    /// The calibration as `--speculation-confidence` takes it, which parses
+    /// back to the same one.
+    pub(crate) fn text(&self) -> String {
+        let pairs = |kind| {
+            (0..self.positions())
+                .map(|position| {
+                    let (scale, offset) = self.allocation.pair(kind, position);
+                    [scale, offset]
+                })
+                .collect()
+        };
+        serde_json::to_string(&Calibration {
+            contract: self.contract.clone(),
+            floor: self.allocation.floor(),
+            greedy: pairs(runtime_engine::AllocationKind::Greedy),
+            sampled: pairs(runtime_engine::AllocationKind::Sampled),
+        })
+        .expect("a calibration serializes")
+    }
+
     /// The allocation serving uses with `manifest`, or why it serves without
     /// one: the package must draft, allocate verify drafts, and name this
     /// calibration's confidence contract, with device results selected.
@@ -131,7 +151,8 @@ mod tests {
                 .pair(runtime_engine::AllocationKind::Sampled, 1),
             (2.0, -1.0)
         );
-        assert_eq!(calibration().check(), Ok(checked));
+        assert_eq!(calibration().check(), Ok(checked.clone()));
+        assert_eq!(parse(&checked.text()), Ok(Some(checked)));
     }
 
     #[test]

@@ -266,6 +266,11 @@ impl Provider for DeepSeek41Family {
     fn name(&self) -> &str {
         "chopinfer-model-deepseek41"
     }
+    /// The flash geometry's profiles; `profile` names the one a
+    /// checkpoint of another geometry serves.
+    fn serving_profiles(&self) -> Option<&str> {
+        Some(PROFILES)
+    }
     fn profiles(&self) -> Vec<String> {
         let file: serde_json::Value =
             serde_json::from_str(PROFILES).expect("the serving profiles parse");

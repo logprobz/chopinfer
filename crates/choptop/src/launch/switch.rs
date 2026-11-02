@@ -11,7 +11,7 @@ use super::placement::{Dependency, Placement};
 use super::process::{Identity, stamp};
 use super::records::Record;
 use super::{Queued, Reservation, Wait, indices, reserved};
-use crate::catalog::{Catalog, Check, Profile};
+use crate::catalog::{Catalog, Check, Profile, ServeOptions, Shape};
 use crate::loader::Start;
 
 /// What changed between the placement a start was confirmed or checked
@@ -85,14 +85,21 @@ pub fn changed(before: &Placement, after: &Placement, reservations: &[Reservatio
     changes
 }
 
-/// Two values the same: equal text, or equal numbers.
-fn same(left: &str, right: &str) -> bool {
-    let (left, right) = (left.trim(), right.trim());
-    left == right
-        || matches!(
-            (left.parse::<f64>(), right.parse::<f64>()),
-            (Ok(left), Ok(right)) if left == right
-        )
+/// Two values the same: equal text. An option `serve --describe-options`
+/// gives as `N` compares as a whole number, exactly, and one it gives as
+/// `F` as a number, so `1` is `1.0`.
+fn same(left: &str, right: &str, shape: Option<Shape>) -> bool {
+    match shape {
+        Some(Shape::Count) => match (left.parse::<i128>(), right.parse::<i128>()) {
+            (Ok(left), Ok(right)) => left == right,
+            _ => left == right,
+        },
+        Some(Shape::Number) => match (left.parse::<f64>(), right.parse::<f64>()) {
+            (Ok(left), Ok(right)) => left == right,
+            _ => left == right,
+        },
+        _ => left == right,
+    }
 }
 
 /// The settings and model options the profile and the form say, by name:
@@ -144,19 +151,29 @@ fn expected(
 /// Where `serve --check` resolves other values than the profile and the
 /// form say, each named. Only the settings both sides govern are compared:
 /// a key on one side only is not governed there.
-pub fn differences(check: &Check, profile: &Profile, start: &Start) -> Vec<String> {
+pub fn differences(
+    check: &Check,
+    profile: &Profile,
+    start: &Start,
+    serve: Option<&ServeOptions>,
+) -> Vec<String> {
     let (settings, options) = expected(profile, start);
+    let shape = |name: &str| {
+        serve
+            .and_then(|serve| serve.option(name))
+            .map(|option| option.shape)
+    };
     let mut differences = Vec::new();
     for (name, value) in &check.settings {
         if let Some(wanted) = settings.get(name)
-            && !same(value, wanted)
+            && !same(value, wanted, shape(name))
         {
             differences.push(format!("--{name} resolves to {value}, not {wanted}"));
         }
     }
     for option in &check.model_options {
         if let Some(wanted) = options.get(&option.name)
-            && !same(&option.value, wanted)
+            && !same(&option.value, wanted, None)
         {
             differences.push(format!(
                 "model option {} resolves to {}, not {wanted}",
@@ -656,5 +673,80 @@ mod tests {
         // dropping what it waits for.
         let refused = replacing_nine(&[reservation(7, "launch A")]).unwrap_err();
         assert!(refused.contains("has ended"), "{refused}");
+    }
+
+    #[test]
+    fn values_compare_as_text_unless_their_option_is_a_number() {
+        let serve = ServeOptions::parse(include_str!(
+            "../../tests/fixtures/contracts/serve-options.json"
+        ))
+        .unwrap();
+        let mut profile = Profile::unlisted("tp2-mtp", 2);
+        profile.settings = [
+            ("max-sequences", "32"),
+            ("gpu-memory-utilization", "0.9"),
+            ("prefill-budget", "tbt"),
+            ("decode-tbt-target-ms", "750"),
+        ]
+        .into_iter()
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        .collect();
+        profile.model_options = [("verify_graph_rows".to_owned(), "64".to_owned())].into();
+        let start = Start {
+            model: "qwen38".into(),
+            profile: "tp2-mtp".into(),
+            placement: Placement::default(),
+            command: Vec::new(),
+            explicit: command::Explicit::default(),
+            choice: crate::loader::Choice {
+                edits: [
+                    (Key::Flag("max-sequences".into()), "9007199254740992".into()),
+                    (Key::Flag("gpu-memory-utilization".into()), "1".into()),
+                ]
+                .into(),
+                ..crate::loader::Choice::default()
+            },
+        };
+        let check = Check {
+            profile: "tp2-mtp".into(),
+            settings: [
+                // f64 holds these two as one number; N compares them exactly.
+                ("max-sequences", "9007199254740993"),
+                // F compares as numbers.
+                ("gpu-memory-utilization", "1.0"),
+                // Neither is N or F here, so they compare as text.
+                ("prefill-budget", "TBT"),
+                ("decode-tbt-target-ms", "750.0"),
+            ]
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .collect(),
+            model_options: vec![crate::catalog::CheckedOption {
+                name: "verify_graph_rows".into(),
+                value: "64.0".into(),
+                default: "64".into(),
+                default_is_qualified: true,
+            }],
+            warnings: Vec::new(),
+        };
+        assert_eq!(
+            differences(&check, &profile, &start, Some(&serve)),
+            [
+                "--decode-tbt-target-ms resolves to 750.0, not 750",
+                "--max-sequences resolves to 9007199254740993, not 9007199254740992",
+                "--prefill-budget resolves to TBT, not tbt",
+                "model option verify_graph_rows resolves to 64.0, not 64",
+            ]
+        );
+        // A whole number written another way is the same number.
+        let mut padded = check.clone();
+        padded
+            .settings
+            .insert("max-sequences".into(), "+9007199254740992".into());
+        assert!(
+            !differences(&padded, &profile, &start, Some(&serve))
+                .iter()
+                .any(|difference| difference.starts_with("--max-sequences"))
+        );
     }
 }

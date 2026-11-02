@@ -466,7 +466,7 @@ impl App {
         let Some(profile) = self.catalog.profile(&start.model, &start.profile) else {
             return self.refuse_start(&format!("profile {} is gone", start.profile));
         };
-        let differences = switch::differences(&check, profile, &start);
+        let differences = switch::differences(&check, profile, &start, self.catalog.options());
         if !differences.is_empty() {
             return self.refuse_start(&format!(
                 "serve --check resolves what the profile and form do not say: {}",

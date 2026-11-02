@@ -6,6 +6,7 @@ use std::env;
 use std::io::IsTerminal;
 use std::process::ExitCode;
 
+use choptop::catalog::{self, Checkpoints};
 use choptop::cli::{self, Options, USAGE};
 use choptop::discover::Discovery;
 use choptop::discover::docker::DockerScanner;
@@ -94,6 +95,18 @@ fn main() -> ExitCode {
         sources,
         gpus: options.gpus,
         gpu_counters: options.gpu_counters,
+        chopinfer: catalog::find_binary(
+            options.chopinfer.as_deref(),
+            env::var_os("PATH").as_deref(),
+        ),
+        checkpoints: Checkpoints::load(
+            catalog::checkpoints_path(env::var_os("XDG_CONFIG_HOME"), env::var_os("HOME")),
+            catalog::checkpoint_variables(env::vars()),
+        ),
+        environment: env::vars()
+            .filter(|(name, _)| name.starts_with("CHOPINFER_"))
+            .collect(),
+        logs: logs_shown(),
     };
     match tui::run(setup) {
         Ok(()) => ExitCode::SUCCESS,
@@ -101,6 +114,24 @@ fn main() -> ExitCode {
             eprintln!("choptop: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Where launch logs go, `~` for the home directory: under
+/// `$XDG_STATE_HOME/choptop`, else `~/.local/state/choptop`.
+fn logs_shown() -> String {
+    let home = env::var("HOME").ok().filter(|home| home.starts_with('/'));
+    let state = env::var("XDG_STATE_HOME")
+        .ok()
+        .filter(|state| state.starts_with('/'));
+    let path = match (&state, &home) {
+        (Some(state), _) => format!("{state}/choptop/logs"),
+        (None, Some(home)) => format!("{home}/.local/state/choptop/logs"),
+        (None, None) => return "~/.local/state/choptop/logs".to_owned(),
+    };
+    match &home {
+        Some(home) if path.starts_with(&format!("{home}/")) => format!("~{}", &path[home.len()..]),
+        _ => path,
     }
 }
 

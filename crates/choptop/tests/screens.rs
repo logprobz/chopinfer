@@ -1,10 +1,11 @@
-//! The list, detail and monitor views, rendered from a fixed fleet and
-//! fixed host and GPU readings and compared with golden screens in
-//! `tests/screens/`.
+//! The list, detail, monitor and loader views, rendered from a fixed fleet,
+//! fixed host and GPU readings and a fixed catalog, and compared with
+//! golden screens in `tests/screens/`.
 
 use std::path::{Path, PathBuf};
 
 use choptop::app::{App, View};
+use choptop::catalog::{Catalog, Checkpoints, Models, Pick, Reply, Request, ServeOptions};
 use choptop::discover::Found;
 use choptop::discover::docker::ServeContainer;
 use choptop::discover::proc::ServeProcess;
@@ -16,6 +17,8 @@ use choptop::host::{
     self, Chip, Cpu, Filesystem, Host, Load, Memory, Pressure, Quantity, Rapl, Rates, Sensor,
 };
 use choptop::instances::Registry;
+use choptop::launch::command::Key;
+use choptop::loader::{Choice, Recent};
 use choptop::poll::{Answer, Poll};
 use choptop::prometheus::Histogram;
 use choptop::stats::{Counters, Gauges, Histograms, Snapshot};
@@ -627,14 +630,13 @@ fn with_monitor(app: &mut App, counters: bool, machine: Option<Machine>) {
         gpm: true,
         unreadable: None,
     };
-    gpus.apply(
-        Report::Opened {
-            driver: Some("615.71.09".to_owned()),
-            devices: (0..4).map(device).collect(),
-        },
-        &mut app.registry,
-        0.0,
-    );
+    let opened = Report::Opened {
+        driver: Some("615.71.09".to_owned()),
+        devices: (0..4).map(device).collect(),
+    };
+    // The loader reads the same reports as they arrive.
+    app.live.gpu(&opened);
+    gpus.apply(opened, &mut app.registry, 0.0);
     let process = |pid, memory, kind, ticks, name: &str| Process {
         pid,
         memory: Some(memory),
@@ -702,11 +704,9 @@ fn with_monitor(app: &mut App, counters: bool, machine: Option<Machine>) {
                 answered: true,
             }
         };
-        gpus.apply(
-            Report::Polled((0..4).map(reading).collect()),
-            &mut app.registry,
-            t,
-        );
+        let polled = Report::Polled((0..4).map(reading).collect());
+        app.live.gpu(&polled);
+        gpus.apply(polled, &mut app.registry, t);
         if let Some(machine) = machine {
             host.apply(
                 HostReport::Polled {
@@ -791,6 +791,194 @@ fn check(name: &str, app: &App, width: u16, height: u16) {
             actual.display()
         );
     }
+}
+
+fn press(app: &mut App, code: crossterm::event::KeyCode) {
+    app.key(crossterm::event::KeyEvent::new(
+        code,
+        crossterm::event::KeyModifiers::NONE,
+    ));
+}
+
+fn loader_fixture(name: &str) -> String {
+    std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/loader")
+            .join(name),
+    )
+    .unwrap()
+}
+
+/// The fleet's GPUs with the loader opened on MiMo (process 48211 on all
+/// four), the catalog read from `tests/fixtures/loader`, checkpoints for
+/// Qwen, MiMo and DeepSeek, and two recent launches.
+fn loader() -> App {
+    use crossterm::event::KeyCode;
+    let mut app = fleet();
+    with_gpus(&mut app, false);
+    // The loading Qwen process has gone; the scan the loader reads is the
+    // rest.
+    let found = app
+        .registry
+        .instances
+        .iter()
+        .filter_map(|instance| match &instance.source {
+            choptop::instances::Source::Process {
+                pid: 48211,
+                start_ticks,
+            } => Some(Found::Process(ServeProcess {
+                pid: 48211,
+                start_ticks: *start_ticks,
+                executable: "chopinfer".to_owned(),
+                arguments: instance.arguments.clone(),
+                model_hint: instance.model_hint.clone(),
+                age: Some(11_520.0),
+                listening: vec!["127.0.0.1:8311".parse().unwrap()],
+                cuda_visible_devices: None,
+            })),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    app.live.scan(&choptop::discover::Report::Scan {
+        found,
+        events: Vec::new(),
+    });
+    app.probe = |_, _| true;
+    let checkpoints = Checkpoints::load(
+        None,
+        [
+            ("CHOPINFER_DEEPSEEK_CHECKPOINT", "/models/deepseek"),
+            ("CHOPINFER_MIMO_CHECKPOINT", "/models/mimo"),
+            ("CHOPINFER_QWEN38_CHECKPOINT", "/models/qwen"),
+        ]
+        .into_iter()
+        .map(|(name, directory)| (name.to_owned(), PathBuf::from(directory)))
+        .collect(),
+    );
+    app.catalog = Catalog::new(Ok("/opt/chopinfer/bin/chopinfer".into()), checkpoints);
+    let recent = |label: &str, when: &str, model: &str, profile: &str, set: usize| Recent {
+        label: label.to_owned(),
+        when: when.to_owned(),
+        choice: Choice {
+            model: model.to_owned(),
+            profile: profile.to_owned(),
+            gpus: (0..4).collect(),
+            edits: (0..set)
+                .map(|_| (Key::Flag("max-sequences".to_owned()), "48".to_owned()))
+                .collect(),
+            custom: Vec::new(),
+        },
+    };
+    app.loader.recent = vec![
+        recent(
+            "DeepSeek tp4-dspark",
+            "yesterday",
+            "deepseek41",
+            "tp4-dspark",
+            0,
+        ),
+        recent("Qwen tp2-mtp x2", "3d ago", "qwen38", "tp2-mtp", 1),
+    ];
+    press(&mut app, KeyCode::Char('l'));
+    assert_eq!(app.view, View::Loader);
+    app.catalog_reply(Reply::Options(ServeOptions::parse(&loader_fixture(
+        "serve-options.json",
+    ))));
+    app.catalog_reply(Reply::Models(Models::parse(&loader_fixture("models.json"))));
+    for (directory, file) in [
+        ("/models/deepseek", "pick-deepseek.json"),
+        ("/models/mimo", "pick-mimo.json"),
+        ("/models/qwen", "pick-qwen.json"),
+    ] {
+        app.catalog_reply(Reply::Pick(
+            directory.into(),
+            Pick::parse(&loader_fixture(file)),
+        ));
+    }
+    app.catalog.outbox.clear();
+    app.tick(NOW);
+    app
+}
+
+/// Answers the loader's requests as chopinfer would: no package options,
+/// and the command line the form's options make.
+fn answer_loader(app: &mut App) {
+    app.tick(NOW);
+    for request in std::mem::take(&mut app.catalog.outbox) {
+        match request {
+            Request::PackageOptions { generation, .. } => {
+                app.catalog_reply(Reply::PackageOptions(generation, Ok(Vec::new())));
+            }
+            Request::Command {
+                generation,
+                checkpoint,
+                tensor_parallel,
+                options,
+                ..
+            } => {
+                let mut arguments = vec![
+                    "serve".to_owned(),
+                    "--model".to_owned(),
+                    checkpoint.display().to_string(),
+                    "--tensor-parallel-size".to_owned(),
+                    tensor_parallel.to_string(),
+                ];
+                arguments.extend(options);
+                app.catalog_reply(Reply::Command(generation, Ok(arguments)));
+            }
+            _ => {}
+        }
+    }
+    app.tick(NOW);
+}
+
+/// Qwen as two TP2 instances on MiMo's GPUs, with the sequence cap set.
+fn qwen_tp2() -> App {
+    use crossterm::event::KeyCode;
+    let mut app = loader();
+    press(&mut app, KeyCode::Tab);
+    for _ in 0..4 {
+        press(&mut app, KeyCode::Down);
+    }
+    press(&mut app, KeyCode::Tab);
+    press(&mut app, KeyCode::Tab);
+    for _ in 0..7 {
+        press(&mut app, KeyCode::Down);
+    }
+    // The edit starts from the profile's 32.
+    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::Backspace);
+    press(&mut app, KeyCode::Backspace);
+    for key in ['4', '8'] {
+        press(&mut app, KeyCode::Char(key));
+    }
+    press(&mut app, KeyCode::Enter);
+    answer_loader(&mut app);
+    app
+}
+
+#[test]
+fn loader_view() {
+    use crossterm::event::KeyCode;
+    let mut app = qwen_tp2();
+    assert_eq!(app.loader.profile.as_deref(), Some("tp2-mtp"));
+    assert_eq!(
+        app.loader.edits.get(&Key::Flag("max-sequences".to_owned())),
+        Some(&"48".to_owned())
+    );
+    assert!(
+        app.loader.plan.problems.is_empty(),
+        "{:?}",
+        app.loader.plan.problems
+    );
+    app.settle(132, 38);
+    check("loader-132x38", &app, 132, 38);
+    // Below 110 columns the focused pane fills the space.
+    app.settle(100, 30);
+    check("loader-100x30", &app, 100, 30);
+    press(&mut app, KeyCode::BackTab);
+    app.settle(80, 24);
+    check("loader-80x24", &app, 80, 24);
 }
 
 #[test]
@@ -1114,9 +1302,15 @@ fn text_on_the_header_and_footer_bars_is_not_their_color() {
     use choptop::ui::buffer::Color;
     let mut app = fleet();
     with_gpus(&mut app, true);
-    for view in [View::List, View::Detail, View::Monitor] {
+    let loader = qwen_tp2();
+    for view in [View::List, View::Detail, View::Monitor, View::Loader] {
         app.view = view;
-        let frame = ui::draw(&app, 132, 38, NOW);
+        let frame = ui::draw(
+            if view == View::Loader { &loader } else { &app },
+            132,
+            38,
+            NOW,
+        );
         for y in [0, frame.height - 1] {
             for x in 0..frame.width {
                 let cell = frame.cell(x, y).unwrap();
@@ -1137,9 +1331,15 @@ fn every_size_draws_without_panicking() {
     with_gpus(&mut waiting, true);
     let mut unavailable = monitor(Machine::Hot, true);
     unavailable.gpus = Gpus::new(Status::Unavailable("no driver".to_owned()), true, 1.0);
-    // The host before its first reading, a full one, and one without NVML.
-    for mut app in [waiting, monitor(Machine::Workstation, true), unavailable] {
-        for view in [View::List, View::Detail, View::Monitor] {
+    // The host before its first reading, a full one, one without NVML, and
+    // the loader.
+    for mut app in [
+        waiting,
+        monitor(Machine::Workstation, true),
+        unavailable,
+        qwen_tp2(),
+    ] {
+        for view in [View::List, View::Detail, View::Monitor, View::Loader] {
             app.view = view;
             for help in [false, true] {
                 app.help = help;

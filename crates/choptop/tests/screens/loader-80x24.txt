@@ -1,0 +1,24 @@
+ choptop  >  Load model   replacing proc 48211   4 models  4 GPUs
+
+┌─ Placement  TP2  2 instances ────────────────────────────────────────────────┐
+│▌GPU 0 ■ A  proc 48211 MiMo-V2.6-Flash                                        │
+│ GPU 1 ■ A  proc 48211 MiMo-V2.6-Flash                                        │
+│ GPU 2 ■ B  proc 48211 MiMo-V2.6-Flash                                        │
+│ GPU 3 ■ B  proc 48211 MiMo-V2.6-Flash                                        │
+│ A 127.0.0.1:8310   B 127.0.0.1:8311                                          │
+│ stops proc 48211 first                                                       │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+└─ Tab: Options ───────────────────────────────────────────────────────────────┘
+┌─ Command  2 processes of this user ──────────────────────────────────────────┐
+│ A  CUDA_VISIBLE_DEVICES=0,1 chopinfer serve --model /models/qwen             │
+│      --tensor-parallel-size 2 --max-sequences 48 --listen 127.0.0.1:8310     │
+│ B  CUDA_VISIBLE_DEVICES=2,3 chopinfer serve --model /models/qwen             │
+│      --tensor-parallel-size 2 --max-sequences 48 --listen 127.0.0.1:8311     │
+│ tp2-mtp; 1 set here (white).  Stops proc 48211 first.                        │
+└──────────────────────────────────────────────────────────────────────────────┘
+ Tab pane   ↑↓ jk move   ←→ change   Enter edit   / find   S start   Esc back

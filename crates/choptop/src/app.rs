@@ -1,13 +1,16 @@
 //! The interface state: which view, which instance or GPU, which window,
-//! and what each key does.
+//! the model loader, and what each key does.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
+use crate::catalog::{Catalog, Reply};
 use crate::gpu::Gpus;
 use crate::host::Host;
 use crate::instances::{Instance, Registry};
 use crate::launch::Reservation;
 use crate::launch::occupancy::Live;
+use crate::launch::placement::bind_probe;
+use crate::loader::{Loader, Outcome, Start};
 use crate::stats::Window;
 use crate::ui::list::{TABLE_TOP, first_row, table_rows};
 use crate::ui::monitor;
@@ -21,6 +24,8 @@ pub enum View {
     Detail,
     /// This host: CPU, memory, disks, sensors and GPUs.
     Monitor,
+    /// Starting or switching a model.
+    Loader,
 }
 
 /// What the main loop should do after an input.
@@ -29,6 +34,8 @@ pub enum Action {
     Nothing,
     Redraw,
     Rescan,
+    /// The loader's form passed its checks; [`App::start`] holds the switch.
+    Start,
     Quit,
 }
 
@@ -62,6 +69,18 @@ pub struct App {
     pub live: Live,
     /// choptop's launches that are queued or starting.
     pub reservations: Vec<Reservation>,
+    /// What `chopinfer` said it can serve.
+    pub catalog: Catalog,
+    pub loader: Loader,
+    /// The switch the loader's `S` checked, for the launch to take.
+    pub start: Option<Box<Start>>,
+    /// Where launch logs go, as shown.
+    pub logs: String,
+    /// Whether a port is free to listen on; tests replace the bind probe.
+    pub probe: fn(&str, u16) -> bool,
+    /// The clock at the last [`App::tick`], which stamps the loader's
+    /// messages.
+    clock: f64,
     /// The views Esc returns through, the latest last.
     trail: Vec<View>,
     /// The terminal height at the last [`App::settle`], which clicks are
@@ -94,6 +113,12 @@ impl App {
             gpu_scroll: 0,
             live: Live::default(),
             reservations: Vec::new(),
+            catalog: Catalog::none(),
+            loader: Loader::default(),
+            start: None,
+            logs: "~/.local/state/choptop/logs".to_owned(),
+            probe: bind_probe,
+            clock: 0.0,
             trail: Vec::new(),
             height: 0,
             gpu_table: None,
@@ -140,13 +165,58 @@ impl App {
         self.open(View::Monitor);
     }
 
-    /// Opens the details of the instance on the selected GPU, if any.
-    fn open_gpu_instance(&mut self) -> bool {
-        let row = self
-            .gpus
+    /// The row on the selected GPU, if any.
+    fn gpu_instance(&self) -> Option<u64> {
+        self.gpus
             .processes(self.gpu, &self.registry.instances)
             .into_iter()
-            .find_map(|(_, row)| row);
+            .find_map(|(_, row)| row)
+    }
+
+    /// Opens the model loader on the selected row, or in the monitor the
+    /// selected GPU's: its GPUs are preselected when they are known.
+    fn open_loader(&mut self) {
+        let row = match self.view {
+            View::Monitor => self.gpu_instance(),
+            _ => self.current().map(|row| row.id),
+        };
+        let gpus = row
+            .map(|id| self.gpus.of_instance(&self.registry.instances, id))
+            .filter(|gpus| !gpus.is_empty());
+        let recent = std::mem::take(&mut self.loader.recent);
+        self.loader = Loader::open(gpus, recent);
+        self.catalog.open();
+        self.open(View::Loader);
+    }
+
+    /// Works out the loader's plan from the latest readings at `now`;
+    /// called before each frame.
+    pub fn tick(&mut self, now: f64) {
+        self.clock = now;
+        if self.view == View::Loader {
+            let mut probe = self.probe;
+            self.loader.refresh(
+                &mut self.catalog,
+                &self.live,
+                &self.registry.instances,
+                &self.reservations,
+                self.interval,
+                now,
+                &mut probe,
+            );
+        }
+    }
+
+    /// Takes a reply from `chopinfer`.
+    pub fn catalog_reply(&mut self, reply: Reply) {
+        if let Some(reply) = self.catalog.apply(reply) {
+            self.loader.reply(reply);
+        }
+    }
+
+    /// Opens the details of the instance on the selected GPU, if any.
+    fn open_gpu_instance(&mut self) -> bool {
+        let row = self.gpu_instance();
         match row {
             Some(row) => {
                 self.selected = Some(row);
@@ -179,6 +249,14 @@ impl App {
             .gpu_table
             .map_or(1, |(_, _, _, height)| usize::from(height.saturating_sub(3)));
         self.gpu_scroll = first_row(self.gpu_scroll, self.gpu, shown);
+        if self.view == View::Loader {
+            let shown = crate::ui::loader::layout(width, height, self)
+                .options
+                .map_or(1, |(_, _, _, height)| {
+                    crate::ui::loader::option_rows(height)
+                });
+            self.loader.settle(&self.catalog, shown);
+        }
     }
 
     /// The rows shown, in order.
@@ -226,6 +304,24 @@ impl App {
             self.help = false;
             return Action::Redraw;
         }
+        if self.view == View::Loader {
+            match self.loader.key(event.code, &mut self.catalog, self.clock) {
+                Outcome::Handled => return Action::Redraw,
+                Outcome::Back => {
+                    self.back();
+                    return Action::Redraw;
+                }
+                Outcome::Help => {
+                    self.help = true;
+                    return Action::Redraw;
+                }
+                Outcome::Start(start) => {
+                    self.start = Some(start);
+                    return Action::Start;
+                }
+                Outcome::Unhandled => {}
+            }
+        }
         match (self.view, event.code) {
             (_, KeyCode::Char('q')) => return Action::Quit,
             (_, KeyCode::Char('?')) => self.help = true,
@@ -234,6 +330,7 @@ impl App {
             (_, KeyCode::Char('r')) => return Action::Rescan,
             // g opened the GPU view this replaces.
             (_, KeyCode::Char('m' | 'g')) => self.toggle_monitor(),
+            (View::List | View::Detail | View::Monitor, KeyCode::Char('l')) => self.open_loader(),
             (View::List, KeyCode::Down | KeyCode::Char('j')) => self.step(true, false),
             (View::List, KeyCode::Up | KeyCode::Char('k')) => self.step(false, false),
             (View::List, KeyCode::Enter) => {
@@ -253,7 +350,7 @@ impl App {
                     return Action::Nothing;
                 }
             }
-            (View::Detail, KeyCode::Right | KeyCode::Tab | KeyCode::Char('l')) => {
+            (View::Detail, KeyCode::Right | KeyCode::Tab) => {
                 self.step(true, true);
             }
             (View::Detail, KeyCode::Left | KeyCode::BackTab) => self.step(false, true),
@@ -266,7 +363,7 @@ impl App {
     /// within half a second opens it, or the GPU's instance. A GPU row is
     /// clicked only between the table's borders, not beside it.
     pub fn mouse(&mut self, event: MouseEvent, now: f64) -> Action {
-        if self.view == View::Detail
+        if matches!(self.view, View::Detail | View::Loader)
             || self.help
             || event.kind != MouseEventKind::Down(MouseButton::Left)
         {
@@ -507,6 +604,75 @@ mod tests {
         assert_eq!(app.gpu, 0);
         assert_eq!(app.mouse(click(150, 8), 4.0), Action::Redraw);
         assert_eq!(app.gpu, 1);
+    }
+
+    #[test]
+    fn l_opens_the_loader_from_every_view_and_esc_returns() {
+        let mut app = app(3);
+        with_gpus(&mut app, 2);
+        assert_eq!(press(&mut app, KeyCode::Char('l')), Action::Redraw);
+        assert_eq!(app.view, View::Loader);
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.view, View::List);
+        // In the details, l opens the loader; Tab and → still step.
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.selected_index(), 1);
+        press(&mut app, KeyCode::Char('l'));
+        assert_eq!((app.view, app.selected_index()), (View::Loader, 1));
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.view, View::Detail);
+        press(&mut app, KeyCode::Char('m'));
+        press(&mut app, KeyCode::Char('l'));
+        assert_eq!(app.view, View::Loader);
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.view, View::Monitor);
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.view, View::List);
+    }
+
+    #[test]
+    fn the_loader_takes_its_keys_and_leaves_the_rest() {
+        use crate::loader::Pane;
+        let mut app = app(1);
+        press(&mut app, KeyCode::Char('l'));
+        app.tick(1.0);
+        // Tab moves between panes instead of instances.
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.loader.pane, Pane::Profiles);
+        press(&mut app, KeyCode::BackTab);
+        assert_eq!(app.loader.pane, Pane::Models);
+        // ? opens help, which any key closes.
+        press(&mut app, KeyCode::Char('?'));
+        assert!(app.help);
+        press(&mut app, KeyCode::Char('j'));
+        assert!(!app.help);
+        // / finds; while finding, q is text.
+        press(&mut app, KeyCode::Char('/'));
+        assert_eq!(press(&mut app, KeyCode::Char('q')), Action::Redraw);
+        assert_eq!(app.loader.find, "q");
+        press(&mut app, KeyCode::Esc);
+        // Without chopinfer, S says why it cannot start.
+        assert_eq!(press(&mut app, KeyCode::Char('S')), Action::Redraw);
+        let flash = app.loader.flash.clone().unwrap();
+        assert!(
+            flash.text.starts_with("Not started: chopinfer"),
+            "{}",
+            flash.text
+        );
+        assert!(app.start.is_none());
+        // Keys the loader leaves alone keep their meaning.
+        press(&mut app, KeyCode::Char('p'));
+        assert!(app.paused);
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 10,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert_eq!(app.mouse(click, 1.0), Action::Nothing);
+        assert_eq!(press(&mut app, KeyCode::Char('q')), Action::Quit);
     }
 
     #[test]

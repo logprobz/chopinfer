@@ -1640,9 +1640,28 @@ mod tests {
              esac\n",
             fixtures.display()
         );
-        fs::write(&script, text).unwrap();
-        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        write_script(&script, &text);
         script
+    }
+
+    /// Writes an executable script from another process. Written from
+    /// here, a child another test forks meanwhile could hold it open for
+    /// writing, and running it would fail with "Text file busy".
+    fn write_script(path: &Path, text: &str) {
+        use std::io::Write;
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "cat > \"$0\" && chmod 755 \"$0\""])
+            .arg(path)
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(text.as_bytes())
+            .unwrap();
+        assert!(child.wait().unwrap().success());
     }
 
     #[test]
@@ -1712,8 +1731,7 @@ mod tests {
     fn a_command_that_hangs_is_ended() {
         let root = scratch("hang");
         let script = root.join("chopinfer");
-        fs::write(&script, "#!/bin/sh\nexec sleep 30\n").unwrap();
-        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        write_script(&script, "#!/bin/sh\nexec sleep 30\n");
         let started = Instant::now();
         let error = run(&script, &[], &[], Duration::from_millis(200)).unwrap_err();
         assert!(error.contains("no answer within"), "{error}");

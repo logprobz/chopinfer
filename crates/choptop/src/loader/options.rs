@@ -519,7 +519,7 @@ impl Context<'_> {
                     let profile = self.profile?;
                     Some(match profile.qualified_max_sequences {
                         Some(qualified) => format!("evidence through {qualified}"),
-                        None => "experimental".to_owned(),
+                        None => profile.status.clone(),
                     })
                 }
                 "graph-memory-reserve-mib" => Some("MiB per rank".to_owned()),

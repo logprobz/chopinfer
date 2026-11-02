@@ -257,7 +257,14 @@ impl Loader {
     }
 
     pub fn profile<'a>(&self, catalog: &'a Catalog) -> Option<&'a Profile> {
-        self.model(catalog)?.profile(self.profile.as_deref()?)
+        catalog.profile(self.model.as_deref()?, self.profile.as_deref()?)
+    }
+
+    /// The chosen model's profiles, with the ones only its pick names.
+    pub fn profiles<'a>(&self, catalog: &'a Catalog) -> Vec<&'a Profile> {
+        self.model
+            .as_deref()
+            .map_or_else(Vec::new, |model| catalog.profiles(model))
     }
 
     /// The pick for the chosen model's checkpoint, once read.
@@ -340,12 +347,11 @@ impl Loader {
 
     /// The profile `serve --model` picks at the size the picked GPUs allow.
     fn auto_profile(&self, catalog: &Catalog) -> Option<String> {
-        let model = self.model(catalog)?;
+        let profiles = self.profiles(catalog);
         let pick = self.pick(catalog);
         let mut sizes = match pick {
             Some(pick) => pick.sizes.iter().map(|size| size.tensor_parallel).collect(),
-            None => model
-                .profiles
+            None => profiles
                 .iter()
                 .map(|profile| profile.tensor_parallel)
                 .collect::<Vec<_>>(),
@@ -354,15 +360,14 @@ impl Loader {
         sizes.dedup();
         let size = allowed(&sizes, self.picked.len())?;
         pick.and_then(|pick| pick.size(size)?.pick.clone())
-            .filter(|name| model.profile(name).is_some())
+            .filter(|name| profiles.iter().any(|profile| profile.name == *name))
             .or_else(|| {
-                model
-                    .profiles
+                profiles
                     .iter()
                     .find(|profile| profile.tensor_parallel == size)
                     .map(|profile| profile.name.clone())
             })
-            .or_else(|| model.profiles.first().map(|profile| profile.name.clone()))
+            .or_else(|| profiles.first().map(|profile| profile.name.clone()))
     }
 
     fn choose_model(&mut self, model: String) {
@@ -907,31 +912,25 @@ impl Loader {
     }
 
     fn profiles_key(&mut self, code: KeyCode, catalog: &Catalog) -> Outcome {
-        let Some(model) = self.model(catalog) else {
+        if self.model(catalog).is_none() {
             return Outcome::Unhandled;
-        };
+        }
+        let profiles = self.profiles(catalog);
         let index = self
             .profile
             .as_ref()
-            .and_then(|name| {
-                model
-                    .profiles
-                    .iter()
-                    .position(|profile| profile.name == *name)
-            })
+            .and_then(|name| profiles.iter().position(|profile| profile.name == *name))
             .unwrap_or(0);
         let next = match code {
             KeyCode::Up | KeyCode::Char('k') => index.saturating_sub(1),
-            KeyCode::Down | KeyCode::Char('j') => {
-                (index + 1).min(model.profiles.len().saturating_sub(1))
-            }
+            KeyCode::Down | KeyCode::Char('j') => (index + 1).min(profiles.len().saturating_sub(1)),
             KeyCode::Enter => {
                 self.pane = Pane::Options;
                 return Outcome::Handled;
             }
             _ => return Outcome::Unhandled,
         };
-        if let Some(profile) = model.profiles.get(next) {
+        if let Some(profile) = profiles.get(next) {
             self.profile = Some(profile.name.clone());
             self.profile_chosen = true;
         }
@@ -1319,6 +1318,52 @@ pub(crate) mod tests {
         let mut stale = Loader::open(Some(vec![0, 1]), Vec::new());
         stale.refresh(&mut catalog, &live, &[], &[], 1.0, 9.0, &mut |_, _| true);
         assert!(stale.picked.is_empty());
+    }
+
+    #[test]
+    fn a_pick_the_profiles_file_does_not_list_is_offered_and_started() {
+        let mut catalog = catalog();
+        let mut live = Live::default();
+        live.gpu(&Report::Opened {
+            driver: None,
+            devices: devices(8),
+        });
+        live.scan(&discover::Report::Scan {
+            found: Vec::new(),
+            events: Vec::new(),
+        });
+        live.gpu(&Report::Polled(vec![
+            Reading {
+                at: 1.0,
+                processes: Some(Vec::new()),
+                answered: true,
+                ..Reading::default()
+            };
+            8
+        ]));
+        let mut loader = Loader::open(None, Vec::new());
+        refresh(&mut loader, &mut catalog, &live);
+        assert_eq!(loader.picked.len(), 8);
+        let names = loader
+            .profiles(&catalog)
+            .iter()
+            .map(|profile| profile.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["tp4-dspark", "tp8-dspark-wide"]);
+        // Eight GPUs take serve --model's TP8 pick, which only the pick
+        // names, and the command line is asked for it.
+        assert_eq!(loader.profile.as_deref(), Some("tp8-dspark-wide"));
+        assert_eq!(loader.plan.tensor_parallel, Some(8));
+        assert!(catalog.outbox.iter().any(|request| matches!(
+            request,
+            Request::Command { tensor_parallel: 8, profile, .. } if profile == "tp8-dspark-wide"
+        )));
+        // The Profiles pane moves to it and back like any other.
+        loader.pane = Pane::Profiles;
+        press(&mut loader, &mut catalog, KeyCode::Up);
+        assert_eq!(loader.profile.as_deref(), Some("tp4-dspark"));
+        press(&mut loader, &mut catalog, KeyCode::Down);
+        assert_eq!(loader.profile.as_deref(), Some("tp8-dspark-wide"));
     }
 
     #[test]

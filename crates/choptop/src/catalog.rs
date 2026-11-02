@@ -183,6 +183,32 @@ pub struct Profile {
     pub model_options: BTreeMap<String, String>,
 }
 
+/// The status of a profile `models pick` names that the model's profiles
+/// file does not list.
+pub const UNLISTED: &str = "unlisted";
+
+impl Profile {
+    /// A profile known only by the name `models pick` gives it at
+    /// `tensor_parallel`, as one family names profiles for other
+    /// geometries. Its settings are not known here.
+    pub fn unlisted(name: &str, tensor_parallel: u32) -> Self {
+        Self {
+            name: name.to_owned(),
+            status: UNLISTED.to_owned(),
+            tensor_parallel,
+            drafter: String::new(),
+            speculative_tokens: 0,
+            max_sequences: 0,
+            qualified_max_sequences: None,
+            qualification: format!(
+                "serve --model picks {name} at TP{tensor_parallel}, which the model's profiles file does not list, so its settings show as defaults here."
+            ),
+            settings: BTreeMap::new(),
+            model_options: BTreeMap::new(),
+        }
+    }
+}
+
 /// One installed model.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Model {
@@ -1135,6 +1161,8 @@ pub struct Catalog {
     pub models: Option<Fetch<Models>>,
     /// `models pick` for each directory asked about.
     pub picks: BTreeMap<PathBuf, Fetch<Pick>>,
+    /// The picks' profiles the profiles file does not list, by directory.
+    unlisted: BTreeMap<PathBuf, Vec<Profile>>,
     pub checkpoints: Checkpoints,
     /// choptop's own `CHOPINFER_*` variables, which a launch inherits.
     pub environment: BTreeMap<String, String>,
@@ -1149,6 +1177,7 @@ impl Catalog {
             options: None,
             models: None,
             picks: BTreeMap::new(),
+            unlisted: BTreeMap::new(),
             checkpoints,
             environment: BTreeMap::new(),
             outbox: Vec::new(),
@@ -1205,7 +1234,37 @@ impl Catalog {
             }
             other => return Some(other),
         }
+        self.list_unlisted();
         None
+    }
+
+    /// Finds the profiles each pick names that its model's profiles file
+    /// does not list.
+    fn list_unlisted(&mut self) {
+        let mut unlisted = BTreeMap::new();
+        for (directory, fetch) in &self.picks {
+            let Fetch::Ready(pick) = fetch else {
+                continue;
+            };
+            let Some(model) = pick.model.as_deref().and_then(|model| self.model(model)) else {
+                continue;
+            };
+            let profiles = pick
+                .sizes
+                .iter()
+                .filter_map(|size| {
+                    let name = size.pick.as_deref()?;
+                    model
+                        .profile(name)
+                        .is_none()
+                        .then(|| Profile::unlisted(name, size.tensor_parallel))
+                })
+                .collect::<Vec<_>>();
+            if !profiles.is_empty() {
+                unlisted.insert(directory.clone(), profiles);
+            }
+        }
+        self.unlisted = unlisted;
     }
 
     pub fn models(&self) -> &[Model] {
@@ -1217,6 +1276,29 @@ impl Catalog {
 
     pub fn model(&self, model: &str) -> Option<&Model> {
         self.models().iter().find(|seen| seen.model == model)
+    }
+
+    /// The profiles of `model`: the profiles file's, then the ones its
+    /// checkpoint's pick names that the file does not list.
+    pub fn profiles(&self, model: &str) -> Vec<&Profile> {
+        let Some(listed) = self.model(model) else {
+            return Vec::new();
+        };
+        let unlisted = self
+            .checkpoint(model)
+            .directory()
+            .and_then(|directory| self.unlisted.get(directory));
+        listed
+            .profiles
+            .iter()
+            .chain(unlisted.into_iter().flatten())
+            .collect()
+    }
+
+    pub fn profile(&self, model: &str, name: &str) -> Option<&Profile> {
+        self.profiles(model)
+            .into_iter()
+            .find(|profile| profile.name == name)
     }
 
     pub fn options(&self) -> Option<&ServeOptions> {
@@ -1800,6 +1882,17 @@ mod tests {
         assert_eq!(catalog.checkpoint("qwen38"), Checkpoint::Missing);
         catalog.apply(Reply::Models(Models::parse(MODELS)));
         assert_eq!(catalog.models().len(), 2);
+        // The TP8 pick is not in the profiles file, so it is added.
+        let names = catalog
+            .profiles("deepseek41")
+            .iter()
+            .map(|profile| profile.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["tp4-dspark", "tp8-dspark-wide"]);
+        let wide = catalog.profile("deepseek41", "tp8-dspark-wide").unwrap();
+        assert_eq!((wide.status.as_str(), wide.tensor_parallel), (UNLISTED, 8));
+        assert!(wide.settings.is_empty());
+        assert_eq!(catalog.profiles("qwen38").len(), 2);
         assert_eq!(
             catalog.troubles(),
             [
@@ -1813,6 +1906,7 @@ mod tests {
             .remember("deepseek41", Path::new("/models/ds2"))
             .unwrap();
         assert_eq!(catalog.checkpoint("deepseek41"), Checkpoint::Checking);
+        assert_eq!(catalog.profiles("deepseek41").len(), 1);
         // Replies the loader owns are handed back.
         let command = Reply::Command(1, Ok(vec!["serve".into()]));
         assert_eq!(catalog.apply(command.clone()), Some(command));

@@ -47,10 +47,7 @@ pub fn layout(width: u16, height: u16, app: &App) -> Layout {
     let models =
         app.catalog.models().len().max(1) as u16 + 1 + loader.recent.len().min(RECENT) as u16 + 2;
     let placement = loader.plan.gpus.len().max(1) as u16 + 4;
-    let profiles = loader
-        .model(&app.catalog)
-        .map_or(1, |model| model.profiles.len().max(1)) as u16
-        + 2;
+    let profiles = loader.profiles(&app.catalog).len().max(1) as u16 + 2;
     let wide = width >= WIDE && models + profiles + placement <= room;
     if wide {
         let profiles = room - models - placement;
@@ -350,6 +347,10 @@ fn models_pane(buffer: &mut Buffer, app: &App, area: Area, alone_: bool) {
 
 /// `AR`, `MTP 3`, `DSPARK 5`, `AR DCP2`.
 fn speculation(profile: &Profile) -> String {
+    // An unlisted profile's drafter is not known.
+    if profile.drafter.is_empty() {
+        return String::new();
+    }
     let mut label = if profile.drafter == "none" || profile.speculative_tokens == 0 {
         "AR".to_owned()
     } else {
@@ -405,20 +406,20 @@ fn profiles_pane(buffer: &mut Buffer, app: &App, area: Area, alone_: bool) {
     if alone_ {
         alone(buffer, area, Pane::Profiles);
     }
-    let Some(model) = loader.model(&app.catalog) else {
+    if loader.model(&app.catalog).is_none() {
         return;
-    };
+    }
+    let profiles = loader.profiles(&app.catalog);
     let pick = loader.pick(&app.catalog);
     let room = usize::from(height.saturating_sub(2));
     let chosen = loader.profile.as_deref();
-    let cursor = model
-        .profiles
+    let cursor = profiles
         .iter()
         .position(|profile| Some(profile.name.as_str()) == chosen)
         .unwrap_or(0);
     let skip = first(cursor, room);
     let mut row = y + 1;
-    for (index, profile) in model.profiles.iter().enumerate().skip(skip).take(room) {
+    for (index, profile) in profiles.iter().enumerate().skip(skip).take(room) {
         let is_chosen = index == cursor && chosen.is_some();
         if focus && is_chosen {
             selected(buffer, x, row, width);
@@ -436,7 +437,7 @@ fn profiles_pane(buffer: &mut Buffer, app: &App, area: Area, alone_: bool) {
         } else if let Some(qualified) = profile.qualified_max_sequences {
             (format!("evidence C{qualified}"), Color::Green)
         } else {
-            ("experimental".to_owned(), Color::Yellow)
+            (sanitize(&profile.status), Color::Yellow)
         };
         let pieces = [
             (2, pad(&sanitize(&profile.name), 13), name_style),

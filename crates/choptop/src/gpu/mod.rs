@@ -23,6 +23,9 @@ pub struct Device {
     /// NVML's index, the one nvidia-smi shows; not a CUDA ordinal.
     pub index: u32,
     pub name: String,
+    /// The UUID NVML gives, `GPU-` and 36 hex digits and dashes, which
+    /// `CUDA_VISIBLE_DEVICES` takes as it is; `None` when it cannot be read.
+    pub uuid: Option<String>,
     /// Bytes.
     pub memory_total: Option<u64>,
     pub sm_max_mhz: Option<u32>,
@@ -50,6 +53,19 @@ impl Device {
             .unwrap_or(name);
         name.replace(" Blackwell", "")
     }
+}
+
+/// Whether `text` is a whole GPU UUID: `GPU-` then hex digits grouped
+/// 8-4-4-4-12. A prefix, an ordinal or a MIG device is not one.
+pub fn is_uuid(text: &str) -> bool {
+    let Some(rest) = text.strip_prefix("GPU-") else {
+        return false;
+    };
+    let groups = rest.split('-').collect::<Vec<_>>();
+    groups.len() == 5
+        && groups.iter().zip([8, 4, 4, 4, 12]).all(|(group, length)| {
+            group.len() == length && group.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
 }
 
 /// The clock event reasons of `nvmlDeviceGetCurrentClocksEventReasons`.
@@ -708,6 +724,29 @@ mod tests {
         // GPM without the graphics metric falls back to NVML.
         reading.activity = Some(Activity::default());
         assert_eq!(reading.kernels(), Some(0.97));
+    }
+
+    /// A made-up UUID ending in `last`, written so that no UUID appears in
+    /// the source.
+    fn uuid(prefix: &str, last: &str) -> String {
+        format!("{prefix}{}-0000-0000-0000-{last}", "0".repeat(8))
+    }
+
+    #[test]
+    fn only_a_whole_gpu_uuid_is_one() {
+        assert!(is_uuid(&uuid("GPU-", "000000000001")));
+        assert!(is_uuid(&uuid("GPU-", "abcdef012345")));
+        for text in [
+            "0".to_owned(),
+            "GPU-00000000".to_owned(),
+            uuid("GPU-", "00000000001"),
+            uuid("GPU-", "00000000000g"),
+            uuid("MIG-", "000000000001"),
+            uuid("gpu-", "000000000001"),
+            String::new(),
+        ] {
+            assert!(!is_uuid(&text), "{text}");
+        }
     }
 
     #[test]

@@ -30,6 +30,8 @@ const ERROR_UNCORRECTED: c_uint = 1;
 const VOLATILE_ECC: c_uint = 0;
 const FEATURE_ENABLED: c_uint = 1;
 const NAME_BUFFER: usize = 96;
+/// `NVML_DEVICE_UUID_V2_BUFFER_SIZE`.
+const UUID_BUFFER: usize = 96;
 const VERSION_BUFFER: usize = 80;
 
 /// `NVML_STRUCT_VERSION(data, ver)`: the struct size with the version in
@@ -189,6 +191,7 @@ struct Api {
     by_index: ByIndex,
     driver: Option<Text>,
     name: Option<DeviceText>,
+    uuid: Option<DeviceText>,
     temperature_v: Option<DeviceStruct<TemperatureV1>>,
     temperature: Option<DeviceKindU32>,
     margin: Option<DeviceStruct<MarginTemperature>>,
@@ -243,6 +246,7 @@ impl Api {
             by_index,
             driver: function!(library, c"nvmlSystemGetDriverVersion", Text),
             name: function!(library, c"nvmlDeviceGetName", DeviceText),
+            uuid: function!(library, c"nvmlDeviceGetUUID", DeviceText),
             temperature_v: function!(
                 library,
                 c"nvmlDeviceGetTemperatureV",
@@ -505,6 +509,13 @@ impl Nvml {
             (name(handle, buffer.as_mut_ptr(), NAME_BUFFER as c_uint) == SUCCESS)
                 .then(|| text(&buffer))
         });
+        // Launches name GPUs by UUID: NVML's index is not a CUDA ordinal.
+        let uuid = self.api.uuid.and_then(|uuid| {
+            let mut buffer = [0 as c_char; UUID_BUFFER];
+            (uuid(handle, buffer.as_mut_ptr(), UUID_BUFFER as c_uint) == SUCCESS)
+                .then(|| text(&buffer))
+                .filter(|text| super::is_uuid(text))
+        });
         let generation = self.u32(self.api.max_link_generation, handle, &mut statuses);
         let width = self.u32(self.api.max_link_width, handle, &mut statuses);
         // The maximum operating temperature, which nvidia-smi's T.Limit and
@@ -540,6 +551,7 @@ impl Nvml {
         Device {
             index: index as u32,
             name: name.unwrap_or_else(|| "GPU".to_owned()),
+            uuid,
             memory_total: self.memory(handle, &mut statuses).map(|(total, _)| total),
             sm_max_mhz: self.kind_u32(self.api.max_clock, handle, CLOCK_SM, &mut statuses),
             pcie_max: generation.zip(width),

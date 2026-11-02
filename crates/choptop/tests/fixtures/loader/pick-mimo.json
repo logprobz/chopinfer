@@ -1,0 +1,55 @@
+{
+ "schema": "chopinfer.models-pick.v1",
+ "model": "mimo26",
+ "refusal": null,
+ "sizes": [
+  {
+   "tensor_parallel": 4,
+   "pick": "tp4-dflash",
+   "refusal": null,
+   "profiles": [
+    {
+     "name": "tp4-ar",
+     "available": true,
+     "arguments": [
+      "--speculation",
+      "fixed",
+      "--speculative-tokens",
+      "0",
+      "--draft-cost",
+      "per-token",
+      "--prefill-budget",
+      "fixed",
+      "--graph-memory-reserve-mib",
+      "320"
+     ],
+     "inherited_model_options": []
+    },
+    {
+     "name": "tp4-mtp",
+     "available": false,
+     "reason": "this checkpoint has dflash/, so serve --model serves DFlash"
+    },
+    {
+     "name": "tp4-dflash",
+     "available": true,
+     "arguments": [],
+     "inherited_model_options": []
+    }
+   ]
+  },
+  {
+   "tensor_parallel": 2,
+   "pick": "tp2-ar",
+   "refusal": null,
+   "profiles": [
+    {
+     "name": "tp2-ar",
+     "available": true,
+     "arguments": [],
+     "inherited_model_options": []
+    }
+   ]
+  }
+ ]
+}

@@ -35,4 +35,4 @@
 │                                                                                                                                  │
 │                                                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- ↑↓ jk select   Enter details   m monitor   w window   r rescan   p pause   ? help   q quit
+ ↑↓ jk select   Enter details   l load model   m monitor   w window   r rescan   p pause   ? help   q quit

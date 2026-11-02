@@ -5,13 +5,13 @@
 │ target          127.0.0.1:8431   Qwen3.8-Flash    ready             956   5,200     11/2  64%    71%  59%  175ms              ██ │
 │ target          192.0.2.10:8310  -                unreachable         -       -        -    -      -    -      -  retrying       │
 │▌proc 48211      127.0.0.1:8311   MiMo-V2.6-Flash  ready           1,795   5,200     24/2  64%    71%  59%  175ms  ██████████████ │
-│ proc 51022      -                Qwen3.8-Flash    starting            -       -        -    -      -    -      -  up 2m14s       │
-│ docker glm-tp4  12┌─ Help ───────────────────────────────────────────────────────────────────────────────────┐ -                 │
-└───────────────────│ Keys                                                                                     │───────────────────┘
-┌─ proc 48211  MiMo-│   ↑ ↓  j k      select an instance (list)                                                │───────────────────┐
-│ DECODE   now  1,79│   Enter         open its details                                                         │tok/s              │
-│                   │   Esc  h        back to the list                                                         │      50,000 tok/s │
-│ ▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃│   ← →  Tab      previous or next instance (details)                                      │                   │
+│ proc 51022      - ┌─ Help ───────────────────────────────────────────────────────────────────────────────────┐ -  up 2m14s       │
+│ docker glm-tp4  12│ Keys                                                                                     │ -                 │
+└───────────────────│   ↑ ↓  j k      select an instance (list)                                                │───────────────────┘
+┌─ proc 48211  MiMo-│   Enter         open its details                                                         │───────────────────┐
+│ DECODE   now  1,79│   Esc  h        back to the list                                                         │tok/s              │
+│                   │   ← →  Tab      previous or next instance (details)                                      │      50,000 tok/s │
+│ ▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃│   l             load a model: start one, or replace the selected instance                │                   │
 │ ██████████████████│   m             this host: CPU, memory, disks, sensors and GPUs                          │   ▂          ▂    │
 │ ██████████████████│   w             latency and ratio window: 60s, 5m, since start                           │   █          █    │
 │ ██████████████████│   r             rescan for processes and containers now                                  │   █          █    │
@@ -35,4 +35,4 @@
 │                                                                                                                                  │
 │                                                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- ↑↓ jk select   Enter details   m monitor   w window   r rescan   p pause   ? help   q quit
+ ↑↓ jk select   Enter details   l load model   m monitor   w window   r rescan   p pause   ? help   q quit

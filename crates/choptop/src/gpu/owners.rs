@@ -267,6 +267,7 @@ mod tests {
             model_hint: None,
             listening: Vec::new(),
             age: None,
+            cuda_visible_devices: None,
         })
     }
 

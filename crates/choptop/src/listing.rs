@@ -478,6 +478,12 @@ mod tests {
                 devices: vec![Device {
                     index: 0,
                     name: "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition".into(),
+                    // Made up; no UUID appears in the source.
+                    uuid: Some(format!(
+                        "GPU-{}-0000-0000-0000-{}",
+                        "0".repeat(8),
+                        "1".repeat(12)
+                    )),
                     memory_total: Some(97_887 << 20),
                     sm_max_mhz: Some(3090),
                     pcie_max: Some((5, 16)),
@@ -543,6 +549,8 @@ mod tests {
         assert_eq!(gpu["processes"][1]["type"], "G");
         assert_eq!(gpu["processes"][1]["instance"], serde_json::Value::Null);
         assert_eq!(gpu["processes_age_seconds"], 0.0);
+        // The UUID names GPUs for launches and stays out of the document.
+        assert!(gpu.get("uuid").is_none(), "{gpu}");
         // A poll whose process lists failed keeps the list before it, and
         // says how old it is; a GPU never listed has none.
         gpus.apply(

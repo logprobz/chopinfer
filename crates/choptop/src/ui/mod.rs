@@ -4,6 +4,7 @@ pub mod buffer;
 pub mod detail;
 pub mod gpus;
 pub mod list;
+pub mod loader;
 pub mod monitor;
 pub mod widgets;
 
@@ -36,6 +37,7 @@ pub fn draw(app: &App, width: u16, height: u16, now: f64) -> Buffer {
         View::List => list::draw(&mut buffer, app, now),
         View::Detail => detail::draw(&mut buffer, app, now),
         View::Monitor => monitor::draw(&mut buffer, app, now),
+        View::Loader => loader::draw(&mut buffer, app, now),
     }
     if app.help {
         help(&mut buffer, app.view);
@@ -151,6 +153,10 @@ fn help(buffer: &mut Buffer, view: View) {
         ("  Enter", "open its details"),
         ("  Esc  h", "back to the list"),
         ("  ← →  Tab", "previous or next instance (details)"),
+        (
+            "  l",
+            "load a model: start one, or replace the selected instance",
+        ),
         ("  m", "this host: CPU, memory, disks, sensors and GPUs"),
         ("  w", "latency and ratio window: 60s, 5m, since start"),
         ("  r", "rescan for processes and containers now"),
@@ -184,6 +190,10 @@ fn help(buffer: &mut Buffer, view: View) {
         ("  ↑ ↓  j k", "select a GPU"),
         ("  Enter", "open the details of the instance on the GPU"),
         ("  Esc  h  m", "back to where m was pressed"),
+        (
+            "  l",
+            "load a model: start one, or replace the selected GPU's instance",
+        ),
         ("  w", "latency and ratio window: 60s, 5m, since start"),
         ("  r", "rescan for processes and containers now"),
         ("  p", "pause the screen; polls keep their latest result"),
@@ -240,10 +250,57 @@ fn help(buffer: &mut Buffer, view: View) {
         ("", ""),
         ("", "Press any key to close."),
     ];
-    let lines = if view == View::Monitor {
-        MONITOR
-    } else {
-        INSTANCES
+    const LOADER: &[(&str, &str)] = &[
+        ("Keys", ""),
+        ("  Tab  Shift-Tab", "next or previous pane"),
+        ("  ↑ ↓  j k", "move"),
+        ("  ← →", "change a choice; open or close a group"),
+        (
+            "  Enter",
+            "edit a value, open a group, apply a recent launch",
+        ),
+        (
+            "  Space",
+            "pick or drop a GPU; instances follow the GPUs picked",
+        ),
+        ("  /", "find an option by name"),
+        (
+            "  a",
+            "add a serve argument, or VAR=value for its environment",
+        ),
+        ("  x", "reset to the profile or the default"),
+        ("  S", "start: review what runs and what stops, then launch"),
+        ("  Esc", "back to the list"),
+        ("", ""),
+        ("Where it comes from", ""),
+        (
+            "  models",
+            "chopinfer-model-* helpers installed beside chopinfer",
+        ),
+        (
+            "  profiles",
+            "each helper's serving profiles; ● is the one serve --model picks",
+        ),
+        (
+            "  options",
+            "chopinfer serve --describe-options; package options from --list-model-options",
+        ),
+        (
+            "  launches",
+            "processes of this user, logged under ~/.local/state/choptop/logs",
+        ),
+        ("", ""),
+        (
+            "",
+            "A profile other than ● runs as serve --model with that profile's values as flags.",
+        ),
+        ("", ""),
+        ("", "Press any key to close."),
+    ];
+    let (lines, column) = match view {
+        View::Monitor => (MONITOR, 16),
+        View::Loader => (LOADER, 18),
+        View::List | View::Detail => (INSTANCES, 16),
     };
     let width = 92.min(buffer.width - 2);
     let height = (lines.len() as u16 + 2).min(buffer.height - 2);
@@ -264,11 +321,11 @@ fn help(buffer: &mut Buffer, view: View) {
         } else if left.is_empty() {
             buffer.put(x + 2, y, &pad(right, room), Style::fg(Color::Dim));
         } else {
-            let column = buffer.put(x + 2, y, &pad(left, 16), Style::fg(Color::Cyan));
+            let start = buffer.put(x + 2, y, &pad(left, column), Style::fg(Color::Cyan));
             buffer.put(
-                column,
+                start,
                 y,
-                &pad(right, room.saturating_sub(16)),
+                &pad(right, room.saturating_sub(column)),
                 Style::PLAIN,
             );
         }

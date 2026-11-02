@@ -1,0 +1,58 @@
+{
+  "schema": "chopinfer.models.v1",
+  "models": [
+    {
+      "model": "qwen38",
+      "helper": "chopinfer-model-qwen38",
+      "served_model_name": "Qwen3.8-Flash",
+      "profiles": [
+        {
+          "name": "tp4-mtp",
+          "status": "qualified",
+          "tensor_parallel": 4,
+          "drafter": "mtp",
+          "speculative_tokens": 3,
+          "max_sequences": 32,
+          "qualified_max_sequences": 32,
+          "qualification": "Serving evidence through 32 sequences.",
+          "settings": {"max-sequences": "32", "prefix-cache": "on", "speculation": "adaptive", "speculative-tokens": "3"},
+          "model_options": {}
+        },
+        {
+          "name": "tp2-ar",
+          "status": "experimental",
+          "tensor_parallel": 2,
+          "drafter": "none",
+          "speculative_tokens": 0,
+          "max_sequences": 32,
+          "qualified_max_sequences": null,
+          "qualification": "Experimental: a narrower topology smoke only.",
+          "settings": {"max-sequences": "32", "prefix-cache": "on", "speculative-tokens": "0"},
+          "model_options": {}
+        }
+      ]
+    },
+    {
+      "model": "deepseek41",
+      "helper": "chopinfer-model-deepseek41",
+      "served_model_name": "DeepSeek-V4.1-Flash",
+      "profiles": [
+        {
+          "name": "tp4-dspark",
+          "status": "experimental",
+          "tensor_parallel": 4,
+          "drafter": "dspark",
+          "speculative_tokens": 5,
+          "max_sequences": 32,
+          "qualified_max_sequences": null,
+          "qualification": "Not qualified.",
+          "settings": {"decode-tbt-target-ms": "750", "mixed-decode-steps": "4", "mixed-min-prefill-tokens": "256", "prefill-budget": "tbt", "speculation": "balanced"},
+          "model_options": {"dspark_draft_chunk_items": "12", "prefill_upper_skip": "true"}
+        }
+      ]
+    }
+  ],
+  "errors": [
+    {"helper": "chopinfer-model-broken", "message": "serving-profiles exited with status 2"}
+  ]
+}

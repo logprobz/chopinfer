@@ -1,0 +1,30 @@
+ choptop  >  Load model   replacing proc 48211   4 models  4 GPUs   window 60s  poll 1s  rescan 15s
+
+┌─ Options  49 serve options  1 set ───────────────────────────────────────────────────────────────┐
+│   OPTION                    VALUE                        FROM     NOTE                           │
+│ ▾ Model                                                                                          │
+│   checkpoint                $CHOPINFER_QWEN38_CHECKPOINT env                                     │
+│   modalities                -                            default                                 │
+│   activation-policy         -                            default                                 │
+│   model-cache-dir           -                            default                                 │
+│   served-model-name         Qwen3.8-Flash                package                                 │
+│   load-threads              -                            default                                 │
+│ ▾ Scheduling  1 set                                                                              │
+│▌  max-sequences             48                           set      no evidence                    │
+│   max-batch-tokens          8192                         profile                                 │
+│   prefill-chunk-tokens      2048                         profile                                 │
+│   queue-depth               -                            default                                 │
+│   queue-wait-ms             -                            default                                 │
+│   admission                 -                            default                                 │
+│                                                                                                  │
+│ --max-sequences  no evidence; the most sequences served at once (default 8)                      │
+│                                                                                                  │
+└─ Tab: Models ─────────────────────────────────────────────────────────────────────── 1-14 of 48 ─┘
+┌─ Command  2 processes of this user ──────────────────────────────────────────────────────────────┐
+│ A  CUDA_VISIBLE_DEVICES=0,1 chopinfer serve --model /models/qwen --tensor-parallel-size 2        │
+│      --max-sequences 48 --listen 127.0.0.1:8310                                                  │
+│ B  CUDA_VISIBLE_DEVICES=2,3 chopinfer serve --model /models/qwen --tensor-parallel-size 2        │
+│      --max-sequences 48 --listen 127.0.0.1:8311                                                  │
+│ tp2-mtp; 1 set here (white).  Logs go to ~/.local/state/choptop/logs.  Stops proc 48211 first.   │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ Tab pane   ↑↓ jk move   ←→ change   Enter edit   / find   S start   Esc back

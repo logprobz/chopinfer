@@ -771,6 +771,7 @@ mod tests {
                 .iter()
                 .map(|address| address.parse().unwrap())
                 .collect(),
+            cuda_visible_devices: None,
         })
     }
 

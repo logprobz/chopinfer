@@ -1,8 +1,9 @@
 //! The full-screen interface: the terminal, the input loop, and the
 //! threads it drives.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -17,11 +18,13 @@ use crossterm::terminal::{
 };
 
 use crate::app::{Action, App, View};
+use crate::catalog::{self, Catalog, Checkpoints};
 use crate::discover::{self, Command, Discovery, Report, Schedule};
 use crate::gpu::poll::{self as gpu_poll, GpuPoller};
 use crate::gpu::{Gpus, Status};
 use crate::host::poll::{self as host_poll, HostPoller};
 use crate::instances::{EVENT_LIMIT, Followup, Registry, Source, Tone};
+use crate::launch::occupancy::Live;
 use crate::poll::{Poll, Poller};
 use crate::targets::Target;
 use crate::ui::{self, buffer::Buffer, buffer::flush};
@@ -46,6 +49,13 @@ pub struct Setup {
     /// sampled while the monitor is open.
     pub gpus: bool,
     pub gpu_counters: bool,
+    /// The `chopinfer` the loader runs, or why there is none.
+    pub chopinfer: Result<PathBuf, String>,
+    pub checkpoints: Checkpoints,
+    /// choptop's own `CHOPINFER_*` variables, which launches inherit.
+    pub environment: BTreeMap<String, String>,
+    /// Where launch logs go, as shown.
+    pub logs: String,
 }
 
 /// Restores the terminal when dropped, including while a panic unwinds.
@@ -88,6 +98,10 @@ struct Workers {
     /// Most pollers at once.
     limit: usize,
     limit_reported: bool,
+    /// The threads that run `chopinfer` for the loader, started at its
+    /// first request.
+    catalog: Option<catalog::Worker>,
+    catalog_replies: Sender<catalog::Reply>,
 }
 
 impl Workers {
@@ -164,6 +178,23 @@ impl Workers {
             let _ = commands.send(command);
         }
     }
+
+    /// Sends the loader's requests to `chopinfer`'s threads.
+    fn ask(&mut self, app: &mut App) {
+        if app.catalog.outbox.is_empty() {
+            return;
+        }
+        let requests = std::mem::take(&mut app.catalog.outbox);
+        let Ok(binary) = &app.catalog.binary else {
+            return;
+        };
+        let worker = self.catalog.get_or_insert_with(|| {
+            catalog::Worker::spawn(binary.clone(), self.catalog_replies.clone())
+        });
+        for request in requests {
+            worker.send(request);
+        }
+    }
 }
 
 /// Holds `report` while paused. A scan lists every instance, so it replaces
@@ -210,6 +241,20 @@ fn hold_host(held: &mut Vec<host_poll::Report>, report: host_poll::Report) {
     held.push(report);
 }
 
+/// Takes a discovery report: the loader's readings at once, the screen's
+/// held while paused.
+fn receive_scan(app: &mut App, held: &mut Vec<Report>, report: Report) {
+    app.live.scan(&report);
+    hold(held, report);
+}
+
+/// Takes a GPU report: the loader's readings at once, the screen's held
+/// while paused.
+fn receive_gpu(app: &mut App, held: &mut Vec<gpu_poll::Report>, report: gpu_poll::Report) {
+    app.live.gpu(&report);
+    hold_gpu(held, report);
+}
+
 fn take_report(registry: &mut Registry, report: Report, now: f64) -> Vec<Followup> {
     match report {
         Report::Scan { found, events } => {
@@ -240,6 +285,7 @@ pub fn run(setup: Setup) -> io::Result<()> {
     }
     let (results, poll_results) = mpsc::channel();
     let (reports_sender, reports) = mpsc::channel::<Report>();
+    let mut live = Live::default();
     let commands = setup.discovery.map(|discovery| {
         let (commands, receiver) = mpsc::channel();
         discover::spawn(
@@ -251,10 +297,12 @@ pub fn run(setup: Setup) -> io::Result<()> {
         );
         // The startup scan, before the first frame.
         if let Ok(report) = reports.recv_timeout(FIRST_SCAN) {
+            live.scan(&report);
             followups.extend(take_report(&mut registry, report, now()));
         }
         commands
     });
+    let (catalog_replies, catalog_reports) = mpsc::channel();
     let mut workers = Workers {
         pollers: HashMap::new(),
         results,
@@ -264,12 +312,21 @@ pub fn run(setup: Setup) -> io::Result<()> {
         bearer: setup.bearer,
         limit: MAXIMUM_INSTANCES,
         limit_reported: false,
+        catalog: None,
+        catalog_replies,
     };
     workers.follow(&mut registry, followups, now());
     let mut app = App::new(registry, setup.interval, setup.rescan, setup.sources);
+    app.live = live;
+    app.catalog = Catalog::new(setup.chopinfer, setup.checkpoints);
+    app.catalog.environment = setup.environment;
+    app.logs = setup.logs;
     // GPM counters are sampled only while the monitor is open.
     let counters = Arc::new(AtomicBool::new(false));
     let (gpu_results, gpu_reports) = mpsc::channel();
+    if !setup.gpus {
+        app.live.unavailable = Some("--no-gpus".to_owned());
+    }
     let _gpu_poller = setup.gpus.then(|| {
         app.gpus = Gpus::new(Status::Opening, setup.gpu_counters, setup.interval);
         GpuPoller::spawn(setup.interval, origin, Arc::clone(&counters), gpu_results)
@@ -300,6 +357,7 @@ pub fn run(setup: Setup) -> io::Result<()> {
             polls: &poll_results,
             gpus: &gpu_reports,
             host: &host_reports,
+            catalog: &catalog_reports,
         },
         (&stop, &counters),
         color,
@@ -326,12 +384,14 @@ fn read_input() -> Receiver<Event> {
     receiver
 }
 
-/// What discovery and the instance, GPU and host pollers send the loop.
+/// What discovery, the instance, GPU and host pollers and `chopinfer`'s
+/// threads send the loop.
 struct Inbox<'a> {
     reports: &'a Receiver<Report>,
     polls: &'a Receiver<(u64, Poll)>,
     gpus: &'a Receiver<gpu_poll::Report>,
     host: &'a Receiver<host_poll::Report>,
+    catalog: &'a Receiver<catalog::Reply>,
 }
 
 fn run_loop(
@@ -342,6 +402,7 @@ fn run_loop(
         polls: poll_results,
         gpus: gpu_reports,
         host: host_reports,
+        catalog: catalog_reports,
     }: Inbox<'_>,
     (stop, counters): (&AtomicBool, &AtomicBool),
     color: bool,
@@ -375,6 +436,23 @@ fn run_loop(
                             .note(now(), "choptop", "rescan requested", Tone::Normal);
                         dirty = true;
                     }
+                    Action::Start => {
+                        // The launch continues from here: a fresh GPU read
+                        // and rescan, serve --check, then the confirm dialog.
+                        let count = app
+                            .start
+                            .as_ref()
+                            .map_or(0, |start| start.placement.instances.len());
+                        app.loader.flash(
+                            now(),
+                            format!(
+                                "Checked: {count} process{} ready to start; starting is not built yet",
+                                if count == 1 { "" } else { "es" }
+                            ),
+                            true,
+                        );
+                        dirty = true;
+                    }
                     Action::Redraw => dirty = true,
                     Action::Nothing => {}
                 },
@@ -387,14 +465,19 @@ fn run_loop(
             }
         }
         for report in reports.try_iter() {
-            hold(&mut held_reports, report);
+            receive_scan(app, &mut held_reports, report);
         }
         held_polls.extend(poll_results.try_iter());
         for report in gpu_reports.try_iter() {
-            hold_gpu(&mut held_gpus, report);
+            receive_gpu(app, &mut held_gpus, report);
         }
         for report in host_reports.try_iter() {
             hold_host(&mut held_host, report);
+        }
+        // The loader's answers are not held by a pause.
+        for reply in catalog_reports.try_iter() {
+            app.catalog_reply(reply);
+            dirty = true;
         }
         counters.store(
             app.view == View::Monitor && app.gpus.counters,
@@ -431,6 +514,8 @@ fn run_loop(
         let at = now();
         if dirty || at - drawn_at >= 1.0 {
             let (width, height) = crossterm::terminal::size()?;
+            app.tick(at);
+            workers.ask(app);
             app.settle(width, height);
             let frame = ui::draw(app, width, height, at);
             flush(previous.as_ref(), &frame, &mut stdout, color)?;
@@ -452,6 +537,7 @@ mod tests {
         let first = registry.add_target(Target::parse("127.0.0.1:9").unwrap(), 0.0);
         let second = registry.add_target(Target::parse("127.0.0.2:9").unwrap(), 0.0);
         let (results, _poll_results) = mpsc::channel();
+        let (catalog_replies, _catalog_reports) = mpsc::channel();
         let mut workers = Workers {
             pollers: HashMap::new(),
             results,
@@ -461,6 +547,8 @@ mod tests {
             bearer: None,
             limit: 1,
             limit_reported: false,
+            catalog: None,
+            catalog_replies,
         };
         workers.follow(
             &mut registry,
@@ -493,6 +581,61 @@ mod tests {
         hold_gpu(&mut held, polled(1.0));
         hold_gpu(&mut held, polled(2.0));
         assert_eq!(held, [opened, polled(2.0)]);
+    }
+
+    #[test]
+    fn a_paused_screen_still_updates_the_loaders_readings() {
+        use crate::gpu::{Device, Reading};
+        use crate::launch::occupancy::{Inputs, Occupancy, occupancy};
+        let mut app = App::new(Registry::new(1.0), 1.0, 15.0, vec!["proc"]);
+        app.paused = true;
+        let (mut held_gpus, mut held_reports) = (Vec::new(), Vec::new());
+        let device = Device {
+            uuid: Some(format!(
+                "GPU-{}-0000-0000-0000-{}",
+                "0".repeat(8),
+                "0".repeat(12)
+            )),
+            ..Device::default()
+        };
+        receive_gpu(
+            &mut app,
+            &mut held_gpus,
+            gpu_poll::Report::Opened {
+                driver: None,
+                devices: vec![device],
+            },
+        );
+        receive_gpu(
+            &mut app,
+            &mut held_gpus,
+            gpu_poll::Report::Polled(vec![Reading {
+                at: 5.0,
+                processes: Some(Vec::new()),
+                answered: true,
+                ..Reading::default()
+            }]),
+        );
+        receive_scan(
+            &mut app,
+            &mut held_reports,
+            Report::Scan {
+                found: Vec::new(),
+                events: Vec::new(),
+            },
+        );
+        // The screen holds its frame: no GPUs yet, every report held.
+        assert!(app.gpus.devices.is_empty());
+        assert_eq!((held_gpus.len(), held_reports.len()), (2, 1));
+        // The loader reads the latest.
+        let gpus = occupancy(&Inputs {
+            live: &app.live,
+            instances: &app.registry.instances,
+            reservations: &app.reservations,
+            interval: app.interval,
+            now: 5.5,
+        });
+        assert_eq!(gpus[0].occupancy, Occupancy::Free);
     }
 
     #[test]

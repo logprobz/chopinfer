@@ -379,6 +379,10 @@ pub fn run(setup: Setup) -> io::Result<()> {
     ] {
         signal_hook::flag::register(signal, Arc::clone(&stop))?;
     }
+    // Set by every resize, before its event is read, and cleared by each
+    // frame.
+    let resized = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(signal_hook::consts::SIGWINCH, Arc::clone(&resized))?;
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         restore();
@@ -396,7 +400,7 @@ pub fn run(setup: Setup) -> io::Result<()> {
             host: &host_reports,
             catalog: &catalog_reports,
         },
-        (&stop, &counters),
+        (&stop, &counters, &resized),
         gpu_poller.as_ref(),
         color,
         now,
@@ -435,13 +439,20 @@ struct Inbox<'a> {
 /// Hands input `event` to `app` at `now`. A key goes with the terminal's
 /// size as `size` reads it then, not as the last resize said: a resize can
 /// be read after a key typed since, and Enter must not confirm a dialog
-/// that a frame of another size drew.
+/// that a frame of another size drew. Nor one the terminal was resized
+/// away from and back to since the last frame, which `resized`, set by
+/// SIGWINCH and cleared by each frame, tells whether its event is read
+/// yet or not.
 pub fn handle(
     app: &mut App,
     event: Event,
     size: impl FnOnce() -> Option<(u16, u16)>,
+    resized: &AtomicBool,
     now: f64,
 ) -> Action {
+    if resized.load(Ordering::SeqCst) {
+        app.resized();
+    }
     match event {
         Event::Key(key) if key.kind == KeyEventKind::Press => app.key(key, size()),
         Event::Mouse(mouse) => match app.mouse(mouse, now) {
@@ -466,7 +477,7 @@ fn run_loop(
         host: host_reports,
         catalog: catalog_reports,
     }: Inbox<'_>,
-    (stop, counters): (&AtomicBool, &AtomicBool),
+    (stop, counters, resized): (&AtomicBool, &AtomicBool, &AtomicBool),
     gpu_poller: Option<&GpuPoller>,
     color: bool,
     now: impl Fn() -> f64,
@@ -493,7 +504,8 @@ fn run_loop(
             if matches!(event, Event::Resize(..)) {
                 previous = None;
             }
-            match handle(app, event, || crossterm::terminal::size().ok(), now()) {
+            let size = || crossterm::terminal::size().ok();
+            match handle(app, event, size, resized, now()) {
                 Action::Quit => break 'running,
                 Action::Rescan => {
                     workers.command(Command::Force);
@@ -579,6 +591,9 @@ fn run_loop(
         }
         let at = now();
         if dirty || at - drawn_at >= 1.0 {
+            // Cleared before the size is read, so a resize after the read
+            // leaves this frame's dialog to confirm no more.
+            resized.store(false, Ordering::SeqCst);
             let (width, height) = crossterm::terminal::size()?;
             app.tick(at);
             workers.ask(app);

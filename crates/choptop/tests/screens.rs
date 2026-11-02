@@ -1868,31 +1868,38 @@ fn enter_confirms_only_a_dialog_the_last_frame_drew_whole() {
     check("stop-60x13", &app, 60, 13);
 }
 
+/// The start dialog for DeepSeek's tp4-dspark, or else X's dialog on a
+/// launch that is not there, so nothing could stop.
+fn confirming_start_or_stop(start: bool) -> App {
+    use choptop::app::{Dialog, StopConfirm, Stoppable};
+    if start {
+        return dspark_confirming();
+    }
+    let mut app = fleet();
+    with_gpus(&mut app, false);
+    app.dialog = Some(Dialog::Stop(Box::new(StopConfirm {
+        label: "proc 48211".to_owned(),
+        what: "MiMo-V2.6-Flash at 127.0.0.1:8311 on GPUs 0,1,2,3".to_owned(),
+        gpus: vec![0, 1, 2, 3],
+        target: Stoppable::Launch(u64::MAX),
+        waiting: false,
+    })));
+    app
+}
+
 #[test]
 fn enter_after_the_terminal_shrank_waits_for_a_frame_at_its_size() {
-    use choptop::app::{Action, Dialog, StopConfirm, Stoppable};
+    use choptop::app::Action;
     use choptop::tui::handle;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use std::sync::atomic::AtomicBool;
     let enter = || Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    // No SIGWINCH seen: the size the key goes with tells on its own.
+    let calm = AtomicBool::new(false);
     for start in [true, false] {
         for resize_first in [false, true] {
             let case = format!("start {start}, resize read first {resize_first}");
-            let mut app = if start {
-                dspark_confirming()
-            } else {
-                // X's dialog, on a launch that is not there, so nothing
-                // could stop.
-                let mut app = fleet();
-                with_gpus(&mut app, false);
-                app.dialog = Some(Dialog::Stop(Box::new(StopConfirm {
-                    label: "proc 48211".to_owned(),
-                    what: "MiMo-V2.6-Flash at 127.0.0.1:8311 on GPUs 0,1,2,3".to_owned(),
-                    gpus: vec![0, 1, 2, 3],
-                    target: Stoppable::Launch(u64::MAX),
-                    waiting: false,
-                })));
-                app
-            };
+            let mut app = confirming_start_or_stop(start);
             app.settle(132, 38);
             // The terminal is 59x38 now, and its resize is read before or
             // after an Enter typed since.
@@ -1902,15 +1909,15 @@ fn enter_after_the_terminal_shrank_waits_for_a_frame_at_its_size() {
                 [enter(), Event::Resize(59, 38)]
             };
             for event in batch {
-                handle(&mut app, event, || Some((59, 38)), NOW);
+                handle(&mut app, event, || Some((59, 38)), &calm, NOW);
             }
             assert!(app.dialog.is_some() && app.pending.is_none(), "{case}");
             // Back at 132x38, Enter waits for a frame at that size.
-            let action = handle(&mut app, enter(), || Some((132, 38)), NOW);
+            let action = handle(&mut app, enter(), || Some((132, 38)), &calm, NOW);
             assert_eq!(action, Action::Redraw, "{case}");
             assert!(app.dialog.is_some(), "{case}");
             app.settle(132, 38);
-            handle(&mut app, enter(), || Some((132, 38)), NOW);
+            handle(&mut app, enter(), || Some((132, 38)), &calm, NOW);
             assert!(app.dialog.is_none(), "{case}");
             assert_eq!(app.pending.is_some(), start, "{case}");
         }
@@ -1918,8 +1925,40 @@ fn enter_after_the_terminal_shrank_waits_for_a_frame_at_its_size() {
     // A size that cannot be read confirms nothing.
     let mut app = dspark_confirming();
     app.settle(132, 38);
-    handle(&mut app, enter(), || None, NOW);
+    handle(&mut app, enter(), || None, &calm, NOW);
     assert!(app.dialog.is_some() && app.pending.is_none());
+}
+
+#[test]
+fn enter_after_a_resize_away_and_back_waits_for_a_new_frame() {
+    use choptop::app::Action;
+    use choptop::tui::handle;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let enter = || Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let same = || Some((132, 38));
+    for start in [true, false] {
+        let mut app = confirming_start_or_stop(start);
+        app.settle(132, 38);
+        // The terminal went to 59x38 and back since that frame: SIGWINCH
+        // was seen, and Enter is read before either Resize event.
+        let resized = AtomicBool::new(true);
+        let action = handle(&mut app, enter(), same, &resized, NOW);
+        assert_eq!(action, Action::Redraw, "start {start}");
+        assert!(
+            app.dialog.is_some() && app.pending.is_none(),
+            "start {start}"
+        );
+        for event in [Event::Resize(59, 38), Event::Resize(132, 38)] {
+            handle(&mut app, event, same, &resized, NOW);
+        }
+        // A frame drawn after it confirms.
+        resized.store(false, Ordering::SeqCst);
+        app.settle(132, 38);
+        handle(&mut app, enter(), same, &resized, NOW);
+        assert!(app.dialog.is_none(), "start {start}");
+        assert_eq!(app.pending.is_some(), start);
+    }
 }
 
 #[test]

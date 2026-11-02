@@ -468,6 +468,13 @@ Every request that fails writes exactly one line,
   parse adds `json_error` with serde's `category` (`syntax`, `data`, `eof` or
   `io`), `line` and `column`. An unknown model adds `served`, the first eight
   served names.
+- A decoder failure (`code="invalid_model_output"`) adds `output_refusal`
+  with `reason`, `token_ordinal` (zero-based) and `token_id`. The token fields
+  are null when unknown, such as a refusal at completion finish. The reason
+  is a known fixed refusal, or only its family followed by `refusal text
+  withheld`; an unknown family becomes `unrecognized refusal`. It is bounded
+  to 256 bytes on one line and carries no prompt or generated text. The
+  client's error body and the line's `message` and `code` stay unchanged.
 - `stage` is how far the request got: `transport` (refused before a handler:
   a head that did not parse or arrive, the connection limit, an unknown
   route, a missing API key), `intake`, `preparation`, `admission` or
@@ -478,7 +485,8 @@ Every request that fails writes exactly one line,
   `generated_tokens` counts what every choice of the request generated
   before it ended; with several choices, `request_id` names the one that
   failed.
-- No line carries prompt text, generated text or token IDs. Fields the client
+- No line carries prompt or generated text. Only `output_refusal` carries a
+  token ID: the one refused token. Fields the client
   controls are cut to a byte limit (method 16, path 256, model and request
   IDs 128, `param` 64), so a line stays under 4 KiB.
 

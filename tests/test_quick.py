@@ -75,6 +75,40 @@ class Selection(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertIn(consumer, quick.affected(metadata, [path]))
 
+    def test_registry_reader_paths_exist(self):
+        for edge in change_scope.declarations():
+            for reader in edge["reader"].split(";"):
+                reader = reader.strip()
+                if "/" not in reader or any(char.isspace() for char in reader):
+                    continue
+                with self.subTest(source=edge["source"], reader=reader):
+                    self.assertTrue(list(change_scope.ROOT.glob(reader)), reader)
+
+    def test_streaming_fixture_names_both_actual_readers(self):
+        fixture = "fixtures/tokenizer-whitespace.json"
+        report = change_scope.Graph(self.model_metadata()).select([fixture])
+        for model in ("mimo26", "qwen38"):
+            package = "model-" + model
+            reader = f"models/{model}/compiler/tests/streaming_text.rs"
+            with self.subTest(model=model):
+                self.assertIn(package, report["packages"])
+                self.assertTrue(any(edge.get("reader") == reader and edge["kind"] == "data include"
+                                    for reason in report["reasons"][package] for edge in reason["chain"]))
+                source = change_scope.ROOT / reader
+                includes = [(source.parent / json.loads(argument)).resolve()
+                            for argument in change_scope.include_arguments(source.read_text())]
+                self.assertIn(change_scope.ROOT / fixture, includes)
+
+    def test_model_support_keeps_fallback_without_a_false_source_include(self):
+        metadata = self.model_metadata()
+        report = change_scope.Graph(metadata).select(["models/mimo26/compiler/tests/support/frontend.rs"])
+        self.assertEqual(report["packages"], sorted(metadata["workspace_members"]))
+        reasons = report["reasons"]["model-qwen38"]
+        self.assertTrue(any(edge["kind"] == "conservative fallback"
+                            for reason in reasons for edge in reason["chain"]))
+        self.assertFalse(any(edge["kind"] == "source include"
+                             for reason in reasons for edge in reason["chain"]))
+
     def test_qwen_cuda_selects_kernel_lab(self):
         for header in ("qwen38_bundle.cuh", "qwen38_speculation.cuh"):
             with self.subTest(header=header):

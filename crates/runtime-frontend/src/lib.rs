@@ -36,6 +36,7 @@ mod native;
 mod serve;
 mod tokenizer;
 
+pub use checks::loggable_refusal_v1;
 pub use decode::{
     AssistantCompletionV1, CompletedCompletionV1, CompletionDecoderV1, CompletionFinishV1,
     CompletionUpdateV1, DecoderLimitsV1, GeneratedTokenV1, IncrementalTextV1,

@@ -20,7 +20,7 @@ use runtime_frontend::{
     AUDIO_MAXIMUM_SECONDS_V1, AUDIO_SAMPLE_RATE_V1, BundleChatStateV1, BundleParserSourceV1,
     CompletionDecoderV1, CompletionFinishV1, CompletionUpdateV1, DecoderLimitsV1,
     FrontendDescriptorV1, FrontendMultimodalV1, FrontendPositionRuleV1, FrontendVocabularyV1,
-    GeneratedTokenV1, PromptModeV1, TokenContributionV1,
+    GeneratedTokenV1, PromptModeV1, TokenContributionV1, loggable_refusal_v1,
 };
 use runtime_grammar::{CompiledGrammar, ConstraintState};
 use runtime_kv::KvMetrics;
@@ -43,7 +43,7 @@ use runtime_server::{
     AdmissionError, BackendReadiness, BackendToolCall, BoxFuture, CancellationSignal, EventSender,
     FinishReason, FrontendMediaPartKindV1, FrontendMediaPartV1, GeneratedTokenLogprob,
     GenerationBackend, GenerationEvent, MediaInputV1, MediaSpanV1, MetricsSnapshotProvider,
-    PositionSpanV1, PreparedPrompt, PreparedRequest, PromptSegmentV1,
+    OutputRefusal, PositionSpanV1, PreparedPrompt, PreparedRequest, PromptSegmentV1,
     PromptTokenLogprob as ServerPromptTokenLogprob, ReasoningContent, TokenLogprob, TokenUsage,
     VisibleContent,
 };
@@ -4565,7 +4565,11 @@ fn handle_engine_event<E: ModelExecutor>(
                 active.insert(id, generation);
                 true
             } else {
-                fail_generation(&generation, DECODE_MESSAGE, DECODE_CODE);
+                fail_output(
+                    &generation,
+                    "prompt logprobs could not be decoded or delivered",
+                    None,
+                );
                 cancel_live_request(engine, id)
             }
         }
@@ -4577,14 +4581,22 @@ fn handle_engine_event<E: ModelExecutor>(
             let ordinal = match u64::try_from(generation.completion_tokens) {
                 Ok(ordinal) => ordinal,
                 Err(_) => {
-                    fail_generation(&generation, DECODE_MESSAGE, DECODE_CODE);
+                    fail_output(
+                        &generation,
+                        "the generated token's ordinal overflowed",
+                        Some((None, *token_id)),
+                    );
                     return cancel_live_request(engine, id);
                 }
             };
             let decoded = match generated_token_v1(tokenizer, ordinal, *token_id) {
                 Ok(token) => token,
                 Err(_) => {
-                    fail_generation(&generation, DECODE_MESSAGE, DECODE_CODE);
+                    fail_output(
+                        &generation,
+                        "the tokenizer could not decode the generated token",
+                        Some((Some(ordinal), *token_id)),
+                    );
                     return cancel_live_request(engine, id);
                 }
             };
@@ -4599,7 +4611,11 @@ fn handle_engine_event<E: ModelExecutor>(
                 ) {
                     Ok(record) => Some(record),
                     Err(()) => {
-                        fail_generation(&generation, DECODE_MESSAGE, DECODE_CODE);
+                        fail_output(
+                            &generation,
+                            "the generated token's logprob labels could not be decoded",
+                            Some((Some(ordinal), *token_id)),
+                        );
                         return cancel_live_request(engine, id);
                     }
                 }
@@ -4609,7 +4625,11 @@ fn handle_engine_event<E: ModelExecutor>(
             generation.completion_tokens = match generation.completion_tokens.checked_add(1) {
                 Some(count) => count,
                 None => {
-                    fail_generation(&generation, DECODE_MESSAGE, DECODE_CODE);
+                    fail_output(
+                        &generation,
+                        "the generated token count overflowed",
+                        Some((Some(ordinal), *token_id)),
+                    );
                     return cancel_live_request(engine, id);
                 }
             };
@@ -4635,8 +4655,12 @@ fn handle_engine_event<E: ModelExecutor>(
             generation.logprob_context[3] = Some(*token_id);
             let updates = match generation.decoder.push_engine_token(decoded) {
                 Ok(updates) => updates,
-                Err(_) => {
-                    fail_generation(&generation, DECODE_MESSAGE, DECODE_CODE);
+                Err(message) => {
+                    fail_output(
+                        &generation,
+                        loggable_refusal_v1(&message),
+                        Some((Some(ordinal), *token_id)),
+                    );
                     return cancel_live_request(engine, id);
                 }
             };
@@ -4665,8 +4689,8 @@ fn handle_engine_event<E: ModelExecutor>(
                 generation.decoder.finish_length()
             } {
                 Ok(updates) => updates,
-                Err(_) => {
-                    fail_generation(&generation, DECODE_MESSAGE, DECODE_CODE);
+                Err(message) => {
+                    fail_output(&generation, loggable_refusal_v1(&message), None);
                     return cancel_live_request(engine, id);
                 }
             };
@@ -4902,7 +4926,11 @@ fn handle_delivery_error(generation: &ActiveGeneration, error: UpdateDeliveryErr
     match error {
         UpdateDeliveryError::Overflow => generation.cancellation.cancel(),
         UpdateDeliveryError::InvalidOutput => {
-            fail_generation(generation, DECODE_MESSAGE, DECODE_CODE);
+            fail_output(
+                generation,
+                "decoded updates do not account for their tokens in order",
+                None,
+            );
         }
     }
 }
@@ -4943,6 +4971,23 @@ fn fail_generation(generation: &ActiveGeneration, message: &str, code: &str) {
     let _ = generation.events.try_emit(GenerationEvent::Failed {
         message: message.to_owned(),
         code: Some(code.to_owned()),
+        refusal: None,
+    });
+}
+
+fn fail_output(
+    generation: &ActiveGeneration,
+    reason: impl Into<String>,
+    token: Option<(Option<u64>, u32)>,
+) {
+    let _ = generation.events.try_emit(GenerationEvent::Failed {
+        message: DECODE_MESSAGE.to_owned(),
+        code: Some(DECODE_CODE.to_owned()),
+        refusal: Some(Box::new(OutputRefusal {
+            reason: reason.into(),
+            token_ordinal: token.and_then(|(ordinal, _)| ordinal),
+            token_id: token.map(|(_, id)| id),
+        })),
     });
 }
 

@@ -1,6 +1,6 @@
 {
   "ci/cpu.py": {"matches": {"mimo": 2, "qwen38": 2}, "reason": "Shipped model integration, build selection, or deployment defaults."},
-  "ci/source_dependencies.toml": {"matches": {"mimo26": 11, "qwen38": 13}, "reason": "Shipped model integration, build selection, or deployment defaults."},
+  "ci/source_dependencies.toml": {"matches": {"mimo26": 10, "qwen38": 12}, "reason": "Shipped model integration, build selection, or deployment defaults."},
   "crates/bundle-runtime/tests/create_record.rs": {"matches": {"mimo": 1}, "reason": "Existing model-specific fixture or documented model comparison, not shared runtime behavior."},
   "crates/bundle-runtime/tests/host_graphs.rs": {"matches": {"mimo": 1}, "reason": "Existing model-specific fixture or documented model comparison, not shared runtime behavior."},
   "crates/encoder-spec/README.md": {"matches": {"deepseek": 1, "mimo": 6, "mimo26": 3, "qwen": 2, "qwen38": 3}, "reason": "Existing model-specific fixture or documented model comparison, not shared runtime behavior."},

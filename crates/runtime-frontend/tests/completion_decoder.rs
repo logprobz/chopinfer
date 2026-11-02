@@ -8,8 +8,8 @@
 //! reserved marker, so what they pin is the decoder rather than one model's
 //! punctuation: streaming a completion in arbitrary
 //! byte splits must produce the same answer as parsing it whole, a boundary
-//! must never leak into visible text, and a structure that does not close must
-//! never be reported as one that did.
+//! must never leak into visible text before an ignored end token, and a
+//! structure that does not close must never be reported as one that did.
 
 use std::sync::Arc;
 
@@ -1352,6 +1352,239 @@ fn raw_completion_can_ignore_eos_and_control_special_token_visibility() {
                 }
             );
             assert_eq!(finished(&updates).unwrap().generated_token_count, 2);
+        }
+    }
+}
+
+fn ignored_eos(fixture: &FixtureV1, ordinal: u64) -> GeneratedTokenV1 {
+    GeneratedTokenV1::new(
+        ordinal,
+        fixture.descriptor.vocabulary.stop_token_ids[0],
+        fixture.end().as_bytes().to_vec(),
+    )
+    .with_special(true)
+}
+
+#[test]
+fn ignored_eos_tail_is_content_with_its_token_contributions() {
+    for fixture in fixtures() {
+        for marker in fixture
+            .reserved()
+            .iter()
+            .map(String::as_str)
+            .chain([fixture.thinking_close(), fixture.tool_open()])
+        {
+            for skip in [false, true] {
+                let mut decoder = fixture.decoder(PromptModeV1::Thinking);
+                decoder.set_decoding_options(
+                    runtime_server::DecodingOptions {
+                        ignore_eos: true,
+                        skip_special_tokens: skip,
+                        ..Default::default()
+                    },
+                    false,
+                );
+                decoder.set_reasoning_open(true);
+                decoder.set_tool_extraction(false);
+                let mut updates = decoder
+                    .push_engine_token(GeneratedTokenV1::new(0, 200, b"why".to_vec()))
+                    .unwrap();
+                updates.extend(decoder.push_engine_token(ignored_eos(&fixture, 1)).unwrap());
+                updates.extend(
+                    decoder
+                        .push_engine_token(GeneratedTokenV1::new(
+                            2,
+                            200,
+                            marker.as_bytes().to_vec(),
+                        ))
+                        .unwrap_or_else(|error| panic!("{}: {marker}: {error}", fixture.name)),
+                );
+                // A later ignored EOS must not reopen the parser.
+                updates.extend(decoder.push_engine_token(ignored_eos(&fixture, 3)).unwrap());
+                updates.extend(decoder.finish_length().unwrap());
+                assert_eq!(text(&updates).0, "why", "{}: {marker}", fixture.name);
+                assert_eq!(
+                    text(&updates).1,
+                    if skip {
+                        marker.to_owned()
+                    } else {
+                        format!("{}{marker}{}", fixture.end(), fixture.end())
+                    }
+                );
+                let contributions: Vec<_> = updates
+                    .iter()
+                    .filter_map(|update| match update {
+                        CompletionUpdateV1::Content(part) => Some(part.contributions.clone()),
+                        _ => None,
+                    })
+                    .flatten()
+                    .collect();
+                let expected: Vec<_> = [(1, fixture.end()), (2, marker), (3, fixture.end())]
+                    .into_iter()
+                    .filter(|(ordinal, _)| !skip || *ordinal == 2)
+                    .map(|(ordinal, bytes)| runtime_frontend::TokenContributionV1 {
+                        ordinal,
+                        token_id: if ordinal == 2 {
+                            200
+                        } else {
+                            fixture.descriptor.vocabulary.stop_token_ids[0]
+                        },
+                        byte_start: 0,
+                        byte_end: bytes.len(),
+                    })
+                    .collect();
+                assert_eq!(contributions, expected);
+                let done = finished(&updates).unwrap();
+                assert_eq!(done.reason, CompletionFinishV1::Length);
+                assert_eq!(done.generated_token_count, 4);
+                assert!(done.completion.is_none());
+            }
+        }
+        // Before an EOS, the reserved marker still refuses ordinary chat.
+        let mut decoder = fixture.decoder(PromptModeV1::Chat);
+        let marker = format!("{}x", fixture.reserved()[0]);
+        assert_eq!(
+            decoder
+                .push_engine_token(GeneratedTokenV1::new(0, 200, marker.into_bytes()))
+                .unwrap_err(),
+            "malformed completion: completion contains an unexpected reserved boundary"
+        );
+    }
+}
+
+#[test]
+fn client_stops_still_cut_the_ignored_eos_tail() {
+    for fixture in fixtures() {
+        for spanning in [false, true] {
+            for visible in [false, true] {
+                let mut decoder = fixture.with_stops(&["END"]);
+                decoder.set_decoding_options(
+                    runtime_server::DecodingOptions {
+                        ignore_eos: true,
+                        include_stop_str_in_output: visible,
+                        ..Default::default()
+                    },
+                    false,
+                );
+                let mut updates = decoder.push_engine_token(ignored_eos(&fixture, 0)).unwrap();
+                let prefix = format!("{}x E", fixture.reserved()[0]);
+                updates.extend(
+                    decoder
+                        .push_engine_token(GeneratedTokenV1::new(
+                            1,
+                            200,
+                            prefix.as_bytes().to_vec(),
+                        ))
+                        .unwrap(),
+                );
+                if spanning {
+                    updates.extend(decoder.push_engine_token(ignored_eos(&fixture, 2)).unwrap());
+                }
+                updates.extend(
+                    decoder
+                        .push_engine_token(GeneratedTokenV1::new(
+                            if spanning { 3 } else { 2 },
+                            200,
+                            b"ND trailing".to_vec(),
+                        ))
+                        .unwrap(),
+                );
+                assert_eq!(
+                    text(&updates).1,
+                    format!(
+                        "{}x {}",
+                        fixture.reserved()[0],
+                        if visible { "END" } else { "" }
+                    )
+                );
+                assert_eq!(finished(&updates).unwrap().reason, CompletionFinishV1::Stop);
+            }
+        }
+    }
+}
+
+#[test]
+fn native_ignored_eos_retains_stop_prefixes_and_incomplete_characters() {
+    for fixture in fixtures() {
+        for character in [false, true] {
+            let stops = ["END".to_owned()];
+            let mut decoder = CompletionDecoderV1::with_client_stops(
+                Arc::clone(&fixture.descriptor),
+                PromptModeV1::Thinking,
+                DecoderLimitsV1::declared(&fixture.descriptor),
+                &stops,
+            )
+            .unwrap();
+            decoder.set_parser_source(
+                runtime_frontend::BundleParserSourceV1::from_export(
+                    &runtime_frontend::test_support::fixture_export_v1(),
+                    &serde_json::to_vec(fixture.descriptor.as_ref()).unwrap(),
+                )
+                .unwrap(),
+            );
+            decoder.set_reasoning_open(true);
+            decoder.set_decoding_options(
+                runtime_server::DecodingOptions {
+                    ignore_eos: true,
+                    ..Default::default()
+                },
+                false,
+            );
+            let (first, last): (&[u8], &[u8]) = if character {
+                (b"\xe2\x82", b"\xac")
+            } else {
+                (b"E", b"ND")
+            };
+            let mut updates = decoder
+                .push_engine_token(GeneratedTokenV1::new(0, 200, first.to_vec()))
+                .unwrap();
+            updates.extend(decoder.push_engine_token(ignored_eos(&fixture, 1)).unwrap());
+            updates.extend(
+                decoder
+                    .push_engine_token(GeneratedTokenV1::new(2, 200, last.to_vec()))
+                    .unwrap(),
+            );
+            if character {
+                updates.extend(decoder.finish_length().unwrap());
+                assert_eq!(text(&updates), (String::new(), "€".to_owned()));
+                let contributions: Vec<_> = updates
+                    .iter()
+                    .filter_map(|update| match update {
+                        CompletionUpdateV1::Content(part) => Some(part.contributions.clone()),
+                        _ => None,
+                    })
+                    .flatten()
+                    .collect();
+                assert_eq!(
+                    contributions,
+                    vec![
+                        runtime_frontend::TokenContributionV1 {
+                            ordinal: 0,
+                            token_id: 200,
+                            byte_start: 0,
+                            byte_end: 2
+                        },
+                        runtime_frontend::TokenContributionV1 {
+                            ordinal: 2,
+                            token_id: 200,
+                            byte_start: 0,
+                            byte_end: 1
+                        },
+                    ]
+                );
+            } else {
+                assert_eq!(text(&updates), (String::new(), String::new()));
+            }
+            let done = finished(&updates).unwrap();
+            assert_eq!(
+                done.reason,
+                if character {
+                    CompletionFinishV1::Length
+                } else {
+                    CompletionFinishV1::Stop
+                }
+            );
+            assert_eq!(done.generated_token_count, 3);
         }
     }
 }

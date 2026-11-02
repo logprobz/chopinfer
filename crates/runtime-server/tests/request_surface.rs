@@ -4560,6 +4560,7 @@ async fn backend_failure_codes_survive_http_and_streaming_errors() {
     ] {
         for stream in [false, true] {
             *server.backend.replay.lock().unwrap() = Some(vec![GenerationEvent::Failed {
+                refusal: None,
                 message: "generation failed".into(),
                 code: Some(code.into()),
             }]);

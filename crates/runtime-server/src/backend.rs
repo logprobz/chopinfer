@@ -361,6 +361,15 @@ pub struct TokenUsage {
     pub cached_tokens: Option<u64>,
 }
 
+/// Log-safe facts about refused model output, with no prompt or output text.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OutputRefusal {
+    pub reason: String,
+    /// The refused token's zero-based position, when known.
+    pub token_ordinal: Option<u64>,
+    pub token_id: Option<u32>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum GenerationEvent {
     AdmissionFailed(AdmissionError),
@@ -391,6 +400,7 @@ pub enum GenerationEvent {
     Failed {
         message: String,
         code: Option<String>,
+        refusal: Option<Box<OutputRefusal>>,
     },
 }
 

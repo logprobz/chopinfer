@@ -2471,6 +2471,7 @@ async fn grammar_budget_failure_preserves_the_terminal_reason() {
         ] {
             let server =
                 TestServerV1::start(ScriptedBackendV1::new(vec![GenerationEvent::Failed {
+                    refusal: None,
                     message: reason.to_owned(),
                     code: Some("generation_failed".to_owned()),
                 }]))

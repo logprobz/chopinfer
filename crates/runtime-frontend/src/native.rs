@@ -22,23 +22,15 @@ use runtime_server::{
     PromptSegmentV1,
 };
 
-use crate::checks::{malformed_v1, resource_v1, sequence_v1, validate_function_name_v1};
+use crate::checks::{
+    DECODER_FAMILIES_V1, malformed_v1, resource_v1, sequence_v1, validate_function_name_v1,
+};
 use crate::decode::{AssistantCompletionV1, CompletionFinishV1, ParsedToolCallV1, PromptModeV1};
 use crate::descriptor::{FrontendComponentErrorV1, FrontendDescriptorV1, FrontendMediaKindV1};
 use crate::format::{
     FormatEventV1, FormatInputV1, FormatParserOptionsV1, FormatParserV1, FormatRenderRequestV1,
     FormatRenderedV1, FormatRendererV1, FormatToolCallDeltaV1,
 };
-
-/// The refusal families a decoder reports. A parser refusal in one of them
-/// passes through as the format worded it; any other is malformed.
-const DECODER_FAMILIES_V1: [&str; 5] = [
-    "malformed completion: ",
-    "invalid conversation sequence: ",
-    "conversation resource limit: ",
-    "invalid conversation field: ",
-    "invalid JSON: ",
-];
 
 /// Bytes a render answer may spend past its prompt text and parser state:
 /// the document header, mode, effort, flags and lengths.

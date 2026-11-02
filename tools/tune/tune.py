@@ -149,8 +149,8 @@ def arm_identity(seal, arm):
 
 def check_installs(seal, require_proofs=False):
     installs, default = sealed_installs(seal)
-    if len(installs) > 1 and seal['config']['model'].get('mode') != 'ab':
-        raise ValueError('multiple installs require mode ab')
+    if len(installs) > 1 and seal['config']['model'].get('mode') not in ('ab', 'exact'):
+        raise ValueError('multiple installs require mode ab or exact')
     if default not in installs or installs[default] != seal['install']:
         raise ValueError('default install differs from the first sealed install')
     used = {arm_install(seal, arm)[0] for arm in arms(seal['config'])}
@@ -229,6 +229,7 @@ def validate(payload, dry):
         raise RuntimeError('runtime seal differs from the job wrapper')
     m = json.loads(body)
     check_kv_config(m['config'])
+    required_allocated_concurrencies(m['config'])
     if not dry and not m['ready']:
         raise RuntimeError('template only')
     for path, wanted in m['sha256'].items():
@@ -514,6 +515,24 @@ def check_allocations(name, steps, enabled, required):
     if enabled and required and not count:
         raise RuntimeError(f'{name}: no allocated steps where reservations can exceed width')
     return count
+
+
+def required_allocated_concurrencies(config):
+    required = config['model'].get('required_allocated_concurrencies', [])
+    if (not isinstance(required, list) or any(type(c) is not int or c <= 0 for c in required)
+            or len(required) != len(set(required))
+            or any(c not in config['model']['concurrencies'] for c in required)):
+        raise ValueError('required_allocated_concurrencies must be unique declared positive concurrencies')
+    return required
+
+
+def check_full_allocations(name, config, c, steps, full):
+    if c not in required_allocated_concurrencies(config):
+        return
+    if not full['allocated_steps']:
+        raise RuntimeError(f'{name}: no full-C{c} allocated steps')
+    if any(step['reserved_rows'] <= step['verify_rows'] for step in steps if 'reserved_rows' in step):
+        raise RuntimeError(f'{name}: allocated reservation does not exceed executed rows')
 
 
 STEP_PHASES = ('prefill', 'verify', 'decode')
@@ -1008,6 +1027,7 @@ def run_ab_windows(server, arm, state, power, root, cold=None):
             check_depth(name, w['steps'], arm.get('depths', arm['depth']))
             route = check_fallbacks(name, w['cold_steps'] if cold else w['steps'], arm_fallbacks(config, arm))
             full = full_concurrency(w['steps'], c)
+            check_full_allocations(name, config, c, w['steps'], full)
             if not full['steps'] and not cold:
                 raise RuntimeError(f'{name}: no full-concurrency steps')
             step_cells = cells(w['steps'])
@@ -1275,6 +1295,8 @@ def run_windows(server, arm, state, power, root, passes, reference):
                 w['allocated_steps'] = check_allocations(
                     f'{label} {name} {tag} group {g}', w['steps'], record['confidence']['enabled'],
                     allocation_possible(config, arm, c))
+                full = full_concurrency(w['steps'], c)
+                check_full_allocations(f'{label} {name} {tag} group {g}', config, c, w['steps'], full)
                 w['energy'] = power.window(w['started'], w['ended'], c * tokens)
                 parts.append(w)
             exact = [stream for w in parts for stream in w['exact']]
@@ -1309,8 +1331,9 @@ def run_windows(server, arm, state, power, root, passes, reference):
             if exact != wanted:
                 where = first_difference(wanted, exact)
                 if kind == 'greedy':
-                    raise RuntimeError(f'{label} {name} r{repeat}: greedy output differs from W0 at {where}')
-                state['sampled_differences'].append(f'{label} {name} r{repeat}: differs from W0 at {where}')
+                    state['greedy_differences'].append(f'{label} {name} r{repeat}: greedy output differs from W0 at {where}')
+                else:
+                    state['sampled_differences'].append(f'{label} {name} r{repeat}: differs from W0 at {where}')
             state['exact'][name] = state['exact'].get(name, 0) + 1
             save(SEAL_RUN, state)
 
@@ -1360,7 +1383,7 @@ def run_arm(run, arm, state, dry, keep, reference_pass, warmup_only=False):
         record['confidence'] = confidence_startup(log, [*model['serve_arguments'], *arguments])
         record['weights'] = weight_source(log)
         wanted = 'borrowed' if keep else 'loaded'
-        if (not dry or model.get('mode') == 'ab') and record['weights']['source'] != wanted:
+        if (not dry or model.get('mode') == 'ab' or len(sealed_installs(SEAL)[0]) > 1) and record['weights']['source'] != wanted:
             raise RuntimeError(f"{label}: weights {record['weights']}, expected {wanted}")
         record['kv_pages_per_rank'] = kv_pages(log, config, state, label)
         if not state['tokens']:
@@ -1463,7 +1486,8 @@ def main(args):
     state = {'status': 'running', 'dry_run': args.dry_run, 'revision': m['install'].get('revision'),
              'arm_installs': {arm['label']: arm_identity(m, arm) for arm in arms(config)},
              'mode': config['model'].get('mode', 'sweep'), 'order': order(config), 'processes': {}, 'exact': {},
-             'reference': {}, 'tokens': [], 'sampled_differences': [], 'power': {}, 'telemetry': {}, 'keeper': None,
+             'reference': {}, 'tokens': [], 'greedy_differences': [], 'sampled_differences': [],
+             'power': {}, 'telemetry': {}, 'keeper': None,
              'errors': []}
     r.WORK_DEADLINE = time.monotonic() + config['work_seconds']
     since = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())
@@ -1498,13 +1522,14 @@ def main(args):
             save(run, state)
         if state['mode'] == 'ab':
             reference_ab(run, state, args.dry_run, keep)
-        if state['sampled_differences']:
-            raise RuntimeError(f"fixed-seed sampled outputs differ from W0: {state['sampled_differences']}")
         planned = planned_windows(config)
         executed = sum(state['exact'].values())
         state['windows'] = {'planned': planned, 'executed': executed}
         if executed != planned:
             raise RuntimeError(f'{executed} timed windows executed, {planned} planned')
+        if state['greedy_differences'] or state['sampled_differences']:
+            raise RuntimeError(f"outputs differ from W0: greedy={state['greedy_differences']}; "
+                               f"fixed-seed sampled={state['sampled_differences']}")
         state['status'] = 'passed'
     except BaseException as error:
         state['status'] = 'void' if isinstance(error, (r.PowerChanged, faults.PartlyWarm)) else 'failed'

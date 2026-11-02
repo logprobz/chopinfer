@@ -65,7 +65,6 @@ fn validate(batch: &BatchRequestV1, boundaries: &[Boundary], cuts: bool) -> Resu
             || item.is_decode()
             || item.is_verify()
             || item.prompt_rows()
-            || item.anchor()
             || boundary.prompt_tokens == 0
             || batch
                 .media()
@@ -95,6 +94,11 @@ fn validate(batch: &BatchRequestV1, boundaries: &[Boundary], cuts: bool) -> Resu
                 "prefill append does not end at its guaranteed boundary",
             ));
         }
+        // A cuts envelope may carry a prompt-ending item whose anchor state
+        // the bundle keeps inside the item. Grid-only envelopes refuse it.
+        if item.anchor() && !(cuts && end == boundary.prompt_tokens) {
+            return Err(Error::Contract("invalid prefill boundary item"));
+        }
     }
     Ok(())
 }
@@ -105,6 +109,8 @@ pub fn encode(original: &[u8], boundaries: &[Boundary]) -> Result<Vec<u8>, Error
 
 /// Encode endpoints for a separately negotiated complete-state cuts API.
 /// The scheduler and bundle enforce the bundle's declared prefill granule.
+/// Prompt-ending items may keep an anchor inside their rows, including at
+/// nonzero starts. The scheduler enforces the instance's anchor allowance.
 pub fn encode_with_cuts(original: &[u8], boundaries: &[Boundary]) -> Result<Vec<u8>, Error> {
     encode_policy(original, boundaries, true)
 }
@@ -428,5 +434,68 @@ mod tests {
         // Each request has one boundary per step.
         let original = cut_batch(&[item(3, 0, 512, false)]);
         assert!(encode_with_cuts(&original, &[cut(3, 9000, 512), cut(3, 9000, 512)]).is_err());
+    }
+
+    /// Only a cuts envelope carries an anchor item, and only one ending its
+    /// prompt: the bundle keeps its state at the granule inside it.
+    #[test]
+    fn anchor_items_need_cuts_and_their_prompt_end() {
+        let anchored = |previous: u64, rows: u32| {
+            BatchRequestV1::new(
+                BatchWireVersionV1::V3,
+                vec![
+                    BatchItemV1::new(7, false, rows, true, vec![1; rows as usize])
+                        .with_anchor(true),
+                ],
+                vec![BatchAppendV1::new(
+                    previous,
+                    u64::from(rows),
+                    previous + u64::from(rows),
+                    vec![1; (previous + u64::from(rows)).div_ceil(64) as usize],
+                    None,
+                )],
+            )
+            .encode()
+            .unwrap()
+        };
+        for (previous, rows) in [(0, 789), (529, 260), (100001, 49), (100032, 65)] {
+            let prompt_tokens = previous + u64::from(rows);
+            let anchor = prompt_tokens / 64 * 64;
+            assert!(previous < anchor && anchor < prompt_tokens);
+            let end = Boundary {
+                request_id: 7,
+                prompt_tokens,
+                chunk_end: prompt_tokens,
+                chunk_tokens: 8192,
+            };
+            let original = anchored(previous, rows);
+            assert!(encode(&original, &[end]).is_err());
+            let bytes = encode_with_cuts(&original, &[end]).unwrap();
+            assert!(decode(&bytes).is_err());
+            let read = decode_with_cuts(&bytes).unwrap();
+            assert_eq!(read.original, original);
+            assert!(read.batch.items()[0].anchor());
+            assert_eq!(read.boundaries, [end]);
+            let short = Boundary {
+                prompt_tokens: prompt_tokens + 64,
+                ..end
+            };
+            assert!(encode_with_cuts(&original, &[short]).is_err());
+            let mut bad = bytes;
+            let prompt_offset = 24 + original.len() + 8;
+            bad[prompt_offset..prompt_offset + 8]
+                .copy_from_slice(&short.prompt_tokens.to_le_bytes());
+            assert!(decode_with_cuts(&bad).is_err());
+        }
+        // The batch codec also refuses an anchor without prompt-end logits.
+        assert!(
+            BatchRequestV1::new(
+                BatchWireVersionV1::V3,
+                vec![BatchItemV1::new(7, false, 768, false, vec![1; 768]).with_anchor(true)],
+                vec![BatchAppendV1::new(0, 768, 768, vec![1; 12], None)],
+            )
+            .encode()
+            .is_err()
+        );
     }
 }

@@ -43,10 +43,10 @@ fn extra_endpoints_require_the_separate_bundle_declaration() {
     }
 }
 
-/// Manifest anchor batches pass through unchanged. Guaranteed grids refuse
-/// them even when they negotiate complete-state cuts.
+/// Manifest anchor batches pass through unchanged. A guaranteed grid admits
+/// prompt-ending anchors only through its separately negotiated cuts envelope.
 #[test]
-fn manifest_anchor_bytes_survive_but_grid_envelopes_refuse_anchors() {
+fn manifest_anchor_bytes_survive_and_grid_anchors_need_cuts() {
     use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
     let original = BatchRequestV1::new(
         BatchWireVersionV1::V3,
@@ -71,7 +71,16 @@ fn manifest_anchor_bytes_survive_but_grid_envelopes_refuse_anchors() {
         instance.prefill_cuts = cuts;
         let encoded =
             crate::executor::negotiated_prefill_request(&instance, original.clone(), &items);
-        assert!(encoded.is_err());
+        if cuts {
+            let bytes = encoded.unwrap();
+            assert!(runtime_bundle_sdk::prefill::decode(&bytes).is_err());
+            let read = runtime_bundle_sdk::prefill::decode_with_cuts(&bytes).unwrap();
+            assert_eq!(read.original, original);
+            assert!(read.batch.items()[0].anchor());
+            assert_eq!(read.boundaries[0].chunk_end, 789);
+        } else {
+            assert!(encoded.is_err());
+        }
     }
     let instance = FakeExecutionV1::emitting(Vec::new());
     let forwarded =

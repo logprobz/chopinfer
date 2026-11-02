@@ -1638,8 +1638,26 @@ mod tests {
         app.supervise(at);
     }
 
+    /// `confirm` with the launches it replaces that have started marked so,
+    /// as a placement read now marks them.
+    fn marked(app: &App, mut confirm: Confirm) -> Confirm {
+        let reservations = app.launches.reservations();
+        let placement = &mut confirm.start.placement;
+        placement.started = placement
+            .replaces
+            .iter()
+            .copied()
+            .filter(|id| {
+                crate::launch::reserved(&reservations, *id)
+                    .is_some_and(|reservation| !reservation.waiting())
+            })
+            .collect();
+        confirm
+    }
+
     /// Confirms with Enter, then supplies the requested fresh reports.
     fn run(app: &mut App, confirm: Confirm) {
+        let confirm = marked(app, confirm);
         app.live.found = confirm
             .stops
             .iter()
@@ -1780,6 +1798,7 @@ mod tests {
             app.live.found = vec![found_serve(&serve, &[0, 1])];
             let found = app.live.found.clone();
             read_reports(&mut app, 0.0, found);
+            let start = marked(&app, start);
             app.launch(start);
             let why = if case == "adopted" {
                 format!("{label} is another process now")
@@ -2157,7 +2176,7 @@ mod tests {
     #[test]
     fn newer_readings_invalidate_checks_and_confirmations() {
         for stage in ["check", "expired check", "confirm"] {
-            for change in ["blocked", "unknown", "uuid", "port"] {
+            for change in ["blocked", "unknown", "uuid", "port", "started"] {
                 let root = scratch(&format!("revalidate-{stage}-{change}"));
                 let binary = root.join("never");
                 write_script(&binary, &format!("#!/bin/sh\n{CLOSE}exit 0\n"));
@@ -2166,13 +2185,35 @@ mod tests {
                 app.catalog.binary = Ok(binary);
                 app.probe = |_, _| true;
                 app.live.scanning = true;
-                read_reports(&mut app, 1.0, Vec::new());
-                app.clock = 1.0;
                 let edits = [
                     (Key::ModelOption("prefill_upper_skip".into()), "false"),
                     (Key::Flag("max-sequences".into()), "48"),
                 ];
-                checking(&mut app, deepseek(&edits), 1);
+                let mut start = deepseek(&edits);
+                // A launch still waiting on the GPUs picked, which the
+                // dialog says is cancelled before it starts.
+                let mut replaced = None;
+                if change == "started" {
+                    let mut record =
+                        crate::launch::records::tests::record("earlier", 'A', &[0, 1, 2, 3]);
+                    record.uuids = (0..4).map(uuid).collect();
+                    let id = app
+                        .launches
+                        .adopt(record, Phase::Waiting, &mut app.registry, 1.0);
+                    start.placement.replaces = vec![id];
+                    start.placement.instances[0].after = vec![placement::Dependency::Launch(id)];
+                    replaced = Some(id);
+                }
+                // Nothing is queued, and only the replaced launch is there.
+                let unqueued = |app: &App| {
+                    app.launches
+                        .launches
+                        .iter()
+                        .all(|launch| Some(launch.id) == replaced)
+                };
+                read_reports(&mut app, 1.0, Vec::new());
+                app.clock = 1.0;
+                checking(&mut app, start, 1);
                 if stage == "confirm" {
                     app.catalog_reply(Reply::Check(1, Check::parse(CHECK)));
                     assert!(app.dialog.is_some(), "{:?}", app.loader.flash);
@@ -2182,7 +2223,7 @@ mod tests {
                     app.asked(10.0);
                     app.supervise(10.1);
                     assert!(app.pending.is_some());
-                    assert!(app.launches.launches.is_empty());
+                    assert!(unqueued(&app));
                 } else if stage == "expired check" {
                     app.clock = 10.0;
                     app.catalog_reply(Reply::Check(1, Check::parse(CHECK)));
@@ -2200,6 +2241,7 @@ mod tests {
                         ..Reading::default()
                     })
                     .collect::<Vec<_>>();
+                let mut started = None;
                 match change {
                     "blocked" => {
                         readings[0].processes = Some(vec![Process {
@@ -2215,6 +2257,20 @@ mod tests {
                     "unknown" => readings[0].processes = None,
                     "uuid" => app.live.devices[0].uuid = Some(uuid(8)),
                     "port" => app.probe = |_, port| port != 8310,
+                    "started" => {
+                        // It started meanwhile: Enter would stop it.
+                        let guard = fake_serve(&root.join("serve"));
+                        let launch = app
+                            .launches
+                            .launches
+                            .iter_mut()
+                            .find(|launch| Some(launch.id) == replaced)
+                            .unwrap();
+                        launch.phase = Phase::Running;
+                        launch.record.pid = Some(guard.0.id());
+                        launch.record.start_ticks = process::start_ticks_of(guard.0.id());
+                        started = Some(guard);
+                    }
                     _ => unreachable!(),
                 }
                 app.live.gpu(&Report::Polled(readings));
@@ -2227,21 +2283,24 @@ mod tests {
                 assert!(app.dialog.is_none(), "{stage}: {change}");
                 assert!(app.pending.is_none(), "{stage}: {change}");
                 assert_eq!(app.view, View::Loader);
-                assert!(
-                    app.loader
-                        .flash
-                        .as_ref()
-                        .unwrap()
-                        .text
-                        .starts_with("Not started:")
-                );
-                assert!(app.launches.launches.is_empty());
+                let text = &app.loader.flash.as_ref().unwrap().text;
+                assert!(text.starts_with("Not started:"), "{text}");
+                if change == "started" {
+                    assert!(
+                        text.contains("has started, so it would be stopped, not cancelled"),
+                        "{text}"
+                    );
+                }
+                assert!(unqueued(&app), "{stage}: {change}");
                 assert!(
                     !app.registry
                         .events
                         .iter()
-                        .any(|event| event.what.starts_with("stopping:"))
+                        .any(|event| event.what.starts_with("stopping:")),
+                    "{stage}: {change}: {:#?}",
+                    events(&app)
                 );
+                drop(started);
             }
         }
     }

@@ -52,6 +52,9 @@ pub struct Placement {
     pub stops: Vec<Serve>,
     /// Pending launches replaced, by launch id.
     pub replaces: Vec<u64>,
+    /// Those of them that had started: a switch stops these through their
+    /// process group, and cancels the others before they start.
+    pub started: Vec<u64>,
     /// Why the GPUs picked make no instances: none, or not a whole number
     /// of groups.
     pub grouping: Option<String>,
@@ -148,6 +151,7 @@ pub fn place(
         }
     }
     if placement.grouping.is_some() {
+        placement.started = started(field, &placement.replaces);
         return placement;
     }
     let default = parse_listen(DEFAULT_LISTEN).unwrap_or(("127.0.0.1".to_owned(), 8310));
@@ -239,7 +243,19 @@ pub fn place(
             after,
         });
     }
+    placement.started = started(field, &placement.replaces);
     placement
+}
+
+/// The launches among `replaces` that have started.
+fn started(field: &Field, replaces: &[u64]) -> Vec<u64> {
+    replaces
+        .iter()
+        .copied()
+        .filter(|id| {
+            super::reserved(field.reservations, *id).is_some_and(|reserved| !reserved.waiting())
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -429,9 +445,10 @@ mod tests {
         );
         assert_eq!(named.replaces, [1, 2]);
         assert!(named.problems.is_empty());
-        // Both launches, on all four GPUs.
+        // Both launches, on all four GPUs; only the second has started.
         let both = place(&field, &picked(&[0, 1, 2, 3]), 4, None, &mut free);
         assert_eq!(both.replaces, [1, 2]);
+        assert_eq!(both.started, [2]);
         assert_eq!(
             both.instances[0].after,
             [Dependency::Launch(1), Dependency::Launch(2)]

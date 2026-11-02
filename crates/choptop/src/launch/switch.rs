@@ -16,9 +16,10 @@ use crate::loader::Start;
 
 /// What changed between the placement a start was confirmed or checked
 /// with and the one a later reading gives: serve processes newly holding a
-/// GPU picked or gone from them, launches to replace by id, ports moved,
-/// and what each instance waits for. Problems of the new placement are
-/// the loader's, given before these. `reservations` name the launches.
+/// GPU picked or gone from them, launches to replace by id and whether
+/// each has started, ports moved, and what each instance waits for.
+/// Problems of the new placement are the loader's, given before these.
+/// `reservations` name the launches.
 pub fn changed(before: &Placement, after: &Placement, reservations: &[Reservation]) -> Vec<String> {
     let launch = |id: &u64| {
         reserved(reservations, *id).map_or_else(
@@ -51,6 +52,25 @@ pub fn changed(before: &Placement, after: &Placement, reservations: &[Reservatio
                 "{} no longer holds a GPU or port picked",
                 launch(id)
             ));
+        }
+    }
+    // A launch the dialog said is cancelled before it starts would be
+    // stopped once it has started.
+    for id in after
+        .replaces
+        .iter()
+        .filter(|id| before.replaces.contains(id))
+    {
+        let started = after.started.contains(id);
+        if started != before.started.contains(id) {
+            changes.push(if started {
+                format!(
+                    "{} has started, so it would be stopped, not cancelled",
+                    launch(id)
+                )
+            } else {
+                format!("{} is waiting again", launch(id))
+            });
         }
     }
     for planned in &after.instances {
@@ -628,8 +648,15 @@ mod tests {
                 "launch A no longer holds a GPU or port picked",
             ]
         );
-        // So is what each instance waits for.
+        // So is whether each has started.
         second.replaces = vec![7];
+        second.started = vec![7];
+        assert_eq!(
+            changed(&first, &second, &reservations),
+            ["launch A has started, so it would be stopped, not cancelled"]
+        );
+        // And what each instance waits for.
+        second.started.clear();
         second.instances[0].after = vec![Dependency::Launch(7)];
         assert_eq!(
             changed(&first, &second, &reservations),

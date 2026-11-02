@@ -220,6 +220,11 @@ fn help(buffer: &mut Buffer, view: View, read_only: bool) {
         ("  p", "pause the screen; polls keep their latest result"),
         ("  q  Ctrl-C", "quit"),
         ("", ""),
+        ("Sources", ""),
+        (
+            "  launch",
+            "serve processes choptop started; each log stays after its process exits",
+        ),
         ("Host", ""),
         (
             "  CPU",
@@ -326,7 +331,10 @@ fn help(buffer: &mut Buffer, view: View, read_only: bool) {
     let lines = lines
         .iter()
         .filter(|(left, right)| {
-            !read_only || !(LAUNCH_KEYS.contains(left) || [STARTS, STOPS].contains(right))
+            !read_only
+                || !(LAUNCH_KEYS.contains(left)
+                    || [STARTS, STOPS].contains(right)
+                    || (view == View::Monitor && *left == "Sources"))
         })
         .collect::<Vec<_>>();
     let width = 92.min(buffer.width - 2);
@@ -506,6 +514,28 @@ pub const INTER_TOKEN: HistogramOf = |s| s.histograms.inter_token.as_ref();
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn monitor_help_names_launches_only_when_writable() {
+        for read_only in [false, true] {
+            let mut buffer = Buffer::new(132, 38);
+            help(&mut buffer, View::Monitor, read_only);
+            let text = buffer.text();
+            for explanation in [
+                "Sources",
+                "launch",
+                "load a model:",
+                "stop the selected GPU's instance",
+            ] {
+                assert_eq!(
+                    text.contains(explanation),
+                    !read_only,
+                    "{explanation}: {text}"
+                );
+            }
+            assert!(text.contains("Press any key to close."));
+        }
+    }
 
     #[test]
     fn the_footer_drops_whole_pairs_by_rank() {

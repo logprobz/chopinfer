@@ -112,6 +112,8 @@ pub struct Start {
     /// The final `serve` arguments, without `--listen`.
     pub command: Vec<String>,
     pub explicit: Explicit,
+    /// The form's choices, which the launch records keep.
+    pub choice: Choice,
 }
 
 /// What a key did in the loader.
@@ -390,6 +392,13 @@ impl Loader {
             .collect()
     }
 
+    /// Whether the profile follows the picked GPUs to what `serve --model`
+    /// picks at their size: until one is chosen in the Profiles pane or a
+    /// recent launch is restored.
+    pub fn profile_follows(&self) -> bool {
+        !self.profile_chosen
+    }
+
     /// The profile `serve --model` picks at the size the picked GPUs allow.
     fn auto_profile(&self, catalog: &Catalog) -> Option<String> {
         let profiles = self.profiles(catalog);
@@ -449,6 +458,7 @@ impl Loader {
             live,
             instances,
             reservations,
+            waited: &[],
             interval,
             now,
         };
@@ -821,7 +831,7 @@ impl Loader {
     }
 
     /// The switch `S` starts, or why not.
-    fn start(&self) -> Result<Start, String> {
+    pub fn start(&self) -> Result<Start, String> {
         // The checkpoint row names a directory the plan does not use yet.
         if self.typed_checkpoint.is_some() {
             return Err("still checking the checkpoint".to_owned());
@@ -847,7 +857,39 @@ impl Loader {
             placement: self.plan.placement.clone(),
             command: command.clone(),
             explicit: self.plan.explicit.clone(),
+            choice: Choice {
+                model: model.clone(),
+                profile: profile.clone(),
+                gpus: self.picked.clone(),
+                edits: self.edits.clone(),
+                custom: self.custom.clone(),
+            },
         })
+    }
+
+    /// The warnings the Options pane notes for the form's serve values,
+    /// such as an evidence limit: `--max-sequences 48: no evidence`.
+    pub fn warnings(&self, catalog: &Catalog) -> Vec<String> {
+        let context = self.context(catalog);
+        self.edits
+            .iter()
+            .filter(|(key, _)| matches!(key, Key::Flag(_)))
+            .filter_map(|(key, value)| {
+                let warning = context.warning(key)?;
+                Some(sanitize(&format!("{} {value}: {warning}", key.shown())))
+            })
+            .collect()
+    }
+
+    /// Takes the choices of an earlier launch.
+    pub fn restore(&mut self, choice: Choice) {
+        self.model = Some(choice.model);
+        self.profile = Some(choice.profile);
+        self.profile_chosen = true;
+        self.picked = choice.gpus;
+        self.preselect = None;
+        self.edits = choice.edits;
+        self.custom = choice.custom;
     }
 
     /// Sets `key` to `value`, or drops the edit when that is the value it
@@ -991,13 +1033,7 @@ impl Loader {
                     .and_then(|index| self.recent.get(index))
                     .cloned()
                 {
-                    let choice = recent.choice;
-                    self.model = Some(choice.model);
-                    self.profile = Some(choice.profile);
-                    self.profile_chosen = true;
-                    self.picked = choice.gpus;
-                    self.edits = choice.edits;
-                    self.custom = choice.custom;
+                    self.restore(recent.choice);
                     self.flash(
                         now,
                         format!("restored {} from {}", recent.label, recent.when),
@@ -1033,6 +1069,8 @@ impl Loader {
                 self.pane = Pane::Options;
                 return Outcome::Handled;
             }
+            // Space chooses the profile under the cursor as it is.
+            KeyCode::Char(' ') => index,
             _ => return Outcome::Unhandled,
         };
         if let Some(profile) = profiles.get(next) {
@@ -1366,6 +1404,7 @@ pub(crate) mod tests {
         live.scan(&discover::Report::Scan {
             found: vec![serve_process(48211, &["127.0.0.1:8310"], None)],
             events: Vec::new(),
+            started: 0.0,
         });
         let listed = |processes: Vec<Process>| Reading {
             at: 1.0,
@@ -1436,6 +1475,7 @@ pub(crate) mod tests {
         live.scan(&discover::Report::Scan {
             found: Vec::new(),
             events: Vec::new(),
+            started: 0.0,
         });
         live.gpu(&Report::Polled(vec![
             Reading {
@@ -2114,6 +2154,7 @@ pub(crate) mod tests {
                 serve_process(61204, &[], None),
             ],
             events: Vec::new(),
+            started: 0.0,
         });
         let reservations = vec![
             Reservation {
@@ -2122,6 +2163,7 @@ pub(crate) mod tests {
                 gpus: vec![uuid(0), uuid(1)],
                 port: 8312,
                 process: None,
+                launch: 1,
             },
             Reservation {
                 label: "proc 61204".into(),
@@ -2129,6 +2171,7 @@ pub(crate) mod tests {
                 gpus: vec![uuid(2), uuid(3)],
                 port: 8313,
                 process: Some((61204, 612_040)),
+                launch: 2,
             },
         ];
         let mut loader = Loader::open(Some(vec![0, 1, 2, 3]), Vec::new());
@@ -2143,14 +2186,14 @@ pub(crate) mod tests {
         );
         let placement = &loader.plan.placement;
         // Both launches are replaced: A is cancelled, B stopped.
-        assert_eq!(placement.replaces, [0, 1]);
+        assert_eq!(placement.replaces, [1, 2]);
         assert!(reservations[0].waiting() && !reservations[1].waiting());
         assert_eq!(
             placement.instances[0].after,
             [
                 Dependency::Serve(placement.stops[0].clone()),
-                Dependency::Launch(0),
                 Dependency::Launch(1),
+                Dependency::Launch(2),
             ]
         );
         // The pending launches' ports stay theirs; 48211's is reused.
@@ -2198,6 +2241,43 @@ pub(crate) mod tests {
         // An answer still on its way for DeepSeek is dropped.
         loader.reply(Reply::PackageOptions(1, parse_package_options(PACKAGE)));
         assert_eq!(loader.package, None);
+    }
+
+    #[test]
+    fn space_in_profiles_keeps_the_default_as_gpus_are_picked() {
+        for chosen in [true, false] {
+            let (mut catalog, live) = (catalog(), live());
+            let mut loader = Loader::open(None, Vec::new());
+            refresh(&mut loader, &mut catalog, &live);
+            // Qwen with no GPU picked: the default is its TP2 profile.
+            press(&mut loader, &mut catalog, KeyCode::Char('k'));
+            loader.picked.clear();
+            refresh(&mut loader, &mut catalog, &live);
+            assert_eq!(loader.profile.as_deref(), Some("tp2-ar"));
+            assert!(loader.profile_follows());
+            press(&mut loader, &mut catalog, KeyCode::Tab);
+            assert_eq!(loader.pane, Pane::Profiles);
+            if chosen {
+                press(&mut loader, &mut catalog, KeyCode::Char(' '));
+                assert_eq!(loader.profile.as_deref(), Some("tp2-ar"));
+                assert!(!loader.profile_follows());
+            }
+            press(&mut loader, &mut catalog, KeyCode::Tab);
+            assert_eq!(loader.pane, Pane::Placement);
+            for _ in 0..4 {
+                press(&mut loader, &mut catalog, KeyCode::Char(' '));
+                press(&mut loader, &mut catalog, KeyCode::Down);
+            }
+            refresh(&mut loader, &mut catalog, &live);
+            assert_eq!(loader.picked, BTreeSet::from([0, 1, 2, 3]));
+            let (profile, instances) = if chosen {
+                ("tp2-ar", 2)
+            } else {
+                ("tp4-mtp", 1)
+            };
+            assert_eq!(loader.profile.as_deref(), Some(profile), "chosen {chosen}");
+            assert_eq!(loader.plan.placement.instances.len(), instances);
+        }
     }
 
     #[test]

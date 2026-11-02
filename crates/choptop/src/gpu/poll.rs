@@ -152,7 +152,8 @@ pub fn open() -> Result<(Nvml, Option<String>, Vec<Device>), String> {
 /// The GPU poller thread. Dropping it stops the thread.
 #[derive(Debug)]
 pub struct GpuPoller {
-    stop: Sender<()>,
+    /// Each message asks for a reading now; closing it stops the thread.
+    now: Sender<()>,
 }
 
 impl GpuPoller {
@@ -164,7 +165,7 @@ impl GpuPoller {
         counters: Arc<AtomicBool>,
         results: Sender<Report>,
     ) -> Self {
-        let (stop, stopped) = mpsc::channel();
+        let (now, asked) = mpsc::channel();
         thread::spawn(move || {
             let (nvml, driver, devices) = match open() {
                 Ok(opened) => opened,
@@ -194,19 +195,18 @@ impl GpuPoller {
                 if results.send(Report::Polled(readings)).is_err() {
                     return;
                 }
-                match stopped.recv_timeout(Duration::from_secs_f64(interval)) {
-                    Err(RecvTimeoutError::Timeout) => {}
-                    _ => return,
+                match asked.recv_timeout(Duration::from_secs_f64(interval)) {
+                    Ok(()) | Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => return,
                 }
             }
         });
-        Self { stop }
+        Self { now }
     }
-}
 
-impl Drop for GpuPoller {
-    fn drop(&mut self) {
-        let _ = self.stop.send(());
+    /// Reads the GPUs now instead of at the next interval.
+    pub fn poll_now(&self) {
+        let _ = self.now.send(());
     }
 }
 

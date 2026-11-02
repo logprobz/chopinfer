@@ -18,7 +18,7 @@ use choptop::host::{
 };
 use choptop::instances::Registry;
 use choptop::launch::command::Key;
-use choptop::loader::{Choice, Recent};
+use choptop::launch::records::Record;
 use choptop::poll::{Answer, Poll};
 use choptop::prometheus::Histogram;
 use choptop::stats::{Counters, Gauges, Histograms, Snapshot};
@@ -27,6 +27,8 @@ use choptop::ui;
 
 /// Seconds of history the fleet has when the screens are drawn.
 const NOW: f64 = 300.0;
+/// The wall clock then: 2026-11-02 15:30:12 UTC.
+const WALL: u64 = 1_793_633_412;
 
 /// `per_second` observations in each bucket of `bounds` and `+Inf`, for
 /// `seconds`; each observation counts at its bucket's middle, or at the
@@ -793,11 +795,23 @@ fn check(name: &str, app: &App, width: u16, height: u16) {
     }
 }
 
+/// `code` on a terminal of a size not known.
 fn press(app: &mut App, code: crossterm::event::KeyCode) {
-    app.key(crossterm::event::KeyEvent::new(
-        code,
-        crossterm::event::KeyModifiers::NONE,
-    ));
+    app.key(
+        crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE),
+        None,
+    );
+}
+
+/// Enter on a terminal `width` by `height`.
+fn enter(app: &mut App, width: u16, height: u16) {
+    app.key(
+        crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        ),
+        Some((width, height)),
+    );
 }
 
 fn loader_fixture(name: &str) -> String {
@@ -888,6 +902,7 @@ fn loader_reading(stray: bool, failed: Option<u32>, recent_launches: bool) -> Ap
     app.live.scan(&choptop::discover::Report::Scan {
         found,
         events: Vec::new(),
+        started: 0.0,
     });
     app.probe = |_, _| true;
     let checkpoints = Checkpoints::load(
@@ -902,30 +917,9 @@ fn loader_reading(stray: bool, failed: Option<u32>, recent_launches: bool) -> Ap
         .collect(),
     );
     app.catalog = Catalog::new(Ok("/opt/chopinfer/bin/chopinfer".into()), checkpoints);
-    let recent = |label: &str, when: &str, model: &str, profile: &str, set: usize| Recent {
-        label: label.to_owned(),
-        when: when.to_owned(),
-        choice: Choice {
-            model: model.to_owned(),
-            profile: profile.to_owned(),
-            gpus: (0..4).collect(),
-            edits: (0..set)
-                .map(|_| (Key::Flag("max-sequences".to_owned()), "48".to_owned()))
-                .collect(),
-            custom: Vec::new(),
-        },
-    };
+    app.wall = || WALL;
     if recent_launches {
-        app.loader.recent = vec![
-            recent(
-                "DeepSeek tp4-dspark",
-                "yesterday",
-                "deepseek41",
-                "tp4-dspark",
-                0,
-            ),
-            recent("Qwen tp2-mtp x2", "3d ago", "qwen38", "tp2-mtp", 1),
-        ];
+        app.launches.records.records = recent_records();
     }
     press(&mut app, KeyCode::Char('l'));
     assert_eq!(app.view, View::Loader);
@@ -946,6 +940,49 @@ fn loader_reading(stray: bool, failed: Option<u32>, recent_launches: bool) -> Ap
     app.catalog.outbox.clear();
     app.tick(NOW);
     app
+}
+
+/// One instance of an earlier launch, queued `ago` seconds before
+/// [`WALL`].
+fn earlier(model: (&str, &str, &str), letter: char, gpus: &[u32], ago: u64) -> Record {
+    let (model, served_model_name, profile) = model;
+    Record {
+        switch: choptop::launch::process::stamp(WALL - ago),
+        letter,
+        model: model.to_owned(),
+        served_model_name: served_model_name.to_owned(),
+        profile: profile.to_owned(),
+        gpus: gpus.to_vec(),
+        uuids: gpus.iter().map(|index| uuid(*index)).collect(),
+        host: "127.0.0.1".to_owned(),
+        port: 8310 + u16::from(letter as u8 - b'A'),
+        edits: Vec::new(),
+        custom: Vec::new(),
+        command: String::new(),
+        pid: None,
+        start_ticks: None,
+        log: PathBuf::from("/state/choptop/logs/earlier.log"),
+        queued: WALL - ago,
+        exit_status: Some(0),
+        ended: None,
+    }
+}
+
+/// Qwen at TP2 on two pairs of GPUs three days ago, with one value set,
+/// and DeepSeek at TP4 yesterday.
+fn recent_records() -> Vec<Record> {
+    let qwen = ("qwen38", "Qwen3.8-Flash", "tp2-mtp");
+    let mut first = earlier(qwen, 'A', &[0, 1], 3 * 86_400 + 100);
+    first.edits = vec![(Key::Flag("max-sequences".to_owned()), "48".to_owned())];
+    let mut second = earlier(qwen, 'B', &[2, 3], 3 * 86_400 + 100);
+    second.edits = first.edits.clone();
+    let deepseek = earlier(
+        ("deepseek41", "DeepSeek-V4.1-Flash", "tp4-dspark"),
+        'A',
+        &[0, 1, 2, 3],
+        90_000,
+    );
+    vec![first, second, deepseek]
 }
 
 /// Answers the loader's requests as chopinfer would: no package options,
@@ -1003,6 +1040,98 @@ fn qwen_tp2() -> App {
     press(&mut app, KeyCode::Enter);
     answer_loader(&mut app);
     app
+}
+
+#[test]
+fn the_profiles_pane_says_when_its_profile_follows_the_gpus() {
+    use crossterm::event::KeyCode;
+    let mut app = loader();
+    press(&mut app, KeyCode::Tab);
+    // The help under the options, as one text.
+    let help = |app: &App| {
+        let screen = ui::draw(app, 132, 38, NOW).text();
+        let first = screen
+            .lines()
+            .position(|line| line.contains("tp4-mtp  serve --model picks"))
+            .unwrap();
+        screen
+            .lines()
+            .skip(first)
+            .take(2)
+            .map(|line| {
+                let inner = line.chars().skip(45).take(86).collect::<String>();
+                inner.trim().to_owned()
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    app.settle(132, 38);
+    let following = "tp4-mtp  serve --model picks this profile itself. Status: qualified. Follows the picked GPUs to serve --model's pick until you choose one with ↑↓ or Space.";
+    assert_eq!(help(&app), following);
+    // Space chooses it.
+    press(&mut app, KeyCode::Char(' '));
+    app.tick(NOW);
+    app.settle(132, 38);
+    assert_eq!(
+        help(&app).trim_end(),
+        "tp4-mtp  serve --model picks this profile itself. Status: qualified."
+    );
+}
+
+#[test]
+fn the_profiles_pane_alone_says_when_its_profile_follows_the_gpus() {
+    use crossterm::event::KeyCode;
+    // The words on the screen, with the boxes' borders and the line breaks
+    // of wrapped text gone.
+    let words = |app: &App, height| {
+        ui::draw(app, 80, height, NOW)
+            .text()
+            .replace(['│', '┌', '└', '┐', '┘', '─'], " ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let follows =
+        "Follows the picked GPUs to serve --model's pick until you choose one with ↑↓ or Space.";
+    let mut app = loader();
+    press(&mut app, KeyCode::Tab);
+    for height in [24, 38] {
+        app.settle(80, height);
+        assert!(words(&app, height).contains(follows), "80x{height}");
+    }
+    app.settle(80, 24);
+    check("loader-profiles-80x24", &app, 80, 24);
+    press(&mut app, KeyCode::Char(' '));
+    app.tick(NOW);
+    for height in [24, 38] {
+        app.settle(80, height);
+        assert!(
+            !words(&app, height).contains("Follows the picked"),
+            "80x{height}"
+        );
+    }
+}
+
+#[test]
+fn a_long_model_name_stays_apart_from_its_id() {
+    let mut app = loader();
+    let mut models = Models::parse(&loader_fixture("models.json")).unwrap();
+    models.models[0].served_model_name = "Qwen3.8-Flash-Next-FP8".to_owned();
+    models.models[1].served_model_name = "MiMo-V2.6-Flash-Base".to_owned();
+    app.catalog_reply(Reply::Models(Ok(models)));
+    app.tick(NOW);
+    app.settle(132, 38);
+    let screen = ui::draw(&app, 132, 38, NOW).text();
+    let rows = screen.lines().skip(3).take(2).collect::<Vec<_>>();
+    assert!(
+        rows[0].starts_with("│▌Qwen3.8-Flash-Nex... qwen38     found   ●│"),
+        "{screen}"
+    );
+    // A name that fits is shown whole.
+    assert!(
+        rows[1].starts_with("│ MiMo-V2.6-Flash-Base mimo26     found    │"),
+        "{screen}"
+    );
 }
 
 #[test]
@@ -1265,7 +1394,7 @@ fn the_monitor_without_gpm_or_without_a_driver() {
 #[test]
 fn an_instance_names_its_gpus_and_they_lead_back_to_it() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE));
+    let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), None);
     let mut app = fleet();
     with_gpus(&mut app, true);
     app.view = View::Detail;
@@ -1588,4 +1717,484 @@ fn a_long_list_scrolls_to_the_selection() {
         .find(|line| line.contains('▌'))
         .unwrap_or_default();
     assert!(selected.contains("127.0.0.1:9029"), "{list}");
+}
+
+/// `S` on Qwen at TP2 on all four GPUs: the fresh reading, then `serve
+/// --check` resolving the profile with the form's value.
+fn confirming() -> App {
+    checked(qwen_tp2(), "tp2-mtp", &[("max-sequences", "48")])
+}
+
+/// `S` on `app`'s loader at `profile`: the fresh reading, then `serve
+/// --check` resolving the profile with `values`.
+fn checked(app: App, profile: &str, values: &[(&str, &str)]) -> App {
+    checked_reading(app, profile, values, |app| read_gpus(app, false, None))
+}
+
+/// [`checked`] with the fresh reading `read`.
+fn checked_reading(
+    mut app: App,
+    profile: &str,
+    values: &[(&str, &str)],
+    read: fn(&mut App),
+) -> App {
+    use choptop::catalog::Check;
+    use crossterm::event::KeyCode;
+    app.host.apply(
+        HostReport::Polled {
+            reading: Box::new(host_reading(Machine::Workstation, NOW)),
+            chips: Vec::new(),
+        },
+        &mut app.registry,
+        NOW,
+    );
+    press(&mut app, KeyCode::Char('S'));
+    app.asked(NOW);
+    read(&mut app);
+    app.supervise(NOW);
+    let Some(Request::Check { generation, .. }) = app.catalog.outbox.pop() else {
+        panic!("no check: {:?}", app.loader.flash);
+    };
+    let model = app.loader.model.clone().unwrap();
+    let mut settings = app
+        .catalog
+        .profile(&model, profile)
+        .unwrap()
+        .settings
+        .clone();
+    let mut warnings = Vec::new();
+    for (name, value) in values {
+        settings.insert((*name).to_owned(), (*value).to_owned());
+        warnings.push(format!(
+            "--{name} {value} is above the profile's evidence (none)"
+        ));
+    }
+    app.catalog_reply(Reply::Check(
+        generation,
+        Ok(Check {
+            profile: profile.to_owned(),
+            settings,
+            model_options: Vec::new(),
+            warnings,
+        }),
+    ));
+    app
+}
+
+/// The GPU processes the loader reads at `NOW` when MiMo's process 48211
+/// holds GPUs 0 and 1, the loading Qwen process 51022 GPUs 2 and 3, and
+/// the desktop's Xorg GPU 0.
+fn read_split_gpus(app: &mut App) {
+    let process = |pid, memory, kind, name: &str| Process {
+        pid,
+        memory: Some(memory),
+        kind,
+        owner: Owner {
+            start_ticks: Some(u64::from(pid)),
+            name: Some(name.to_owned()),
+            ..Owner::default()
+        },
+    };
+    let reading = |index: u32| {
+        let holder = if index < 2 { 48211 } else { 51022 };
+        let mut processes = vec![process(holder, 89_012 * MIB, Kind::Compute, "chopinfer")];
+        if index == 0 {
+            processes.push(process(2210, 96 * MIB, Kind::Graphics, "Xorg"));
+        }
+        Reading {
+            at: NOW,
+            processes: Some(processes),
+            answered: true,
+            ..Reading::default()
+        }
+    };
+    app.live.gpu(&Report::Polled((0..4).map(reading).collect()));
+}
+
+/// The start dialog for DeepSeek's tp4-dspark on GPUs 0-3 with its whole
+/// qualification, stopping MiMo's process 48211 on GPUs 0 and 1 and the
+/// loading Qwen process 51022 on GPUs 2 and 3.
+fn dspark_confirming() -> App {
+    use crossterm::event::KeyCode;
+    let mut app = loader();
+    let process = |pid: u32, listening: &[&str], hint: &str, age: f64| {
+        Found::Process(ServeProcess {
+            pid,
+            start_ticks: u64::from(pid),
+            executable: "chopinfer".to_owned(),
+            arguments: format!("chopinfer serve --model /models/{hint} --tensor-parallel-size 2")
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect(),
+            model_hint: Some(hint.to_owned()),
+            age: Some(age),
+            listening: listening
+                .iter()
+                .map(|address| address.parse().unwrap())
+                .collect(),
+            cuda_visible_devices: None,
+        })
+    };
+    app.live.scan(&choptop::discover::Report::Scan {
+        found: vec![
+            process(48211, &["127.0.0.1:8311"], "MiMo-V2.6-Flash", 11_520.0),
+            process(51022, &[], "Qwen3.8-Flash", 134.0),
+        ],
+        events: Vec::new(),
+        started: 0.0,
+    });
+    read_split_gpus(&mut app);
+    let mut models = Models::parse(&loader_fixture("models.json")).unwrap();
+    let dspark = models
+        .models
+        .iter_mut()
+        .find(|model| model.model == "deepseek41")
+        .unwrap()
+        .profiles
+        .iter_mut()
+        .find(|profile| profile.name == "tp4-dspark")
+        .unwrap();
+    dspark.qualification = loader_fixture("qualification-tp4-dspark.txt")
+        .trim_end()
+        .to_owned();
+    app.catalog_reply(Reply::Models(Ok(models)));
+    for _ in 0..2 {
+        press(&mut app, KeyCode::Down);
+    }
+    app.tick(NOW);
+    answer_loader(&mut app);
+    assert_eq!(app.loader.model.as_deref(), Some("deepseek41"));
+    assert_eq!(app.loader.profile.as_deref(), Some("tp4-dspark"));
+    checked_reading(app, "tp4-dspark", &[], read_split_gpus)
+}
+
+#[test]
+fn a_long_qualification_leaves_room_for_every_stop_and_check() {
+    use choptop::app::Dialog;
+    let mut app = dspark_confirming();
+    let Some(Dialog::Start(confirm)) = &app.dialog else {
+        panic!("no start dialog: {:?}", app.loader.flash);
+    };
+    assert_eq!(confirm.stops.len(), 2);
+    app.settle(132, 38);
+    check("confirm-tp4-dspark-132x38", &app, 132, 38);
+    // Too short for every stop and check: the dialog says so, and Enter
+    // does not start.
+    app.settle(132, 20);
+    check("confirm-too-short-132x20", &app, 132, 20);
+    enter(&mut app, 132, 20);
+    assert!(app.dialog.is_some());
+    assert!(app.pending.is_none());
+    app.settle(132, 38);
+    enter(&mut app, 132, 38);
+    assert!(app.dialog.is_none());
+    assert!(app.pending.is_some());
+}
+
+#[test]
+fn enter_confirms_only_a_dialog_the_last_frame_drew_whole() {
+    use choptop::app::{Dialog, StopConfirm, Stoppable};
+    let refused = |app: &mut App, width, height| {
+        enter(app, width, height);
+        app.dialog.is_some() && app.pending.is_none()
+    };
+    let mut app = dspark_confirming();
+    // No frame has drawn it yet.
+    assert!(refused(&mut app, 132, 38));
+    // Too narrow for anything but the size the screen needs.
+    app.settle(59, 38);
+    let screen = ui::draw(&app, 59, 38, NOW).text();
+    assert!(
+        screen.starts_with("needs 60x12; terminal is 59x38"),
+        "{screen}"
+    );
+    assert!(refused(&mut app, 59, 38));
+    // At 80 columns every line breaks to fit.
+    app.settle(80, 38);
+    check("confirm-tp4-dspark-80x38", &app, 80, 38);
+    // The terminal changed size since that frame.
+    app.resized();
+    assert!(refused(&mut app, 80, 38));
+    app.settle(80, 38);
+    enter(&mut app, 80, 38);
+    assert!(app.dialog.is_none() && app.pending.is_some());
+    // X's dialog, on a launch that is not there, so nothing could stop.
+    let mut app = fleet();
+    with_gpus(&mut app, false);
+    app.dialog = Some(Dialog::Stop(Box::new(StopConfirm {
+        label: "proc 48211".to_owned(),
+        what: "MiMo-V2.6-Flash at 127.0.0.1:8311 on GPUs 0,1,2,3".to_owned(),
+        gpus: vec![0, 1, 2, 3],
+        target: Stoppable::Launch(u64::MAX),
+        waiting: false,
+    })));
+    for (width, height) in [(59, 38), (60, 12)] {
+        app.settle(width, height);
+        enter(&mut app, width, height);
+        assert!(app.dialog.is_some(), "{width}x{height}");
+    }
+    check("stop-too-short-60x12", &app, 60, 12);
+    app.settle(60, 13);
+    check("stop-60x13", &app, 60, 13);
+}
+
+/// The start dialog for DeepSeek's tp4-dspark, or else X's dialog on a
+/// launch that is not there, so nothing could stop.
+fn confirming_start_or_stop(start: bool) -> App {
+    use choptop::app::{Dialog, StopConfirm, Stoppable};
+    if start {
+        return dspark_confirming();
+    }
+    let mut app = fleet();
+    with_gpus(&mut app, false);
+    app.dialog = Some(Dialog::Stop(Box::new(StopConfirm {
+        label: "proc 48211".to_owned(),
+        what: "MiMo-V2.6-Flash at 127.0.0.1:8311 on GPUs 0,1,2,3".to_owned(),
+        gpus: vec![0, 1, 2, 3],
+        target: Stoppable::Launch(u64::MAX),
+        waiting: false,
+    })));
+    app
+}
+
+#[test]
+fn enter_after_the_terminal_shrank_waits_for_a_frame_at_its_size() {
+    use choptop::app::Action;
+    use choptop::tui::handle;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use std::sync::atomic::AtomicBool;
+    let enter = || Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    // No SIGWINCH seen: the size the key goes with tells on its own.
+    let calm = AtomicBool::new(false);
+    for start in [true, false] {
+        for resize_first in [false, true] {
+            let case = format!("start {start}, resize read first {resize_first}");
+            let mut app = confirming_start_or_stop(start);
+            app.settle(132, 38);
+            // The terminal is 59x38 now, and its resize is read before or
+            // after an Enter typed since.
+            let batch = if resize_first {
+                [Event::Resize(59, 38), enter()]
+            } else {
+                [enter(), Event::Resize(59, 38)]
+            };
+            for event in batch {
+                handle(&mut app, event, || Some((59, 38)), &calm, NOW);
+            }
+            assert!(app.dialog.is_some() && app.pending.is_none(), "{case}");
+            // Back at 132x38, Enter waits for a frame at that size.
+            let action = handle(&mut app, enter(), || Some((132, 38)), &calm, NOW);
+            assert_eq!(action, Action::Redraw, "{case}");
+            assert!(app.dialog.is_some(), "{case}");
+            app.settle(132, 38);
+            handle(&mut app, enter(), || Some((132, 38)), &calm, NOW);
+            assert!(app.dialog.is_none(), "{case}");
+            assert_eq!(app.pending.is_some(), start, "{case}");
+        }
+    }
+    // A size that cannot be read confirms nothing.
+    let mut app = dspark_confirming();
+    app.settle(132, 38);
+    handle(&mut app, enter(), || None, &calm, NOW);
+    assert!(app.dialog.is_some() && app.pending.is_none());
+}
+
+#[test]
+fn enter_after_a_resize_away_and_back_waits_for_a_new_frame() {
+    use choptop::app::Action;
+    use choptop::tui::handle;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let enter = || Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let same = || Some((132, 38));
+    for start in [true, false] {
+        let mut app = confirming_start_or_stop(start);
+        app.settle(132, 38);
+        // The terminal went to 59x38 and back since that frame: SIGWINCH
+        // was seen, and Enter is read before either Resize event.
+        let resized = AtomicBool::new(true);
+        let action = handle(&mut app, enter(), same, &resized, NOW);
+        assert_eq!(action, Action::Redraw, "start {start}");
+        assert!(
+            app.dialog.is_some() && app.pending.is_none(),
+            "start {start}"
+        );
+        for event in [Event::Resize(59, 38), Event::Resize(132, 38)] {
+            handle(&mut app, event, same, &resized, NOW);
+        }
+        // A frame drawn after it confirms.
+        resized.store(false, Ordering::SeqCst);
+        app.settle(132, 38);
+        handle(&mut app, enter(), same, &resized, NOW);
+        assert!(app.dialog.is_none(), "start {start}");
+        assert_eq!(app.pending.is_some(), start);
+    }
+}
+
+#[test]
+fn the_start_and_stop_dialogs() {
+    use choptop::app::{Dialog, StopConfirm, Stoppable};
+    let app = confirming();
+    assert!(
+        matches!(app.dialog, Some(Dialog::Start(_))),
+        "{:?}",
+        app.loader.flash
+    );
+    check("confirm-132x38", &app, 132, 38);
+    // One instance on all four GPUs: the address stays apart from them.
+    let mut tp4 = loader();
+    answer_loader(&mut tp4);
+    assert_eq!(tp4.loader.profile.as_deref(), Some("tp4-mtp"));
+    let app = checked(tp4, "tp4-mtp", &[]);
+    assert!(
+        matches!(app.dialog, Some(Dialog::Start(_))),
+        "{:?}",
+        app.loader.flash
+    );
+    check("confirm-tp4-132x38", &app, 132, 38);
+    // A long state directory is shown whole.
+    let mut long = loader();
+    long.logs = "/var/lib/batch-jobs/xdg-state-home-of-a-long-running-batch-job-on-a-shared-workstation/choptop/logs".to_owned();
+    answer_loader(&mut long);
+    let app = checked(long, "tp4-mtp", &[]);
+    check("confirm-long-state-132x38", &app, 132, 38);
+    let mut app = fleet();
+    with_gpus(&mut app, false);
+    app.dialog = Some(Dialog::Stop(Box::new(StopConfirm {
+        label: "proc 48211".to_owned(),
+        what: "MiMo-V2.6-Flash at 127.0.0.1:8311 on GPUs 0,1,2,3".to_owned(),
+        gpus: vec![0, 1, 2, 3],
+        target: Stoppable::Process {
+            pid: 48211,
+            start_ticks: 48211,
+        },
+        waiting: false,
+    })));
+    check("stop-132x38", &app, 132, 38);
+}
+
+/// The fleet after a switch from MiMo to Qwen at TP2 twice was confirmed:
+/// MiMo draining, both Qwen instances waiting for it, a launch of an
+/// earlier switch starting, and one before it exited during startup.
+fn launching() -> App {
+    use choptop::launch::process::Identity;
+    use choptop::launch::{Phase, Queued, Wait};
+    let mut app = fleet();
+    with_gpus(&mut app, false);
+    app.sources.push("launch");
+    let mimo = app
+        .registry
+        .instances
+        .iter_mut()
+        .find(|row| row.label() == "proc 48211")
+        .unwrap();
+    mimo.stopping = Some(NOW - 3.0);
+    let recorded = Identity {
+        pid: 48211,
+        start_ticks: 48211,
+        uid: 1000,
+        arguments: vec!["chopinfer".to_owned(), "serve".to_owned()],
+        container: None,
+    };
+    let qwen = ("qwen38", "Qwen3.8-Flash", "tp2-mtp");
+    let mut failed = earlier(qwen, 'A', &[4, 5], 600);
+    (failed.pid, failed.start_ticks, failed.exit_status) = (Some(61290), Some(61290), Some(1));
+    failed.port = 8320;
+    failed.log = PathBuf::from("/state/choptop/logs/qwen38-tp2-mtp-a-20261102-152012.log");
+    let id = app.launches.adopt(
+        failed,
+        Phase::Exited(NOW - 594.0, Some(1)),
+        &mut app.registry,
+        NOW - 600.0,
+    );
+    let launch = app
+        .launches
+        .launches
+        .iter_mut()
+        .find(|seen| seen.id == id)
+        .unwrap();
+    launch.shown = "CUDA_VISIBLE_DEVICES=4,5 chopinfer serve --model /models/qwen --tensor-parallel-size 2 --max-sequences 48 --listen 127.0.0.1:8320".to_owned();
+    launch.tail = vec![
+        "# choptop launch A of qwen38 tp2-mtp, switch 20261102-152012".to_owned(),
+        "checkpoint /models/qwen at TP2 with profile tp2-mtp".to_owned(),
+        "preparing the package: done in 2.1s".to_owned(),
+        "loading weights: done in 3.4s".to_owned(),
+        "startup kv pool: sizing for 48 sequences".to_owned(),
+        "error: KV pool does not fit: 48 sequences need 61.2 GiB, 52.0 GiB free per rank"
+            .to_owned(),
+    ];
+    let row = app.registry.launch_row(id).unwrap().id;
+    app.registry.note(
+        NOW - 594.0,
+        "proc 61290",
+        "exited 1 during startup: error: KV pool does not fit: 48 sequences need 61.2 GiB, 52.0 GiB free per rank",
+        choptop::instances::Tone::Bad,
+    );
+    app.registry.note(
+        NOW - 3.0,
+        "proc 48211",
+        "stopping: SIGTERM from choptop to start Qwen3.8-Flash tp2-mtp on GPUs 0,1,2,3; it ran chopinfer serve --model /models/mimo --tensor-parallel-size 4",
+        choptop::instances::Tone::Warning,
+    );
+    for (letter, gpus) in [('A', [0, 1]), ('B', [2, 3])] {
+        let mut record = earlier(qwen, letter, &gpus, 3);
+        (record.exit_status, record.edits) = (
+            None,
+            vec![(Key::Flag("max-sequences".to_owned()), "48".to_owned())],
+        );
+        app.launches.queue(
+            Queued {
+                record,
+                binary: PathBuf::from("/opt/chopinfer/bin/chopinfer"),
+                arguments: Vec::new(),
+                environment: Vec::new(),
+                logged: String::new(),
+                shown: String::new(),
+                waits: vec![Wait::Serve(recorded.clone())],
+            },
+            &mut app.registry,
+            NOW - 3.0,
+        );
+    }
+    let deepseek = ("deepseek41", "DeepSeek-V4.1-Flash", "tp4-dspark");
+    let mut starting = earlier(deepseek, 'A', &[4, 5, 6, 7], 40);
+    (starting.pid, starting.start_ticks, starting.exit_status) = (Some(61377), Some(61377), None);
+    starting.port = 8320;
+    let id = app
+        .launches
+        .adopt(starting, Phase::Running, &mut app.registry, NOW - 4.0);
+    let launch = app
+        .launches
+        .launches
+        .iter_mut()
+        .find(|seen| seen.id == id)
+        .unwrap();
+    launch.shown = "CUDA_VISIBLE_DEVICES=4,5,6,7 chopinfer serve --model /models/deepseek --tensor-parallel-size 4 --listen 127.0.0.1:8320".to_owned();
+    launch.tail = vec![
+        "# choptop launch A of deepseek41 tp4-dspark".to_owned(),
+        "loading weights: 41 of 163 shards".to_owned(),
+    ];
+    app.selected = Some(row);
+    app
+}
+
+#[test]
+fn launch_rows_wait_start_and_exit_in_the_list() {
+    let mut app = launching();
+    check("list-launches-132x38", &app, 132, 38);
+    // A waiting row's panel says what it waits for.
+    app.selected = app
+        .registry
+        .instances
+        .iter()
+        .find(|row| row.label() == "launch A")
+        .map(|row| row.id);
+    let screen = ui::draw(&app, 132, 38, NOW).text();
+    assert!(
+        screen.contains("launch A  Qwen3.8-Flash  queued by choptop, tp2-mtp, GPUs 0,1"),
+        "{screen}"
+    );
+    assert!(screen.contains(
+        "Waiting for proc 48211 to exit and free GPUs 0,1; then choptop starts this serve process."
+    ));
 }

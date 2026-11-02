@@ -12,11 +12,13 @@
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::io::Read;
+use std::io::{self, Read};
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -714,6 +716,13 @@ pub enum Request {
         options: Vec<String>,
         environment: Vec<(String, String)>,
     },
+    /// `ARGUMENTS --check`, a launch's serve arguments, with its variables
+    /// set.
+    Check {
+        generation: u64,
+        arguments: Vec<String>,
+        environment: Vec<(String, String)>,
+    },
 }
 
 /// `models command` for `profile` at `tensor_parallel` on `checkpoint`,
@@ -777,6 +786,17 @@ impl Request {
                 Vec::new(),
                 CATALOG_TIMEOUT,
             ),
+            // It prepares the package as serving would, so it may take as
+            // long as reading the package's options.
+            Self::Check {
+                arguments,
+                environment,
+                ..
+            } => {
+                let mut all = arguments.clone();
+                all.push("--check".to_owned());
+                (all, environment.clone(), PACKAGE_TIMEOUT)
+            }
         }
     }
 }
@@ -789,16 +809,114 @@ pub enum Reply {
     Pick(PathBuf, Result<Pick, String>),
     Command(u64, Result<Vec<String>, String>),
     PackageOptions(u64, Result<Vec<PackageOption>, String>),
+    /// What `serve --check` resolved, or serve's own message.
+    Check(u64, Result<Check, String>),
+}
+
+/// The process groups of choptop's own `chopinfer` children, each led by
+/// the child itself, which discovery leaves out. `serve --check` and
+/// `serve --list-model-options` run serve with a launch's environment,
+/// and with a real package live long enough for a scan to take them for a
+/// serve process loading on the picked GPUs.
+///
+/// A child's pid and group are left out only while it is unreaped: once
+/// reaped, both ids may name unrelated processes, even while a descendant
+/// still holds its output. Such a descendant may then show as a discovered
+/// row until it exits, which is better than hiding a real server.
+#[derive(Clone, Debug, Default)]
+pub struct Children(Arc<Mutex<Groups>>);
+
+#[derive(Debug, Default)]
+struct Groups {
+    /// The registration of each unreaped child, by its pid.
+    led: BTreeMap<u32, u64>,
+    next: u64,
+}
+
+impl Children {
+    fn lock(&self) -> MutexGuard<'_, Groups> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Whether `id` leads the group of a child that is not reaped yet.
+    pub fn contains(&self, id: u32) -> bool {
+        self.lock().led.contains_key(&id)
+    }
+
+    /// Whether process `pid` of process group `group` is left out as one
+    /// of them.
+    pub fn excludes(&self, pid: u32, group: Option<u32>) -> bool {
+        let groups = self.lock();
+        groups.led.contains_key(&pid) || group.is_some_and(|group| groups.led.contains_key(&group))
+    }
+}
+
+/// A child's group while it is one of [`Children`].
+struct Registered<'a> {
+    children: &'a Children,
+    group: u32,
+    serial: u64,
+}
+
+impl<'a> Registered<'a> {
+    /// Starts `command` as one of `children`, under their lock so no scan
+    /// finds it before.
+    fn spawn(children: &'a Children, command: &mut Command) -> io::Result<(Self, Child)> {
+        let mut groups = children.lock();
+        let child = command.spawn()?;
+        groups.next += 1;
+        let serial = groups.next;
+        groups.led.insert(child.id(), serial);
+        let registered = Self {
+            children,
+            group: child.id(),
+            serial,
+        };
+        Ok((registered, child))
+    }
+
+    /// Runs `act` on `child` under the lock the scanner reads, then reaps
+    /// `child` if it has exited, in the same step leaving it out no more.
+    fn act<T>(
+        &self,
+        child: &mut Child,
+        act: impl FnOnce(&mut Child) -> T,
+    ) -> (T, io::Result<Option<ExitStatus>>) {
+        let mut groups = self.children.lock();
+        let value = act(child);
+        let status = child.try_wait();
+        if matches!(status, Ok(Some(_))) {
+            remove(&mut groups, self.group, self.serial);
+        }
+        (value, status)
+    }
+
+    fn try_wait(&self, child: &mut Child) -> io::Result<Option<ExitStatus>> {
+        self.act(child, |_| ()).1
+    }
+}
+
+impl Drop for Registered<'_> {
+    fn drop(&mut self) {
+        remove(&mut self.children.lock(), self.group, self.serial);
+    }
+}
+
+/// Leaves out `group` no more if registration `serial` still holds it.
+fn remove(groups: &mut Groups, group: u32, serial: u64) {
+    if groups.led.get(&group) == Some(&serial) {
+        groups.led.remove(&group);
+    }
 }
 
 /// Runs `request` with `binary` and reads its document.
-pub fn answer(binary: &Path, request: Request) -> Reply {
+pub fn answer(binary: &Path, request: Request, children: &Children) -> Reply {
     let (arguments, environment, timeout) = request.command();
     let shown = format!(
         "chopinfer {}",
         arguments[..2.min(arguments.len())].join(" ")
     );
-    let output = run(binary, &arguments, &environment, timeout);
+    let output = run(binary, &arguments, &environment, timeout, children);
     let failed = |message: String| format!("{shown}: {message}");
     match request {
         Request::Options => Reply::Options(
@@ -828,32 +946,59 @@ pub fn answer(binary: &Path, request: Request) -> Reply {
                 .map_err(failed)
                 .and_then(|mut arguments| {
                     arguments.push("--list-model-options".to_owned());
-                    run(binary, &arguments, &environment, PACKAGE_TIMEOUT)
+                    run(binary, &arguments, &environment, PACKAGE_TIMEOUT, children)
                         .and_then(|text| parse_package_options(&text))
                         .map_err(|message| {
                             format!("chopinfer serve --list-model-options: {message}")
                         })
                 }),
         ),
+        // A refusal is shown as serve words it.
+        Request::Check { generation, .. } => {
+            Reply::Check(generation, output.and_then(|text| Check::parse(&text)))
+        }
     }
 }
 
 /// Runs `binary` with `arguments` and `environment` added to choptop's
-/// own, stdin closed, for at most `timeout`. Its stdout when it succeeds,
-/// else the end of its stderr.
+/// own, stdin closed, for at most `timeout`, in a process group of its own
+/// that is one of `children` until it is done. Its stdout when it
+/// succeeds, else the end of its stderr.
 pub fn run(
     binary: &Path,
     arguments: &[String],
     environment: &[(String, String)],
     timeout: Duration,
+    children: &Children,
 ) -> Result<String, String> {
-    let mut child = Command::new(binary)
+    run_with_grace(
+        binary,
+        arguments,
+        environment,
+        timeout,
+        Duration::from_secs(5),
+        children,
+    )
+}
+
+fn run_with_grace(
+    binary: &Path,
+    arguments: &[String],
+    environment: &[(String, String)],
+    timeout: Duration,
+    grace: Duration,
+    children: &Children,
+) -> Result<String, String> {
+    let mut command = Command::new(binary);
+    command
         .args(arguments)
         .envs(environment.iter().map(|(name, value)| (name, value)))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .process_group(0);
+    // It is one of `children` until it is reaped.
+    let (registered, mut child) = Registered::spawn(children, &mut command)
         .map_err(|error| format!("cannot run {}: {error}", binary.display()))?;
     let drain = |pipe: Option<Box<dyn Read + Send>>| {
         thread::spawn(move || {
@@ -878,11 +1023,34 @@ pub fn run(
     );
     let deadline = Instant::now() + timeout;
     let status = loop {
-        match child.try_wait() {
+        match registered.try_wait(&mut child) {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
+                let _ = registered.act(&mut child, |child| {
+                    let _ = crate::launch::process::terminate_group(child);
+                });
+                let until = Instant::now() + grace;
+                let mut killed = false;
+                // Each signal goes while it is not reaped, so its group is
+                // still its own.
+                loop {
+                    let (_, status) = registered.act(&mut child, |child| {
+                        if !killed
+                            && Instant::now() >= until
+                            && matches!(child.try_wait(), Ok(None))
+                        {
+                            killed = true;
+                            let _ = rustix::process::kill_process_group(
+                                rustix::process::Pid::from_child(child),
+                                rustix::process::Signal::KILL,
+                            );
+                        }
+                    });
+                    if !matches!(status, Ok(None)) {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(20));
+                }
                 // A helper it started may still hold the pipes, so their
                 // readers are left to end on their own.
                 return Err(format!("no answer within {}s", timeout.as_secs()));
@@ -896,11 +1064,14 @@ pub fn run(
     if status.success() {
         return Ok(stdout);
     }
-    let last = stderr
-        .lines()
-        .map(str::trim)
-        .rfind(|line| !line.is_empty())
-        .map(sanitize);
+    // serve's own message is its last `chopinfer:` line; anything else
+    // ends with what it printed last.
+    let lines = stderr.lines().map(str::trim).collect::<Vec<_>>();
+    let last = lines
+        .iter()
+        .rfind(|line| line.starts_with("chopinfer:"))
+        .or_else(|| lines.iter().rfind(|line| !line.is_empty()))
+        .map(|line| sanitize(line));
     Err(match last {
         Some(line) if line.chars().count() > MESSAGE_LIMIT => {
             line.chars().take(MESSAGE_LIMIT).collect::<String>() + "..."
@@ -920,22 +1091,26 @@ pub struct Worker {
     catalog: Sender<Request>,
     command: Sender<Request>,
     package: Sender<Request>,
+    check: Sender<Request>,
 }
 
 impl Worker {
-    /// Runs requests with `binary` and sends each reply to `replies`.
-    pub fn spawn(binary: PathBuf, replies: Sender<Reply>) -> Self {
+    /// Runs requests with `binary` and sends each reply to `replies`; its
+    /// children are among `children` while they run.
+    pub fn spawn(binary: PathBuf, replies: Sender<Reply>, children: Children) -> Self {
         let lane = |latest: bool| {
             let (sender, receiver) = mpsc::channel();
             let binary = binary.clone();
             let replies = replies.clone();
-            thread::spawn(move || run_lane(&binary, &receiver, &replies, latest));
+            let children = children.clone();
+            thread::spawn(move || run_lane(&binary, &receiver, &replies, latest, &children));
             sender
         };
         Self {
             catalog: lane(false),
             command: lane(true),
             package: lane(true),
+            check: lane(true),
         }
     }
 
@@ -944,6 +1119,7 @@ impl Worker {
             Request::Options | Request::Models | Request::Pick(_) => &self.catalog,
             Request::Command { .. } => &self.command,
             Request::PackageOptions { .. } => &self.package,
+            Request::Check { .. } => &self.check,
         };
         let _ = lane.send(request);
     }
@@ -951,14 +1127,20 @@ impl Worker {
 
 /// Answers requests in turn; with `latest`, only the newest of those
 /// waiting, since each replaces the ones before it.
-fn run_lane(binary: &Path, requests: &Receiver<Request>, replies: &Sender<Reply>, latest: bool) {
+fn run_lane(
+    binary: &Path,
+    requests: &Receiver<Request>,
+    replies: &Sender<Reply>,
+    latest: bool,
+    children: &Children,
+) {
     while let Ok(mut request) = requests.recv() {
         if latest {
             while let Ok(newer) = requests.try_recv() {
                 request = newer;
             }
         }
-        if replies.send(answer(binary, request)).is_err() {
+        if replies.send(answer(binary, request, children)).is_err() {
             return;
         }
     }
@@ -1268,8 +1450,8 @@ impl Catalog {
         }
     }
 
-    /// Takes a catalog reply; command and package replies are given back
-    /// for the loader.
+    /// Takes a catalog reply; command, package and check replies are given
+    /// back for the loader and the start they belong to.
     pub fn apply(&mut self, reply: Reply) -> Option<Reply> {
         match reply {
             Reply::Options(result) => self.options = Some(result.into()),
@@ -1682,6 +1864,11 @@ mod tests {
                cat \"$fixtures/models-pick.json\" ;;\n\
              'models command') echo \"$*\" > \"$(dirname \"$0\")/last-command\"; cat \"$fixtures/models-command.json\" ;;\n\
              *) echo \"$*\" >> \"$(dirname \"$0\")/serve-calls\"\n\
+               for last; do :; done\n\
+               if [ \"$last\" = --check ]; then\n\
+                 if [ -n \"$CHOPINFER_REFUSE\" ]; then echo 'chopinfer: preparing the package' >&2; echo 'chopinfer: --context-parallel-size 3 does not divide 4' >&2; echo 'see chopinfer serve --help' >&2; exit 1; fi\n\
+                 cat \"$fixtures/serve-check.json\"; exit 0\n\
+               fi\n\
                if [ \"$CHOPINFER_LOG_LEVEL\" = debug ]; then cat \"$fixtures/list-model-options.json\"; else echo null; fi ;;\n\
              esac\n",
             fixtures.display()
@@ -1715,12 +1902,14 @@ mod tests {
         let root = scratch("answer");
         let binary = fake_chopinfer(&root);
         assert!(matches!(
-            answer(&binary, Request::Options),
+            answer(&binary, Request::Options, &Children::default()),
             Reply::Options(Ok(_))
         ));
-        let Reply::Pick(directory, Err(error)) =
-            answer(&binary, Request::Pick("/models/broken".into()))
-        else {
+        let Reply::Pick(directory, Err(error)) = answer(
+            &binary,
+            Request::Pick("/models/broken".into()),
+            &Children::default(),
+        ) else {
             panic!("a refused pick")
         };
         assert_eq!(directory, Path::new("/models/broken"));
@@ -1738,6 +1927,7 @@ mod tests {
                 profile: "tp4-ar".into(),
                 options: vec!["--max-sequences".into(), "48".into()],
             },
+            &Children::default(),
         );
         assert!(matches!(reply, Reply::Command(7, Ok(_))), "{reply:?}");
         assert_eq!(
@@ -1757,6 +1947,7 @@ mod tests {
                     options: vec!["--max-sequences".into(), "48".into()],
                     environment,
                 },
+                &Children::default(),
             )
         };
         assert_eq!(
@@ -1787,7 +1978,38 @@ mod tests {
             panic!("package options")
         };
         assert_eq!(options.len(), 4);
-        let missing = answer(&root.join("absent"), Request::Models);
+        // serve --check: what it resolved, or serve's own last line.
+        let check = |environment: Vec<(String, String)>| {
+            answer(
+                &binary,
+                Request::Check {
+                    generation: 9,
+                    arguments: parse_command(COMMAND).unwrap(),
+                    environment,
+                },
+                &Children::default(),
+            )
+        };
+        let Reply::Check(9, Ok(checked)) = check(Vec::new()) else {
+            panic!("a check")
+        };
+        assert_eq!(checked, Check::parse(CHECK).unwrap());
+        assert!(
+            fs::read_to_string(root.join("serve-calls"))
+                .unwrap()
+                .lines()
+                .last()
+                .unwrap()
+                .ends_with("--model-option dspark_draft_chunk_items=12 --check")
+        );
+        assert_eq!(
+            check(vec![("CHOPINFER_REFUSE".into(), "1".into())]),
+            Reply::Check(
+                9,
+                Err("chopinfer: --context-parallel-size 3 does not divide 4".into())
+            )
+        );
+        let missing = answer(&root.join("absent"), Request::Models, &Children::default());
         assert!(
             matches!(&missing, Reply::Models(Err(error)) if error.contains("cannot run")),
             "{missing:?}"
@@ -1795,12 +2017,190 @@ mod tests {
     }
 
     #[test]
+    fn catalog_timeouts_terminate_groups_then_escalate_and_reap() {
+        use crate::launch::process::tests::{CLOSE, wait_for};
+        for cooperative in [true, false] {
+            let root = scratch(if cooperative {
+                "timeout-term"
+            } else {
+                "timeout-kill"
+            });
+            let script = root.join("chopinfer");
+            let trap = if cooperative {
+                "trap 'echo term > \"$ROOT/term\"; exit 0' TERM"
+            } else {
+                "trap '' TERM"
+            };
+            write_script(
+                &script,
+                &format!(
+                    "#!/bin/sh\n{CLOSE}{trap}\necho $$ > \"$ROOT/parent\"\n/bin/sh -c 'exec sleep 30' &\necho $! > \"$ROOT/descendant\"\nn=0\nwhile [ $n -lt 600 ]; do sleep 0.05; n=$((n+1)); done\n"
+                ),
+            );
+            let started = Instant::now();
+            let result = run_with_grace(
+                &script,
+                &[],
+                &[("ROOT".into(), root.display().to_string())],
+                Duration::from_secs(1),
+                Duration::from_millis(150),
+                &Children::default(),
+            );
+            assert!(result.unwrap_err().contains("no answer within"));
+            assert!(started.elapsed() < Duration::from_secs(10));
+            assert_eq!(root.join("term").exists(), cooperative);
+            let pid = fs::read_to_string(root.join("parent"))
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            assert!(
+                crate::launch::process::start_ticks_of(pid).is_none(),
+                "parent was not reaped"
+            );
+            let descendant = fs::read_to_string(root.join("descendant"))
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            wait_for(|| {
+                crate::launch::process::Identity::read(descendant)
+                    .is_none_or(|identity| !identity.running())
+            });
+        }
+    }
+
+    /// A serve process in the fake `/proc` at `root`: `pid` of process
+    /// group `group`, started at clock tick `start`.
+    fn serve_entry(root: &Path, pid: u32, group: u32, start: u64) {
+        let directory = root.join(pid.to_string());
+        fs::create_dir_all(directory.join("fd")).unwrap();
+        std::os::unix::fs::symlink("/opt/chopinfer/bin/chopinfer", directory.join("exe")).unwrap();
+        fs::write(
+            directory.join("cmdline"),
+            "chopinfer\0serve\0--model\0/models/other\0",
+        )
+        .unwrap();
+        fs::write(
+            directory.join("stat"),
+            format!(
+                "{pid} (chopinfer) S 1 {group} 1 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 {start} 0 0\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    /// A request running on its own thread; dropping it lets its child and
+    /// the helper the child leaves end, and waits for it.
+    struct Draining {
+        root: PathBuf,
+        task: Option<thread::JoinHandle<Result<String, String>>>,
+    }
+
+    impl Drop for Draining {
+        fn drop(&mut self) {
+            let _ = fs::write(self.root.join("release"), "");
+            let _ = fs::write(self.root.join("helper"), "");
+            if let Some(task) = self.task.take() {
+                let _ = task.join();
+            }
+        }
+    }
+
+    /// The clock tick since boot, in the 10 ms ticks `/proc/PID/stat`
+    /// counts a process's start in.
+    fn ticks_now() -> u64 {
+        let uptime = fs::read_to_string("/proc/uptime").unwrap();
+        let seconds = uptime.split_whitespace().next().unwrap();
+        (seconds.parse::<f64>().unwrap() * 100.0) as u64
+    }
+
+    #[test]
+    fn a_reaped_child_leaves_nothing_out_while_its_output_drains() {
+        use crate::discover::proc::ProcScanner;
+        use crate::launch::process::tests::{CLOSE, wait_for};
+        let root = scratch("reaped-child");
+        let script = root.join("chopinfer");
+        // It notes its pid, leaves a helper that holds its output, and
+        // exits once released.
+        write_script(
+            &script,
+            &format!(
+                "#!/bin/sh\n{CLOSE}echo $$ > \"$ROOT/pid.tmp\" && mv \"$ROOT/pid.tmp\" \"$ROOT/pid\"\n(n=0; while [ ! -e \"$ROOT/helper\" ] && [ $n -lt 200 ]; do sleep 0.05; n=$((n+1)); done) &\nn=0\nwhile [ ! -e \"$ROOT/release\" ] && [ $n -lt 200 ]; do sleep 0.05; n=$((n+1)); done\necho '{{}}'\n"
+            ),
+        );
+        let before = ticks_now();
+        let children = Children::default();
+        let registry = children.clone();
+        let environment = vec![("ROOT".to_owned(), root.display().to_string())];
+        let mut draining = Draining {
+            root: root.clone(),
+            task: Some(thread::spawn(move || {
+                run(
+                    &script,
+                    &[],
+                    &environment,
+                    Duration::from_secs(30),
+                    &registry,
+                )
+            })),
+        };
+        wait_for(|| root.join("pid").exists());
+        let pid = fs::read_to_string(root.join("pid"))
+            .unwrap()
+            .trim()
+            .parse::<u32>()
+            .unwrap();
+        assert!(children.contains(pid));
+        let fake = root.join("proc");
+        let seen = |children: &Children| {
+            ProcScanner::new(&fake)
+                .excluding(children.clone())
+                .scan()
+                .into_iter()
+                .map(|process| process.pid)
+                .collect::<Vec<_>>()
+        };
+        // A serve process older than the reap in its group: left out while
+        // it runs.
+        let older = pid + 3000;
+        serve_entry(&fake, older, pid, before);
+        assert!(seen(&children).is_empty());
+        // It is reaped; the helper still holds its output.
+        fs::write(root.join("release"), "").unwrap();
+        wait_for(|| !Path::new(&format!("/proc/{pid}")).exists());
+        // A process started within the reap's own tick takes its pid and
+        // leads a group of that id, which the older process has joined.
+        serve_entry(&fake, pid, pid, ticks_now());
+        assert_eq!(seen(&children), [pid, older]);
+        assert!(!children.contains(pid));
+        assert!(!draining.task.as_ref().unwrap().is_finished());
+        fs::write(root.join("helper"), "").unwrap();
+        let output = draining.task.take().unwrap().join().unwrap();
+        assert_eq!(output.unwrap(), "{}\n");
+        assert!(children.lock().led.is_empty());
+    }
+
+    #[test]
     fn a_command_that_hangs_is_ended() {
         let root = scratch("hang");
         let script = root.join("chopinfer");
-        write_script(&script, "#!/bin/sh\nexec sleep 30\n");
+        write_script(
+            &script,
+            &format!(
+                "#!/bin/sh\n{}exec sleep 30\n",
+                crate::launch::process::tests::CLOSE
+            ),
+        );
         let started = Instant::now();
-        let error = run(&script, &[], &[], Duration::from_millis(200)).unwrap_err();
+        let error = run(
+            &script,
+            &[],
+            &[],
+            Duration::from_millis(200),
+            &Children::default(),
+        )
+        .unwrap_err();
         assert!(error.contains("no answer within"), "{error}");
         assert!(started.elapsed() < Duration::from_secs(10));
     }
@@ -1809,7 +2209,7 @@ mod tests {
     fn the_worker_answers_every_catalog_request_and_the_latest_command() {
         let root = scratch("worker");
         let (replies, received) = mpsc::channel();
-        let worker = Worker::spawn(fake_chopinfer(&root), replies);
+        let worker = Worker::spawn(fake_chopinfer(&root), replies, Children::default());
         worker.send(Request::Options);
         worker.send(Request::Models);
         worker.send(Request::Pick("/models/deepseek".into()));

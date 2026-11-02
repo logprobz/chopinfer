@@ -3,7 +3,7 @@
 //! columns the focused pane fills the space and Tab moves between them.
 
 use super::buffer::{Buffer, Color, Style};
-use super::widgets::{boxed, pad, right, sanitize, wrap};
+use super::widgets::{boxed, pad, right, sanitize, shorten, wrap};
 use super::{footer, header};
 use crate::app::App;
 use crate::catalog::{Availability, Checkpoint, Fetch, Pick, Profile};
@@ -20,6 +20,10 @@ const LEFT: u16 = 44;
 const COMMAND: u16 = 7;
 /// Most recent launches shown.
 const RECENT: usize = 2;
+/// What the focused Profiles pane says while its profile follows the
+/// picked GPUs.
+const FOLLOWS: &str =
+    "Follows the picked GPUs to serve --model's pick until you choose one with ↑↓ or Space.";
 
 type Area = (u16, u16, u16, u16);
 
@@ -203,9 +207,8 @@ fn replacing(app: &App) -> Vec<String> {
         .stops
         .iter()
         .map(|serve| serve.label())
-        .chain(placement.replaces.iter().filter_map(|position| {
-            app.reservations
-                .get(*position)
+        .chain(placement.replaces.iter().filter_map(|id| {
+            crate::launch::reserved(&app.reservations, *id)
                 .map(|reservation| sanitize(&reservation.label))
         }))
         .collect()
@@ -275,17 +278,22 @@ fn models_pane(buffer: &mut Buffer, app: &App, area: Area, alone_: bool) {
         if index == loader.model_cursor {
             cursor = Some(lines.len());
         }
+        // A space always follows the name and the id.
         let mut line = vec![
             (
                 2,
-                pad(&sanitize(&model.served_model_name), 21),
+                pad(&shorten(&sanitize(&model.served_model_name), 20), 21),
                 if chosen {
                     Style::fg(Color::White).bold()
                 } else {
                     Style::PLAIN
                 },
             ),
-            (23, pad(&sanitize(&model.model), 11), Style::fg(Color::Dim)),
+            (
+                23,
+                pad(&shorten(&sanitize(&model.model), 10), 11),
+                Style::fg(Color::Dim),
+            ),
             (34, state.to_owned(), Style::fg(color)),
         ];
         if chosen {
@@ -490,8 +498,21 @@ fn profiles_pane(buffer: &mut Buffer, app: &App, area: Area, alone_: bool) {
         return;
     }
     let inner = usize::from(width.saturating_sub(4));
-    let lines = wrap(&sanitize(&text), inner);
+    // Alone, with no Options pane to say so, the box's last rows say that
+    // the profile follows the GPUs.
+    let follows = if alone_ && focus && loader.profile_follows() {
+        wrap(FOLLOWS, inner)
+    } else {
+        Vec::new()
+    };
     let room = usize::from(bottom - top);
+    let follows = &follows[..follows.len().min(room)];
+    for (index, line) in follows.iter().enumerate() {
+        let row = bottom - (follows.len() - index) as u16;
+        buffer.put(x + 2, row, line, Style::PLAIN);
+    }
+    let lines = wrap(&sanitize(&text), inner);
+    let room = room - follows.len();
     for (index, line) in lines.iter().take(room).enumerate() {
         let cut = index + 1 == room && lines.len() > room;
         let shown = if cut {
@@ -599,9 +620,7 @@ fn placement_pane(buffer: &mut Buffer, app: &App, area: Area, alone_: bool) {
                     .iter()
                     .map(|holder| match holder {
                         Holder::Serve(serve) => serve.described(),
-                        Holder::Launch(position) => app
-                            .reservations
-                            .get(*position)
+                        Holder::Launch(id) => crate::launch::reserved(&app.reservations, *id)
                             .map_or_else(String::new, |launch| {
                                 sanitize(&format!("{} {}", launch.label, launch.model))
                             }),
@@ -610,7 +629,7 @@ fn placement_pane(buffer: &mut Buffer, app: &App, area: Area, alone_: bool) {
                     .join(", "),
                 if holders.iter().any(|holder| match holder {
                     Holder::Serve(serve) => placement.stops.contains(serve),
-                    Holder::Launch(position) => placement.replaces.contains(position),
+                    Holder::Launch(id) => placement.replaces.contains(id),
                 }) {
                     Color::Yellow
                 } else {
@@ -877,11 +896,11 @@ fn pane_help(app: &App, lines: &[(Row, Line)]) -> (String, String, Color) {
                 ),
                 None => String::new(),
             };
-            (
-                sanitize(&profile.name),
-                sanitize(&format!("{how}Status: {}.", profile.status)),
-                Color::Default,
-            )
+            let mut help = sanitize(&format!("{how}Status: {}.", profile.status));
+            if loader.profile_follows() {
+                help = format!("{help} {FOLLOWS}");
+            }
+            (sanitize(&profile.name), help, Color::Default)
         }
         Pane::Placement => {
             let size = loader.plan.tensor_parallel.unwrap_or(1);
@@ -912,7 +931,7 @@ fn pane_help(app: &App, lines: &[(Row, Line)]) -> (String, String, Color) {
                 Some((index, Occupancy::Blocked(what))) => (
                     format!("GPU {index}"),
                     sanitize(&format!(
-                        "held by {what}, which choptop does not stop, so a launch cannot use it."
+                        "held by {what}; a switch does not stop it, so a launch cannot use it."
                     )),
                     Color::Yellow,
                 ),
@@ -1343,6 +1362,15 @@ fn command_box(buffer: &mut Buffer, app: &App, area: Area, now: f64) {
     }
     let summary_y = y + height - 2;
     let end = x + width - 2;
+    if let Some(text) = app.pending_text() {
+        buffer.put(
+            x + 2,
+            summary_y,
+            &pad(&format!("{text}; Esc cancels the start"), inner),
+            Style::fg(Color::Yellow),
+        );
+        return;
+    }
     if let Some(flash) = loader
         .flash
         .as_ref()
@@ -1495,6 +1523,28 @@ mod tests {
                 format!("     {}", "q".repeat(16)),
                 "     --served-model-name Qwen".to_owned(),
             ]
+        );
+    }
+
+    #[test]
+    fn a_gpu_held_by_what_a_switch_does_not_stop_says_so_in_one_sentence() {
+        let mut app = App::new(crate::instances::Registry::new(1.0), 1.0, 15.0, Vec::new());
+        app.loader.pane = Pane::Placement;
+        app.loader.plan.gpus = vec![occupancy::Gpu {
+            index: 2,
+            uuid: None,
+            memory_total: None,
+            occupancy: Occupancy::Blocked("proc 51022 Qwen3.8-Flash, which is starting".into()),
+            graphics: Vec::new(),
+        }];
+        app.loader.gpu_cursor = 0;
+        assert_eq!(
+            pane_help(&app, &[]),
+            (
+                "GPU 2".to_owned(),
+                "held by proc 51022 Qwen3.8-Flash, which is starting; a switch does not stop it, so a launch cannot use it.".to_owned(),
+                Color::Yellow
+            )
         );
     }
 

@@ -59,7 +59,7 @@ pub fn draw(buffer: &mut Buffer, app: &App, now: f64) {
     crumbs.push((
         match &state {
             State::NotReady(reason) => format!("not ready: {}", sanitize(reason)),
-            state => state.label().to_owned(),
+            state => state.shown(),
         },
         Style::fg(tone_color(state.tone())).bold(),
     ));
@@ -1174,6 +1174,7 @@ fn identity(buffer: &mut Buffer, row: &Instance, gpus: &[u32], area: (u16, u16, 
         Source::Target(target) => format!("--target {}", sanitize(&target.display())),
         Source::Process { pid, .. } => format!("serve process {pid} of this user{at}"),
         Source::Container { name, .. } => format!("docker container {}{at}", sanitize(name)),
+        Source::Launch { .. } => "a choptop launch that has not started".to_owned(),
     };
     let mut via = vec![("found via".to_owned(), found)];
     if !gpus.is_empty() {

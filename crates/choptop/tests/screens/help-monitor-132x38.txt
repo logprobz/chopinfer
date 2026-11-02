@@ -1,38 +1,38 @@
  choptop  >  Monitor   48 CPUs  4 GPUs  1 slowing down   driver 615.71.09   GPM on                  window 60s  poll 1s  rescan 15s
-
-┌─ Host  Example Workstation CPU  up 12d04h ───────────────────────────────────────────────┐┌─ Sensors  28 on 14 chips ────────────┐
-│ CPU       ━━━━────┌─ Help ───────────────────────────────────────────────────────────────────────────────────┐59 58 61 60C       │
-│ memory    ━━━━━━──│ Keys                                                                                     │0 860 rpm          │
-│ cores     ████▄▄▃▄│   ↑ ↓  j k      select a GPU                                                             │                   │
-│ load      11.51  1│   Enter         open the details of the instance on the GPU                              │C                  │
-│ I/O       net  rx │   Esc  h  m     back to where m was pressed                                              │52C  NIC, board    │
-└───────────────────│   l             load a model: start one, or replace the selected GPU's instance          │───────────────────┘
-┌─ GPUs  rates and s│   w             latency and ratio window: 60s, 5m, since start                           │───────────────────┐
-│ GPU  NAME         │   r             rescan for processes and containers now                                  │IL 5m              │
-│▌0    RTX PRO 6000 │   p             pause the screen; polls keep their latest result                         │▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
-│ 1    RTX PRO 6000 │   q  Ctrl-C     quit                                                                     │▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
-│ 2    RTX PRO 6000 │                                                                                          │▇▇▇▇▇▇▇▇▇▇▇▇▇▇████ │
-│ 3    RTX PRO 6000 │ Host                                                                                     │▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
-└───────────────────│   CPU           share of CPU time not idle, from /proc/stat; cores: a cell each          │───────────────────┘
-┌─ GPU 0  RTX PRO 60│   memory        in use: the total less what the kernel can reclaim (MemAvailable)        │───────────────────┐
-│ ACTIVITY  now  89%│   pressure      share of the last 10s that tasks stalled on CPU, memory or I/O           │█████████████───── │
-│                   │   sensors       /sys/class/hwmon; yellow 10C under a chip's limit, else from 85C         │11%  all processes │
-│ ▅▅▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄│   space         used share of each local filesystem and /dev/shm; yellow from 90%        │MiMo-V2.6-Flash    │
-│ ██████████████████│                                                                                          │                   │
-│ ██████████████████│ GPU time                                                                                 │━━━━━────────  79% │
-│ -33s ▔▔▔▔▔▔▔▔▔▔▔▔▔│   kernels       share of time a kernel ran on the GPU, from any process                  │─────────────  31% │
-│ VRAM         ━━━━━│   no kernel     the rest: waiting for the host or for work                               │─────────────  38% │
-│ temperature  68C  │   SM busy       share of SMs with work (GPM)                                             │━━━━━━━──────  82% │
-│ clocks       SM 2,│   occupancy     active warps against the most the SMs hold (GPM)                         │iB/s               │
-│ limited by   power│   tensor        share of time the tensor pipes ran (GPM)                                 │                   │
-│ PCIe         gen 5│   DRAM          share of peak memory bandwidth in use (GPM)                              │                   │
-└───────────────────│                                                                                          │───────────────────┘
-┌─ Processes  on GPU│ /proc, /sys and NVML are read once a poll, GPM counters only while                       │───────────────────┐
-│ PID     TYPE      │ this view is open. GPU numbers are nvidia-smi's, not CUDA ordinals.                      │ beside            │
-│ 48211   C     86.9│ In a container, CPU, memory, disk I/O and sensors are the host's.                        │                   │
-│ 2210    G      0.1│                                                                                          │ck 1,650 of 3,090  │
-│                   │ Press any key to close.                                                                  │                   │
-│                   └──────────────────────────────────────────────────────────────────────────────────────────┘ 90C               │
-│                                                         ││                                                                       │
+                    ┌─ Help ───────────────────────────────────────────────────────────────────────────────────┐
+┌─ Host  Example Wor│ Keys                                                                                     │ chips ────────────┐
+│ CPU       ━━━━────│   ↑ ↓  j k      select a GPU                                                             │59 58 61 60C       │
+│ memory    ━━━━━━──│   Enter         open the details of the instance on the GPU                              │0 860 rpm          │
+│ cores     ████▄▄▃▄│   Esc  h  m     back to where m was pressed                                              │                   │
+│ load      11.51  1│   l             load a model: start one, or replace the selected GPU's instance          │C                  │
+│ I/O       net  rx │   X             stop the selected GPU's instance, if it is yours                         │52C  NIC, board    │
+└───────────────────│   w             latency and ratio window: 60s, 5m, since start                           │───────────────────┘
+┌─ GPUs  rates and s│   r             rescan for processes and containers now                                  │───────────────────┐
+│ GPU  NAME         │   p             pause the screen; polls keep their latest result                         │IL 5m              │
+│▌0    RTX PRO 6000 │   q  Ctrl-C     quit                                                                     │▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
+│ 1    RTX PRO 6000 │                                                                                          │▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
+│ 2    RTX PRO 6000 │ Sources                                                                                  │▇▇▇▇▇▇▇▇▇▇▇▇▇▇████ │
+│ 3    RTX PRO 6000 │   launch        serve processes choptop started; each log stays after its process exits  │▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇ │
+└───────────────────│ Host                                                                                     │───────────────────┘
+┌─ GPU 0  RTX PRO 60│   CPU           share of CPU time not idle, from /proc/stat; cores: a cell each          │───────────────────┐
+│ ACTIVITY  now  89%│   memory        in use: the total less what the kernel can reclaim (MemAvailable)        │█████████████───── │
+│                   │   pressure      share of the last 10s that tasks stalled on CPU, memory or I/O           │11%  all processes │
+│ ▅▅▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄│   sensors       /sys/class/hwmon; yellow 10C under a chip's limit, else from 85C         │MiMo-V2.6-Flash    │
+│ ██████████████████│   space         used share of each local filesystem and /dev/shm; yellow from 90%        │                   │
+│ ██████████████████│                                                                                          │━━━━━────────  79% │
+│ -33s ▔▔▔▔▔▔▔▔▔▔▔▔▔│ GPU time                                                                                 │─────────────  31% │
+│ VRAM         ━━━━━│   kernels       share of time a kernel ran on the GPU, from any process                  │─────────────  38% │
+│ temperature  68C  │   no kernel     the rest: waiting for the host or for work                               │━━━━━━━──────  82% │
+│ clocks       SM 2,│   SM busy       share of SMs with work (GPM)                                             │iB/s               │
+│ limited by   power│   occupancy     active warps against the most the SMs hold (GPM)                         │                   │
+│ PCIe         gen 5│   tensor        share of time the tensor pipes ran (GPM)                                 │                   │
+└───────────────────│   DRAM          share of peak memory bandwidth in use (GPM)                              │───────────────────┘
+┌─ Processes  on GPU│                                                                                          │───────────────────┐
+│ PID     TYPE      │ /proc, /sys and NVML are read once a poll, GPM counters only while                       │ beside            │
+│ 48211   C     86.9│ this view is open. GPU numbers are nvidia-smi's, not CUDA ordinals.                      │                   │
+│ 2210    G      0.1│ In a container, CPU, memory, disk I/O and sensors are the host's.                        │ck 1,650 of 3,090  │
+│                   │                                                                                          │                   │
+│                   │ Press any key to close.                                                                  │ 90C               │
+│                   └──────────────────────────────────────────────────────────────────────────────────────────┘                   │
 └─────────────────────────────────────────────────────────┘└───────────────────────────────────────────────────────────────────────┘
  Esc back   ↑↓ jk select   Enter instance   w window   r rescan   p pause   ? help   q quit

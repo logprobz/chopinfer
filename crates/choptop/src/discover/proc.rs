@@ -7,6 +7,11 @@
 //! namespaces, such as containers, are left to Docker discovery. Only owned
 //! processes have their executable and command line read, and only matching
 //! ones their descriptors, so a scan costs a few milliseconds.
+//!
+//! choptop's own `chopinfer` children, which run serve to check a start or
+//! read a package's options, are left out by pid and process group: a
+//! wrapper that `--chopinfer` names may run serve as its own child. Only
+//! unreaped children count: a reaped one's ids may name new processes.
 
 use std::collections::HashSet;
 use std::fs;
@@ -15,6 +20,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use super::{is_serve, model_hint, reachable};
+use crate::catalog::Children;
 
 /// Clock ticks per second in `/proc/PID/stat`: `USER_HZ`, 100 in the x86_64
 /// Linux ABI.
@@ -52,6 +58,8 @@ pub struct ProcScanner {
     uid: Option<u32>,
     /// This process's network namespace; `None` when unreadable.
     namespace: Option<PathBuf>,
+    /// choptop's own `chopinfer` children, which are not serve rows.
+    children: Children,
 }
 
 impl ProcScanner {
@@ -67,12 +75,19 @@ impl ProcScanner {
             root,
             uid,
             namespace,
+            children: Children::default(),
         }
     }
 
     /// Counts processes of `uid` only, or of every owner with `None`.
     pub fn with_uid(mut self, uid: Option<u32>) -> Self {
         self.uid = uid;
+        self
+    }
+
+    /// Leaves out `children` and the processes in their groups.
+    pub fn excluding(mut self, children: Children) -> Self {
+        self.children = children;
         self
     }
 
@@ -105,6 +120,9 @@ impl ProcScanner {
         }
         let arguments = read_cmdline(&directory.join("cmdline"))?;
         if !is_serve(&arguments) {
+            return None;
+        }
+        if self.children.excludes(pid, group(&directory)) {
             return None;
         }
         if let Some(namespace) = &self.namespace
@@ -219,6 +237,13 @@ pub(crate) fn start_ticks(directory: &Path) -> Option<u64> {
     let stat = fs::read_to_string(directory.join("stat")).ok()?;
     let after = &stat[stat.rfind(')')? + 1..];
     after.split_whitespace().nth(19)?.parse().ok()
+}
+
+/// Field 5 of `/proc/PID/stat`, the process group.
+fn group(directory: &Path) -> Option<u32> {
+    let stat = fs::read_to_string(directory.join("stat")).ok()?;
+    let after = &stat[stat.rfind(')')? + 1..];
+    after.split_whitespace().nth(2)?.parse().ok()
 }
 
 /// The `(address, inode)` of every LISTEN row of a `/proc/net/tcp` or

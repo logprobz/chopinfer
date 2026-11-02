@@ -23,6 +23,63 @@ use crate::ui::widgets::{bytes, sanitize};
 
 use super::Reservation;
 
+/// Whether a queued launch may proceed under the latest GPU reading.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Gate {
+    Clear,
+    Hold,
+    Cancel(String),
+}
+
+/// A reservation never overrides a newer unknown or blocked reading.
+/// Expected owners hold the launch until the reading also shows them gone;
+/// `gpus` must count the processes it waits for as what they stand for
+/// (see [`Waited`]).
+pub fn gate(launch: &super::Launch, gpus: &[Gpu]) -> Gate {
+    if launch.record.gpus.len() != launch.record.uuids.len() {
+        return Gate::Cancel("the saved GPU UUIDs are incomplete".into());
+    }
+    let mut hold = false;
+    for (index, uuid) in launch.record.gpus.iter().zip(&launch.record.uuids) {
+        let Some(gpu) = gpus.iter().find(|gpu| gpu.index == *index) else {
+            return Gate::Cancel(format!("GPU {index} is gone"));
+        };
+        if gpu.uuid.is_none() && matches!(gpu.occupancy, Occupancy::Unknown(_)) {
+            hold = true;
+            continue;
+        }
+        if gpu.uuid.as_ref() != Some(uuid) {
+            return Gate::Cancel(format!("GPU {index}'s UUID changed"));
+        }
+        match &gpu.occupancy {
+            Occupancy::Free => {}
+            Occupancy::Unknown(_) => hold = true,
+            Occupancy::Blocked(why) => {
+                return Gate::Cancel(format!("GPU {index} is held by {why}"));
+            }
+            Occupancy::Held(holders) => {
+                for holder in holders {
+                    if *holder == Holder::Launch(launch.id) {
+                        continue;
+                    }
+                    let expected = launch.waits.iter().any(|wait| match (wait, holder) {
+                        (super::Wait::Launch(id), Holder::Launch(other)) => id == other,
+                        (super::Wait::Serve(identity), Holder::Serve(serve)) => {
+                            identity.pid == serve.pid && identity.start_ticks == serve.start_ticks
+                        }
+                        _ => false,
+                    });
+                    if !expected {
+                        return Gate::Cancel(format!("GPU {index} has a new owner"));
+                    }
+                    hold = true;
+                }
+            }
+        }
+    }
+    if hold { Gate::Hold } else { Gate::Clear }
+}
+
 /// What is known of one GPU's processes.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Listing {
@@ -53,6 +110,12 @@ pub struct Live {
     pub unavailable: Option<String>,
     /// Every instance the latest scan found.
     pub found: Vec<Found>,
+    /// When the latest scan began, and when the latest GPU reading was
+    /// taken; a start waits for both to be newer than its request.
+    pub scanned: Option<f64>,
+    pub polled: Option<f64>,
+    /// Whether discovery runs; without it no scan is waited for.
+    pub scanning: bool,
 }
 
 impl Live {
@@ -75,6 +138,11 @@ impl Live {
                 }
             }
             Report::Polled(readings) => {
+                self.polled = readings
+                    .iter()
+                    .map(|reading| reading.at)
+                    .reduce(f64::min)
+                    .or(self.polled);
                 for (listing, reading) in self.listings.iter_mut().zip(readings) {
                     // As the interface reads it: lost until a query answers.
                     if reading.lost {
@@ -96,10 +164,22 @@ impl Live {
         }
     }
 
+    /// Whether a scan began and the GPUs were read at or after `since`;
+    /// GPUs that cannot be read, and scans while discovery is off, are not
+    /// waited for.
+    pub fn fresh(&self, since: f64) -> bool {
+        let read = self.unavailable.is_some() || self.polled.is_some_and(|at| at >= since);
+        let scanned = !self.scanning || self.scanned.is_some_and(|at| at >= since);
+        read && scanned
+    }
+
     /// Takes a discovery report.
     pub fn scan(&mut self, report: &discover::Report) {
         match report {
-            discover::Report::Scan { found, .. } => self.found = found.clone(),
+            discover::Report::Scan { found, started, .. } => {
+                self.found = found.clone();
+                self.scanned = Some(*started);
+            }
             discover::Report::Listening {
                 pid,
                 start_ticks,
@@ -152,8 +232,19 @@ impl Serve {
 pub enum Holder {
     /// A serve process of this user, stopped before the launch starts.
     Serve(Serve),
-    /// A pending choptop launch, by its position among the reservations.
-    Launch(usize),
+    /// A pending choptop launch, by its launch id.
+    Launch(u64),
+}
+
+/// A process a queued launch waits for, by pid and start ticks, and the
+/// holder it stands for. A GPU reading taken before it exited may still
+/// show it after the scan has dropped it or its launch has left the list;
+/// it is still that holder, not a new owner.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Waited {
+    pub pid: u32,
+    pub start_ticks: u64,
+    pub holder: Holder,
 }
 
 /// Who holds one GPU.
@@ -162,9 +253,9 @@ pub enum Occupancy {
     Free,
     /// Rows a switch may stop or replace.
     Held(Vec<Holder>),
-    /// Something choptop does not stop, and what: a container, a remote
-    /// target, a process that is not serve, a starting process's
-    /// reservation.
+    /// Something a switch does not stop, and who, as it reads after "held
+    /// by": a container, a remote target, a process that is not serve, a
+    /// serve process that is starting there.
     Blocked(String),
     /// Not known, and why; it cannot be picked.
     Unknown(String),
@@ -187,7 +278,8 @@ pub struct Gpu {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PortHolder {
     Serve(Serve),
-    Launch(usize),
+    /// A pending choptop launch, by its launch id.
+    Launch(u64),
     /// Something choptop does not stop, and what.
     Other(String),
 }
@@ -198,6 +290,9 @@ pub struct Inputs<'a> {
     /// The registry's rows, which name containers and targets.
     pub instances: &'a [Instance],
     pub reservations: &'a [Reservation],
+    /// The processes queued launches wait for; empty but for deciding
+    /// whether those launches go ahead.
+    pub waited: &'a [Waited],
     /// Seconds between GPU polls: a process list older than two is stale.
     pub interval: f64,
     pub now: f64,
@@ -249,12 +344,23 @@ impl Inputs<'_> {
             .collect()
     }
 
-    /// The reservation whose started process is `pid`.
-    fn launch_of(&self, pid: u32, start_ticks: Option<u64>) -> Option<usize> {
-        self.reservations.iter().position(|reservation| {
-            reservation.process.is_some_and(|(seen, ticks)| {
-                seen == pid && start_ticks.is_none_or(|start| start == ticks)
+    /// The launch id of the reservation whose started process is `pid`.
+    fn launch_of(&self, pid: u32, start_ticks: Option<u64>) -> Option<u64> {
+        self.reservations
+            .iter()
+            .find(|reservation| {
+                reservation.process.is_some_and(|(seen, ticks)| {
+                    seen == pid && start_ticks.is_none_or(|start| start == ticks)
+                })
             })
+            .map(|reservation| reservation.launch)
+    }
+
+    /// The waited process `pid`; a GPU reading that could not read its
+    /// start ticks matches by pid, as [`Inputs::launch_of`] does.
+    fn waited(&self, pid: u32, start_ticks: Option<u64>) -> Option<&Waited> {
+        self.waited.iter().find(|waited| {
+            waited.pid == pid && start_ticks.is_none_or(|start| start == waited.start_ticks)
         })
     }
 
@@ -355,16 +461,17 @@ pub fn occupancy(inputs: &Inputs) -> Vec<Gpu> {
         })
         .collect::<Vec<_>>();
     // Pending launches hold their GPUs before their processes show.
-    for (position, reservation) in inputs.reservations.iter().enumerate() {
+    for reservation in inputs.reservations {
+        let launch = reservation.launch;
         for gpu in gpus.iter_mut().filter(|gpu| {
             gpu.uuid
                 .as_ref()
                 .is_some_and(|uuid| reservation.gpus.contains(uuid))
         }) {
             match &mut gpu.occupancy {
-                Occupancy::Free => gpu.occupancy = Occupancy::Held(vec![Holder::Launch(position)]),
-                Occupancy::Held(holders) if !holders.contains(&Holder::Launch(position)) => {
-                    holders.push(Holder::Launch(position));
+                Occupancy::Free => gpu.occupancy = Occupancy::Held(vec![Holder::Launch(launch)]),
+                Occupancy::Held(holders) if !holders.contains(&Holder::Launch(launch)) => {
+                    holders.push(Holder::Launch(launch));
                 }
                 _ => {}
             }
@@ -374,9 +481,12 @@ pub fn occupancy(inputs: &Inputs) -> Vec<Gpu> {
     // GPUs its CUDA_VISIBLE_DEVICES names are its own. Without UUIDs there,
     // every GPU might be.
     for serve in serves.iter().filter(|serve| serve.starting) {
+        // A launch's process, or one a launch waits for, which may have
+        // let go of its GPUs while it drains.
         if inputs
             .launch_of(serve.pid, Some(serve.start_ticks))
             .is_some()
+            || inputs.waited(serve.pid, Some(serve.start_ticks)).is_some()
         {
             continue;
         }
@@ -403,10 +513,8 @@ pub fn occupancy(inputs: &Inputs) -> Vec<Gpu> {
                     gpu.uuid.as_ref().is_some_and(|uuid| uuids.contains(uuid))
                         && !matches!(gpu.occupancy, Occupancy::Unknown(_))
                 }) {
-                    gpu.occupancy = Occupancy::Blocked(format!(
-                        "reserved by {}, which is starting",
-                        serve.described()
-                    ));
+                    gpu.occupancy =
+                        Occupancy::Blocked(format!("{}, which is starting", serve.described()));
                 }
             }
             None => {
@@ -433,8 +541,10 @@ fn holders(inputs: &Inputs, serves: &[Serve], processes: &[Process]) -> (Occupan
     let mut graphics = Vec::new();
     for process in processes {
         let owner = &process.owner;
-        if let Some(position) = inputs.launch_of(process.pid, owner.start_ticks) {
-            holders.push(Holder::Launch(position));
+        if let Some(launch) = inputs.launch_of(process.pid, owner.start_ticks) {
+            holders.push(Holder::Launch(launch));
+        } else if let Some(waited) = inputs.waited(process.pid, owner.start_ticks) {
+            holders.push(waited.holder.clone());
         } else if let Some(serve) = serves
             .iter()
             .find(|serve| serve.pid == process.pid && owner.start_ticks == Some(serve.start_ticks))
@@ -480,14 +590,14 @@ pub fn ports(inputs: &Inputs) -> BTreeMap<u16, PortHolder> {
         .flat_map(|(_, processes)| processes.iter().map(|process| process.pid))
         .collect::<Vec<_>>();
     let mut ports = BTreeMap::new();
-    for (position, reservation) in inputs.reservations.iter().enumerate() {
+    for reservation in inputs.reservations {
         ports
             .entry(reservation.port)
-            .or_insert(PortHolder::Launch(position));
+            .or_insert(PortHolder::Launch(reservation.launch));
     }
     for serve in inputs.serves(&holding) {
         let holder = match inputs.launch_of(serve.pid, Some(serve.start_ticks)) {
-            Some(position) => PortHolder::Launch(position),
+            Some(launch) => PortHolder::Launch(launch),
             None => PortHolder::Serve(serve.clone()),
         };
         for port in &serve.ports {
@@ -592,6 +702,7 @@ pub(crate) mod tests {
             live,
             instances: &[],
             reservations,
+            waited: &[],
             interval: 1.0,
             now,
         })
@@ -712,6 +823,7 @@ pub(crate) mod tests {
         live.scan(&discover::Report::Scan {
             found: vec![serve_process(48211, &["127.0.0.1:8311"], None)],
             events: Vec::new(),
+            started: 0.0,
         });
         let mut in_container = on_gpu(700);
         in_container.owner.container = Some("4f2a".into());
@@ -729,6 +841,7 @@ pub(crate) mod tests {
             live: &live,
             instances: &registry.instances,
             reservations: &[],
+            waited: &[],
             interval: 1.0,
             now: 1.0,
         });
@@ -771,6 +884,7 @@ pub(crate) mod tests {
             live: &live,
             instances: &registry.instances,
             reservations: &[],
+            waited: &[],
             interval: 1.0,
             now: 1.0,
         });
@@ -794,12 +908,14 @@ pub(crate) mod tests {
                 .into_iter()
                 .collect(),
             events: Vec::new(),
+            started: 0.0,
         });
         live.gpu(&polled(1.0, vec![Some(processes)]));
         occupancy(&Inputs {
             live: &live,
             instances: &[],
             reservations: &[],
+            waited: &[],
             interval: 1.0,
             now: 1.0,
         })
@@ -855,6 +971,7 @@ pub(crate) mod tests {
             gpus: gpus.iter().map(|index| uuid(*index)).collect(),
             port,
             process,
+            launch: u64::from(port),
         }
     }
 
@@ -871,6 +988,7 @@ pub(crate) mod tests {
         live.scan(&discover::Report::Scan {
             found: vec![serve_process(61204, &[], None)],
             events: Vec::new(),
+            started: 0.0,
         });
         let reservations = [
             reservation("launch A", &[0, 1], 8310, None),
@@ -880,6 +998,7 @@ pub(crate) mod tests {
             live: &live,
             instances: &[],
             reservations: &reservations,
+            waited: &[],
             interval: 1.0,
             now: 1.5,
         };
@@ -890,15 +1009,15 @@ pub(crate) mod tests {
         assert_eq!(
             held,
             [
-                Occupancy::Held(vec![Holder::Launch(0)]),
-                Occupancy::Held(vec![Holder::Launch(0)]),
-                Occupancy::Held(vec![Holder::Launch(1)]),
-                Occupancy::Held(vec![Holder::Launch(1)]),
+                Occupancy::Held(vec![Holder::Launch(8310)]),
+                Occupancy::Held(vec![Holder::Launch(8310)]),
+                Occupancy::Held(vec![Holder::Launch(8311)]),
+                Occupancy::Held(vec![Holder::Launch(8311)]),
             ]
         );
         let ports = ports(&inputs);
-        assert_eq!(ports[&8310], PortHolder::Launch(0));
-        assert_eq!(ports[&8311], PortHolder::Launch(1));
+        assert_eq!(ports[&8310], PortHolder::Launch(8310));
+        assert_eq!(ports[&8311], PortHolder::Launch(8311));
         // Once its process holds the GPUs it is still that launch.
         live.gpu(&polled(
             2.0,
@@ -913,10 +1032,14 @@ pub(crate) mod tests {
             live: &live,
             instances: &[],
             reservations: &reservations,
+            waited: &[],
             interval: 1.0,
             now: 2.0,
         });
-        assert_eq!(gpus[2].occupancy, Occupancy::Held(vec![Holder::Launch(1)]));
+        assert_eq!(
+            gpus[2].occupancy,
+            Occupancy::Held(vec![Holder::Launch(8311)])
+        );
     }
 
     #[test]
@@ -931,19 +1054,48 @@ pub(crate) mod tests {
         live.scan(&discover::Report::Scan {
             found: vec![serve_process(51022, &[], Some(&named))],
             events: Vec::new(),
+            started: 0.0,
         });
         let held = states(&live, &[], 1.0);
         assert_eq!(held[0], Occupancy::Free);
         assert_eq!(
             held[2],
-            Occupancy::Blocked("reserved by proc 51022 model-51022, which is starting".into())
+            Occupancy::Blocked("proc 51022 model-51022, which is starting".into())
         );
         assert_eq!(held[3], held[2]);
+        // Each reads after "held by".
+        let gpus = occupancy(&Inputs {
+            live: &live,
+            instances: &[],
+            reservations: &[],
+            waited: &[],
+            interval: 1.0,
+            now: 1.0,
+        });
+        let placement = crate::launch::placement::place(
+            &crate::launch::placement::Field {
+                gpus: &gpus,
+                ports: &BTreeMap::new(),
+                reservations: &[],
+            },
+            &[2, 3].into(),
+            2,
+            None,
+            &mut |_, _| true,
+        );
+        assert_eq!(
+            placement.problems,
+            [
+                "GPU 2 is held by proc 51022 model-51022, which is starting",
+                "GPU 3 is held by proc 51022 model-51022, which is starting",
+            ]
+        );
         // With ordinals, or without the variable, any GPU may be its.
         for visible in [Some("2,3"), None, Some(&format!("{},1", uuid(2))[..])] {
             live.scan(&discover::Report::Scan {
                 found: vec![serve_process(51022, &[], visible)],
                 events: Vec::new(),
+                started: 0.0,
             });
             for state in states(&live, &[], 1.0) {
                 assert_eq!(
@@ -971,11 +1123,149 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_waited_process_holds_its_gpu_as_what_it_stands_for() {
+        let mut live = Live::default();
+        live.gpu(&Report::Opened {
+            driver: None,
+            devices: devices(4),
+        });
+        // A reading taken before a replaced launch (500) and a stopped serve
+        // process (600) exited, the latter's start time no longer readable,
+        // and a new process that reuses pid 500.
+        let gone = Process {
+            owner: Owner::default(),
+            ..on_gpu(600)
+        };
+        let reused = Process {
+            owner: Owner {
+                start_ticks: Some(1),
+                ..Owner::default()
+            },
+            ..on_gpu(500)
+        };
+        live.gpu(&polled(
+            1.0,
+            vec![
+                Some(vec![on_gpu(500)]),
+                Some(vec![gone]),
+                Some(vec![reused]),
+                Some(Vec::new()),
+            ],
+        ));
+        // A scan from before the replaced launch exited, and another
+        // replaced launch that has let go of GPU 3 while it drains.
+        live.scan(&discover::Report::Scan {
+            found: vec![
+                serve_process(500, &["127.0.0.1:8310"], Some(&uuid(0))),
+                serve_process(700, &[], Some(&uuid(3))),
+            ],
+            events: Vec::new(),
+            started: 0.5,
+        });
+        let serve = Serve {
+            pid: 600,
+            start_ticks: 6000,
+            name: None,
+            ports: Vec::new(),
+            starting: false,
+        };
+        let waited = [
+            Waited {
+                pid: 500,
+                start_ticks: 5000,
+                holder: Holder::Launch(3),
+            },
+            Waited {
+                pid: 600,
+                start_ticks: 6000,
+                holder: Holder::Serve(serve.clone()),
+            },
+            Waited {
+                pid: 700,
+                start_ticks: 7000,
+                holder: Holder::Launch(4),
+            },
+        ];
+        let held = |waited: &[Waited]| {
+            occupancy(&Inputs {
+                live: &live,
+                instances: &[],
+                reservations: &[],
+                waited,
+                interval: 1.0,
+                now: 1.0,
+            })
+            .into_iter()
+            .map(|gpu| gpu.occupancy)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            held(&waited),
+            [
+                Occupancy::Held(vec![Holder::Launch(3)]),
+                Occupancy::Held(vec![Holder::Serve(serve)]),
+                Occupancy::Blocked("pid 500 (-, 80 GiB)".into()),
+                Occupancy::Free,
+            ]
+        );
+        // Unwaited, the first is a serve process of this user, the second a
+        // stranger, and the last a serve process that is loading.
+        let unwaited = held(&[]);
+        assert!(
+            matches!(&unwaited[0], Occupancy::Held(holders) if matches!(&holders[0], Holder::Serve(serve) if serve.pid == 500))
+        );
+        assert_eq!(
+            unwaited[1],
+            Occupancy::Blocked("pid 600 (-, 80 GiB)".into())
+        );
+        assert_eq!(
+            unwaited[3],
+            Occupancy::Blocked("proc 700 model-700, which is starting".into())
+        );
+    }
+
+    #[test]
+    fn readings_are_fresh_once_a_scan_and_a_gpu_read_follow_the_request() {
+        let mut live = Live {
+            scanning: true,
+            ..Live::default()
+        };
+        assert!(!live.fresh(5.0));
+        live.gpu(&Report::Opened {
+            driver: None,
+            devices: devices(2),
+        });
+        live.gpu(&polled(5.5, vec![Some(vec![]); 2]));
+        live.scan(&discover::Report::Scan {
+            found: Vec::new(),
+            events: Vec::new(),
+            started: 4.9,
+        });
+        // The scan began before the request.
+        assert!(!live.fresh(5.0));
+        live.scan(&discover::Report::Scan {
+            found: Vec::new(),
+            events: Vec::new(),
+            started: 5.1,
+        });
+        assert!(live.fresh(5.0));
+        assert!(!live.fresh(5.6));
+        // Without GPUs there is no read to wait for, and without
+        // discovery no scan.
+        live.gpu(&Report::Unavailable("no driver".into()));
+        assert!(live.fresh(5.1));
+        assert!(!live.fresh(5.2));
+        live.scanning = false;
+        assert!(live.fresh(5.2));
+    }
+
+    #[test]
     fn a_listener_that_opens_later_updates_the_scan() {
         let mut live = Live::default();
         live.scan(&discover::Report::Scan {
             found: vec![serve_process(9, &[], None)],
             events: Vec::new(),
+            started: 0.0,
         });
         live.scan(&discover::Report::Listening {
             pid: 9,

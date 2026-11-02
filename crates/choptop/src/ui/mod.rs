@@ -1,6 +1,7 @@
 //! Drawing the interface into a [`buffer::Buffer`].
 
 pub mod buffer;
+pub mod confirm;
 pub mod detail;
 pub mod gpus;
 pub mod list;
@@ -11,7 +12,7 @@ pub mod widgets;
 use buffer::{Buffer, Color, Style};
 use widgets::{boxed, pad};
 
-use crate::app::{App, View};
+use crate::app::{App, Dialog, View};
 use crate::instances::{Instance, State, Tone};
 use crate::stats::{HistogramOf, Snapshot, Window};
 
@@ -39,10 +40,19 @@ pub fn draw(app: &App, width: u16, height: u16, now: f64) -> Buffer {
         View::Monitor => monitor::draw(&mut buffer, app, now),
         View::Loader => loader::draw(&mut buffer, app, now),
     }
+    if let Some(dialog) = &app.dialog {
+        confirm::draw(&mut buffer, app, dialog);
+    }
     if app.help {
-        help(&mut buffer, app.view);
+        help(&mut buffer, app.view, app.read_only);
     }
     buffer
+}
+
+/// Whether a frame `width` by `height` draws `dialog` whole: the frame is
+/// drawn at all, and so is every line the dialog must show, uncut.
+pub fn draws_whole(app: &App, dialog: &Dialog, width: u16, height: u16) -> bool {
+    width >= MINIMUM.0 && height >= MINIMUM.1 && confirm::whole(app, dialog, width, height)
 }
 
 pub fn tone_color(tone: Tone) -> Color {
@@ -146,7 +156,13 @@ pub fn footer(buffer: &mut Buffer, keys: &[(&str, &str, u8)]) {
     }
 }
 
-fn help(buffer: &mut Buffer, view: View) {
+/// Help lines `--read-only` leaves out: its keys and source by their
+/// left column, and what it says about them.
+const LAUNCH_KEYS: [&str; 3] = ["  l", "  X", "  launch"];
+const STARTS: &str = "l and X start and stop serve processes of this user, each after a";
+const STOPS: &str = "confirm; containers and servers elsewhere are never stopped.";
+
+fn help(buffer: &mut Buffer, view: View, read_only: bool) {
     const INSTANCES: &[(&str, &str)] = &[
         ("Keys", ""),
         ("  ↑ ↓  j k", "select an instance (list)"),
@@ -156,6 +172,10 @@ fn help(buffer: &mut Buffer, view: View) {
         (
             "  l",
             "load a model: start one, or replace the selected instance",
+        ),
+        (
+            "  X",
+            "stop the selected instance of yours, or dismiss an exited launch",
         ),
         ("  m", "this host: CPU, memory, disks, sensors and GPUs"),
         ("  w", "latency and ratio window: 60s, 5m, since start"),
@@ -176,12 +196,18 @@ fn help(buffer: &mut Buffer, view: View) {
             "  target",
             "--target, --targets-file and CHOPINFER_TOP_TARGETS",
         ),
+        (
+            "  launch",
+            "serve processes choptop started; each log stays after its process exits",
+        ),
         ("", ""),
         (
             "",
             "Reads only /health and /metrics. Rates come from counter deltas",
         ),
         ("", "between polls; a new startup nonce re-baselines them."),
+        ("", STARTS),
+        ("", STOPS),
         ("", ""),
         ("", "Press any key to close."),
     ];
@@ -194,11 +220,17 @@ fn help(buffer: &mut Buffer, view: View) {
             "  l",
             "load a model: start one, or replace the selected GPU's instance",
         ),
+        ("  X", "stop the selected GPU's instance, if it is yours"),
         ("  w", "latency and ratio window: 60s, 5m, since start"),
         ("  r", "rescan for processes and containers now"),
         ("  p", "pause the screen; polls keep their latest result"),
         ("  q  Ctrl-C", "quit"),
         ("", ""),
+        ("Sources", ""),
+        (
+            "  launch",
+            "serve processes choptop started; each log stays after its process exits",
+        ),
         ("Host", ""),
         (
             "  CPU",
@@ -263,6 +295,10 @@ fn help(buffer: &mut Buffer, view: View) {
             "  Space",
             "pick or drop a GPU; instances follow the GPUs picked",
         ),
+        (
+            "",
+            "in Profiles, choose the profile as it is, so it stays as GPUs change",
+        ),
         ("  /", "find an option by name"),
         (
             "  a",
@@ -302,6 +338,15 @@ fn help(buffer: &mut Buffer, view: View) {
         View::Loader => (LOADER, 18),
         View::List | View::Detail => (INSTANCES, 16),
     };
+    let lines = lines
+        .iter()
+        .filter(|(left, right)| {
+            !read_only
+                || !(LAUNCH_KEYS.contains(left)
+                    || [STARTS, STOPS].contains(right)
+                    || (view == View::Monitor && *left == "Sources"))
+        })
+        .collect::<Vec<_>>();
     let width = 92.min(buffer.width - 2);
     let height = (lines.len() as u16 + 2).min(buffer.height - 2);
     let x = (buffer.width - width) / 2;
@@ -342,6 +387,9 @@ pub fn state_group(state: &State) -> &'static str {
         State::Unreachable(_) | State::NotChopinfer => "unreachable",
         State::Failed => "failed",
         State::Poisoned => "poisoned",
+        State::Waiting => "starting",
+        State::Stopping => "stopping",
+        State::Exited(_) => "exited",
     }
 }
 
@@ -476,6 +524,28 @@ pub const INTER_TOKEN: HistogramOf = |s| s.histograms.inter_token.as_ref();
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn monitor_help_names_launches_only_when_writable() {
+        for read_only in [false, true] {
+            let mut buffer = Buffer::new(132, 38);
+            help(&mut buffer, View::Monitor, read_only);
+            let text = buffer.text();
+            for explanation in [
+                "Sources",
+                "launch",
+                "load a model:",
+                "stop the selected GPU's instance",
+            ] {
+                assert_eq!(
+                    text.contains(explanation),
+                    !read_only,
+                    "{explanation}: {text}"
+                );
+            }
+            assert!(text.contains("Press any key to close."));
+        }
+    }
 
     #[test]
     fn the_footer_drops_whole_pairs_by_rank() {

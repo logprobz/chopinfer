@@ -1,0 +1,38 @@
+ choptop  >  Load model   replacing proc 48211, proc 51022   4 models  4 GPUs
+
+┌─ Models  installed beside chopinfer ─────────────────────────────────────────┐
+│ Qwen3.8-Flash        qwen38     found                                        │
+│┌─ Start DeepSeek tp4-dspark ────────────────────────────────────────────────┐│
+││                                                                            ││
+││ DeepSeek-V4.1-Flash  tp4-dspark  1 instance at TP4                         ││
+││                                                                            ││
+││ A  GPUs 0,1,2,3    127.0.0.1:8310                                          ││
+││     log deepseek41-tp4-dspark-a-20261102-153012.log                        ││
+││    logs and launch records stay in ~/.local/state/choptop                  ││
+││                                                                            ││
+││ Stops first                                                                ││
+││   proc 48211  MiMo-V2.6-Flash on GPUs 0,1:                                 ││
+││     SIGTERM, then the GPUs are free once it exits                          ││
+││   proc 51022  Qwen3.8-Flash on GPUs 2,3:                                   ││
+││     SIGTERM, then the GPUs are free once it exits                          ││
+││   serve drains admitted requests for up to 30 s (--drain-timeout-ms) before││
+││     it exits                                                               ││
+││                                                                            ││
+││ Check                                                                      ││
+││   tp4-dspark: Not qualified: DSpark at TP4 on the deepseek-ai              ││
+││     checkpoint with native KV. Confidence-allocated batches compute all    ││
+││     five drafter heads and score only computed target rows through         ││
+││     mapped sampling. Only unallocated uniform depth-three batches of 3-8...││
+││   GPU 0 also holds pid 2210 (Xorg, 96 MiB), which choptop leaves           ││
+││     running                                                                ││
+││   host memory: 132 of 251 GiB available                                    ││
+││   GPU failures such as memory fit or peer access can still happen          ││
+└│     after the stop                                                         │┘
+┌│                                                                            │┐
+││ Enter start   Esc back to the loader                                       ││
+│└────────────────────────────────────────────────────────────────────────────┘│
+│                                                                              │
+│                                                                              │
+│ tp4-dspark; 0 set here (white).  Stops proc 48211, proc 51022 first.         │
+└──────────────────────────────────────────────────────────────────────────────┘
+ Tab pane   ↑↓ jk move   ←→ change   Enter edit   / find   S start   Esc back

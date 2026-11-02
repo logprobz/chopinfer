@@ -170,7 +170,7 @@ pub fn row(instances: &[Instance], process: &Process) -> Option<u64> {
             *pid == process.pid && owner.start_ticks == Some(*start_ticks)
         }
         Source::Container { id, .. } => owner.container.as_deref() == Some(id.as_str()),
-        Source::Target(_) => false,
+        Source::Target(_) | Source::Launch { .. } => false,
     });
     let found = exact.or_else(|| {
         let listen = owner

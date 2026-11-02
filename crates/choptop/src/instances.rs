@@ -6,6 +6,10 @@
 //! and warmup. A response carrying the startup nonce makes a row a polled
 //! instance. Rows that report the same nonce are one server and are shown
 //! once.
+//!
+//! A row choptop launched stays until its launch ends: it waits as
+//! `launch A`, becomes `proc PID` once started, and an instance that exits
+//! on its own stays as an exited row until it is dismissed.
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -39,15 +43,20 @@ pub enum Source {
         id: String,
         name: String,
     },
+    /// A choptop launch that has no process yet.
+    Launch {
+        letter: char,
+    },
 }
 
 impl Source {
-    /// `target`, `proc 48211` or `docker glm-tp4`.
+    /// `target`, `proc 48211`, `docker glm-tp4` or `launch A`.
     pub fn label(&self) -> String {
         match self {
             Self::Target(_) => "target".to_owned(),
             Self::Process { pid, .. } => format!("proc {pid}"),
             Self::Container { name, .. } => format!("docker {name}"),
+            Self::Launch { letter } => format!("launch {letter}"),
         }
     }
 
@@ -56,6 +65,7 @@ impl Source {
             Self::Target(_) => "target",
             Self::Process { .. } => "proc",
             Self::Container { .. } => "docker",
+            Self::Launch { .. } => "launch",
         }
     }
 
@@ -64,14 +74,14 @@ impl Source {
     fn rank(&self) -> u8 {
         match self {
             Self::Target(_) => 0,
-            Self::Process { .. } => 1,
+            Self::Process { .. } | Self::Launch { .. } => 1,
             Self::Container { .. } => 2,
         }
     }
 
     pub fn key(&self) -> Option<Key> {
         match self {
-            Self::Target(_) => None,
+            Self::Target(_) | Self::Launch { .. } => None,
             Self::Process { pid, start_ticks } => Some(Key::Process {
                 pid: *pid,
                 start_ticks: *start_ticks,
@@ -123,6 +133,13 @@ pub enum State {
     Failed,
     /// Reuse is unsafe after a commit, rollback or prefix failure.
     Poisoned,
+    /// A launch waiting for what it replaces to exit.
+    Waiting,
+    /// Sent SIGTERM by choptop; draining.
+    Stopping,
+    /// A launch whose process exited on its own, with its status when
+    /// known.
+    Exited(Option<i32>),
 }
 
 impl State {
@@ -138,16 +155,34 @@ impl State {
             Self::NotChopinfer => "not chopinfer",
             Self::Failed => "failed",
             Self::Poisoned => "poisoned",
+            Self::Waiting => "waiting",
+            Self::Stopping => "stopping",
+            Self::Exited(_) => "exited",
+        }
+    }
+
+    /// The label with an exit status: `exited 1`.
+    pub fn shown(&self) -> String {
+        match self {
+            Self::Exited(Some(status)) => format!("exited {status}"),
+            state => state.label().to_owned(),
         }
     }
 
     pub fn tone(&self) -> Tone {
         match self {
             Self::Ready | Self::Idle => Tone::Good,
-            Self::NotReady(_) | Self::Connecting | Self::Starting | Self::NotAnswering => {
-                Tone::Warning
-            }
-            Self::Unreachable(_) | Self::NotChopinfer | Self::Failed | Self::Poisoned => Tone::Bad,
+            Self::NotReady(_)
+            | Self::Connecting
+            | Self::Starting
+            | Self::NotAnswering
+            | Self::Waiting
+            | Self::Stopping => Tone::Warning,
+            Self::Unreachable(_)
+            | Self::NotChopinfer
+            | Self::Failed
+            | Self::Poisoned
+            | Self::Exited(_) => Tone::Bad,
         }
     }
 
@@ -157,6 +192,17 @@ impl State {
             Self::Ready | Self::Idle | Self::NotReady(_) | Self::Failed | Self::Poisoned
         )
     }
+}
+
+/// Where a launch is, as its row shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Launched {
+    /// Waiting for what it replaces to exit.
+    Waiting,
+    /// Its process runs.
+    Running,
+    /// Its process exited on its own, with this status when known.
+    Exited(Option<i32>),
 }
 
 /// One row.
@@ -194,6 +240,10 @@ pub struct Instance {
     pub aliases: Vec<String>,
     pub restarts: u32,
     pub last_restart: Option<f64>,
+    /// The choptop launch this row is, by its id, and where it is.
+    pub launch: Option<(u64, Launched)>,
+    /// When choptop sent it SIGTERM.
+    pub stopping: Option<f64>,
     /// When a container row that never answered last asked for its process
     /// list to be read again.
     reread_at: f64,
@@ -223,11 +273,21 @@ impl Instance {
             aliases: Vec::new(),
             restarts: 0,
             last_restart: None,
+            launch: None,
+            stopping: None,
             reread_at: f64::NEG_INFINITY,
         }
     }
 
     pub fn state(&self, now: f64) -> State {
+        match self.launch {
+            Some((_, Launched::Waiting)) => return State::Waiting,
+            Some((_, Launched::Exited(status))) => return State::Exited(status),
+            _ => {}
+        }
+        if self.stopping.is_some() {
+            return State::Stopping;
+        }
         if self.reachable {
             let gauges = self.stats.latest().map(|snapshot| &snapshot.gauges);
             if gauges.and_then(|gauges| gauges.poisoned) == Some(true) {
@@ -257,7 +317,7 @@ impl Instance {
             Source::Container { .. } if self.endpoints.is_empty() => {
                 State::Unreachable("no address the host can reach".to_owned())
             }
-            Source::Process { .. }
+            Source::Process { .. } | Source::Launch { .. }
                 if self
                     .listening_since
                     .is_some_and(|since| now - since > NOT_ANSWERING_SECONDS) =>
@@ -434,14 +494,24 @@ impl Registry {
             {
                 instance.arguments = arguments;
                 instance.model_hint = hint;
+                let mut opened = None;
                 if instance.endpoints != endpoints {
+                    // A process seen listening for the first time, as a
+                    // launch's often is at the first scan after it starts.
                     if instance.listening_since.is_none() && !endpoints.is_empty() {
                         instance.listening_since = Some(now);
+                        if matches!(instance.source, Source::Process { .. }) {
+                            opened = Some(instance.label());
+                        }
                     }
                     instance.endpoints = endpoints;
                     if instance.alias_of.is_none() {
                         followups.push(Followup::Poll(instance.id));
                     }
+                }
+                if let Some(label) = opened {
+                    let address = instance.address().unwrap_or_default();
+                    self.note(now, label, format!("listening on {address}"), Tone::Normal);
                 }
                 continue;
             }
@@ -473,14 +543,18 @@ impl Registry {
             self.instances.push(instance);
             followups.push(Followup::Poll(id));
         }
+        // A launch's row and a row choptop is stopping leave when choptop
+        // sees their process end.
         let gone = self
             .instances
             .iter()
             .filter(|instance| {
-                instance
-                    .source
-                    .key()
-                    .is_some_and(|key| !keys.contains(&key))
+                instance.launch.is_none()
+                    && instance.stopping.is_none()
+                    && instance
+                        .source
+                        .key()
+                        .is_some_and(|key| !keys.contains(&key))
             })
             .map(|instance| instance.id)
             .collect::<Vec<_>>();
@@ -491,15 +565,23 @@ impl Registry {
     }
 
     fn remove(&mut self, id: u64, now: f64) -> Vec<Followup> {
-        let Some(index) = self.instances.iter().position(|instance| instance.id == id) else {
+        let Some(instance) = self.get(id) else {
             return Vec::new();
         };
-        let instance = self.instances.remove(index);
         let what = match instance.source {
             Source::Container { .. } => "gone: the container stopped or no longer runs serve",
             _ => "gone: the process exited",
         };
         self.note(now, instance.label(), what, Tone::Normal);
+        self.forget(id)
+    }
+
+    /// Takes row `id` out of the list without an event.
+    pub fn forget(&mut self, id: u64) -> Vec<Followup> {
+        let Some(index) = self.instances.iter().position(|instance| instance.id == id) else {
+            return Vec::new();
+        };
+        let instance = self.instances.remove(index);
         let mut followups = vec![Followup::Stop(id)];
         if let Some(primary) = instance.alias_of
             && let Some(primary) = self.instances.iter_mut().find(|row| row.id == primary)
@@ -509,6 +591,58 @@ impl Registry {
         }
         followups.extend(self.release_aliases(id));
         followups
+    }
+
+    /// Adds the row of launch `id`, which waits as `launch LETTER` and
+    /// shows `model` until it answers.
+    pub fn add_launch(&mut self, id: u64, letter: char, model: &str, now: f64) -> u64 {
+        let row = self.next_id;
+        self.next_id += 1;
+        let mut instance = Instance::new(
+            row,
+            Source::Launch { letter },
+            Vec::new(),
+            self.interval,
+            now,
+        );
+        instance.model_hint = Some(model.to_owned());
+        instance.launch = Some((id, Launched::Waiting));
+        self.instances.push(instance);
+        row
+    }
+
+    /// The row of launch `id`.
+    pub fn launch_row(&mut self, id: u64) -> Option<&mut Instance> {
+        self.instances
+            .iter_mut()
+            .find(|instance| instance.launch.is_some_and(|(seen, _)| seen == id))
+    }
+
+    /// Launch `id` runs as process `pid`: its waiting row becomes that
+    /// process's row, or, for a launch an earlier choptop started, the row
+    /// a scan made for the process becomes the launch's.
+    pub fn launch_process(&mut self, id: u64, pid: u32, start_ticks: u64, model: &str, now: f64) {
+        let source = Source::Process { pid, start_ticks };
+        if let Some(instance) = self
+            .instances
+            .iter_mut()
+            .find(|instance| instance.source == source)
+        {
+            instance.launch = Some((id, Launched::Running));
+            return;
+        }
+        if let Some(instance) = self.launch_row(id) {
+            instance.source = source;
+            instance.launch = Some((id, Launched::Running));
+            instance.born = Some(now);
+            return;
+        }
+        let row = self.add_launch(id, 'A', model, now);
+        if let Some(instance) = self.instances.iter_mut().find(|seen| seen.id == row) {
+            instance.source = source;
+            instance.launch = Some((id, Launched::Running));
+            instance.born = Some(now);
+        }
     }
 
     /// Shows again the rows that were shown as `id`, and polls them.
@@ -852,6 +986,36 @@ mod tests {
                 "gone: the process exited",
             ]
         );
+    }
+
+    #[test]
+    fn a_launch_listening_at_the_first_scan_says_so_before_it_answers() {
+        let mut registry = Registry::new(1.0);
+        registry.add_launch(1, 'A', "Qwen3.8-Flash", 0.0);
+        registry.launch_process(1, 200, 7, "Qwen3.8-Flash", 1.0);
+        let row = registry.launch_row(1).unwrap().id;
+        // The first scan after it started finds it listening already.
+        assert_eq!(
+            registry.reconcile(vec![process(200, &["127.0.0.1:8311"])], 2.0),
+            [Followup::Poll(row)]
+        );
+        registry.apply(row, answer("n1", 5.0, true), 2.5);
+        let events = registry
+            .events
+            .iter()
+            .map(|event| format!("{}: {}", event.who, event.what))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            events,
+            [
+                "proc 200: listening on 127.0.0.1:8311",
+                "proc 200: answering at 127.0.0.1:8311",
+            ]
+        );
+        // A later scan or socket check that finds the same says nothing new.
+        registry.reconcile(vec![process(200, &["127.0.0.1:8311"])], 3.0);
+        registry.listening(200, 7, vec!["127.0.0.1:8311".parse().unwrap()], 3.0);
+        assert_eq!(registry.events.len(), 2);
     }
 
     #[test]

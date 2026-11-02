@@ -9,6 +9,7 @@ use super::widgets::{
 use super::{Figures, INTER_TOKEN, TTFT, footer, header, shown_name, state_group, tone_color};
 use crate::app::App;
 use crate::instances::{Instance, Source, State};
+use crate::launch::{Launch, Phase, Wait};
 
 /// The row of the instances table's top border.
 pub const TABLE_TOP: u16 = 2;
@@ -272,20 +273,52 @@ pub fn draw(buffer: &mut Buffer, app: &App, now: f64) {
         (0, events_top, width, height - 1 - events_top),
         now,
     );
-    footer(
-        buffer,
-        &[
-            ("↑↓ jk", "select", 0),
-            ("Enter", "details", 0),
-            ("l", "load model", 0),
-            ("m", "monitor", 0),
-            ("w", "window", 2),
-            ("r", "rescan", 3),
-            ("p", "pause", 1),
-            ("?", "help", 0),
-            ("q", "quit", 0),
-        ],
-    );
+    let keys = [
+        ("↑↓ jk", "select", 0),
+        ("Enter", "details", 0),
+        ("l", "load model", 0),
+        ("X", "stop", 1),
+        ("m", "monitor", 0),
+        ("w", "window", 2),
+        ("r", "rescan", 3),
+        ("p", "pause", 1),
+        ("?", "help", 0),
+        ("q", "quit", 0),
+    ];
+    let keys = keys
+        .into_iter()
+        .filter(|(key, _, _)| !app.read_only || !matches!(*key, "l" | "X"))
+        .collect::<Vec<_>>();
+    footer(buffer, &keys);
+}
+
+/// The launch row `row` is, if any.
+fn launch_of<'a>(app: &'a App, row: &Instance) -> Option<&'a Launch> {
+    row.launch.and_then(|(id, _)| app.launches.get(id))
+}
+
+/// `proc 48211`, `launch B`: what a waiting launch waits for.
+fn waits_for(app: &App, launch: &Launch) -> Vec<String> {
+    launch
+        .waits
+        .iter()
+        .map(|wait| match wait {
+            Wait::Serve(identity) => format!("proc {}", identity.pid),
+            Wait::Launch(id) => app
+                .launches
+                .get(*id)
+                .map_or_else(|| "a launch".to_owned(), Launch::label),
+        })
+        .collect()
+}
+
+/// `48211, launch B`: what a waiting launch waits for, in short.
+fn after(app: &App, launch: &Launch) -> String {
+    waits_for(app, launch)
+        .iter()
+        .map(|label| label.strip_prefix("proc ").unwrap_or(label))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Draws `row` on line `y`, highlighted when `selected`, with the `shown`
@@ -322,10 +355,7 @@ fn draw_row(
             Some(name) => (name, dim),
             None => ("-".to_owned(), dim),
         },
-        (
-            state.label().to_owned(),
-            Style::fg(tone_color(state.tone())),
-        ),
+        (state.shown(), Style::fg(tone_color(state.tone()))),
         number(figures.decode().map(integer)),
         number(figures.prefill().map(integer)),
         match (running, waiting) {
@@ -373,6 +403,22 @@ fn draw_row(
         return;
     }
     match &state {
+        State::Waiting => {
+            let note = launch_of(app, row)
+                .map(|launch| after(app, launch))
+                .filter(|after| !after.is_empty())
+                .map_or_else(|| "queued".to_owned(), |after| format!("after {after}"));
+            buffer.put(column, y, &pad(&sanitize(&note), spark), dim);
+        }
+        State::Stopping => {
+            let note = row
+                .stopping
+                .map(|since| format!("draining {}", age(now - since)));
+            buffer.put(column, y, &pad(&note.unwrap_or_default(), spark), dim);
+        }
+        State::Exited(_) => {
+            buffer.put(column, y, &pad("see its log", spark), dim);
+        }
         State::Starting | State::NotAnswering => {
             let note = row
                 .uptime(now)
@@ -407,8 +453,20 @@ fn summary(buffer: &mut Buffer, app: &App, row: &Instance, area: (u16, u16, u16,
     let (x, y, width, height) = area;
     let name = shown_name(row).unwrap_or_else(|| row.address().unwrap_or_default());
     let state = row.state(now);
-    let status = match &state {
-        State::NotReady(reason) => format!("  not ready: {}", sanitize(reason)),
+    let launch = launch_of(app, row);
+    let status = match (&state, launch) {
+        (State::NotReady(reason), _) => format!("  not ready: {}", sanitize(reason)),
+        (_, Some(launch)) => format!(
+            "  {} by choptop, {}, {}",
+            if state == State::Waiting {
+                "queued"
+            } else {
+                "started"
+            },
+            sanitize(&launch.record.profile),
+            launch.gpus()
+        ),
+        (State::Stopping, None) => "  stopping".to_owned(),
         _ => String::new(),
     };
     boxed(
@@ -427,6 +485,12 @@ fn summary(buffer: &mut Buffer, app: &App, row: &Instance, area: (u16, u16, u16,
     );
     let figures = Figures::new(row, app.window);
     let dim = Style::fg(Color::Dim);
+    if let Some(launch) = launch
+        && !figures.live()
+    {
+        launch_lines(buffer, app, row, launch, (x + 2, y + 1), now);
+        return;
+    }
     if !figures.live() {
         status_lines(buffer, row, &state, (x + 2, y + 2), now);
         return;
@@ -678,16 +742,109 @@ fn fit(forms: &[String], room: usize) -> String {
         })
 }
 
-/// What to say about a row that is not answering.
-pub fn status_lines(buffer: &mut Buffer, row: &Instance, state: &State, at: (u16, u16), now: f64) {
+/// The panel of a launch row that does not answer: what it waits for or
+/// how it ended, its command line, its log and the end of the log.
+fn launch_lines(
+    buffer: &mut Buffer,
+    app: &App,
+    row: &Instance,
+    launch: &Launch,
+    at: (u16, u16),
+    now: f64,
+) {
     let (x, y) = at;
     let dim = Style::fg(Color::Dim);
+    let state = row.state(now);
+    let ran = |at: f64| {
+        launch
+            .started_at
+            .map(|started| format!(" after {}", age(at - started)))
+            .unwrap_or_default()
+    };
+    let (first, second, color) = match (&state, launch.phase) {
+        (State::Waiting, _) => {
+            let waits = waits_for(app, launch);
+            (
+                if waits.is_empty() {
+                    "Starting this serve process.".to_owned()
+                } else {
+                    format!(
+                        "Waiting for {} to exit and free {}; then choptop starts this serve process.",
+                        waits.join(" and "),
+                        launch.gpus()
+                    )
+                },
+                String::new(),
+                Color::Yellow,
+            )
+        }
+        (State::Exited(status), Phase::Exited(at, _)) => (
+            format!(
+                "The serve process {}{}{}.",
+                match status {
+                    Some(status) => format!("exited with status {status}"),
+                    None => "exited".to_owned(),
+                },
+                ran(at),
+                if row.answered { "" } else { ", during startup" }
+            ),
+            "X dismisses this row; l opens the loader with this launch's choices.".to_owned(),
+            Color::Red,
+        ),
+        (State::Stopping, _) => (
+            format!(
+                "SIGTERM sent {} ago; serve drains admitted requests, then exits.",
+                age(now - row.stopping.unwrap_or(now))
+            ),
+            "Its row leaves the list once the process is gone.".to_owned(),
+            Color::Yellow,
+        ),
+        _ => status_text(row, &state, now),
+    };
+    let room = usize::from(buffer.width.saturating_sub(x + 2));
+    buffer.put(x, y, &pad(&first, room), Style::fg(color));
+    buffer.put(x, y + 1, &pad(&second, room), dim);
+    buffer.put(x, y + 2, &pad(&sanitize(&launch.shown), room), dim);
+    let file = launch
+        .record
+        .log
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let column = buffer.put(x, y + 4, "Log  ", Style::fg(Color::Cyan).bold());
+    buffer.put(
+        column,
+        y + 4,
+        &pad(
+            &sanitize(&format!("{}/{file}", app.logs)),
+            room.saturating_sub(5),
+        ),
+        Style::PLAIN,
+    );
+    let tail = &launch.tail[launch.tail.len().saturating_sub(6)..];
+    if tail.is_empty() {
+        buffer.put(x + 2, y + 5, "nothing yet", dim);
+    }
+    for (index, line) in tail.iter().enumerate() {
+        let error = line.to_ascii_lowercase().contains("error");
+        buffer.put(
+            x + 2,
+            y + 5 + index as u16,
+            &pad(line, room.saturating_sub(2)),
+            if error { Style::fg(Color::Red) } else { dim },
+        );
+    }
+}
+
+/// What to say about a row that is not answering: two lines and the
+/// color of the first.
+fn status_text(row: &Instance, state: &State, now: f64) -> (String, String, Color) {
     let up = row
         .uptime(now)
         .map(|seconds| format!(" (up {})", age(seconds)))
         .unwrap_or_default();
     let error = |row: &Instance| sanitize(row.error.as_deref().unwrap_or("no answer yet"));
-    let (first, second, color) = match (state, &row.source) {
+    match (state, &row.source) {
         (State::Starting, Source::Container { .. }) => (
             format!("The container runs serve{up} but does not answer yet: {}.", error(row)),
             "serve opens its listener after loading and warmup; this row fills in when /health answers.".to_owned(),
@@ -722,13 +879,20 @@ pub fn status_lines(buffer: &mut Buffer, row: &Instance, state: &State, at: (u16
             },
             Color::Red,
         ),
-    };
+    }
+}
+
+/// What to say about a row that is not answering.
+pub fn status_lines(buffer: &mut Buffer, row: &Instance, state: &State, at: (u16, u16), now: f64) {
+    let (x, y) = at;
+    let dim = Style::fg(Color::Dim);
+    let (first, second, color) = status_text(row, state, now);
     // The boxes these lines sit in end one column before the right edge.
     let room = usize::from(buffer.width.saturating_sub(x + 2));
     buffer.put(x, y, &pad(&first, room), Style::fg(color));
     buffer.put(x, y + 1, &pad(&second, room), dim);
     if !row.arguments.is_empty() {
-        let command = sanitize(&row.arguments.join(" "));
+        let command = sanitize(&crate::launch::command::line(&row.arguments));
         buffer.put(
             x,
             y + 3,

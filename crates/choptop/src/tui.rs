@@ -24,6 +24,7 @@ use crate::gpu::poll::{self as gpu_poll, GpuPoller};
 use crate::gpu::{Gpus, Status};
 use crate::host::poll::{self as host_poll, HostPoller};
 use crate::instances::{EVENT_LIMIT, Followup, Registry, Source, Tone};
+use crate::launch::Launches;
 use crate::launch::occupancy::Live;
 use crate::poll::{Poll, Poller};
 use crate::targets::Target;
@@ -56,6 +57,10 @@ pub struct Setup {
     pub environment: BTreeMap<String, String>,
     /// Where launch logs go, as shown.
     pub logs: String,
+    /// choptop's state directory, for launch logs and records.
+    pub state: Option<PathBuf>,
+    /// `--read-only`: no loader and no stopping.
+    pub read_only: bool,
 }
 
 /// Restores the terminal when dropped, including while a panic unwinds.
@@ -102,6 +107,8 @@ struct Workers {
     /// first request.
     catalog: Option<catalog::Worker>,
     catalog_replies: Sender<catalog::Reply>,
+    /// Those threads' children while they run, which discovery leaves out.
+    children: catalog::Children,
 }
 
 impl Workers {
@@ -189,7 +196,11 @@ impl Workers {
             return;
         };
         let worker = self.catalog.get_or_insert_with(|| {
-            catalog::Worker::spawn(binary.clone(), self.catalog_replies.clone())
+            catalog::Worker::spawn(
+                binary.clone(),
+                self.catalog_replies.clone(),
+                self.children.clone(),
+            )
         });
         for request in requests {
             worker.send(request);
@@ -201,7 +212,12 @@ impl Workers {
 /// the reports held before it, keeping their latest events up to what the
 /// event log holds: a long pause holds one scan and a bounded log.
 fn hold(held: &mut Vec<Report>, report: Report) {
-    let Report::Scan { found, events } = report else {
+    let Report::Scan {
+        found,
+        events,
+        started,
+    } = report
+    else {
         held.push(report);
         return;
     };
@@ -216,6 +232,7 @@ fn hold(held: &mut Vec<Report>, report: Report) {
     held.push(Report::Scan {
         found,
         events: kept,
+        started,
     });
 }
 
@@ -257,7 +274,7 @@ fn receive_gpu(app: &mut App, held: &mut Vec<gpu_poll::Report>, report: gpu_poll
 
 fn take_report(registry: &mut Registry, report: Report, now: f64) -> Vec<Followup> {
     match report {
-        Report::Scan { found, events } => {
+        Report::Scan { found, events, .. } => {
             for event in events {
                 registry.note(now, "discovery", event, Tone::Warning);
             }
@@ -286,7 +303,9 @@ pub fn run(setup: Setup) -> io::Result<()> {
     let (results, poll_results) = mpsc::channel();
     let (reports_sender, reports) = mpsc::channel::<Report>();
     let mut live = Live::default();
-    let commands = setup.discovery.map(|discovery| {
+    let children = catalog::Children::default();
+    let commands = setup.discovery.map(|mut discovery| {
+        discovery.exclude(&children);
         let (commands, receiver) = mpsc::channel();
         discover::spawn(
             discovery,
@@ -302,6 +321,7 @@ pub fn run(setup: Setup) -> io::Result<()> {
         }
         commands
     });
+    let scanning = commands.is_some();
     let (catalog_replies, catalog_reports) = mpsc::channel();
     let mut workers = Workers {
         pollers: HashMap::new(),
@@ -314,20 +334,37 @@ pub fn run(setup: Setup) -> io::Result<()> {
         limit_reported: false,
         catalog: None,
         catalog_replies,
+        children,
     };
+    // Launches an earlier choptop started that still run keep their rows,
+    // GPUs and port. A read-only choptop has no launches.
+    let (mut launches, message) = if setup.read_only {
+        (Launches::default(), None)
+    } else {
+        Launches::new(setup.state.as_deref(), &setup.logs)
+    };
+    if let Some(message) = message {
+        registry.note(now(), "choptop", message, Tone::Warning);
+    }
+    launches.relink(&mut registry, now());
+    followups.append(&mut launches.followups);
     workers.follow(&mut registry, followups, now());
     let mut app = App::new(registry, setup.interval, setup.rescan, setup.sources);
     app.live = live;
+    app.live.scanning = scanning;
     app.catalog = Catalog::new(setup.chopinfer, setup.checkpoints);
     app.catalog.environment = setup.environment;
     app.logs = setup.logs;
+    app.read_only = setup.read_only;
+    app.reservations = launches.reservations();
+    app.launches = launches;
     // GPM counters are sampled only while the monitor is open.
     let counters = Arc::new(AtomicBool::new(false));
     let (gpu_results, gpu_reports) = mpsc::channel();
     if !setup.gpus {
         app.live.unavailable = Some("--no-gpus".to_owned());
     }
-    let _gpu_poller = setup.gpus.then(|| {
+    let gpu_poller = setup.gpus.then(|| {
         app.gpus = Gpus::new(Status::Opening, setup.gpu_counters, setup.interval);
         GpuPoller::spawn(setup.interval, origin, Arc::clone(&counters), gpu_results)
     });
@@ -342,6 +379,10 @@ pub fn run(setup: Setup) -> io::Result<()> {
     ] {
         signal_hook::flag::register(signal, Arc::clone(&stop))?;
     }
+    // Set by every resize, before its event is read, and cleared by each
+    // frame.
+    let resized = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(signal_hook::consts::SIGWINCH, Arc::clone(&resized))?;
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         restore();
@@ -359,7 +400,8 @@ pub fn run(setup: Setup) -> io::Result<()> {
             host: &host_reports,
             catalog: &catalog_reports,
         },
-        (&stop, &counters),
+        (&stop, &counters, &resized),
+        gpu_poller.as_ref(),
         color,
         now,
     );
@@ -394,6 +436,37 @@ struct Inbox<'a> {
     catalog: &'a Receiver<catalog::Reply>,
 }
 
+/// Hands input `event` to `app` at `now`. A key goes with the terminal's
+/// size as `size` reads it then, not as the last resize said: a resize can
+/// be read after a key typed since, and Enter must not confirm a dialog
+/// that a frame of another size drew. Nor one the terminal was resized
+/// away from and back to since the last frame, which `resized`, set by
+/// SIGWINCH and cleared by each frame, tells whether its event is read
+/// yet or not.
+pub fn handle(
+    app: &mut App,
+    event: Event,
+    size: impl FnOnce() -> Option<(u16, u16)>,
+    resized: &AtomicBool,
+    now: f64,
+) -> Action {
+    if resized.load(Ordering::SeqCst) {
+        app.resized();
+    }
+    match event {
+        Event::Key(key) if key.kind == KeyEventKind::Press => app.key(key, size()),
+        Event::Mouse(mouse) => match app.mouse(mouse, now) {
+            Action::Nothing => Action::Nothing,
+            _ => Action::Redraw,
+        },
+        Event::Resize(_, _) => {
+            app.resized();
+            Action::Redraw
+        }
+        _ => Action::Nothing,
+    }
+}
+
 fn run_loop(
     app: &mut App,
     workers: &mut Workers,
@@ -404,7 +477,8 @@ fn run_loop(
         host: host_reports,
         catalog: catalog_reports,
     }: Inbox<'_>,
-    (stop, counters): (&AtomicBool, &AtomicBool),
+    (stop, counters, resized): (&AtomicBool, &AtomicBool, &AtomicBool),
+    gpu_poller: Option<&GpuPoller>,
     color: bool,
     now: impl Fn() -> f64,
 ) -> io::Result<()> {
@@ -427,41 +501,30 @@ fn run_loop(
             Err(RecvTimeoutError::Disconnected) => break,
         };
         for event in first.into_iter().chain(input.try_iter()) {
-            match event {
-                Event::Key(key) if key.kind == KeyEventKind::Press => match app.key(key) {
-                    Action::Quit => break 'running,
-                    Action::Rescan => {
-                        workers.command(Command::Force);
-                        app.registry
-                            .note(now(), "choptop", "rescan requested", Tone::Normal);
-                        dirty = true;
-                    }
-                    Action::Start => {
-                        // The launch continues from here: a fresh GPU read
-                        // and rescan, serve --check, then the confirm dialog.
-                        let count = app
-                            .start
-                            .as_ref()
-                            .map_or(0, |start| start.placement.instances.len());
-                        app.loader.flash(
-                            now(),
-                            format!(
-                                "Checked: {count} process{} ready to start; starting is not built yet",
-                                if count == 1 { "" } else { "es" }
-                            ),
-                            true,
-                        );
-                        dirty = true;
-                    }
-                    Action::Redraw => dirty = true,
-                    Action::Nothing => {}
-                },
-                Event::Mouse(mouse) => dirty |= app.mouse(mouse, now()) != Action::Nothing,
-                Event::Resize(_, _) => {
-                    previous = None;
+            if matches!(event, Event::Resize(..)) {
+                previous = None;
+            }
+            let size = || crossterm::terminal::size().ok();
+            match handle(app, event, size, resized, now()) {
+                Action::Quit => break 'running,
+                Action::Rescan => {
+                    workers.command(Command::Force);
+                    app.registry
+                        .note(now(), "choptop", "rescan requested", Tone::Normal);
                     dirty = true;
                 }
-                _ => {}
+                Action::Read => {
+                    // A start or stop goes on from a GPU reading and a
+                    // scan begun after this, even while paused.
+                    app.asked(now());
+                    if let Some(poller) = gpu_poller {
+                        poller.poll_now();
+                    }
+                    workers.command(Command::Force);
+                    dirty = true;
+                }
+                Action::Redraw => dirty = true,
+                Action::Nothing => {}
             }
         }
         for report in reports.try_iter() {
@@ -474,11 +537,26 @@ fn run_loop(
         for report in host_reports.try_iter() {
             hold_host(&mut held_host, report);
         }
-        // The loader's answers are not held by a pause.
+        // The loader's answers are not held by a pause, nor are launches.
         for reply in catalog_reports.try_iter() {
             app.catalog_reply(reply);
             dirty = true;
         }
+        dirty |= app.supervise(now());
+        // A start or stop that waits for a fresh reading, or a launch whose
+        // waits are over, goes on from a GPU reading and a scan begun now.
+        if app.needs_read() {
+            app.asked(now());
+            if let Some(poller) = gpu_poller {
+                poller.poll_now();
+            }
+            workers.command(Command::Force);
+        }
+        let followups = std::mem::take(&mut app.launches.followups);
+        if !followups.is_empty() {
+            workers.follow(&mut app.registry, followups, now());
+        }
+        workers.ask(app);
         counters.store(
             app.view == View::Monitor && app.gpus.counters,
             Ordering::Relaxed,
@@ -513,6 +591,9 @@ fn run_loop(
         }
         let at = now();
         if dirty || at - drawn_at >= 1.0 {
+            // Cleared before the size is read, so a resize after the read
+            // leaves this frame's dialog to confirm no more.
+            resized.store(false, Ordering::SeqCst);
             let (width, height) = crossterm::terminal::size()?;
             app.tick(at);
             workers.ask(app);
@@ -549,6 +630,7 @@ mod tests {
             limit_reported: false,
             catalog: None,
             catalog_replies,
+            children: catalog::Children::default(),
         };
         workers.follow(
             &mut registry,
@@ -622,6 +704,7 @@ mod tests {
             Report::Scan {
                 found: Vec::new(),
                 events: Vec::new(),
+                started: 0.0,
             },
         );
         // The screen holds its frame: no GPUs yet, every report held.
@@ -632,6 +715,7 @@ mod tests {
             live: &app.live,
             instances: &app.registry.instances,
             reservations: &app.reservations,
+            waited: &[],
             interval: app.interval,
             now: 5.5,
         });
@@ -667,6 +751,7 @@ mod tests {
         let scan = |events: &[&str]| Report::Scan {
             found: Vec::new(),
             events: events.iter().map(|event| (*event).to_owned()).collect(),
+            started: 0.0,
         };
         let mut held = Vec::new();
         hold(&mut held, scan(&["a"]));

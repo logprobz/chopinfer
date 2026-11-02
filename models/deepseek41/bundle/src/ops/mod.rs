@@ -107,6 +107,11 @@ impl Ops {
                     || asked.what.starts_with("dense.attention.kv local ")
             })
             .map(|asked| asked.workspace)
+            .chain(
+                self.dense
+                    .iter()
+                    .map(dense::DenseOps::tail_shared_workspace),
+            )
             .max()
             .unwrap_or(0)
     }
@@ -425,6 +430,7 @@ impl Ops {
             .iter()
             .map(|asked| asked.workspace)
             .chain(self.attention.iter().map(latent::AttentionOps::workspace))
+            .chain(self.dense.iter().map(dense::DenseOps::tail_workspace))
             .max()
             .unwrap_or(0)
     }

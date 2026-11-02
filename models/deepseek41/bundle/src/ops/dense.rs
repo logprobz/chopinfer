@@ -231,6 +231,7 @@ pub(crate) trait SlicedQuantize: Send + Sync {
 pub(crate) struct DenseOps {
     pub(crate) dual: Option<super::dense_dual::Op>,
     short_prefill: bool,
+    tail_queries: Vec<(&'static str, Mxfp8FoldGemmQuery)>,
     wide_engram: Vec<(u32, Prepared<Mxfp8FoldGemmBuffers<View>>)>,
     /// Row-local folds by projection and decode or verify bucket.
     local: Vec<(&'static str, u32, Prepared<Mxfp8FoldGemmBuffers<View>>)>,
@@ -427,6 +428,14 @@ impl DenseOps {
         Ok(DenseOps {
             dual: super::dense_dual::Op::prepare(shape, asks)?,
             short_prefill,
+            tail_queries: if short_prefill::tail_folds_enabled(shape) {
+                projections(shape)
+                    .into_iter()
+                    .map(|d| (d.id, d.query))
+                    .collect()
+            } else {
+                Vec::new()
+            },
             wide_engram: Vec::new(),
             local,
             fused,
@@ -774,6 +783,14 @@ impl DenseOps {
         bind.launch(op.at_phase(phase), &buffers, Counts::rows(rows))
     }
 
+    pub(crate) fn tail_workspace(&self) -> u64 {
+        short_prefill::workspace(self, false)
+    }
+
+    pub(crate) fn tail_shared_workspace(&self) -> u64 {
+        short_prefill::workspace(self, true)
+    }
+
     pub(crate) fn project(
         &self,
         id: &str,
@@ -792,6 +809,19 @@ impl DenseOps {
         workspace: Option<DeviceBufferSpanV1>,
     ) -> Result<Vec<Lowered>, Refusal> {
         let rows = phase.rows();
+        if phase.prefill()
+            && rows > short_prefill::MAX_ROWS
+            && let Some((_, query)) = self.tail_queries.iter().find(|(of, _)| *of == id)
+        {
+            return short_prefill::project(
+                self,
+                id,
+                *query,
+                rows,
+                views,
+                workspace.ok_or(Refusal("prefill tail folds require workspace"))?,
+            );
+        }
         let op = if phase.prefill() && rows >= 128 {
             &self
                 .prefill_gemms
@@ -1334,8 +1364,9 @@ mod tests {
                     let matrix = (shape.ranks() == 4)
                         .then(|| crate::sm120::prefill_matrix::choice(q, phase.rows()))
                         .flatten();
-                    let split =
-                        crate::sm120::mxfp8_fold::prefill_tail_policy(q).splits(phase.rows());
+                    let split = crate::sm120::mxfp8_fold::prefill_tail_policy(q, false)
+                        .unwrap()
+                        .splits(phase.rows());
                     let compact =
                         crate::sm120::mxfp8_fold::compact::stages(&FLASH, q, phase.rows());
                     assert_eq!(

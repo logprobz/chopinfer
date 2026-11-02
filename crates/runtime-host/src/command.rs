@@ -66,6 +66,7 @@ use crate::install::{
 };
 use crate::kernel;
 use crate::kv_cache_dtype::{KvCacheDtypeV1, resolve_kv_cache_dtype_v1};
+use crate::mapped_views::{MappedPrewarmV1, MappedResidencyReportV1, MappedViewsV1};
 use crate::reference_forcing::{
     REFERENCE_TOKENS_ENV_V1, ReferenceTokensV1, refuse_reference_tokens_variable_v1,
 };
@@ -154,6 +155,7 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]
   [--speculation-costs ITEMS:BASE:STEP:DRAFTING:ROW,...] [--speculation-depths ITEMS:DEPTH,...]
   [--speculation-widths ROWS,...] [--speculation-graph-rows N] [--speculation-confidence JSON|off]
   [--draft-cost per-token|per-block] [--prefix-cache on|off] [--verify-warmup on|off]
+  [--prewarm-mapped-views off|on|auto] (default off)
   [--prefill-budget fixed|decode-aware|tbt] [--prefill-timing-cuts off|fixed|adaptive] [--prefill-itl-target-ms N | --prefill-decode-steps N]
   [--decode-tbt-target-ms N] [--mixed-min-prefill-tokens N] [--mixed-decode-steps N]
   [--kv-offload-gib N] [--kv-offload-min-tokens N] [--kv-offload-gbps F] [--kv-offload-prefix off]
@@ -457,6 +459,8 @@ pub struct ServingOptionsV1 {
     pub prefill_budget: runtime_scheduler::PrefillBudget,
     /// Allow timing-selected grid cuts beside decoding requests; off by default.
     pub prefill_timing_cuts: PrefillTimingCutsV1,
+    /// Warm mapped views after readiness; off by default.
+    pub prewarm_mapped_views: MappedPrewarmV1,
 }
 
 impl Default for ServingOptionsV1 {
@@ -486,6 +490,7 @@ impl Default for ServingOptionsV1 {
             admission: AdmissionPolicy::Optimistic(OptimisticAdmission::DEFAULT),
             prefill_budget: runtime_scheduler::PrefillBudget::Fixed,
             prefill_timing_cuts: PrefillTimingCutsV1::Off,
+            prewarm_mapped_views: MappedPrewarmV1::Off,
         }
     }
 }
@@ -1492,6 +1497,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             "--verify-warmup",
             "--prefill-budget",
             "--prefill-timing-cuts",
+            "--prewarm-mapped-views",
             "--prefill-itl-target-ms",
             "--prefill-decode-steps",
             "--decode-tbt-target-ms",
@@ -1847,6 +1853,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             admission,
             prefill_budget,
             prefill_timing_cuts,
+            prewarm_mapped_views: parsed.prewarm_mapped_views.unwrap_or_default(),
         }),
         speculative_tokens: parsed.speculative_tokens.unwrap_or(0),
         speculative_rows: parsed
@@ -3292,7 +3299,12 @@ fn serve_v1(
     )?;
     // What the metrics endpoint answers with is this worker's own engine, KV
     // and lifecycle state, taken before the backend is handed to the transport.
-    let metrics = Arc::new(backend.runtime_metrics(&http_options.served_model_names));
+    let report = MappedResidencyReportV1::default();
+    let metrics = Arc::new(
+        backend
+            .runtime_metrics(&http_options.served_model_names)
+            .with_mapped_residency(report.clone()),
+    );
     let warmup_steps = backend.startup_step_log();
     let backend = Arc::new(backend);
     let result = serve_transport_v1(
@@ -3305,6 +3317,10 @@ fn serve_v1(
         &topology,
         device,
         metrics,
+        MappedViewsV1 {
+            mode: serving.prewarm_mapped_views,
+            report,
+        },
         std::time::Duration::from_millis(serving.drain_timeout_ms),
         http_options,
         warmup_sequences,
@@ -3350,6 +3366,7 @@ fn serve_transport_v1(
     topology: &ServedTopologyV1,
     device: DeviceServicesV1,
     metrics: Arc<dyn MetricsSnapshotProvider>,
+    views: MappedViewsV1,
     drain_timeout: std::time::Duration,
     http_options: runtime_server::HttpOptions,
     warmup_sequences: usize,
@@ -3408,6 +3425,7 @@ fn serve_transport_v1(
                 .maximum_context_tokens()
                 .unwrap_or(frontend.maximum_total_tokens()),
         );
+        let _mapped_views = views.start();
         // Keep HTTP alive for retryable refusals until admitted responses finish
         // or the drain deadline expires. Only then tear down the serving runtime.
         runtime_server::serve_with_shutdown_and_http_options(
@@ -5558,6 +5576,7 @@ struct ArgumentsV1 {
     optimistic_admission: Option<bool>,
     prefill_budget: Option<runtime_scheduler::PrefillBudget>,
     prefill_timing_cuts: Option<PrefillTimingCutsV1>,
+    prewarm_mapped_views: Option<MappedPrewarmV1>,
     prefill_itl_target_ms: Option<usize>,
     prefill_decode_steps: Option<usize>,
     decode_tbt_target_ms: Option<usize>,
@@ -5810,6 +5829,12 @@ impl ArgumentsV1 {
                         usage_error("--prefill-timing-cuts must be off, fixed or adaptive")
                     })?;
                     set_once_v1(&mut parsed.prefill_timing_cuts, policy, flag)?;
+                }
+                "--prewarm-mapped-views" => {
+                    let mode = MappedPrewarmV1::parse(value).ok_or_else(|| {
+                        usage_error("--prewarm-mapped-views must be off, on or auto")
+                    })?;
+                    set_once_v1(&mut parsed.prewarm_mapped_views, mode, flag)?;
                 }
                 "--prefill-budget" => {
                     let policy = match value.as_str() {
@@ -6211,6 +6236,10 @@ impl ArgumentsV1 {
             ("--verify-warmup", self.verify_warmup.is_some()),
             ("--prefill-budget", self.prefill_budget.is_some()),
             ("--prefill-timing-cuts", self.prefill_timing_cuts.is_some()),
+            (
+                "--prewarm-mapped-views",
+                self.prewarm_mapped_views.is_some(),
+            ),
             (
                 "--prefill-itl-target-ms",
                 self.prefill_itl_target_ms.is_some(),
@@ -6740,6 +6769,7 @@ mod tests {
     };
 
     use crate::executor::BATCH_REQUEST_MAGIC_V1;
+    use crate::mapped_views::MappedPrewarmV1;
 
     use super::{
         ArgumentsV1, BundleHostCompatibilityV1, BundleSelectionV1, DEFAULT_HOST_ARCHITECTURE_V1,
@@ -7614,6 +7644,7 @@ mod tests {
                 admission: AdmissionPolicy::Optimistic(OptimisticAdmission::DEFAULT),
                 prefill_budget: runtime_scheduler::PrefillBudget::Fixed,
                 prefill_timing_cuts: PrefillTimingCutsV1::Off,
+                prewarm_mapped_views: MappedPrewarmV1::Off,
             }
         );
 
@@ -7843,6 +7874,75 @@ mod tests {
                 "{message}"
             );
         }
+    }
+
+    #[test]
+    fn prewarm_mapped_views_defaults_off_and_accepts_modes_without_a_checkpoint() {
+        assert_eq!(
+            ServingOptionsV1::default().prewarm_mapped_views,
+            MappedPrewarmV1::Off
+        );
+        let HostCommandV1::Serve { serving, .. } =
+            parse_host_command_v1(&arguments(&["serve", "--bundle", "fixture"])).unwrap()
+        else {
+            panic!("serve command");
+        };
+        assert_eq!(serving.prewarm_mapped_views, MappedPrewarmV1::Off);
+        for (value, mode) in [
+            ("off", MappedPrewarmV1::Off),
+            ("on", MappedPrewarmV1::On),
+            ("auto", MappedPrewarmV1::Auto),
+        ] {
+            let HostCommandV1::Serve { serving, .. } = parse_host_command_v1(&arguments(&[
+                "serve",
+                "--bundle",
+                "fixture",
+                "--prewarm-mapped-views",
+                value,
+            ]))
+            .unwrap() else {
+                panic!("serve command");
+            };
+            assert_eq!(serving.prewarm_mapped_views, mode);
+        }
+    }
+
+    #[test]
+    fn prewarm_mapped_views_refuses_invalid_repeated_and_non_serve_flags() {
+        for value in ["", "yes", "Auto"] {
+            assert!(
+                refusal(&[
+                    "serve",
+                    "--bundle",
+                    "fixture",
+                    "--prewarm-mapped-views",
+                    value,
+                ])
+                .contains("--prewarm-mapped-views must be off, on or auto")
+            );
+        }
+        assert!(
+            refusal(&[
+                "serve",
+                "--bundle",
+                "fixture",
+                "--prewarm-mapped-views",
+                "off",
+                "--prewarm-mapped-views",
+                "auto",
+            ])
+            .contains("more than once")
+        );
+        assert!(
+            refusal(&[
+                "conformance-run",
+                "--bundle",
+                "fixture",
+                "--prewarm-mapped-views",
+                "off",
+            ])
+            .contains("does not accept --prewarm-mapped-views")
+        );
     }
 
     #[test]

@@ -360,6 +360,51 @@ network I/O is the container's namespace, shown as not visible when it has no
 physical interface. CPU package power needs read access to RAPL, which is
 usually root only.
 
+### Start and stop serve processes from choptop
+
+The model loader (`l`) starts `chopinfer serve` processes of this user and
+stops the ones they replace; `X` stops the selected instance. `--read-only`
+turns both off. choptop never stops a container or a server on another host:
+either blocks a placement, and `X` refuses it with the reason. It uses the
+Docker API only to read.
+
+Each start passes three checks, any of which refuses it with the reason:
+
+1. `S` takes a fresh GPU process reading and a discovery scan, even while the
+   screen is paused. A picked GPU that became unknown or is newly held blocks
+   the start.
+2. `chopinfer serve ARGS --check` runs with the launch's environment. A
+   refusal shows serve's message. The settings and model options it resolves
+   must equal the selected profile's, as `chopinfer models --json` gives
+   them, with the form's values applied. Only keys both sides govern are
+   compared, and each difference is named.
+3. The confirm dialog lists the instances with their ports and logs, what
+   stops first, the profile's qualification, warnings (evidence limits,
+   unqualified model options, other processes on the picked GPUs) and host
+   memory. A failure that needs a GPU, such as memory fit or peer access, can
+   still happen after the stop.
+
+On Enter, choptop records each serve process it stops: pid, start time, uid,
+command line (which must be `chopinfer serve`) and that its cgroup names no
+container. It sends one SIGTERM through a pidfd, and only while the process
+still matches that record; a process that changed is left alone, and the
+launches waiting for it are cancelled. The stopping event keeps the stopped
+server's command line. Each launch waits until the owners of its GPUs and the
+holder of its port have exited, checks the port once more, and starts, or
+reports the port in use. A new start cancels a launch that is still waiting
+and stops a starting one through its process group first. serve drains for
+up to `--drain-timeout-ms` before it exits.
+
+A launch runs in a process group of its own with stdin closed and its output
+in a new log under `$XDG_STATE_HOME/choptop/logs`, else
+`~/.local/state/choptop/logs`, readable by this user only. It keeps running
+after choptop exits. `launches.json` beside the logs keeps the last 20
+launches: their choices, GPU UUIDs, port, pid, start time, log and exit
+status. It feeds the loader's recent launches and lets a restarted choptop
+take up the launches still running. A launch that exits during startup stays
+listed as `exited N` with the end of its log until `X` dismisses it; `l` on
+it reopens the loader with its choices.
+
 ## Example alerts
 
 Tune thresholds to the model and traffic; keep `model_name` when grouping a

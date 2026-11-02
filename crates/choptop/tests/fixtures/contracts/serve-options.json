@@ -1,0 +1,19 @@
+{
+  "schema": "chopinfer.serve-options.v1",
+  "options": [
+    {"flag": "--model", "value": "DIR", "choices": null, "group": "model", "help": "Hugging Face snapshot directory; serve prepares a package for it in the model cache.", "model_launch": true, "repeatable": false},
+    {"flag": "--modalities", "value": "TEXT", "choices": ["auto", "all", "text", "text,image"], "group": "model", "help": "Inputs to serve.", "model_launch": true, "repeatable": false},
+    {"flag": "--bundle", "value": "DIR", "choices": null, "group": "model", "help": "A prepared package.", "model_launch": false, "repeatable": false},
+    {"flag": "--max-sequences", "value": "N", "choices": null, "group": "scheduling", "help": "The most sequences decoding at once.", "model_launch": true, "repeatable": false},
+    {"flag": "--gpu-memory-utilization", "value": "F", "choices": null, "group": "memory", "help": "The share of each GPU's memory this server may take.", "model_launch": true, "repeatable": false},
+    {"flag": "--prefix-cache", "value": "TEXT", "choices": ["on", "off"], "group": "cache", "help": "Reuse the KV of shared prompt prefixes.", "model_launch": true, "repeatable": false},
+    {"flag": "--allow-credentials", "value": "none", "choices": null, "group": "server", "help": "Allow credentials in CORS requests.", "model_launch": true, "repeatable": false},
+    {"flag": "--allowed-origins", "value": "JSON", "choices": null, "group": "server", "help": "CORS origins as a JSON list.", "model_launch": true, "repeatable": false},
+    {"flag": "--allowed-local-media-path", "value": "DIR", "choices": null, "group": "media", "help": "A directory file:// media may be read from.", "model_launch": true, "repeatable": true},
+    {"flag": "--debug-preempt-every", "value": "N", "choices": null, "group": "debug", "help": "Preempt every Nth step, for tests.", "model_launch": true, "repeatable": false}
+  ],
+  "environment": [
+    {"name": "CHOPINFER_API_KEY", "value": "TEXT", "secret": true, "help": "Bearer token clients must send."},
+    {"name": "CHOPINFER_LOG_SUMMARY_SECONDS", "value": "N", "secret": false, "help": "Seconds between summary log lines."}
+  ]
+}

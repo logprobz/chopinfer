@@ -6,7 +6,7 @@ pub const USAGE: &str = "\
 usage: choptop [--target HOST:PORT]... [--targets-file FILE]
                      [--no-discover] [--no-docker] [--interval SECONDS]
                      [--rescan SECONDS] [--api-key KEY] [--no-gpus]
-                     [--no-gpu-counters] [--list [--json]]
+                     [--no-gpu-counters] [--chopinfer PATH] [--list [--json]]
 
 A live view of running chopinfer serve instances and this host: its CPUs,
 memory, disks, sensors and GPUs. It reads only /health and /metrics from
@@ -26,13 +26,16 @@ servers, the host from /proc and /sys, and the GPUs through NVML.
   --no-gpus            Do not read this host's GPUs.
   --no-gpu-counters    Do not sample GPM counters (SM, tensor, DRAM) in the
                        monitor.
+  --chopinfer PATH     The chopinfer the model loader asks for models and
+                       serve options (default chopinfer on PATH).
   --list               Print the instances once and exit; with --json, as a
                        chopinfer.top.list.v1 document.
   -h, --help           Print this help.
   --version            Print the version.
 
 Keys: arrows or j/k select, Enter opens, Esc returns, Tab switches, m shows
-the monitor, w changes the window, r rescans, p pauses, ? shows help, q quits.
+the monitor, l loads a model, w changes the window, r rescans, p pauses,
+? shows help, q quits.
 ";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -46,6 +49,8 @@ pub struct Options {
     pub api_key: Option<String>,
     pub gpus: bool,
     pub gpu_counters: bool,
+    /// The chopinfer the loader runs.
+    pub chopinfer: Option<PathBuf>,
     pub list: bool,
     pub json: bool,
     pub help: bool,
@@ -64,6 +69,7 @@ impl Default for Options {
             api_key: None,
             gpus: true,
             gpu_counters: true,
+            chopinfer: None,
             list: false,
             json: false,
             help: false,
@@ -114,6 +120,7 @@ pub fn parse(arguments: impl IntoIterator<Item = String>) -> Result<Options, Str
             "--api-key" => options.api_key = Some(value("--api-key")?),
             "--no-gpus" => options.gpus = false,
             "--no-gpu-counters" => options.gpu_counters = false,
+            "--chopinfer" => options.chopinfer = Some(PathBuf::from(value("--chopinfer")?)),
             "--list" => options.list = true,
             "--json" => options.json = true,
             "-h" | "--help" => options.help = true,
@@ -139,7 +146,8 @@ mod tests {
     fn reads_every_option() {
         let options = parsed(
             "--target :8311 --target=gpu:8310 --targets-file t.txt --no-discover --no-docker \
-             --interval 0.5 --rescan=30 --api-key k --no-gpus --no-gpu-counters --list --json",
+             --interval 0.5 --rescan=30 --api-key k --no-gpus --no-gpu-counters \
+             --chopinfer /opt/chopinfer/bin/chopinfer --list --json",
         )
         .unwrap();
         assert_eq!(options.targets, [":8311", "gpu:8310"]);
@@ -148,6 +156,10 @@ mod tests {
         assert!(!options.gpus && !options.gpu_counters);
         assert_eq!((options.interval, options.rescan), (0.5, 30.0));
         assert_eq!(options.api_key.as_deref(), Some("k"));
+        assert_eq!(
+            options.chopinfer,
+            Some(PathBuf::from("/opt/chopinfer/bin/chopinfer"))
+        );
         assert_eq!(parsed("").unwrap(), Options::default());
     }
 

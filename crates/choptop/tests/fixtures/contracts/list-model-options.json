@@ -1,0 +1,25 @@
+{
+  "schema": "chop.model-options.v1",
+  "options": [
+    {
+      "name": "dspark_draft_chunk_items",
+      "definition": {"type": "integer", "default": 12, "minimum": 1, "maximum": 32},
+      "default_is_qualified": true
+    },
+    {
+      "name": "prefill_chunk_tokens",
+      "definition": {"type": "string", "default": "8192", "allowed_values": ["0", "2048", "8192"]},
+      "default_is_qualified": true
+    },
+    {
+      "name": "prefill_upper_skip",
+      "definition": {"type": "boolean", "default": true},
+      "default_is_qualified": true
+    },
+    {
+      "name": "text_config.rope_scale",
+      "definition": {"type": "number", "default": 1.5, "minimum": 0.5, "maximum": 4.0},
+      "default_is_qualified": false
+    }
+  ]
+}

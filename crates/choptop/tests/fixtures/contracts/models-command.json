@@ -1,0 +1,4 @@
+{
+  "schema": "chopinfer.models-command.v1",
+  "arguments": ["serve", "--model", "/models/deepseek", "--tensor-parallel-size", "4", "--speculative-tokens", "0", "--prefill-budget", "fixed", "--max-sequences", "48", "--model-option", "dspark_draft_chunk_items=12"]
+}

@@ -9,6 +9,7 @@
 //! `unsafe_code = "deny"`.
 
 pub mod app;
+pub mod catalog;
 pub mod cli;
 pub mod discover;
 pub mod gpu;

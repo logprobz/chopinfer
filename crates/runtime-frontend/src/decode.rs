@@ -231,6 +231,34 @@ pub struct CompletionDecoderV1 {
 }
 
 impl CompletionDecoderV1 {
+    /// Classifies only end-token IDs declared by the model, before filtering.
+    /// The boolean says the request ignores this end ID and has no explicit
+    /// stop-ID override. Other special tokens are not end tokens.
+    #[must_use]
+    pub fn declared_end_token(&self, token_id: u32) -> Option<bool> {
+        self.descriptor
+            .vocabulary
+            .stop_token_ids
+            .contains(&token_id)
+            .then_some(
+                self.decoding.ignore_eos && !self.decoding.stop_token_ids.contains(&token_id),
+            )
+    }
+
+    /// Whether this contribution covers all retained bytes of its token.
+    /// A partial span may also contain a hidden marker or another channel.
+    #[must_use]
+    pub fn contribution_covers_token(&self, contribution: &TokenContributionV1) -> bool {
+        let index = self
+            .tokens
+            .partition_point(|token| token.ordinal < contribution.ordinal);
+        self.tokens.get(index).is_some_and(|token| {
+            token.ordinal == contribution.ordinal
+                && contribution.byte_start == 0
+                && contribution.byte_end == token.end - token.start
+        })
+    }
+
     #[must_use]
     pub fn new(
         descriptor: Arc<FrontendDescriptorV1>,

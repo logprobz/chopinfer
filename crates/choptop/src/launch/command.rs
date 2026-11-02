@@ -174,7 +174,7 @@ pub fn classify(row: &str, catalog: Option<&ServeOptions>) -> Result<Classified,
                     "{name} is set from the GPUs picked in Placement, so only checked GPUs are used"
                 ));
             }
-            if catalog.is_some_and(|catalog| catalog.variable(name).is_some()) {
+            if name == API_KEY || catalog.is_some_and(|catalog| catalog.variable(name).is_some()) {
                 classified
                     .folds
                     .push((Key::Variable(name.to_owned()), value.to_owned()));

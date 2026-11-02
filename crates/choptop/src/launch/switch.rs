@@ -439,6 +439,18 @@ pub fn queued(
         .filter(|(key, _)| !matches!(key, Key::Variable(name) if secret(name)))
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect::<Vec<_>>();
+    let mut custom = Vec::new();
+    for row in &start.choice.custom {
+        let classified = command::classify(row, catalog.options())?;
+        let contains_secret = classified
+            .folds
+            .iter()
+            .any(|(key, _)| matches!(key, Key::Variable(name) if secret(name)))
+            || classified.variables.iter().any(|(name, _)| secret(name));
+        if !contains_secret {
+            custom.push(row.clone());
+        }
+    }
     let program = binary.file_name().map_or_else(
         || "chopinfer".to_owned(),
         |name| name.to_string_lossy().into_owned(),
@@ -504,7 +516,7 @@ pub fn queued(
                 host: planned.host.clone(),
                 port: planned.port,
                 edits: edits.clone(),
-                custom: start.choice.custom.clone(),
+                custom: custom.clone(),
                 pid: None,
                 start_ticks: None,
                 log: logs.map_or_else(|| name.clone().into(), |logs| logs.join(&name)),
@@ -673,6 +685,76 @@ mod tests {
         // dropping what it waits for.
         let refused = replacing_nine(&[reservation(7, "launch A")]).unwrap_err();
         assert!(refused.contains("has ended"), "{refused}");
+    }
+
+    #[test]
+    fn delayed_catalog_secrets_never_reach_saved_launch_choices() {
+        use crate::catalog::{Fetch, Reply};
+        use crate::launch::process::tests::scratch;
+        use crate::launch::records::Records;
+        use crossterm::event::KeyCode;
+        let root = scratch("delayed-secrets");
+        let mut catalog = crate::loader::tests::catalog();
+        let options = catalog.options.take().unwrap();
+        let mut loader = crate::loader::Loader::default();
+        for row in [
+            "CHOPINFER_API_KEY=placeholder-api",
+            "PRIVATE_TOKEN=placeholder-catalog",
+            "KEEP_ME=ok",
+        ] {
+            loader.key(KeyCode::Char('a'), &mut catalog, 0.0);
+            for character in row.chars() {
+                loader.key(KeyCode::Char(character), &mut catalog, 0.0);
+            }
+            loader.key(KeyCode::Enter, &mut catalog, 0.0);
+        }
+        assert!(
+            loader
+                .edits
+                .contains_key(&Key::Variable(command::API_KEY.into()))
+        );
+        assert!(
+            loader
+                .custom
+                .iter()
+                .any(|row| row.contains("placeholder-catalog"))
+        );
+        let Fetch::Ready(mut options) = options else {
+            panic!("fixture options")
+        };
+        let mut variable = options.variable(command::API_KEY).unwrap().clone();
+        variable.name = "PRIVATE_TOKEN".into();
+        options.environment.push(variable);
+        catalog.apply(Reply::Options(Ok(options)));
+        let mut confirm = replacing_nine(&[reservation(9, "launch B")]).unwrap();
+        confirm.start.choice.edits = loader.edits;
+        confirm.start.choice.custom = loader.custom;
+        // Also sanitize a raw API key left by an older loader or saved choice.
+        confirm
+            .start
+            .choice
+            .custom
+            .push("CHOPINFER_API_KEY=placeholder-raw".into());
+        confirm.start.explicit = command::explicit(
+            &command::Form {
+                edits: &confirm.start.choice.edits,
+                custom: &confirm.start.choice.custom,
+            },
+            catalog.options(),
+            &[],
+            None,
+        );
+        let items = queued(&confirm, &catalog, &[], Some(&root)).unwrap();
+        assert!(!items[0].logged.contains("placeholder-"));
+        let path = root.join("launches.json");
+        let mut records = Records::load(Some(path.clone())).0;
+        for item in items {
+            records.put(item.record);
+        }
+        records.save().unwrap();
+        let saved = std::fs::read_to_string(path).unwrap();
+        assert!(!saved.contains("placeholder-"), "{saved}");
+        assert!(saved.contains("KEEP_ME=ok"));
     }
 
     #[test]

@@ -1031,6 +1031,28 @@ fn qwen_tp2() -> App {
 }
 
 #[test]
+fn a_long_model_name_stays_apart_from_its_id() {
+    let mut app = loader();
+    let mut models = Models::parse(&loader_fixture("models.json")).unwrap();
+    models.models[0].served_model_name = "Qwen3.8-Flash-Next-FP8".to_owned();
+    models.models[1].served_model_name = "MiMo-V2.6-Flash-Base".to_owned();
+    app.catalog_reply(Reply::Models(Ok(models)));
+    app.tick(NOW);
+    app.settle(132, 38);
+    let screen = ui::draw(&app, 132, 38, NOW).text();
+    let rows = screen.lines().skip(3).take(2).collect::<Vec<_>>();
+    assert!(
+        rows[0].starts_with("│▌Qwen3.8-Flash-Nex... qwen38     found   ●│"),
+        "{screen}"
+    );
+    // A name that fits is shown whole.
+    assert!(
+        rows[1].starts_with("│ MiMo-V2.6-Flash-Base mimo26     found    │"),
+        "{screen}"
+    );
+}
+
+#[test]
 fn loader_view() {
     use crossterm::event::KeyCode;
     let mut app = qwen_tp2();

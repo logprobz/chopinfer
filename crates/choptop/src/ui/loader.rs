@@ -3,7 +3,7 @@
 //! columns the focused pane fills the space and Tab moves between them.
 
 use super::buffer::{Buffer, Color, Style};
-use super::widgets::{boxed, pad, right, sanitize, wrap};
+use super::widgets::{boxed, pad, right, sanitize, shorten, wrap};
 use super::{footer, header};
 use crate::app::App;
 use crate::catalog::{Availability, Checkpoint, Fetch, Pick, Profile};
@@ -274,17 +274,22 @@ fn models_pane(buffer: &mut Buffer, app: &App, area: Area, alone_: bool) {
         if index == loader.model_cursor {
             cursor = Some(lines.len());
         }
+        // A space always follows the name and the id.
         let mut line = vec![
             (
                 2,
-                pad(&sanitize(&model.served_model_name), 21),
+                pad(&shorten(&sanitize(&model.served_model_name), 20), 21),
                 if chosen {
                     Style::fg(Color::White).bold()
                 } else {
                     Style::PLAIN
                 },
             ),
-            (23, pad(&sanitize(&model.model), 11), Style::fg(Color::Dim)),
+            (
+                23,
+                pad(&shorten(&sanitize(&model.model), 10), 11),
+                Style::fg(Color::Dim),
+            ),
             (34, state.to_owned(), Style::fg(color)),
         ];
         if chosen {

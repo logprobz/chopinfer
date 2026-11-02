@@ -25,6 +25,18 @@ pub fn pad(text: &str, width: usize) -> String {
     out
 }
 
+/// `text` in at most `width` characters, ending with `...` when it is cut.
+pub fn shorten(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        return text.to_owned();
+    }
+    let kept = text
+        .chars()
+        .take(width.saturating_sub(3))
+        .collect::<String>();
+    kept + &".".repeat(width.min(3))
+}
+
 /// `text` in lines of at most `width` characters, broken at spaces; a
 /// word longer than a line is split. Text that fits is kept as it is.
 pub fn wrap(text: &str, width: usize) -> Vec<String> {

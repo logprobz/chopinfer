@@ -3756,6 +3756,7 @@ fn serve_preflight_v1(
     model_options: &std::collections::BTreeMap<String, String>,
     list_model_options: bool,
     profile_drafter: Option<&str>,
+    install_signals: bool,
 ) -> Result<ServePreflightOutcomeV1, HostCommandErrorV1> {
     // Refused before anything loads, so a launcher that still exports the
     // variable fails at startup rather than serving forced tokens.
@@ -3768,6 +3769,11 @@ fn serve_preflight_v1(
         return Err(usage_error(
             "--max-tokenizer-input-bytes must be between 1 and 67108864",
         ));
+    }
+    // A check serves nothing for a signal to stop.
+    if install_signals {
+        crate::signals::install()
+            .map_err(|error| run_error(format!("cannot install signal handlers: {error}")))?;
     }
     let server_config = server_config_v1(serving, surface, envelope)?;
     let BundleSelectionV1::Directory(path) = selection;
@@ -3959,11 +3965,6 @@ fn serve_v1(
     list_model_options: bool,
     check: Option<ServeCheckV1>,
 ) -> Result<String, HostCommandErrorV1> {
-    // A check serves nothing for a signal to stop.
-    if check.is_none() {
-        crate::signals::install()
-            .map_err(|error| run_error(format!("cannot install signal handlers: {error}")))?;
-    }
     let preflight = match serve_preflight_v1(
         selection,
         host,
@@ -3976,6 +3977,7 @@ fn serve_v1(
         model_options,
         list_model_options,
         profile_drafter,
+        check.is_none(),
     )? {
         ServePreflightOutcomeV1::Listing(listing) => return Ok(listing),
         ServePreflightOutcomeV1::Checked(preflight) => preflight,

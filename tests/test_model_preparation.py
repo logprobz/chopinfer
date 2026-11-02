@@ -886,6 +886,34 @@ print(json.dumps(reply), flush=True)
                 implementation["detail"]["target_architecture"] = "sm_90"
         agree(edited("parity-elsewhere", elsewhere), ["--fake-host-services"], {},
               "this host cannot run the selected bundle's operation")
+
+        # What prefix caching needs of the package beside the module's
+        # callbacks: request state for a state-slot restore, and copy-on-write
+        # batch records, which a package without media, prompt rows or a
+        # drafter does not read.
+        def without(*capabilities):
+            def edit(manifest):
+                required = manifest["resource_requirements"]["required_capabilities"]
+                required[:] = [name for name in required if name not in capabilities]
+                if "chop.speculative.v1" in capabilities:
+                    del manifest["speculation"]
+            return edit
+
+        def both(*edits):
+            def edit(manifest):
+                for each in edits:
+                    each(manifest)
+            return edit
+        slot = "chop.prefix-cache.state-slot.v1"
+        slot_reason = f"the selected bundle requires {slot} without a prefix cache and request state"
+        for name, edit, reason in (
+                ("parity-slot-without-prefix-cache", both(without("chop.prefix-cache.v1"), requiring(slot)),
+                 slot_reason),
+                ("parity-slot-without-state", requiring(slot), slot_reason),
+                ("parity-first-batch-records",
+                 without("chop.media-inputs.v1", "chop.prompt-rows.v2", "chop.speculative.v1"),
+                 "requires prefix caching without request retirement and copy-on-write batch records")):
+            agree(edited(name, edit), ["--fake-host-services"], {}, reason)
         # What the instance's configuration refuses before the module plans or
         # creates anything: planned images without a checkpoint, and
         # capabilities without the limits they serve with.

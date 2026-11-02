@@ -4070,14 +4070,16 @@ struct EngineCheckV1<'a> {
 
 /// What [`ServedEngineV1::open`] refuses that needs neither the native
 /// module nor a device, in its order and with its messages: the model option
-/// defaults the load resolves, the recurrent state slots, host-memory
-/// services this build lacks, the instance configuration the package and the
-/// served settings make, the `--debug-reference-tokens` file and the device
-/// sampler forcing needs.
+/// defaults the load resolves, what prefix caching needs of the package, the
+/// recurrent state slots, host-memory services this build lacks, the instance
+/// configuration the package and the served settings make, the
+/// `--debug-reference-tokens` file and the device sampler forcing needs.
 fn check_engine_open_v1(engine: &EngineCheckV1<'_>) -> Result<(), HostCommandErrorV1> {
     let manifest = engine.package.manifest();
     crate::install::check_model_option_defaults_v1(engine.package)
         .map_err(|error| worker_refusal_v1(unloaded_v1(error)))?;
+    check_prefix_cache_package_v1(manifest, engine.speculation.is_some())
+        .map_err(worker_refusal_v1)?;
     let state_slots = if manifest.recurrent_state_layouts().is_empty() {
         None
     } else {
@@ -4804,44 +4806,22 @@ impl ServedEngineV1 {
             .with_model_options(&self.model_options)
             .map_err(|e| e.to_string())?;
         same_selection_v1(&expected, loaded.manifest(), &self.selection)?;
-        let batch_wire = batch_wire_capability_v1(loaded.manifest());
-        let batch_wire = if self.speculation.is_some() {
-            if batch_wire == crate::executor::BatchWireCapabilityV1::V3Media {
-                crate::executor::BatchWireCapabilityV1::V3MediaSpeculative
-            } else {
-                crate::executor::BatchWireCapabilityV1::V3Speculative
-            }
-        } else {
-            batch_wire
-        };
+        let batch_wire = served_batch_wire_v1(loaded.manifest(), self.speculation.is_some());
         require_speculation_callback_v1(
             self.speculation.is_some(),
             loaded.library().supports_speculation(),
         )?;
-        let prefix_capability = loaded
-            .manifest()
-            .resource_requirements()
-            .required_capabilities()
-            .iter()
-            .any(|capability| {
-                capability.as_str() == runtime_bundle_abi::PREFIX_CACHE_CAPABILITY_V1
-            });
+        let prefix = PrefixCacheDeclarationV1::of(loaded.manifest());
+        let prefix_capability = prefix.declared;
         require_prefix_cache_callbacks_v1(
-            prefix_capability,
+            prefix.declared,
             loaded.library().supports_prefix_cache(),
             loaded.library().supports_request_retirement(),
             batch_wire,
         )?;
         require_prefix_state_slot_callback_v1(
-            loaded
-                .manifest()
-                .resource_requirements()
-                .required_capabilities()
-                .iter()
-                .any(|capability| {
-                    capability.as_str() == runtime_bundle_abi::PREFIX_CACHE_STATE_SLOT_CAPABILITY_V1
-                }),
-            prefix_capability && !loaded.manifest().recurrent_state_layouts().is_empty(),
+            prefix.state_slot,
+            prefix.with_state,
             loaded.library().supports_prefix_state_slot(),
         )?;
         let serving_kv = serving_kv_capability_v1(loaded.manifest());
@@ -5130,6 +5110,68 @@ fn open_with_request_retirement_v1<T>(
     open()
 }
 
+/// The batch records a package's instance reads, as the served speculation
+/// widens them.
+fn served_batch_wire_v1(
+    manifest: &BundleManifestV1,
+    speculation: bool,
+) -> crate::executor::BatchWireCapabilityV1 {
+    let batch_wire = batch_wire_capability_v1(manifest);
+    if !speculation {
+        batch_wire
+    } else if batch_wire == crate::executor::BatchWireCapabilityV1::V3Media {
+        crate::executor::BatchWireCapabilityV1::V3MediaSpeculative
+    } else {
+        crate::executor::BatchWireCapabilityV1::V3Speculative
+    }
+}
+
+/// What a package's manifest declares of prefix caching.
+#[derive(Clone, Copy)]
+struct PrefixCacheDeclarationV1 {
+    /// `chop.prefix-cache.v1`.
+    declared: bool,
+    /// The state-slot prefix restore.
+    state_slot: bool,
+    /// Prefix caching with the request state a slot restore fills.
+    with_state: bool,
+}
+
+impl PrefixCacheDeclarationV1 {
+    fn of(manifest: &BundleManifestV1) -> Self {
+        let requires = |name: &str| {
+            manifest
+                .resource_requirements()
+                .required_capabilities()
+                .iter()
+                .any(|capability| capability.as_str() == name)
+        };
+        let declared = requires(runtime_bundle_abi::PREFIX_CACHE_CAPABILITY_V1);
+        Self {
+            declared,
+            state_slot: requires(runtime_bundle_abi::PREFIX_CACHE_STATE_SLOT_CAPABILITY_V1),
+            with_state: declared && !manifest.recurrent_state_layouts().is_empty(),
+        }
+    }
+}
+
+/// What the prefix-cache guards of [`ServedEngineV1::open`] refuse of the
+/// package and the served speculation alone, in their order: prefix caching
+/// over batch records without copy-on-write, and a state-slot restore
+/// without the prefix cache and request state it restores into.
+fn check_prefix_cache_package_v1(
+    manifest: &BundleManifestV1,
+    speculation: bool,
+) -> Result<(), String> {
+    let prefix = PrefixCacheDeclarationV1::of(manifest);
+    require_prefix_cache_records_v1(prefix.declared, served_batch_wire_v1(manifest, speculation))?;
+    require_prefix_state_slot_package_v1(prefix.state_slot, prefix.with_state)
+}
+
+/// Why a bundle declaring prefix caching cannot serve it here.
+const PREFIX_CACHE_UNSUPPORTED_V1: &str = "the selected bundle requires prefix caching without \
+     request retirement and copy-on-write batch records";
+
 /// Refuses a bundle that declares prefix caching without what it relies on.
 ///
 /// A hit shares a partly filled page, which needs copy-on-write records, and
@@ -5149,12 +5191,35 @@ fn require_prefix_cache_callbacks_v1(
                 .to_owned(),
         );
     }
-    if !retirement || batch_wire == crate::executor::BatchWireCapabilityV1::V1 {
-        return Err(
-            "the selected bundle requires prefix caching without request retirement and \
-             copy-on-write batch records"
-                .to_owned(),
-        );
+    if !retirement {
+        return Err(PREFIX_CACHE_UNSUPPORTED_V1.to_owned());
+    }
+    require_prefix_cache_records_v1(declared, batch_wire)
+}
+
+/// What declared prefix caching needs of the batch records beside the
+/// module's callbacks: copy-on-write, which the first batch wire lacks.
+fn require_prefix_cache_records_v1(
+    declared: bool,
+    batch_wire: crate::executor::BatchWireCapabilityV1,
+) -> Result<(), String> {
+    if declared && batch_wire == crate::executor::BatchWireCapabilityV1::V1 {
+        return Err(PREFIX_CACHE_UNSUPPORTED_V1.to_owned());
+    }
+    Ok(())
+}
+
+/// What a declared state-slot restore needs of the package beside its
+/// callback: the prefix cache and request state slots it restores into.
+fn require_prefix_state_slot_package_v1(
+    declared: bool,
+    prefix_cache_with_state: bool,
+) -> Result<(), String> {
+    if declared && !prefix_cache_with_state {
+        return Err(format!(
+            "the selected bundle requires {} without a prefix cache and request state",
+            runtime_bundle_abi::PREFIX_CACHE_STATE_SLOT_CAPABILITY_V1
+        ));
     }
     Ok(())
 }
@@ -5169,12 +5234,7 @@ fn require_prefix_state_slot_callback_v1(
     if !declared {
         return Ok(());
     }
-    if !prefix_cache_with_state {
-        return Err(format!(
-            "the selected bundle requires {} without a prefix cache and request state",
-            runtime_bundle_abi::PREFIX_CACHE_STATE_SLOT_CAPABILITY_V1
-        ));
-    }
+    require_prefix_state_slot_package_v1(declared, prefix_cache_with_state)?;
     if !callback {
         return Err(
             "the selected bundle requires a state-slot prefix restore but has no \
@@ -9816,6 +9876,63 @@ mod tests {
                 .unwrap_err()
                 .contains("restore_prefix_state_in_slot_v1")
         );
+    }
+
+    /// Over a module with every callback, the prefix-cache guards of the
+    /// engine's open refuse exactly what `serve --check` refuses of the
+    /// package, with the same message; without the callbacks they still
+    /// refuse it, naming a callback first.
+    #[test]
+    fn a_check_refuses_what_the_prefix_cache_guards_refuse_of_the_package() {
+        let guards = |manifest: &BundleManifestV1, speculation: bool, callbacks: bool| {
+            let prefix = super::PrefixCacheDeclarationV1::of(manifest);
+            super::require_prefix_cache_callbacks_v1(
+                prefix.declared,
+                callbacks,
+                callbacks,
+                super::served_batch_wire_v1(manifest, speculation),
+            )
+            .and_then(|()| {
+                super::require_prefix_state_slot_callback_v1(
+                    prefix.state_slot,
+                    prefix.with_state,
+                    callbacks,
+                )
+            })
+        };
+        let prefix = runtime_bundle_abi::PREFIX_CACHE_CAPABILITY_V1;
+        let slot = runtime_bundle_abi::PREFIX_CACHE_STATE_SLOT_CAPABILITY_V1;
+        let wire = crate::executor::BATCH_WIRE_V2_CAPABILITY_V1;
+        let mut refused = 0;
+        for capabilities in [
+            &[][..],
+            &[prefix],
+            &[slot],
+            &[prefix, slot],
+            &[prefix, wire],
+            &[prefix, slot, wire],
+        ] {
+            let manifest = manifest_requiring(
+                vec![topology("tp1", 1)],
+                8,
+                DECLARED_ROWS_V1,
+                &"0".repeat(64),
+                capabilities.iter().map(|name| id(name)).collect(),
+            );
+            for speculation in [false, true] {
+                let checked = super::check_prefix_cache_package_v1(&manifest, speculation);
+                assert_eq!(
+                    checked,
+                    guards(&manifest, speculation, true),
+                    "{capabilities:?} {speculation}"
+                );
+                if checked.is_err() {
+                    refused += 1;
+                    assert!(guards(&manifest, speculation, false).is_err());
+                }
+            }
+        }
+        assert!(refused > 0);
     }
 
     #[test]

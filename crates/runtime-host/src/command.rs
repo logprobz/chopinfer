@@ -881,6 +881,9 @@ pub enum HostCommandV1 {
     Serve {
         model_options: std::collections::BTreeMap<String, String>,
         list_model_options: bool,
+        /// `--check`: run the startup checks that need no device, and print
+        /// what serving would resolve instead of serving.
+        check: bool,
         /// The serving profile whose options are defaults, reported by
         /// `/health`.
         profile_name: Option<String>,
@@ -1172,11 +1175,15 @@ fn parse_weights_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostC
             selection,
             weight_keeper,
             weight_keeper_identity,
+            check,
             ..
         } = &serve
         else {
             return Err(usage_error("weights identity takes serve's options"));
         };
+        if *check {
+            return Err(usage_error("weights identity does not take --check"));
+        }
         if weight_keeper.is_some() || weight_keeper_identity.is_some() {
             return Err(usage_error(
                 "weights identity computes its proof without borrowing or accepting another proof",
@@ -1201,11 +1208,15 @@ fn parse_weights_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostC
                 direct_checkpoint,
                 selection,
                 weight_keeper,
+                check,
                 ..
             } = &serve
             else {
                 return Err(usage_error("weights keep takes serve's options"));
             };
+            if *check {
+                return Err(usage_error("weights keep does not take --check"));
+            }
             if weight_keeper.is_some() {
                 return Err(usage_error("weights keep does not borrow from a keeper"));
             }
@@ -1659,6 +1670,13 @@ pub(crate) const SERVE_OPTIONS_V1: &[ServeOptionV1] = {
             Model,
             "the content proof that lets this build borrow a keeper's rank images",
         ),
+        ServeOptionV1::new(
+            "--check",
+            Flag,
+            Model,
+            "run the startup checks that need no device, print the result as JSON and exit",
+        )
+        .not_launch(),
         ServeOptionV1::new(
             "--listen",
             Text,
@@ -2564,6 +2582,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
     Ok(HostCommandV1::Serve {
         model_options,
         list_model_options: parsed.list_model_options,
+        check: parsed.check,
         profile_name: resolved.profile,
         profile_drafter: resolved.drafter,
         qualified_max_sequences: resolved.qualified_max_sequences,
@@ -2992,9 +3011,10 @@ fn run_host_command_from_v1(
         HostCommandV1::Serve {
             model_options,
             list_model_options,
+            check,
             profile_name,
             profile_drafter,
-            qualified_max_sequences: _,
+            qualified_max_sequences,
             direct_package,
             http_options,
             log_level,
@@ -3195,6 +3215,10 @@ fn run_host_command_from_v1(
                 http_options.as_ref().clone(),
                 model_options,
                 *list_model_options,
+                check.then(|| ServeCheckV1 {
+                    settings: effective_settings_v1(command),
+                    qualified_max_sequences: *qualified_max_sequences,
+                }),
             );
             if let Err(error) = &result {
                 runtime_log::error!("startup/serving failure: {error}");
@@ -3680,34 +3704,53 @@ fn check_frontend_v1(
     }
 }
 
+/// What serving resolves from the selected package before it opens the
+/// package's native module or any device: [`serve_preflight_v1`], which
+/// serving and `serve --check` share.
+struct ServePreflightV1 {
+    /// Kept while the package serves, so a cache prune leaves it.
+    cache_lease: Option<runtime_bundle::preparation::CacheLease>,
+    server_config: ServerConfig,
+    tokenizer_input_bytes: usize,
+    package: BundlePackageV1,
+    graph_rows: Option<usize>,
+    kv_cache: crate::kv_cache_dtype::KvCacheChoiceV1,
+    device_results: bool,
+    speculation: Option<SpeculationConfig>,
+    /// The served model options, with those the host sets itself.
+    model_options: std::collections::BTreeMap<String, String>,
+    resolved_options: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+/// What [`serve_preflight_v1`] found: `--list-model-options` returns its
+/// listing before the drafter and host memory checks.
+enum ServePreflightOutcomeV1 {
+    Listing(String),
+    Checked(Box<ServePreflightV1>),
+}
+
+/// The startup checks of a served package that need no device, in the order
+/// serving runs them: the environment and request limits, the package's
+/// verification and topology, its KV layout, the speculation bounds, the
+/// model options, the profile's drafter and the KV offload host memory.
 #[allow(clippy::too_many_arguments)]
-fn serve_v1(
-    readiness_started: std::time::Instant,
-    (profile_name, profile_drafter): (Option<&str>, Option<&str>),
-    direct_package: Option<&DirectPackageIdentityV1>,
-    devices: Option<&[i32]>,
+fn serve_preflight_v1(
     selection: &BundleSelectionV1,
     host: &BundleHostCompatibilityV1,
-    topology: Option<&str>,
-    device: DeviceServicesV1,
-    listen: SocketAddr,
+    (topology, devices): (Option<&str>, Option<&[i32]>),
     serving: ServingOptionsV1,
-    speculative: (usize, Option<usize>),
-    speculation_mode: SpeculationMode,
+    (surface, envelope): (RequestSurfaceV1, Option<DeveloperServingEnvelopeV1>),
+    (speculative, speculation_mode): ((usize, Option<usize>), SpeculationMode),
     (draft_cost_model, verify_widths, verify_confidence): (
         DraftCostModel,
         VerifyWidths,
         Option<&crate::confidence::VerifyConfidence>,
     ),
-    surface: RequestSurfaceV1,
-    envelope: Option<DeveloperServingEnvelopeV1>,
-    allowed_local_media_path: Option<&Path>,
-    remote_media: &runtime_media::remote::RemoteMediaPolicy,
-    debug_reference_tokens: Option<&Path>,
-    http_options: runtime_server::HttpOptions,
+    forced: bool,
     model_options: &std::collections::BTreeMap<String, String>,
     list_model_options: bool,
-) -> Result<String, HostCommandErrorV1> {
+    profile_drafter: Option<&str>,
+) -> Result<ServePreflightOutcomeV1, HostCommandErrorV1> {
     // Refused before anything loads, so a launcher that still exports the
     // variable fails at startup rather than serving forced tokens.
     refuse_reference_tokens_variable_v1(std::env::var_os(REFERENCE_TOKENS_ENV_V1))
@@ -3720,11 +3763,9 @@ fn serve_v1(
             "--max-tokenizer-input-bytes must be between 1 and 67108864",
         ));
     }
-    crate::signals::install()
-        .map_err(|error| run_error(format!("cannot install signal handlers: {error}")))?;
     let server_config = server_config_v1(serving, surface, envelope)?;
     let BundleSelectionV1::Directory(path) = selection;
-    let _cache_lease = runtime_bundle::preparation::CacheLease::for_bundle(
+    let cache_lease = runtime_bundle::preparation::CacheLease::for_bundle(
         &path.canonicalize().map_err(|e| run_error(e.to_string()))?,
     )
     .map_err(|e| run_error(e.to_string()))?;
@@ -3755,19 +3796,20 @@ fn serve_v1(
             verify_confidence,
             package.manifest(),
             device_results,
-            debug_reference_tokens.is_some(),
+            forced,
         )
     });
-    let model_options = &verify_allocation_options_v1(
+    let model_options = verify_allocation_options_v1(
         package.manifest(),
         model_options,
         speculation
             .and_then(SpeculationConfig::verify_allocation)
             .is_some(),
     )?;
-    let resolved_options = package.manifest().resolve_model_options(model_options)?;
+    let resolved_options = package.manifest().resolve_model_options(&model_options)?;
     if list_model_options {
         return serde_json::to_string_pretty(&package.manifest().model_options())
+            .map(ServePreflightOutcomeV1::Listing)
             .map_err(|e| run_error(e.to_string()));
     }
     validate_profile_drafter_v1(package.manifest(), profile_drafter, speculative.0)?;
@@ -3782,6 +3824,172 @@ fn serve_v1(
         crate::offload::preflight_host_memory(serving.kv_offload.budget_bytes, available)
             .map_err(run_error)?;
     }
+    Ok(ServePreflightOutcomeV1::Checked(Box::new(
+        ServePreflightV1 {
+            cache_lease,
+            server_config,
+            tokenizer_input_bytes,
+            package,
+            graph_rows,
+            kv_cache,
+            device_results,
+            speculation,
+            model_options,
+            resolved_options,
+        },
+    )))
+}
+
+/// What `serve --check` reports besides what the package resolves: the
+/// command's effective settings and the profile's qualified limit.
+pub(crate) struct ServeCheckV1 {
+    settings: std::collections::BTreeMap<String, String>,
+    qualified_max_sequences: Option<usize>,
+}
+
+/// `serve --check` after [`serve_preflight_v1`]: the topology at its planned
+/// rank count with its context-parallel groups and the package's batch
+/// limits, as serving checks them once its devices are open, then a
+/// `chopinfer.serve-check.v1` document. No device or native module opens.
+fn serve_check_v1(
+    preflight: &ServePreflightV1,
+    topology: Option<&str>,
+    devices: Option<&[i32]>,
+    serving: &ServingOptionsV1,
+    profile_name: Option<&str>,
+    check: ServeCheckV1,
+) -> Result<String, HostCommandErrorV1> {
+    let manifest = preflight.package.manifest();
+    ServedTopologyV1::planned(manifest, topology, devices)?
+        .with_context_parallel(manifest, serving.context_parallel_size)?;
+    check_batch_limits_v1(manifest, serving)?;
+    let text = |value: &serde_json::Value| match value {
+        serde_json::Value::String(text) => text.clone(),
+        value => value.to_string(),
+    };
+    let declared = manifest
+        .model_options()
+        .map_or(&[][..], |options| options.options.as_slice());
+    let model_options: Vec<serde_json::Value> = declared
+        .iter()
+        .map(|option| {
+            let default = option.definition.default_value();
+            let value = preflight
+                .resolved_options
+                .get(&option.name)
+                .unwrap_or(&default);
+            serde_json::json!({
+                "name": option.name,
+                "value": text(value),
+                "default": text(&default),
+                "default_is_qualified": option.default_is_qualified,
+            })
+        })
+        .collect();
+    let mut warnings = Vec::new();
+    if let Some(limit) = check.qualified_max_sequences
+        && serving.maximum_sequences > limit
+    {
+        warnings.push(format!(
+            "--max-sequences {} exceeds the profile's qualified limit {limit}; this override is \
+             not qualified",
+            serving.maximum_sequences
+        ));
+    }
+    if let Some(options) = manifest.model_options()
+        && !options.is_qualified(&preflight.resolved_options)
+    {
+        let unqualified: Vec<&str> = options
+            .options
+            .iter()
+            .filter(|option| {
+                !option.default_is_qualified
+                    || preflight.resolved_options.get(&option.name)
+                        != Some(&option.definition.default_value())
+            })
+            .map(|option| option.name.as_str())
+            .collect();
+        warnings.push(format!(
+            "model options {} are not qualified defaults",
+            unqualified.join(", ")
+        ));
+    }
+    Ok(serde_json::json!({
+        "schema": "chopinfer.serve-check.v1",
+        "profile": profile_name,
+        "settings": check.settings,
+        "model_options": model_options,
+        "warnings": warnings,
+    })
+    .to_string())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn serve_v1(
+    readiness_started: std::time::Instant,
+    (profile_name, profile_drafter): (Option<&str>, Option<&str>),
+    direct_package: Option<&DirectPackageIdentityV1>,
+    devices: Option<&[i32]>,
+    selection: &BundleSelectionV1,
+    host: &BundleHostCompatibilityV1,
+    topology: Option<&str>,
+    device: DeviceServicesV1,
+    listen: SocketAddr,
+    serving: ServingOptionsV1,
+    speculative: (usize, Option<usize>),
+    speculation_mode: SpeculationMode,
+    (draft_cost_model, verify_widths, verify_confidence): (
+        DraftCostModel,
+        VerifyWidths,
+        Option<&crate::confidence::VerifyConfidence>,
+    ),
+    surface: RequestSurfaceV1,
+    envelope: Option<DeveloperServingEnvelopeV1>,
+    allowed_local_media_path: Option<&Path>,
+    remote_media: &runtime_media::remote::RemoteMediaPolicy,
+    debug_reference_tokens: Option<&Path>,
+    http_options: runtime_server::HttpOptions,
+    model_options: &std::collections::BTreeMap<String, String>,
+    list_model_options: bool,
+    check: Option<ServeCheckV1>,
+) -> Result<String, HostCommandErrorV1> {
+    // A check serves nothing for a signal to stop.
+    if check.is_none() {
+        crate::signals::install()
+            .map_err(|error| run_error(format!("cannot install signal handlers: {error}")))?;
+    }
+    let preflight = match serve_preflight_v1(
+        selection,
+        host,
+        (topology, devices),
+        serving,
+        (surface, envelope),
+        (speculative, speculation_mode),
+        (draft_cost_model, verify_widths, verify_confidence),
+        debug_reference_tokens.is_some(),
+        model_options,
+        list_model_options,
+        profile_drafter,
+    )? {
+        ServePreflightOutcomeV1::Listing(listing) => return Ok(listing),
+        ServePreflightOutcomeV1::Checked(preflight) => preflight,
+    };
+    if let Some(check) = check {
+        return serve_check_v1(&preflight, topology, devices, &serving, profile_name, check);
+    }
+    let ServePreflightV1 {
+        cache_lease: _cache_lease,
+        server_config,
+        tokenizer_input_bytes,
+        package,
+        graph_rows,
+        kv_cache,
+        device_results,
+        speculation,
+        model_options,
+        resolved_options,
+    } = *preflight;
+    let model_options = &model_options;
     runtime_log::info_stdout!("{}", kv_cache.describe(package.manifest()));
     let bundle_id = package.manifest().id().as_str().to_owned();
     // The served frontend is the package's own export, so the module opens
@@ -5379,6 +5587,40 @@ fn option_tokens_v1(value: Option<usize>) -> String {
     )
 }
 
+/// The prompt tokens the package prefills per batch, after refusing
+/// sequence and batch limits past its declaration. A batch holds at most one
+/// item per live sequence, and its tokens never exceed its token budget (a
+/// media encode may overrun the budget, its prompt tokens may not), so these
+/// two bounds keep every batch the scheduler forms within what the bundle
+/// executes.
+fn check_batch_limits_v1(
+    manifest: &BundleManifestV1,
+    serving: &ServingOptionsV1,
+) -> Result<usize, HostCommandErrorV1> {
+    let limits = manifest.batch_limits();
+    let prefill_limit = limits.map_or(usize::MAX, |limits| {
+        usize::try_from(limits.maximum_prefill_tokens()).unwrap_or(usize::MAX)
+    });
+    if let Some(limits) = limits
+        && u64::try_from(serving.maximum_sequences).unwrap_or(u64::MAX)
+            > u64::from(limits.maximum_sequences())
+    {
+        return Err(usage_error(format!(
+            "--max-sequences {} exceeds the {} sequence(s) the selected bundle runs at once",
+            serving.maximum_sequences,
+            limits.maximum_sequences()
+        )));
+    }
+    if let Some(requested) = serving.maximum_batch_tokens
+        && requested > prefill_limit
+    {
+        return Err(usage_error(format!(
+            "--max-batch-tokens {requested} exceeds the {prefill_limit} prompt token(s) the selected bundle prefills per batch"
+        )));
+    }
+    Ok(prefill_limit)
+}
+
 /// Sizes the engine from what the bundle and its declaration allow.
 ///
 /// The page size, the sequence limit, and the vocabulary are the bundle's. The
@@ -5422,31 +5664,8 @@ fn engine_config_v1(
             "the selected bundle declares no sequence tokens to serve",
         ));
     }
-    // A batch holds at most one item per live sequence, and its tokens never
-    // exceed its token budget (a media encode may overrun the budget, its
-    // prompt tokens may not), so these two bounds keep every batch the
-    // scheduler forms within what the bundle executes.
     let limits = manifest.batch_limits();
-    let prefill_limit = limits.map_or(usize::MAX, |limits| {
-        usize::try_from(limits.maximum_prefill_tokens()).unwrap_or(usize::MAX)
-    });
-    if let Some(limits) = limits
-        && u64::try_from(serving.maximum_sequences).unwrap_or(u64::MAX)
-            > u64::from(limits.maximum_sequences())
-    {
-        return Err(usage_error(format!(
-            "--max-sequences {} exceeds the {} sequence(s) the selected bundle runs at once",
-            serving.maximum_sequences,
-            limits.maximum_sequences()
-        )));
-    }
-    if let Some(requested) = serving.maximum_batch_tokens
-        && requested > prefill_limit
-    {
-        return Err(usage_error(format!(
-            "--max-batch-tokens {requested} exceeds the {prefill_limit} prompt token(s) the selected bundle prefills per batch"
-        )));
-    }
+    let prefill_limit = check_batch_limits_v1(manifest, &serving)?;
     let batch_tokens = serving
         .maximum_batch_tokens
         .unwrap_or_else(|| {
@@ -6287,6 +6506,8 @@ fn declared_topologies_v1(topologies: &[BundleTopologyV1]) -> String {
 struct ArgumentsV1 {
     model_options: std::collections::BTreeMap<String, String>,
     list_model_options: bool,
+    /// `serve --check`: the startup checks that need no device.
+    check: bool,
     http_options: runtime_server::HttpOptions,
     http_flags: Vec<String>,
     devices: Option<Vec<i32>>,
@@ -6372,6 +6593,7 @@ pub(crate) const VALUELESS_FLAGS_V1: &[&str] = &[
     "--allow-credentials",
     "--fake-host-services",
     "--list-model-options",
+    "--check",
 ];
 
 /// Removed flags, refused with what replaced them.
@@ -6430,6 +6652,7 @@ impl ArgumentsV1 {
                     "--allow-credentials" => &mut parsed.http_options.allow_credentials,
                     "--fake-host-services" => &mut parsed.host_memory_device,
                     "--list-model-options" => &mut parsed.list_model_options,
+                    "--check" => &mut parsed.check,
                     _ => unreachable!("the valueless flag table and parser must agree"),
                 };
                 if *slot {
@@ -6933,6 +7156,7 @@ impl ArgumentsV1 {
             ),
             ("--model-option", !self.model_options.is_empty()),
             ("--list-model-options", self.list_model_options),
+            ("--check", self.check),
             ("--model-cache-dir", self.model_cache_dir.is_some()),
             ("--activation-policy", self.activation_policy.is_some()),
             ("--modalities", self.modalities.is_some()),
@@ -12805,6 +13029,42 @@ mod serve_option_tests {
                 .to_string()
                 .contains("unsupported argument '--describe-options'")
         );
+    }
+
+    /// `--check` is a serve flag only.
+    #[test]
+    fn check_is_a_serve_flag() {
+        let HostCommandV1::Serve { check, .. } =
+            parse_host_command_v1(&words(&["serve", "--bundle", "a", "--check"])).unwrap()
+        else {
+            panic!("serve");
+        };
+        assert!(check);
+        for invocation in [
+            &[
+                "conformance-run",
+                "--bundle",
+                "a",
+                "--fixture-request",
+                "x",
+                "--check",
+            ][..],
+            &["weights", "identity", "--model", "m", "--check"],
+            &[
+                "weights",
+                "keep",
+                "--keeper-dir",
+                "k",
+                "--model",
+                "m",
+                "--check",
+            ],
+        ] {
+            let error = parse_host_command_v1(&words(invocation))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("--check"), "{invocation:?}: {error}");
+        }
     }
 
     /// Every setting [`effective_settings_v1`] reports for a model profile

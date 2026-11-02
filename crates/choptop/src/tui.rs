@@ -502,6 +502,13 @@ fn run_loop(
             app.catalog_reply(reply);
             dirty = true;
         }
+        if app.needs_read() {
+            app.asked(now());
+            if let Some(poller) = gpu_poller {
+                poller.poll_now();
+            }
+            workers.command(Command::Force);
+        }
         dirty |= app.supervise(now());
         let followups = std::mem::take(&mut app.launches.followups);
         if !followups.is_empty() {

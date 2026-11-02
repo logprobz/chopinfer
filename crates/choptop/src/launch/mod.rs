@@ -632,6 +632,7 @@ impl Launches {
         registry: &mut Registry,
         now: f64,
         probe: &mut dyn FnMut(&str, u16) -> bool,
+        gate: &mut dyn FnMut(&Launch) -> occupancy::Gate,
     ) -> bool {
         let mut changed = false;
         // Stopped serve processes that exited.
@@ -679,6 +680,15 @@ impl Launches {
             };
             match self.launches[index].phase {
                 Phase::Waiting => {
+                    match gate(&self.launches[index]) {
+                        occupancy::Gate::Clear => {}
+                        occupancy::Gate::Hold => continue,
+                        occupancy::Gate::Cancel(why) => {
+                            self.cancel(id, &why, registry, now);
+                            changed = true;
+                            continue;
+                        }
+                    }
                     let waits = self.launches[index].waits.clone();
                     if waits.iter().all(|wait| self.over(wait)) {
                         self.begin(id, registry, now, probe);
@@ -921,7 +931,9 @@ mod tests {
         mut done: impl FnMut(&Launches, &Registry) -> bool,
     ) {
         wait_for(|| {
-            launches.supervise(registry, 5.0, &mut |_, _| true);
+            launches.supervise(registry, 5.0, &mut |_, _| true, &mut |_| {
+                occupancy::Gate::Clear
+            });
             done(launches, registry)
         });
     }
@@ -959,7 +971,9 @@ mod tests {
             let mut launches = launches(&root);
             let mut registry = Registry::new(1.0);
             let id = launches.queue(queued(&binary, 'A', 8310, Vec::new()), &mut registry, 1.0);
-            launches.supervise(&mut registry, 2.0, &mut |_, _| true);
+            launches.supervise(&mut registry, 2.0, &mut |_, _| true, &mut |_| {
+                occupancy::Gate::Clear
+            });
             let pid = launches.get(id).unwrap().record.pid.unwrap();
             spawned = Identity::read(pid);
             panic!("fixture assertion");
@@ -1007,7 +1021,9 @@ mod tests {
                 Tone::Normal
             )
         );
-        launches.supervise(&mut registry, 2.0, &mut |_, _| true);
+        launches.supervise(&mut registry, 2.0, &mut |_, _| true, &mut |_| {
+            occupancy::Gate::Clear
+        });
         let pid = launches.get(id).unwrap().record.pid.unwrap();
         let log = launches.get(id).unwrap().record.log.clone();
         assert!(matches!(
@@ -1106,7 +1122,9 @@ mod tests {
             probed.set(probed.get() + 1);
             true
         };
-        launches.supervise(&mut registry, 2.0, &mut probe);
+        launches.supervise(&mut registry, 2.0, &mut probe, &mut |_| {
+            occupancy::Gate::Clear
+        });
         assert_eq!(launches.get(id).unwrap().phase, Phase::Waiting);
         // The GPU's owner exits; the port's holder still runs.
         launches
@@ -1128,7 +1146,9 @@ mod tests {
         ));
         assert!(what.ends_with("chopinfer serve"), "{what}");
         wait_for(|| {
-            launches.supervise(&mut registry, 3.0, &mut probe);
+            launches.supervise(&mut registry, 3.0, &mut probe, &mut |_| {
+                occupancy::Gate::Clear
+            });
             launches.stops.is_empty()
         });
         assert_eq!(
@@ -1150,13 +1170,17 @@ mod tests {
             )
             .unwrap();
         wait_for(|| {
-            launches.supervise(&mut registry, 4.0, &mut probe);
+            launches.supervise(&mut registry, 4.0, &mut probe, &mut |_| {
+                occupancy::Gate::Clear
+            });
             launches.get(id).unwrap().phase == Phase::Running
         });
         assert_eq!(probed.get(), 1);
         // A launch whose port is taken at its final probe does not start.
         let taken = launches.queue(queued(&binary, 'B', 8311, Vec::new()), &mut registry, 4.0);
-        launches.supervise(&mut registry, 4.5, &mut |_, port| port != 8311);
+        launches.supervise(&mut registry, 4.5, &mut |_, port| port != 8311, &mut |_| {
+            occupancy::Gate::Clear
+        });
         assert!(launches.get(taken).is_none() && registry.launch_row(taken).is_none());
         assert_eq!(
             last_event(&registry),
@@ -1189,7 +1213,9 @@ mod tests {
         let mut launches = launches(&root);
         let mut registry = Registry::new(1.0);
         let id = launches.queue(queued(&binary, 'A', 8310, Vec::new()), &mut registry, 1.0);
-        launches.supervise(&mut registry, 2.0, &mut |_, _| true);
+        launches.supervise(&mut registry, 2.0, &mut |_, _| true, &mut |_| {
+            occupancy::Gate::Clear
+        });
         wait_for(|| root.join("grandchild").exists());
         let grandchild = std::fs::read_to_string(root.join("grandchild"))
             .unwrap()
@@ -1300,7 +1326,9 @@ mod tests {
             .push(("CHOPINFER_API_KEY".into(), "placeholder-secret".into()));
         item.logged = command.into();
         let id = launches.queue(item, &mut registry, 1.0);
-        launches.supervise(&mut registry, 2.0, &mut |_, _| true);
+        launches.supervise(&mut registry, 2.0, &mut |_, _| true, &mut |_| {
+            occupancy::Gate::Clear
+        });
         launches
             .stop(id, "as asked with X", &mut registry, 3.0)
             .unwrap();

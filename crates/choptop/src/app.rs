@@ -10,8 +10,8 @@ use crate::catalog::{Catalog, Check, Reply, Request};
 use crate::gpu::Gpus;
 use crate::host::Host;
 use crate::instances::{Instance, Launched, Registry, Source, Tone};
-use crate::launch::occupancy::Live;
-use crate::launch::placement::bind_probe;
+use crate::launch::occupancy::{self, Gate, Live};
+use crate::launch::placement::{self, bind_probe};
 use crate::launch::process::{self, Identity};
 use crate::launch::switch::{self, Confirm, Target};
 use crate::launch::{Launches, Reservation, command, indices};
@@ -59,6 +59,10 @@ pub enum Action {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Wanted {
     Start(Box<Start>),
+    /// The check finished after its readings expired.
+    Checked(Box<Start>, Check),
+    /// Enter was pressed; refresh before acting on the confirmed plan.
+    Launch(Box<Confirm>),
     /// Stopping the row with this id.
     Stop(u64),
 }
@@ -347,11 +351,18 @@ impl App {
         }
     }
 
+    /// A background check needs a new read, just as pressing S does.
+    pub fn needs_read(&self) -> bool {
+        self.pending
+            .as_ref()
+            .is_some_and(|pending| pending.since.is_none())
+    }
+
     /// What the pending start is waiting for, as the command box says it.
     pub fn pending_text(&self) -> Option<&'static str> {
         match self.pending.as_ref()? {
             Pending {
-                wanted: Wanted::Start(_),
+                wanted: Wanted::Start(_) | Wanted::Checked(..) | Wanted::Launch(_),
                 ticket: None,
                 ..
             } => Some("Checking: reading the GPUs and processes again"),
@@ -366,6 +377,8 @@ impl App {
     /// Says why the start does not go ahead.
     fn refuse_start(&mut self, why: &str) {
         self.pending = None;
+        self.dialog = None;
+        self.view = View::Loader;
         self.loader
             .flash(self.clock, format!("Not started: {}", sanitize(why)), false);
     }
@@ -376,7 +389,22 @@ impl App {
     pub fn supervise(&mut self, now: f64) -> bool {
         self.clock = now;
         let mut probe = self.probe;
-        let mut changed = self.launches.supervise(&mut self.registry, now, &mut probe);
+        let reservations = self.launches.reservations();
+        let gpus = occupancy::occupancy(&occupancy::Inputs {
+            live: &self.live,
+            instances: &self.registry.instances,
+            reservations: &reservations,
+            interval: self.interval,
+            now,
+        });
+        let fresh = self.live.fresh(now - 2.0 * self.interval);
+        let mut gate = |launch: &crate::launch::Launch| match occupancy::gate(launch, &gpus) {
+            Gate::Clear if !fresh => Gate::Hold,
+            other => other,
+        };
+        let mut changed = self
+            .launches
+            .supervise(&mut self.registry, now, &mut probe, &mut gate);
         self.reservations = self.launches.reservations();
         let Some(Pending {
             since: Some(since),
@@ -392,7 +420,9 @@ impl App {
                 let why =
                     format!("no fresh GPU reading and discovery scan within {READ_SECONDS:.0} s");
                 match self.pending.take().map(|pending| pending.wanted) {
-                    Some(Wanted::Start(_)) => self.refuse_start(&why),
+                    Some(Wanted::Start(_) | Wanted::Checked(..) | Wanted::Launch(_)) => {
+                        self.refuse_start(&why)
+                    }
                     Some(Wanted::Stop(row)) => self.refuse_stop(row, &why),
                     None => {}
                 }
@@ -402,6 +432,8 @@ impl App {
         }
         match self.pending.take().map(|pending| pending.wanted) {
             Some(Wanted::Start(start)) => self.recheck(start, since, now),
+            Some(Wanted::Checked(start, check)) => self.finish_check(start, check),
+            Some(Wanted::Launch(confirm)) => self.launch(*confirm),
             Some(Wanted::Stop(row)) => self.open_stop(row),
             None => {}
         }
@@ -463,6 +495,18 @@ impl App {
             Ok(check) => check,
             Err(message) => return self.refuse_start(&message),
         };
+        if !self.live.fresh(self.clock - 2.0 * self.interval) {
+            self.pending = Some(Pending {
+                wanted: Wanted::Checked(start, check),
+                since: None,
+                ticket: None,
+            });
+            return;
+        }
+        self.finish_check(start, check);
+    }
+
+    fn finish_check(&mut self, start: Box<Start>, check: Check) {
         let Some(profile) = self.catalog.profile(&start.model, &start.profile) else {
             return self.refuse_start(&format!("profile {} is gone", start.profile));
         };
@@ -473,6 +517,11 @@ impl App {
                 differences.join("; ")
             ));
         }
+        let gpus = match self.validate_start(&start) {
+            Ok(gpus) => gpus,
+            Err(why) => return self.refuse_start(&why),
+        };
+        self.reservations = self.launches.reservations();
         let launches = &self.launches;
         let stopping = |pid, ticks| launches.stopping(pid, ticks);
         let confirm = switch::confirm(
@@ -480,7 +529,7 @@ impl App {
             &switch::Reading {
                 catalog: &self.catalog,
                 check: &check,
-                gpus: &self.loader.plan.gpus,
+                gpus: &gpus,
                 reservations: &self.reservations,
                 stopping: &stopping,
                 warnings: self.loader.warnings(&self.catalog),
@@ -566,11 +615,68 @@ impl App {
     }
 
     /// Enter in a confirm dialog.
-    fn confirm(&mut self, dialog: Dialog) {
+    fn confirm(&mut self, dialog: Dialog) -> Action {
         match dialog {
-            Dialog::Start(confirm) => self.launch(*confirm),
-            Dialog::Stop(stop) => self.stop(*stop),
+            Dialog::Start(confirm) => {
+                self.pending = Some(Pending {
+                    wanted: Wanted::Launch(confirm),
+                    since: None,
+                    ticket: None,
+                });
+                Action::Read
+            }
+            Dialog::Stop(stop) => {
+                self.stop(*stop);
+                Action::Redraw
+            }
         }
+    }
+
+    /// Rebuild the saved choice against current ownership. Every change
+    /// returns to the loader and requires a new confirmation.
+    fn validate_start(&self, start: &Start) -> Result<Vec<occupancy::Gpu>, String> {
+        if !self.live.fresh(self.clock - 2.0 * self.interval) {
+            return Err("GPU reading or discovery scan is stale; press S to read again".into());
+        }
+        let reservations = self.launches.reservations();
+        let inputs = occupancy::Inputs {
+            live: &self.live,
+            instances: &self.registry.instances,
+            reservations: &reservations,
+            interval: self.interval,
+            now: self.clock,
+        };
+        let gpus = occupancy::occupancy(&inputs);
+        let ports = occupancy::ports(&inputs);
+        let size = start
+            .placement
+            .instances
+            .first()
+            .ok_or("nothing to start")?
+            .gpus
+            .len();
+        let mut probe = self.probe;
+        let fresh = placement::place(
+            &placement::Field {
+                gpus: &gpus,
+                ports: &ports,
+                reservations: &reservations,
+            },
+            &start.choice.gpus,
+            size as u32,
+            start.explicit.listen.as_deref(),
+            &mut probe,
+        );
+        let mut problems = fresh.problems.clone();
+        problems.extend(fresh.grouping.clone());
+        problems.extend(switch::changed(&start.placement, &fresh, &reservations));
+        if !problems.is_empty() {
+            return Err(format!(
+                "{}; check the placement and press S again",
+                problems.join("; ")
+            ));
+        }
+        Ok(gpus)
     }
 
     /// Runs a confirmed switch: records each serve process it stops, and
@@ -579,6 +685,9 @@ impl App {
     /// processes SIGTERM. The list shows the launches.
     fn launch(&mut self, mut confirm: Confirm) {
         let now = self.clock;
+        if let Err(why) = self.validate_start(&confirm.start) {
+            return self.refuse_start(&why);
+        }
         if let Err(why) = self.launch_directories() {
             return self.refuse_start(&why);
         }
@@ -796,7 +905,7 @@ impl App {
         }
         if let Some(dialog) = self.dialog.take() {
             match event.code {
-                KeyCode::Enter => self.confirm(dialog),
+                KeyCode::Enter => return self.confirm(dialog),
                 KeyCode::Esc => {}
                 _ => {
                     self.dialog = Some(dialog);
@@ -808,7 +917,7 @@ impl App {
         if self.pending.is_some() && event.code == KeyCode::Esc {
             if matches!(
                 self.pending.take().map(|pending| pending.wanted),
-                Some(Wanted::Start(_))
+                Some(Wanted::Start(_) | Wanted::Checked(..) | Wanted::Launch(_))
             ) {
                 self.loader.flash(self.clock, "Start cancelled", false);
             }
@@ -962,7 +1071,7 @@ mod tests {
     use crate::instances::State;
     use crate::launch::command::{Explicit, Key};
     use crate::launch::occupancy::Serve;
-    use crate::launch::occupancy::tests::{on_gpu, serve_process, uuid};
+    use crate::launch::occupancy::tests::{devices, on_gpu, serve_process, uuid};
     use crate::launch::placement::{Placement, Planned};
     use crate::launch::process::tests::{
         CLOSE, Guard, fake_serve, fake_serve_running, scratch, wait_for, write_script,
@@ -1302,7 +1411,31 @@ mod tests {
                         uuids: gpus.iter().map(|index| uuid(*index)).collect(),
                         host: "127.0.0.1".into(),
                         port: *port,
-                        after: Vec::new(),
+                        after: instances
+                            .iter()
+                            .find(|(seen, ..)| seen == letter)
+                            .unwrap()
+                            .3
+                            .iter()
+                            .map(|target| match target {
+                                Target::Serve(serve) => placement::Dependency::Serve(serve.clone()),
+                                Target::Launch(id) => placement::Dependency::Launch(*id),
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+                stops: stops
+                    .iter()
+                    .filter_map(|stop| match &stop.target {
+                        Target::Serve(serve) => Some(serve.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+                replaces: stops
+                    .iter()
+                    .filter_map(|stop| match &stop.target {
+                        Target::Launch(id) => Some(*id),
+                        _ => None,
                     })
                     .collect(),
                 ..Placement::default()
@@ -1320,6 +1453,10 @@ mod tests {
             choice: Choice {
                 model: "qwen38".into(),
                 profile: "tp2-mtp".into(),
+                gpus: instances
+                    .iter()
+                    .flat_map(|(_, gpus, ..)| gpus.iter().copied())
+                    .collect(),
                 ..Choice::default()
             },
         };
@@ -1378,10 +1515,106 @@ mod tests {
         }
     }
 
-    /// Confirms `confirm` with Enter in its dialog.
+    /// Refresh the fake scan and GPU processes from this test's own serves.
+    fn read_launches(app: &mut App, at: f64) {
+        let found = app
+            .live
+            .found
+            .iter()
+            .filter(|found| match found {
+                Found::Process(serve) => process::alive(serve.pid, serve.start_ticks),
+                _ => false,
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        read_reports(app, at, found);
+    }
+
+    fn read_reports(app: &mut App, at: f64, found: Vec<Found>) {
+        if app.live.devices.is_empty() {
+            app.live.gpu(&Report::Opened {
+                driver: None,
+                devices: devices(4),
+            });
+        }
+        let readings = (0..4)
+            .map(|index| Reading {
+                at,
+                answered: true,
+                processes: Some(
+                    found
+                        .iter()
+                        .filter_map(|found| match found {
+                            Found::Process(serve)
+                                if serve.cuda_visible_devices.as_ref().is_some_and(|visible| {
+                                    visible.split(',').any(|seen| seen == uuid(index))
+                                }) =>
+                            {
+                                Some(Process {
+                                    pid: serve.pid,
+                                    kind: Kind::Compute,
+                                    owner: Owner {
+                                        start_ticks: Some(serve.start_ticks),
+                                        ..Owner::default()
+                                    },
+                                    ..Process::default()
+                                })
+                            }
+                            _ => None,
+                        })
+                        .collect(),
+                ),
+                ..Reading::default()
+            })
+            .collect();
+        app.live.scan(&crate::discover::Report::Scan {
+            found,
+            events: Vec::new(),
+            started: at,
+        });
+        app.live.gpu(&Report::Polled(readings));
+    }
+
+    fn supervise_launches(app: &mut App, at: f64) {
+        read_launches(app, at);
+        app.supervise(at);
+    }
+
+    /// Confirms with Enter, then supplies the requested fresh reports.
     fn run(app: &mut App, confirm: Confirm) {
+        app.live.found = confirm
+            .stops
+            .iter()
+            .filter_map(|stop| match &stop.target {
+                Target::Serve(serve) => Some(Found::Process(ServeProcess {
+                    pid: serve.pid,
+                    start_ticks: serve.start_ticks,
+                    executable: "chopinfer".into(),
+                    arguments: vec!["chopinfer".into(), "serve".into()],
+                    model_hint: serve.name.clone(),
+                    age: None,
+                    listening: serve
+                        .ports
+                        .iter()
+                        .map(|port| format!("127.0.0.1:{port}").parse().unwrap())
+                        .collect(),
+                    cuda_visible_devices: Some(
+                        stop.gpus
+                            .iter()
+                            .map(|index| uuid(*index))
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    ),
+                })),
+                _ => None,
+            })
+            .collect();
+        let at = app.clock;
+        read_reports(app, at, app.live.found.clone());
         app.dialog = Some(Dialog::Start(Box::new(confirm)));
-        assert_eq!(press(app, KeyCode::Enter), Action::Redraw);
+        assert_eq!(press(app, KeyCode::Enter), Action::Read);
+        app.asked(at);
+        app.supervise(at);
         assert!(app.dialog.is_none());
     }
 
@@ -1405,6 +1638,7 @@ mod tests {
         write_script(&binary, &format!("#!/bin/sh\n{CLOSE}exit 0\n"));
         let mut app = launching(&root, &binary);
         let mut record = crate::launch::records::tests::record("earlier", 'A', &[0, 1]);
+        record.uuids = vec![uuid(0), uuid(1)];
         record.pid = Some(guard.0.id());
         record.start_ticks = Some(process::start_ticks_of(guard.0.id()).unwrap() + 1);
         let adopted = app
@@ -1414,7 +1648,9 @@ mod tests {
             &[('A', &[0, 1], 8310, vec![Target::Launch(adopted)])],
             vec![replacing(&app, adopted)],
         );
-        run(&mut app, start);
+        read_reports(&mut app, 0.0, Vec::new());
+        // Refuse the stop at admission before supervision closes the stale record.
+        app.launch(start);
         assert!(guard.0.try_wait().unwrap().is_none());
         assert!(
             app.registry
@@ -1429,7 +1665,7 @@ mod tests {
                 .any(|event| event.what.starts_with("cancelled:")
                     && event.what.ends_with("was not stopped"))
         );
-        app.supervise(1.0);
+        supervise_launches(&mut app, 1.0);
         assert!(
             app.launches
                 .launches
@@ -1545,7 +1781,7 @@ mod tests {
             .count();
         assert_eq!(signals, 1);
         wait_for(|| {
-            app.supervise(5.0);
+            supervise_launches(&mut app, 5.0);
             app.launches.get(second).unwrap().phase == Phase::Running
         });
         assert!(
@@ -1579,7 +1815,7 @@ mod tests {
         ));
         let third = newest(&app);
         wait_for(|| {
-            app.supervise(6.0);
+            supervise_launches(&mut app, 6.0);
             let started = app
                 .launches
                 .get(third)
@@ -1601,7 +1837,7 @@ mod tests {
             .stop(third, "at the end of the test", &mut app.registry, 7.0)
             .unwrap();
         wait_for(|| {
-            app.supervise(8.0);
+            supervise_launches(&mut app, 8.0);
             app.launches.launches.is_empty()
         });
     }
@@ -1669,9 +1905,193 @@ mod tests {
     }
 
     #[test]
+    fn newer_readings_invalidate_checks_and_confirmations() {
+        for stage in ["check", "expired check", "confirm"] {
+            for change in ["blocked", "unknown", "uuid", "port"] {
+                let root = scratch(&format!("revalidate-{stage}-{change}"));
+                let binary = root.join("never");
+                write_script(&binary, &format!("#!/bin/sh\n{CLOSE}exit 0\n"));
+                let mut app = launching(&root, &binary);
+                app.catalog = crate::loader::tests::catalog();
+                app.catalog.binary = Ok(binary);
+                app.probe = |_, _| true;
+                app.live.scanning = true;
+                read_reports(&mut app, 1.0, Vec::new());
+                app.clock = 1.0;
+                let edits = [
+                    (Key::ModelOption("prefill_upper_skip".into()), "false"),
+                    (Key::Flag("max-sequences".into()), "48"),
+                ];
+                checking(&mut app, deepseek(&edits), 1);
+                if stage == "confirm" {
+                    app.catalog_reply(Reply::Check(1, Check::parse(CHECK)));
+                    assert!(app.dialog.is_some(), "{:?}", app.loader.flash);
+                    // Enter after expiration must request another read.
+                    app.clock = 10.0;
+                    assert_eq!(press(&mut app, KeyCode::Enter), Action::Read);
+                    app.asked(10.0);
+                    app.supervise(10.1);
+                    assert!(app.pending.is_some());
+                    assert!(app.launches.launches.is_empty());
+                } else if stage == "expired check" {
+                    app.clock = 10.0;
+                    app.catalog_reply(Reply::Check(1, Check::parse(CHECK)));
+                    assert!(app.needs_read());
+                    app.asked(10.0);
+                    app.supervise(10.1);
+                    assert!(app.pending.is_some() && app.dialog.is_none());
+                }
+                read_reports(&mut app, 10.2, Vec::new());
+                let mut readings = (0..4)
+                    .map(|_| Reading {
+                        at: 10.2,
+                        processes: Some(Vec::new()),
+                        answered: true,
+                        ..Reading::default()
+                    })
+                    .collect::<Vec<_>>();
+                match change {
+                    "blocked" => {
+                        readings[0].processes = Some(vec![Process {
+                            pid: 7777,
+                            kind: Kind::Compute,
+                            owner: Owner {
+                                name: Some("other-compute".into()),
+                                ..Owner::default()
+                            },
+                            ..Process::default()
+                        }])
+                    }
+                    "unknown" => readings[0].processes = None,
+                    "uuid" => app.live.devices[0].uuid = Some(uuid(8)),
+                    "port" => app.probe = |_, port| port != 8310,
+                    _ => unreachable!(),
+                }
+                app.live.gpu(&Report::Polled(readings));
+                app.clock = 10.3;
+                if stage == "check" {
+                    app.catalog_reply(Reply::Check(1, Check::parse(CHECK)));
+                } else {
+                    app.supervise(10.3);
+                }
+                assert!(app.dialog.is_none(), "{stage}: {change}");
+                assert!(app.pending.is_none(), "{stage}: {change}");
+                assert_eq!(app.view, View::Loader);
+                assert!(
+                    app.loader
+                        .flash
+                        .as_ref()
+                        .unwrap()
+                        .text
+                        .starts_with("Not started:")
+                );
+                assert!(app.launches.launches.is_empty());
+                assert!(
+                    !app.registry
+                        .events
+                        .iter()
+                        .any(|event| event.what.starts_with("stopping:"))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn waiting_launches_hold_on_unknown_readings_and_cancel_on_new_owners() {
+        for change in ["blocked", "new launch"] {
+            let root = scratch(if change == "blocked" {
+                "wait-blocked"
+            } else {
+                "wait-new-launch"
+            });
+            let binary = root.join("never");
+            write_script(&binary, &format!("#!/bin/sh\n{CLOSE}exit 0\n"));
+            let mut app = launching(&root, &binary);
+            run(
+                &mut app,
+                confirm(&[('A', &[0, 1], 8310, Vec::new())], Vec::new()),
+            );
+            let id = newest(&app);
+            app.live.gpu(&Report::Polled(
+                (0..4)
+                    .map(|_| Reading {
+                        at: 1.0,
+                        processes: None,
+                        answered: true,
+                        ..Reading::default()
+                    })
+                    .collect(),
+            ));
+            app.supervise(1.0);
+            assert_eq!(app.launches.get(id).unwrap().phase, Phase::Waiting);
+            read_reports(&mut app, 2.0, Vec::new());
+            if change == "blocked" {
+                app.live.gpu(&Report::Polled(
+                    (0..4)
+                        .map(|_| Reading {
+                            at: 2.0,
+                            processes: Some(vec![Process {
+                                pid: 7777,
+                                kind: Kind::Compute,
+                                ..Process::default()
+                            }]),
+                            answered: true,
+                            ..Reading::default()
+                        })
+                        .collect(),
+                ));
+            } else {
+                let mut record = crate::launch::records::tests::record("other", 'B', &[0]);
+                record.uuids = vec![uuid(0)];
+                app.launches
+                    .adopt(record, Phase::Running, &mut app.registry, 2.0);
+            }
+            app.supervise(2.0);
+            assert!(app.launches.get(id).is_none());
+            assert!(
+                app.registry
+                    .events
+                    .iter()
+                    .any(|event| event.what.starts_with("cancelled: GPU"))
+            );
+            read_reports(&mut app, 3.0, Vec::new());
+            app.supervise(3.0);
+            assert!(
+                !app.registry
+                    .events
+                    .iter()
+                    .any(|event| event.what.starts_with("launched by"))
+            );
+        }
+        // A stale read holds a queue until the requested devices are fresh.
+        let root = scratch("wait-fresh");
+        let binary = root.join("sleeps");
+        write_script(
+            &binary,
+            &format!(
+                "#!/bin/sh\n{CLOSE}{}",
+                crate::launch::process::tests::UNTIL_TERM
+            ),
+        );
+        let mut app = launching(&root, &binary);
+        run(
+            &mut app,
+            confirm(&[('A', &[0, 1], 8310, Vec::new())], Vec::new()),
+        );
+        let id = newest(&app);
+        app.supervise(10.0);
+        assert_eq!(app.launches.get(id).unwrap().phase, Phase::Waiting);
+        read_reports(&mut app, 10.1, Vec::new());
+        app.supervise(10.2);
+        assert_eq!(app.launches.get(id).unwrap().phase, Phase::Running);
+    }
+
+    #[test]
     fn serve_check_must_resolve_what_the_profile_and_the_form_say() {
         let mut app = app(0);
         app.catalog = crate::loader::tests::catalog();
+        app.probe = |_, _| true;
+        read_launches(&mut app, 0.0);
         let check = Check::parse(CHECK).unwrap();
         let edits = [
             (Key::ModelOption("prefill_upper_skip".into()), "false"),

@@ -23,6 +23,61 @@ use crate::ui::widgets::{bytes, sanitize};
 
 use super::Reservation;
 
+/// Whether a queued launch may proceed under the latest GPU reading.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Gate {
+    Clear,
+    Hold,
+    Cancel(String),
+}
+
+/// A reservation never overrides a newer unknown or blocked reading.
+/// Expected owners hold the launch until the reading also shows them gone.
+pub fn gate(launch: &super::Launch, gpus: &[Gpu]) -> Gate {
+    if launch.record.gpus.len() != launch.record.uuids.len() {
+        return Gate::Cancel("the saved GPU UUIDs are incomplete".into());
+    }
+    let mut hold = false;
+    for (index, uuid) in launch.record.gpus.iter().zip(&launch.record.uuids) {
+        let Some(gpu) = gpus.iter().find(|gpu| gpu.index == *index) else {
+            return Gate::Cancel(format!("GPU {index} is gone"));
+        };
+        if gpu.uuid.is_none() && matches!(gpu.occupancy, Occupancy::Unknown(_)) {
+            hold = true;
+            continue;
+        }
+        if gpu.uuid.as_ref() != Some(uuid) {
+            return Gate::Cancel(format!("GPU {index}'s UUID changed"));
+        }
+        match &gpu.occupancy {
+            Occupancy::Free => {}
+            Occupancy::Unknown(_) => hold = true,
+            Occupancy::Blocked(why) => {
+                return Gate::Cancel(format!("GPU {index} is held by {why}"));
+            }
+            Occupancy::Held(holders) => {
+                for holder in holders {
+                    if *holder == Holder::Launch(launch.id) {
+                        continue;
+                    }
+                    let expected = launch.waits.iter().any(|wait| match (wait, holder) {
+                        (super::Wait::Launch(id), Holder::Launch(other)) => id == other,
+                        (super::Wait::Serve(identity), Holder::Serve(serve)) => {
+                            identity.pid == serve.pid && identity.start_ticks == serve.start_ticks
+                        }
+                        _ => false,
+                    });
+                    if !expected {
+                        return Gate::Cancel(format!("GPU {index} has a new owner"));
+                    }
+                    hold = true;
+                }
+            }
+        }
+    }
+    if hold { Gate::Hold } else { Gate::Clear }
+}
+
 /// What is known of one GPU's processes.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Listing {

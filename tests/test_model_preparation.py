@@ -652,6 +652,150 @@ print(json.dumps(reply), flush=True)
         self.assertEqual(relative["package_identity"], absolute["package_identity"])
         self.assertEqual(absolute["measurements"]["decisions"], ["reused completed direct package"])
 
+    def host_run(self, *args):
+        return subprocess.run([self.host, *args], env=self.environment, text=True,
+                              capture_output=True, timeout=HANG_SECONDS)
+
+    def host_document(self, *args, schema):
+        result = self.host_run(*args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        document = json.loads(result.stdout)
+        self.assertEqual(document["schema"], schema)
+        return document, result.stderr
+
+    def test_serve_describes_its_options_and_environment(self):
+        document, _ = self.host_document("serve", "--describe-options", schema="chopinfer.serve-options.v1")
+        self.assertEqual(set(document), {"schema", "options", "environment"})
+        groups = {"model", "scheduling", "memory", "speculation", "prefill", "cache", "server", "media",
+                  "logging", "debug"}
+        for option in document["options"]:
+            self.assertEqual(set(option), {"flag", "value", "choices", "group", "help", "model_launch", "repeatable"})
+            self.assertIn(option["value"], {"N", "F", "TEXT", "DIR", "FILE", "JSON", "none"})
+            self.assertIn(option["group"], groups)
+        flags = {option["flag"]: option for option in document["options"]}
+        self.assertEqual(flags["--max-sequences"]["value"], "N")
+        self.assertEqual(flags["--prefix-cache"]["choices"], ["on", "off"])
+        self.assertTrue(flags["--model-option"]["repeatable"])
+        self.assertFalse(flags["--bundle"]["model_launch"])
+        self.assertEqual([entry["name"] for entry in document["environment"]],
+                         ["CHOPINFER_API_KEY", "CHOPINFER_LOG_LEVEL", "CHOPINFER_LOG_SUMMARY_SECONDS",
+                          "CHOPINFER_MODEL_OPTIONS"])
+        for entry in document["environment"]:
+            self.assertEqual(set(entry), {"name", "value", "secret", "help"})
+
+    def test_models_list_profiles_and_pick_and_command_serve_them(self):
+        catalog, _ = self.host_document("models", "--json", schema="chopinfer.models.v1")
+        self.assertEqual(catalog["errors"], [])
+        [model] = catalog["models"]
+        self.assertEqual((model["model"], model["helper"], model["served_model_name"]),
+                         ("fixture", "chopinfer-model-fixture", "fixture"))
+        profiles = {profile["name"]: profile for profile in model["profiles"]}
+        self.assertEqual(set(profiles), {"tp4-ar", "tp4-mtp", "tp4-dflash"})
+        for profile in profiles.values():
+            self.assertEqual(set(profile), {"name", "status", "tensor_parallel", "drafter", "speculative_tokens",
+                                            "max_sequences", "qualified_max_sequences", "qualification",
+                                            "settings", "model_options"})
+            self.assertTrue(all(isinstance(value, str) for value in profile["settings"].values()))
+        self.assertEqual(profiles["tp4-dflash"]["settings"]["prefill-budget"], "tbt")
+        self.assertEqual(profiles["tp4-dflash"]["settings"]["decode-tbt-target-ms"], "150")
+        self.assertEqual(profiles["tp4-ar"]["settings"]["speculative-tokens"], "0")
+        self.assertEqual((profiles["tp4-mtp"]["drafter"], profiles["tp4-mtp"]["status"]), ("mtp", "experimental"))
+
+        pick, _ = self.host_document("models", "pick", "--model", self.checkpoint, "--json",
+                                     schema="chopinfer.models-pick.v1")
+        self.assertEqual((pick["model"], pick["refusal"]), ("fixture", None))
+        [size] = pick["sizes"]
+        self.assertEqual((size["tensor_parallel"], size["pick"], size["refusal"]), (4, "tp4-mtp", None))
+        entries = {entry["name"]: entry for entry in size["profiles"]}
+        self.assertEqual(entries["tp4-mtp"], {"name": "tp4-mtp", "available": True, "arguments": [],
+                                              "inherited_model_options": []})
+        self.assertEqual(set(entries["tp4-ar"]), {"name", "available", "arguments", "inherited_model_options"})
+        self.assertIn("--speculative-tokens", entries["tp4-ar"]["arguments"])
+        self.assertEqual(set(entries["tp4-dflash"]), {"name", "available", "reason"})
+        self.assertFalse(entries["tp4-dflash"]["available"])
+        self.assertIn("drafts with dflash", entries["tp4-dflash"]["reason"])
+        # Over a DFlash pick, the autoregressive profile resets its TBT budget.
+        dflash = self.root / "catalog-dflash-checkpoint"
+        subprocess.run([self.helper, "fixture-source", dflash, "dflash,none"], check=True, timeout=HANG_SECONDS)
+        over, _ = self.host_document("models", "pick", "--model", dflash, "--json", schema="chopinfer.models-pick.v1")
+        entries = {entry["name"]: entry for entry in over["sizes"][0]["profiles"]}
+        self.assertEqual(over["sizes"][0]["pick"], "tp4-dflash")
+        arguments = entries["tp4-ar"]["arguments"]
+        self.assertEqual(arguments[arguments.index("--prefill-budget") + 1], "fixed")
+        self.assertFalse(entries["tp4-mtp"]["available"])
+        refused, _ = self.host_document("models", "pick", "--model", self.root / "no-such-checkpoint", "--json",
+                                        schema="chopinfer.models-pick.v1")
+        self.assertEqual((refused["model"], refused["sizes"]), (None, []))
+        self.assertIn("no-such-checkpoint", refused["refusal"])
+
+        base = ["serve", "--model", str(self.checkpoint), "--tensor-parallel-size", "4"]
+        command, _ = self.host_document("models", "command", "--model", self.checkpoint, "--tensor-parallel-size", "4",
+                                        "--profile", "tp4-mtp", schema="chopinfer.models-command.v1")
+        self.assertEqual(command["arguments"], base)
+        command, _ = self.host_document("models", "command", "--model", self.checkpoint, "--tensor-parallel-size", "4",
+                                        "--profile", "tp4-ar", "--", "--max-sequences", "1", "--prefix-cache", "off",
+                                        schema="chopinfer.models-command.v1")
+        arguments = command["arguments"]
+        self.assertEqual(arguments[:5], base)
+        self.assertEqual(arguments.count("--max-sequences"), 1)
+        self.assertNotIn("--listen", arguments)
+        self.assertNotIn("--devices", arguments)
+        for options, reason in ((["--max-sequences", "1", "--max-sequences", "2"], "given more than once"),
+                                (["--listen", "127.0.0.1:0"], "leaves --listen")):
+            result = self.host_run("models", "command", "--model", self.checkpoint, "--tensor-parallel-size", "4",
+                                   "--profile", "tp4-ar", "--", *options)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(reason, result.stderr)
+        result = self.host_run("models", "command", "--model", self.checkpoint, "--tensor-parallel-size", "4",
+                               "--profile", "tp4-dflash")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("is unavailable", result.stderr)
+
+        # A check of each resolves exactly the settings the catalog lists.
+        cache = self.root / "catalog-cache"
+        for name, options in (("tp4-mtp", base[1:]), ("tp4-ar", command["arguments"][1:])):
+            check, log = self.host_document("serve", *options, "--model-cache-dir", cache, "--check",
+                                            schema="chopinfer.serve-check.v1")
+            self.assertEqual(set(check), {"schema", "profile", "settings", "model_options", "warnings"})
+            self.assertEqual(check["profile"], "tp4-mtp")
+            expected = dict(profiles[name]["settings"])
+            if name == "tp4-ar":
+                expected.update({"max-sequences": "1", "prefix-cache": "off"})
+            self.assertEqual(check["settings"], expected)
+            self.assertEqual(check["model_options"], [])
+            self.assertNotIn("startup module load:", log)
+            self.assertNotIn("startup readiness:", log)
+
+    def test_a_check_refuses_what_serving_refuses_without_a_device(self):
+        checkpoint = self.copy_checkpoint("check-options-checkpoint")
+        config = json.loads((checkpoint / "config.json").read_text())
+        config["scratch_multiplier"] = 1
+        (checkpoint / "config.json").write_text(json.dumps(config))
+        cache = self.root / "check-cache"
+        check, _ = self.host_document("serve", "--model", checkpoint, "--model-cache-dir", cache,
+                                      "--tensor-parallel-size", "4", "--check", schema="chopinfer.serve-check.v1")
+        self.assertEqual(check["model_options"], [{"name": "scratch_multiplier", "value": "1", "default": "1",
+                                                   "default_is_qualified": False}])
+        self.assertTrue(any("scratch_multiplier" in warning for warning in check["warnings"]), check["warnings"])
+        check, _ = self.host_document("serve", "--model", checkpoint, "--model-cache-dir", cache, "--check",
+                                      "--model-option", "scratch_multiplier=2", "--max-sequences", "2",
+                                      schema="chopinfer.serve-check.v1")
+        self.assertEqual(check["model_options"][0]["value"], "2")
+        self.assertEqual(check["settings"]["max-sequences"], "2")
+        # No device opens, so the refusal is the one serving gives after
+        # it opens the devices.
+        for options, reason in ((["--context-parallel-size", "3"], "--context-parallel-size 3"),
+                                (["--model-option", "scratch_multiplier=5"], "allowed range")):
+            result = self.host_run("serve", "--model", checkpoint, "--model-cache-dir", cache,
+                                   "--tensor-parallel-size", "4", *options, "--check")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, "")
+            self.assertIn(reason, result.stderr)
+            self.assertNotIn("startup module load:", result.stderr)
+            served = self.refusal(checkpoint, "--tensor-parallel-size", "4", *options, cache=cache)
+            message = next(line for line in result.stderr.splitlines() if reason in line)
+            self.assertIn(message.split(": ", 1)[1], served)
+
     def test_discovery_refuses_unsafe_missing_and_ambiguous_providers(self):
         for scenario in ["missing", "ambiguous", "writable", "symlink"]:
             install = self.root / scenario

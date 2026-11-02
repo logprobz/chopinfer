@@ -16,6 +16,46 @@ chopinfer serve --bundle "$PACKAGE" --checkpoint "$CHECKPOINT" --profile tp4-ar
 chopinfer profiles list models/qwen38/profiles.json
 ```
 
+Four commands describe these choices as JSON, for a launcher such as
+`choptop` to build `serve --model` commands from:
+
+```sh
+chopinfer models --json
+chopinfer models pick --model "$CHOPINFER_MIMO_CHECKPOINT" --json
+chopinfer models command --model "$CHOPINFER_MIMO_CHECKPOINT" \
+  --tensor-parallel-size 4 --profile tp4-ar -- --max-sequences 64
+chopinfer serve --model "$CHOPINFER_MIMO_CHECKPOINT" --tensor-parallel-size 4 --check
+```
+
+- `models --json` lists each installed model's profiles with their status,
+  rank count, drafter, sequence limits, qualification text and the
+  effective settings `serve --model` resolves from each, keyed by flag name
+  without `--`.
+- `models pick` names, for each rank count the model's profiles serve, the
+  profile `serve --model` picks for that checkpoint or the helper's
+  refusal. Each other profile at that count is either explicit options over
+  the pick, which resolve to exactly that profile's settings, or
+  unavailable with the reason: it drafts with another drafter than the
+  package carries, or it leaves a setting the pick sets at a default no
+  flag value names. Model options only the pick sets are listed as
+  inherited; a launcher resets them to the package defaults.
+- `models command` prints the `serve --model` arguments that serve a profile
+  with the given options. An option replaces the profile's flag of the same
+  name, `--model-option` the same option name, and `--speculative-tokens 0`
+  or a non-TBT `--prefill-budget` clears the profile's speculation or TBT
+  target as it does for `serve --model`. A duplicate or invalid option is
+  refused here. `--listen` and `--devices` stay with each instance.
+- `serve ... --check` runs every startup check that needs no device:
+  package preparation and verification, the drafter, model options,
+  speculation bounds, KV offload host memory, the topology at the planned
+  rank count with its context-parallel groups, and batch limits. It prints
+  the profile, the same effective settings and every model option with its
+  value and default, and opens no device or native module. A failure exits
+  nonzero with the message serving would give.
+
+`serve --describe-options` prints every serve option with its value shape,
+group and help, and the environment variables serve reads.
+
 An explicit option overrides a profile default. `--speculative-tokens 0`
 disables speculation but retains that profile's sequence cap. A profile
 cannot grant qualification to an override. `max_sequences` is the serving

@@ -139,6 +139,12 @@ fixed-batch replay --config FILE
 serve --model DIR [--tensor-parallel-size N] [--model-cache-dir DIR] [--activation-policy auto|checkpoint|bf16]
   [--modalities auto|all|text[,image][,video][,audio]] [--load-threads N]
   [--log-level error|warn|info|debug]
+serve SERVE-OPTIONS --check (runs every startup check that needs no device; prints JSON)
+serve --describe-options (prints every serve option and the environment serve reads as JSON)
+models --json (the installed models and their serving profiles)
+models pick --model DIR --json (the profile serve --model picks at each size, and the others)
+models command --model DIR --tensor-parallel-size N --profile NAME [-- SERVE-OPTIONS]
+  (the serve --model arguments that serve profile NAME with the options)
 verify --model DIR [--manifest FILE[#ENTRY]] [--allow-unrecorded] [--jobs N]
 eval list|run|verify-references --model DIR ... (eval --help lists the options)
 serve --bundle DIR [--checkpoint DIR [--load-threads N]
@@ -7696,6 +7702,22 @@ mod tests {
             .to_string();
         assert!(error.contains("links no device driver"), "{error}");
         assert!(error.contains("runtime-host/linux-cuda-host"), "{error}");
+    }
+
+    #[test]
+    fn help_lists_the_catalog_commands_and_the_check() {
+        for command in [
+            "serve SERVE-OPTIONS --check",
+            "serve --describe-options",
+            "models --json",
+            "models pick --model DIR --json",
+            "models command --model DIR --tensor-parallel-size N --profile NAME",
+        ] {
+            assert!(
+                super::HOST_COMMAND_USAGE_V1.contains(command),
+                "help omits {command}"
+            );
+        }
     }
 
     #[test]

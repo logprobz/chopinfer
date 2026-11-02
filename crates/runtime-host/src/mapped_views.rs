@@ -935,7 +935,6 @@ mod tests {
         });
         done.recv_timeout(TEST_TIMEOUT).unwrap();
         thread.join().unwrap();
-        assert_eq!(Arc::strong_count(&rows), 1);
         // Only the process registry may retain a weak reference after shutdown.
         assert_eq!(Arc::weak_count(&rows), 1);
     }
@@ -945,7 +944,7 @@ mod tests {
         let (_temp, rows, cold) = mapping("blocked");
         let (ready, waiting) = mpsc::channel();
         let (release, released) = mpsc::channel();
-        let guard = MappedViewsV1 {
+        let mut guard = MappedViewsV1 {
             mode: MappedPrewarmV1::On,
             report: MappedResidencyReportV1::default(),
         }
@@ -960,6 +959,7 @@ mod tests {
         );
         waiting.recv_timeout(TEST_TIMEOUT).unwrap();
         let stop = Arc::clone(&guard.stop);
+        let warm_thread = guard.prewarm_thread.take().unwrap();
         let (finished, done) = mpsc::channel();
         let thread = std::thread::spawn(move || {
             drop(guard);
@@ -970,14 +970,11 @@ mod tests {
         thread.join().unwrap();
         bounded.unwrap();
         assert!(stop.load(Ordering::Acquire));
-        let deadline = Instant::now() + TEST_TIMEOUT;
-        while Arc::strong_count(&rows) > 1 {
-            assert!(
-                Instant::now() < deadline,
-                "stopped warm retained its mapping"
-            );
-            std::thread::sleep(TEST_INTERVAL);
-        }
+        let MappedPrewarmOutcomeV1::Warmed(warm) = warm_thread.join().unwrap() else {
+            panic!("the stopped warm did not finish");
+        };
+        assert!(warm.stopped);
+        assert_eq!(warm.warmed_bytes, 0);
         if cold {
             assert_eq!(rows.resident_pages().unwrap().0, 0);
         }

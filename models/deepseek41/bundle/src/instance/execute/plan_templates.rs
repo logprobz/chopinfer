@@ -15,8 +15,10 @@
 //! A selection that lowers to another launch count or other collective
 //! flags refuses the patch, so the step tries the key's other templates,
 //! then lowers in full and keeps one more: a key keeps a template for each
-//! set of index batches its contexts take. Plans that keep anchors, read
-//! media rows or take position axes are never kept.
+//! set of index batches its contexts take. Anchors key only their packed
+//! rows and spare indices; slot seeds and ledger ownership are rebuilt
+//! each step outside the template. Plans that read media rows or take
+//! position axes are never kept.
 //!
 //! A template keeps the Engram plan of its first step with prepared
 //! gathers, and later steps audit only its index selections against the
@@ -24,7 +26,8 @@
 //!
 //! `prefill_plan_cache_verify` lowers every reused template again and
 //! makes every reused Engram plan again, and refuses the step if either
-//! fresh plan differs.
+//! fresh plan differs. It also rebuilds the anchor seeds and ledger list
+//! from the fresh lowering's layout and compares them with the run's.
 
 use super::{PREFILL, Run, skip};
 use crate::instance::Instance;
@@ -64,7 +67,7 @@ impl Key {
             head_rows: run.head_rows,
             cache: run.cache,
             dma: skip::Plan::dma_applies(instance, run),
-            structure: layout.structure()?,
+            structure: layout.structure(),
         })
     }
 }
@@ -105,7 +108,10 @@ impl Templates {
         };
         let refused = self.kept.counts().refused;
         if let Some(plan) = self.kept.reuse(&key, |plan| plan.patch(instance, run))? {
-            if verify && !plan.same(&skip::Plan::lower(instance, run, &layout)?)? {
+            if verify
+                && (!plan.same(&skip::Plan::lower(instance, run, &layout)?)?
+                    || run.anchors != layout.step(instance, run)?)
+            {
                 return Err("a reused prefill plan template differs from a fresh lowering".into());
             }
             return Ok(plan);

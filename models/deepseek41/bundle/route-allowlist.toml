@@ -1345,6 +1345,10 @@ rows = [[26, 192]]
 reason = "With the wide_draft option, drafter forwards of 13 to 32 items (65 to 160 block rows) run the drafter's 128-expert router on its exact F32 split route: its reuse plan admits forwards of up to 60 rows and no row tile is measured for its shape. The rows are the enclosing step's, from 13 drafting items at two rows each"
 task = "WIDE-DRAFT-router"
 
+# Direct prefill steps under the prefill_tail_folds candidate. Each exact-row
+# fold symbol a remainder selects has its own ranges, every width from 65 to
+# 8192 whose remainder pieces fall in its fallback set, so no inherited cone
+# or short-prefill exception covers a tail-fold gap.
 [[allow]]
 profiles = ["tail-folds-tp4-ar", "tail-folds-tp4-dspark"]
 phase = "prefill"

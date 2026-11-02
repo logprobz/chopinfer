@@ -335,8 +335,9 @@ and off. Each tail piece must match option-off lowering at the same row
 count. Direct-step allowances cover every selected remainder independently
 of inherited cone gaps. Internal single/chunk and packed output-cone tails
 have separate candidate allowances; preserved full launches newly exposed
-by changed fallback totals have explicit accounting exceptions. They do not establish GPU arithmetic equality. The candidate is
-not adopted, and no performance claim follows from those checks.
+by changed fallback totals have explicit accounting exceptions. These CPU
+checks do not establish GPU arithmetic equality. The candidate is not
+adopted, and no performance claim follows from them.
 
 The ignored lab probe compares the current route with the partition at
 85, 127, 789, 831, 853, 1557 and 1599 rows for the Flash TP4 q/kv/o,

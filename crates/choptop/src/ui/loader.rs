@@ -1373,52 +1373,77 @@ fn command_box(buffer: &mut Buffer, app: &App, area: Area, now: f64) {
             .filter(|(_, _, origin)| *origin == Origin::Set)
             .count()
         + usize::from(plan.explicit.listen.is_some());
-    let what = match pick {
-        Some(pick) if pick == profile.name => format!(
-            "{} is what serve --model picks at TP{}",
-            profile.name, profile.tensor_parallel
-        ),
-        Some(pick) => format!(
-            "{} is serve --model's {pick} with {from_profile} profile option{} (cyan)",
-            profile.name,
-            if from_profile == 1 { "" } else { "s" }
-        ),
-        None => profile.name.clone(),
+    let options = |count: usize| {
+        format!(
+            "{count} profile option{} (cyan)",
+            if count == 1 { "" } else { "s" }
+        )
     };
-    let mut pieces = vec![
-        (
-            sanitize(&format!("{what}; {set_here} set here (white).")),
-            Style::fg(Color::Dim),
-        ),
-        (format!("  Logs go to {}.", app.logs), Style::fg(Color::Dim)),
-    ];
+    // How the profile runs, from the longest telling to its name alone.
+    let whats = match pick {
+        Some(pick) if pick == profile.name => vec![
+            format!(
+                "{} is what serve --model picks at TP{}",
+                profile.name, profile.tensor_parallel
+            ),
+            format!(
+                "{}, serve --model's TP{} pick",
+                profile.name, profile.tensor_parallel
+            ),
+        ],
+        Some(pick) => vec![
+            format!(
+                "{} is serve --model's {pick} with {}",
+                profile.name,
+                options(from_profile)
+            ),
+            format!("{}: {pick} and {}", profile.name, options(from_profile)),
+        ],
+        None => Vec::new(),
+    }
+    .into_iter()
+    .chain([profile.name.clone()])
+    .map(|what| sanitize(&format!("{what}; {set_here} set here (white).")))
+    .collect::<Vec<_>>();
+    let logs = format!("  Logs go to {}.", app.logs);
+    let mut after = Vec::new();
     let replacing = replacing(app);
     if !replacing.is_empty() {
-        pieces.push((
+        after.push((
             format!("  Stops {} first.", replacing.join(", ")),
             Style::fg(Color::Yellow),
         ));
     }
     if problems == 0 && !plan.waits.is_empty() {
-        pieces.push((
+        after.push((
             format!("  Waiting for {}.", plan.waits.join(", ")),
             Style::fg(Color::Dim),
         ));
     }
-    // The logs note, then the profile's description, give way to what
-    // stops and what is awaited.
-    let length = |pieces: &[(String, Style)]| {
-        pieces
-            .iter()
-            .map(|(text, _)| text.chars().count())
-            .sum::<usize>()
+    // What stops and what is awaited always show. The profile's telling
+    // shortens before the logs note gives way.
+    let length = after
+        .iter()
+        .map(|(text, _): &(String, Style)| text.chars().count())
+        .sum::<usize>();
+    let logs_length = logs.chars().count();
+    let fits = |what: &String, logs: bool| {
+        what.chars().count() + if logs { logs_length } else { 0 } + length <= inner
     };
-    if length(&pieces) > inner {
-        pieces.remove(1);
+    let (what, logs) = [true, false]
+        .into_iter()
+        .find_map(|with_logs| {
+            whats
+                .iter()
+                .find(|what| fits(what, with_logs))
+                .map(|what| (what.clone(), with_logs.then_some(logs.clone())))
+        })
+        .unwrap_or_else(|| (whats.last().cloned().unwrap_or_default(), None));
+    let mut pieces = vec![(what, Style::fg(Color::Dim))];
+    if let Some(logs) = logs {
+        pieces.push((logs, Style::fg(Color::Dim)));
     }
-    if length(&pieces) > inner {
-        pieces[0].0 = sanitize(&format!("{}; {set_here} set here (white).", profile.name));
-    }
+    pieces.extend(after);
     let mut column = x + 2;
     for (text, style) in pieces {
         let room = usize::from(end.saturating_sub(column));

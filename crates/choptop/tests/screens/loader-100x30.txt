@@ -25,6 +25,6 @@
 │      --max-sequences 48 --listen 127.0.0.1:8310                                                  │
 │ B  CUDA_VISIBLE_DEVICES=2,3 chopinfer serve --model /models/qwen --tensor-parallel-size 2        │
 │      --max-sequences 48 --listen 127.0.0.1:8311                                                  │
-│ tp2-mtp is what serve --model picks at TP2; 1 set here (white).  Stops proc 48211 first.         │
+│ tp2-mtp; 1 set here (white).  Logs go to ~/.local/state/choptop/logs.  Stops proc 48211 first.   │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  Tab pane   ↑↓ jk move   ←→ change   Enter edit   / find   S start   Esc back

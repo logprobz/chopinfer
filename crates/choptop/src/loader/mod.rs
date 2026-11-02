@@ -299,6 +299,11 @@ impl Loader {
                 .as_ref()
                 .and_then(Fetch::ready)
                 .map(Vec::as_slice),
+            package_unread: match &self.package {
+                Some(Fetch::Waiting) => Some(""),
+                Some(Fetch::Failed(error)) => Some(error),
+                _ => None,
+            },
             listen: self
                 .plan
                 .placement
@@ -1631,6 +1636,63 @@ pub(crate) mod tests {
             loader.flash.clone().unwrap().text,
             "restored Qwen tp2-ar from 3d ago"
         );
+    }
+
+    #[test]
+    fn a_second_start_on_pending_launches_replaces_them() {
+        use crate::launch::occupancy::tests::uuid;
+        use crate::launch::placement::Dependency;
+        let mut catalog = catalog();
+        let mut live = live();
+        // Launch A waits for 48211; launch B started and is loading, with
+        // no GPU process and no listener yet.
+        live.scan(&discover::Report::Scan {
+            found: vec![
+                serve_process(48211, &["127.0.0.1:8310"], None),
+                serve_process(61204, &[], None),
+            ],
+            events: Vec::new(),
+        });
+        let reservations = vec![
+            Reservation {
+                label: "launch A".into(),
+                model: "DeepSeek-V4.1-Flash".into(),
+                gpus: vec![uuid(0), uuid(1)],
+                port: 8312,
+                process: None,
+            },
+            Reservation {
+                label: "proc 61204".into(),
+                model: "DeepSeek-V4.1-Flash".into(),
+                gpus: vec![uuid(2), uuid(3)],
+                port: 8313,
+                process: Some((61204, 612_040)),
+            },
+        ];
+        let mut loader = Loader::open(Some(vec![0, 1, 2, 3]), Vec::new());
+        loader.refresh(
+            &mut catalog,
+            &live,
+            &[],
+            &reservations,
+            1.0,
+            1.5,
+            &mut |_, _| true,
+        );
+        let placement = &loader.plan.placement;
+        // Both launches are replaced: A is cancelled, B stopped.
+        assert_eq!(placement.replaces, [0, 1]);
+        assert!(reservations[0].waiting() && !reservations[1].waiting());
+        assert_eq!(
+            placement.instances[0].after,
+            [
+                Dependency::Serve(placement.stops[0].clone()),
+                Dependency::Launch(0),
+                Dependency::Launch(1),
+            ]
+        );
+        // The pending launches' ports stay theirs; 48211's is reused.
+        assert_eq!(placement.instances[0].port, 8310);
     }
 
     #[test]

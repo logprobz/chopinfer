@@ -182,6 +182,9 @@ pub struct Context<'a> {
     pub custom: &'a [String],
     /// The package's options once read.
     pub package: Option<&'a [PackageOption]>,
+    /// Why they are not read yet: `None` before they are asked for, an
+    /// empty text while they are read, or the failure.
+    pub package_unread: Option<&'a str>,
     /// The first instance's address.
     pub listen: Option<String>,
     pub tensor_parallel: Option<u32>,
@@ -313,9 +316,14 @@ impl Context<'_> {
     }
 
     fn package_info(&self) -> Row {
-        match self.package {
-            Some(_) => Row::Info("this package declares none".to_owned(), Tone::Hint),
-            None => Row::Info(
+        match (self.package, self.package_unread) {
+            (Some(_), _) => Row::Info("this package declares none".to_owned(), Tone::Hint),
+            (None, Some("")) => Row::Info(
+                "reading them with serve --list-model-options".to_owned(),
+                Tone::Hint,
+            ),
+            (None, Some(error)) => Row::Info(error.to_owned(), Tone::Problem),
+            (None, None) => Row::Info(
                 "read with serve --list-model-options once a checkpoint and GPUs are chosen"
                     .to_owned(),
                 Tone::Hint,
@@ -662,5 +670,212 @@ impl Context<'_> {
                 "not set".to_owned()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::catalog::parse_package_options;
+    use crate::loader::Loader;
+    use crate::loader::tests::{catalog, live};
+
+    const PACKAGE: &str = include_str!("../../tests/fixtures/contracts/list-model-options.json");
+
+    /// A loader on DeepSeek's tp4-dspark at TP4 with the package's options
+    /// read.
+    fn loader() -> (Loader, Catalog) {
+        let mut catalog = catalog();
+        let mut loader = Loader::open(Some(vec![0, 1, 2, 3]), Vec::new());
+        loader.refresh(&mut catalog, &live(), &[], &[], 1.0, 1.5, &mut |_, _| true);
+        let generation = catalog
+            .outbox
+            .iter()
+            .find_map(|request| match request {
+                crate::catalog::Request::PackageOptions { generation, .. } => Some(*generation),
+                _ => None,
+            })
+            .unwrap();
+        loader.reply(crate::catalog::Reply::PackageOptions(
+            generation,
+            parse_package_options(PACKAGE),
+        ));
+        loader.refresh(&mut catalog, &live(), &[], &[], 1.0, 1.5, &mut |_, _| true);
+        (loader, catalog)
+    }
+
+    fn line(loader: &Loader, catalog: &Catalog, key: Key) -> Line {
+        loader.context(catalog).line(&Row::Option(key))
+    }
+
+    #[test]
+    fn groups_follow_the_catalog_and_three_start_closed() {
+        let (loader, catalog) = loader();
+        let rows = loader.rows(&catalog);
+        let groups = rows
+            .iter()
+            .filter_map(|row| match row {
+                Row::Group { group, open, .. } => Some((*group, *open)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            groups,
+            [
+                (Group::Model, true),
+                (Group::Scheduling, true),
+                (Group::Memory, true),
+                (Group::Speculation, true),
+                (Group::Prefill, true),
+                (Group::Cache, true),
+                (Group::Package, true),
+                (Group::Server, false),
+                (Group::Media, false),
+                (Group::Logging, false),
+                (Group::Custom, true),
+            ]
+        );
+        // --bundle does not apply to serve --model; --model is the
+        // checkpoint row; the closed groups show no rows.
+        let flags = rows
+            .iter()
+            .filter_map(|row| match row {
+                Row::Option(Key::Flag(name)) => Some(name.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            flags,
+            [
+                "model",
+                "modalities",
+                "max-sequences",
+                "gpu-memory-utilization",
+                "prefix-cache"
+            ]
+        );
+        assert_eq!(rows.last(), Some(&Row::Add));
+        let context = loader.context(&catalog);
+        assert_eq!(
+            context.name(&Row::Option(Key::Flag("model".into()))),
+            "checkpoint"
+        );
+        // Every flag and variable but the hidden ones, and the package's.
+        assert_eq!(context.option_count(), 9 + 2 + 4);
+    }
+
+    #[test]
+    fn values_say_where_they_come_from() {
+        let (mut loader, catalog) = loader();
+        let checkpoint = line(&loader, &catalog, Key::Flag("model".into()));
+        assert_eq!(
+            (checkpoint.value.as_str(), checkpoint.from),
+            ("$CHOPINFER_DEEPSEEK_CHECKPOINT", From::Environment)
+        );
+        let default = line(&loader, &catalog, Key::Flag("max-sequences".into()));
+        assert_eq!((default.value.as_str(), default.from), ("-", From::Default));
+        // An experimental profile has no evidence to stay under.
+        assert_eq!(default.note, Some(("experimental".to_owned(), Tone::Hint)));
+        loader
+            .edits
+            .insert(Key::Flag("max-sequences".into()), "48".into());
+        let set = line(&loader, &catalog, Key::Flag("max-sequences".into()));
+        assert_eq!((set.value.as_str(), set.from), ("48", From::Set));
+        assert_eq!(set.note, Some(("no evidence".to_owned(), Tone::Warning)));
+        loader
+            .edits
+            .insert(Key::Flag("max-sequences".into()), "4x".into());
+        let wrong = line(&loader, &catalog, Key::Flag("max-sequences".into()));
+        assert!(wrong.wrong);
+        assert_eq!(wrong.note, Some(("whole number".to_owned(), Tone::Problem)));
+        loader
+            .edits
+            .insert(Key::Flag("gpu-memory-utilization".into()), "1.5".into());
+        assert_eq!(
+            line(
+                &loader,
+                &catalog,
+                Key::Flag("gpu-memory-utilization".into())
+            )
+            .note,
+            Some(("share in (0, 1]".to_owned(), Tone::Problem))
+        );
+        // A secret is never shown.
+        loader
+            .edits
+            .insert(Key::Variable("CHOPINFER_API_KEY".into()), "secret".into());
+        let key = line(&loader, &catalog, Key::Variable("CHOPINFER_API_KEY".into()));
+        assert_eq!(
+            (key.value.as_str(), key.flag.as_str()),
+            ("****", "CHOPINFER_API_KEY=")
+        );
+        assert_eq!(key.note, Some(("environment".to_owned(), Tone::Hint)));
+        // A choice says so; a switch reads as off until set.
+        let cache = line(&loader, &catalog, Key::Flag("prefix-cache".into()));
+        assert!(cache.choice);
+        assert_eq!(
+            loader
+                .context(&catalog)
+                .choices(&Key::Flag("allow-credentials".into())),
+            ["off", "on"]
+        );
+    }
+
+    #[test]
+    fn package_options_read_their_profile_and_mark_other_values_unqualified() {
+        let (mut loader, catalog) = loader();
+        let rows = loader.rows(&catalog);
+        assert!(rows.contains(&Row::Package("dspark_draft_chunk_items".into())));
+        let context = loader.context(&catalog);
+        let items = context.line(&Row::Package("dspark_draft_chunk_items".into()));
+        // The profile's value is the package default: qualified.
+        assert_eq!(
+            (items.value.as_str(), items.from, items.note.clone()),
+            ("12", From::Profile, None)
+        );
+        let skip = context.line(&Row::Package("prefill_upper_skip".into()));
+        assert_eq!((skip.value.as_str(), skip.from), ("true", From::Profile));
+        let chunks = context.line(&Row::Package("prefill_chunk_tokens".into()));
+        assert_eq!(
+            (chunks.value.as_str(), chunks.from),
+            ("8192", From::Package)
+        );
+        assert!(chunks.choice);
+        loader.edits.insert(
+            Key::ModelOption("dspark_draft_chunk_items".into()),
+            "16".into(),
+        );
+        let set = loader
+            .context(&catalog)
+            .line(&Row::Package("dspark_draft_chunk_items".into()));
+        assert_eq!(set.note, Some(("unqualified".to_owned(), Tone::Warning)));
+        loader.edits.insert(
+            Key::ModelOption("dspark_draft_chunk_items".into()),
+            "64".into(),
+        );
+        let wrong = loader
+            .context(&catalog)
+            .line(&Row::Package("dspark_draft_chunk_items".into()));
+        assert_eq!(wrong.note, Some(("from 1 to 32".to_owned(), Tone::Problem)));
+        assert!(loader.plan.problems.is_empty());
+    }
+
+    #[test]
+    fn find_shows_matching_rows_in_open_groups() {
+        let (mut loader, catalog) = loader();
+        loader.find = "api".into();
+        let rows = loader.rows(&catalog);
+        assert_eq!(
+            rows,
+            [
+                Row::Group {
+                    group: Group::Server,
+                    count: 1,
+                    set: 0,
+                    open: true
+                },
+                Row::Option(Key::Variable("CHOPINFER_API_KEY".into())),
+            ]
+        );
     }
 }

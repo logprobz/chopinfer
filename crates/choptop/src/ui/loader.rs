@@ -688,9 +688,7 @@ fn options_pane(buffer: &mut Buffer, app: &App, area: Area, alone_: bool) {
             ),
             Style::fg(Color::White).bold(),
         ));
-        if !loader.finding {
-            title.push(("  Esc clears".to_owned(), Style::fg(Color::Dim)));
-        }
+        title.push(("  Esc clears".to_owned(), Style::fg(Color::Dim)));
     } else {
         title.push((
             format!("  {} serve options", context.option_count()),

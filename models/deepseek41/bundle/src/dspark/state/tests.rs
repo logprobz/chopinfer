@@ -1240,3 +1240,113 @@ fn raw_history_cells_older_than_the_window_are_never_read() {
         }
     }
 }
+
+fn executed_anchor_item(kind: Kind) -> State {
+    let mut state = State::new(config()).unwrap();
+    state.prepare(vec![prefill(41, 0, 0, 12)]).unwrap();
+    state.begin_execution().unwrap();
+    state.executed().unwrap();
+    let plan = state.begin_commit(&[]).unwrap();
+    state.complete_commit(plan).unwrap();
+    state
+        .prepare(vec![Rows {
+            request: 41,
+            slot: 0,
+            start: 12,
+            kind,
+        }])
+        .unwrap();
+    state.begin_execution().unwrap();
+    state.executed().unwrap();
+    state
+}
+
+#[test]
+fn anchor_commit_refuses_duplicate_requests_without_changing_the_transaction() {
+    let mut state = executed_anchor_item(Kind::Prefill { rows: 10 });
+    let before = state.clone();
+    assert_eq!(
+        state.begin_commit_with_anchors(&[], &[(41, 14), (41, 16)]),
+        Err("invalid DSpark commit anchor")
+    );
+    assert_eq!(state, before);
+    assert!(state.begin_commit_with_anchors(&[], &[(41, 14)]).is_ok());
+}
+
+#[test]
+fn anchor_commit_requires_an_interior_position_of_a_prefill_item() {
+    let mut state = executed_anchor_item(Kind::Prefill { rows: 10 });
+    let before = state.clone();
+    for anchor in [(41, 11), (41, 12), (41, 22), (41, 23), (42, 14)] {
+        assert_eq!(
+            state.begin_commit_with_anchors(&[], &[anchor]),
+            Err("invalid DSpark commit anchor"),
+            "{anchor:?}"
+        );
+        assert_eq!(state, before);
+    }
+    for kind in [Kind::Decode { drafts: 3 }, Kind::Verify { rows: 4 }] {
+        let mut state = executed_anchor_item(kind);
+        let before = state.clone();
+        // Position 14 is inside the row range, but this is not prefill.
+        assert_eq!(
+            state.begin_commit_with_anchors(&[(41, 1)], &[(41, 14)]),
+            Err("invalid DSpark commit anchor"),
+            "{kind:?}"
+        );
+        assert_eq!(state, before);
+        assert!(state.begin_commit(&[(41, 1)]).is_ok());
+    }
+}
+
+#[test]
+fn anchored_tails_from_33_through_63_rows_keep_the_split_bulk_state() {
+    let config = Config {
+        window: 128,
+        max_prefill_rows: 8192,
+        context_tokens: 1024,
+        position_capacity: 1024,
+        ..config()
+    };
+    let execute = |state: &mut State, row| {
+        state.prepare(vec![row]).unwrap();
+        state.begin_execution().unwrap();
+        state.executed().unwrap();
+    };
+    for tail_rows in 33..=63 {
+        let mut fused = State::new(config).unwrap();
+        execute(&mut fused, prefill(41, 0, 0, 768 + tail_rows));
+        let head = fused.begin_commit_with_anchors(&[], &[(41, 768)]).unwrap();
+        let tails = head.tails().to_vec();
+        fused.complete_commit(head).unwrap();
+        let tail = fused.begin_tail_commit(&tails).unwrap();
+        assert_eq!(tail.offset(0), 768);
+        assert_eq!(tail.items()[0].kept, tail_rows);
+        assert!(!tail.items()[0].project_from_staging);
+        fused.complete_commit(tail).unwrap();
+
+        let mut split = State::new(config).unwrap();
+        for row in [prefill(41, 0, 0, 768), prefill(41, 0, 768, tail_rows)] {
+            execute(&mut split, row);
+            let plan = split.begin_commit(&[]).unwrap();
+            split.complete_commit(plan).unwrap();
+        }
+        assert_eq!(fused, split, "tail rows: {tail_rows}");
+        let context = fused.context(41).unwrap();
+        assert_eq!(context.projected(), [768; 3]);
+        assert_eq!(context.bulk(), Some((768, 768 + u64::from(tail_rows))));
+        assert_eq!(
+            fused.snapshot(41),
+            Err("DSpark stages need catch-up before snapshot")
+        );
+        for state in [&mut fused, &mut split] {
+            for stage in 0..config.stages {
+                while let Some(pass) = state.projection(41, stage, config.window).unwrap() {
+                    state.projected(pass).unwrap();
+                }
+            }
+        }
+        assert_eq!(fused, split, "caught-up tail rows: {tail_rows}");
+        assert_eq!(fused.snapshot(41).unwrap(), split.snapshot(41).unwrap());
+    }
+}

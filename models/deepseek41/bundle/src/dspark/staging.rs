@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use super::calibration::{self, Context};
 use super::device::{DECODE_BASE, slice};
 use super::execution::{Diagnostic, DraftInput, Host, Input, TargetRows};
-use super::state::{BLOCK_ROWS, CommitPlan, Kind, Projection, RowProjection};
+use super::state::{BLOCK_ROWS, CommitItem, CommitPlan, Kind, Projection, RowProjection, Rows};
 use crate::engram_rows::{self, Destination, EngramRows, Hashed, Mapped, Step, Table};
 
 /// Bounded diagnostics returned after device target execution. Confidence
@@ -352,35 +352,36 @@ impl Staging {
         })
     }
 
-    fn pending_for(
-        &self,
-        plan: &CommitPlan,
-        item: &super::state::CommitItem,
-    ) -> Result<&Pending, String> {
+    /// Reconstruct the staged row span after matching both segments by request.
+    fn anchored_rows(item: &CommitItem, tail: Rows) -> Result<Rows, String> {
         let mut rows = item.rows;
-        if let Some(&(tail, _)) = plan
+        let Kind::Prefill { rows: head } = rows.kind else {
+            return Err("Engram anchor head is not prefill".into());
+        };
+        let Kind::Prefill { rows: count } = tail.kind else {
+            return Err("Engram anchor tail is not prefill".into());
+        };
+        if tail.slot != rows.slot || tail.start != rows.start + u64::from(head) || item.kept != head
+        {
+            return Err("Engram anchor segments are not contiguous".into());
+        }
+        rows.kind = Kind::Prefill {
+            rows: head
+                .checked_add(count)
+                .ok_or("Engram anchor rows overflow")?,
+        };
+        Ok(rows)
+    }
+
+    fn pending_for(&self, plan: &CommitPlan, item: &CommitItem) -> Result<&Pending, String> {
+        let rows = match plan
             .tails()
             .iter()
-            .find(|(tail, _)| tail.request == rows.request)
+            .find(|(tail, _)| tail.request == item.rows.request)
         {
-            let Kind::Prefill { rows: head } = rows.kind else {
-                return Err("Engram anchor head is not prefill".into());
-            };
-            let Kind::Prefill { rows: count } = tail.kind else {
-                return Err("Engram anchor tail is not prefill".into());
-            };
-            if tail.slot != rows.slot
-                || tail.start != rows.start + u64::from(head)
-                || item.kept != head
-            {
-                return Err("Engram anchor segments are not contiguous".into());
-            }
-            rows.kind = Kind::Prefill {
-                rows: head
-                    .checked_add(count)
-                    .ok_or("Engram anchor rows overflow")?,
-            };
-        }
+            Some(&(tail, _)) => Self::anchored_rows(item, tail)?,
+            None => item.rows,
+        };
         self.pending
             .iter()
             .find(|p| p.rows.rows == rows)

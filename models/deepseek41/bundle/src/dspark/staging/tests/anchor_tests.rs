@@ -80,3 +80,37 @@ fn anchor_segments_publish_the_split_history_and_reject_a_wrong_head() {
     }
     assert_eq!(staging.rows.history(7), split.rows.history(7));
 }
+
+#[test]
+fn anchor_segments_refuse_noncontiguous_slots_positions_and_kept_rows() {
+    let mut lifecycle = state();
+    executed(&mut lifecycle, rows(0, 789));
+    let plan = lifecycle
+        .begin_commit_with_anchors(&[], &[(7, 768)])
+        .unwrap();
+    let head = plan.items()[0];
+    let tail = plan.tails()[0].0;
+    assert_eq!(Staging::anchored_rows(&head, tail).unwrap(), rows(0, 789));
+    for (head, tail) in [
+        (head, Rows { slot: 1, ..tail }),
+        (
+            head,
+            Rows {
+                start: tail.start + 1,
+                ..tail
+            },
+        ),
+        (
+            CommitItem {
+                kept: head.kept - 1,
+                ..head
+            },
+            tail,
+        ),
+    ] {
+        assert_eq!(
+            Staging::anchored_rows(&head, tail).unwrap_err(),
+            "Engram anchor segments are not contiguous"
+        );
+    }
+}

@@ -555,6 +555,7 @@ enum Scenario {
     Cancel,
     TinyHead,
     OverlappingHead,
+    LongTail,
 }
 #[derive(PartialEq, Eq)]
 struct Outcome {
@@ -570,6 +571,7 @@ fn run(dspark: bool, fused: bool, scenario: Scenario) -> Outcome {
     let mut run = Run::new(dspark, fused);
     let (start, end, count) = match scenario {
         Scenario::Cold | Scenario::Cancel => (0, 789, 1),
+        Scenario::LongTail => (0, 831, 1),
         Scenario::Odd | Scenario::Restore => (829, 900, 1),
         Scenario::Near => (768, 850, 1),
         Scenario::Mixed => (829, 900, 1),
@@ -797,4 +799,9 @@ fn tiny_head_preserves_staged_tail() {
 #[test]
 fn overlapping_head_preserves_staged_tail() {
     compare(Scenario::OverlappingHead);
+}
+
+#[test]
+fn long_tail_preserves_deferred_bulk_projection() {
+    compare(Scenario::LongTail);
 }

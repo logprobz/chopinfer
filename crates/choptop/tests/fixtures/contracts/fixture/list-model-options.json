@@ -1,0 +1,15 @@
+{
+  "schema": "chop.model-options.v1",
+  "options": [
+    {
+      "name": "scratch_multiplier",
+      "definition": {
+        "type": "integer",
+        "default": 1,
+        "minimum": 1,
+        "maximum": 4
+      },
+      "default_is_qualified": false
+    }
+  ]
+}

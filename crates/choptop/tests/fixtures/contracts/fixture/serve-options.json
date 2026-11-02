@@ -1,0 +1,817 @@
+{
+  "schema": "chopinfer.serve-options.v1",
+  "options": [
+    {
+      "flag": "--bundle",
+      "value": "DIR",
+      "choices": null,
+      "group": "model",
+      "help": "the package directory to serve",
+      "model_launch": false,
+      "repeatable": false
+    },
+    {
+      "flag": "--model",
+      "value": "DIR",
+      "choices": null,
+      "group": "model",
+      "help": "the checkpoint directory to prepare a package for and serve",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--tensor-parallel-size",
+      "value": "N",
+      "choices": null,
+      "group": "model",
+      "help": "the rank count --model prepares and serves (default 4)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--model-cache-dir",
+      "value": "DIR",
+      "choices": null,
+      "group": "model",
+      "help": "where --model keeps prepared packages",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--model-option",
+      "value": "TEXT",
+      "choices": null,
+      "group": "model",
+      "help": "a model option the package declares, as NAME=VALUE",
+      "model_launch": true,
+      "repeatable": true
+    },
+    {
+      "flag": "--list-model-options",
+      "value": "none",
+      "choices": null,
+      "group": "model",
+      "help": "print the package's model options as JSON and exit",
+      "model_launch": false,
+      "repeatable": false
+    },
+    {
+      "flag": "--activation-policy",
+      "value": "TEXT",
+      "choices": [
+        "auto",
+        "checkpoint",
+        "bf16"
+      ],
+      "group": "model",
+      "help": "the activation precision --model prepares the package for",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--modalities",
+      "value": "TEXT",
+      "choices": null,
+      "group": "model",
+      "help": "auto, all, or a list of text, image, video and audio",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--served-model-name",
+      "value": "TEXT",
+      "choices": null,
+      "group": "model",
+      "help": "the names clients request the model by, one or more",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--topology",
+      "value": "TEXT",
+      "choices": null,
+      "group": "model",
+      "help": "the package topology to serve",
+      "model_launch": false,
+      "repeatable": false
+    },
+    {
+      "flag": "--profile",
+      "value": "TEXT",
+      "choices": null,
+      "group": "model",
+      "help": "a serving profile of a --bundle package, as NAME or FILE#NAME",
+      "model_launch": false,
+      "repeatable": false
+    },
+    {
+      "flag": "--devices",
+      "value": "TEXT",
+      "choices": null,
+      "group": "model",
+      "help": "visible device ordinals, one per rank, as 0,1,...",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--checkpoint",
+      "value": "DIR",
+      "choices": null,
+      "group": "model",
+      "help": "the checkpoint a --bundle package's weight plan loads",
+      "model_launch": false,
+      "repeatable": false
+    },
+    {
+      "flag": "--load-threads",
+      "value": "N",
+      "choices": null,
+      "group": "model",
+      "help": "packing workers per rank of a direct load",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--weight-keeper",
+      "value": "DIR",
+      "choices": null,
+      "group": "model",
+      "help": "map the rank images the weight keeper in DIR lends",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--weight-keeper-policy",
+      "value": "TEXT",
+      "choices": [
+        "prefer",
+        "require"
+      ],
+      "group": "model",
+      "help": "load without the keeper when it lends nothing (prefer), or fail (require)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--weight-keeper-identity",
+      "value": "FILE",
+      "choices": null,
+      "group": "model",
+      "help": "the content proof that lets this build borrow a keeper's rank images",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--check",
+      "value": "none",
+      "choices": null,
+      "group": "model",
+      "help": "run the startup checks that need no device, print the result as JSON and exit",
+      "model_launch": false,
+      "repeatable": false
+    },
+    {
+      "flag": "--describe-options",
+      "value": "none",
+      "choices": null,
+      "group": "model",
+      "help": "print serve's options and environment as JSON and exit; it ends the command",
+      "model_launch": false,
+      "repeatable": false
+    },
+    {
+      "flag": "--listen",
+      "value": "TEXT",
+      "choices": null,
+      "group": "server",
+      "help": "the address and port to listen on (default 127.0.0.1:8310)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--enable-request-id-headers",
+      "value": "none",
+      "choices": null,
+      "group": "server",
+      "help": "return each request's ID in response headers",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--api-key",
+      "value": "TEXT",
+      "choices": null,
+      "group": "server",
+      "help": "the key clients must send; CHOPINFER_API_KEY keeps it off the command line",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--allowed-origins",
+      "value": "JSON",
+      "choices": null,
+      "group": "server",
+      "help": "CORS origins, as a JSON array of strings",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--allowed-methods",
+      "value": "JSON",
+      "choices": null,
+      "group": "server",
+      "help": "CORS methods, as a JSON array of strings",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--allowed-headers",
+      "value": "JSON",
+      "choices": null,
+      "group": "server",
+      "help": "CORS headers, as a JSON array of strings",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--allow-credentials",
+      "value": "none",
+      "choices": null,
+      "group": "server",
+      "help": "allow CORS credentials",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--max-context-tokens",
+      "value": "N",
+      "choices": null,
+      "group": "scheduling",
+      "help": "the most tokens one request may hold; the package's context by default",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--gpu-memory-utilization",
+      "value": "F",
+      "choices": null,
+      "group": "memory",
+      "help": "the share of each GPU's total memory this server may take, in (0, 1]",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--graph-memory-reserve-mib",
+      "value": "N",
+      "choices": null,
+      "group": "memory",
+      "help": "MiB per rank kept out of the KV pool for CUDA graphs (default 1024)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--kv-pages",
+      "value": "N",
+      "choices": null,
+      "group": "memory",
+      "help": "the most KV pages to allocate; as many as fit by default",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--context-parallel-size",
+      "value": "N",
+      "choices": null,
+      "group": "memory",
+      "help": "ranks of one context-parallel group, which must divide the rank count (default 1)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--kv-cache-dtype",
+      "value": "TEXT",
+      "choices": [
+        "auto",
+        "bf16",
+        "fp8",
+        "mixed"
+      ],
+      "group": "memory",
+      "help": "the KV cache element; auto runs the package's preference",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--speculative-tokens",
+      "value": "N",
+      "choices": null,
+      "group": "speculation",
+      "help": "draft tokens per item and step; 0 serves without speculation",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--speculative-rows",
+      "value": "N",
+      "choices": null,
+      "group": "speculation",
+      "help": "the most verify rows of one step; the package's by default",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--speculation",
+      "value": "TEXT",
+      "choices": [
+        "fixed",
+        "balanced",
+        "adaptive",
+        "table"
+      ],
+      "group": "speculation",
+      "help": "how many drafts each step verifies (default adaptive)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--speculation-costs",
+      "value": "TEXT",
+      "choices": null,
+      "group": "speculation",
+      "help": "table mode's step costs, as ITEMS:BASE:STEP:DRAFTING:ROW,...",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--speculation-depths",
+      "value": "TEXT",
+      "choices": null,
+      "group": "speculation",
+      "help": "balanced mode's depth schedule, as ITEMS:DEPTH,...",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--speculation-widths",
+      "value": "TEXT",
+      "choices": null,
+      "group": "speculation",
+      "help": "the verify widths balanced plans land on, as ROWS,...",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--speculation-graph-rows",
+      "value": "N",
+      "choices": null,
+      "group": "speculation",
+      "help": "the widest verify step captured in a graph",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--speculation-confidence",
+      "value": "JSON",
+      "choices": null,
+      "group": "speculation",
+      "help": "a drafter confidence calibration for balanced mode, as JSON, or off",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--draft-cost",
+      "value": "TEXT",
+      "choices": [
+        "per-token",
+        "per-block"
+      ],
+      "group": "speculation",
+      "help": "how the drafter's cost grows with the drafts of a step",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--prefix-cache",
+      "value": "TEXT",
+      "choices": [
+        "on",
+        "off"
+      ],
+      "group": "cache",
+      "help": "reuse cached prompt prefixes when the package declares it (default on)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--verify-warmup",
+      "value": "TEXT",
+      "choices": [
+        "on",
+        "off"
+      ],
+      "group": "speculation",
+      "help": "warm up every verify graph shape at startup (default on)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--prefill-budget",
+      "value": "TEXT",
+      "choices": [
+        "fixed",
+        "decode-aware",
+        "tbt"
+      ],
+      "group": "prefill",
+      "help": "how prefill shares a step with decoding requests (default fixed)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--prefill-timing-cuts",
+      "value": "TEXT",
+      "choices": [
+        "off",
+        "fixed",
+        "adaptive"
+      ],
+      "group": "prefill",
+      "help": "timing-selected prefill cuts beside decoding; fixed and adaptive need tbt",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--prefill-itl-target-ms",
+      "value": "N",
+      "choices": null,
+      "group": "prefill",
+      "help": "decode-aware: the mixed step's time target in ms, 1 to 60000",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--prefill-decode-steps",
+      "value": "N",
+      "choices": null,
+      "group": "prefill",
+      "help": "decode-aware: the most decode steps the prefill part takes, 1 to 64",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--decode-tbt-target-ms",
+      "value": "N",
+      "choices": null,
+      "group": "prefill",
+      "help": "tbt: the decode stall target in ms (default 100)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--mixed-min-prefill-tokens",
+      "value": "N",
+      "choices": null,
+      "group": "prefill",
+      "help": "tbt: the prefill tokens every mixed step takes at least (default 512)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--mixed-decode-steps",
+      "value": "N",
+      "choices": null,
+      "group": "prefill",
+      "help": "tbt: decode-only steps after each mixed step, 0 to 8 (default 0)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--kv-offload-gib",
+      "value": "N",
+      "choices": null,
+      "group": "cache",
+      "help": "host memory for offloaded KV pages in GiB; 0 turns offload off",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--kv-offload-min-tokens",
+      "value": "N",
+      "choices": null,
+      "group": "cache",
+      "help": "the fewest tokens a sequence offloads (default 64)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--kv-offload-gbps",
+      "value": "F",
+      "choices": null,
+      "group": "cache",
+      "help": "the offload rate cap per link in GB/s; uncapped by default",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--kv-offload-prefix",
+      "value": "TEXT",
+      "choices": [
+        "on",
+        "off"
+      ],
+      "group": "cache",
+      "help": "offload cached prefixes; only off is served",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--admission",
+      "value": "TEXT",
+      "choices": [
+        "reserved",
+        "optimistic"
+      ],
+      "group": "scheduling",
+      "help": "how admission reserves KV pages (default optimistic)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--admission-watermark",
+      "value": "F",
+      "choices": null,
+      "group": "scheduling",
+      "help": "optimistic: the share of pages kept free of reservations, in [0, 1)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--max-preemptions",
+      "value": "N",
+      "choices": null,
+      "group": "scheduling",
+      "help": "optimistic: preemptions before a request keeps its worst case (default 3)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--debug-preempt-every",
+      "value": "N",
+      "choices": null,
+      "group": "debug",
+      "help": "qualification only: preempt decoding requests every N tokens",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--debug-swap-every",
+      "value": "N",
+      "choices": null,
+      "group": "debug",
+      "help": "qualification only: swap decoding requests to host memory every N tokens",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--max-sequences",
+      "value": "N",
+      "choices": null,
+      "group": "scheduling",
+      "help": "the most sequences served at once (default 8)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--max-batch-tokens",
+      "value": "N",
+      "choices": null,
+      "group": "scheduling",
+      "help": "the token budget of one scheduled batch",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--prefill-chunk-tokens",
+      "value": "N",
+      "choices": null,
+      "group": "prefill",
+      "help": "prompt tokens per prefill chunk, within the batch budget",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--queue-depth",
+      "value": "N",
+      "choices": null,
+      "group": "scheduling",
+      "help": "requests that may wait beyond the served sequences; unbounded by default",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--queue-wait-ms",
+      "value": "N",
+      "choices": null,
+      "group": "scheduling",
+      "help": "how long a request may wait for admission; 0 waits without limit",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--drain-timeout-ms",
+      "value": "N",
+      "choices": null,
+      "group": "server",
+      "help": "how long a stop drains admitted requests (default 30000)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--log-level",
+      "value": "TEXT",
+      "choices": [
+        "error",
+        "warn",
+        "info",
+        "debug"
+      ],
+      "group": "logging",
+      "help": "the log level; CHOPINFER_LOG_LEVEL or info by default",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--max-request-body-bytes",
+      "value": "N",
+      "choices": null,
+      "group": "server",
+      "help": "the largest request body accepted",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--max-request-string-bytes",
+      "value": "N",
+      "choices": null,
+      "group": "server",
+      "help": "the largest string one request may carry",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--responses-store-bytes",
+      "value": "N",
+      "choices": null,
+      "group": "server",
+      "help": "the byte budget of stored Responses; 0 stores none",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--max-tokenizer-input-bytes",
+      "value": "N",
+      "choices": null,
+      "group": "server",
+      "help": "the most bytes one tokenizer input may carry, 1 to 67108864",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--max-images-per-request",
+      "value": "N",
+      "choices": null,
+      "group": "media",
+      "help": "the most images one request may carry; the package's count by default",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--allowed-local-media-path",
+      "value": "DIR",
+      "choices": null,
+      "group": "media",
+      "help": "the directory file:// media may be read from",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--allowed-media-domains",
+      "value": "TEXT",
+      "choices": null,
+      "group": "media",
+      "help": "the hosts remote media may come from, as HOST,...",
+      "model_launch": true,
+      "repeatable": true
+    },
+    {
+      "flag": "--media-allow-private-addresses",
+      "value": "TEXT",
+      "choices": [
+        "on",
+        "off"
+      ],
+      "group": "media",
+      "help": "let remote media resolve to private addresses (default off)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--media-request-timeout-ms",
+      "value": "N",
+      "choices": null,
+      "group": "media",
+      "help": "the time limit of one remote media request, 1 to 300000 ms",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--media-fetch-timeout-ms",
+      "value": "N",
+      "choices": null,
+      "group": "media",
+      "help": "the time limit of one remote media fetch with its redirects, 1 to 300000 ms",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--media-connect-timeout-ms",
+      "value": "N",
+      "choices": null,
+      "group": "media",
+      "help": "the time limit of one remote media connection, 1 to 300000 ms",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--media-max-redirects",
+      "value": "N",
+      "choices": null,
+      "group": "media",
+      "help": "the most redirects one remote media fetch follows",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--debug-reference-tokens",
+      "value": "FILE",
+      "choices": null,
+      "group": "debug",
+      "help": "qualification only: teacher-forced reference tokens",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--fake-host-services",
+      "value": "none",
+      "choices": null,
+      "group": "debug",
+      "help": "serve on host-memory device services, for CPU tests",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--architecture",
+      "value": "TEXT",
+      "choices": null,
+      "group": "debug",
+      "help": "the device architecture the host answers a package with (default sm_120f)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--capability",
+      "value": "TEXT",
+      "choices": null,
+      "group": "debug",
+      "help": "a host capability to declare beyond the built-in ones",
+      "model_launch": true,
+      "repeatable": true
+    }
+  ],
+  "environment": [
+    {
+      "name": "CHOPINFER_API_KEY",
+      "value": "TEXT",
+      "secret": true,
+      "help": "the key clients must send when --api-key is not given (VLLM_API_KEY when it is unset)"
+    },
+    {
+      "name": "CHOPINFER_LOG_LEVEL",
+      "value": "TEXT",
+      "secret": false,
+      "help": "error, warn, info or debug: the log level when --log-level is not given"
+    },
+    {
+      "name": "CHOPINFER_LOG_SUMMARY_SECONDS",
+      "value": "N",
+      "secret": false,
+      "help": "seconds between summary lines, 1 to 86400 (default 60)"
+    },
+    {
+      "name": "CHOPINFER_MODEL_OPTIONS",
+      "value": "TEXT",
+      "secret": false,
+      "help": "model options as NAME=VALUE,..., under the profile's and any --model-option"
+    }
+  ]
+}

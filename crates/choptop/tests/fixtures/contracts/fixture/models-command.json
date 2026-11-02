@@ -1,0 +1,28 @@
+{
+  "schema": "chopinfer.models-command.v1",
+  "arguments": [
+    "serve",
+    "--model",
+    "/models/fixture",
+    "--tensor-parallel-size",
+    "4",
+    "--max-batch-tokens",
+    "128",
+    "--prefill-chunk-tokens",
+    "128",
+    "--gpu-memory-utilization",
+    "1",
+    "--kv-cache-dtype",
+    "auto",
+    "--prefix-cache",
+    "off",
+    "--speculative-tokens",
+    "0",
+    "--draft-cost",
+    "per-token",
+    "--queue-depth",
+    "8",
+    "--max-sequences",
+    "1"
+  ]
+}

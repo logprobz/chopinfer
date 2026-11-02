@@ -784,6 +784,53 @@ print(json.dumps(reply), flush=True)
         self.assertEqual(check["model_options"][0]["value"], "2")
         self.assertEqual(check["settings"]["max-sequences"], "2")
 
+    def test_the_catalog_documents_match_choptops_copies(self):
+        # choptop's tests parse copies of these documents
+        # (crates/choptop/tests/contracts.rs), with the temporary paths
+        # replaced. A change to a document fails here first: update the copy
+        # on purpose, and choptop's parsers with it, never to hide a mismatch.
+        checkpoint = self.copy_checkpoint("contract-checkpoint")
+        config = json.loads((checkpoint / "config.json").read_text())
+        config["scratch_multiplier"] = 1
+        (checkpoint / "config.json").write_text(json.dumps(config))
+        model = ["--model", checkpoint]
+        serve = ["serve", *model, "--tensor-parallel-size", "4", "--model-cache-dir", self.root / "contract-cache"]
+        documents = {
+            "serve-options": self.host_document("serve", "--describe-options", schema="chopinfer.serve-options.v1"),
+            "models": self.host_document("models", "--json", schema="chopinfer.models.v1"),
+            "models-pick": self.host_document("models", "pick", *model, "--json", schema="chopinfer.models-pick.v1"),
+            "models-command": self.host_document("models", "command", *model, "--tensor-parallel-size", "4",
+                                                 "--profile", "tp4-ar", "--", "--max-sequences", "1",
+                                                 schema="chopinfer.models-command.v1"),
+            "serve-check": self.host_document(*serve, "--check", schema="chopinfer.serve-check.v1"),
+            "list-model-options": self.host_document(*serve, "--list-model-options", schema="chop.model-options.v1"),
+        }
+        placeholders = [(str(checkpoint), "/models/fixture"), (str(self.root), "/tmp/fixture")]
+
+        def placed(value):
+            if isinstance(value, str):
+                for path, placeholder in placeholders:
+                    value = value.replace(path, placeholder)
+                return value
+            if isinstance(value, list):
+                return [placed(item) for item in value]
+            if isinstance(value, dict):
+                return {key: placed(item) for key, item in value.items()}
+            return value
+
+        copies = ROOT / "crates/choptop/tests/fixtures/contracts/fixture"
+        written = Path(tempfile.mkdtemp(prefix="choptop-contracts-"))
+        differ = []
+        for name, (document, _) in documents.items():
+            document = placed(document)
+            copy = copies / f"{name}.json"
+            if not copy.is_file() or json.loads(copy.read_text()) != document:
+                (written / copy.name).write_text(json.dumps(document, indent=2, ensure_ascii=False) + "\n")
+                differ.append(copy.name)
+        self.assertEqual(differ, [], f"chopinfer printed other documents than choptop's copies in {copies}; "
+                                     f"what it printed is in {written}")
+        shutil.rmtree(written)
+
     def refusal_message(self, stderr):
         # The host's refusal is its last report: the program name and the
         # message, with the usage text a usage error carries.

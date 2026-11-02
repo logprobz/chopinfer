@@ -676,6 +676,49 @@ mod tests {
     }
 
     #[test]
+    fn a_reopened_loader_takes_no_answer_meant_for_the_one_before() {
+        use crate::catalog::{Fetch, Reply, Request};
+        let mut app = app(1);
+        app.catalog = crate::loader::tests::catalog();
+        app.live = crate::loader::tests::live();
+        app.probe = |_, _| true;
+        // The package's options and the command line it asked for.
+        let asked = |app: &mut App| {
+            let outbox = std::mem::take(&mut app.catalog.outbox);
+            let package = outbox.iter().find_map(|request| match request {
+                Request::PackageOptions { generation, .. } => Some(*generation),
+                _ => None,
+            });
+            let command = outbox.iter().find_map(|request| match request {
+                Request::Command { generation, .. } => Some(*generation),
+                _ => None,
+            });
+            (package.unwrap(), command.unwrap())
+        };
+        press(&mut app, KeyCode::Char('l'));
+        app.tick(1.5);
+        let (package, command) = asked(&mut app);
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Char('l'));
+        app.tick(1.5);
+        let (again, command_again) = asked(&mut app);
+        assert!(again != package && again != command && command_again != command);
+        // The first loader's answers arrive after it closed.
+        app.catalog_reply(Reply::PackageOptions(package, Ok(Vec::new())));
+        let stale = vec!["serve".to_owned(), "--stale".to_owned()];
+        app.catalog_reply(Reply::Command(command, Ok(stale)));
+        app.tick(1.5);
+        assert_eq!(app.loader.package, Some(Fetch::Waiting));
+        assert_eq!(app.loader.plan.command, None);
+        // Its own are taken.
+        app.catalog_reply(Reply::PackageOptions(again, Ok(Vec::new())));
+        app.catalog_reply(Reply::Command(command_again, Ok(vec!["serve".to_owned()])));
+        app.tick(1.5);
+        assert_eq!(app.loader.package, Some(Fetch::Ready(Vec::new())));
+        assert_eq!(app.loader.plan.command, Some(vec!["serve".to_owned()]));
+    }
+
+    #[test]
     fn the_selection_follows_its_row() {
         let mut app = app(3);
         press(&mut app, KeyCode::Down);

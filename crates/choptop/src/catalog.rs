@@ -692,7 +692,8 @@ pub enum Request {
     Models,
     /// `models pick --model DIR --json`.
     Pick(PathBuf),
-    /// `models command`, answered with the same generation.
+    /// `models command`, answered with the same generation: a number from
+    /// [`Catalog::ticket`], never reused while choptop runs.
     Command {
         generation: u64,
         checkpoint: PathBuf,
@@ -1168,6 +1169,10 @@ pub struct Catalog {
     pub environment: BTreeMap<String, String>,
     /// Requests for the worker, taken by the main loop.
     pub outbox: Vec<Request>,
+    /// The last number handed to a loader's request. It outlives each
+    /// loader, so a reply to a request of one that closed never matches a
+    /// request of the next.
+    tickets: u64,
 }
 
 impl Catalog {
@@ -1181,6 +1186,7 @@ impl Catalog {
             checkpoints,
             environment: BTreeMap::new(),
             outbox: Vec::new(),
+            tickets: 0,
         }
     }
 
@@ -1214,6 +1220,12 @@ impl Catalog {
         }
         self.picks.insert(directory.clone(), Fetch::Waiting);
         self.outbox.push(Request::Pick(directory));
+    }
+
+    /// A number for a loader's request that no earlier request had.
+    pub fn ticket(&mut self) -> u64 {
+        self.tickets += 1;
+        self.tickets
     }
 
     /// Asks a request the loader owns, such as a command line.

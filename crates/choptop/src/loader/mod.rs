@@ -174,13 +174,14 @@ pub struct Loader {
     /// A checkpoint typed in, kept once `models pick` names its model.
     pub typed_checkpoint: Option<PathBuf>,
     pub plan: Plan,
-    /// The `models command` asked last, its generation and its answer.
+    /// The `models command` asked last, the catalog's ticket of the
+    /// request whose answer is awaited, and its answer.
     command_asked: Option<(PathBuf, u32, String, Vec<String>)>,
-    command_generation: u64,
+    command_ticket: Option<u64>,
     command_answer: Option<Result<Vec<String>, String>>,
     /// The package options asked last, by checkpoint and size.
     package_asked: Option<(PathBuf, u32)>,
-    package_generation: u64,
+    package_ticket: Option<u64>,
     pub package: Option<Fetch<Vec<PackageOption>>>,
 }
 
@@ -211,10 +212,10 @@ impl Default for Loader {
             typed_checkpoint: None,
             plan: Plan::default(),
             command_asked: None,
-            command_generation: 0,
+            command_ticket: None,
             command_answer: None,
             package_asked: None,
-            package_generation: 0,
+            package_ticket: None,
             package: None,
         }
     }
@@ -546,10 +547,11 @@ impl Loader {
         let package_key = (checkpoint.clone(), tensor_parallel);
         if self.package_asked.as_ref() != Some(&package_key) {
             self.package_asked = Some(package_key);
-            self.package_generation += 1;
+            let ticket = catalog.ticket();
+            self.package_ticket = Some(ticket);
             self.package = Some(Fetch::Waiting);
             catalog.send(Request::PackageOptions {
-                generation: self.package_generation,
+                generation: ticket,
                 arguments: vec![
                     "--model".to_owned(),
                     checkpoint.display().to_string(),
@@ -577,10 +579,11 @@ impl Loader {
         };
         let command_key = (checkpoint, tensor_parallel, profile, explicit.arguments());
         if self.command_asked.as_ref() != Some(&command_key) {
-            self.command_generation += 1;
+            let ticket = catalog.ticket();
+            self.command_ticket = Some(ticket);
             self.command_answer = None;
             catalog.send(Request::Command {
-                generation: self.command_generation,
+                generation: ticket,
                 checkpoint: command_key.0.clone(),
                 tensor_parallel,
                 profile: command_key.2.clone(),
@@ -594,7 +597,7 @@ impl Loader {
     /// and any answer still on its way.
     fn forget_package(&mut self) {
         if self.package_asked.take().is_some() {
-            self.package_generation += 1;
+            self.package_ticket = None;
             self.package = None;
         }
     }
@@ -602,18 +605,19 @@ impl Loader {
     /// Drops the command line once the form it was asked for changed.
     fn forget_command(&mut self) {
         if self.command_asked.take().is_some() {
-            self.command_generation += 1;
+            self.command_ticket = None;
             self.command_answer = None;
         }
     }
 
-    /// Takes a reply to a request the loader made.
+    /// Takes a reply to a request the loader made: only the answer to the
+    /// request it awaits, not one of an earlier form or an earlier loader.
     pub fn reply(&mut self, reply: Reply) {
         match reply {
-            Reply::Command(generation, result) if generation == self.command_generation => {
+            Reply::Command(ticket, result) if Some(ticket) == self.command_ticket => {
                 self.command_answer = Some(result);
             }
-            Reply::PackageOptions(generation, result) if generation == self.package_generation => {
+            Reply::PackageOptions(ticket, result) if Some(ticket) == self.package_ticket => {
                 self.package = Some(result.into());
             }
             _ => {}

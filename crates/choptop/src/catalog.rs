@@ -714,6 +714,13 @@ pub enum Request {
         options: Vec<String>,
         environment: Vec<(String, String)>,
     },
+    /// `ARGUMENTS --check`, a launch's serve arguments, with its variables
+    /// set.
+    Check {
+        generation: u64,
+        arguments: Vec<String>,
+        environment: Vec<(String, String)>,
+    },
 }
 
 /// `models command` for `profile` at `tensor_parallel` on `checkpoint`,
@@ -777,6 +784,17 @@ impl Request {
                 Vec::new(),
                 CATALOG_TIMEOUT,
             ),
+            // It prepares the package as serving would, so it may take as
+            // long as reading the package's options.
+            Self::Check {
+                arguments,
+                environment,
+                ..
+            } => {
+                let mut all = arguments.clone();
+                all.push("--check".to_owned());
+                (all, environment.clone(), PACKAGE_TIMEOUT)
+            }
         }
     }
 }
@@ -789,6 +807,8 @@ pub enum Reply {
     Pick(PathBuf, Result<Pick, String>),
     Command(u64, Result<Vec<String>, String>),
     PackageOptions(u64, Result<Vec<PackageOption>, String>),
+    /// What `serve --check` resolved, or serve's own message.
+    Check(u64, Result<Check, String>),
 }
 
 /// Runs `request` with `binary` and reads its document.
@@ -835,6 +855,10 @@ pub fn answer(binary: &Path, request: Request) -> Reply {
                         })
                 }),
         ),
+        // A refusal is shown as serve words it.
+        Request::Check { generation, .. } => {
+            Reply::Check(generation, output.and_then(|text| Check::parse(&text)))
+        }
     }
 }
 
@@ -896,11 +920,14 @@ pub fn run(
     if status.success() {
         return Ok(stdout);
     }
-    let last = stderr
-        .lines()
-        .map(str::trim)
-        .rfind(|line| !line.is_empty())
-        .map(sanitize);
+    // serve's own message is its last `chopinfer:` line; anything else
+    // ends with what it printed last.
+    let lines = stderr.lines().map(str::trim).collect::<Vec<_>>();
+    let last = lines
+        .iter()
+        .rfind(|line| line.starts_with("chopinfer:"))
+        .or_else(|| lines.iter().rfind(|line| !line.is_empty()))
+        .map(|line| sanitize(line));
     Err(match last {
         Some(line) if line.chars().count() > MESSAGE_LIMIT => {
             line.chars().take(MESSAGE_LIMIT).collect::<String>() + "..."
@@ -920,6 +947,7 @@ pub struct Worker {
     catalog: Sender<Request>,
     command: Sender<Request>,
     package: Sender<Request>,
+    check: Sender<Request>,
 }
 
 impl Worker {
@@ -936,6 +964,7 @@ impl Worker {
             catalog: lane(false),
             command: lane(true),
             package: lane(true),
+            check: lane(true),
         }
     }
 
@@ -944,6 +973,7 @@ impl Worker {
             Request::Options | Request::Models | Request::Pick(_) => &self.catalog,
             Request::Command { .. } => &self.command,
             Request::PackageOptions { .. } => &self.package,
+            Request::Check { .. } => &self.check,
         };
         let _ = lane.send(request);
     }
@@ -1268,8 +1298,8 @@ impl Catalog {
         }
     }
 
-    /// Takes a catalog reply; command and package replies are given back
-    /// for the loader.
+    /// Takes a catalog reply; command, package and check replies are given
+    /// back for the loader and the start they belong to.
     pub fn apply(&mut self, reply: Reply) -> Option<Reply> {
         match reply {
             Reply::Options(result) => self.options = Some(result.into()),
@@ -1682,6 +1712,11 @@ mod tests {
                cat \"$fixtures/models-pick.json\" ;;\n\
              'models command') echo \"$*\" > \"$(dirname \"$0\")/last-command\"; cat \"$fixtures/models-command.json\" ;;\n\
              *) echo \"$*\" >> \"$(dirname \"$0\")/serve-calls\"\n\
+               for last; do :; done\n\
+               if [ \"$last\" = --check ]; then\n\
+                 if [ -n \"$CHOPINFER_REFUSE\" ]; then echo 'chopinfer: preparing the package' >&2; echo 'chopinfer: --context-parallel-size 3 does not divide 4' >&2; echo 'see chopinfer serve --help' >&2; exit 1; fi\n\
+                 cat \"$fixtures/serve-check.json\"; exit 0\n\
+               fi\n\
                if [ \"$CHOPINFER_LOG_LEVEL\" = debug ]; then cat \"$fixtures/list-model-options.json\"; else echo null; fi ;;\n\
              esac\n",
             fixtures.display()
@@ -1787,6 +1822,36 @@ mod tests {
             panic!("package options")
         };
         assert_eq!(options.len(), 4);
+        // serve --check: what it resolved, or serve's own last line.
+        let check = |environment: Vec<(String, String)>| {
+            answer(
+                &binary,
+                Request::Check {
+                    generation: 9,
+                    arguments: parse_command(COMMAND).unwrap(),
+                    environment,
+                },
+            )
+        };
+        let Reply::Check(9, Ok(checked)) = check(Vec::new()) else {
+            panic!("a check")
+        };
+        assert_eq!(checked, Check::parse(CHECK).unwrap());
+        assert!(
+            fs::read_to_string(root.join("serve-calls"))
+                .unwrap()
+                .lines()
+                .last()
+                .unwrap()
+                .ends_with("--model-option dspark_draft_chunk_items=12 --check")
+        );
+        assert_eq!(
+            check(vec![("CHOPINFER_REFUSE".into(), "1".into())]),
+            Reply::Check(
+                9,
+                Err("chopinfer: --context-parallel-size 3 does not divide 4".into())
+            )
+        );
         let missing = answer(&root.join("absent"), Request::Models);
         assert!(
             matches!(&missing, Reply::Models(Err(error)) if error.contains("cannot run")),

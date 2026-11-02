@@ -66,10 +66,10 @@ This differs from vLLM, whose parsers keep reading post-end output. Raw
 completions are unchanged.
 
 From 2026-11-02, `ignore_eos` replays and generated-history traces (such as
-`tools/qual/agentic_trace.py --trace-history generated`) change behavior:
-sessions no longer abort on post-end markup, and the post-end tail returns
-as content, so it enters the next turn's rendered history. An A/B across
-this change compares different workloads.
+`tools/qual/agentic_mixed.py --workload trace --trace-history generated`)
+change behavior: sessions no longer abort on post-end markup, and the
+post-end tail returns as content, so it enters the next turn's rendered
+history. An A/B across this change compares different workloads.
 
 **Choices.** `n` may be 1 through 128. Completion prompts may be a list of
 strings or token-ID arrays, with at most 128 choices in total; choice indexes

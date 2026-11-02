@@ -12,6 +12,7 @@ use crate::{FinishReason, RequestId};
 pub const MAX_BYTES: usize = 64 * 1024 * 1024;
 const MAX_COMPLETED: usize = 256;
 const MAX_ACTIVE: usize = 256;
+const MAX_DELIVERIES: usize = 256;
 
 /// Shared observation state, independent of engine and frontend lifetimes.
 #[derive(Clone, Debug)]
@@ -19,12 +20,17 @@ pub struct ReplyHistoryObserver(pub(crate) Arc<Mutex<Registry>>);
 impl ReplyHistoryObserver {
     /// A stack-owned receipt. Cloning the shared registry allocates no storage.
     #[must_use]
-    pub fn delivery(&self, id: RequestId) -> ReplyHistoryDelivery {
-        ReplyHistoryDelivery {
+    pub fn delivery(&self, id: RequestId) -> Option<ReplyHistoryDelivery> {
+        let mut registry = self.0.lock().ok()?;
+        if registry.delivery_handles == MAX_DELIVERIES {
+            return None;
+        }
+        registry.delivery_handles += 1;
+        Some(ReplyHistoryDelivery {
             observer: self.clone(),
             id,
             succeeded: false,
-        }
+        })
     }
 }
 
@@ -45,10 +51,11 @@ impl ReplyHistoryDelivery {
 }
 impl Drop for ReplyHistoryDelivery {
     fn drop(&mut self) {
-        if !self.succeeded
-            && let Ok(mut observer) = self.observer.0.lock()
-        {
-            observer.discard(self.id, Count::DeliveryFailed);
+        if let Ok(mut observer) = self.observer.0.lock() {
+            observer.delivery_handles -= 1;
+            if !self.succeeded {
+                observer.discard(self.id, Count::DeliveryFailed);
+            }
         }
     }
 }
@@ -143,7 +150,7 @@ struct Comparison {
     anchor_counted: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct History {
     id: RequestId,
     prompt: usize,
@@ -197,6 +204,7 @@ pub(crate) struct Registry {
     order: u64,
     lost_history: bool,
     temporary_bytes: usize,
+    delivery_handles: usize,
     metrics: KvMetrics,
 }
 
@@ -223,6 +231,7 @@ impl Registry {
             order: 0,
             lost_history: false,
             temporary_bytes: 0,
+            delivery_handles: 0,
             metrics,
         };
         result.publish();
@@ -234,7 +243,8 @@ impl Registry {
             + self.completed.capacity() * size_of::<History>()
             + self.active.iter().map(Active::bytes).sum::<usize>()
             + self.completed.iter().map(History::bytes).sum::<usize>()
-            // Candidate comparison and allocation bookkeeping during submit.
+            // Candidate temporaries, Arc/Mutex bookkeeping, and up to 256
+            // stack-owned delivery receipts (including future frame padding).
             + 64 * 1024
     }
     fn publish(&self) {
@@ -769,6 +779,10 @@ impl Registry {
         }
         self.completed.push(history);
         self.publish();
+    }
+    pub(crate) fn drop_observation(&mut self, id: RequestId) {
+        self.lost_history = true;
+        self.discard(id, Count::CapacityDrop);
     }
     pub(crate) fn retire(&mut self, id: RequestId) {
         if self.active.iter().any(|active| {

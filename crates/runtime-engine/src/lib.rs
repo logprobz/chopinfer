@@ -3355,6 +3355,17 @@ impl<E: ModelExecutor> Engine<E> {
             .map(|observer| ReplyHistoryObserver(Arc::clone(observer)))
     }
 
+    /// Drops telemetry when the bounded frontend delivery receipt cannot fit.
+    pub fn drop_reply_history_observation(&self, id: RequestId) {
+        if let Some(mut observer) = self
+            .reply_history
+            .as_ref()
+            .and_then(|observer| observer.lock().ok())
+        {
+            observer.drop_observation(id);
+        }
+    }
+
     /// Requires a successful terminal channel handoff before retaining history.
     pub fn require_reply_history_delivery(&self, id: RequestId) {
         if let Some(mut observer) = self

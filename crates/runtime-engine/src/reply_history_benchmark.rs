@@ -80,7 +80,7 @@ fn seed(case: Case, metrics: KvMetrics, tokens: &[u32]) -> Registry {
 }
 
 fn cycle(
-    registry: &mut Option<Mutex<Registry>>,
+    registry: &mut Option<ReplyHistoryObserver>,
     chain: &PrefixChainV1,
     case: Case,
     serial: u64,
@@ -88,15 +88,19 @@ fn cycle(
     collect: bool,
 ) {
     let first = 1000 + serial * case.concurrency as u64;
+    let mut receipts = Vec::with_capacity(case.concurrency);
     let lookup = timed(|| {
         for request in 0..case.concurrency {
             let id = RequestId::new(first + request as u64);
             if let Some(registry) = registry {
-                let mut registry = registry.lock().unwrap();
+                receipts.push(registry.delivery(id));
+                let mut registry = registry.0.lock().unwrap();
                 registry.submit(id, chain, case.reply);
                 registry.defer(id);
+                registry.require_handoff(id);
                 registry.prefill(id, 0, chain.tokens().len() - 1, 0);
             } else {
+                receipts.push(None);
                 black_box((id, chain));
             }
         }
@@ -110,7 +114,7 @@ fn cycle(
             for request in 0..case.concurrency {
                 let id = RequestId::new(first + request as u64);
                 if let Some(registry) = registry {
-                    let mut guard = registry.lock().unwrap();
+                    let mut guard = registry.0.lock().unwrap();
                     guard.append(id, &output[..width]);
                     if last {
                         guard.engine_finish(id, FinishReason::Length);
@@ -118,6 +122,7 @@ fn cycle(
                     drop(guard);
                     for ordinal in offset..offset + width {
                         registry
+                            .0
                             .lock()
                             .unwrap()
                             .annotate(id, ordinal, ReplyRegion::Content);
@@ -134,11 +139,15 @@ fn cycle(
         }
     }
     let finish = timed(|| {
-        for request in 0..case.concurrency {
+        for (request, receipt) in receipts.iter_mut().enumerate() {
             let id = RequestId::new(first + request as u64);
             if let Some(registry) = registry {
-                let mut registry = registry.lock().unwrap();
+                let mut registry = registry.0.lock().unwrap();
                 registry.delivered(id, FinishReason::Length, case.reply);
+                drop(registry);
+                if let Some(receipt) = receipt.take() {
+                    receipt.succeeded();
+                }
             } else {
                 black_box(id);
             }
@@ -254,6 +263,7 @@ fn reply_observer_cpu_cost() {
         let mut tokens = vec![13; case.prompt + case.reply + 1];
         let metrics = KvMetrics::default();
         let registry = seed(case, metrics.clone(), &tokens);
+        let fixture = registry.completed.clone();
         let seeded_entries = registry.completed.len();
         let seeded_bytes = registry.bytes();
         if case.mode == "miss" {
@@ -270,11 +280,23 @@ fn reply_observer_cpu_cost() {
             salt.as_ref().map(|s| s.as_slice()),
         )
         .unwrap();
-        let mut enabled = Some(Mutex::new(registry));
+        let mut enabled = Some(ReplyHistoryObserver(Arc::new(Mutex::new(registry))));
         let mut disabled = None;
         let mut on: [Vec<Sample>; 4] = std::array::from_fn(|_| Vec::new());
         let mut off: [Vec<Sample>; 4] = std::array::from_fn(|_| Vec::new());
         for serial in 0..case.samples + 8 {
+            // Each sample starts from the named retained-history population.
+            // Fixture construction is outside timing; submit, commit, eviction,
+            // annotations and final delivery of the consumer are all timed.
+            {
+                let mut registry = enabled.as_ref().unwrap().0.lock().unwrap();
+                assert!(registry.active.is_empty());
+                assert_eq!(registry.delivery_handles, 0);
+                registry.completed.clear();
+                registry.completed.extend(fixture.iter().cloned());
+                registry.lost_history = false;
+                assert!(registry.bytes() <= MAX_BYTES);
+            }
             // Reverse paired order each sample to expose drift.
             if serial % 2 == 0 {
                 cycle(
@@ -343,19 +365,22 @@ fn reply_observer_cpu_cost() {
                 "enabled_elapsed": distribution(&on[i], false), "disabled_elapsed": distribution(&off[i], false),
             }))).collect::<serde_json::Map<_,_>>();
         let total_ns: f64 = differences[3].iter().map(|s| s.elapsed).sum();
+        let total_cpu_ns: f64 = differences[3].iter().map(|s| s.cpu).sum();
         println!(
             "{}",
             serde_json::json!({"observer_cpu_case": case.name, "prompt": case.prompt,
             "reply": case.reply, "block": case.block, "concurrency": case.concurrency,
             "accepted_width": case.width, "mode": case.mode, "seeded_entries": seeded_entries,
-            "seeded_bytes": seeded_bytes, "final_bytes": enabled.as_ref().unwrap().lock().unwrap().bytes(),
+            "seeded_bytes": seeded_bytes, "final_bytes": enabled.as_ref().unwrap().0.lock().unwrap().bytes(),
             "phases": phases, "coincident_cycle_incremental_elapsed": variability,
             "elapsed_us_per_committed_token": total_ns/1000./(case.samples*case.concurrency*case.reply) as f64,
             "elapsed_us_per_completed_request": total_ns/1000./(case.samples*case.concurrency) as f64,
+            "cpu_us_per_committed_token": total_cpu_ns/1000./(case.samples*case.concurrency*case.reply) as f64,
+            "cpu_us_per_completed_request": total_cpu_ns/1000./(case.samples*case.concurrency) as f64,
             "default_on_resolved": resolved,
-            "method": "paired alternating CPU-only observer calls; thread schedstat CPU and Instant elapsed; prompt chain shared with disabled baseline; eight warmup batches"})
+            "method": "paired alternating CPU-only observer calls; thread schedstat CPU and Instant elapsed; prompt chain shared with disabled baseline; retained fixture restored before each pair; eight warmup batches"})
         );
-        assert!(enabled.as_ref().unwrap().lock().unwrap().bytes() <= MAX_BYTES);
+        assert!(enabled.as_ref().unwrap().0.lock().unwrap().bytes() <= MAX_BYTES);
     }
     println!(
         "observer_default_on_gate={}",

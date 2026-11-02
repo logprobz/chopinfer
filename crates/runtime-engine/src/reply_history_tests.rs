@@ -343,3 +343,17 @@ fn lookup_probe_work_depends_on_pages_logarithmically_and_reply_hashes_once() {
     assert!(count(&metrics, Count::Fingerprints) - before_hash <= 256 * 4 + 550);
     assert!(count(&metrics, Count::Probes) - before_probe <= 256 * 20);
 }
+
+#[test]
+fn delivery_receipts_have_a_shared_cap_even_before_admission() {
+    let metrics = KvMetrics::default();
+    let observer = ReplyHistoryObserver(Arc::new(Mutex::new(Registry::new(metrics).unwrap())));
+    let receipts = (0..MAX_DELIVERIES)
+        .map(|id| observer.delivery(RequestId::new(id as u64)).unwrap())
+        .collect::<Vec<_>>();
+    assert!(observer.delivery(RequestId::new(999)).is_none());
+    assert_eq!(observer.0.lock().unwrap().delivery_handles, MAX_DELIVERIES);
+    drop(receipts);
+    assert_eq!(observer.0.lock().unwrap().delivery_handles, 0);
+    assert!(observer.delivery(RequestId::new(999)).is_some());
+}

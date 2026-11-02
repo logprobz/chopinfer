@@ -14,7 +14,7 @@ use crate::launch::occupancy::{self, Gate, Live};
 use crate::launch::placement::{self, bind_probe};
 use crate::launch::process::{self, Identity};
 use crate::launch::switch::{self, Confirm, Target};
-use crate::launch::{Launches, Reservation, command, indices};
+use crate::launch::{Launches, Phase, Reservation, command, indices};
 use crate::loader::{Loader, Outcome, Start};
 use crate::stats::Window;
 use crate::ui::list::{TABLE_TOP, first_row, table_rows};
@@ -768,12 +768,28 @@ impl App {
     }
 
     /// Runs a confirmed stop: a launch through its process group, or a
-    /// serve process through a pidfd once it is still the process read.
+    /// serve process through a pidfd once it is still the process read. A
+    /// launch that started or went back to waiting since the dialog opened
+    /// would be stopped otherwise than it said, so it is confirmed again.
     fn stop(&mut self, stop: StopConfirm) {
         let now = self.clock;
         let why = "as asked with X";
+        let waiting = |launches: &Launches, id| {
+            launches
+                .get(id)
+                .map(|launch| launch.phase == Phase::Waiting)
+        };
         let result = match stop.target {
-            Stoppable::Launch(id) => self.launches.stop(id, why, &mut self.registry, now),
+            Stoppable::Launch(id) => match waiting(&self.launches, id) {
+                Some(false) if stop.waiting => Err(
+                    "it started after the dialog opened, so Enter would send it SIGTERM, not cancel it; press X again"
+                        .to_owned(),
+                ),
+                Some(true) if !stop.waiting => {
+                    Err("it is waiting again; press X again".to_owned())
+                }
+                _ => self.launches.stop(id, why, &mut self.registry, now),
+            },
             Stoppable::Process { pid, start_ticks } => {
                 Identity::record(pid, start_ticks).and_then(|identity| {
                     self.launches
@@ -3189,6 +3205,70 @@ mod tests {
             app.registry.instances.is_empty()
         });
         position(&app, &serve.label(), "exited after draining 1s");
+    }
+
+    #[test]
+    fn x_on_a_waiting_launch_that_starts_before_enter_is_confirmed_again() {
+        let root = scratch("x-started-since");
+        let binary = root.join("sleeps");
+        write_script(
+            &binary,
+            &format!(
+                "#!/bin/sh\n{CLOSE}{}",
+                crate::launch::process::tests::UNTIL_TERM
+            ),
+        );
+        let mut app = launching(&root, &binary);
+        app.live.scanning = true;
+        let start = confirm(&[('A', &[0, 1], 8310, Vec::new())], Vec::new());
+        queue_only(&mut app, &start, &[]);
+        let id = newest(&app);
+        app.selected = Some(app.registry.launch_row(id).unwrap().id);
+        // X while it waits: the dialog says Enter cancels it.
+        app.clock = 0.1;
+        assert_eq!(press(&mut app, KeyCode::Char('X')), Action::Read);
+        app.asked(0.1);
+        read_reports(&mut app, 0.2, Vec::new());
+        app.supervise(0.3);
+        assert!(matches!(&app.dialog, Some(Dialog::Stop(stop)) if stop.waiting));
+        assert_eq!(app.launches.get(id).unwrap().phase, Phase::Waiting);
+        // It starts while the dialog is open.
+        app.asked(0.3);
+        read_reports(&mut app, 0.4, Vec::new());
+        app.supervise(0.5);
+        assert_eq!(app.launches.get(id).unwrap().phase, Phase::Running);
+        let label = app.launches.get(id).unwrap().label();
+        assert_eq!(press(&mut app, KeyCode::Enter), Action::Redraw);
+        assert_eq!(app.launches.get(id).unwrap().phase, Phase::Running);
+        assert!(
+            !events(&app).iter().any(|event| event.contains("stopping:")),
+            "{:#?}",
+            events(&app)
+        );
+        assert!(
+            events(&app).contains(&
+                "launch A: not stopped: it started after the dialog opened, so Enter would send it SIGTERM, not cancel it; press X again"
+                    .to_owned()
+            ),
+            "{:#?}",
+            events(&app)
+        );
+        // X again says SIGTERM, and Enter sends it.
+        assert_eq!(press(&mut app, KeyCode::Char('X')), Action::Read);
+        app.asked(0.6);
+        read_reports(&mut app, 0.7, Vec::new());
+        app.supervise(0.8);
+        assert!(matches!(&app.dialog, Some(Dialog::Stop(stop)) if !stop.waiting));
+        assert_eq!(press(&mut app, KeyCode::Enter), Action::Redraw);
+        position(
+            &app,
+            &label,
+            "stopping: SIGTERM from choptop as asked with X",
+        );
+        wait_for(|| {
+            app.supervise(0.9);
+            app.launches.get(id).is_none()
+        });
     }
 
     #[test]

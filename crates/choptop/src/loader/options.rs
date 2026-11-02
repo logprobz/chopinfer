@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use crate::catalog::{
     Catalog, Checkpoint, Model, PackageOption, Profile, ServeOption, Shape, Source,
 };
-use crate::launch::command::{API_KEY, Key, OWNED, classify};
+use crate::launch::command::{API_KEY, Key, OWNED, classify, words};
 use crate::launch::placement::parse_listen;
 
 /// A group of the Options pane, in the order shown.
@@ -474,6 +474,10 @@ impl Context<'_> {
                     Shape::Json => serde_json::from_str::<serde_json::Value>(&value)
                         .is_err()
                         .then(|| "JSON".to_owned()),
+                    Shape::JsonOrOff => (value != "off"
+                        && serde_json::from_str::<serde_json::Value>(&value).is_err())
+                    .then(|| "JSON or off".to_owned()),
+                    Shape::Words => words(&value).err(),
                     _ => None,
                 }
             }
@@ -818,6 +822,43 @@ mod tests {
                 .context(&catalog)
                 .choices(&Key::Flag("allow-credentials".into())),
             ["off", "on"]
+        );
+    }
+
+    /// With serve's own description, `--speculation-confidence` takes JSON
+    /// or `off`, and `--served-model-name` one or more names.
+    #[test]
+    fn values_follow_the_shapes_serve_describes() {
+        let (mut loader, mut catalog) = loader();
+        catalog.apply(crate::catalog::Reply::Options(
+            crate::catalog::ServeOptions::parse(include_str!(
+                "../../tests/fixtures/contracts/fixture/serve-options.json"
+            )),
+        ));
+        let mut problem = |name: &str, value: &str| {
+            let key = Key::Flag(name.into());
+            loader.edits.insert(key.clone(), value.into());
+            loader.context(&catalog).problem(&key)
+        };
+        let confidence = "speculation-confidence";
+        assert_eq!(problem(confidence, "off"), None);
+        assert_eq!(problem(confidence, r#"{"floor": 1}"#), None);
+        for wrong in ["Off", "{"] {
+            assert_eq!(
+                problem(confidence, wrong),
+                Some("JSON or off".to_owned()),
+                "{wrong}"
+            );
+        }
+        let names = "served-model-name";
+        assert_eq!(problem(names, r#"primary "second name""#), None);
+        assert_eq!(
+            problem(names, "primary --alias"),
+            Some("words that do not start with --".to_owned())
+        );
+        assert_eq!(
+            problem(names, r#""primary"#),
+            Some("a double quote is not closed".to_owned())
         );
     }
 

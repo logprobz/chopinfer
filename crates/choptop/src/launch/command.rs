@@ -105,6 +105,19 @@ pub fn split(row: &str) -> Result<Vec<String>, String> {
     Ok(words)
 }
 
+/// The words of a value serve takes as `TEXT...`, split as a custom row
+/// is: one or more, none of which serve would read as the next flag.
+pub fn words(value: &str) -> Result<Vec<String>, String> {
+    let words = split(value)?;
+    if words.is_empty() {
+        return Err("one or more words".to_owned());
+    }
+    if words.iter().any(|word| word.starts_with("--")) {
+        return Err("words that do not start with --".to_owned());
+    }
+    Ok(words)
+}
+
 /// Writes `words` back as a row [`split`] reads the same.
 pub fn join(words: &[String]) -> String {
     words
@@ -265,13 +278,17 @@ pub fn classify(row: &str, catalog: Option<&ServeOptions>) -> Result<Classified,
             }
             _ => match option {
                 Some(option) if option.model_launch && !option.repeatable => {
-                    let value = if option.shape == Shape::Switch {
-                        if !values.is_empty() {
-                            return Err(format!("--{name} takes no value"));
+                    let value = match option.shape {
+                        Shape::Switch => {
+                            if !values.is_empty() {
+                                return Err(format!("--{name} takes no value"));
+                            }
+                            "on".to_owned()
                         }
-                        "on".to_owned()
-                    } else {
-                        single(&values)?
+                        // Its words are one value, as its Options row holds
+                        // them.
+                        Shape::Words if !values.is_empty() => join(&values),
+                        _ => single(&values)?,
                     };
                     classified.folds.push((Key::Flag(name.to_owned()), value));
                 }
@@ -328,21 +345,28 @@ pub fn explicit(
     package: Option<&[PackageOption]>,
 ) -> Explicit {
     let mut explicit = Explicit::default();
-    let switch = |name: &str| {
+    let shape = |name: &str| {
         catalog
             .and_then(|catalog| catalog.option(name))
-            .is_some_and(|option| option.shape == Shape::Switch)
+            .map(|option| option.shape)
     };
-    let flag = |explicit: &mut Explicit, name: &str, value: &str, origin| {
-        if switch(name) {
+    let flag = |explicit: &mut Explicit, name: &str, value: &str, origin| match shape(name) {
+        Some(Shape::Switch) => {
             if value == "on" {
                 explicit.options.push((vec![format!("--{name}")], origin));
             }
-        } else {
-            explicit
-                .options
-                .push((vec![format!("--{name}"), value.to_owned()], origin));
         }
+        Some(Shape::Words) => match words(value) {
+            Ok(words) => {
+                let mut group = vec![format!("--{name}")];
+                group.extend(words);
+                explicit.options.push((group, origin));
+            }
+            Err(why) => explicit.blocked.push(format!("--{name} takes {why}")),
+        },
+        _ => explicit
+            .options
+            .push((vec![format!("--{name}"), value.to_owned()], origin)),
     };
     let model_option =
         |name: &str, value: &str| vec!["--model-option".to_owned(), format!("{name}={value}")];
@@ -574,6 +598,59 @@ mod tests {
         // Before the catalog is read nothing folds but listen and the key.
         let early = classify("--max-sequences 48", None).unwrap();
         assert_eq!(early.arguments, words("--max-sequences 48"));
+    }
+
+    /// With serve's own description, a flag that takes one or more names
+    /// keeps them as separate arguments from a custom row or its Options
+    /// row, and `--speculation-confidence` takes `off`.
+    #[test]
+    fn several_names_stay_separate_arguments() {
+        let serve = ServeOptions::parse(include_str!(
+            "../../tests/fixtures/contracts/fixture/serve-options.json"
+        ))
+        .unwrap();
+        let names = Key::Flag("served-model-name".into());
+        let classified = classify(
+            r#"--served-model-name primary "second name" --speculation-confidence off"#,
+            Some(&serve),
+        )
+        .unwrap();
+        assert_eq!(
+            classified.folds,
+            [
+                (names.clone(), r#"primary "second name""#.into()),
+                (Key::Flag("speculation-confidence".into()), "off".into()),
+            ]
+        );
+        let explicit_of = |value: &str| {
+            let edits = [(names.clone(), value.to_owned())].into();
+            explicit(
+                &Form {
+                    edits: &edits,
+                    custom: &[],
+                },
+                Some(&serve),
+                &[],
+                None,
+            )
+        };
+        let two = explicit_of(r#"primary "second name""#);
+        assert_eq!(
+            two.arguments(),
+            ["--served-model-name", "primary", "second name"]
+        );
+        assert!(two.blocked.is_empty());
+        for (value, why) in [
+            ("primary --alias", "words that do not start with --"),
+            ("", "one or more words"),
+        ] {
+            let refused = explicit_of(value);
+            assert!(refused.arguments().is_empty());
+            assert_eq!(
+                refused.blocked,
+                [format!("--served-model-name takes {why}")]
+            );
+        }
     }
 
     #[test]

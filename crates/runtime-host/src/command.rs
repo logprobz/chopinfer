@@ -1500,6 +1500,10 @@ pub(crate) enum ServeValueV1 {
     Directory,
     File,
     Json,
+    /// JSON, or the word `off`.
+    JsonOrOff,
+    /// One or more words, up to the next flag.
+    Words,
     /// One of the listed words.
     Choice(&'static [&'static str]),
     /// A flag without a value.
@@ -1590,7 +1594,9 @@ pub(crate) const SERVE_OPTIONS_V1: &[ServeOptionV1] = {
     use ServeGroupV1::{
         Cache, Debug, Logging, Media, Memory, Model, Prefill, Scheduling, Server, Speculation,
     };
-    use ServeValueV1::{Choice, Count, Directory, File, Flag, Json, Number, Text};
+    use ServeValueV1::{
+        Choice, Count, Directory, File, Flag, Json, JsonOrOff, Number, Text, Words,
+    };
     &[
         ServeOptionV1::new(
             "--bundle",
@@ -1645,7 +1651,7 @@ pub(crate) const SERVE_OPTIONS_V1: &[ServeOptionV1] = {
         ),
         ServeOptionV1::new(
             "--served-model-name",
-            Text,
+            Words,
             Model,
             "the names clients request the model by, one or more",
         ),
@@ -1836,7 +1842,7 @@ pub(crate) const SERVE_OPTIONS_V1: &[ServeOptionV1] = {
         ),
         ServeOptionV1::new(
             "--speculation-confidence",
-            Json,
+            JsonOrOff,
             Speculation,
             "a drafter confidence calibration for balanced mode, as JSON, or off",
         ),
@@ -2144,6 +2150,8 @@ fn describe_serve_options_v1() -> String {
                 ServeValueV1::Directory => ("DIR", None),
                 ServeValueV1::File => ("FILE", None),
                 ServeValueV1::Json => ("JSON", None),
+                ServeValueV1::JsonOrOff => ("JSON|off", None),
+                ServeValueV1::Words => ("TEXT...", None),
                 ServeValueV1::Choice(choices) => ("TEXT", Some(choices)),
                 ServeValueV1::Flag => ("none", None),
             };
@@ -13681,6 +13689,35 @@ mod serve_option_tests {
         }
     }
 
+    /// The forms a value shape names beyond one value parse: `off` for
+    /// `JSON|off`, and two words before the next flag for `TEXT...`.
+    #[test]
+    fn the_described_value_forms_parse() {
+        let mut seen = 0;
+        for option in SERVE_OPTIONS_V1 {
+            let values: &[&str] = match option.value {
+                ServeValueV1::JsonOrOff => &["off"],
+                ServeValueV1::Words => &["primary", "alias"],
+                _ => continue,
+            };
+            seen += 1;
+            let mut invocation = words(&["serve", "--bundle", "/package", option.flag]);
+            invocation.extend(words(values));
+            invocation.extend(words(&["--max-sequences", "1"]));
+            if let Err(error) = parse_host_command_v1(&invocation) {
+                let error = error.to_string();
+                assert!(
+                    !error.contains("does not accept")
+                        && !error.contains("unsupported argument")
+                        && !error.contains(&format!("invalid {}", option.flag)),
+                    "{}: {error}",
+                    option.flag
+                );
+            }
+        }
+        assert_eq!(seen, 2);
+    }
+
     /// `serve --describe-options` ends a serve invocation like `--help`, and
     /// prints every option and the environment serve reads.
     #[test]
@@ -13725,8 +13762,10 @@ mod serve_option_tests {
                 );
                 assert_eq!(option["flag"], entry.flag);
                 assert!(
-                    ["N", "F", "TEXT", "DIR", "FILE", "JSON", "none"]
-                        .contains(&option["value"].as_str().unwrap())
+                    [
+                        "N", "F", "TEXT", "TEXT...", "DIR", "FILE", "JSON", "JSON|off", "none"
+                    ]
+                    .contains(&option["value"].as_str().unwrap())
                 );
                 assert_eq!(
                     option["choices"].is_array(),
@@ -13739,6 +13778,15 @@ mod serve_option_tests {
                 .unwrap();
             assert_eq!(prefix["choices"], serde_json::json!(["on", "off"]));
             assert_eq!(prefix["group"], "cache");
+            let value = |flag: &str| {
+                options
+                    .iter()
+                    .find(|option| option["flag"] == flag)
+                    .unwrap()["value"]
+                    .clone()
+            };
+            assert_eq!(value("--served-model-name"), "TEXT...");
+            assert_eq!(value("--speculation-confidence"), "JSON|off");
             let names: Vec<&str> = document["environment"]
                 .as_array()
                 .unwrap()

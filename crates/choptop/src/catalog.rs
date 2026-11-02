@@ -51,9 +51,13 @@ pub enum Shape {
     /// `F`: a number.
     Number,
     Text,
+    /// `TEXT...`: one or more words before the next flag.
+    Words,
     Directory,
     File,
     Json,
+    /// `JSON|off`: JSON, or the word `off`.
+    JsonOrOff,
     /// `none`: a switch that takes no value.
     Switch,
 }
@@ -64,9 +68,11 @@ impl Shape {
             "N" => Self::Count,
             "F" => Self::Number,
             "TEXT" => Self::Text,
+            "TEXT..." => Self::Words,
             "DIR" => Self::Directory,
             "FILE" => Self::File,
             "JSON" => Self::Json,
+            "JSON|off" => Self::JsonOrOff,
             "none" => Self::Switch,
             other => return Err(format!("unknown value shape {other:?}")),
         })

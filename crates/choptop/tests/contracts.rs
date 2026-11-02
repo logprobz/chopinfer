@@ -32,6 +32,8 @@ fn reads_the_options_serve_describes() {
         Some(&["on".to_owned(), "off".to_owned()][..])
     );
     assert!(flag("--model-option").repeatable);
+    assert_eq!(flag("--served-model-name").shape, Shape::Words);
+    assert_eq!(flag("--speculation-confidence").shape, Shape::JsonOrOff);
     // Flags a loader must not offer for `serve --model`.
     for owned in ["--bundle", "--profile", "--describe-options"] {
         assert!(!flag(owned).model_launch, "{owned}");

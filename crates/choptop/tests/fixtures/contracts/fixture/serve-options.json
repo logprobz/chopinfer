@@ -79,7 +79,7 @@
     },
     {
       "flag": "--served-model-name",
-      "value": "TEXT",
+      "value": "TEXT...",
       "choices": null,
       "group": "model",
       "help": "the names clients request the model by, one or more",
@@ -384,7 +384,7 @@
     },
     {
       "flag": "--speculation-confidence",
-      "value": "JSON",
+      "value": "JSON|off",
       "choices": null,
       "group": "speculation",
       "help": "a drafter confidence calibration for balanced mode, as JSON, or off",

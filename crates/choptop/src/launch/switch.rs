@@ -106,10 +106,18 @@ pub fn changed(before: &Placement, after: &Placement, reservations: &[Reservatio
 }
 
 /// Two values the same: equal text. An option `serve --describe-options`
-/// gives as `N` compares as a whole number, exactly, and one it gives as
-/// `F` as a number, so `1` is `1.0`.
+/// gives as `N` compares as a whole number, exactly, one it gives as `F` as
+/// a number, so `1` is `1.0`, and one it gives as `JSON` or `JSON|off` as
+/// JSON, so spacing and key order do not count.
 fn same(left: &str, right: &str, shape: Option<Shape>) -> bool {
     match shape {
+        Some(Shape::Json | Shape::JsonOrOff) => match (
+            serde_json::from_str::<serde_json::Value>(left),
+            serde_json::from_str::<serde_json::Value>(right),
+        ) {
+            (Ok(left), Ok(right)) => left == right,
+            _ => left == right,
+        },
         Some(Shape::Count) => match (left.parse::<i128>(), right.parse::<i128>()) {
             (Ok(left), Ok(right)) => left == right,
             _ => left == right,
@@ -808,6 +816,31 @@ mod tests {
             "{}",
             item.shown
         );
+    }
+
+    /// A JSON value compares as JSON: the calibration serve prints back with
+    /// its own spacing and key order is the one the form set.
+    #[test]
+    fn json_values_compare_as_json() {
+        let serve = ServeOptions::parse(include_str!(
+            "../../tests/fixtures/contracts/fixture/serve-options.json"
+        ))
+        .unwrap();
+        let shape = serve
+            .option("speculation-confidence")
+            .map(|option| option.shape);
+        assert_eq!(shape, Some(Shape::JsonOrOff));
+        let printed = r#"{"contract":"c","floor":1,"greedy":[[1.5,0.0]]}"#;
+        assert!(same(
+            printed,
+            r#"{ "floor": 1, "greedy": [[1.5, 0.0]], "contract": "c" }"#,
+            shape
+        ));
+        assert!(!same(printed, r#"{"contract":"c","floor":2}"#, shape));
+        assert!(same("off", "off", shape));
+        assert!(!same("off", printed, shape));
+        // As text, spacing counts.
+        assert!(!same(printed, &printed.replace(',', ", "), None));
     }
 
     #[test]

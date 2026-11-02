@@ -675,12 +675,14 @@ print(json.dumps(reply), flush=True)
                   "logging", "debug"}
         for option in document["options"]:
             self.assertEqual(set(option), {"flag", "value", "choices", "group", "help", "model_launch", "repeatable"})
-            self.assertIn(option["value"], {"N", "F", "TEXT", "DIR", "FILE", "JSON", "none"})
+            self.assertIn(option["value"], {"N", "F", "TEXT", "TEXT...", "DIR", "FILE", "JSON", "JSON|off", "none"})
             self.assertIn(option["group"], groups)
         flags = {option["flag"]: option for option in document["options"]}
         self.assertEqual(flags["--max-sequences"]["value"], "N")
         self.assertEqual(flags["--prefix-cache"]["choices"], ["on", "off"])
         self.assertTrue(flags["--model-option"]["repeatable"])
+        self.assertEqual(flags["--served-model-name"]["value"], "TEXT...")
+        self.assertEqual(flags["--speculation-confidence"]["value"], "JSON|off")
         self.assertFalse(flags["--bundle"]["model_launch"])
         self.assertFalse(flags["--profile"]["model_launch"])
         self.assertEqual([entry["name"] for entry in document["environment"]],

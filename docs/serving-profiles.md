@@ -73,7 +73,11 @@ chopinfer serve --model "$CHOPINFER_MIMO_CHECKPOINT" --tensor-parallel-size 4 --
   package holds, which no KV capacity can serve.
 
 `serve --describe-options` prints every serve option with its value shape,
-group and help, and the environment variables serve reads.
+group and help, and the environment variables serve reads. A value shape is
+`N` (a whole number), `F` (a number), `TEXT`, `TEXT...` (one or more words
+before the next flag), `DIR`, `FILE`, `JSON`, `JSON|off` (JSON or the word
+`off`) or `none` (a flag without a value); a choice is `TEXT` with its
+`choices`.
 
 An explicit option overrides a profile default. `--speculative-tokens 0`
 disables speculation but retains that profile's sequence cap. A profile

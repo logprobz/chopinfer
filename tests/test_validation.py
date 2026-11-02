@@ -712,6 +712,28 @@ class Reports(unittest.TestCase):
         reason = reference['artifacts']['reasons']['kernel-lab']
         self.assertTrue(any(r['conservative'] for r in reason))
 
+    def test_compiler_support_and_tokenizer_fixture_keep_conservative_frontend_obligations(self):
+        for path in ('fixtures/tokenizer-whitespace.json',
+                     'models/mimo26/compiler/tests/support/frontend.rs'):
+            with self.subTest(path=path):
+                report = self.report(path)
+                [broad] = [row for row in report['changes']
+                           if row['class'] == 'frontend' and set(row['models']) == MODELS]
+                self.assertEqual(broad['reason'],
+                                 'conservative frontend validation for compiler support files and the tokenizer fixture')
+                self.assertEqual(set(report['artifacts']['packages']), set(self.graph.by_name))
+                for model in MODELS:
+                    for check in self.catalog.data['classes']['frontend']['model_checks']:
+                        self.assertIn(f'{model}:{check}', self.ids(report))
+
+    def test_shared_streaming_macro_reaches_both_compilers_through_cargo(self):
+        report = self.graph.select(['crates/runtime-frontend/src/test_support/streaming.rs'])
+        for package in ('model-mimo26', 'model-qwen38'):
+            with self.subTest(package=package):
+                self.assertIn(package, report['packages'])
+                self.assertTrue(any(edge['kind'] == 'Cargo dev' and edge['to'] == package
+                                    for reason in report['reasons'][package] for edge in reason['chain']))
+
     def test_generated_cuda_and_manifest_relative_inputs_have_observed_readers(self):
         self.assertIn(('crates/kernel-lab/build.rs', 'generated CUDA header'),
                       self.graph.reads['models/qwen38/bundle/cuda/qwen38_speculation.cuh'])

@@ -264,8 +264,10 @@ pub struct Explicit {
     pub environment: Vec<(String, String, Origin)>,
     /// The listen address the form sets.
     pub listen: Option<String>,
-    /// Why there is no command yet.
+    /// What is wrong with the form.
     pub blocked: Vec<String>,
+    /// What the command waits for.
+    pub waiting: Vec<String>,
 }
 
 impl Explicit {
@@ -361,8 +363,8 @@ pub fn explicit(
         }
         match package {
             None => explicit
-                .blocked
-                .push(format!("waiting for the package's options to reset {name}")),
+                .waiting
+                .push(format!("the package's options, to reset {name}")),
             Some(options) => match options.iter().find(|option| option.name == *name) {
                 Some(option) => explicit
                     .options
@@ -602,9 +604,10 @@ mod tests {
         // Until the package's options are read the defaults are unknown.
         let waiting = explicit(&form, Some(&catalog), &inherited, None);
         assert_eq!(
-            waiting.blocked,
-            ["waiting for the package's options to reset dspark_draft_chunk_items"]
+            waiting.waiting,
+            ["the package's options, to reset dspark_draft_chunk_items"]
         );
+        assert!(waiting.blocked.is_empty());
         let package = package();
         let explicit = explicit(&form, Some(&catalog), &inherited, Some(&package));
         assert!(explicit.blocked.is_empty(), "{:?}", explicit.blocked);

@@ -1136,6 +1136,8 @@ pub struct Catalog {
     /// `models pick` for each directory asked about.
     pub picks: BTreeMap<PathBuf, Fetch<Pick>>,
     pub checkpoints: Checkpoints,
+    /// choptop's own `CHOPINFER_*` variables, which a launch inherits.
+    pub environment: BTreeMap<String, String>,
     /// Requests for the worker, taken by the main loop.
     pub outbox: Vec<Request>,
 }
@@ -1148,6 +1150,7 @@ impl Catalog {
             models: None,
             picks: BTreeMap::new(),
             checkpoints,
+            environment: BTreeMap::new(),
             outbox: Vec::new(),
         }
     }

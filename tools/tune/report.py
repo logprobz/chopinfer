@@ -78,8 +78,8 @@ def arm_installs(run, rows):
     for arm in declared:
         if 'install' in arm and arm['install'] != installs[arm['label']]['install']:
             raise ValueError('arm install provenance differs from its configuration')
-    if config['model'].get('mode') != 'ab' and len({v['install'] for v in installs.values()}) > 1:
-        raise ValueError('multiple installs require mode ab')
+    if config['model'].get('mode') not in ('ab', 'exact') and len({v['install'] for v in installs.values()}) > 1:
+        raise ValueError('multiple installs require mode ab or exact')
     for row in rows:
         if {key: row.get(key) for key in ('install', 'revision')} != installs.get(row.get('arm')):
             raise ValueError('window install or revision differs from its arm')
@@ -248,37 +248,53 @@ def costs(run):
     (C, kind, depth) the median request and full-concurrency tok/s and
     J/token over repeats; per arm its served rows, graph rows and widths,
     each rank's memory after warmup and the GPU memory samples. Writes
-    RUN_DIR/costs.json and RUN_DIR/costs.md."""
+    RUN_DIR/costs.json and RUN_DIR/costs.md. Multi-install exact runs retain
+    a separate cell and window table per arm."""
     run = Path(run)
     config, rows = load(run)
+    installs = arm_installs(run, rows)
+    separate = config['model'].get('mode') == 'exact' and len({v['install'] for v in installs.values()}) > 1
+    if separate:
+        import tune
+        reference = tune.arms(config)[0]['label']
     table = {}
     for row in rows:
         for key, cell in (row.get('cells') or {}).items():
-            into = table.setdefault(key, {'cycle_ms': [], 'execution_ms': [], 'arms': set()})
+            into = table.setdefault((row['arm'] if separate else '', key),
+                                    {'cycle_ms': [], 'execution_ms': [], 'arms': set()})
             into['cycle_ms'] += cell['cycle_ms']
             into['execution_ms'] += cell['execution_ms']
             into['arms'].add(row['label'])
     cells = {}
-    for key, cell in table.items():
-        shape = re.fullmatch(r'i(\d+)-r(\d+)(?:-v(\d+)-R(\d+))?', key)
+    for (arm, shape_key), cell in table.items():
+        shape = re.fullmatch(r'i(\d+)-r(\d+)(?:-v(\d+)-R(\d+))?', shape_key)
         if shape is None:
-            raise ValueError(f'invalid step shape {key}')
+            raise ValueError(f'invalid step shape {shape_key}')
         items, rows_ = map(int, shape.group(1, 2))
+        key = f'{arm}/{shape_key}' if separate else shape_key
         cells[key] = {'items': items, 'rows': rows_, 'steps': len(cell['cycle_ms']),
                       'cycle_ms_median': median(cell['cycle_ms']), 'cycle_ms_p10': percentile(cell['cycle_ms'], .1),
                       'cycle_ms_p90': percentile(cell['cycle_ms'], .9),
                       'execution_ms_median': median(cell['execution_ms']), 'arms': sorted(cell['arms'])}
         if shape[3] is not None:
             cells[key].update(verify_items=int(shape[3]), reserved=int(shape[4]))
+        if separate:
+            cells[key]['arm'] = arm
     groups = {}
     for row in rows:
-        groups.setdefault((row['concurrency'], row['kind'], row['depth']), []).append(row)
-    windows = {f'c{c}/{k}/d{d}': {
+        groups.setdefault((row['arm'] if separate else '', row['concurrency'], row['kind'], row['depth']), []).append(row)
+    windows = {(f'{arm}/' if separate else '') + f'c{c}/{k}/d{d}': {
         'repeats': len(v), 'request_median': median([x['request_tokens_per_second'] for x in v]),
         'request_spread': spread([x['request_tokens_per_second'] for x in v]),
         'full_median': median([x['full']['tokens_per_second'] for x in v]),
         'joules_median': median([(x.get('energy') or {}).get('joules_per_token') for x in v])}
-        for (c, k, d), v in sorted(groups.items())}
+        for (arm, c, k, d), v in sorted(groups.items())}
+    if separate:
+        for arm, c, k, d in groups:
+            windows[f'{arm}/c{c}/{k}/d{d}'].update(
+                arm=arm, **installs[arm], reference_arm=reference,
+                comparison='reference-repeat' if arm == reference else
+                'same-install' if installs[arm]['install'] == installs[reference]['install'] else 'cross-install')
     memory, warmed = {}, {}
     summary = run / 'summary.json'
     if summary.exists():
@@ -290,12 +306,12 @@ def costs(run):
                              'graph_rows': option('--speculation-graph-rows'),
                              'widths': option('--speculation-widths'),
                              'ranks': (process.get('memory_after_warmup') or {}).get('ranks', [])}
-    out = {'cells': dict(sorted(cells.items(), key=lambda kv: (kv[1]['items'], kv[1]['rows']))),
-           'arm_installs': arm_installs(run, rows),
+    out = {'cells': dict(sorted(cells.items(), key=lambda kv: (kv[1].get('arm', ''), kv[1]['items'], kv[1]['rows']))),
+           'arm_installs': installs,
            'windows': windows, 'gpu_memory_mib': memory, 'memory_after_warmup': warmed}
     full = {key: cell for key, cell in out['cells'].items()
             if ('reserved' in cell and cell['items'] in config['model']['concurrencies'])
-            or any(key == f"i{c}-r{c * (d + 1)}" for c in config['model']['concurrencies']
+            or any(key.rsplit('/', 1)[-1] == f"i{c}-r{c * (d + 1)}" for c in config['model']['concurrencies']
                    for d in range(config['model'].get('max_depth', 5) + 1))}
     out['summary'] = {key: round(cell['cycle_ms_median'], 2) for key, cell in full.items()
                       if cell['cycle_ms_median'] is not None}
@@ -317,6 +333,10 @@ def costs(run):
         lines.append(f"| {key} | {value['repeats']} | {value['request_median']:.1f} | {value['request_spread']:.1%} | "
                      f"{value['full_median']:.1f} | "
                      + ('-' if value['joules_median'] is None else f"{value['joules_median']:.3f}") + ' |')
+    if separate:
+        lines += ['', f'Exact windows compare tokens and selected logprob bits with arm `{reference}`.',
+                  'Timing and energy are descriptive only. Comparison classes:', '']
+        lines += [f"- {key}: {value['comparison']}" for key, value in windows.items()]
     gpus = config['model'].get('tensor_parallel_size', 1)
     lines += ['', 'Memory after warmup per arm and rank (rows and graph rows as served; `-` is the profile '
               'default): MiB taken since KV sizing (graphs) / MiB free.', '',

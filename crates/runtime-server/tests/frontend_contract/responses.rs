@@ -312,6 +312,7 @@ async fn invalid_requests_and_storage_errors_match_reference_statuses() {
 async fn backend_errors_and_length_limits_have_terminal_contracts() {
     for streaming in [false, true] {
         let server = TestServerV1::start(ScriptedBackendV1::new(vec![GenerationEvent::Failed {
+            refusal: None,
             message: "test failure".to_owned(),
             code: None,
         }]))
@@ -911,6 +912,7 @@ async fn stored_failures_use_responses_error_codes() {
     for (event, code, message) in [
         (
             GenerationEvent::Failed {
+                refusal: None,
                 message: "failure".to_owned(),
                 code: None,
             },

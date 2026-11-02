@@ -41,16 +41,44 @@ fn every_shipped_reference_verifies_against_its_pin() {
     let mut bound = 0;
     for loaded in shipped() {
         references::checkpoint_lock(&loaded).unwrap();
-        for pin in &loaded.declaration.references {
-            // A workload kept outside the repository is read only where its
-            // variable is set, as crate tests that need real data do.
-            if let Some(Input::Environment { env, .. }) = &pin.workload
-                && std::env::var_os(env).is_none()
+        let environment = |name: &str| loaded.environment(name);
+        // The variable an input kept outside the repository needs, when it
+        // is unset.
+        let unset = |input: &Input| match input {
+            Input::Environment { env, .. }
+                if references::declared_path(input, &loaded.root, &environment).is_none() =>
             {
-                assert!(matches!(
-                    references::pinned(&loaded, pin, None),
-                    Err(ReferenceError::Stale(field, _)) if field == "workload"
-                ));
+                Some(env.clone())
+            }
+            _ => None,
+        };
+        for pin in &loaded.declaration.references {
+            // A reference or workload kept outside the repository is read
+            // only where its variable is set, as crate tests that need real
+            // data do. Without it the pin is refused for its path first,
+            // then for its workload, in the order of
+            // `common.pinned_reference`.
+            let refused = if let Some(env) = unset(&pin.path) {
+                Some(ReferenceError::Missing(format!(
+                    "the {} reference needs {env}",
+                    pin.name
+                )))
+            } else {
+                pin.workload.as_ref().and_then(unset).map(|env| {
+                    ReferenceError::Stale(
+                        "workload".into(),
+                        format!("the bound {} reference's workload needs {env}", pin.name),
+                    )
+                })
+            };
+            if let Some(refused) = refused {
+                assert_eq!(
+                    references::pinned(&loaded, pin, None).err(),
+                    Some(refused),
+                    "{}: {}",
+                    loaded.declaration.model,
+                    pin.name
+                );
                 continue;
             }
             let verified = references::pinned(&loaded, pin, None).unwrap_or_else(|error| {
@@ -69,12 +97,26 @@ fn every_shipped_reference_verifies_against_its_pin() {
 
 #[test]
 fn a_reference_with_other_bytes_or_elsewhere_is_refused() {
-    // A declaration may pin no reference yet, so take the first that pins one.
-    let loaded = shipped()
+    // A declaration may pin no reference yet, and one kept outside the
+    // repository is read only where its variable is set, so take the first
+    // whose reference and declared workload are here.
+    let (loaded, mut pin) = shipped()
         .into_iter()
-        .find(|loaded| !loaded.declaration.references.is_empty())
-        .expect("no shipped declaration pins a reference");
-    let mut pin = loaded.declaration.references[0].clone();
+        .find_map(|loaded| {
+            let environment = |name: &str| loaded.environment(name);
+            let here = |input: &Input| {
+                references::declared_path(input, &loaded.root, &environment)
+                    .is_some_and(|path| path.is_file())
+            };
+            let pin = loaded
+                .declaration
+                .references
+                .iter()
+                .find(|pin| here(&pin.path) && pin.workload.as_ref().is_none_or(here))?
+                .clone();
+            Some((loaded, pin))
+        })
+        .expect("no shipped reference is here");
     let source =
         references::declared_path(&pin.path, &loaded.root, &references::process_environment)
             .unwrap();

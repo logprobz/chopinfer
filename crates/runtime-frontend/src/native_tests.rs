@@ -12,6 +12,50 @@ use crate::descriptor::{
     FrontendMediaRecipeV1, FrontendMediaRenderV1, FrontendMultimodalV1,
 };
 
+#[test]
+fn logged_parser_refusals_keep_only_known_text() {
+    use crate::checks::loggable_refusal_v1;
+
+    let canary = "canary-7f3e9b";
+    for family in DECODER_FAMILIES_V1 {
+        let document = document::RefusalV1::new(format!("{family}{canary}"), None).encode();
+        let refusal = parser_failure_v1(FrontendCallErrorV1::Refused(document));
+        assert!(refusal.contains(canary));
+        let logged = loggable_refusal_v1(&refusal);
+        assert_eq!(logged, format!("{family}refusal text withheld"));
+        assert!(!logged.contains(canary));
+    }
+    assert_eq!(loggable_refusal_v1(canary), "unrecognized refusal");
+    let document = document::RefusalV1::new(canary, None).encode();
+    assert_eq!(
+        loggable_refusal_v1(&parser_failure_v1(FrontendCallErrorV1::Refused(document))),
+        "malformed completion: refusal text withheld",
+    );
+    for message in [
+        "malformed completion: completion contains an unexpected reserved boundary",
+        "malformed completion: generated token has no decoded bytes",
+        "malformed completion: special token ID has mismatched decoded bytes",
+        "malformed completion: token received after terminal completion",
+        "malformed completion: length finish received after terminal completion",
+        "malformed completion: decoder panicked",
+        "conversation resource limit: incremental completion exceeds the token limit",
+        "invalid conversation sequence: decoding options set after decoding began",
+    ] {
+        let document = document::RefusalV1::new(message, None).encode();
+        assert_eq!(
+            loggable_refusal_v1(&parser_failure_v1(FrontendCallErrorV1::Refused(document))),
+            message,
+        );
+        assert_eq!(
+            loggable_refusal_v1(&format!("{message} {canary}")),
+            format!(
+                "{}: refusal text withheld",
+                message.split_once(": ").unwrap().0
+            ),
+        );
+    }
+}
+
 /// A bundle frontend whose component names the answers it gives.
 struct FakeFrontendV1 {
     scenario: String,

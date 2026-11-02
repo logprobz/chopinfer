@@ -158,7 +158,9 @@ fn served_twins_preserve_every_selected_grid_and_abi() {
             .unwrap()
             .rows()
             .iter()
-            .filter(|r| r.schedule == "dense_decode")
+            // Wide verify has a separate header capacity and is covered by
+            // fold_core::dense_wide::wide_schedules_keep_the_served_launch_shape.
+            .filter(|r| r.schedule == "dense_decode" && r.key.op != "dense_fold.wide.verify")
         {
             let (knobs, _) = Knobs::from_row(row).unwrap();
             for rows in row.key.rows.unwrap_or([1, row.key.bucket])[0]

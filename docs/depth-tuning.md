@@ -170,8 +170,8 @@ count. It needs `speculation_mode: "balanced"` and cannot be combined with
 
 Seal with `--install-dir "$ROUND" --install-name base --install-name head`.
 An arm without `install` uses the first name on the command line. Unknown
-names, unused sealed installs and multiple installs outside `mode: ab` are
-refused. Sweep, costs and exact jobs still use one install. With one install, the seal
+names, unused sealed installs and multiple installs outside `mode: ab` or
+`mode: exact` are refused. Sweep and costs jobs use one install. With one install, the seal
 keeps its existing shape; omitting `--install-name` still means `head`.
 Prompts and reporting helpers come from the first sealed source snapshot,
 so both arms receive the same inputs. Preflight, warmup, every timed visit,
@@ -180,6 +180,44 @@ Records and reports name each arm's install and revision. A report with
 install metadata requires a complete, consistent arm map; deleting the map
 does not make the run legacy. Matched-seed ABBA
 order and token/logprob-bit exactness comparisons are unchanged.
+
+For a build comparison with greedy and fixed-seed sampled batches, use the
+same named installs and arms with:
+
+```json
+"mode": "exact",
+"kinds": {"greedy": 0.5, "sampled": 0.5},
+"sampling": {"temperature": 1.0, "top_p": 1.0, "seed": 9100},
+"concurrencies": [8, 16],
+"repeats": 2
+```
+
+Exact mode needs no `pairs`. Its first declared arm captures one reference
+per kind and concurrency, then checks every arm's repeated windows against
+that reference. Greedy requests use temperature 0. Prompts are tokenized
+once by the reference arm; all arms receive those token IDs. Equality
+compares emitted token IDs and selected-logprob bits, with the first
+different stream and token position retained for every differing window.
+Output mismatches fail the job after its planned windows; invalid evidence
+and server failures still stop it. The existing costs report separates
+multi-install exact results by arm and labels reference repeats separately
+from cross-install comparisons. Its timings do not establish a speed verdict.
+
+Set `required_allocated_concurrencies`, for example `[8, 16]`, when the
+comparison must exercise confidence allocation at those full concurrencies.
+Every arm's reference and measured windows at each named concurrency must
+execute allocated steps with more reserved than executed rows. Allocation
+only in smaller drain cohorts does not qualify. This explicit requirement
+also applies to A/B measured windows and supplements the inferred allocation
+check described below.
+
+Normal-load controls are separate single-install exact jobs with `keeper:
+false` and `require_keeper: false`, queued before the keeper-backed block.
+For a reference-arm control, use identical prompts, sampling and windows;
+compare `prompt-tokens.json` first, then the reference and window `exact`
+arrays across the normal and borrowed runs. A successful control alone does
+not compare builds. Multi-install exact jobs always require keeper borrowing
+and each install's content proof.
 
 A single-install job may also pass `--content-proof NAME=FILE` for its one
 build; the proof is checked against every arm's fresh recipe the same way.

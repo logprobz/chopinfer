@@ -35,8 +35,8 @@ def fixture_content(root, name):
     return path
 
 
-def frozen_fixture(root):
-    """Two frozen installs with different recipes and equal proven weight bytes."""
+def frozen_fixture(root, names=('base', 'head')):
+    """Frozen installs with different recipes and equal proven weight bytes."""
     import shutil
     logs = root / 'logs'
     logs.mkdir(parents=True)
@@ -44,7 +44,8 @@ def frozen_fixture(root):
                 'checkpoint': {'identity': 'a' * 64, 'stamps': [{'size': 4}]},
                 'images': [{'image_role': 'weights', 'rank': 0, 'recipe_identity': 'b' * 64,
                             'byte_length': 4, 'identity': {'content_sha256': '', 'layout_sha256': 'c' * 64}}]}
-    for name, revision in (('base', '1' * 40), ('head', '2' * 40)):
+    for index, name in enumerate(names, 1):
+        revision = str(index) * 40
         binary = root / f'install-{name}' / 'bin/chopinfer'
         binary.parent.mkdir(parents=True)
         binary.write_text('#!/usr/bin/env python3\nimport json, sys\nfrom pathlib import Path\n'
@@ -535,16 +536,186 @@ class Tuner(unittest.TestCase):
             seal = json.loads((root / 'plain/runtime-seal.json').read_text())
             self.assertNotIn('weight_keeper_identity', seal['install'])
 
-    def test_multi_install_requires_ab_mode(self):
+    def test_multi_install_refuses_sweep_and_costs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             model = frozen_fixture(root)
-            for mode in ('sweep', 'costs', 'exact'):
+            for mode in ('sweep', 'costs'):
                 with self.subTest(mode=mode):
                     model['mode'] = mode
                     result = stage_fixture(root, model, destination=mode)
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertIn('multiple installs require mode ab', result.stderr)
+                    self.assertIn('multiple installs require mode ab or exact', result.stderr)
+
+    def test_exact_two_installs_compare_both_kinds(self):
+        import copy
+        import os
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root)
+            model.update(mode='exact', kinds={'greedy': .5, 'sampled': .5}, concurrencies=[8, 16])
+            model.update(max_depth=5, verify_rows=64, required_allocated_concurrencies=[8, 16])
+            for arm in model['arms']:
+                arm.pop('depth')
+                arm.update(depths='1:5,8:3,16:3,32:0', arguments=[
+                    '--speculative-rows', '64', '--speculation-widths', '6,8,16,32,64',
+                    '--speculation-confidence', '{"floor":1}'])
+            model['planning']['tokens_per_second'] = {'8': 100, '16': 100}
+            model['planning']['ar_tokens_per_second'] = {'8': 100, '16': 100}
+            result = stage_fixture(root, model)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            staged = root / 'stage'
+            seal = json.loads((staged / 'runtime-seal.json').read_text())
+            for field in ('content_key', 'weight_keeper_identity'):
+                changed = copy.deepcopy(seal)
+                changed['installs']['head'].pop(field)
+                with self.assertRaisesRegex(ValueError, 'content'):
+                    tune.check_installs(changed, require_proofs=True)
+            env = {k: v for k, v in os.environ.items() if not k.startswith('TUNE_')}
+            env.update(CHOPINFER_WEIGHT_KEEPER_DIR=str(root / 'synthetic-keeper'),
+                       CHOPINFER_TEST_CHECKPOINT=str(root / 'checkpoint'))
+            out = root / 'exact'
+            result = subprocess.run([sys.executable, '-B', str(staged / 'harness/tune.py'), '--dry-run',
+                                     '--output', str(out), '--payload-sha', stage.digest(staged / 'runtime-seal.json')],
+                                    env=env, text=True, capture_output=True, timeout=90)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            summary = json.loads((out / 'summary.json').read_text())
+            self.assertEqual(summary['windows'], {'executed': 16, 'planned': 16})
+            self.assertEqual(summary['status'], 'passed')
+            self.assertTrue(all(row['weights']['source'] == 'borrowed' for row in summary['processes'].values()))
+            costs = json.loads((out / 'costs.json').read_text())
+            for label, comparison in [('a', 'reference-repeat'), ('b', 'cross-install')]:
+                self.assertTrue(any(key.startswith(label + '/') for key in costs['cells']))
+                for key, row in costs['windows'].items():
+                    if key.startswith(label + '/'):
+                        self.assertEqual(row['repeats'], 2)
+                        self.assertEqual(row['comparison'], comparison)
+            for kind in ('greedy', 'sampled'):
+                for c in (8, 16):
+                    reference = json.loads((out / f'a/reference/{kind}-c{c}.json').read_text())
+                    self.assertEqual(reference['install'], 'base')
+                    for label, install in [('a', 'base'), ('b', 'head')]:
+                        for repeat in range(2):
+                            row = json.loads((out / f'{label}/windows/{kind}-c{c}-r{repeat}.json').read_text())
+                            self.assertEqual(row['exact'], reference['exact'])
+                            self.assertEqual(row['install'], install)
+                            self.assertGreater(row['full']['allocated_steps'], 0)
+            launches = list(out.glob('*/server/launch.json'))
+            self.assertEqual(len(launches), 2)
+            for path in launches:
+                launch = json.loads(path.read_text())
+                install = launch['install']
+                self.assertEqual(launch['serve_argv'][0], str(root / f'install-{install}/bin/chopinfer'))
+                self.assertIn(str(root / f'cache-{install}'), launch['serve_argv'])
+                proof = Path(launch['serve_argv'][launch['serve_argv'].index('--weight-keeper-identity') + 1])
+                self.assertEqual(proof.name, f'content-{install}.json')
+            summary['arm_installs']['b']['revision'] = '0' * 40
+            tune.r.write(out / 'summary.json', summary)
+            with self.assertRaisesRegex(ValueError, 'revision differs'):
+                report.costs(out)
+
+    def test_exact_three_installs_keep_later_windows_after_mismatches(self):
+        import os
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            names = ('base', 'head', 'later')
+            model = frozen_fixture(root, names)
+            model.update(mode='exact', kinds={'greedy': .5, 'sampled': .5}, concurrencies=[8, 16])
+            model['arms'].append({'label': 'c', 'depth': 1, 'install': 'later'})
+            model['planning']['tokens_per_second'] = {'8': 100, '16': 100}
+            model['planning']['ar_tokens_per_second'] = {'8': 100, '16': 100}
+            result = stage_fixture(root, model, names=names)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            staged = root / 'stage'
+            env = {k: v for k, v in os.environ.items() if not k.startswith('TUNE_')}
+            env.update(CHOPINFER_WEIGHT_KEEPER_DIR=str(root / 'synthetic-keeper'),
+                       CHOPINFER_TEST_CHECKPOINT=str(root / 'checkpoint'))
+            for control, field in [('TUNE_STUB_PERTURB_INSTALL', 'selected_bits'),
+                                   ('TUNE_STUB_TOKEN_INSTALL', 'token_ids')]:
+                out = root / field
+                result = subprocess.run([sys.executable, '-B', str(staged / 'harness/tune.py'), '--dry-run',
+                                         '--output', str(out), '--payload-sha', stage.digest(staged / 'runtime-seal.json')],
+                                        env={**env, control: 'head'}, text=True, capture_output=True, timeout=90)
+                summary = json.loads((out / 'summary.json').read_text())
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual(summary['status'], 'failed')
+                self.assertEqual(summary['windows'], {'planned': 24, 'executed': 24})
+                for kind in ('greedy', 'sampled'):
+                    self.assertEqual(len(summary[kind + '_differences']), 4)
+                    self.assertTrue(all('b ' in d and field + '[50]' in d for d in summary[kind + '_differences']))
+                    for c in (8, 16):
+                        reference = json.loads((out / f'a/reference/{kind}-c{c}.json').read_text())
+                        for repeat in range(2):
+                            row = json.loads((out / f'c/windows/{kind}-c{c}-r{repeat}.json').read_text())
+                            self.assertEqual(row['exact'], reference['exact'])
+
+    def test_exact_refuses_loaded_weights_and_missing_full_allocation(self):
+        import os
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root)
+            model.update(mode='exact', kinds={'greedy': .5, 'sampled': .5}, concurrencies=[8, 16],
+                         required_allocated_concurrencies=[8, 16], max_depth=5, verify_rows=64)
+            for arm in model['arms']:
+                arm.update(depth=3, arguments=['--speculative-rows', '64', '--speculation-widths', '6,8,16,32,64',
+                                               '--speculation-confidence', '{"floor":1}'])
+            model['planning']['tokens_per_second'] = {'8': 100, '16': 100}
+            model['planning']['ar_tokens_per_second'] = {'8': 100, '16': 100}
+            result = stage_fixture(root, model)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            staged = root / 'stage'
+            env = {k: v for k, v in os.environ.items() if not k.startswith('TUNE_')}
+            env.update(CHOPINFER_WEIGHT_KEEPER_DIR=str(root / 'synthetic-keeper'),
+                       CHOPINFER_TEST_CHECKPOINT=str(root / 'checkpoint'))
+            for name, controls, error in [
+                    ('weights', {'TUNE_STUB_LOADED_INSTALL': 'head'}, 'expected borrowed'),
+                    ('kv', {'TUNE_STUB_KV_CHANGE_LABEL': 'a'}, 'expected 64 per rank'),
+                    ('allocation', {'TUNE_STUB_IGNORE_FULL_ALLOCATION': '16'}, 'no full-C16 allocated steps')]:
+                out = root / name
+                result = subprocess.run([sys.executable, '-B', str(staged / 'harness/tune.py'), '--dry-run',
+                                         '--output', str(out), '--payload-sha', stage.digest(staged / 'runtime-seal.json')],
+                                        env={**env, **controls}, text=True, capture_output=True, timeout=90)
+                summary = json.loads((out / 'summary.json').read_text())
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(error, ' '.join(summary['errors']))
+
+    def test_exact_reference_follows_the_first_arm_install(self):
+        import os
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root)
+            model.update(mode='exact', kinds={'greedy': .5, 'sampled': .5})
+            model['arms'][0]['install'] = 'head'
+            model['arms'][1]['install'] = 'base'
+            result = stage_fixture(root, model)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            staged = root / 'stage'
+            env = {k: v for k, v in os.environ.items() if not k.startswith('TUNE_')}
+            env.update(CHOPINFER_WEIGHT_KEEPER_DIR=str(root / 'synthetic-keeper'),
+                       CHOPINFER_TEST_CHECKPOINT=str(root / 'checkpoint'))
+            for name, keeper in [('borrowed', True), ('missing-keeper', False)]:
+                out = root / name
+                selected = dict(env)
+                if not keeper:
+                    selected.pop('CHOPINFER_WEIGHT_KEEPER_DIR')
+                result = subprocess.run([sys.executable, '-B', str(staged / 'harness/tune.py'), '--dry-run',
+                                         '--output', str(out), '--payload-sha', stage.digest(staged / 'runtime-seal.json')],
+                                        env=selected, text=True, capture_output=True, timeout=90)
+                summary = json.loads((out / 'summary.json').read_text())
+                self.assertEqual(result.returncode, 0 if keeper else 1, result.stdout + result.stderr)
+                if not keeper:
+                    self.assertIn('multi-install jobs require weight keeper borrowing', ' '.join(summary['errors']))
+                    continue
+                for kind in ('greedy', 'sampled'):
+                    reference = json.loads((out / f'a/reference/{kind}-c1.json').read_text())
+                    self.assertEqual(reference['install'], 'head')
+                    self.assertEqual(reference['revision'], '2' * 40)
+                    self.assertEqual(summary['processes']['a']['install'], 'head')
+                    self.assertEqual(summary['processes']['b']['install'], 'base')
 
     def test_metadata_jobs_require_complete_consistent_provenance(self):
         import copy
@@ -1432,6 +1603,24 @@ class Tuner(unittest.TestCase):
             tune.check_allocations('unrequested', steps, False, False)
         self.assertEqual(tune.check_allocations('full width', [], True, False), 0)
 
+    def test_required_allocations_reject_smaller_cohorts_and_invalid_reservations(self):
+        config = {'model': {'concurrencies': [8, 16], 'required_allocated_concurrencies': [16]}}
+        steps = [{'batch': i, 'completed_unix_ns': i * 1_000_000, 'prefill_items': 0,
+                  'decode_rows': 0, 'verify_items': 8, 'verify_rows': 32, 'reserved_rows': 48,
+                  'verify_emitted_tokens': 12, 'accepted_tokens': 8, 'execution_us': 800} for i in range(3)]
+        self.assertGreater(tune.check_allocations('smaller', steps, True, False), 0)
+        with self.assertRaisesRegex(RuntimeError, 'no full-C16 allocated steps'):
+            tune.check_full_allocations('smaller', config, 16, steps, tune.full_concurrency(steps, 16))
+        full_steps = [{**row, 'decode_rows': 1, 'verify_items': 15, 'verify_rows': 31, 'reserved_rows': 60}
+                      for row in steps]
+        tune.check_full_allocations('full', config, 16, full_steps, tune.full_concurrency(full_steps, 16))
+        invalid = [{**row, 'reserved_rows': row['verify_rows']} for row in full_steps]
+        with self.assertRaisesRegex(RuntimeError, 'reservation does not exceed'):
+            tune.check_full_allocations('invalid', config, 16, invalid, tune.full_concurrency(invalid, 16))
+        for required in (None, '16', [True], [16.0], [-1], [0], [8, 8], [32]):
+            with self.subTest(required=required), self.assertRaisesRegex(ValueError, 'required_allocated_concurrencies'):
+                tune.required_allocated_concurrencies({'model': {**config['model'], 'required_allocated_concurrencies': required}})
+
     def test_arms_may_run_a_production_depth_schedule(self):
         config = {'model': {'speculation_mode': 'balanced', 'mode': 'ab', 'extra_arguments': [],
                             'arms': [{'label': 'f', 'depths': '1:5,8:3,16:3,32:0', 'install': 'base'},
@@ -1872,6 +2061,37 @@ class Tuner(unittest.TestCase):
             self.assertEqual(summary['processes']['d3']['metrics']['prefix_cache_evictions'], 10)
             self.assertEqual(recorded.r.trace_rows(server / 'server.log'), steps)
             self.assertEqual(costs['cells']['i8-r32']['steps'], 3)
+            # Metadata-bearing runs must retain their observed identities.
+            identity = {'install': 'base', 'revision': '1' * 40}
+            config['model'].update(mode='exact', speculation_mode='balanced',
+                                   arms=[{'label': 'd3', 'depth': 3, 'install': 'base'}])
+            tune.r.write(run / 'config.json', config)
+            source_summary = {'status': 'passed', 'arm_installs': {'d3': identity},
+                              'processes': {'d3': identity}}
+            tune.r.write(run / 'summary.json', source_summary)
+            value = json.loads(window.read_text())
+            tune.r.write(window, {**value, 'arm': 'd3', **identity})
+            metadata = Path(directory) / 'metadata'
+            recorded.main(run, metadata)
+            adapted = json.loads((metadata / 'summary.json').read_text())
+            self.assertEqual(adapted['processes']['d3']['revision'], identity['revision'])
+            import shutil
+            shutil.copytree(run / 'd3', run / 'head')
+            head = {'install': 'head', 'revision': '2' * 40}
+            config['model']['arms'].append({'label': 'head', 'depth': 3, 'install': 'head'})
+            source_summary['arm_installs']['head'] = head
+            source_summary['processes']['head'] = head
+            tune.r.write(run / 'config.json', config)
+            tune.r.write(run / 'summary.json', source_summary)
+            head_window = run / 'head/windows/greedy-c8.json'
+            tune.r.write(head_window, {**value, 'arm': 'head', **head})
+            paired = Path(directory) / 'paired'
+            recorded.main(run, paired)
+            self.assertEqual(set(json.loads((paired / 'costs.json').read_text())['cells']),
+                             {'d3/i8-r32', 'head/i8-r32'})
+            tune.r.write(head_window, {**value, 'arm': 'head', **identity})
+            with self.assertRaisesRegex(ValueError, 'revision differs'):
+                recorded.main(run, Path(directory) / 'corrupt')
             (server / 'server.log').write_text('\n'.join(log[:3]) + '\n')
             with self.assertRaises(SystemExit):
                 recorded.main(run, Path(directory) / 'short')

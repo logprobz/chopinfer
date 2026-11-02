@@ -5,7 +5,7 @@ schema = "chopinfer-source-dependencies-v1"
 source = "models/qwen38/compiler/src/frontend-multimodal.json"
 consumers = ["bundle-qwen38"]
 kind = "data include"
-reader = "models/qwen38/bundle/src/encoder/run.rs"
+reader = "models/qwen38/bundle/src/encoder/acquire.rs"
 
 [[edges]]
 source = "models/mimo26/compiler/src/frontend.json"
@@ -14,16 +14,16 @@ kind = "data include"
 reader = "models/mimo26/bundle/src/encoders/arena.rs"
 
 [[edges]]
-source = "models/mimo26/compiler/tests/support/*"
-consumers = ["model-qwen38"]
-kind = "source include"
-reader = "models/qwen38/compiler/tests/streaming_text.rs"
+source = "fixtures/tokenizer-whitespace.json"
+consumers = ["model-mimo26"]
+kind = "data include"
+reader = "models/mimo26/compiler/tests/streaming_text.rs"
 
 [[edges]]
 source = "fixtures/tokenizer-whitespace.json"
-consumers = ["model-mimo26", "model-qwen38"]
+consumers = ["model-qwen38"]
 kind = "data include"
-reader = "models/mimo26/compiler/tests/support/streaming_text.rs"
+reader = "models/qwen38/compiler/tests/streaming_text.rs"
 
 [[edges]]
 source = "models/*/bundle/cuda/*"
@@ -35,7 +35,7 @@ reader = "crates/kernel-lab/build.rs"
 source = "models/qwen38/bundle/kernels.lock"
 consumers = ["kernel-lab"]
 kind = "data include"
-reader = "crates/kernel-lab/tests/qwen38_bundle_rows.rs"
+reader = "models/qwen38/contract/src/sm120/generated.rs"
 
 [[edges]]
 source = "models/qwen38/compiler/src/*.rs"
@@ -53,7 +53,7 @@ reader = "models/mimo26/contract/src/lib.rs"
 source = "models/*/bundle/kernels.lock"
 consumers = ["model-*-contract"]
 kind = "data include"
-reader = "models/*/contract/src/prepared.rs"
+reader = "models/*/contract/src/sm120/generated.rs; models/*/contract/src/sm120/prepared.rs; models/*/contract/src/capabilities/sm120.rs"
 
 [[edges]]
 source = "crates/kernel-core/src/transform/*"

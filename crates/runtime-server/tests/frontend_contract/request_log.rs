@@ -512,6 +512,7 @@ async fn a_failure_after_admission_is_one_error_line() {
         ScriptedBackendV1::new(vec![
             content("hi"),
             GenerationEvent::Failed {
+                refusal: None,
                 message: format!("device fault near {CANARY}"),
                 code: Some("device_fault".to_owned()),
             },
@@ -550,6 +551,7 @@ async fn a_failure_after_admission_is_one_error_line() {
     for line in &lines {
         assert_failure(line, 500, "error");
         assert_eq!(line["code"], "device_fault");
+        assert!(line.get("output_refusal").is_none());
         assert_eq!(line["message"], "backend failure");
         assert_eq!(line["stage"], "generation");
         assert_eq!(line["prompt_tokens"], 4);
@@ -564,6 +566,65 @@ async fn a_failure_after_admission_is_one_error_line() {
         let id = line["request_id"].as_str().unwrap();
         assert!(id.ends_with("_0") || id.ends_with("_1"), "{line:#}");
         assert!(line["generated_tokens"].as_u64().unwrap() >= 1, "{line:#}");
+    }
+    assert!(!server.raw().contains(CANARY), "{}", server.raw());
+}
+
+#[tokio::test]
+async fn output_refusals_reach_whole_and_streamed_failure_lines() {
+    let reason = "malformed completion: completion contains an unexpected reserved boundary";
+    let server = LoggedServer::start(
+        ScriptedBackendV1::new(vec![GenerationEvent::Failed {
+            message: "model output could not be decoded".to_owned(),
+            code: Some("invalid_model_output".to_owned()),
+            refusal: Some(Box::new(runtime_server::OutputRefusal {
+                reason: reason.to_owned(),
+                token_ordinal: Some(0),
+                token_id: Some(42),
+            })),
+        }]),
+        ServerConfig::default(),
+    )
+    .await;
+    for stream in [false, true] {
+        for (path, mut body) in [
+            ("/v1/completions", json!({"prompt": CANARY})),
+            (
+                "/v1/chat/completions",
+                json!({"messages": [{"role": "user", "content": CANARY}]}),
+            ),
+            ("/v1/responses", json!({"input": CANARY})),
+        ] {
+            body["model"] = json!(MODEL);
+            body["stream"] = json!(stream);
+            let response = server.request(&post(path, &body.to_string())).await;
+            assert_eq!(
+                response.status,
+                if stream { 200 } else { 500 },
+                "{}",
+                response.body
+            );
+            let code = if stream && path == "/v1/responses" {
+                "InternalServerError"
+            } else {
+                "invalid_model_output"
+            };
+            assert!(response.body.contains(code), "{}", response.body);
+            assert!(response.body.contains("model output could not be decoded"));
+            assert!(!response.body.contains("output_refusal"));
+            assert!(!response.body.contains(reason));
+        }
+    }
+    for line in server.lines(6).await {
+        assert_failure(&line, 500, "error");
+        assert_eq!(line["message"], "backend failure");
+        assert_eq!(line["code"], "invalid_model_output");
+        assert_eq!(
+            line["output_refusal"],
+            json!({
+                "reason": reason, "token_ordinal": 0, "token_id": 42,
+            })
+        );
     }
     assert!(!server.raw().contains(CANARY), "{}", server.raw());
 }
@@ -597,6 +658,7 @@ async fn a_failing_choice_of_a_stream_is_the_line_not_its_siblings() {
             .emit_to(
                 0,
                 GenerationEvent::Failed {
+                    refusal: None,
                     message: "device fault".to_owned(),
                     code: Some("device_fault".to_owned()),
                 },
@@ -637,6 +699,7 @@ async fn concurrent_choice_failures_keep_each_failure_with_its_choice() {
             .await;
         backend.wait_admitted(2 * (request + 1)).await;
         let failed = |choice: usize| GenerationEvent::Failed {
+            refusal: None,
             message: "device fault".to_owned(),
             code: Some(format!("fault_{choice}")),
         };
@@ -1015,6 +1078,7 @@ async fn each_responses_outcome_writes_one_line_of_its_kind() {
         ScriptedBackendV1::new(vec![
             content("hi"),
             GenerationEvent::Failed {
+                refusal: None,
                 message: format!("device fault near {CANARY}"),
                 code: Some("device_fault".to_owned()),
             },

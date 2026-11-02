@@ -59,6 +59,7 @@ impl ActiveRequest {
                 Some(GenerationEvent::Failed {
                     message: "server drain deadline expired".to_owned(),
                     code: Some("shutdown_timeout".to_owned()),
+                    refusal: None,
                 })
             }
             event = events.recv() => event,
@@ -618,7 +619,7 @@ impl ChatEventFoldV1 {
                     .map(|(reason, _)| Some(reason))
                     .map_err(rejected_event);
             }
-            GenerationEvent::Failed { message, code } => {
+            GenerationEvent::Failed { message, code, .. } => {
                 fold.failure(message, code.as_deref())
                     .map_err(rejected_event)?;
                 return Err(FrontendErrorV1::new(message.clone(), None));
@@ -1633,12 +1634,20 @@ async fn nonstreaming_response(
                 }
                 return json_response(StatusCode::OK, value, &metadata.request_id);
             }
-            GenerationEvent::Failed { message, code } => {
+            GenerationEvent::Failed {
+                message,
+                code,
+                refusal,
+            } => {
                 active.complete();
                 if let Err(error) = fold.failure(&message, code.as_deref()) {
                     return error.into_response(&metadata.request_id);
                 }
-                return ApiError::backend(message, code).into_response(&metadata.request_id);
+                let mut error = ApiError::backend(message, code);
+                if let Some(refusal) = refusal {
+                    error = error.with_output_refusal(*refusal);
+                }
+                return error.into_response(&metadata.request_id);
             }
         }
     }
@@ -2304,14 +2313,21 @@ fn streaming_response(
                     let _ = send_done(&body_tx).await;
                     return;
                 }
-                GenerationEvent::Failed { message, code } => {
+                GenerationEvent::Failed {
+                    message,
+                    code,
+                    refusal,
+                } => {
                     active.complete();
                     if let Err(error) = fold.failure(&message, code.as_deref()) {
                         let _ = send_error(&body_tx, &error).await;
                         let _ = send_done(&body_tx).await;
                         return;
                     }
-                    let error = ApiError::backend(message, code);
+                    let mut error = ApiError::backend(message, code);
+                    if let Some(refusal) = refusal {
+                        error = error.with_output_refusal(*refusal);
+                    }
                     let _ = send_error(&body_tx, &error).await;
                     let _ = send_done(&body_tx).await;
                     return;

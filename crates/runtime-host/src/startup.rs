@@ -797,6 +797,7 @@ mod wave_tests {
                 for events in state.1.drain(..) {
                     let event = if self.fail_wave == Some(wave) {
                         GenerationEvent::Failed {
+                            refusal: None,
                             message: format!("wave {wave} failed"),
                             code: None,
                         }
@@ -1308,6 +1309,7 @@ mod wave_stop_tests {
                 if self.fail {
                     events
                         .try_emit(GenerationEvent::Failed {
+                            refusal: None,
                             message: "request failed".to_owned(),
                             code: None,
                         })

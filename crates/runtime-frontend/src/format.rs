@@ -36,7 +36,9 @@ pub(crate) struct FormatParserOptionsV1 {
     pub(crate) stream_tool_calls: bool,
     /// Whether the completion is raw text with no structure to read.
     pub(crate) raw: bool,
-    /// Whether end markers are ordinary text, as `ignore_eos` asks.
+    /// Whether end markers may not stop generation. In chat, the host ends
+    /// this parser at the first ignored end token; later bytes are plain
+    /// answer text and never reach it. Raw completions keep parsing as text.
     pub(crate) ignore_eos: bool,
     /// Whether the engine sampled the tokens, so a stop it confirmed arrives
     /// by ID and the ordinary spelling of an ID-backed end marker is text.

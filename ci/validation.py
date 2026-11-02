@@ -344,7 +344,7 @@ class Catalog:
         if path == "fixtures/tokenizer-whitespace.json" or "/compiler/tests/support/" in path:
             names = [name for name, row in self.models.items() if row["inventory"]]
             rows.append({"path": path, "class": "frontend", "models": sorted(names),
-                         "reason": "shared streaming fixture/source reaches compiler tests"})
+                         "reason": "conservative frontend validation for compiler support files and the tokenizer fixture"})
         return rows or [{"path": path, "class": "unknown", "models": sorted(self.models),
                         "reason": "unknown ownership; widen validation"}]
 

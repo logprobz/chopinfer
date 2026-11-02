@@ -380,23 +380,43 @@ impl InstalledHelper {
             .stderr(Stdio::piped())
             .spawn()?;
         let stdout = child.stdout.take().ok_or("helper stdout unavailable")?;
-        let stderr = child.stderr.take().ok_or("helper stderr unavailable")?;
+        let mut stderr = child.stderr.take().ok_or("helper stderr unavailable")?;
         let (sender, reply) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut bytes = Vec::new();
             let read = stdout
                 .take(SERVING_PROFILES_MAX_BYTES + 1)
                 .read_to_end(&mut bytes);
-            let mut message = String::new();
-            let _ = stderr.take(4096).read_to_string(&mut message);
-            let _ = sender.send(read.map(|_| (bytes, message)));
+            let _ = sender.send(read.map(|_| bytes));
         });
-        let received = reply.recv_timeout(std::time::Duration::from_secs(10));
-        let _ = child.kill();
-        let status = child.wait()?;
-        let (bytes, message) = received.map_err(
-            |_| "installed helper did not print its serving profiles within 10 seconds",
-        )??;
+        // Stderr drains beside stdout, so a helper that writes much to it
+        // cannot block before it finishes its document.
+        let (said, message) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut text = Vec::new();
+            let _ = (&mut stderr).take(4096).read_to_end(&mut text);
+            let _ = std::io::copy(&mut stderr, &mut std::io::sink());
+            let _ = said.send(String::from_utf8_lossy(&text).into_owned());
+        });
+        let timeout = std::time::Duration::from_secs(10);
+        let deadline = std::time::Instant::now() + timeout;
+        let received = reply.recv_timeout(timeout);
+        let status = loop {
+            if let Some(status) = child.try_wait()? {
+                break Some(status);
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        let late = || "installed helper did not print its serving profiles within 10 seconds";
+        let (bytes, status) = (received.map_err(|_| late())??, status.ok_or_else(late)?);
+        let message = message
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap_or_default();
         provider.source.verify()?;
         if bytes.len() as u64 > SERVING_PROFILES_MAX_BYTES {
             return Err("installed helper's serving profiles exceed their bound".into());

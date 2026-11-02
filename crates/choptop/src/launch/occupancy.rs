@@ -23,8 +23,18 @@ use super::Reservation;
 struct Listing {
     /// It said it is lost and has not answered since.
     lost: bool,
+    /// The latest process query failed: the list before it says nothing
+    /// now.
+    failed: bool,
     /// The latest process list read, and when.
     listed: Option<(f64, Vec<Process>)>,
+}
+
+impl Listing {
+    /// The processes, while the latest query read them.
+    fn current(&self) -> Option<&(f64, Vec<Process>)> {
+        self.listed.as_ref().filter(|_| !self.failed)
+    }
 }
 
 /// The latest GPU readings and discovery scan, taken as they arrive, even
@@ -67,8 +77,14 @@ impl Live {
                     } else if reading.answered {
                         listing.lost = false;
                     }
-                    if let Some(processes) = &reading.processes {
-                        listing.listed = Some((reading.at, processes.clone()));
+                    // A failed query leaves the GPU unknown until the next
+                    // one reads it.
+                    match &reading.processes {
+                        Some(processes) => {
+                            listing.listed = Some((reading.at, processes.clone()));
+                            listing.failed = false;
+                        }
+                        None => listing.failed = true,
                     }
                 }
             }
@@ -265,6 +281,9 @@ fn unknown(live: &Live, index: usize, interval: f64, now: f64) -> Option<String>
     if listing.lost {
         return Some("lost or off the bus".to_owned());
     }
+    if listing.failed {
+        return Some("its process list could not be read".to_owned());
+    }
     match &listing.listed {
         None => Some("its processes have not been read".to_owned()),
         Some((at, _)) if now - at > 2.0 * interval => Some(format!(
@@ -294,8 +313,7 @@ pub fn occupancy(inputs: &Inputs) -> Vec<Gpu> {
                 .is_none()
                 .then(|| {
                     live.listings[index]
-                        .listed
-                        .as_ref()
+                        .current()
                         .map_or(&[][..], |(_, processes)| processes.as_slice())
                 })
         })
@@ -456,7 +474,7 @@ pub fn ports(inputs: &Inputs) -> BTreeMap<u16, PortHolder> {
         .live
         .listings
         .iter()
-        .filter_map(|listing| listing.listed.as_ref())
+        .filter_map(Listing::current)
         .flat_map(|(_, processes)| processes.iter().map(|process| process.pid))
         .collect::<Vec<_>>();
     let mut ports = BTreeMap::new();
@@ -608,16 +626,26 @@ pub(crate) mod tests {
         live.gpu(&polled(1.0, vec![Some(vec![]), Some(vec![]), None]));
         let now = states(&live, &[], 1.5);
         assert_eq!(now[0], Occupancy::Free);
-        // A failed list with no list before it is unknown, never free.
-        assert_eq!(unknown_reason(&now[2]), "its processes have not been read");
-        // A failed read keeps the list before it for two polls...
+        // A failed list is unknown, never free.
+        assert_eq!(
+            unknown_reason(&now[2]),
+            "its process list could not be read"
+        );
+        // A failed read right after a good one is unknown too: the list
+        // before it does not stand in...
         live.gpu(&polled(2.0, vec![None, Some(vec![]), Some(vec![])]));
-        assert_eq!(states(&live, &[], 2.5)[0], Occupancy::Free);
-        // ...and after that it is stale.
-        live.gpu(&polled(4.0, vec![None, Some(vec![]), Some(vec![])]));
-        let stale = states(&live, &[], 4.0);
+        let failed = states(&live, &[], 2.0);
+        assert_eq!(
+            unknown_reason(&failed[0]),
+            "its process list could not be read"
+        );
+        assert_eq!(failed[2], Occupancy::Free);
+        // ...until the next read succeeds.
+        live.gpu(&polled(3.0, vec![Some(vec![]), Some(vec![]), Some(vec![])]));
+        assert_eq!(states(&live, &[], 3.0)[0], Occupancy::Free);
+        // A list read more than two polls ago is stale.
+        let stale = states(&live, &[], 6.0);
         assert_eq!(unknown_reason(&stale[0]), "its process list is 3s old");
-        assert_eq!(stale[1], Occupancy::Free);
         // Readings stopped: every list goes stale.
         let later = states(&live, &[], 10.0);
         assert!(

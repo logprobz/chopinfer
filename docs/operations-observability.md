@@ -345,9 +345,9 @@ supervisor stop timeout above the drain budget, as in the 45-second examples.
 A fatal engine/rank error exits nonzero without native teardown; restart a
 fresh process and remove unready endpoints from load balancing.
 
-## Watch running instances with chopinfer-top
+## Watch running instances with choptop
 
-`chopinfer-top --help` describes discovery, explicit URLs and display options.
+`choptop --help` describes discovery, explicit URLs and display options.
 It reads health and metrics; unavailable queries must not be interpreted as
 zero usage. Its GPU discovery is local and does not establish that a device
 is idle. Use the served identity to match an instance to its configuration.

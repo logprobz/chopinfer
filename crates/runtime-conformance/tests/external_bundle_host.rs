@@ -137,11 +137,7 @@ fn two_external_bundles_run_through_one_unchanged_host_binary() {
     assert_served_prefix_cache(&host, root, temporary.path());
     assert_unchanged(&host, &host_hash, "serving prefix cache hits");
     assert_dashboard_lists_a_served_fixture(&target_directory, &host, root, temporary.path());
-    assert_unchanged(
-        &host,
-        &host_hash,
-        "listing a served fixture with chopinfer-top",
-    );
+    assert_unchanged(&host, &host_hash, "listing a served fixture with choptop");
     reject_unloadable_bundles(&host, &host_hash, temporary.path(), &emitted);
     refuse_serving_without_a_frontend(&host, root, temporary.path(), &emitted);
     assert_unchanged(&host, &host_hash, "refusing a package without a frontend");
@@ -761,7 +757,7 @@ fn assert_served_media_and_speculation(host: &Path, root: &Path, scratch: &Path)
     misses.no_page_leak();
 }
 
-/// `chopinfer-top --list --json` reports a served fixture: found as this
+/// `choptop --list --json` reports a served fixture: found as this
 /// user's serve process on Linux, and as an explicit target everywhere, with
 /// the identity `/health` reports and the tokens it generated.
 fn assert_dashboard_lists_a_served_fixture(
@@ -776,13 +772,13 @@ fn assert_dashboard_lists_a_served_fixture(
             "--locked",
             "--offline",
             "-p",
-            "chopinfer-top",
+            "choptop",
             "--bin",
-            "chopinfer-top",
+            "choptop",
         ]),
-        "build chopinfer-top",
+        "build choptop",
     );
-    let dashboard = target_directory.join("debug").join("chopinfer-top");
+    let dashboard = target_directory.join("debug").join("choptop");
     let server = ServedFixtureV1::start(host, root, scratch, "dashboard", false, false);
     server.post(&serde_json::json!({
         "model": "fixture/tp4", "messages": [{"role": "user", "content": "a"}],
@@ -800,7 +796,7 @@ fn assert_dashboard_lists_a_served_fixture(
                 .args(["--list", "--json", "--no-docker", "--interval", "0.5"])
                 .args(arguments)
                 .env_remove("CHOPINFER_TOP_TARGETS"),
-            "chopinfer-top --list",
+            "choptop --list",
         );
         let listing: Value = serde_json::from_str(&output).expect("the listing is JSON");
         assert_eq!(listing["schema"], "chopinfer.top.list.v1", "{output}");

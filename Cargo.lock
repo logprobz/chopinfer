@@ -284,7 +284,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
-name = "chopinfer-top"
+name = "choptop"
 version = "0.1.0-alpha.3"
 dependencies = [
  "crossterm",

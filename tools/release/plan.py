@@ -55,7 +55,7 @@ def stage(plan, root):
     `chopinfer eval files` lists for the model's declaration, at their
     checkout paths; its third column names a checkpoint variant, which
     build.sh passes as `--variant`, or is `-` for the model's qual.json."""
-    rows = [('binary', name, 'bin/' + name, '755') for name in ('chopinfer', 'chopinfer-host', 'chopinfer-top')]
+    rows = [('binary', name, 'bin/' + name, '755') for name in ('chopinfer', 'chopinfer-host', 'choptop')]
     rows += [('binary', target.name, inventory.destination(target), '755') for target in binaries(plan)]
     for model in plan:
         rows += [('binary', Path(inventory.destination(target)).name, inventory.destination(target), '755')

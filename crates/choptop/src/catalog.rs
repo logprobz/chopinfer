@@ -9,14 +9,14 @@
 //! package preparation holds back nothing else. The command and package
 //! lanes run only the latest request waiting for them.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::io::Read;
+use std::io::{self, Read};
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
@@ -813,34 +813,159 @@ pub enum Reply {
     Check(u64, Result<Check, String>),
 }
 
-/// The process groups of choptop's own `chopinfer` children while they
-/// run, each led by the child itself, which discovery leaves out.
-/// `serve --check` and `serve --list-model-options` run serve with a
-/// launch's environment, and with a real package live long enough for a
-/// scan to take them for a serve process loading on the picked GPUs.
+/// The process groups of choptop's own `chopinfer` children, each led by
+/// the child itself, which discovery leaves out. `serve --check` and
+/// `serve --list-model-options` run serve with a launch's environment,
+/// and with a real package live long enough for a scan to take them for a
+/// serve process loading on the picked GPUs.
+///
+/// While a child runs, its pid and its group are left out. Once it is
+/// reaped, its pid may name an unrelated process and no longer counts. Its
+/// group counts while a process of it that started before the reap is
+/// alive, since until then no new process can take the group's id, and
+/// only until choptop has read the child's output: a process that still
+/// holds it, as a wrapper's backgrounded serve does, is still the request.
 #[derive(Clone, Debug, Default)]
-pub struct Children(Arc<Mutex<BTreeSet<u32>>>);
+pub struct Children(Arc<Mutex<Groups>>);
+
+#[derive(Debug, Default)]
+struct Groups {
+    /// By the leading child's pid.
+    led: BTreeMap<u32, Led>,
+    next: u64,
+}
+
+/// One child's group: which registration it is, and the clock tick since
+/// boot at which its leader was reaped.
+#[derive(Clone, Copy, Debug)]
+struct Led {
+    serial: u64,
+    reaped: Option<u64>,
+}
 
 impl Children {
-    fn lock(&self) -> MutexGuard<'_, BTreeSet<u32>> {
+    fn lock(&self) -> MutexGuard<'_, Groups> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Whether `id`, a pid or a process group, is one of them.
+    /// Whether `id` leads the group of a child that runs now.
     pub fn contains(&self, id: u32) -> bool {
-        self.lock().contains(&id)
+        self.lock()
+            .led
+            .get(&id)
+            .is_some_and(|led| led.reaped.is_none())
+    }
+
+    /// Whether process `pid` of process group `group`, started at clock
+    /// tick `start_ticks`, is left out as one of them. A child's pid counts
+    /// only while the child runs. Its group counts until the child's run
+    /// ends, after the reap only while `held(group, reaped)` finds a process
+    /// of the group alive that started by tick `reaped`: until then no new
+    /// process can take the group's id.
+    pub fn excludes(
+        &self,
+        pid: u32,
+        group: Option<u32>,
+        start_ticks: u64,
+        held: impl FnOnce(u32, u64) -> bool,
+    ) -> bool {
+        let (runs, led) = {
+            let groups = self.lock();
+            let runs = groups.led.get(&pid).is_some_and(|led| led.reaped.is_none());
+            let led = group.and_then(|group| Some((group, *groups.led.get(&group)?)));
+            (runs, led)
+        };
+        runs || led.is_some_and(|(group, led)| {
+            led.reaped
+                .is_none_or(|reaped| start_ticks <= reaped || held(group, reaped))
+        })
     }
 }
 
-/// A child's process group while it is one of [`Children`].
+/// The clock tick since boot, as `/proc/PID/stat` counts a process's
+/// start, rounded up; `None` when `/proc/uptime` cannot be read.
+fn boot_ticks() -> Option<u64> {
+    let uptime = fs::read_to_string("/proc/uptime").ok()?;
+    let seconds = uptime.split_whitespace().next()?.parse::<f64>().ok()?;
+    Some((seconds * crate::discover::proc::USER_HZ).ceil() as u64)
+}
+
+/// A child's group while it is one of [`Children`].
 struct Registered<'a> {
     children: &'a Children,
     group: u32,
+    serial: u64,
+}
+
+impl<'a> Registered<'a> {
+    /// Starts `command` as one of `children`, under their lock so no scan
+    /// finds it before.
+    fn spawn(children: &'a Children, command: &mut Command) -> io::Result<(Self, Child)> {
+        let mut groups = children.lock();
+        let child = command.spawn()?;
+        groups.next += 1;
+        let serial = groups.next;
+        groups.led.insert(
+            child.id(),
+            Led {
+                serial,
+                reaped: None,
+            },
+        );
+        let registered = Self {
+            children,
+            group: child.id(),
+            serial,
+        };
+        Ok((registered, child))
+    }
+
+    /// Runs `act` on `child` under the lock the scanner reads, then reaps
+    /// `child` if it has exited, in the same step marking it reaped so its
+    /// pid no longer counts and its group only while it holds a process
+    /// that started no later.
+    fn act<T>(
+        &self,
+        child: &mut Child,
+        act: impl FnOnce(&mut Child) -> T,
+    ) -> (T, io::Result<Option<ExitStatus>>) {
+        let mut groups = self.children.lock();
+        let value = act(child);
+        let status = child.try_wait();
+        let ours = groups
+            .led
+            .get(&self.group)
+            .is_some_and(|led| led.serial == self.serial && led.reaped.is_none());
+        if matches!(status, Ok(Some(_))) && ours {
+            match boot_ticks() {
+                Some(ticks) => {
+                    if let Some(led) = groups.led.get_mut(&self.group) {
+                        led.reaped = Some(ticks);
+                    }
+                }
+                None => {
+                    groups.led.remove(&self.group);
+                }
+            }
+        }
+        (value, status)
+    }
+
+    fn try_wait(&self, child: &mut Child) -> io::Result<Option<ExitStatus>> {
+        self.act(child, |_| ()).1
+    }
 }
 
 impl Drop for Registered<'_> {
     fn drop(&mut self) {
-        self.children.lock().remove(&self.group);
+        let mut groups = self.children.lock();
+        if groups
+            .led
+            .get(&self.group)
+            .is_some_and(|led| led.serial == self.serial)
+        {
+            groups.led.remove(&self.group);
+        }
     }
 }
 
@@ -924,23 +1049,17 @@ fn run_with_grace(
     grace: Duration,
     children: &Children,
 ) -> Result<String, String> {
-    // Held while it starts, so no scan finds it before it is one of them.
-    let mut groups = children.lock();
-    let mut child = Command::new(binary)
+    let mut command = Command::new(binary);
+    command
         .args(arguments)
         .envs(environment.iter().map(|(name, value)| (name, value)))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .process_group(0)
-        .spawn()
+        .process_group(0);
+    // It stays one of `children` until its output is read.
+    let (registered, mut child) = Registered::spawn(children, &mut command)
         .map_err(|error| format!("cannot run {}: {error}", binary.display()))?;
-    groups.insert(child.id());
-    drop(groups);
-    let _group = Registered {
-        children,
-        group: child.id(),
-    };
     let drain = |pipe: Option<Box<dyn Read + Send>>| {
         thread::spawn(move || {
             let mut bytes = Vec::new();
@@ -964,22 +1083,34 @@ fn run_with_grace(
     );
     let deadline = Instant::now() + timeout;
     let status = loop {
-        match child.try_wait() {
+        match registered.try_wait(&mut child) {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() >= deadline => {
-                let _ = crate::launch::process::terminate_group(&mut child);
+                let _ = registered.act(&mut child, |child| {
+                    let _ = crate::launch::process::terminate_group(child);
+                });
                 let until = Instant::now() + grace;
-                while matches!(child.try_wait(), Ok(None)) {
-                    if Instant::now() >= until {
-                        let _ = rustix::process::kill_process_group(
-                            rustix::process::Pid::from_child(&child),
-                            rustix::process::Signal::KILL,
-                        );
+                let mut killed = false;
+                // Each signal goes while it is not reaped, so its group is
+                // still its own.
+                loop {
+                    let (_, status) = registered.act(&mut child, |child| {
+                        if !killed
+                            && Instant::now() >= until
+                            && matches!(child.try_wait(), Ok(None))
+                        {
+                            killed = true;
+                            let _ = rustix::process::kill_process_group(
+                                rustix::process::Pid::from_child(child),
+                                rustix::process::Signal::KILL,
+                            );
+                        }
+                    });
+                    if !matches!(status, Ok(None)) {
                         break;
                     }
                     thread::sleep(Duration::from_millis(20));
                 }
-                let _ = child.wait();
                 // A helper it started may still hold the pipes, so their
                 // readers are left to end on their own.
                 return Err(format!("no answer within {}s", timeout.as_secs()));
@@ -1997,6 +2128,115 @@ mod tests {
                     .is_none_or(|identity| !identity.running())
             });
         }
+    }
+
+    /// A serve process in the fake `/proc` at `root`: `pid` of process
+    /// group `group`, started at clock tick `start`.
+    fn serve_entry(root: &Path, pid: u32, group: u32, start: u64) {
+        let directory = root.join(pid.to_string());
+        fs::create_dir_all(directory.join("fd")).unwrap();
+        std::os::unix::fs::symlink("/opt/chopinfer/bin/chopinfer", directory.join("exe")).unwrap();
+        fs::write(
+            directory.join("cmdline"),
+            "chopinfer\0serve\0--model\0/models/other\0",
+        )
+        .unwrap();
+        fs::write(
+            directory.join("stat"),
+            format!(
+                "{pid} (chopinfer) S 1 {group} 1 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 {start} 0 0\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    /// A request running on its own thread; dropping it lets its child and
+    /// the helper the child leaves end, and waits for it.
+    struct Draining {
+        root: PathBuf,
+        task: Option<thread::JoinHandle<Result<String, String>>>,
+    }
+
+    impl Drop for Draining {
+        fn drop(&mut self) {
+            let _ = fs::write(self.root.join("release"), "");
+            let _ = fs::write(self.root.join("helper"), "");
+            if let Some(task) = self.task.take() {
+                let _ = task.join();
+            }
+        }
+    }
+
+    #[test]
+    fn a_reaped_child_leaves_out_only_its_own_while_its_output_drains() {
+        use crate::discover::proc::ProcScanner;
+        use crate::launch::process::tests::{CLOSE, wait_for};
+        let root = scratch("reaped-child");
+        let script = root.join("chopinfer");
+        // It notes its pid, leaves a helper that holds its output, and
+        // exits once released.
+        write_script(
+            &script,
+            &format!(
+                "#!/bin/sh\n{CLOSE}echo $$ > \"$ROOT/pid.tmp\" && mv \"$ROOT/pid.tmp\" \"$ROOT/pid\"\n(n=0; while [ ! -e \"$ROOT/helper\" ] && [ $n -lt 200 ]; do sleep 0.05; n=$((n+1)); done) &\nn=0\nwhile [ ! -e \"$ROOT/release\" ] && [ $n -lt 200 ]; do sleep 0.05; n=$((n+1)); done\necho '{{}}'\n"
+            ),
+        );
+        let before = boot_ticks().unwrap();
+        let children = Children::default();
+        let registry = children.clone();
+        let environment = vec![("ROOT".to_owned(), root.display().to_string())];
+        let mut draining = Draining {
+            root: root.clone(),
+            task: Some(thread::spawn(move || {
+                run(
+                    &script,
+                    &[],
+                    &environment,
+                    Duration::from_secs(30),
+                    &registry,
+                )
+            })),
+        };
+        wait_for(|| root.join("pid").exists());
+        let pid = fs::read_to_string(root.join("pid"))
+            .unwrap()
+            .trim()
+            .parse::<u32>()
+            .unwrap();
+        assert!(children.contains(pid));
+        let fake = root.join("proc");
+        let seen = |children: &Children| {
+            ProcScanner::new(&fake)
+                .excluding(children.clone())
+                .scan()
+                .into_iter()
+                .map(|process| process.pid)
+                .collect::<Vec<_>>()
+        };
+        // A serve process of its group, started before it exits.
+        let member = pid + 3000;
+        serve_entry(&fake, member, pid, before);
+        assert!(seen(&children).is_empty());
+        // It is reaped; the helper still holds its output.
+        fs::write(root.join("release"), "").unwrap();
+        wait_for(|| !Path::new(&format!("/proc/{pid}")).exists());
+        // The member still holds its group, so what joins the group now is
+        // the request's too.
+        let after = boot_ticks().unwrap() + 1;
+        serve_entry(&fake, pid + 2000, pid, after);
+        assert!(seen(&children).is_empty());
+        // Once the member is gone, a process started since may reuse its pid
+        // and lead a group of that id.
+        fs::remove_dir_all(fake.join(member.to_string())).unwrap();
+        serve_entry(&fake, pid, pid, after);
+        assert_eq!(seen(&children), [pid, pid + 2000]);
+        assert!(!children.contains(pid));
+        assert!(!draining.task.as_ref().unwrap().is_finished());
+        // Once its output is read, it is no longer one of them.
+        fs::write(root.join("helper"), "").unwrap();
+        let output = draining.task.take().unwrap().join().unwrap();
+        assert_eq!(output.unwrap(), "{}\n");
+        assert!(children.lock().led.is_empty());
     }
 
     #[test]

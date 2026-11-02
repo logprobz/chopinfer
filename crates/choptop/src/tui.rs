@@ -324,6 +324,9 @@ pub fn run(setup: Setup) -> io::Result<()> {
     // GPM counters are sampled only while the monitor is open.
     let counters = Arc::new(AtomicBool::new(false));
     let (gpu_results, gpu_reports) = mpsc::channel();
+    if !setup.gpus {
+        app.live.unavailable = Some("--no-gpus".to_owned());
+    }
     let _gpu_poller = setup.gpus.then(|| {
         app.gpus = Gpus::new(Status::Opening, setup.gpu_counters, setup.interval);
         GpuPoller::spawn(setup.interval, origin, Arc::clone(&counters), gpu_results)

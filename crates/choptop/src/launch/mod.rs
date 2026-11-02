@@ -361,7 +361,7 @@ impl Launches {
             let arguments = record
                 .pid
                 .and_then(Identity::read)
-                .map(|identity| identity.arguments.join(" "))
+                .map(|identity| command::line(&identity.arguments))
                 .unwrap_or_default();
             if record.command.is_empty() {
                 record.command = crate::ui::widgets::sanitize(&arguments);
@@ -739,7 +739,7 @@ impl Launches {
             label,
             format!(
                 "stopping: SIGTERM from choptop {why}; it ran {}",
-                identity.arguments.join(" ")
+                command::line(&identity.arguments)
             ),
             Tone::Warning,
         );
@@ -1513,6 +1513,27 @@ mod tests {
                 .iter()
                 .all(|event| !event.what.contains("placeholder-secret"))
         );
+    }
+
+    #[test]
+    fn a_stopped_serve_process_shows_its_command_line_quoted() {
+        let root = scratch("stop-quoted");
+        let guard = fake_serve(&root.join("with space"));
+        let identity = identity(&guard);
+        let mut registry = Registry::new(1.0);
+        let mut launches = launches(&root);
+        launches
+            .stop_serve(&identity, &[0, 1], "as asked with X", &mut registry, 1.0)
+            .unwrap();
+        let shell = root.join("with space/chopinfer");
+        assert_eq!(
+            last_event(&registry).1,
+            format!(
+                "stopping: SIGTERM from choptop as asked with X; it ran '{}' serve",
+                shell.display()
+            )
+        );
+        wait_for(|| !identity.running());
     }
 
     #[test]

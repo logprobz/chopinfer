@@ -480,19 +480,12 @@ pub fn queued(
         let listen = planned.listen();
         let arguments = command::arguments(&start.command, &listen);
         let environment = command::environment(&start.explicit, &planned.uuids);
-        let hidden = |name: &str, value: &str| {
-            if secret(name) {
-                format!("{name}=****")
-            } else {
-                format!("{name}={value}")
-            }
-        };
         let mut logged = environment
             .iter()
-            .map(|(name, value)| hidden(name, value))
+            .map(|(name, value)| command::shown_variable(name, value, secret(name)))
             .collect::<Vec<_>>();
-        logged.push(binary.display().to_string());
-        logged.extend(arguments.iter().cloned());
+        logged.push(command::quoted(&binary.display().to_string()));
+        logged.extend(arguments.iter().map(|word| command::quoted(word)));
         let secrets = environment
             .iter()
             .map(|(name, _)| name.as_str())
@@ -783,6 +776,38 @@ mod tests {
         let saved = std::fs::read_to_string(path).unwrap();
         assert!(!saved.contains("placeholder-"), "{saved}");
         assert!(saved.contains("KEEP_ME=ok"));
+    }
+
+    #[test]
+    fn the_saved_command_quotes_what_the_process_gets_as_one_word() {
+        let catalog = crate::loader::tests::catalog();
+        let mut confirm = replacing_nine(&[reservation(9, "launch B")]).unwrap();
+        confirm.start.command = [
+            "serve",
+            "--model",
+            "/models/x/checkpoint with spaces",
+            "--tensor-parallel-size",
+            "2",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        let items = queued(&confirm, &catalog, &[], None).unwrap();
+        let item = &items[0];
+        assert_eq!(item.arguments[2], "/models/x/checkpoint with spaces");
+        assert!(
+            item.logged.ends_with(
+                "/opt/chopinfer/bin/chopinfer serve --model '/models/x/checkpoint with spaces' --tensor-parallel-size 2 --listen 127.0.0.1:8310"
+            ),
+            "{}",
+            item.logged
+        );
+        assert_eq!(item.record.command, item.logged);
+        assert!(
+            item.shown
+                .contains("--model '/models/x/checkpoint with spaces'"),
+            "{}",
+            item.shown
+        );
     }
 
     #[test]

@@ -892,7 +892,7 @@ pub fn status_lines(buffer: &mut Buffer, row: &Instance, state: &State, at: (u16
     buffer.put(x, y, &pad(&first, room), Style::fg(color));
     buffer.put(x, y + 1, &pad(&second, room), dim);
     if !row.arguments.is_empty() {
-        let command = sanitize(&row.arguments.join(" "));
+        let command = sanitize(&crate::launch::command::line(&row.arguments));
         buffer.put(
             x,
             y + 3,

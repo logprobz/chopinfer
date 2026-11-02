@@ -120,6 +120,38 @@ pub fn join(words: &[String]) -> String {
         .join(" ")
 }
 
+/// `word` as a POSIX shell reads it back as one word: as it is when every
+/// character is a letter, digit or one of `_@%+=:,./-`, else in single
+/// quotes, a quote inside as `'\''`. Only for showing a command line; the
+/// arguments a process gets are never quoted.
+pub fn quoted(word: &str) -> String {
+    let plain =
+        |character: char| character.is_ascii_alphanumeric() || "_@%+=:,./-".contains(character);
+    if !word.is_empty() && word.chars().all(plain) {
+        return word.to_owned();
+    }
+    format!("'{}'", word.replace('\'', "'\\''"))
+}
+
+/// `words` as a command line a POSIX shell reads back as them.
+pub fn line(words: &[String]) -> String {
+    words
+        .iter()
+        .map(|word| quoted(word))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// `NAME=value` as shown: the value quoted as [`quoted`] does, or `****`
+/// for a secret.
+pub fn shown_variable(name: &str, value: &str, secret: bool) -> String {
+    if secret {
+        format!("{name}=****")
+    } else {
+        format!("{name}={}", quoted(value))
+    }
+}
+
 /// `NAME=value` with a variable's name: capitals, digits and underscores.
 fn assignment(word: &str) -> Option<(&str, &str)> {
     let (name, value) = word.split_once('=')?;
@@ -404,7 +436,8 @@ pub fn arguments(command: &[String], listen: &str) -> Vec<String> {
 
 /// The command box's tokens for one instance: the environment, with
 /// `CUDA_VISIBLE_DEVICES` as the GPU indices it stands for and secrets
-/// hidden, then `program` and the arguments, each flag with its values.
+/// hidden, then `program` and the arguments, each flag with its values,
+/// every word quoted as [`quoted`] does.
 pub fn tokens(
     program: &str,
     command: &[String],
@@ -423,19 +456,17 @@ pub fn tokens(
         Origin::Environment,
     )];
     for (name, value, _) in &explicit.environment {
-        let value = if secrets.contains(&name.as_str()) {
-            "****"
-        } else {
-            value
-        };
-        tokens.push((format!("{name}={value}"), Origin::Environment));
+        tokens.push((
+            shown_variable(name, value, secrets.contains(&name.as_str())),
+            Origin::Environment,
+        ));
     }
     let mut words = command.iter().peekable();
     let mut first = vec![program.to_owned()];
     if words.peek().map(|word| word.as_str()) == Some("serve") {
         first.extend(words.next().cloned());
     }
-    tokens.push((first.join(" "), Origin::Base));
+    tokens.push((line(&first), Origin::Base));
     let mut groups: Vec<Vec<String>> = Vec::new();
     for word in words {
         match groups.last_mut() {
@@ -452,10 +483,10 @@ pub fn tokens(
                 .find(|(words, _)| *words == group)
                 .map_or(Origin::Profile, |(_, origin)| *origin),
         };
-        tokens.push((group.join(" "), origin));
+        tokens.push((line(&group), origin));
     }
     tokens.push((
-        format!("--listen {listen}"),
+        format!("--listen {}", quoted(listen)),
         if explicit.listen.is_some() {
             Origin::Set
         } else {
@@ -704,6 +735,68 @@ mod tests {
         assert_eq!(
             arguments(&command, "127.0.0.1:8310")[command.len()..],
             ["--listen", "127.0.0.1:8310"]
+        );
+    }
+
+    #[test]
+    fn words_with_spaces_or_shell_characters_are_shown_quoted() {
+        assert_eq!(
+            quoted("/models/qwen-3.8_a:b,c@d%e+f=g"),
+            "/models/qwen-3.8_a:b,c@d%e+f=g"
+        );
+        assert_eq!(
+            quoted("/models/x/checkpoint with spaces"),
+            "'/models/x/checkpoint with spaces'"
+        );
+        assert_eq!(quoted("it's"), r"'it'\''s'");
+        assert_eq!(quoted(""), "''");
+        assert_eq!(quoted("$HOME;*"), "'$HOME;*'");
+        let mut edits = BTreeMap::new();
+        edits.insert(Key::Variable(API_KEY.into()), "a secret".into());
+        let custom = vec!["CHOPINFER_LOG_LEVEL=\"info debug\"".to_owned()];
+        let explicit = explicit(
+            &Form {
+                edits: &edits,
+                custom: &custom,
+            },
+            Some(&catalog()),
+            &[],
+            Some(&[]),
+        );
+        let command = vec![
+            "serve".to_owned(),
+            "--model".to_owned(),
+            "/models/x/checkpoint with spaces".to_owned(),
+            "--tensor-parallel-size".to_owned(),
+            "2".to_owned(),
+        ];
+        let shown = tokens(
+            "chopinfer",
+            &command,
+            &explicit,
+            &[0, 1],
+            "[::1]:8310",
+            &[API_KEY],
+        )
+        .into_iter()
+        .map(|(token, _)| token)
+        .collect::<Vec<_>>();
+        assert_eq!(
+            shown,
+            [
+                "CUDA_VISIBLE_DEVICES=0,1",
+                "CHOPINFER_API_KEY=****",
+                "CHOPINFER_LOG_LEVEL='info debug'",
+                "chopinfer serve",
+                "--model '/models/x/checkpoint with spaces'",
+                "--tensor-parallel-size 2",
+                "--listen '[::1]:8310'",
+            ]
+        );
+        // The process gets the words themselves.
+        assert_eq!(
+            arguments(&command, "[::1]:8310")[2],
+            "/models/x/checkpoint with spaces"
         );
     }
 }

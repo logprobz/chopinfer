@@ -137,18 +137,6 @@ pub fn catalog(g: &Geometry) -> Result<Vec<Entry>, String> {
 }
 
 pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
-    register_with_tail_folds(backend, g, ranks, false)
-}
-
-/// Candidate prefill partition: full TMA tiles followed by exact-row folds.
-/// The caller partitions rows; this backend never selects a split tail.
-pub fn register_with_tail_folds(
-    backend: Sm120,
-    g: &Geometry,
-    ranks: u32,
-    tail_folds: bool,
-) -> Result<Sm120, String> {
-    let tail_folds = tail_folds && g == &model_deepseek41_contract::geometry::FLASH && ranks == 4;
     let prefill: std::collections::BTreeSet<_> = prefill_entries(g, ranks)?
         .into_iter()
         .map(|entry| entry.symbol)
@@ -157,10 +145,10 @@ pub fn register_with_tail_folds(
         .into_iter()
         .fold(backend, |backend, entry| {
             let backend = if prefill.contains(&entry.symbol) {
-                match prefill_tail_policy(entry.query, tail_folds) {
-                    Some(policy) => backend.with_mxfp8_prefill_split_policy(entry.clone(), policy),
-                    None => backend.with_mxfp8_prefill(entry.clone()),
-                }
+                backend.with_mxfp8_prefill_split_policy(
+                    entry.clone(),
+                    prefill_tail_policy(entry.query),
+                )
             } else {
                 backend
             };
@@ -169,7 +157,7 @@ pub fn register_with_tail_folds(
     let mut backend = backend;
     for base in prefill_entries(g, ranks)? {
         for rows in compact::ROWS {
-            if !tail_folds && let Some(stages) = compact::stages(g, base.query, rows) {
+            if let Some(stages) = compact::stages(g, base.query, rows) {
                 let entry =
                     kernels_sm120::gemm::mxfp8_prefill_compact::Entry::new(base.clone(), stages)
                         .map_err(|e| e.to_string())?;
@@ -718,13 +706,9 @@ pub fn prefill_split_cubins(
 /// these bounds are interpolation, not measured crossover points.
 pub fn prefill_tail_policy(
     q: Mxfp8FoldGemmQuery,
-    tail_folds: bool,
-) -> Option<kernels_sm120::gemm::mxfp8_prefill_split::TailPolicy> {
+) -> kernels_sm120::gemm::mxfp8_prefill_split::TailPolicy {
     use kernels_sm120::gemm::mxfp8_prefill_split::TailPolicy;
-    if tail_folds {
-        return None;
-    }
-    Some(match (q.n, q.k, q.groups) {
+    match (q.n, q.k, q.groups) {
         (16384 | 32768, 1280, 1) | (1024, 4096, 8) => TailPolicy {
             max_tail_rows: 16,
             ..TailPolicy::ALL
@@ -738,6 +722,34 @@ pub fn prefill_tail_policy(
             ..TailPolicy::ALL
         },
         _ => TailPolicy::ALL,
+    }
+}
+
+/// The selected baseline's remainder, shared by serving and the lab probe.
+/// Registrations stay identical with the candidate enabled. Inspect the actual
+/// selected symbol so measured matrix, compact and staged-scale routes survive.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PrefillTailPartition {
+    pub full_rows: u32,
+    pub full_launches: usize,
+    pub padded: bool,
+}
+
+pub fn prefill_tail_partition(rows: u32, last_symbol: &str) -> Option<PrefillTailPartition> {
+    use kernels_sm120::gemm::mxfp8_prefill::TILE;
+    if rows <= SMALL_CAPACITY || rows % TILE == 0 {
+        return None;
+    }
+    let symbol = last_symbol
+        .strip_suffix("_packed_v1")
+        .unwrap_or(last_symbol);
+    let generic = rows < TILE;
+    let padded = symbol.ends_with("_prefill_tma_v1");
+    let split = symbol.ends_with("_prefill_tma_v1_split_tail_v1");
+    (generic || padded || split).then_some(PrefillTailPartition {
+        full_rows: rows / TILE * TILE,
+        full_launches: if generic { 0 } else { 2 },
+        padded,
     })
 }
 

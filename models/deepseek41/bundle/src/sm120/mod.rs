@@ -984,6 +984,17 @@ impl crate::Kernels {
         })
     }
 
+    /// The selected prefill route's full row count, retained launch count and
+    /// whether the last grid tile is padded. The lab shares this selector.
+    pub(crate) fn prefill_tail_partition(rows: u32, symbol: &str) -> Option<(u32, usize, bool)> {
+        let partition = mxfp8_fold::prefill_tail_partition(rows, symbol)?;
+        Some((
+            partition.full_rows,
+            partition.full_launches,
+            partition.padded,
+        ))
+    }
+
     /// The row tile of the staged dense prefill route.
     pub(crate) const fn dense_prefill_tile() -> u32 {
         kernels_sm120::gemm::mxfp8_prefill::TILE
@@ -1247,9 +1258,7 @@ impl crate::Kernels {
         let sm120 = dspark_router::register(sm120, shape.geometry);
         let sm120 = ceil_prefill::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = shared::register(sm120, shape.geometry, shape.ranks())?;
-        let tail_folds = crate::ops::dense::short_prefill::tail_folds_enabled(shape);
-        let sm120 =
-            mxfp8_fold::register_with_tail_folds(sm120, shape.geometry, shape.ranks(), tail_folds)?;
+        let sm120 = mxfp8_fold::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = mxfp8_fold::register_wide(
             sm120,
             shape.geometry,
@@ -1259,18 +1268,10 @@ impl crate::Kernels {
         let sm120 = mxfp8_fold_stream::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = mxfp8_fold_direct::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = projection_reuse::register(sm120, shape.geometry, shape.ranks())?;
-        let sm120 = if tail_folds {
-            sm120
-        } else {
-            prefill_matrix::register(sm120, shape.geometry, shape.ranks())?
-        };
+        let sm120 = prefill_matrix::register(sm120, shape.geometry, shape.ranks())?;
         // The TMA matrix prefill has no packed entry; the staged-scale TMA
         // prefill serves its one bucket (Flash TP4, 8192 rows).
-        let sm120 = if tail_folds {
-            sm120
-        } else {
-            prefill_tma_scales::register(sm120, shape.geometry, shape.ranks())?
-        };
+        let sm120 = prefill_tma_scales::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = indexer_query_parallel::register_parallel(sm120, shape.geometry);
         let sm120 = latent_glue::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_scheduled::register_query(sm120, shape.geometry, shape.ranks());

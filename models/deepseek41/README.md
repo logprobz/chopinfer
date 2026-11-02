@@ -304,26 +304,49 @@ capture directories, AR Engram tracing and the shared
 
 ### Candidate dense prefill tail folds
 
-`prefill_tail_folds=true` partitions every Flash TP4 dense prefill above
-64 rows into full 128-row TMA tiles followed by at most two registered
-exact-row folds. The remainder runs once up to 64 rows, or as 64 rows
-plus the rest. The option covers attention q/kv/o, the indexer query,
-shared-expert gate/up/down and Engram projections. It retains the current
-1-64-row short-prefill route. Other topologies keep their current routes.
-The candidate uses ordinary TMA for full tiles, including aligned widths;
-compact, matrix and staged-scale prefill choices stay with the option-off
-route. Each tail has separate aligned scratch, sliced activation, scale
-and output spans, and the original status span with its row offset.
+`prefill_tail_folds=true` changes only remainder work in Flash TP4 dense
+prefill. It keeps every option-off registration and every compact, matrix
+and staged-scale choice, including tabled widths with a 64-row remainder.
+The existing 1-64-row route and aligned widths also stay unchanged. At
+65-127 rows it replaces the generic fold with 64 rows plus the rest. Above
+128 rows it replaces a split tail or the partial tile of an ordinary TMA
+grid with one exact-row fold up to 64 rows, or 64 rows plus the rest.
+
+The split route keeps its admission and full-tile launch exactly, including
+the symbol, tile, row arguments and bindings. A padded TMA route keeps those
+same arguments and removes only the final grid tile. It never reselects the
+full part at its rounded width. For example, an 8191-row q-b projection has
+a 127-row remainder, beyond that shape's split limit of 112, so it keeps the
+ordinary TMA kernel for the first 8064 rows and folds 64 plus 63. The
+`max_tail_rows=16` shapes use padded TMA above 16, but belong to other
+topologies and remain unchanged by this TP4 option.
+
+The option covers attention q/kv/o, the indexer query, shared-expert
+gate/up/down and `engram.kv`. Every tail has separate aligned scratch and
+sliced activation, scale and output spans. Status retains its original span
+and uses the piece's row offset. The partition relies on eager prefill
+planning at its live row count; it does not support padded or graph prefill.
+The option defaults to false and can coexist with `prefill_anchor_items`,
+which defaults to 0.
 
 CPU tests compare fake-host result metadata and committed request state,
 pin routes and spans, and sweep both served profiles with the option on
-and off. They do not establish GPU arithmetic equality. The candidate is
+and off. Each tail piece must match option-off lowering at the same row
+count. Direct-step allowances cover every selected remainder independently
+of inherited cone gaps. Internal single/chunk and packed output-cone tails
+have separate candidate allowances; preserved full launches newly exposed
+by changed fallback totals have explicit accounting exceptions. They do not establish GPU arithmetic equality. The candidate is
 not adopted, and no performance claim follows from those checks.
 
 The ignored lab probe compares the current route with the partition at
 85, 127, 789, 831, 853, 1557 and 1599 rows for the Flash TP4 q/kv/o,
-indexer and shared-expert shapes. Before timing it requires bitwise equal
-outputs and statuses. Each device interleaves identical-operand A/A
+indexer, shared-expert and Engram shapes. Before timing it requires bitwise
+equal outputs and statuses on clean inputs and with a poisoned scale in the
+last tail row. That witness checks a nonzero status base and the second fold
+when present. Timing uses restored clean inputs. The probe prepares the same
+prefill and exact-row registrations as serving and uses the same selected
+symbol partition helper. Its source records why other served registrations
+cannot affect these queries. Each device interleaves identical-operand A/A
 controls with A/B visits using gated CUDA events and cold weights. Each
 result reports the A/A spread. It records power limits and clocks and
 refuses a changed power limit. Lab results locate work; adoption still

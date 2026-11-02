@@ -86,7 +86,7 @@ mod tests {
                 let old = Sm120::new()
                     .with_mxfp8_prefill_split_policy(
                         entry.clone(),
-                        super::super::prefill_tail_policy(q, false).unwrap(),
+                        super::super::prefill_tail_policy(q),
                     )
                     .mxfp8_prefill_gemm(&q, Need::rows(q.m_capacity))
                     .unwrap();

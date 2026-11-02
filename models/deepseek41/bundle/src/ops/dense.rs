@@ -809,19 +809,6 @@ impl DenseOps {
         workspace: Option<DeviceBufferSpanV1>,
     ) -> Result<Vec<Lowered>, Refusal> {
         let rows = phase.rows();
-        if phase.prefill()
-            && rows > short_prefill::MAX_ROWS
-            && let Some((_, query)) = self.tail_queries.iter().find(|(of, _)| *of == id)
-        {
-            return short_prefill::project(
-                self,
-                id,
-                *query,
-                rows,
-                views,
-                workspace.ok_or(Refusal("prefill tail folds require workspace"))?,
-            );
-        }
         let op = if phase.prefill() && rows >= 128 {
             &self
                 .prefill_gemms
@@ -886,10 +873,28 @@ impl DenseOps {
         {
             return fold_stream::launch(op, bind, buffers, None, views.stream, rows);
         }
-        match workspace {
+        let calls = match workspace {
             Some(workspace) => bind.launch_within(op, &buffers, workspace, Counts::rows(rows)),
             None => bind.launch_independent(op, &buffers, Counts::rows(rows)),
+        }?;
+        if phase.prefill()
+            && let Some((_, query)) = self.tail_queries.iter().find(|(of, _)| *of == id)
+            && let Some(partition) = calls
+                .last()
+                .and_then(|last| crate::Kernels::prefill_tail_partition(rows, &last.launch.symbol))
+        {
+            return short_prefill::project(
+                self,
+                id,
+                *query,
+                rows,
+                views,
+                workspace.ok_or(Refusal("prefill tail folds require workspace"))?,
+                calls,
+                partition,
+            );
         }
+        Ok(calls)
     }
 
     pub(crate) fn project_pair(
@@ -1364,9 +1369,8 @@ mod tests {
                     let matrix = (shape.ranks() == 4)
                         .then(|| crate::sm120::prefill_matrix::choice(q, phase.rows()))
                         .flatten();
-                    let split = crate::sm120::mxfp8_fold::prefill_tail_policy(q, false)
-                        .unwrap()
-                        .splits(phase.rows());
+                    let split =
+                        crate::sm120::mxfp8_fold::prefill_tail_policy(q).splits(phase.rows());
                     let compact =
                         crate::sm120::mxfp8_fold::compact::stages(&FLASH, q, phase.rows());
                     assert_eq!(

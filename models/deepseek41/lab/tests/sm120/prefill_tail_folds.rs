@@ -55,6 +55,15 @@ impl Arena<'_> {
             bytes,
         })
     }
+    fn write(&self, view: View, data: &[u8]) -> LabResult<()> {
+        let (buffer, offset, bytes) = &self.views[view.handle as usize - 1];
+        if data.len() != *bytes {
+            return Err("probe upload must fill its view".into());
+        }
+        buffer
+            .copy_from_bytes_at(*offset, data, &self.session.stream)
+            .map_err(|e| e.to_string())
+    }
     fn read(&self, view: View) -> LabResult<Vec<u8>> {
         let (buffer, offset, bytes) = &self.views[view.handle as usize - 1];
         Ok(kernel_harness::poison::read(self.session, buffer)?[*offset..offset + bytes].to_vec())
@@ -77,21 +86,25 @@ fn pattern(bytes: u64, salt: u32, scale: bool) -> Vec<u8> {
         .collect()
 }
 
-fn backend(candidate: bool) -> LabResult<Sm120> {
-    let b = registration::register_with_tail_folds(Sm120::new(), &FLASH, 4, candidate)?;
+fn backend() -> LabResult<Sm120> {
+    let b = registration::register(Sm120::new(), &FLASH, 4)?;
     let b = sm120::projection_reuse::register(b, &FLASH, 4)?;
-    let b = if candidate {
-        b
-    } else {
-        sm120::prefill_tma_scales::register(
-            sm120::prefill_matrix::register(b, &FLASH, 4)?,
-            &FLASH,
-            4,
-        )?
-    };
+    let b = sm120::prefill_matrix::register(b, &FLASH, 4)?;
+    let b = sm120::prefill_tma_scales::register(b, &FLASH, 4)?;
     Ok(b.with_packed_fold_weights())
 }
 
+// These are the same registrations DenseOps prepares: register supplies the
+// exact-row folds and compact entries, then reuse, matrix and staged scales
+// wrap them, followed by packed weight conversion. Other served registrations
+// (stream, direct, wide verify) use different backend methods or query bounds.
+// Need's exactness requirements filter entries. These prefill and exact-row
+// registrations provide the serving invariance requirements, so the relaxed
+// lab Need selects the same entries. DenseOps' pins compare the served asks
+// and each tail's route against the option-off exact-row project.
+// The served lowering and this probe both inspect the selected baseline symbol
+// with prefill_tail_partition before retaining its full launches. Thus neither
+// reselects the full part at a rounded width, which could choose another kernel.
 fn calls(
     a: &mut Arena<'_>,
     backend: &Sm120,
@@ -100,19 +113,41 @@ fn calls(
     b: Buffers<View>,
     candidate: bool,
 ) -> LabResult<Vec<Launch>> {
-    let full = rows / tiled::TILE * tiled::TILE;
-    let pieces = if candidate {
-        vec![
-            (0, full),
-            (full, (rows - full).min(64)),
-            (full + 64, (rows - full).saturating_sub(64)),
-        ]
+    let q = e.query;
+    let op = if rows >= tiled::TILE {
+        backend.mxfp8_prefill_gemm(&q, Need::rows(q.m_capacity))
     } else {
-        vec![(0, rows)]
+        backend.mxfp8_fold_gemm(&q, Need::rows(q.m_capacity))
+    }
+    .map_err(|e| e.to_string())?;
+    let mut result = op
+        .launches(&b, View::EMPTY, Counts::rows(rows))
+        .map_err(|e| e.to_string())?;
+    let partition = candidate
+        .then(|| {
+            registration::prefill_tail_partition(
+                rows,
+                &result.last().expect("nonempty baseline").symbol,
+            )
+        })
+        .flatten();
+    let Some(partition) = partition else {
+        return Ok(result);
     };
-    let mut result = Vec::new();
-    for (offset, count) in pieces.into_iter().filter(|(_, count)| *count > 0) {
-        let q = e.query;
+    result.truncate(partition.full_launches);
+    if partition.padded {
+        result[1].plan.grid[1] = partition.full_rows / tiled::TILE;
+    }
+    let mut offset = partition.full_rows;
+    while offset < rows {
+        let count = (rows - offset).min(64);
+        let output_stride = u64::from(q.n)
+            * u64::from(q.groups)
+            * if q.output == kernel_core::contract::DType::F32 {
+                4
+            } else {
+                2
+            };
         let buffers = Buffers {
             activations: a.range(
                 b.activations,
@@ -126,32 +161,22 @@ fn calls(
             )?,
             output: a.range(
                 b.output,
-                u64::from(offset) * u64::from(q.n) * u64::from(q.groups) * 4,
-                u64::from(count) * u64::from(q.n) * u64::from(q.groups) * 4,
+                u64::from(offset) * output_stride,
+                u64::from(count) * output_stride,
             )?,
             status_row_offset: b.status_row_offset + u64::from(offset),
             ..b
         };
-        let op = if count >= tiled::TILE {
-            backend.mxfp8_prefill_gemm(&q, Need::rows(q.m_capacity))
-        } else {
-            let q = if candidate {
-                registration::routed_query(q, count)
-            } else {
-                q
-            };
-            backend.mxfp8_fold_gemm(&q, Need::rows(q.m_capacity))
-        }
-        .map_err(|e| e.to_string())?;
-        let scratch = if op.info().workspace > 0 {
-            a.filled(op.info().workspace, 0xa5)?
-        } else {
-            View::EMPTY
-        };
+        let q = registration::routed_query(q, count);
+        let op = backend
+            .mxfp8_fold_gemm(&q, Need::rows(q.m_capacity))
+            .map_err(|e| e.to_string())?;
+        let scratch = a.filled(op.info().workspace, 0xa5)?;
         result.extend(
             op.launches(&buffers, scratch, Counts::rows(count))
                 .map_err(|e| e.to_string())?,
         );
+        offset += count;
     }
     Ok(result)
 }
@@ -304,7 +329,7 @@ fn prefill_tail_folds_pair() {
         2
     );
     let start = Instant::now();
-    let backends = [backend(false).unwrap(), backend(true).unwrap()];
+    let backend = backend().unwrap();
     kernel_harness::gpu_test_multi_with(probe().unwrap(), 2 << 30, |sessions| {
         let job_start = sessions.iter().map(gpu_snapshot).collect::<LabResult<Vec<_>>>()?;
         for (session, initial) in sessions.iter().zip(&job_start) {
@@ -318,8 +343,6 @@ fn prefill_tail_folds_pair() {
             };
             let mut results = Vec::new();
             for e in registration::prefill_entries(&FLASH, 4)? {
-                // Engram's table projection is outside the q/kv/o and shared-expert probe.
-                if e.query.k == 6144 { continue; }
                 let mut arena = Arena { session, views: Vec::new() };
                 let q = e.query;
                 let size = e.bytes(1);
@@ -334,9 +357,10 @@ fn prefill_tail_folds_pair() {
                     let mut status = vec![0; size.status as usize + 24];
                     status[..12].fill(0xa5);
                     status[size.status as usize + 12..].fill(0xa5);
+                    let mut scales = pattern(size.activation_scales, 33, true);
                     let mut b = Buffers {
                         activations: arena.bytes(&pattern(size.activations, 173, false))?,
-                        activation_scales: arena.bytes(&pattern(size.activation_scales, 33, true))?,
+                        activation_scales: arena.bytes(&scales)?,
                         weights, weight_scales,
                         output: arena.filled(size.output, 0xff)?,
                         live_rows: arena.bytes(&rows.to_le_bytes())?,
@@ -345,10 +369,10 @@ fn prefill_tail_folds_pair() {
                     };
                     let baseline_output = b.output;
                     let baseline_status = b.status;
-                    let baseline_calls = calls(&mut arena, &backends[0], &e, rows, b, false)?;
+                    let baseline_calls = calls(&mut arena, &backend, &e, rows, b, false)?;
                     b.output = arena.filled(size.output, 0xff)?;
                     b.status = arena.bytes(&status)?;
-                    let partition_calls = calls(&mut arena, &backends[1], &e, rows, b, true)?;
+                    let partition_calls = calls(&mut arena, &backend, &e, rows, b, true)?;
                     let plans = [Calls::new(&arena, baseline_calls)?, Calls::new(&arena, partition_calls)?];
                     for plan in &plans { plan.issue(&arena, &session.stream)?; }
                     session.stream.synchronize().map_err(|e| e.to_string())?;
@@ -359,6 +383,36 @@ fn prefill_tail_folds_pair() {
                         || expected != arena.read(b.output)? || arena.read(baseline_status)? != arena.read(b.status)? {
                         return Err(format!("bitwise tail mismatch n={} k={} groups={} rows={rows}", q.n, q.k, q.groups));
                     }
+                    // Poison the final row, in the second fold when the tail
+                    // exceeds 64. A wrong status_row_offset must move this bit
+                    // or miss the zeroed output, including at the nonzero base.
+                    let poison_row = rows - 1;
+                    let scale_at = poison_row as usize * q.activation_row_stride as usize / 32;
+                    let clean_scale = scales[scale_at];
+                    scales[scale_at] = 255;
+                    arena.write(b.activation_scales, &scales)?;
+                    for output in [baseline_output, b.output] {
+                        arena.write(output, &vec![0xff; size.output as usize])?;
+                    }
+                    for plan in &plans { plan.issue(&arena, &session.stream)?; }
+                    session.stream.synchronize().map_err(|e| e.to_string())?;
+                    let mut poisoned_status = status.clone();
+                    let status_at = (b.status_row_offset as usize + poison_row as usize) * 4;
+                    poisoned_status[status_at..status_at + 4].copy_from_slice(
+                        &kernel_core::mxfp8_gemm::NON_FINITE_INPUT.to_le_bytes());
+                    let mut poisoned_output = expected.clone();
+                    let output_stride = size.output as usize / rows as usize;
+                    poisoned_output[poison_row as usize * output_stride..].fill(0);
+                    for (output, flags) in [(baseline_output, baseline_status), (b.output, b.status)] {
+                        if arena.read(flags)? != poisoned_status || arena.read(output)? != poisoned_output {
+                            return Err(format!("poison row/status offset mismatch n={} k={} groups={} rows={rows} row={poison_row}", q.n, q.k, q.groups));
+                        }
+                    }
+                    // Time the clean operands only, after both exactness gates.
+                    scales[scale_at] = clean_scale;
+                    arena.write(b.activation_scales, &scales)?;
+                    arena.write(baseline_status, &status)?;
+                    arena.write(b.status, &status)?;
                     let label = format!("prefill-tail-n{}-k{}-g{}-r{rows}", q.n, q.k, q.groups);
                     let mut visits = Vec::new();
                     for visit in 0..3 {
@@ -383,7 +437,7 @@ fn prefill_tail_folds_pair() {
                         let visit_end = snapshot()?;
                         visits.push(json!({"gpu_start":visit_start,"gpu_end":visit_end,"baseline_ms":ab.arms[0].median_ms,"partition_ms":ab.arms[1].median_ms,"gain_pct":gain,"aa_spread_pct":spread,"gain_exceeds_control":gain > spread}));
                     }
-                    results.push(json!({"n":q.n,"k":q.k,"groups":q.groups,"rows":rows,"bitwise":true,"visits":visits}));
+                    results.push(json!({"n":q.n,"k":q.k,"groups":q.groups,"rows":rows,"bitwise":true,"poison_row":poison_row,"status_row_offset":b.status_row_offset,"poison_status_checked":true,"visits":visits}));
                     drop(plans);
                     arena.views.truncate(keep);
                 }

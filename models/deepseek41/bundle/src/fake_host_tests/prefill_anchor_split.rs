@@ -554,6 +554,7 @@ enum Scenario {
     Eight,
     Cancel,
     TinyHead,
+    OverlappingHead,
 }
 #[derive(PartialEq, Eq)]
 struct Outcome {
@@ -574,6 +575,9 @@ fn run(dspark: bool, fused: bool, scenario: Scenario) -> Outcome {
         Scenario::Mixed => (829, 900, 1),
         Scenario::Eight => (0, 789, 8),
         Scenario::TinyHead => (893, 900, 1),
+        // The deferred row at 869 joins the 26 head rows. Catch-up writes
+        // packed[0..27), overlapping the tail at packed[26..30).
+        Scenario::OverlappingHead => (870, 900, 1),
     };
     if start > 0 {
         let setup = Item::prefill(0, 0, start, start, false);
@@ -788,4 +792,9 @@ fn cancel_matches_unanchored_rollback() {
 #[test]
 fn tiny_head_preserves_staged_tail() {
     compare(Scenario::TinyHead);
+}
+
+#[test]
+fn overlapping_head_preserves_staged_tail() {
+    compare(Scenario::OverlappingHead);
 }

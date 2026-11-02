@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use super::calibration::{self, Context};
 use super::device::{DECODE_BASE, slice};
 use super::execution::{Diagnostic, DraftInput, Host, Input, TargetRows};
-use super::state::{BLOCK_ROWS, CommitPlan, Kind, Projection, RowProjection};
+use super::state::{BLOCK_ROWS, CommitItem, CommitPlan, Kind, Projection, RowProjection, Rows};
 use crate::engram_rows::{self, Destination, EngramRows, Hashed, Mapped, Step, Table};
 
 /// Bounded diagnostics returned after device target execution. Confidence
@@ -352,16 +352,48 @@ impl Staging {
         })
     }
 
+    /// Reconstruct the staged row span after matching both segments by request.
+    fn anchored_rows(item: &CommitItem, tail: Rows) -> Result<Rows, String> {
+        let mut rows = item.rows;
+        let Kind::Prefill { rows: head } = rows.kind else {
+            return Err("Engram anchor head is not prefill".into());
+        };
+        let Kind::Prefill { rows: count } = tail.kind else {
+            return Err("Engram anchor tail is not prefill".into());
+        };
+        if tail.slot != rows.slot || tail.start != rows.start + u64::from(head) || item.kept != head
+        {
+            return Err("Engram anchor segments are not contiguous".into());
+        }
+        rows.kind = Kind::Prefill {
+            rows: head
+                .checked_add(count)
+                .ok_or("Engram anchor rows overflow")?,
+        };
+        Ok(rows)
+    }
+
+    fn pending_for(&self, plan: &CommitPlan, item: &CommitItem) -> Result<&Pending, String> {
+        let rows = match plan
+            .tails()
+            .iter()
+            .find(|(tail, _)| tail.request == item.rows.request)
+        {
+            Some(&(tail, _)) => Self::anchored_rows(item, tail)?,
+            None => item.rows,
+        };
+        self.pending
+            .iter()
+            .find(|p| p.rows.rows == rows)
+            .ok_or_else(|| "Engram commit has no matching target rows".into())
+    }
+
     fn validate_commit(&self, plan: &CommitPlan) -> Result<(), String> {
         if plan.items().len() != self.pending.len() {
             return Err("Engram commit differs from the staged target batch".into());
         }
         for item in plan.items() {
-            let pending = self
-                .pending
-                .iter()
-                .find(|p| p.rows.rows == item.rows)
-                .ok_or("Engram commit has no matching target rows")?;
+            let pending = self.pending_for(plan, item)?;
             if item.kept as usize > pending.rows.tokens.len() {
                 return Err("Engram commit exceeds the verified rows".into());
             }
@@ -371,17 +403,52 @@ impl Staging {
 
     fn commit(&mut self, plan: &CommitPlan) -> Result<(), String> {
         self.validate_commit(plan)?;
+        if plan.tails().is_empty() {
+            for item in plan.items() {
+                let pending = self
+                    .pending
+                    .iter()
+                    .find(|p| p.rows.rows == item.rows)
+                    .expect("validated target rows");
+                self.rows
+                    .commit(&pending.step(), item.kept as usize)
+                    .map_err(|e| format!("Engram commit: {e:?}"))?;
+            }
+            self.pending.clear();
+            return Ok(());
+        }
+        let mut tails = Vec::new();
         for item in plan.items() {
-            let pending = self
-                .pending
+            let pending = self.pending_for(plan, item)?;
+            let step = pending.step();
+            // Own the views before publishing history, which mutably borrows self.
+            let tokens = step.tokens.to_vec();
+            let text = step.text.map(<[bool]>::to_vec);
+            if let Some(&(rows, _)) = plan
+                .tails()
                 .iter()
-                .find(|p| p.rows.rows == item.rows)
-                .expect("validated target rows");
+                .find(|(tail, _)| tail.request == item.rows.request)
+            {
+                tails.push(Pending {
+                    rows: TargetRows {
+                        rows,
+                        tokens: tokens[item.kept as usize..].to_vec(),
+                    },
+                    text: text.as_ref().map(|v| v[item.kept as usize..].to_vec()),
+                });
+            }
             self.rows
-                .commit(&pending.step(), item.kept as usize)
+                .commit(
+                    &Step {
+                        request: item.rows.request,
+                        tokens: &tokens,
+                        text: text.as_deref(),
+                    },
+                    item.kept as usize,
+                )
                 .map_err(|e| format!("Engram commit: {e:?}"))?;
         }
-        self.pending.clear();
+        self.pending = tails;
         Ok(())
     }
 }

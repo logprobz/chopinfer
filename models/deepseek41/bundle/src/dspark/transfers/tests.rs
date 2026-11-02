@@ -1,6 +1,6 @@
 use super::super::state::{Rows, State};
 use super::*;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 fn config(window: u32) -> Config {
     Config {
@@ -491,105 +491,4 @@ fn batched_launches_pack_passes_in_order_and_split_at_history_wraps() {
     );
     assert!(batched_projection(config, &passes, 0).is_err());
     assert!(batched_projection(config, &[passes[0], passes[0]], 4).is_err());
-}
-
-fn prefill(config: Config, slot: u32, start: u64, rows: u32) -> CommitItem {
-    let direct = u64::from(rows) > config.history_capacity();
-    CommitItem {
-        rows: Rows {
-            request: 41,
-            slot,
-            start,
-            kind: Kind::Prefill { rows },
-        },
-        kept: rows,
-        project_from_staging: direct,
-        retain_offset: if direct { rows - config.window } else { 0 },
-    }
-}
-
-/// Each history cell's position after `copies`, from `before`, with staged
-/// rows numbered by position.
-fn apply(config: Config, before: &BTreeMap<u64, u64>, copies: &[RetainCopy]) -> BTreeMap<u64, u64> {
-    let mut cells = before.clone();
-    for copy in copies {
-        assert!(
-            copy.history_row % config.history_capacity() + u64::from(copy.rows)
-                <= config.history_capacity()
-        );
-        for row in 0..u64::from(copy.rows) {
-            cells.insert(copy.history_row + row, copy.staged_row + row);
-        }
-    }
-    cells
-}
-
-/// An item that keeps its anchor inside it leaves its slot's history and
-/// the anchor's spare exactly as the same item cut at the anchor leaves
-/// the slot after each chunk, never-read cells included.
-#[test]
-fn anchor_copies_match_the_history_of_the_item_cut_at_its_anchor() {
-    let config = config(128);
-    let history = config.history_capacity();
-    let (slot, spare) = (2, 1);
-    for (start, end, anchor) in [
-        (0, 789, 768),
-        (0, 850, 832),
-        (0, 100, 64),
-        (0, 150, 128),
-        (0, 200, 192),
-        (5, 140, 128),
-        (8192, 8257, 8256),
-        (765, 900, 896),
-        (762, 900, 896),
-        (761, 900, 896),
-        (0, 8191, 8128),
-    ] {
-        // Stale cells hold no position of this item.
-        let before: BTreeMap<_, _> = (0..history)
-            .map(|cell| (u64::from(slot) * history + cell, u64::MAX - cell))
-            .collect();
-        // Staged rows are numbered by absolute position, so a cell holds the
-        // position it retains in every arm.
-        let cut = |from: u64, to: u64, cells: &BTreeMap<u64, u64>| {
-            let item = prefill(config, slot, from, (to - from) as u32);
-            apply(config, cells, &retain_copies(config, item, from).unwrap())
-        };
-        let at_anchor = cut(start, anchor, &before);
-        let cut_end = cut(anchor, end, &at_anchor);
-        let item = prefill(config, slot, start, (end - start) as u32);
-        let anchored = anchor_copies(config, item, start, anchor, spare, 2).unwrap();
-        let own = apply(
-            config,
-            &before,
-            &retain_copies(config, item, start).unwrap(),
-        );
-        assert_eq!(
-            apply(config, &own, &anchored.slot),
-            cut_end,
-            "{start} {end} {anchor}"
-        );
-        // The spare starts from the slot's entry and takes the cut's rows.
-        let seeded: BTreeMap<_, _> = before
-            .iter()
-            .map(|(&cell, &position)| (cell % history + u64::from(spare) * history, position))
-            .collect();
-        let kept = apply(config, &seeded, &anchored.spare);
-        let expected: BTreeMap<_, _> = at_anchor
-            .iter()
-            .map(|(&cell, &position)| (cell % history + u64::from(spare) * history, position))
-            .collect();
-        assert_eq!(kept, expected, "{start} {end} {anchor}");
-        assert_eq!(anchored.slot.is_empty(), !item.project_from_staging);
-    }
-    let item = prefill(config, slot, 0, 789);
-    for (anchor, spare, spares) in [
-        (0, 0, 2),
-        (789, 0, 2),
-        (800, 0, 2),
-        (768, 2, 2),
-        (768, 0, 4),
-    ] {
-        assert!(anchor_copies(config, item, 0, anchor, spare, spares).is_err());
-    }
 }

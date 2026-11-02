@@ -40,6 +40,7 @@ mod norm_quantize;
 mod phased_decode_reduce;
 mod position_valid;
 mod prefill_anchor;
+mod prefill_anchor_split;
 mod prefill_anchor_templates;
 mod prefill_attention;
 mod prefill_cache;
@@ -866,12 +867,29 @@ impl FakePackage for FakeHost {
         if self.fail_upload.fails() {
             return Err(BundleStatusV1::HostError);
         }
+        if prefill_anchor_split::REPLAY.with(|replay| replay.borrow().is_some()) {
+            prefill_anchor_split::write(self, destination, source.to_vec());
+        }
         let mut uploads = self.uploads.borrow_mut();
         let bytes = uploads
             .entry((destination.buffer.raw, destination.offset))
             .or_default();
         bytes.clear();
         bytes.extend_from_slice(source);
+        Ok(())
+    }
+    fn on_launch(
+        &self,
+        stream: BundleStreamHandleV1,
+        name: &str,
+        config: LaunchConfigV1,
+        arguments: &[KernelArgumentV1],
+    ) -> HostServiceResultV1<()> {
+        prefill_anchor_split::REPLAY.with(|replay| {
+            if let Some(replay) = &mut *replay.borrow_mut() {
+                replay.launch(self, stream, name, config, arguments);
+            }
+        });
         Ok(())
     }
     fn on_copy(

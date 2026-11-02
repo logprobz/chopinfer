@@ -437,9 +437,25 @@ impl Runtime {
         host: &mut H,
         kept: &[(u64, u32)],
     ) -> Result<Vec<Diagnostic>, Error<H::Error>> {
-        let plan = self.state.begin_commit(kept).map_err(Error::State)?;
+        self.commit_with_anchors(host, kept, &[])
+    }
+
+    pub fn commit_with_anchors<H: Host>(
+        &mut self,
+        host: &mut H,
+        kept: &[(u64, u32)],
+        anchors: &[(u64, u64)],
+    ) -> Result<Vec<Diagnostic>, Error<H::Error>> {
+        let plan = self
+            .state
+            .begin_commit_with_anchors(kept, anchors)
+            .map_err(Error::State)?;
+        let tails = plan.tails().to_vec();
         self.host_result(host.commit_features(&plan))?;
         self.state.complete_commit(plan).map_err(Error::State)?;
+        if !tails.is_empty() {
+            self.commit_tails(host, &tails)?;
+        }
         for diagnostic in &mut self.diagnostics {
             let count = kept
                 .iter()
@@ -455,6 +471,26 @@ impl Runtime {
         let diagnostics = std::mem::take(&mut self.diagnostics);
         host.record_diagnostics(&diagnostics);
         Ok(diagnostics)
+    }
+
+    /// The head has published, so every failure while finishing its tails
+    /// is terminal, including a state refusal before the next host call.
+    fn commit_tails<H: Host>(
+        &mut self,
+        host: &mut H,
+        tails: &[(Rows, u64)],
+    ) -> Result<(), Error<H::Error>> {
+        let result = (|| {
+            // Split scheduling captures each anchor before executing its tail.
+            // Keep those per-request passes, including their dispatch widths.
+            for &(rows, _) in tails {
+                self.catch_up(host, rows.request)?;
+            }
+            let plan = self.state.begin_tail_commit(tails).map_err(Error::State)?;
+            self.host_result(host.commit_features(&plan))?;
+            self.state.complete_commit(plan).map_err(Error::State)
+        })();
+        result.inspect_err(|_| self.state.poison())
     }
 
     pub fn cancel<H: Host>(&mut self, host: &mut H) -> Result<Vec<Diagnostic>, Error<H::Error>> {

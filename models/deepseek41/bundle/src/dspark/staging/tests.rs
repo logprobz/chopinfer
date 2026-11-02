@@ -4,6 +4,7 @@ use crate::dspark::state::{Config, Rows, State};
 use crate::shape::Shape;
 use runtime_bundle_abi::{HostServicesBackendV1, HostServicesTableV1};
 
+mod anchor_tests;
 mod host;
 #[cfg(feature = "state-capture")]
 mod nontext;

@@ -221,11 +221,23 @@ impl CommitItem {
 pub struct CommitPlan {
     transaction: u64,
     items: Vec<CommitItem>,
+    /// Row offsets within each target phase's original packed staging.
+    offsets: Vec<u64>,
+    /// Already executed prompt tails, committed after the anchor catch-up.
+    tails: Vec<(Rows, u64)>,
 }
 
 impl CommitPlan {
     pub fn items(&self) -> &[CommitItem] {
         &self.items
+    }
+
+    pub fn offset(&self, index: usize) -> u64 {
+        self.offsets[index]
+    }
+
+    pub fn tails(&self) -> &[(Rows, u64)] {
+        &self.tails
     }
 }
 
@@ -591,10 +603,35 @@ impl State {
     /// bonus row, as in the host's commit_accepted callback. AR and prefill
     /// items retain all their target rows and have no entry in `kept`.
     pub fn begin_commit(&mut self, kept: &[(u64, u32)]) -> Result<CommitPlan> {
+        self.begin_commit_with_anchors(kept, &[])
+    }
+
+    /// Split anchored prefills at their capture boundary without changing
+    /// their offsets in the target's already executed staging buffer.
+    pub fn begin_commit_with_anchors(
+        &mut self,
+        kept: &[(u64, u32)],
+        anchors: &[(u64, u64)],
+    ) -> Result<CommitPlan> {
         self.usable()?;
         let pending = self.pending.as_ref().ok_or("no DSpark transaction")?;
         if pending.phase != Phase::Executed {
             return Err("DSpark target rows have not completed");
+        }
+        if !anchors.is_empty() {
+            // Reserve the tail transaction before any head retention begins.
+            self.next_serial()?;
+        }
+        for (index, &(request, anchor)) in anchors.iter().enumerate() {
+            if anchors[..index].iter().any(|&(other, _)| other == request)
+                || !pending.rows.iter().any(|row| {
+                    row.request == request
+                        && matches!(row.kind, Kind::Prefill { rows }
+                            if row.start < anchor && anchor < row.start + u64::from(rows))
+                })
+            {
+                return Err("invalid DSpark commit anchor");
+            }
         }
         let verify = pending.rows.iter().filter(|row| row.kind.is_verify());
         if verify.clone().count() != kept.len()
@@ -607,10 +644,38 @@ impl State {
             return Err("invalid DSpark accepted target rows");
         }
         let mut accepted = kept.iter();
+        let mut packed = [0_u64; 2];
+        let mut offsets = Vec::new();
+        let mut tails = Vec::new();
         let items = pending
             .rows
             .iter()
             .map(|&rows| {
+                let phase = usize::from(!matches!(rows.kind, Kind::Prefill { .. }));
+                let offset = packed[phase];
+                offsets.push(offset);
+                packed[phase] += u64::from(rows.kind.target_rows().expect("validated target rows"));
+                let rows = if let Some(&(_, anchor)) =
+                    anchors.iter().find(|&&(r, _)| r == rows.request)
+                {
+                    let head = (anchor - rows.start) as u32;
+                    tails.push((
+                        Rows {
+                            start: anchor,
+                            kind: Kind::Prefill {
+                                rows: rows.kind.target_rows().expect("validated prefill") - head,
+                            },
+                            ..rows
+                        },
+                        offset + u64::from(head),
+                    ));
+                    Rows {
+                        kind: Kind::Prefill { rows: head },
+                        ..rows
+                    }
+                } else {
+                    rows
+                };
                 let count = if rows.kind.is_verify() {
                     accepted.next().expect("validated acceptance vector").1
                 } else {
@@ -632,10 +697,24 @@ impl State {
         let plan = CommitPlan {
             transaction: pending.transaction,
             items,
+            offsets,
+            tails,
         };
         let pending = self.pending.as_mut().expect("checked pending");
         pending.phase = Phase::Committing;
         pending.commit = Some(plan.clone());
+        Ok(plan)
+    }
+
+    /// The fused target already executed these tails. Enter their commit
+    /// only after the head's retention and anchor catch-up have completed.
+    pub fn begin_tail_commit(&mut self, tails: &[(Rows, u64)]) -> Result<CommitPlan> {
+        self.prepare(tails.iter().map(|&(rows, _)| rows).collect())?;
+        self.begin_execution()?;
+        self.executed()?;
+        let mut plan = self.begin_commit(&[])?;
+        plan.offsets = tails.iter().map(|&(_, offset)| offset).collect();
+        self.pending.as_mut().expect("tail transaction").commit = Some(plan.clone());
         Ok(plan)
     }
 

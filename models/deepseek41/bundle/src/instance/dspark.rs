@@ -563,10 +563,15 @@ impl Instance {
                     .ok_or(BundleStatusV1::InvalidState)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let anchors = self
+            .ledger
+            .step()
+            .map_or(&[][..], |step| &step.anchors[..])
+            .to_vec();
         self.dspark_with(
             |runtime, host| {
                 runtime
-                    .commit(host, &kept)
+                    .commit_with_anchors(host, &kept, &anchors)
                     .map(|_| ())
                     .map_err(|e| format!("DSpark commit: {e:?}"))
             },

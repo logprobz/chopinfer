@@ -175,7 +175,7 @@ fn spans_of_previous(stores: &[&String], rings: DeviceBufferSpanV1) -> Option<Ve
 }
 
 /// The copies of `lines`: (source, destination).
-fn copies(lines: &[String]) -> Vec<(Span, Span)> {
+pub(super) fn copies(lines: &[String]) -> Vec<(Span, Span)> {
     lines
         .iter()
         .filter(|line| line.starts_with("copy "))
@@ -185,6 +185,27 @@ fn copies(lines: &[String]) -> Vec<(Span, Span)> {
             (spans[0], spans[1])
         })
         .collect()
+}
+
+/// Snapshot copies follow all drafter catch-up copies. Keep exactly the
+/// declared payload across the four ranks, so catch-up staging is not
+/// mistaken for a read of the snapshot's slot or spare.
+fn snapshot_copies(lines: &[String], payload: u64) -> Vec<(Span, Span)> {
+    let mut bytes = 0;
+    let mut captured: Vec<_> = copies(lines)
+        .into_iter()
+        .rev()
+        .take_while(|(source, _)| {
+            if bytes == payload {
+                return false;
+            }
+            bytes += source.2;
+            true
+        })
+        .collect();
+    assert_eq!(bytes, payload);
+    captured.reverse();
+    captured
 }
 
 /// Only Flash TP4 upper-skip with cuts declares an anchor allowance.
@@ -239,7 +260,9 @@ fn an_anchored_prompt_keeps_its_rounded_end_in_one_step() {
         .execute_prefill_cuts(&request, &mut sink)
         .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     assert_eq!(sink.views.iter().map(|v| v.raw().row_count).sum::<u32>(), 1);
-    instance.commit().unwrap();
+    instance
+        .commit()
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     assert_eq!(
         crate::instance::ledger_state(instance.handle(), 0),
         (Some((1, 789)), false)
@@ -320,13 +343,17 @@ fn an_anchor_near_its_item_start_seeds_the_rings_and_restores() {
     instance
         .execute_prefill_cuts(&grid, &mut Sink::default())
         .unwrap();
-    instance.commit().unwrap();
+    instance
+        .commit()
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     let first = host.device.journal.borrow().len();
     let request = cuts(&anchored(1, 0, 8192, 65, true), 1, 8257, 8257);
     instance
         .execute_prefill_cuts(&request, &mut Sink::default())
         .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
-    instance.commit().unwrap();
+    instance
+        .commit()
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     let step: Vec<String> = host.device.journal.borrow()[first..].to_vec();
     let launch = step.iter().position(|l| l.starts_with("launch ")).unwrap();
     let seeds: Vec<_> = copies(&step[..launch])
@@ -368,7 +395,9 @@ fn an_anchor_near_its_item_start_seeds_the_rings_and_restores() {
         )
         .unwrap();
     assert_eq!(sink.views.iter().map(|v| v.raw().row_count).sum::<u32>(), 1);
-    instance.commit().unwrap();
+    instance
+        .commit()
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     assert_eq!(
         crate::instance::ledger_state(instance.handle(), 1),
         (Some((2, 8257)), false)
@@ -398,7 +427,9 @@ fn anchor_flags_need_spares_an_interior_granule_and_an_upper_skip() {
                 );
                 if supported && rows == 789 {
                     result.unwrap();
-                    instance.commit().unwrap();
+                    instance
+                        .commit()
+                        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
                     instance.retire_request(1).unwrap();
                 } else {
                     assert_eq!(
@@ -433,7 +464,9 @@ fn spares_leave_unanchored_steps_unchanged() {
                     &mut Sink::default(),
                 )
                 .unwrap();
-            instance.commit().unwrap();
+            instance
+                .commit()
+                .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
         }
         let names: Vec<_> = host.device.journal.borrow()[first..]
             .iter()
@@ -470,7 +503,9 @@ fn tp4_anchored_prompt_captures_restores_and_continues() {
         )
         .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     assert_eq!(sink.views.iter().map(|v| v.raw().row_count).sum::<u32>(), 1);
-    instance.commit().unwrap();
+    instance
+        .commit()
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
     instance.capture_prefix_state(1, 4160, &pages).unwrap();
     instance.retire_request(1).unwrap();
@@ -485,7 +520,9 @@ fn tp4_anchored_prompt_captures_restores_and_continues() {
         )
         .unwrap();
     assert_eq!(sink.views.iter().map(|v| v.raw().row_count).sum::<u32>(), 1);
-    instance.commit().unwrap();
+    instance
+        .commit()
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     instance.retire_request(2).unwrap();
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
@@ -508,7 +545,9 @@ fn anchor_seeds_precede_the_tails_own_seed_copies() {
             &mut Sink::default(),
         )
         .unwrap();
-    instance.commit().unwrap();
+    instance
+        .commit()
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
     instance.capture_prefix_state(1, 789, &pages).unwrap();
     instance.retire_request(1).unwrap();
@@ -522,7 +561,9 @@ fn anchor_seeds_precede_the_tails_own_seed_copies() {
             &mut Sink::default(),
         )
         .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
-    instance.commit().unwrap();
+    instance
+        .commit()
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     let step: Vec<String> = host.device.journal.borrow()[first..].to_vec();
     let launch = step.iter().position(|l| l.starts_with("launch ")).unwrap();
     let before: Vec<_> = copies(&step[..launch])
@@ -599,10 +640,8 @@ fn feature_writes(
 }
 
 /// A DSpark prompt keeps its rounded end inside one step: the commit
-/// copies the slot's raw history entry into the anchor's spare, then the
-/// rows a chunk ending at 768 retains (640 to 768), and leaves in the slot
-/// the six rows such a chunk keeps there that the item's last window does
-/// not (655 to 661), before the item's own retention. Both histories then
+/// retains the head's raw rows (640 to 768), copies its whole history into
+/// the anchor's spare, then retains the tail (768 to 789). Both histories
 /// match the item cut at 768. A capture at the anchor reads only spares, it
 /// restores into another slot and continues to the prompt end.
 #[test]
@@ -617,7 +656,9 @@ fn dspark_anchored_prompt_keeps_its_raw_history_at_the_anchor() {
         )
         .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     let before = host.device.journal.borrow().len();
-    instance.commit().unwrap();
+    instance
+        .commit()
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     let lines = host.device.journal.borrow()[before..].to_vec();
     let writes = feature_writes(&lines, features, spare);
     let (_, cells) = feature_row();
@@ -627,18 +668,19 @@ fn dspark_anchored_prompt_keeps_its_raw_history_at_the_anchor() {
             .map(|&(_, destination)| destination)
             .collect::<Vec<_>>(),
         [
+            history(features, 0, 640, 30),
+            history(features, 0, 670, 98),
             history(spare, 0, 0, cells),
-            history(spare, 0, 640, 30),
-            history(spare, 0, 670, 98),
-            history(features, 0, 655, 6),
-            history(features, 0, 661, 9),
-            history(features, 0, 670, 119),
+            history(features, 0, 768, 21),
         ]
     );
-    assert_eq!(writes[0].0, history(features, 0, 0, cells));
+    assert_eq!(writes[2].0, history(features, 0, 0, cells));
     assert!(
-        writes[1..]
+        writes
             .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != 2)
+            .map(|(_, copy)| copy)
             .all(|&(source, _)| !inside(source, features) && !inside(source, spare))
     );
     let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
@@ -647,7 +689,8 @@ fn dspark_anchored_prompt_keeps_its_raw_history_at_the_anchor() {
     for (tokens, from_spares) in [(789, false), (768, true)] {
         let before = host.device.journal.borrow().len();
         instance.capture_prefix_state(1, tokens, &pages).unwrap();
-        let captured = copies(&host.device.journal.borrow()[before..]);
+        let payload = LAYERS * (CODES + SCALES) + 3 * 32768 + cells * feature_row().0;
+        let captured = snapshot_copies(&host.device.journal.borrow()[before..], 4 * payload);
         let read = |buffers: &[DeviceBufferSpanV1]| {
             captured
                 .iter()
@@ -660,7 +703,6 @@ fn dspark_anchored_prompt_keeps_its_raw_history_at_the_anchor() {
             .map(|name| states[0].named(name).unwrap())
             .collect();
         let kept: Vec<_> = spares[0].buffers.iter().flatten().copied().collect();
-        let payload = LAYERS * (CODES + SCALES) + 3 * 32768 + cells * feature_row().0;
         assert_eq!(read(if from_spares { &kept } else { &slot }), payload);
         assert_eq!(read(if from_spares { &slot } else { &kept }), 0);
     }
@@ -676,7 +718,9 @@ fn dspark_anchored_prompt_keeps_its_raw_history_at_the_anchor() {
         )
         .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     assert_eq!(sink.views.iter().map(|v| v.raw().row_count).sum::<u32>(), 1);
-    instance.commit().unwrap();
+    instance
+        .commit()
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     let context = crate::instance::dspark_context(instance.handle(), 2).unwrap();
     assert_eq!((context.slot, context.end), (1, 789));
     instance.retire_request(2).unwrap();
@@ -698,7 +742,9 @@ fn dspark_anchor_near_its_item_start_keeps_every_earlier_row() {
             &mut Sink::default(),
         )
         .unwrap();
-    instance.commit().unwrap();
+    instance
+        .commit()
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     instance
         .execute_prefill_cuts(
             &cuts(&anchored(1, 0, 8192, 65, true), 1, 8257, 8257),
@@ -706,7 +752,9 @@ fn dspark_anchor_near_its_item_start_keeps_every_earlier_row() {
         )
         .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     let before = host.device.journal.borrow().len();
-    instance.commit().unwrap();
+    instance
+        .commit()
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     let lines = host.device.journal.borrow()[before..].to_vec();
     let (_, cells) = feature_row();
     assert_eq!(
@@ -715,9 +763,9 @@ fn dspark_anchor_near_its_item_start_keeps_every_earlier_row() {
             .map(|&(_, destination)| destination)
             .collect::<Vec<_>>(),
         [
+            history(features, 0, 8192, 64),
             history(spare, 0, 0, cells),
-            history(spare, 0, 8192, 64),
-            history(features, 0, 8192, 65),
+            history(features, 0, 8256, 1),
         ]
     );
     let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
@@ -732,7 +780,9 @@ fn dspark_anchor_near_its_item_start_keeps_every_earlier_row() {
             &mut Sink::default(),
         )
         .unwrap();
-    instance.commit().unwrap();
+    instance
+        .commit()
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     assert_eq!(
         crate::instance::dspark_context(instance.handle(), 2)
             .unwrap()
@@ -801,11 +851,13 @@ fn anchored_items_of_one_step_each_keep_their_own_spare() {
         .execute_prefill_cuts(&two_anchored(), &mut Sink::default())
         .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     let before = host.device.journal.borrow().len();
-    instance.commit().unwrap();
+    instance
+        .commit()
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     let lines = host.device.journal.borrow()[before..].to_vec();
     let (row, cells) = feature_row();
-    // The second item's chunk ending at 192 retains 64 to 192, and its own
-    // last window 72 to 200 leaves 66 to 72 of it in the slot.
+    // Both heads retain before their histories are copied into the spares.
+    // Each tail then retains at its original offset in the packed target.
     let anchor_writes: Vec<_> = feature_writes(&lines, features, spare)
         .iter()
         .map(|&(_, destination)| destination)
@@ -814,14 +866,14 @@ fn anchored_items_of_one_step_each_keep_their_own_spare() {
     assert_eq!(
         anchor_writes,
         [
+            history(features, 0, 640, 30),
+            history(features, 0, 670, 98),
+            history(features, 1, 64, 70),
+            history(features, 1, 134, 58),
             history(spare, 0, 0, cells),
-            history(spare, 0, 640, 30),
-            history(spare, 0, 670, 98),
-            history(features, 0, 655, 6),
             history(spare, 1, 0, cells),
-            history(spare, 1, 64, 70),
-            history(spare, 1, 134, 58),
-            history(features, 1, 66, 6),
+            history(features, 0, 768, 21),
+            history(features, 1, 192, 8),
         ]
     );
     let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
@@ -889,7 +941,9 @@ fn a_cancelled_anchored_step_keeps_no_anchor() {
                 &mut Sink::default(),
             )
             .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
-        instance.commit().unwrap();
+        instance
+            .commit()
+            .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
         for tokens in [768, 789] {
             instance.capture_prefix_state(2, tokens, &pages).unwrap();
         }
@@ -900,7 +954,9 @@ fn a_cancelled_anchored_step_keeps_no_anchor() {
                 &mut Sink::default(),
             )
             .unwrap();
-        instance.commit().unwrap();
+        instance
+            .commit()
+            .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
         assert!(instance.capture_prefix_state(2, 768, &pages).is_err());
         for request in [2, 3] {
             instance.retire_request(request).unwrap();
@@ -943,7 +999,9 @@ fn anchor_state_dumps_read_their_spares() {
                 &mut Sink::default(),
             )
             .unwrap();
-        instance.commit().unwrap();
+        instance
+            .commit()
+            .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
         let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
         for tokens in [768, 789] {
             instance
@@ -1081,7 +1139,9 @@ fn dma_anchors_capture_restore_and_continue_with_both_completion_modes() {
                 );
             }
             let commit_start = host.device.journal.borrow().len();
-            instance.commit().unwrap();
+            instance
+                .commit()
+                .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
             if speculative {
                 let index = model_deepseek41_contract::state::request_state(
                     &FLASH,
@@ -1104,18 +1164,19 @@ fn dma_anchors_capture_restore_and_continue_with_both_completion_modes() {
                             .map(|&(_, destination)| destination)
                             .collect::<Vec<_>>(),
                         [
+                            history(features, 0, 640, 30),
+                            history(features, 0, 670, 98),
                             history(kept, 0, 0, cells),
-                            history(kept, 0, 640, 30),
-                            history(kept, 0, 670, 98),
-                            history(features, 0, 655, 6),
-                            history(features, 0, 661, 9),
-                            history(features, 0, 670, 119),
+                            history(features, 0, 768, 21),
                         ]
                     );
-                    assert_eq!(writes[0].0, history(features, 0, 0, cells));
+                    assert_eq!(writes[2].0, history(features, 0, 0, cells));
                     assert!(
-                        writes[1..]
+                        writes
                             .iter()
+                            .enumerate()
+                            .filter(|(index, _)| *index != 2)
+                            .map(|(_, copy)| copy)
                             .all(|&(source, _)| !inside(source, features) && !inside(source, kept))
                     );
                 }
@@ -1123,7 +1184,14 @@ fn dma_anchors_capture_restore_and_continue_with_both_completion_modes() {
             let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
             let before = host.device.journal.borrow().len();
             instance.capture_prefix_state(1, 768, &pages).unwrap();
-            let captured = copies(&host.device.journal.borrow()[before..]);
+            let payload = LAYERS * (CODES + SCALES)
+                + 3 * 32768
+                + if speculative {
+                    feature_row().0 * feature_row().1
+                } else {
+                    0
+                };
+            let captured = snapshot_copies(&host.device.journal.borrow()[before..], 4 * payload);
             for (spare, state) in spares.iter().zip(&states) {
                 let buffers: Vec<_> = spare.buffers.iter().flatten().copied().collect();
                 let payload = LAYERS * (CODES + SCALES)
@@ -1159,7 +1227,9 @@ fn dma_anchors_capture_restore_and_continue_with_both_completion_modes() {
                 )
                 .unwrap();
             assert_eq!(sink.views.iter().map(|v| v.raw().row_count).sum::<u32>(), 1);
-            instance.commit().unwrap();
+            instance
+                .commit()
+                .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
             if speculative {
                 let context = crate::instance::dspark_context(instance.handle(), 2).unwrap();
                 assert_eq!((context.slot, context.end), (0, 789));
@@ -1270,7 +1340,9 @@ fn odd_restored_continuation_matches_the_split_snapshot_and_slot() {
                     .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
                 replay_ring_writes(&host, &mut memory, &host.device.journal.borrow()[first..]);
                 *host.memory.borrow_mut() = memory;
-                instance.commit().unwrap();
+                instance
+                    .commit()
+                    .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
             };
         let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
         let capture = |instance: &mut BundleInstanceV1, request, end| {

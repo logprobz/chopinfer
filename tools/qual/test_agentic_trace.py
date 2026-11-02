@@ -21,13 +21,20 @@ class TraceTests(unittest.TestCase):
             with self.subTest(bounds=bounds):
                 workload = trace.generate(4, 100, 'shape', [100000], 0, append_tokens=bounds)
                 self.assertEqual(workload, trace.validate(copy.deepcopy(workload)))
-                self.assertTrue(all(bounds[0] <= t['append_tokens'] <= bounds[1]
-                                    for s in workload['sessions'] for t in s['turns']))
+                appends = [t['append_tokens'] for s in workload['sessions'] for t in s['turns']]
+                self.assertTrue(all(bounds[0] <= tokens <= bounds[1] for tokens in appends))
+        appends = [t['append_tokens'] for s in trace.generate(4, 100, 'shape', [100000], 0,
+                                                              append_tokens=(1000, 2000))['sessions'] for t in s['turns']]
+        self.assertGreater(len(set(appends)), 300)
+        self.assertLess(min(appends), 1050)
+        self.assertGreater(max(appends), 1950)
 
     def test_generator_default_append_range(self):
+        # The digest of the trace the class mix generated before the range option existed.
         args = (4, 100, 'shape', [100000, 250000], 0)
-        self.assertEqual(json.dumps(trace.generate(*args), indent=2),
-                         json.dumps(trace.generate(*args, append_tokens=None), indent=2))
+        self.assertEqual(trace.digest(trace.generate(*args)),
+                         '5e95100f9c53d35403bb34b5d196399173c8c57a42ad16d5b6827687436f8258')
+        self.assertEqual(trace.generate(*args), trace.generate(*args, append_tokens=None))
 
     def test_append_range_parser(self):
         for value, bounds in (('1000:2000', (1000, 2000)), ('1:32768', (1, 32768)), ('7:7', (7, 7))):

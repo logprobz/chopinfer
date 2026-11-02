@@ -17,9 +17,7 @@ pub(super) fn anchor_allowance(config: &crate::config::Configuration) -> u32 {
         && shape.geometry.id == model_deepseek41_contract::geometry::FLASH.id
         && shape.ranks() == 4
     {
-        config
-            .execution
-            .prefill_anchor_items
+        model_deepseek41_contract::execution_options::MAX_ANCHOR_ITEMS
             .min(config.create.items.get())
     } else {
         0

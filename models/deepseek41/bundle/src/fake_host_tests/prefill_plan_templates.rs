@@ -365,15 +365,7 @@ fn templates_patch_their_step_values_and_key_their_structure() {
 #[test]
 fn anchored_plans_share_templates_and_instances_keep_64() {
     let host = host(true);
-    let instance = super::prefill_skip::create_profile_with_options(
-        &host,
-        8192,
-        true,
-        &[(
-            model_deepseek41_contract::execution_options::PREFILL_ANCHOR_ITEMS,
-            2.into(),
-        )],
-    );
+    let instance = super::prefill_skip::create_profile(&host, 8192, true);
     let anchored = |request, slot| {
         BatchRequestV1::new(
             BatchWireVersionV1::V3,

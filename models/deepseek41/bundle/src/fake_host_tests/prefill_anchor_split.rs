@@ -338,7 +338,7 @@ struct Run {
     dspark: bool,
 }
 impl Run {
-    fn new(dspark: bool, fused: bool) -> Self {
+    fn new(dspark: bool) -> Self {
         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
         host.kv_pages.set(2048);
         host.drafter.set(dspark);
@@ -349,7 +349,6 @@ impl Run {
         for (name, value) in [
             ("prefill_chunk_tokens", 8192.into()),
             ("prefill_upper_skip", true.into()),
-            ("prefill_anchor_items", if fused { 8 } else { 0 }.into()),
             ("dspark_graph_handles_per_rank", 0.into()),
         ] {
             record = crate::config::tests::with_option(record, name, value);
@@ -568,7 +567,7 @@ struct Outcome {
     dispatches: Vec<(String, u32)>,
 }
 fn run(dspark: bool, fused: bool, scenario: Scenario) -> Outcome {
-    let mut run = Run::new(dspark, fused);
+    let mut run = Run::new(dspark);
     let (start, end, count) = match scenario {
         Scenario::Cold | Scenario::Cancel => (0, 789, 1),
         Scenario::LongTail => (0, 831, 1),

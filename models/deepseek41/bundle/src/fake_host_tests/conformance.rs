@@ -582,7 +582,7 @@ impl conformance::Startup for Served {
         }
     }
     fn create(&self) -> Result<BundleInstanceV1, BundleAbiError> {
-        self.create_with(None)
+        self.create_with_prefill(false)
     }
     fn step(&self, items: &[conformance::Item]) -> Vec<u8> {
         let items: Vec<_> = items
@@ -1035,7 +1035,7 @@ fn engram_reasons_distinguish_mixed_and_host_targets() {
 }
 
 impl Served {
-    fn create_with(&self, anchors: Option<u32>) -> Result<BundleInstanceV1, BundleAbiError> {
+    fn create_with_prefill(&self, prefill: bool) -> Result<BundleInstanceV1, BundleAbiError> {
         if self.host.device.symbols_only.get() {
             // The mapped index also serves AR. Speculation is negotiated separately.
             self.host.drafter.set(true);
@@ -1049,22 +1049,19 @@ impl Served {
             self.serving.sequences,
             false,
         );
-        if !self.serving.model_options.is_empty() || anchors.is_some() {
+        if !self.serving.model_options.is_empty() {
             let tag = runtime_bundle_abi::MODEL_OPTIONS_TAG_V1;
             let at = record.windows(tag.len()).position(|w| w == tag).unwrap() + tag.len();
             let mut options: serde_json::Value = serde_json::from_slice(&record[at + 4..]).unwrap();
             for (key, value) in &self.serving.model_options {
                 options[key] = serde_json::from_str(value).unwrap();
             }
-            if let Some(items) = anchors {
-                options["prefill_anchor_items"] = items.into();
-            }
             let options = serde_json::to_vec(&options).unwrap();
             record.truncate(at);
             record.extend_from_slice(&(options.len() as u32).to_le_bytes());
             record.extend_from_slice(&options);
         }
-        let mut api = if self.host.device.symbols_only.get() || anchors.is_some() {
+        let mut api = if self.host.device.symbols_only.get() || prefill {
             api()
                 .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
                 .expect("prefill API")
@@ -1073,7 +1070,7 @@ impl Served {
         } else {
             api()
         };
-        if anchors.is_some() {
+        if prefill {
             api = api
                 .with_prefill_anchors_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_ANCHORS_API_V2)
                 .expect("prefill anchors API");

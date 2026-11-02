@@ -1,5 +1,5 @@
 //! Prompt-end anchors an upper-skip prefill keeps inside its items
-//! (`execution_options::PREFILL_ANCHOR_ITEMS`), so the scheduler need not
+//! (`execution_options::MAX_ANCHOR_ITEMS`), so the scheduler need not
 //! end a chunk at an unaligned prompt's rounded end and run its last 1-63
 //! tokens as a separate step.
 //!

@@ -416,7 +416,6 @@ pub(crate) mod tests {
             (PREFILL_TAIL_FOLDS, true.into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK, 32.into()),
             (DIAGNOSTIC_STEP_LOGS, true.into()),
-            (PREFILL_ANCHOR_ITEMS, 2.into()),
             (WIDE_VERIFY, true.into()),
             (WIDE_DRAFT, true.into()),
             (PHASED_DECODE_REDUCE, true.into()),
@@ -437,7 +436,6 @@ pub(crate) mod tests {
                 prefill_tail_folds: true,
                 dspark_graph_handles_per_rank: 32,
                 diagnostic_step_logs: true,
-                prefill_anchor_items: 2,
                 wide_verify: true,
                 wide_draft: true,
                 phased_decode_reduce: true,
@@ -455,11 +453,23 @@ pub(crate) mod tests {
             (PREFILL_TAIL_FOLDS, 1.into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK, (-1).into()),
             (DIAGNOSTIC_STEP_LOGS, 1.into()),
-            (PREFILL_ANCHOR_ITEMS, 9.into()),
             (WIDE_DRAFT, true.into()),
         ] {
             assert_eq!(
                 decode(&with_option(base.clone(), name, value), |_| {}).unwrap_err(),
+                BundleStatusV1::InvalidArgument
+            );
+        }
+    }
+
+    #[test]
+    fn removed_prefill_anchor_items_option_is_rejected() {
+        let shape = crate::shape::topologies()[0];
+        let base = record(&shape, KV_LAYOUTS[0], 1, false);
+        for value in [0, 8] {
+            let payload = with_option(base.clone(), "prefill_anchor_items", value.into());
+            assert_eq!(
+                decode(&payload, |_| {}).unwrap_err(),
                 BundleStatusV1::InvalidArgument
             );
         }

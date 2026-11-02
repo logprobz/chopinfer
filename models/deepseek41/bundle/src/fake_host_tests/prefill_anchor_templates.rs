@@ -21,7 +21,6 @@ fn create(host: &Rc<Host>, sequences: u32) -> BundleInstanceV1 {
     for (name, value) in [
         ("prefill_chunk_tokens", 8192.into()),
         ("prefill_upper_skip", true.into()),
-        ("prefill_anchor_items", 8.into()),
         ("prefill_plan_cache_verify", true.into()),
     ] {
         record = crate::config::tests::with_option(record, name, value);
@@ -85,7 +84,7 @@ fn batch(items: &[(u64, u64, u64, u64)]) -> (Vec<u8>, Vec<u8>) {
 fn anchor_allowance_is_capped_at_served_sequences() {
     for dspark in [false, true] {
         // Three also checks that the cap is the served count, not its bucket.
-        for sequences in [4, 3, 1] {
+        for sequences in [8, 4, 3, 1] {
             let host = host(dspark);
             let mut instance = create(&host, sequences);
             assert_eq!(instance.prefill_anchor_items(), Ok(Some(sequences)));
@@ -106,6 +105,25 @@ fn anchor_allowance_is_capped_at_served_sequences() {
             instance.destroy().unwrap();
             assert_eq!(host.acquired.get(), host.released.get());
         }
+    }
+}
+
+/// The per-step cap remains eight even when the instance serves more items.
+#[test]
+fn more_than_eight_anchor_items_are_refused_before_launching() {
+    for dspark in [false, true] {
+        let host = host(dspark);
+        let mut instance = create(&host, 9);
+        assert_eq!(instance.prefill_anchor_items(), Ok(Some(8)));
+        let items: Vec<_> = (0..9).map(|slot| (slot + 1, slot, 0, 65)).collect();
+        let before = host.device.journal.borrow().len();
+        assert_eq!(
+            instance.execute_prefill_cuts(&batch(&items).1, &mut Sink::default()),
+            Err(BundleAbiError::Status(BundleStatusV1::InvalidArgument))
+        );
+        assert_eq!(host.device.journal.borrow().len(), before);
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
     }
 }
 

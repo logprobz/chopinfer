@@ -279,7 +279,7 @@ pub fn request_state(g: &Geometry, storage: KvStorage, dspark: bool) -> RequestS
 /// `request_state` whose captured buffers each keep `anchors` spare entries
 /// in a separate buffer of their layout: the state up to that many
 /// prompt-ending items of one prefill keep at their rounded prompt end
-/// (`execution_options::PREFILL_ANCHOR_ITEMS`). The working buffers, and so
+/// (`execution_options::MAX_ANCHOR_ITEMS`). The working buffers, and so
 /// the host's per-slot state bytes, are unchanged. Zero is `request_state`.
 pub fn request_state_with_anchors(
     g: &Geometry,

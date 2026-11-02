@@ -1,7 +1,7 @@
 //! Prompt-end anchors kept inside an upper-skip item
 //! (`instance::execute::anchors`): the spares receive the bytes a chunk
 //! ending at the anchor leaves in its slot, and a capture there copies them.
-use super::prefill_skip::create_profile_with_options;
+use super::prefill_skip::create_profile;
 use super::*;
 use bundle_runtime::fake_host::RecordingSink;
 use runtime_bundle_sdk::prefill::{Boundary, encode_with_cuts};
@@ -49,13 +49,8 @@ fn cuts(batch: &[u8], request: u64, prompt: u64, end: u64) -> Vec<u8> {
     .unwrap()
 }
 
-fn create(host: &Rc<Host>, anchors: u32) -> BundleInstanceV1 {
-    create_profile_with_options(
-        host,
-        8192,
-        true,
-        &[("prefill_anchor_items", anchors.into())],
-    )
+fn create(host: &Rc<Host>) -> BundleInstanceV1 {
+    create_profile(host, 8192, true)
 }
 
 /// A journal span: (buffer, offset, length).
@@ -116,6 +111,7 @@ fn check_anchor_stores(
     spare: DeviceBufferSpanV1,
     zeros: DeviceBufferSpanV1,
     rows: std::ops::Range<u64>,
+    entries: u64,
 ) {
     let stores: Vec<_> = lines
         .iter()
@@ -160,9 +156,10 @@ fn check_anchor_stores(
         assert_eq!(spans[2], (base.0, base.1 + rows.start * 4, n * 4));
         assert_eq!(spans[3], (zeros.buffer.raw, zeros.offset, n * 4));
         assert_eq!(spans[4], (base.0, base.1 + (rows.end - 1) * 4, 4));
-        let base = spare.offset + layer * (CODES + SCALES);
+        assert_eq!(spare.length, entries * LAYERS * (CODES + SCALES));
+        let base = spare.offset + layer * entries * (CODES + SCALES);
         assert_eq!(spans[5], (spare.buffer.raw, base, CODES));
-        assert_eq!(spans[6], (spare.buffer.raw, base + CODES, SCALES));
+        assert_eq!(spans[6], (spare.buffer.raw, base + entries * CODES, SCALES));
         layer += 1;
     }
     assert_eq!(layer, LAYERS);
@@ -213,20 +210,8 @@ fn snapshot_copies(lines: &[String], payload: u64) -> Vec<(Span, Span)> {
 fn instances_declare_their_spares_as_grid_anchor_items() {
     for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
         let host = FakeHost::new(Shape::new(&FLASH, ranks).unwrap(), KV_LAYOUTS[0]);
-        for (chunk, skip, anchors, declared) in [
-            (8192, true, 0, 0),
-            (8192, true, 1, 1),
-            (8192, true, 8, 8),
-            (0, false, 0, 0),
-            (0, false, 8, 0),
-            (8192, false, 8, 0),
-        ] {
-            let mut instance = create_profile_with_options(
-                &host,
-                chunk,
-                skip,
-                &[("prefill_anchor_items", anchors.into())],
-            );
+        for (chunk, skip, declared) in [(8192, true, 8_u32), (0, false, 0), (8192, false, 0)] {
+            let mut instance = create_profile(&host, chunk, skip);
             let expected = if ranks == Ranks::TP4 {
                 declared.min(4)
             } else {
@@ -246,7 +231,7 @@ fn instances_declare_their_spares_as_grid_anchor_items() {
 #[test]
 fn an_anchored_prompt_keeps_its_rounded_end_in_one_step() {
     let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-    let mut instance = create(&host, 1);
+    let mut instance = create(&host);
     let (spares, states) = crate::instance::anchor_spans(instance.handle());
     let (rings, tails) = (
         states[0].named("window.ring").unwrap(),
@@ -291,12 +276,12 @@ fn an_anchored_prompt_keeps_its_rounded_end_in_one_step() {
             destination,
             (
                 raw(spare_tails).0,
-                spare_tails.offset + layer * 32768,
+                spare_tails.offset + layer * 4 * 32768,
                 32768
             )
         );
     }
-    check_anchor_stores(&step, rings, spare_rings, spares[0].zeros, 632..768);
+    check_anchor_stores(&step, rings, spare_rings, spares[0].zeros, 632..768, 4);
     let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
     for (tokens, from_spares) in [(768, true), (789, false)] {
         let before = host.device.journal.borrow().len();
@@ -332,7 +317,7 @@ fn an_anchored_prompt_keeps_its_rounded_end_in_one_step() {
 #[test]
 fn an_anchor_near_its_item_start_seeds_the_rings_and_restores() {
     let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-    let mut instance = create(&host, 1);
+    let mut instance = create(&host);
     let (spares, states) = crate::instance::anchor_spans(instance.handle());
     let (rings, tails) = (
         states[0].named("window.ring").unwrap(),
@@ -380,7 +365,7 @@ fn an_anchor_near_its_item_start_seeds_the_rings_and_restores() {
             .iter()
             .all(|(source, _)| inside(*source, rings) || inside(*source, tails))
     );
-    check_anchor_stores(&step, rings, spare_rings, spares[0].zeros, 0..64);
+    check_anchor_stores(&step, rings, spare_rings, spares[0].zeros, 0..64, 4);
     let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
     instance.capture_prefix_state(1, 8256, &pages).unwrap();
     instance.retire_request(1).unwrap();
@@ -411,15 +396,10 @@ fn an_anchor_near_its_item_start_seeds_the_rings_and_restores() {
 #[test]
 fn anchor_flags_need_spares_an_interior_granule_and_an_upper_skip() {
     for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
-        for (skip, allowance) in [(true, 0), (false, 1), (true, 1)] {
+        for skip in [false, true] {
             let host = FakeHost::new(Shape::new(&FLASH, ranks).unwrap(), KV_LAYOUTS[0]);
-            let mut instance = create_profile_with_options(
-                &host,
-                8192,
-                skip,
-                &[("prefill_anchor_items", allowance.into())],
-            );
-            let supported = ranks == Ranks::TP4 && skip && allowance > 0;
+            let mut instance = create_profile(&host, 8192, skip);
+            let supported = ranks == Ranks::TP4 && skip;
             for rows in [768, 50, 789] {
                 let result = instance.execute_prefill_cuts(
                     &cuts(&anchored(1, 0, 0, rows, true), 1, rows, rows),
@@ -444,49 +424,52 @@ fn anchor_flags_need_spares_an_interior_granule_and_an_upper_skip() {
     }
 }
 
-/// Spares change nothing a step launches unless an item keeps an anchor:
-/// the same prompt issues the same kernels, grids and copies either way.
+/// An unanchored step neither reads nor writes the allocated anchor spares.
 #[test]
-fn spares_leave_unanchored_steps_unchanged() {
-    let launches = |anchors: u32| {
-        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-        let mut instance = create(&host, anchors);
-        let first = host.device.journal.borrow().len();
-        for (start, rows, last) in [(0, 8192, false), (8192, 65, true)] {
-            instance
-                .execute_prefill_cuts(
-                    &cuts(
-                        &chunk(1, 0, start, rows, last, false),
-                        1,
-                        8257,
-                        start + rows,
-                    ),
-                    &mut Sink::default(),
-                )
-                .unwrap();
-            instance
-                .commit()
-                .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
-        }
-        let names: Vec<_> = host.device.journal.borrow()[first..]
+fn unanchored_steps_leave_spares_untouched() {
+    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+    let mut instance = create(&host);
+    let (spares, _) = crate::instance::anchor_spans(instance.handle());
+    let first = host.device.journal.borrow().len();
+    for (start, rows, last) in [(0, 8192, false), (8192, 65, true)] {
+        instance
+            .execute_prefill_cuts(
+                &cuts(
+                    &chunk(1, 0, start, rows, last, false),
+                    1,
+                    8257,
+                    start + rows,
+                ),
+                &mut Sink::default(),
+            )
+            .unwrap();
+        instance
+            .commit()
+            .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+    }
+    let lines = host.device.journal.borrow();
+    assert!(
+        lines[first..]
             .iter()
-            .filter(|line| line.starts_with("launch ") || line.starts_with("copy "))
-            .map(|line| {
-                let mut words = line.split_whitespace();
-                let kind = words.next().unwrap().to_owned();
-                if kind == "copy" {
-                    return kind;
-                }
-                format!("{} {}", words.nth(1).unwrap(), grid(line))
-            })
-            .collect();
-        instance.retire_request(1).unwrap();
-        instance.destroy().unwrap();
-        names
-    };
-    let plain = launches(0);
-    assert!(plain.len() > 1000);
-    assert_eq!(plain, launches(1));
+            .filter(|line| line.starts_with("launch "))
+            .count()
+            > 1000
+    );
+    for line in &lines[first..] {
+        for span in spans(line) {
+            assert!(
+                !spares.iter().any(|spare| spare
+                    .buffers
+                    .iter()
+                    .flatten()
+                    .any(|&b| inside(span, b)))
+            );
+        }
+    }
+    drop(lines);
+    instance.retire_request(1).unwrap();
+    instance.destroy().unwrap();
+    assert_eq!(host.acquired.get(), host.released.get());
 }
 
 /// At TP4 an anchored prompt captures its rounded end from every rank's
@@ -494,7 +477,7 @@ fn spares_leave_unanchored_steps_unchanged() {
 #[test]
 fn tp4_anchored_prompt_captures_restores_and_continues() {
     let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-    let mut instance = create(&host, 1);
+    let mut instance = create(&host);
     let mut sink = Sink::default();
     instance
         .execute_prefill_cuts(
@@ -535,7 +518,7 @@ fn tp4_anchored_prompt_captures_restores_and_continues() {
 #[test]
 fn anchor_seeds_precede_the_tails_own_seed_copies() {
     let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-    let mut instance = create(&host, 1);
+    let mut instance = create(&host);
     let (spares, states) = crate::instance::anchor_spans(instance.handle());
     let tails = states[0].named("compressor.tail").unwrap();
     let spare_tails = spares[0].buffers[1].unwrap();
@@ -647,7 +630,7 @@ fn feature_writes(
 #[test]
 fn dspark_anchored_prompt_keeps_its_raw_history_at_the_anchor() {
     let host = dspark_host(Ranks::TP4);
-    let mut instance = create(&host, 1);
+    let mut instance = create(&host);
     let (features, spare) = feature_spans(&instance);
     instance
         .execute_prefill_cuts(
@@ -734,7 +717,7 @@ fn dspark_anchored_prompt_keeps_its_raw_history_at_the_anchor() {
 #[test]
 fn dspark_anchor_near_its_item_start_keeps_every_earlier_row() {
     let host = dspark_host(Ranks::TP4);
-    let mut instance = create(&host, 1);
+    let mut instance = create(&host);
     let (features, spare) = feature_spans(&instance);
     instance
         .execute_prefill_cuts(
@@ -832,20 +815,11 @@ fn two_anchored() -> Vec<u8> {
 }
 
 /// Each anchored item of a step takes its own spare, in item order, and a
-/// capture at either anchor reads that spare's entry. A step with more
-/// anchored items than spares is refused.
+/// capture at either anchor reads that spare's entry.
 #[test]
 fn anchored_items_of_one_step_each_keep_their_own_spare() {
     let host = dspark_host(Ranks::TP4);
-    let mut short = create(&host, 1);
-    assert_eq!(
-        short.execute_prefill_cuts(&two_anchored(), &mut Sink::default()),
-        Err(runtime_bundle_abi::BundleAbiError::Status(
-            BundleStatusV1::InvalidArgument
-        ))
-    );
-    short.destroy().unwrap();
-    let mut instance = create(&host, 2);
+    let mut instance = create(&host);
     let (features, spare) = feature_spans(&instance);
     instance
         .execute_prefill_cuts(&two_anchored(), &mut Sink::default())
@@ -917,7 +891,7 @@ fn a_cancelled_anchored_step_keeps_no_anchor() {
         } else {
             FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0])
         };
-        let mut instance = create(&host, 1);
+        let mut instance = create(&host);
         let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
         instance
             .execute_prefill_cuts(
@@ -988,7 +962,7 @@ fn anchor_state_dumps_read_their_spares() {
         } else {
             FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0])
         };
-        let mut instance = create(&host, 1);
+        let mut instance = create(&host);
         crate::instance::set_dspark_state_capture_root_for_test(
             instance.handle(),
             Some(root.clone()),
@@ -1066,13 +1040,9 @@ fn dma_anchors_capture_restore_and_continue_with_both_completion_modes() {
             if speculative {
                 host.speculation.set(Some((5, 32)));
             }
-            let mut instance = create_backend_with_options(
-                &host,
-                true,
-                completion_backend(&host, delayed),
-                &[("prefill_anchor_items", 1.into())],
-            )
-            .unwrap();
+            let mut instance =
+                create_backend_with_options(&host, true, completion_backend(&host, delayed), &[])
+                    .unwrap();
             let (spares, states) = crate::instance::anchor_spans(instance.handle());
             assert_eq!(spares.len(), 4);
             assert_eq!(states.len(), 4);
@@ -1105,12 +1075,16 @@ fn dma_anchors_capture_restore_and_continue_with_both_completion_modes() {
                 .position(|line| line.starts_with("launch "))
                 .unwrap();
             let seeds = copies(&step[..launch]);
+            // The DMA helper serves one AR sequence or sixteen DSpark
+            // sequences; the per-step allowance caps the latter at eight.
+            let entries = if speculative { 8 } else { 1 };
+            assert_eq!(instance.prefill_anchor_items(), Ok(Some(entries as u32)));
             for (spare, state) in spares.iter().zip(&states) {
                 let tails = state.named("compressor.tail").unwrap();
                 let kept = spare.buffers[1].unwrap();
-                assert_eq!(kept.length, 3 * 32768);
-                assert_eq!(tails.length % kept.length, 0);
-                let slots = tails.length / kept.length;
+                assert_eq!(kept.length, entries * 3 * 32768);
+                assert_eq!(tails.length % (3 * 32768), 0);
+                let slots = tails.length / (3 * 32768);
                 let tail_seeds: Vec<_> = seeds
                     .iter()
                     .filter(|(_, destination)| inside(*destination, kept))
@@ -1127,7 +1101,11 @@ fn dma_anchors_capture_restore_and_continue_with_both_completion_modes() {
                     );
                     assert_eq!(
                         destination,
-                        (kept.buffer.raw, kept.offset + layer as u64 * 32768, 32768)
+                        (
+                            kept.buffer.raw,
+                            kept.offset + layer as u64 * entries * 32768,
+                            32768
+                        )
                     );
                 }
                 check_anchor_stores(
@@ -1136,6 +1114,7 @@ fn dma_anchors_capture_restore_and_continue_with_both_completion_modes() {
                     spare.buffers[0].unwrap(),
                     spare.zeros,
                     632..768,
+                    entries,
                 );
             }
             let commit_start = host.device.journal.borrow().len();
@@ -1312,7 +1291,7 @@ fn replay_ring_writes(host: &Host, memory: &mut Memory, lines: &[String]) {
 fn odd_restored_continuation_matches_the_split_snapshot_and_slot() {
     let run = |fused: bool| {
         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-        let mut instance = create(&host, u32::from(fused));
+        let mut instance = create(&host);
         let (spares, states) = crate::instance::anchor_spans(instance.handle());
         for state in &states {
             for name in ["window.ring", "compressor.tail"] {

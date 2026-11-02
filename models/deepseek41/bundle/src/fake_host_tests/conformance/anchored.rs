@@ -1,11 +1,7 @@
-//! Route coverage with prompt-end anchors kept inside items, the
-//! default-off `prefill_anchor_items` candidate: both served profiles, their
-//! instances created with eight anchor items, where each step's first eight
-//! prompt-ending prefill items whose rounded end lies inside them keep it
-//! there, in a cuts envelope, as the scheduler sends them. Every other case
-//! runs as served. The servings stay the profiles' own; the option is the
-//! instance's override. The quick tier also verifies reused anchored
-//! templates against fresh lowering and requires anchored template hits.
+//! Route coverage with prompt-end anchors kept inside items on both served
+//! profiles. Each step's first eight eligible prompt-ending items keep their
+//! interior grid anchor. The quick tier also compares reused templates with
+//! fresh lowering and requires anchored template hits.
 use super::*;
 use bundle_runtime::fake_host::conformance::route_guard;
 use conformance::Startup;
@@ -93,7 +89,7 @@ impl Startup for Anchored {
         Self(Served::new(&serving))
     }
     fn create(&self) -> Result<BundleInstanceV1, BundleAbiError> {
-        self.0.create_with(Some(ANCHOR_ITEMS))
+        self.0.create_with_prefill(true)
     }
     fn step(&self, items: &[conformance::Item]) -> Vec<u8> {
         self.0.step(items)
@@ -197,7 +193,7 @@ impl Startup for Anchored {
 }
 
 /// The anchored instances serve each profile with eight anchor items on
-/// its grid, served instances keep none, and an anchored route step keeps
+/// its grid, the legacy test API exposes no allowance, and an anchored step keeps
 /// its prompt's rounded end for a capture.
 #[test]
 fn anchored_instances_keep_eight_anchor_items() {

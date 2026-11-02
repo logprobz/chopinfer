@@ -112,13 +112,14 @@ impl MappedResidencyReportV1 {
 
     fn publish_result_v1(
         &self,
-        result: io::Result<(ResidencySampleV1, Option<String>)>,
+        result: io::Result<Option<(ResidencySampleV1, Option<String>)>>,
     ) -> Option<(ResidencySampleV1, Option<String>)> {
         match result {
-            Ok((sample, hidden)) => {
+            Ok(Some((sample, hidden))) => {
                 self.publish(sample);
                 Some((sample, hidden))
             }
+            Ok(None) => None,
             Err(error) => {
                 runtime_log::warn!(
                     "mapped residency: sampling failed: {error}; keeping the previous sample"
@@ -134,15 +135,32 @@ fn mapped_page_bytes_v1(mapping: &MappedRowsV1) -> u64 {
     (mapping.file_offset() % page + mapping.len()).div_ceil(page) * page
 }
 
-fn sample_v1(mappings: &[Arc<MappedRowsV1>]) -> io::Result<(ResidencySampleV1, Option<String>)> {
+fn sample_v1(
+    mappings: &[Arc<MappedRowsV1>],
+    stop: &AtomicBool,
+) -> io::Result<Option<(ResidencySampleV1, Option<String>)>> {
+    sample_with_v1(mappings, stop, MappedRowsV1::resident_pages)
+}
+
+fn sample_with_v1(
+    mappings: &[Arc<MappedRowsV1>],
+    stop: &AtomicBool,
+    mut resident_pages: impl FnMut(&MappedRowsV1) -> io::Result<(u64, u64)>,
+) -> io::Result<Option<(ResidencySampleV1, Option<String>)>> {
     let started = Instant::now();
     let page = page_bytes_v1() as u64;
     let mut mapped_bytes = 0;
     let mut resident_bytes = Some(0);
     let mut hidden = None;
     for mapping in mappings {
+        if stop.load(Ordering::Acquire) {
+            return Ok(None);
+        }
         mapped_bytes += mapped_page_bytes_v1(mapping);
-        match mapping.resident_pages() {
+        if resident_bytes.is_none() {
+            continue;
+        }
+        match resident_pages(mapping) {
             Ok((resident, _)) => {
                 resident_bytes = resident_bytes.map(|bytes| bytes + resident * page);
             }
@@ -153,14 +171,17 @@ fn sample_v1(mappings: &[Arc<MappedRowsV1>]) -> io::Result<(ResidencySampleV1, O
             Err(error) => return Err(error),
         }
     }
-    Ok((
+    if stop.load(Ordering::Acquire) {
+        return Ok(None);
+    }
+    Ok(Some((
         ResidencySampleV1 {
             mapped_bytes,
             resident_bytes,
             seconds: started.elapsed().as_secs_f64(),
         },
         hidden,
-    ))
+    )))
 }
 
 fn resident_enough_v1(resident: u64, mapped: u64) -> bool {
@@ -177,9 +198,21 @@ enum ResidencyChangeV1 {
 struct ResidencyTrackerV1 {
     armed: bool,
     low: bool,
+    warned_hidden: bool,
 }
 
 impl ResidencyTrackerV1 {
+    fn hidden_warning(&mut self, reason: Option<&str>) -> Option<String> {
+        let reason = reason.filter(|_| !self.warned_hidden)?;
+        self.warned_hidden = true;
+        Some(format!(
+            "mapped residency: warning residency-hidden: {reason}; the kernel shows \
+             page-cache residency only to a process that owns the file on a mount \
+             that is neither idmapped nor overlay, or may write it on a read-write \
+             mount; run the server as the checkpoint's owner on a plain mount to see it"
+        ))
+    }
+
     fn observe(&mut self, sample: ResidencySampleV1) -> Option<ResidencyChangeV1> {
         let resident = sample.resident_bytes?;
         if resident_enough_v1(resident, sample.mapped_bytes) {
@@ -223,7 +256,6 @@ fn sample_loop_v1(
     stopped: Receiver<()>,
 ) {
     let mut first = true;
-    let mut warned_hidden = false;
     let mut tracker = ResidencyTrackerV1::default();
     loop {
         if stop.load(Ordering::Acquire) {
@@ -235,6 +267,7 @@ fn sample_loop_v1(
                 .iter()
                 .filter_map(Weak::upgrade)
                 .collect::<Vec<_>>(),
+            &stop,
         );
         if let Some((sample, hidden)) = report.publish_result_v1(result) {
             if first {
@@ -245,14 +278,8 @@ fn sample_loop_v1(
                 );
                 first = false;
             }
-            if let Some(hidden) = hidden.filter(|_| !warned_hidden) {
-                runtime_log::warn!(
-                    "mapped residency: warning residency-hidden: {hidden}; the kernel shows \
-                     page-cache residency only to a process that owns the file on a mount \
-                     that is neither idmapped nor overlay, or may write it on a read-write \
-                     mount; run the server as the checkpoint's owner on a plain mount to see it"
-                );
-                warned_hidden = true;
+            if let Some(line) = tracker.hidden_warning(hidden.as_deref()) {
+                runtime_log::warn!("{line}");
             }
             match tracker.observe(sample) {
                 Some(ResidencyChangeV1::Low) => runtime_log::warn!(
@@ -280,6 +307,29 @@ pub enum MappedPrewarmOutcomeV1 {
     Declined(PrewarmRoomV1),
     Warmed(PrewarmV1),
     Failed(String),
+}
+
+fn prewarm_done_line_v1(
+    mode: MappedPrewarmV1,
+    warm: &PrewarmV1,
+    mapped: u64,
+) -> (runtime_log::Level, String) {
+    let resident_bytes = warm.resident_bytes.filter(|_| !warm.stopped);
+    let level = if resident_bytes.is_some_and(|resident| !resident_enough_v1(resident, mapped)) {
+        runtime_log::Level::Warn
+    } else {
+        runtime_log::Level::Info
+    };
+    let json = serde_json::json!({
+        "mode": mode.name(),
+        "bytes": warm.bytes,
+        "seconds": warm.seconds,
+        "resident_bytes": resident_bytes,
+        "available_bytes": warm.available_bytes,
+        "margin_bytes": warm.margin_bytes,
+        "stopped": warm.stopped,
+    });
+    (level, format!("mapped prewarm: {json}"))
 }
 
 fn warm_v1(
@@ -310,23 +360,12 @@ fn warm_v1(
     }
     match prewarm_v1(mappings, &room, Some(stop)) {
         Ok(warm) => {
-            let json = serde_json::json!({
-                "mode": mode.name(),
-                "bytes": warm.bytes,
-                "seconds": warm.seconds,
-                "resident_bytes": warm.resident_bytes,
-                "available_bytes": warm.available_bytes,
-                "margin_bytes": warm.margin_bytes,
-                "stopped": warm.stopped,
-            });
             let mapped = mappings.iter().map(|rows| mapped_page_bytes_v1(rows)).sum();
-            if warm
-                .resident_bytes
-                .is_some_and(|resident| !resident_enough_v1(resident, mapped))
-            {
-                runtime_log::warn!("mapped prewarm: {json}");
+            let (level, line) = prewarm_done_line_v1(mode, &warm, mapped);
+            if level == runtime_log::Level::Warn {
+                runtime_log::warn!("{line}");
             } else {
-                runtime_log::info!("mapped prewarm: {json}");
+                runtime_log::info!("{line}");
             }
             MappedPrewarmOutcomeV1::Warmed(warm)
         }
@@ -540,6 +579,78 @@ mod tests {
     }
 
     #[test]
+    fn tracker_warns_about_hidden_residency_once() {
+        let mut tracker = ResidencyTrackerV1::default();
+        assert_eq!(tracker.hidden_warning(None), None);
+        let line = tracker
+            .hidden_warning(Some("fixture access denied"))
+            .unwrap();
+        assert_eq!(
+            line,
+            "mapped residency: warning residency-hidden: fixture access denied; \
+            the kernel shows page-cache residency only to a process that owns the file on a \
+            mount that is neither idmapped nor overlay, or may write it on a read-write mount; \
+            run the server as the checkpoint's owner on a plain mount to see it"
+        );
+        assert_eq!(tracker.hidden_warning(Some("fixture access denied")), None);
+        assert_eq!(tracker.hidden_warning(None), None);
+        assert_eq!(tracker.hidden_warning(Some("another hidden mapping")), None);
+    }
+
+    #[test]
+    fn prewarm_done_line_reports_all_fields_and_warns_only_for_visible_low_residency() {
+        use runtime_log::Level::{Info, Warn};
+        let page = page_bytes_v1() as u64;
+        let mapped = 100 * page;
+        for (resident_pages, stopped, level) in [
+            (Some(100), false, Info),
+            (Some(95), false, Info),
+            (Some(94), false, Warn),
+            (None, false, Info),
+            (None, true, Info),
+        ] {
+            let resident_bytes = resident_pages.map(|pages| pages * page);
+            for (mode, name, available_bytes) in [
+                (MappedPrewarmV1::On, "on", None),
+                (MappedPrewarmV1::Auto, "auto", Some(2 * mapped)),
+            ] {
+                let warm = PrewarmV1 {
+                    bytes: mapped - 3,
+                    warmed_bytes: if stopped { 0 } else { mapped },
+                    stopped,
+                    seconds: 0.25,
+                    resident_bytes,
+                    available_bytes,
+                    margin_bytes: page,
+                };
+                let (actual_level, text) = prewarm_done_line_v1(mode, &warm, mapped);
+                assert_eq!(actual_level, level);
+                let json: serde_json::Value =
+                    serde_json::from_str(text.strip_prefix("mapped prewarm: ").unwrap()).unwrap();
+                assert_eq!(json.as_object().unwrap().len(), 7);
+                assert_eq!(
+                    json,
+                    serde_json::json!({
+                        "mode": name,
+                        "bytes": mapped - 3,
+                        "seconds": 0.25,
+                        "resident_bytes": resident_bytes,
+                        "available_bytes": available_bytes,
+                        "margin_bytes": page,
+                        "stopped": stopped,
+                    })
+                );
+                if resident_bytes.is_none() {
+                    assert!(text.contains("\"resident_bytes\":null"));
+                }
+                if stopped {
+                    assert!(text.contains("\"stopped\":true"));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn report_renders_only_observed_gauges_and_keeps_the_previous_sample_on_error() {
         let report = MappedResidencyReportV1::default();
         assert_eq!(report.sample(), None);
@@ -549,7 +660,7 @@ mod tests {
             resident_bytes: Some(4096),
             seconds: 0.25,
         };
-        report.publish_result_v1(Ok((sample, None)));
+        report.publish_result_v1(Ok(Some((sample, None))));
         assert_eq!(report.sample(), Some(sample));
         assert_eq!(
             report.prometheus(),
@@ -633,9 +744,62 @@ mod tests {
     }
 
     #[test]
+    fn sampling_stops_between_mappings_without_publishing_partial_results() {
+        let (_temp, rows, _) = mapping("sample-stop");
+        let mappings = vec![Arc::clone(&rows); 3];
+        let report = MappedResidencyReportV1::default();
+        let previous = ResidencySampleV1 {
+            mapped_bytes: 8192,
+            resident_bytes: Some(4096),
+            seconds: 0.25,
+        };
+        report.publish(previous);
+        // Stop before the pass, between mappings, and after the last mapping.
+        for stop_after in [0, 1, 3] {
+            let stop = AtomicBool::new(stop_after == 0);
+            let mut sampled = 0;
+            let result = sample_with_v1(&mappings, &stop, |_| {
+                sampled += 1;
+                if sampled == stop_after {
+                    stop.store(true, Ordering::Release);
+                }
+                Ok((0, 5))
+            });
+            assert_eq!(sampled, stop_after);
+            assert!(result.as_ref().unwrap().is_none());
+            assert!(report.publish_result_v1(result).is_none());
+            assert_eq!(report.sample(), Some(previous));
+        }
+    }
+
+    #[test]
+    fn hidden_residency_skips_remaining_reads_but_counts_all_mapped_pages() {
+        let (_temp, rows, _) = mapping("sample-hidden");
+        let mappings = vec![Arc::clone(&rows); 3];
+        let stop = AtomicBool::new(false);
+        let mut sampled = 0;
+        let (sample, hidden) = sample_with_v1(&mappings, &stop, |_| {
+            sampled += 1;
+            assert_eq!(sampled, 1, "read residency after a hidden result");
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "fixture hidden",
+            ))
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(sampled, 1);
+        assert_eq!(sample.mapped_bytes, 15 * page_bytes_v1() as u64);
+        assert_eq!(sample.resident_bytes, None);
+        assert_eq!(hidden.as_deref(), Some("fixture hidden"));
+    }
+
+    #[test]
     fn background_on_warms_and_publishes_whole_pages_even_when_room_is_short() {
         let (_temp, rows, cold) = mapping("on");
-        let (before, _) = sample_v1(&[Arc::clone(&rows)]).unwrap();
+        let (before, _) = sample_v1(&[Arc::clone(&rows)], &AtomicBool::new(false))
+            .unwrap()
+            .unwrap();
         if cold {
             assert_eq!(before.resident_bytes, Some(0));
         }
@@ -769,15 +933,16 @@ mod tests {
             drop(guard);
             finished.send(()).unwrap();
         });
-        done.recv_timeout(Duration::from_secs(2)).unwrap();
+        done.recv_timeout(TEST_TIMEOUT).unwrap();
         thread.join().unwrap();
         assert_eq!(Arc::strong_count(&rows), 1);
+        // Only the process registry may retain a weak reference after shutdown.
+        assert_eq!(Arc::weak_count(&rows), 1);
     }
 
     #[test]
     fn drop_bounds_the_wait_for_a_blocked_warm_and_stops_it_after_release() {
-        let (_temp, rows, _) = mapping("blocked");
-        let weak = Arc::downgrade(&rows);
+        let (_temp, rows, cold) = mapping("blocked");
         let (ready, waiting) = mpsc::channel();
         let (release, released) = mpsc::channel();
         let guard = MappedViewsV1 {
@@ -785,7 +950,7 @@ mod tests {
             report: MappedResidencyReportV1::default(),
         }
         .start_with_v1(
-            vec![rows],
+            vec![Arc::clone(&rows)],
             move |bytes| {
                 ready.send(()).unwrap();
                 released.recv().unwrap();
@@ -800,18 +965,21 @@ mod tests {
             drop(guard);
             finished.send(()).unwrap();
         });
-        let bounded = done.recv_timeout(Duration::from_secs(2));
+        let bounded = done.recv_timeout(TEST_TIMEOUT);
         release.send(()).unwrap();
         thread.join().unwrap();
         bounded.unwrap();
         assert!(stop.load(Ordering::Acquire));
         let deadline = Instant::now() + TEST_TIMEOUT;
-        while weak.upgrade().is_some() {
+        while Arc::strong_count(&rows) > 1 {
             assert!(
                 Instant::now() < deadline,
                 "stopped warm retained its mapping"
             );
             std::thread::sleep(TEST_INTERVAL);
+        }
+        if cold {
+            assert_eq!(rows.resident_pages().unwrap().0, 0);
         }
     }
 
@@ -836,7 +1004,9 @@ mod tests {
             vec![Arc::clone(&rows), Arc::clone(&visible)],
             vec![visible, rows],
         ] {
-            let (sample, hidden) = sample_v1(&mappings).unwrap();
+            let (sample, hidden) = sample_v1(&mappings, &AtomicBool::new(false))
+                .unwrap()
+                .unwrap();
             let expected: u64 = mappings.iter().map(|rows| mapped_page_bytes_v1(rows)).sum();
             assert_eq!(sample.mapped_bytes, expected);
             assert_eq!(sample.resident_bytes, None);

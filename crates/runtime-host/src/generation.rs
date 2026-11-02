@@ -5081,17 +5081,6 @@ mod tests {
             mapped_residency: None,
         };
 
-        let report = crate::mapped_views::MappedResidencyReportV1::default();
-        let with_mappings = metrics.clone().with_mapped_residency(report.clone());
-        assert!(!with_mappings.prometheus(0).contains("chop_mapped_view_"));
-        report.publish(crate::mapped_views::ResidencySampleV1 {
-            mapped_bytes: 8192,
-            resident_bytes: Some(4096),
-            seconds: 0.25,
-        });
-        assert!(with_mappings.prometheus(0).contains(&report.prometheus()));
-        assert!(!metrics.prometheus(0).contains("chop_mapped_view_"));
-
         let summary = metrics.summary().unwrap();
 
         assert_eq!(
@@ -5110,6 +5099,42 @@ mod tests {
             reported,
             summary.kv_blocks_used as f64 / summary.kv_block_capacity as f64
         );
+    }
+
+    #[test]
+    fn mapped_residency_metrics_follow_device_memory_and_require_a_sample() {
+        let device_memory = crate::device_memory::DeviceMemoryReportV1::default();
+        device_memory.publish(&[crate::device_memory::RankDeviceMemoryV1 {
+            kv_bytes: 32768,
+            free_bytes: 16384,
+            ..Default::default()
+        }]);
+        let metrics = super::NativeRuntimeMetricsV1 {
+            model_name: "fixture".to_owned(),
+            engine: super::EngineMetrics::default(),
+            kv: runtime_kv::KvMetrics::new(runtime_kv::KvCachePrecision::Other),
+            state: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(super::READY)),
+            media: None,
+            device_memory: Some(device_memory.clone()),
+            mapped_residency: None,
+        };
+        let report = crate::mapped_views::MappedResidencyReportV1::default();
+        let with_mappings = metrics.clone().with_mapped_residency(report.clone());
+        assert!(!with_mappings.prometheus(0).contains("chop_mapped_view_"));
+        report.publish(crate::mapped_views::ResidencySampleV1 {
+            mapped_bytes: 8192,
+            resident_bytes: Some(4096),
+            seconds: 0.25,
+        });
+        assert!(!metrics.prometheus(0).contains("chop_mapped_view_"));
+        let endpoint = with_mappings.prometheus(0);
+        let device_lines = device_memory.prometheus();
+        let residency_lines = report.prometheus();
+        assert!(!device_lines.is_empty());
+        assert!(!residency_lines.is_empty());
+        let device_start = endpoint.find(&device_lines).unwrap();
+        let residency_start = endpoint.find(&residency_lines).unwrap();
+        assert!(device_start + device_lines.len() <= residency_start);
     }
 
     /// A chat whose render left reasoning open waits for a declared

@@ -364,6 +364,21 @@ state equal to the previous implementation. GPU exactness evidence ends
 at the tested width of 65; widths 66-192 have CPU coverage only. Widths
 above 64 remain unqualified for timing.
 
+On 2026-11-02, TP4 native KV with 196608 pages per rank and the default
+`tp4-dspark` profile (64 speculative rows and floor-one confidence) matched
+pre-fix build `21da932dd8` against fix tip `171003328d` and serving build
+`0c620f1a66` bit for bit. Each later build matched 96 requests and 12,288
+emitted token IDs and selected logprobs: two repeats of greedy and sampled
+requests at C8 and C16, with 128 outputs, sampled temperature 1.0 and seed
+9100 (16 comparisons per kind at C8, 32 at C16). Every measured window in
+all three builds executed allocated steps, including `i8-r32-v8-R48` and
+`i16-r32-v15-R61`. Normal-loaded and keeper-borrowed base outputs also
+matched. The serving build completed a 145-sequence mixed smoke without
+errors or a restart. Its 30 history-dependent requests, six each with
+presence penalty 0.5, frequency penalty 0.5, repetition penalty 1.2, strict
+JSON Schema or required tool calls, verified through unallocated steps;
+ordinary control cohorts in the same server still allocated at C8 and C16.
+
 See [confidence allocation](dspark-confidence.md) for the measured coding
 and chat tradeoff.
 

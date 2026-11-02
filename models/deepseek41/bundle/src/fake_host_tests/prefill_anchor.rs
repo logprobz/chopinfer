@@ -206,7 +206,11 @@ fn instances_declare_their_spares_as_grid_anchor_items() {
                 skip,
                 &[("prefill_anchor_items", anchors.into())],
             );
-            let expected = if ranks == Ranks::TP4 { declared } else { 0 };
+            let expected = if ranks == Ranks::TP4 {
+                declared.min(4)
+            } else {
+                0
+            };
             assert_eq!(instance.prefill_anchor_items(), Ok(Some(expected)));
             instance.destroy().unwrap();
         }

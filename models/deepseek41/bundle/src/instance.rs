@@ -977,15 +977,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
     let has_drafter = verify_rows > 0
         && config.kv.storage == model_deepseek41_contract::state::KvStorage::Native
         && shape.geometry.dspark_stages() > 0;
-    let anchors = if config.prefill.skip
-        && config.prefill.scheduler_cuts()
-        && shape.geometry.id == model_deepseek41_contract::geometry::FLASH.id
-        && shape.ranks() == 4
-    {
-        config.execution.prefill_anchor_items
-    } else {
-        0
-    };
+    let anchors = prefill::anchor_allowance(&config);
     let state = model_deepseek41_contract::state::request_state_with_anchors(
         shape.geometry,
         config.kv.storage,

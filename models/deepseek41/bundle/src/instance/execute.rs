@@ -1253,7 +1253,7 @@ impl Instance {
         if self.anchor_spares.is_empty() {
             0
         } else {
-            self.config.execution.prefill_anchor_items
+            super::prefill::anchor_allowance(&self.config)
         }
     }
 

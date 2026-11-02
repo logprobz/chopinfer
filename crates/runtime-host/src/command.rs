@@ -3523,7 +3523,9 @@ impl ServedEngineV1 {
             .with_model_options(&self.model_options)
             .map_err(|e| e.to_string())?;
         same_selection_v1(&expected, loaded.manifest(), &self.selection)?;
-        let batch_wire = crate::executor::serving_batch_wire_capability_v1(
+        // The wire before grid anchor items are negotiated below: prefix
+        // caching needs copy-on-write records the bundle declares itself.
+        let declared_wire = crate::executor::serving_batch_wire_capability_v1(
             loaded.manifest(),
             self.speculation.is_some(),
             0,
@@ -3544,7 +3546,7 @@ impl ServedEngineV1 {
             prefix_capability,
             loaded.library().supports_prefix_cache(),
             loaded.library().supports_request_retirement(),
-            batch_wire,
+            declared_wire,
         )?;
         require_prefix_state_slot_callback_v1(
             loaded

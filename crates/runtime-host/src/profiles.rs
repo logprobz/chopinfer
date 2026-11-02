@@ -32,6 +32,8 @@ pub(crate) struct Profile {
     pub qualification: String,
     pub kv_cache_dtype: String,
     pub prefix_cache: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_history_observer: Option<bool>,
     pub max_batch_tokens: usize,
     pub prefill_chunk_tokens: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -343,6 +345,12 @@ impl Profile {
             ("--draft-cost", self.speculation.draft_cost.clone()),
         ] {
             args.extend([flag.into(), value]);
+        }
+        if let Some(enabled) = self.reply_history_observer {
+            args.extend([
+                "--reply-history-observer".into(),
+                if enabled { "on" } else { "off" }.into(),
+            ]);
         }
         if let Some(depth) = self.queue_depth {
             args.extend(["--queue-depth".into(), depth.to_string()]);
@@ -1015,6 +1023,7 @@ pub(crate) fn inspect(arguments: &[String]) -> Result<String, HostCommandErrorV1
                     ("tbt", Some(policy.target_millis()))
                 }
             };
+            shown["reply_history_observer"] = serving.reply_history_observer.into();
             shown["prefill_budget"] = budget.into();
             shown["prefill_timing_cuts"] = serving.prefill_timing_cuts.name().into();
             if let Some(target) = target {
@@ -1690,6 +1699,7 @@ mod tests {
             panic!("profile inspection");
         };
         let mut expected = value["profiles"]["test"].clone();
+        expected["reply_history_observer"] = false.into();
         expected["prefill_timing_cuts"] = "off".into();
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&text).unwrap(),
@@ -1711,6 +1721,42 @@ mod tests {
         );
         std::fs::remove_file(path).unwrap();
         std::fs::remove_dir_all(bundle).unwrap();
+    }
+
+    #[test]
+    fn reply_history_profile_defaults_and_explicit_overrides() {
+        for value in [None, Some(false), Some(true)] {
+            let mut data = fixture();
+            if let Some(value) = value {
+                data["profiles"]["test"]["reply_history_observer"] = value.into();
+            }
+            let file = Profiles::parse(&serde_json::to_vec(&data).unwrap()).unwrap();
+            let defaults = file.get("test").unwrap().arguments(&file.served_model_name);
+            for explicit in [None, Some(false), Some(true)] {
+                let flags = explicit
+                    .map(|v| {
+                        vec![
+                            "--reply-history-observer".into(),
+                            if v { "on" } else { "off" }.into(),
+                        ]
+                    })
+                    .unwrap_or_default();
+                let mut args = vec!["serve".into()];
+                args.extend(apply_defaults(&defaults, &flags));
+                let crate::HostCommandV1::Serve { serving, .. } =
+                    crate::parse_host_command_v1(&args).unwrap()
+                else {
+                    panic!("serve");
+                };
+                assert_eq!(
+                    serving.reply_history_observer,
+                    explicit.or(value).unwrap_or(false)
+                );
+            }
+        }
+        let mut data = fixture();
+        data["profiles"]["test"]["reply_history_observer"] = "on".into();
+        assert!(Profiles::parse(&serde_json::to_vec(&data).unwrap()).is_err());
     }
 
     #[test]
@@ -1868,6 +1914,7 @@ mod tests {
                 panic!("profile inspection");
             };
             let mut expected = value["profiles"]["test"].clone();
+            expected["reply_history_observer"] = false.into();
             expected["prefill_budget"] = policy.into();
             expected["prefill_timing_cuts"] = "off".into();
             if let Some(target) = target {

@@ -191,6 +191,7 @@ def steps(target, work, jobs, test_threads, exhaustive=False):
         step("redeploy-wait", PY + ["tests/test_redeploy_wait.py"]),
         step("fixed-batch-logits", PY + ["tests/test_fixed_batch_logits.py"]),
         step("fixed-state-replay", PY + ["tests/test_fixed_state_replay.py"]),
+        step("reply-history-report", PY + ["tests/test_reply_measurement.py"]),
         step("lifecycle-diagnostics", PY + ["tests/test_lifecycle_diagnostics.py"]),
         step("encoder-adoptions", PY + ["tests/encoder-adoptions.py"]),
         step("encoder-adoptions-check", PY + ["tests/test_encoder_adoptions.py"]),

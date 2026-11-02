@@ -11,6 +11,8 @@ mod metrics;
 mod positions;
 pub mod profile;
 mod prompt_lookup;
+mod reply_history;
+pub use reply_history::{ReplyHistoryDelivery, ReplyHistoryObserver, ReplyRegion};
 mod speculation;
 mod step_rows;
 pub mod warmup;
@@ -43,7 +45,7 @@ use metrics::BatchComposition;
 use std::collections::{BTreeMap, VecDeque};
 use std::error::Error;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use runtime_grammar::{ConstraintState, GrammarError};
 use runtime_kv::{
@@ -81,9 +83,22 @@ pub struct EngineConfig {
     refusal_limits: BatchRefusalLimits,
     position_axes: bool,
     force_host_swap: bool,
+    reply_history_observer: bool,
 }
 
 impl EngineConfig {
+    /// Enables bounded reply repetition diagnostics. This never enables reuse.
+    #[must_use]
+    pub const fn with_reply_history_observer(mut self, enabled: bool) -> Self {
+        self.reply_history_observer = enabled;
+        self
+    }
+
+    #[must_use]
+    pub const fn reply_history_observer(self) -> bool {
+        self.reply_history_observer
+    }
+
     /// The resolved per-request sequence limit used by this engine.
     #[must_use]
     pub const fn maximum_sequence_tokens(&self) -> usize {
@@ -294,6 +309,7 @@ impl EngineConfig {
             refusal_limits: BatchRefusalLimits::DEFAULT,
             position_axes: false,
             force_host_swap: false,
+            reply_history_observer: false,
         })
     }
 
@@ -1612,6 +1628,7 @@ struct RequestRecord {
     /// Prefill progress through `history`: the prompt, and after a
     /// preemption also the emitted tokens the request recomputes.
     prompt_offset: usize,
+    reply_compared_tokens: usize,
     prompt_logprobs: Option<usize>,
     pending_decode_token: Option<u32>,
     sampling: SamplingParameters,
@@ -1770,6 +1787,7 @@ impl Drop for PendingBatchGuard<'_> {
 /// executor keeps the existing physical KV buffers and pinned offload arenas.
 #[derive(Debug)]
 struct StartupCheckpoint {
+    reply_history: Option<Arc<Mutex<reply_history::Registry>>>,
     host_clock: compatibility::HostClock,
     offload: Option<offload::OffloadState>,
     scheduler: Scheduler,
@@ -1782,6 +1800,7 @@ struct StartupCheckpoint {
 
 #[derive(Debug)]
 pub struct Engine<E: ModelExecutor> {
+    reply_history: Option<Arc<Mutex<reply_history::Registry>>>,
     startup_checkpoint: Option<StartupCheckpoint>,
     offload: Option<offload::OffloadState>,
     executor: E,
@@ -1881,6 +1900,7 @@ impl<E: ModelExecutor> Engine<E> {
         let metrics = EngineMetrics::default();
         metrics.compatibility(|metrics| metrics.configure(self.maximum_sequence_tokens));
         self.startup_checkpoint = Some(StartupCheckpoint {
+            reply_history: self.reply_history.take(),
             host_clock: self.host_clock.clone(),
             offload: std::mem::replace(&mut self.offload, offload),
             scheduler: std::mem::replace(&mut self.scheduler, scheduler),
@@ -1907,6 +1927,7 @@ impl<E: ModelExecutor> Engine<E> {
             .startup_checkpoint
             .take()
             .ok_or("startup warmup was not started")?;
+        self.reply_history = saved.reply_history;
         self.host_clock = saved.host_clock;
         self.scheduler = saved.scheduler;
         self.offload = saved.offload;
@@ -1950,6 +1971,15 @@ impl<E: ModelExecutor> Engine<E> {
         metrics: EngineMetrics,
         kv_metrics: KvMetrics,
     ) -> Result<Self, EngineError> {
+        let reply_history = if config.reply_history_observer {
+            let registry = reply_history::Registry::new(kv_metrics.clone());
+            if registry.is_none() {
+                kv_metrics.reply_history_count(runtime_kv::ReplyHistoryCounter::AllocationDrop, 1);
+            }
+            registry.map(|registry| Arc::new(Mutex::new(registry)))
+        } else {
+            None
+        };
         let mut scheduler =
             Scheduler::new_with_kv_metrics(config.scheduler, config.kv_geometry, kv_metrics)
                 .map_err(EngineError::Scheduler)?;
@@ -1990,6 +2020,7 @@ impl<E: ModelExecutor> Engine<E> {
             .transpose()
             .map_err(EngineError::Scheduler)?;
         let engine = Self {
+            reply_history,
             startup_checkpoint: None,
             offload,
             executor,
@@ -2097,10 +2128,13 @@ impl<E: ModelExecutor> Engine<E> {
         } else {
             spec
         };
-        let prefix = match self.prefix_block_tokens {
-            Some(block_tokens) => Some(prefix_request(block_tokens, &request)?),
+        let prefix_chain = match self.prefix_block_tokens {
+            Some(block_tokens) => Some(Arc::new(prefix_request(block_tokens, &request)?)),
             None => None,
         };
+        let prefix = prefix_chain.as_ref().map(|chain| {
+            PrefixRequestV1::new(Arc::clone(chain), request.prompt_logprobs.is_none())
+        });
         self.scheduler
             .submit_with_prefix(spec, prefix)
             .map_err(EngineError::Submit)?;
@@ -2121,6 +2155,39 @@ impl<E: ModelExecutor> Engine<E> {
             return Err(EngineError::MetadataAllocationFailed);
         }
         history.extend_from_slice(&request.prompt_tokens);
+        if let Some(mut observer) = self
+            .reply_history
+            .as_ref()
+            .and_then(|observer| observer.lock().ok())
+        {
+            if let Some(chain) = &prefix_chain {
+                observer.submit(request.id, chain, request.maximum_new_tokens);
+            } else {
+                // No cache chain exists. Charge the temporary prompt copy,
+                // page digests and media metadata before constructing one.
+                let block = self.scheduler.kv_geometry().block_tokens();
+                let temporary = request
+                    .prompt_tokens
+                    .len()
+                    .saturating_mul(size_of::<u32>())
+                    .saturating_add((request.prompt_tokens.len() / block + 1).saturating_mul(32))
+                    .saturating_add(
+                        request
+                            .spans
+                            .len()
+                            .saturating_mul(size_of::<PrefixMediaSpanV1>()),
+                    )
+                    .saturating_add(4096);
+                if observer.reserve_temporary(temporary) {
+                    if let Ok(chain) = prefix_request(block, &request) {
+                        observer.submit(request.id, &chain, request.maximum_new_tokens);
+                    } else {
+                        observer.unsupported();
+                    }
+                    observer.release_temporary();
+                }
+            }
+        }
         let prompt_tokens = request.prompt_tokens.len();
         let submitted_micros = self.clock.now_micros();
         self.requests.insert(
@@ -2128,6 +2195,7 @@ impl<E: ModelExecutor> Engine<E> {
             RequestRecord {
                 prompt_tokens: request.prompt_tokens,
                 prompt_offset: 0,
+                reply_compared_tokens: 0,
                 prompt_logprobs: request.prompt_logprobs,
                 pending_decode_token: None,
                 sampling: request.sampling,
@@ -2740,6 +2808,42 @@ impl<E: ModelExecutor> Engine<E> {
                 });
             }
         }
+        if let Some(mut observer) = self
+            .reply_history
+            .as_ref()
+            .and_then(|observer| observer.lock().ok())
+        {
+            for update in &prepared_engine.requests {
+                let record = requests
+                    .get_mut(&update.request_id)
+                    .expect("commit preflight checked membership");
+                if is_failed(update.request_id) {
+                    observer.discard(
+                        update.request_id,
+                        runtime_kv::ReplyHistoryCounter::DeliveryFailed,
+                    );
+                    continue;
+                }
+                let start = record
+                    .prompt_offset
+                    .max(record.reply_compared_tokens)
+                    .max(record.cached_tokens);
+                let end = update
+                    .prompt_offset
+                    .min(record.prompt_tokens.len().saturating_sub(1));
+                observer.prefill(update.request_id, start, end, record.cached_tokens);
+                record.reply_compared_tokens =
+                    record.reply_compared_tokens.max(update.prompt_offset);
+                if let Some(sample) = &update.sample {
+                    observer.append(update.request_id, &sample.tokens);
+                }
+            }
+            for event in &prepared_engine.events {
+                if let EngineEventKind::Finished { reason } = event.kind() {
+                    observer.engine_finish(event.request_id(), *reason);
+                }
+            }
+        }
         apply_committed_parts(requests, events, next_event_sequence, prepared_engine);
         drop(pending_batch);
         drop(publication_timer);
@@ -3219,15 +3323,101 @@ impl<E: ModelExecutor> Engine<E> {
     /// reason. Call after submit and before stepping, then finalize on delivery
     /// or cancellation, even if the engine request has already retired.
     pub fn defer_completion_metrics(&self, id: RequestId) {
+        if let Some(mut observer) = self
+            .reply_history
+            .as_ref()
+            .and_then(|observer| observer.lock().ok())
+        {
+            observer.defer(id);
+        }
         self.metrics
             .compatibility(|metrics| metrics.defer_completion(id));
     }
 
     /// Records the frontend's final reason once, including for retired runs.
     pub fn finish_completion_metrics(&self, id: RequestId, reason: FinishReason) {
+        if let Some(mut observer) = self
+            .reply_history
+            .as_ref()
+            .and_then(|observer| observer.lock().ok())
+        {
+            observer.finish(id, reason);
+        }
         self.metrics.compatibility(|metrics| {
             metrics.finish_completion(id, reason, self.clock.now_micros())
         });
+    }
+
+    #[must_use]
+    pub fn reply_history_observer(&self) -> Option<ReplyHistoryObserver> {
+        self.reply_history
+            .as_ref()
+            .map(|observer| ReplyHistoryObserver(Arc::clone(observer)))
+    }
+
+    /// Drops telemetry when the bounded frontend delivery receipt cannot fit.
+    pub fn drop_reply_history_observation(&self, id: RequestId) {
+        if let Some(mut observer) = self
+            .reply_history
+            .as_ref()
+            .and_then(|observer| observer.lock().ok())
+        {
+            observer.drop_observation(id);
+        }
+    }
+
+    /// Requires a successful terminal channel handoff before retaining history.
+    pub fn require_reply_history_delivery(&self, id: RequestId) {
+        if let Some(mut observer) = self
+            .reply_history
+            .as_ref()
+            .and_then(|observer| observer.lock().ok())
+        {
+            observer.require_handoff(id);
+        }
+    }
+
+    pub fn note_reply_history_tool_finish(&self, id: RequestId) {
+        if let Some(mut observer) = self
+            .reply_history
+            .as_ref()
+            .and_then(|observer| observer.lock().ok())
+        {
+            observer.tool_finish(id);
+        }
+    }
+
+    /// Finalizes the observed history at the frontend's actual delivered token
+    /// count, including text stops inside an accepted speculative run.
+    pub fn finish_reply_history_delivery(
+        &self,
+        id: RequestId,
+        reason: FinishReason,
+        tokens: usize,
+    ) {
+        if let Some(mut observer) = self
+            .reply_history
+            .as_ref()
+            .and_then(|observer| observer.lock().ok())
+        {
+            observer.delivered(id, reason, tokens);
+        }
+    }
+
+    /// Adds a content-free generated-token contribution before transport conversion.
+    pub fn annotate_reply_token(&self, id: RequestId, ordinal: usize, region: ReplyRegion) {
+        if let Some(mut observer) = self
+            .reply_history
+            .as_ref()
+            .and_then(|observer| observer.lock().ok())
+        {
+            observer.annotate(id, ordinal, region);
+        }
+    }
+
+    #[must_use]
+    pub fn reply_history_observer_enabled(&self) -> bool {
+        self.reply_history.is_some()
     }
 
     /// Retires live work after a successful frontend text stop.
@@ -3242,6 +3432,13 @@ impl<E: ModelExecutor> Engine<E> {
     fn terminate(&mut self, id: RequestId, reason: FinishReason) -> Result<(), EngineError> {
         self.ensure_retirement_ready()?;
         self.scheduler.cancel(id).map_err(EngineError::Scheduler)?;
+        if let Some(mut observer) = self
+            .reply_history
+            .as_ref()
+            .and_then(|observer| observer.lock().ok())
+        {
+            observer.engine_finish(id, reason);
+        }
         self.release_unused_swaps()?;
         self.pending_retirements.push(id);
         if reason == FinishReason::Cancelled {
@@ -3422,6 +3619,13 @@ impl<E: ModelExecutor> Engine<E> {
             .reap_terminal(self.terminal_retirement_per_step)
             .map_err(EngineError::Scheduler)?;
         for id in &retired {
+            if let Some(mut observer) = self
+                .reply_history
+                .as_ref()
+                .and_then(|observer| observer.lock().ok())
+            {
+                observer.retire(*id);
+            }
             self.requests.remove(id);
         }
         Ok(retired.len())
@@ -3449,7 +3653,7 @@ impl<E: ModelExecutor> Engine<E> {
 fn prefix_request(
     block_tokens: usize,
     request: &EngineRequest,
-) -> Result<PrefixRequestV1, EngineError> {
+) -> Result<PrefixChainV1, EngineError> {
     let media = request
         .spans
         .iter()
@@ -3475,10 +3679,7 @@ fn prefix_request(
         request.cache_salt.as_deref(),
     )
     .map_err(|error| EngineError::Scheduler(ScheduleError::Kv(error)))?;
-    Ok(PrefixRequestV1::new(
-        Arc::new(chain),
-        request.prompt_logprobs.is_none(),
-    ))
+    Ok(chain)
 }
 
 fn executor_error_fixed(message: &'static str) -> ExecutorError {
@@ -5663,6 +5864,7 @@ mod transaction_tests {
             RequestRecord {
                 prompt_tokens: vec![1],
                 prompt_offset: 0,
+                reply_compared_tokens: 0,
                 prompt_logprobs: None,
                 pending_decode_token: None,
                 sampling: SamplingParameters::new(1.0)

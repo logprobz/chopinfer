@@ -19,6 +19,7 @@
     "prefix-cache": "off",
     "queue-depth": "8",
     "queue-wait-ms": "0",
+    "reply-history-observer": "off",
     "speculation": "adaptive",
     "speculative-tokens": "3",
     "verify-warmup": "on"

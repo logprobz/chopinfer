@@ -48,6 +48,7 @@ pub mod image_decode;
 mod install;
 mod kernel;
 mod kv_cache_dtype;
+pub mod mapped_views;
 mod media_cache;
 mod media_memory;
 mod models;

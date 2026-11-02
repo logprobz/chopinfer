@@ -1800,3 +1800,39 @@ fn engine_end_marker_spellings_stay_literal_across_the_minimum_boundary() {
         }
     }
 }
+
+#[test]
+fn observer_metadata_distinguishes_declared_ends_and_partial_contributions() {
+    let fixture = FixtureV1::new("key-value", KEY_VALUE);
+    let mut decoder = fixture.with_stops(&["STOP"]);
+    let eos = fixture.descriptor.vocabulary.stop_token_ids[0];
+    assert_eq!(decoder.declared_end_token(eos), Some(false));
+    assert_eq!(decoder.declared_end_token(200), None);
+    let updates = feed(&mut decoder, &[b"left-ST", b"OP-right"]);
+    let part = updates
+        .iter()
+        .find_map(|update| match update {
+            CompletionUpdateV1::Content(text) => Some(&text.contributions[0]),
+            _ => None,
+        })
+        .unwrap();
+    assert!(!decoder.contribution_covers_token(part));
+    let mut decoder = fixture.decoder(PromptModeV1::Chat);
+    decoder.set_decoding_options(
+        runtime_server::DecodingOptions {
+            ignore_eos: true,
+            ..Default::default()
+        },
+        true,
+    );
+    assert_eq!(decoder.declared_end_token(eos), Some(true));
+    decoder.set_decoding_options(
+        runtime_server::DecodingOptions {
+            ignore_eos: true,
+            stop_token_ids: vec![eos],
+            ..Default::default()
+        },
+        true,
+    );
+    assert_eq!(decoder.declared_end_token(eos), Some(false));
+}

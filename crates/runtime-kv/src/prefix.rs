@@ -135,6 +135,47 @@ impl PrefixChainV1 {
         self.digests.get(blocks).copied()
     }
 
+    /// Already computed full-page identities, including the salted root.
+    #[must_use]
+    pub fn digests(&self) -> &[PrefixCacheKeyV1] {
+        &self.digests
+    }
+
+    /// Incremental continuation of the final page. The caller must account
+    /// for its allocation and discard it before retaining a digest-only history.
+    pub fn continuation(&self) -> Result<PrefixDigestTailV1, KvError> {
+        let start = self.full_blocks() * self.block_tokens;
+        let mut tokens = Vec::new();
+        tokens
+            .try_reserve_exact(self.block_tokens)
+            .map_err(|_| KvError::MetadataAllocationFailed)?;
+        tokens.extend_from_slice(&self.tokens[start..]);
+        let mut media = Vec::new();
+        let spans = self.media.iter().filter(|span| start < span.end()).count();
+        media
+            .try_reserve_exact(spans)
+            .map_err(|_| KvError::MetadataAllocationFailed)?;
+        media.extend(self.media.iter().filter(|span| start < span.end()).copied());
+        Ok(PrefixDigestTailV1 {
+            block_tokens: self.block_tokens,
+            previous: self.digests[self.full_blocks()],
+            tokens,
+            media,
+        })
+    }
+
+    /// Allocation capacity needed for [`Self::continuation`].
+    #[must_use]
+    pub fn continuation_bytes(&self) -> usize {
+        self.block_tokens * size_of::<u32>()
+            + self
+                .media
+                .iter()
+                .filter(|span| self.full_blocks() * self.block_tokens < span.end())
+                .count()
+                * size_of::<PrefixMediaSpanV1>()
+    }
+
     /// The key of an anchor at `boundary` tokens of this prompt.
     #[must_use]
     pub fn key_at(&self, boundary: usize) -> Option<PrefixCacheKeyV1> {
@@ -153,6 +194,15 @@ impl PrefixChainV1 {
         sha.update((tail as u64).to_le_bytes());
         self.hash_range(&mut sha, start, boundary);
         Some(PrefixCacheKeyV1::new(sha.finalize().into()))
+    }
+
+    /// Whether this position is a text token, outside all media spans.
+    #[must_use]
+    pub fn text_token(&self, position: usize) -> bool {
+        !self
+            .media
+            .iter()
+            .any(|span| span.start <= position && position < span.end())
     }
 
     /// Whether `boundary` falls strictly inside one of the prompt's media spans.
@@ -197,6 +247,65 @@ impl PrefixChainV1 {
             sha.update((span.rows as u64).to_le_bytes());
             sha.update(span.media_row.to_le_bytes());
         }
+    }
+}
+
+/// Bounded partial-page material for extending a prompt with committed text
+/// output. It has no KV handles and never changes the public prefix cache.
+#[derive(Debug)]
+pub struct PrefixDigestTailV1 {
+    block_tokens: usize,
+    previous: PrefixCacheKeyV1,
+    tokens: Vec<u32>,
+    media: Vec<PrefixMediaSpanV1>,
+}
+
+impl PrefixDigestTailV1 {
+    fn digest(&self, tail: bool) -> PrefixCacheKeyV1 {
+        let mut sha = Sha256::new();
+        sha.update(self.previous.digest());
+        if tail {
+            sha.update(TAIL_DOMAIN);
+            sha.update((self.tokens.len() as u64).to_le_bytes());
+        }
+        for token in &self.tokens {
+            sha.update(token.to_le_bytes());
+        }
+        for span in &self.media {
+            sha.update(span.identity);
+            sha.update((span.start as u64).to_le_bytes());
+            sha.update((span.rows as u64).to_le_bytes());
+            sha.update(span.media_row.to_le_bytes());
+        }
+        PrefixCacheKeyV1::new(sha.finalize().into())
+    }
+
+    /// Exact identity at the current boundary, including partial-page media.
+    #[must_use]
+    pub fn key(&self) -> PrefixCacheKeyV1 {
+        if self.tokens.is_empty() {
+            self.previous
+        } else {
+            self.digest(true)
+        }
+    }
+
+    /// Appends an accepted output token and returns any newly completed page.
+    pub fn push(&mut self, token: u32) -> Option<PrefixCacheKeyV1> {
+        self.tokens.push(token);
+        if self.tokens.len() != self.block_tokens {
+            return None;
+        }
+        self.previous = self.digest(false);
+        self.tokens.clear();
+        self.media.clear();
+        Some(self.previous)
+    }
+
+    #[must_use]
+    pub fn allocated_bytes(&self) -> usize {
+        self.tokens.capacity() * size_of::<u32>()
+            + self.media.capacity() * size_of::<PrefixMediaSpanV1>()
     }
 }
 

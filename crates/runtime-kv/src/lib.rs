@@ -8,12 +8,17 @@ mod declared_pages;
 mod offload;
 pub use offload::*;
 mod metrics;
+mod reply_metrics;
+pub use reply_metrics::{
+    REPLY_CONTEXT_LABELS, REPLY_CONTEXT_LIMITS, REPLY_COUNTER_LABELS, REPLY_ROW_LABELS,
+    ReplyHistoryCounter, ReplyHistoryRows, ReplyHistorySnapshot,
+};
 mod prefix;
 
 pub use context_parallel::*;
 pub use declared_pages::*;
 pub use metrics::{KvCachePrecision, KvMetrics, KvMetricsSnapshot};
-pub use prefix::{PrefixChainV1, PrefixMediaSpanV1};
+pub use prefix::{PrefixChainV1, PrefixDigestTailV1, PrefixMediaSpanV1};
 
 use prefix::PrefixRegistryV1;
 

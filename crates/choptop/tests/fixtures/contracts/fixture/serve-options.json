@@ -132,6 +132,19 @@
       "repeatable": false
     },
     {
+      "flag": "--prewarm-mapped-views",
+      "value": "TEXT",
+      "choices": [
+        "off",
+        "on",
+        "auto"
+      ],
+      "group": "model",
+      "help": "warm mapped weight views after listening; auto only when memory holds them (default off)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
       "flag": "--weight-keeper",
       "value": "DIR",
       "choices": null,
@@ -637,6 +650,18 @@
       ],
       "group": "logging",
       "help": "the log level; CHOPINFER_LOG_LEVEL or info by default",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
+      "flag": "--reply-history-observer",
+      "value": "TEXT",
+      "choices": [
+        "on",
+        "off"
+      ],
+      "group": "logging",
+      "help": "count repeated generated pages and reply ends in bounded digests (default off)",
       "model_launch": true,
       "repeatable": false
     },

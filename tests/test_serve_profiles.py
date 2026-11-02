@@ -357,6 +357,7 @@ print(json.dumps({'result': 'prepared-direct', 'bundle': str(bundle)}))
                     result = subprocess.run([host, 'profiles', 'show', path, name], text=True, capture_output=True)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     expected = dict(profile)
+                    expected.setdefault('reply_history_observer', False)
                     expected.setdefault('prefill_budget', 'fixed')
                     expected.setdefault('prefill_timing_cuts', 'off')
                     if expected['prefill_budget'] == 'tbt':

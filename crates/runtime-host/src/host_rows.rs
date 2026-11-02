@@ -16,7 +16,7 @@
 //! it runs (the same rule its loads already state; `chopinfer verify`
 //! checks the payload).
 
-// SAFETY-REVIEWED: this module contains the mmap, madvise and munmap calls.
+// SAFETY-REVIEWED: this module contains mapping, residency and access checks.
 #![allow(unsafe_code)]
 
 pub(crate) mod fetch;
@@ -212,20 +212,186 @@ impl MappedRowsV1 {
     }
 
     /// How many of the mapping's pages are resident now (`mincore`): the
-    /// pages a read would not fault from the file.
+    /// pages a read would not fault from the file. Returns `PermissionDenied`
+    /// when access to the retained source file does not establish visibility.
     pub fn resident_pages(&self) -> io::Result<(u64, u64)> {
+        self.resident_pages_in_windows_v1(16_384)
+    }
+
+    fn resident_pages_in_windows_v1(&self, window_pages: usize) -> io::Result<(u64, u64)> {
+        use std::os::unix::fs::MetadataExt;
+        let file = self.source.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "page-cache residency is unknown: the mapping kept no descriptor of its file",
+            )
+        })?;
+        let owner = file.metadata()?.uid();
+        let overflow_uid = std::fs::read_to_string("/proc/sys/kernel/overflowuid")
+            .ok()
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(65534);
+        if !residency_visible_v1(
+            owner,
+            filesystem_uid_v1(),
+            overflow_uid,
+            file_mount_idmapped_v1(file),
+            file_is_overlay_v1(file),
+            file_writable_v1(file),
+        ) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "page-cache residency is hidden: the process neither owns nor may write the file",
+            ));
+        }
         let page = page_bytes_v1();
         let pages = self.mapped_length.div_ceil(page);
-        let mut residency = vec![0_u8; pages];
-        // SAFETY-REVIEWED: the range is the mapping this value owns, and the
-        // vector holds one byte per page of it.
-        if unsafe { libc::mincore(self.base, self.mapped_length, residency.as_mut_ptr().cast()) }
-            != 0
-        {
-            return Err(io::Error::last_os_error());
+        let window_pages = window_pages.max(1);
+        let mut residency = vec![0_u8; window_pages.min(pages)];
+        let mut resident = 0;
+        for start in (0..pages).step_by(window_pages) {
+            let offset = start * page;
+            let length = (self.mapped_length - offset).min(residency.len() * page);
+            // SAFETY-REVIEWED: the page-aligned range is within this mapping,
+            // and the reused buffer holds one byte per page of the window.
+            if unsafe {
+                libc::mincore(
+                    self.base.cast::<u8>().add(offset).cast(),
+                    length,
+                    residency.as_mut_ptr().cast(),
+                )
+            } != 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            resident += residency[..length.div_ceil(page)]
+                .iter()
+                .filter(|page| **page & 1 != 0)
+                .count();
         }
-        let resident = residency.iter().filter(|page| **page & 1 != 0).count();
         Ok((resident as u64, pages as u64))
+    }
+}
+
+/// Trust ownership only when fstat's uid can be compared with the fsuid.
+/// Overlayfs can check a lower inode whose uid and idmapping are hidden
+/// from these descriptor and mountinfo checks, so its owner is untrusted.
+/// These guards can hide visible residency. A non-owner writer on a read-only
+/// mount is hidden on `EROFS`, as is a root process relying only on
+/// `CAP_FOWNER`, whose user-namespace rules are not checked here.
+fn residency_visible_v1(
+    file_owner: u32,
+    filesystem_uid: Option<u32>,
+    overflow_uid: u32,
+    mount_idmapped: Option<bool>,
+    filesystem_overlay: Option<bool>,
+    writable: bool,
+) -> bool {
+    writable
+        || (filesystem_uid == Some(file_owner)
+            && file_owner != overflow_uid
+            && mount_idmapped == Some(false)
+            && filesystem_overlay == Some(false))
+}
+
+pub(crate) fn filesystem_uid_v1() -> Option<u32> {
+    filesystem_uid_from_status_v1(&std::fs::read_to_string("/proc/self/status").ok()?)
+}
+
+fn filesystem_uid_from_status_v1(status: &str) -> Option<u32> {
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("Uid:"))?
+        .split_whitespace()
+        .nth(3)?
+        .parse()
+        .ok()
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn mount_idmapped_v1(mountinfo: &str, mount_id: u64) -> Option<bool> {
+    mountinfo.lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        if fields.next()?.parse::<u64>().ok()? != mount_id {
+            return None;
+        }
+        Some(fields.nth(4)?.split(',').any(|option| option == "idmapped"))
+    })
+}
+
+fn file_mount_idmapped_v1(file: &File) -> Option<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        // SAFETY-REVIEWED: statx reads the empty C string and fills a zeroed
+        // plain-data struct for a descriptor `file` keeps open.
+        let (result, status) = unsafe {
+            let mut status: libc::statx = std::mem::zeroed();
+            let result = libc::statx(
+                file.as_raw_fd(),
+                c"".as_ptr(),
+                libc::AT_EMPTY_PATH,
+                libc::STATX_MNT_ID,
+                &raw mut status,
+            );
+            (result, status)
+        };
+        if result != 0 || status.stx_mask & libc::STATX_MNT_ID == 0 {
+            return None;
+        }
+        mount_idmapped_v1(
+            &std::fs::read_to_string("/proc/self/mountinfo").ok()?,
+            status.stx_mnt_id,
+        )
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = file;
+        None
+    }
+}
+
+fn file_is_overlay_v1(file: &File) -> Option<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        const OVERLAYFS_SUPER_MAGIC: libc::c_long = 0x794c7630;
+        // SAFETY-REVIEWED: fstatfs fills a zeroed plain-data struct for a
+        // descriptor `file` keeps open.
+        let (result, status) = unsafe {
+            let mut status: libc::statfs = std::mem::zeroed();
+            let result = libc::fstatfs(file.as_raw_fd(), &raw mut status);
+            (result, status)
+        };
+        (result == 0).then_some(status.f_type == OVERLAYFS_SUPER_MAGIC)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = file;
+        None
+    }
+}
+
+pub(crate) fn file_writable_v1(file: &File) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        // SAFETY-REVIEWED: the file keeps its descriptor open and the
+        // empty path is a live C string; this call only checks access.
+        unsafe {
+            libc::syscall(
+                libc::SYS_faccessat2,
+                file.as_raw_fd(),
+                c"".as_ptr(),
+                libc::W_OK,
+                libc::AT_EMPTY_PATH | libc::AT_EACCESS,
+            ) == 0
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = file;
+        false
     }
 }
 
@@ -363,17 +529,21 @@ pub fn mapped_bytes_v1() -> u64 {
         .sum()
 }
 
-/// Release page-table entries at an explicit measurement boundary. The job
-/// can then evict selected file ranges without discarding locked row copies.
-pub(crate) fn release_page_tables_for_measurement() -> io::Result<u64> {
-    let mappings = REGISTRY
+/// The live mappings whose checkpoint identity was authenticated at load.
+pub(crate) fn authenticated_mappings_v1() -> Vec<Arc<MappedRowsV1>> {
+    REGISTRY
         .lock()
-        .map_err(|_| io::Error::other("mapped row registry is poisoned"))?
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .values()
         .filter_map(Weak::upgrade)
         .filter(|mapping| mapping.key.identity.is_some())
-        .collect::<Vec<_>>();
-    release_page_tables(&mappings)
+        .collect()
+}
+
+/// Release page-table entries at an explicit measurement boundary. The job
+/// can then evict selected file ranges without discarding locked row copies.
+pub(crate) fn release_page_tables_for_measurement() -> io::Result<u64> {
+    release_page_tables(&authenticated_mappings_v1())
 }
 
 fn release_page_tables(mappings: &[Arc<MappedRowsV1>]) -> io::Result<u64> {
@@ -438,6 +608,185 @@ mod tests {
         rows.will_need_rows(256, &[10_000]);
         rows.will_need_rows(0, &[1]);
         assert_eq!(rows.bytes(), &bytes[300..39_300]);
+    }
+
+    #[test]
+    fn residency_visibility_accepts_owners_or_writers() {
+        for (fsuid, writable, visible) in [
+            (42, false, true),
+            (43, true, true),
+            (42, true, true),
+            (43, false, false),
+            (0, false, false),
+        ] {
+            assert_eq!(
+                residency_visible_v1(42, Some(fsuid), 65534, Some(false), Some(false), writable),
+                visible
+            );
+        }
+    }
+
+    #[test]
+    fn residency_visibility_refuses_overflow_ownership() {
+        for overflow_uid in [65534, 42] {
+            assert!(!residency_visible_v1(
+                overflow_uid,
+                Some(overflow_uid),
+                overflow_uid,
+                Some(false),
+                Some(false),
+                false,
+            ));
+            assert!(residency_visible_v1(
+                overflow_uid,
+                Some(overflow_uid),
+                overflow_uid,
+                Some(false),
+                Some(false),
+                true,
+            ));
+        }
+    }
+
+    #[test]
+    fn residency_visibility_refuses_unproven_ownership() {
+        for (fsuid, idmapped) in [
+            (Some(42), Some(true)),
+            (Some(42), None),
+            (Some(43), Some(false)),
+            (None, Some(false)),
+        ] {
+            assert!(!residency_visible_v1(
+                42,
+                fsuid,
+                65534,
+                idmapped,
+                Some(false),
+                false
+            ));
+            assert!(residency_visible_v1(
+                42,
+                fsuid,
+                65534,
+                idmapped,
+                Some(false),
+                true
+            ));
+        }
+    }
+
+    #[test]
+    fn residency_visibility_refuses_overlay_or_unknown_filesystems() {
+        for overlay in [Some(true), None] {
+            assert!(!residency_visible_v1(
+                42,
+                Some(42),
+                65534,
+                Some(false),
+                overlay,
+                false
+            ));
+            assert!(residency_visible_v1(
+                42,
+                Some(42),
+                65534,
+                Some(false),
+                overlay,
+                true
+            ));
+        }
+    }
+
+    #[test]
+    fn filesystem_uid_uses_the_fourth_uid_field() {
+        assert_eq!(
+            filesystem_uid_from_status_v1("Name:\ttest\nUid:\t40\t41\t42\t43\nGid:\t5\t5\t5\t5\n"),
+            Some(43)
+        );
+        for status in ["", "Uid: 40 41 42", "Uid: 40 41 42 unknown"] {
+            assert_eq!(filesystem_uid_from_status_v1(status), None);
+        }
+    }
+
+    #[test]
+    fn mountinfo_checks_idmapped_in_the_matching_mount_options() {
+        let mountinfo = "10 1 8:1 / /plain rw,relatime - ext4 /dev/example rw\n\
+                         11 1 8:1 / /mapped rw,idmapped,relatime - ext4 /dev/example rw\n\
+                         12 1 8:1 / /other rw,relatime - ext4 /dev/example rw,idmapped\n\
+                         36 35 98:0 /a\\040b /mount/a\\040b rw,noatime,idmapped shared:1 master:2 - ext4 /dev/root rw\n";
+        assert_eq!(mount_idmapped_v1(mountinfo, 10), Some(false));
+        assert_eq!(mount_idmapped_v1(mountinfo, 11), Some(true));
+        assert_eq!(mount_idmapped_v1(mountinfo, 12), Some(false));
+        assert_eq!(mount_idmapped_v1(mountinfo, 36), Some(true));
+        assert_eq!(mount_idmapped_v1(mountinfo, 13), None);
+        assert_eq!(mount_idmapped_v1("10 1 8:1 / /plain", 10), None);
+        assert_eq!(mount_idmapped_v1("", 10), None);
+    }
+
+    #[test]
+    fn windowed_residency_matches_a_whole_vector() {
+        let page = page_bytes_v1();
+        let (_temp, file) = file("windowed-residency", &vec![7; 8 * page]);
+        file.sync_all().unwrap();
+        crate::page_cache::advise_v1(&file, 0, 0, crate::page_cache::CacheAdviceV1::DontNeed)
+            .unwrap();
+        let rows = map_rows_v1(&file, 17, (7 * page) as u64).unwrap();
+        // Pages 2, 5 and 7 expose a repeated base address and counting the
+        // stale third buffer entry in the final two-page window.
+        for offset in [2 * page, 5 * page, 7 * page - 1] {
+            std::hint::black_box(rows.bytes()[offset]);
+        }
+        let pages = rows.mapped_length.div_ceil(page);
+        assert_eq!(pages, 8);
+        let mut residency = vec![0_u8; pages];
+        // SAFETY-REVIEWED: the range is this live mapping, and the vector
+        // holds one byte for each of its pages.
+        assert_eq!(
+            unsafe { libc::mincore(rows.base, rows.mapped_length, residency.as_mut_ptr().cast()) },
+            0
+        );
+        let expected = (
+            residency.iter().filter(|page| **page & 1 != 0).count() as u64,
+            pages as u64,
+        );
+        // The file system may keep pages despite the eviction advice.
+        assert!(expected.0 >= 3);
+        assert_eq!(rows.resident_pages_in_windows_v1(3).unwrap(), expected);
+        assert_eq!(rows.resident_pages().unwrap(), expected);
+    }
+
+    #[test]
+    fn residency_without_a_retained_descriptor_is_hidden() {
+        let (_temp, file) = file("missing-descriptor", &[7; 100]);
+        let mut rows = Arc::try_unwrap(map_rows_v1(&file, 0, 100).unwrap()).unwrap();
+        rows.source = None;
+        let error = rows.resident_pages().unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            error.to_string(),
+            "page-cache residency is unknown: the mapping kept no descriptor of its file"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn non_owned_read_only_file_hides_residency() {
+        use std::os::unix::fs::MetadataExt;
+        let file = File::open("/etc/passwd").unwrap();
+        let metadata = file.metadata().unwrap();
+        if filesystem_uid_v1() == Some(metadata.uid()) {
+            eprintln!("skipped non-owned residency case: file owner equals process fsuid");
+            return;
+        }
+        if file_writable_v1(&file) {
+            eprintln!("skipped non-owned residency case: file is writable");
+            return;
+        }
+        let rows = map_rows_v1(&file, 0, metadata.len()).unwrap();
+        assert_eq!(
+            rows.resident_pages().unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
     }
 
     #[test]

@@ -110,6 +110,7 @@ class PreparationProcess(unittest.TestCase):
                     self.assertEqual(completion["usage"]["completion_tokens"], 1)
                     if then:
                         then(address, models["data"][0]["id"])
+                    text = log.read_text()
                     package = next(json.loads(line.split(": ", 1)[1]) for line in text.splitlines() if line.startswith("startup direct_package: "))
                     # Weights come from the checkpoint through the bundle's weight plan.
                     self.assertIn("startup direct_checkpoint:", text)
@@ -190,8 +191,12 @@ class PreparationProcess(unittest.TestCase):
         cold, models, _ = self.launch(self.checkpoint, cache, extra=("--load-threads", "2"))
         self.assertEqual(models["data"][0]["id"], "local-" + cold["checkpoint_identity"])
         self.assertEqual(cold["measurements"]["decisions"], ["emitted direct package"])
-        warm, models, _ = self.launch(self.checkpoint, cache, "experiment-A")
+        warm, models, log = self.launch(self.checkpoint, cache, "experiment-A",
+                                       extra=("--prewarm-mapped-views", "auto"))
         self.assertEqual(models["data"][0]["id"], "experiment-A")
+        resolved = self.resolved_serve(log)
+        self.assertIn("prewarm_mapped_views: Auto", resolved)
+        self.assertIn("mapped prewarm: no mapped views", log)
         self.assertEqual(cold["package_identity"], warm["package_identity"])
         self.assertEqual(warm["measurements"]["decisions"], ["reused completed direct package"])
         # The same emission inputs reuse the package without emitting it again.

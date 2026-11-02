@@ -185,6 +185,20 @@ pub struct Launches {
     next: u64,
 }
 
+// Production launches keep running when the dashboard exits. Tests own
+// their fakes and must reap them even when an assertion unwinds.
+#[cfg(test)]
+impl Drop for Launches {
+    fn drop(&mut self) {
+        for launch in &mut self.launches {
+            if let Some(child) = &mut launch.child {
+                let _ = process::terminate_group(child);
+                let _ = child.wait();
+            }
+        }
+    }
+}
+
 impl Launches {
     /// Launches whose records and logs go in `state`, choptop's state
     /// directory; a message when its records cannot be read.
@@ -194,7 +208,10 @@ impl Launches {
             records,
             logs: state.map(|state| state.join("logs")),
             logs_shown: logs_shown.to_owned(),
-            ..Self::default()
+            launches: Vec::new(),
+            stops: Vec::new(),
+            followups: Vec::new(),
+            next: 0,
         };
         (launches, message)
     }
@@ -888,6 +905,40 @@ mod tests {
                 .iter()
                 .all(|launch| matches!(launch.phase, Phase::Exited(..)))
         });
+    }
+
+    #[test]
+    fn a_panicking_launch_owner_reaps_its_children() {
+        let root = scratch("panic-owner");
+        let binary = root.join("sleeps");
+        write_script(&binary, &format!("#!/bin/sh\n{CLOSE}{UNTIL_TERM}"));
+        let mut spawned = None;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut launches = launches(&root);
+            let mut registry = Registry::new(1.0);
+            let id = launches.queue(queued(&binary, 'A', 8310, Vec::new()), &mut registry, 1.0);
+            launches.supervise(&mut registry, 2.0, &mut |_, _| true);
+            let pid = launches.get(id).unwrap().record.pid.unwrap();
+            spawned = Identity::read(pid);
+            panic!("fixture assertion");
+        }));
+        assert!(result.is_err());
+        let spawned = spawned.unwrap();
+        let survived = spawned.running();
+        // Clean up even when this regression is run with Drop disabled.
+        if survived {
+            spawned.terminate().unwrap();
+            wait_for(|| !spawned.running());
+            let _ = rustix::process::waitpid(
+                rustix::process::Pid::from_raw(spawned.pid as i32),
+                rustix::process::WaitOptions::empty(),
+            );
+        }
+        assert!(!survived, "the panic left a test launch running");
+        assert!(
+            process::start_ticks_of(spawned.pid).is_none(),
+            "child was not reaped"
+        );
     }
 
     #[test]

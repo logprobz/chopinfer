@@ -316,18 +316,20 @@ pub(crate) mod tests {
             assert!(status.success());
             write_script(&root.join("serve"), &format!("{CLOSE}{body}"));
         }
-        let child = Command::new(&shell)
-            .arg("serve")
-            .current_dir(root)
-            .stdin(Stdio::null())
-            .process_group(0)
-            .spawn()
-            .unwrap();
+        let child = Guard(
+            Command::new(&shell)
+                .arg("serve")
+                .current_dir(root)
+                .stdin(Stdio::null())
+                .process_group(0)
+                .spawn()
+                .unwrap(),
+        );
         // Until the shell has replaced the copy's arguments with its own.
         wait_for(|| {
-            Identity::read(child.id()).is_some_and(|identity| identity.arguments.len() == 2)
+            Identity::read(child.0.id()).is_some_and(|identity| identity.arguments.len() == 2)
         });
-        Guard(child)
+        child
     }
 
     pub(crate) fn wait_for(mut done: impl FnMut() -> bool) {

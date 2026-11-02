@@ -2154,6 +2154,22 @@ class Tuner(unittest.TestCase):
                     continue
                 self.assertEqual(set(job.get('kinds', model['kinds'])), {'sampled'}, (path, name))
 
+    def test_model_configs_serve_without_timing_cuts_on_a_fixed_budget(self):
+        for path in sorted((HERE.parents[1] / 'models').glob('*/depth-tune.json')):
+            profiles = json.loads(path.with_name('profiles.json').read_text())['profiles']
+            if not any(profile.get('prefill_timing_cuts', 'off') != 'off' for profile in profiles.values()):
+                continue
+            model = json.loads(path.read_text())
+            jobs = model.pop('jobs', {})
+            for name, job in [('', {}), *jobs.items()]:
+                config = {'model': {**model, **job}}
+                for arm in tune.arms(config):
+                    arguments = [*config['model'].get('serve_arguments', []), *tune.arm_arguments(config, arm)]
+                    budget = tune.argument_value(arguments, '--prefill-budget')
+                    if budget is not None and budget != 'tbt':
+                        self.assertEqual(tune.argument_value(arguments, '--prefill-timing-cuts'), 'off',
+                                         (path, name, arm['label']))
+
     def test_runs_merge_into_one_schedule(self):
         with tempfile.TemporaryDirectory() as directory:
             low, high = Path(directory) / 'low', Path(directory) / 'high'

@@ -29,6 +29,23 @@ fn wrapped(lines: &mut Vec<Line>, text: &str, width: usize, style: Style) {
     }
 }
 
+/// `path` in lines of at most `width` characters, each broken after a
+/// `/` where one fits.
+fn path_lines(path: &str, width: usize) -> Vec<String> {
+    let mut rest = path.chars().collect::<Vec<_>>();
+    let mut lines = Vec::new();
+    while rest.len() > width && width > 0 {
+        let cut = rest[..width]
+            .iter()
+            .rposition(|character| *character == '/')
+            .filter(|slash| *slash > 0)
+            .map_or(width, |slash| slash + 1);
+        lines.push(rest.drain(..cut).collect());
+    }
+    lines.push(rest.into_iter().collect());
+    lines
+}
+
 pub fn draw(buffer: &mut Buffer, app: &App, dialog: &Dialog) {
     let (width, title, lines) = match dialog {
         Dialog::Start(confirm) => (START_WIDTH, confirm.title(), start_lines(app, confirm)),
@@ -43,7 +60,8 @@ pub fn draw(buffer: &mut Buffer, app: &App, dialog: &Dialog) {
 
 /// Draws `lines` in a box `width` wide, centered, titled `title`. When the
 /// terminal is too short, lines before the last two (a blank and the keys)
-/// are left out from the end.
+/// are left out from the end. A line too long for the box ends with
+/// `...`, in the style of the piece it is cut in.
 fn overlay(buffer: &mut Buffer, width: u16, title: &str, mut lines: Vec<Line>) {
     let width = width.min(buffer.width.saturating_sub(2));
     let room = usize::from(buffer.height.saturating_sub(4));
@@ -57,16 +75,37 @@ fn overlay(buffer: &mut Buffer, width: u16, title: &str, mut lines: Vec<Line>) {
     let y = (buffer.height - height) / 2;
     buffer.clear(x, y, width, height, None);
     boxed(buffer, (x, y, width, height), &[(title, cyan())], true);
-    let end = x + width - 1;
+    let room = usize::from(width.saturating_sub(2));
     for (index, line) in lines.iter().take(usize::from(height - 2)).enumerate() {
+        let row = y + 1 + index as u16;
+        let length = line
+            .iter()
+            .map(|(text, _)| text.as_str())
+            .collect::<String>()
+            .trim_end()
+            .chars()
+            .count();
+        let mut left = if length > room {
+            room.saturating_sub(3)
+        } else {
+            room
+        };
         let mut column = x + 1;
+        let mut cut = None;
         for (text, style) in line {
-            let room = usize::from(end.saturating_sub(column));
-            column = buffer.put(
+            let shown = text.chars().take(left).collect::<String>();
+            left -= shown.chars().count();
+            column = buffer.put(column, row, &shown, *style);
+            if left == 0 && cut.is_none() {
+                cut = Some(*style);
+            }
+        }
+        if length > room {
+            buffer.put(
                 column,
-                y + 1 + index as u16,
-                &text.chars().take(room).collect::<String>(),
-                *style,
+                row,
+                &".".repeat(room.min(3)),
+                cut.unwrap_or(Style::PLAIN),
             );
         }
     }
@@ -127,11 +166,16 @@ fn start_lines(app: &App, confirm: &Confirm) -> Vec<Line> {
             (format!("log {}", sanitize(log)), dim),
         ]);
     }
-    let state = app.logs.strip_suffix("/logs").unwrap_or(&app.logs);
-    lines.push(vec![(
-        format!("    logs and launch records stay in {}", sanitize(state)),
-        dim,
-    )]);
+    let state = sanitize(app.logs.strip_suffix("/logs").unwrap_or(&app.logs));
+    let stay = "logs and launch records stay in";
+    if stay.len() + 1 + state.chars().count() <= inner - 4 {
+        lines.push(vec![(format!("    {stay} {state}"), dim)]);
+    } else {
+        lines.push(vec![(format!("    {stay}"), dim)]);
+        for part in path_lines(&state, inner - 6) {
+            lines.push(vec![(format!("      {part}"), dim)]);
+        }
+    }
     if !confirm.stops.is_empty() {
         lines.push(Vec::new());
         lines.push(vec![(" Stops first".to_owned(), cyan())]);
@@ -228,4 +272,42 @@ fn stop_lines(stop: &StopConfirm) -> Vec<Line> {
             (keep.to_owned(), Style::PLAIN),
         ],
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_line_too_long_for_its_dialog_ends_with_dots() {
+        let mut buffer = Buffer::new(40, 8);
+        let dim = Style::fg(Color::Dim);
+        overlay(
+            &mut buffer,
+            30,
+            "Start",
+            vec![
+                vec![("x".repeat(20), Style::PLAIN), ("y".repeat(20), dim)],
+                vec![("fits".to_owned(), Style::PLAIN)],
+            ],
+        );
+        let text = buffer.text();
+        let row = text.lines().nth(3).unwrap();
+        assert_eq!(
+            row,
+            format!("     │{}{}...│", "x".repeat(20), "y".repeat(5))
+        );
+        assert_eq!(buffer.cell(31, 3).unwrap().style, dim);
+        assert!(text.lines().nth(4).unwrap().starts_with("     │fits "));
+    }
+
+    #[test]
+    fn a_long_path_breaks_after_a_slash() {
+        assert_eq!(
+            path_lines("/var/lib/a-long-name/choptop", 22),
+            ["/var/lib/a-long-name/", "choptop"]
+        );
+        assert_eq!(path_lines("/state", 22), ["/state"]);
+        assert_eq!(path_lines("/abcdefgh", 4), ["/abc", "defg", "h"]);
+    }
 }

@@ -1677,16 +1677,22 @@ fn the_start_and_stop_dialogs() {
     );
     check("confirm-132x38", &app, 132, 38);
     // One instance on all four GPUs: the address stays apart from them.
-    let mut loader = loader();
-    answer_loader(&mut loader);
-    assert_eq!(loader.loader.profile.as_deref(), Some("tp4-mtp"));
-    let app = checked(loader, "tp4-mtp", &[]);
+    let mut tp4 = loader();
+    answer_loader(&mut tp4);
+    assert_eq!(tp4.loader.profile.as_deref(), Some("tp4-mtp"));
+    let app = checked(tp4, "tp4-mtp", &[]);
     assert!(
         matches!(app.dialog, Some(Dialog::Start(_))),
         "{:?}",
         app.loader.flash
     );
     check("confirm-tp4-132x38", &app, 132, 38);
+    // A long state directory is shown whole.
+    let mut long = loader();
+    long.logs = "/var/lib/batch-jobs/xdg-state-home-of-a-long-running-batch-job-on-a-shared-workstation/choptop/logs".to_owned();
+    answer_loader(&mut long);
+    let app = checked(long, "tp4-mtp", &[]);
+    check("confirm-long-state-132x38", &app, 132, 38);
     let mut app = fleet();
     with_gpus(&mut app, false);
     app.dialog = Some(Dialog::Stop(Box::new(StopConfirm {

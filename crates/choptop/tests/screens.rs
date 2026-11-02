@@ -1022,6 +1022,19 @@ fn loader_view() {
 }
 
 #[test]
+fn the_left_panes_keep_their_rows_without_recent_launches() {
+    let mut app = loader();
+    app.loader.recent.clear();
+    app.tick(NOW);
+    // As the specification places them at 132x38: Models on rows 2-10,
+    // Profiles 11-21 and Placement 22-29.
+    let layout = ui::loader::layout(132, 38, &app);
+    assert_eq!(layout.models, Some((0, 2, 44, 9)));
+    assert_eq!(layout.profiles, Some((0, 11, 44, 11)));
+    assert_eq!(layout.placement, Some((0, 22, 44, 8)));
+}
+
+#[test]
 fn a_process_the_switch_stops_is_yellow_on_every_gpu_it_holds() {
     use choptop::ui::buffer::Color;
     use crossterm::event::KeyCode;

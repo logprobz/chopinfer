@@ -44,8 +44,9 @@ pub fn layout(width: u16, height: u16, app: &App) -> Layout {
         width,
         COMMAND.min(height.saturating_sub(top + room + 1)),
     );
-    let models =
-        app.catalog.models().len().max(1) as u16 + 1 + loader.recent.len().min(RECENT) as u16 + 2;
+    // The recent launches' rows are kept even before there are any, so the
+    // panes below stay where they are.
+    let models = app.catalog.models().len().max(1) as u16 + 1 + RECENT as u16 + 2;
     let placement = loader.plan.gpus.len().max(1) as u16 + 4;
     let profiles = loader.profiles(&app.catalog).len().max(1) as u16 + 2;
     let wide = width >= WIDE && models + profiles + placement <= room;

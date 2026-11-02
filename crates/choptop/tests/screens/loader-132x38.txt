@@ -18,15 +18,15 @@
 │ tp2-mtp      ● MTP 3       experimental  ││   admission                 -                            default                     │
 │                                          ││   max-preemptions           -                            default                     │
 │ Experimental: narrower topology smoke    ││ ▾ Memory and KV                                                                      │
-│ only, no full concurrency qualificati... ││   gpu-memory-utilization    1.00                         profile                     │
+│ only, no full concurrency qualificati... ││   gpu-memory-utilization    1                            profile                     │
 └──────────────────────────────────────────┘│   graph-memory-reserve-mib  384                          profile  MiB per rank       │
 ┌─ Placement  TP2  2 instances ────────────┐│   kv-cache-dtype            auto                         profile                     │
 │ GPU 0 ■ A  proc 48211 MiMo-V2.6-Flash    ││   kv-pages                  -                            default                     │
 │ GPU 1 ■ A  proc 48211 MiMo-V2.6-Flash    ││   context-parallel-size     -                            default                     │
 │ GPU 2 ■ B  proc 48211 MiMo-V2.6-Flash    ││   max-context-tokens        -                            default                     │
 │ GPU 3 ■ B  proc 48211 MiMo-V2.6-Flash    ││                                                                                      │
-│ A 127.0.0.1:8310   B 127.0.0.1:8311      ││ --max-sequences  no evidence. The serving cap: the most sequences decoding at once.  │
-│ stops proc 48211 first                   ││ Startup warns above the profile's evidence.                                          │
+│ A 127.0.0.1:8310   B 127.0.0.1:8311      ││ --max-sequences  no evidence; the most sequences served at once (default 8)          │
+│ stops proc 48211 first                   ││                                                                                      │
 └──────────────────────────────────────────┘└───────────────────────────────────────────────────────────────────────── 1-22 of 48 ─┘
 ┌─ Command  2 processes of this user ──────────────────────────────────────────────────────────────────────────────────────────────┐
 │ A  CUDA_VISIBLE_DEVICES=0,1 chopinfer serve --model /models/qwen --tensor-parallel-size 2 --max-sequences 48                     │

@@ -17,8 +17,8 @@
 │   queue-wait-ms             -                            default                                 │
 │   admission                 -                            default                                 │
 │                                                                                                  │
-│ --max-sequences  no evidence. The serving cap: the most sequences decoding at once. Startup      │
-│ warns above the profile's evidence.                                                              │
+│ --max-sequences  no evidence; the most sequences served at once (default 8)                      │
+│                                                                                                  │
 └─ Tab: Models ─────────────────────────────────────────────────────────────────────── 1-14 of 48 ─┘
 ┌─ Command  2 processes of this user ──────────────────────────────────────────────────────────────┐
 │ A  CUDA_VISIBLE_DEVICES=0,1 chopinfer serve --model /models/qwen --tensor-parallel-size 2        │

@@ -885,17 +885,27 @@ fn pane_help(app: &App, lines: &[(Row, Line)]) -> (String, String, Color) {
             match &line.note {
                 Some((note, Tone::Problem)) => (
                     sanitize(&line.flag),
-                    sanitize(&format!("{note}. {}", line.help)),
+                    sanitize(&noted(note, &line.help)),
                     Color::Red,
                 ),
                 Some((note, Tone::Warning)) => (
                     sanitize(&line.flag),
-                    sanitize(&format!("{note}. {}", line.help)),
+                    sanitize(&noted(note, &line.help)),
                     Color::Yellow,
                 ),
                 _ => (sanitize(&line.flag), sanitize(&line.help), Color::Default),
             }
         }
+    }
+}
+
+/// A row's note before its help, which is a lowercase phrase from
+/// chopinfer or a sentence of choptop's own.
+fn noted(note: &str, help: &str) -> String {
+    match help.chars().next() {
+        None => note.to_owned(),
+        Some(first) if first.is_lowercase() => format!("{note}; {help}"),
+        Some(_) => format!("{note}. {help}"),
     }
 }
 

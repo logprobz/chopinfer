@@ -494,14 +494,24 @@ impl Registry {
             {
                 instance.arguments = arguments;
                 instance.model_hint = hint;
+                let mut opened = None;
                 if instance.endpoints != endpoints {
+                    // A process seen listening for the first time, as a
+                    // launch's often is at the first scan after it starts.
                     if instance.listening_since.is_none() && !endpoints.is_empty() {
                         instance.listening_since = Some(now);
+                        if matches!(instance.source, Source::Process { .. }) {
+                            opened = Some(instance.label());
+                        }
                     }
                     instance.endpoints = endpoints;
                     if instance.alias_of.is_none() {
                         followups.push(Followup::Poll(instance.id));
                     }
+                }
+                if let Some(label) = opened {
+                    let address = instance.address().unwrap_or_default();
+                    self.note(now, label, format!("listening on {address}"), Tone::Normal);
                 }
                 continue;
             }
@@ -976,6 +986,36 @@ mod tests {
                 "gone: the process exited",
             ]
         );
+    }
+
+    #[test]
+    fn a_launch_listening_at_the_first_scan_says_so_before_it_answers() {
+        let mut registry = Registry::new(1.0);
+        registry.add_launch(1, 'A', "Qwen3.8-Flash", 0.0);
+        registry.launch_process(1, 200, 7, "Qwen3.8-Flash", 1.0);
+        let row = registry.launch_row(1).unwrap().id;
+        // The first scan after it started finds it listening already.
+        assert_eq!(
+            registry.reconcile(vec![process(200, &["127.0.0.1:8311"])], 2.0),
+            [Followup::Poll(row)]
+        );
+        registry.apply(row, answer("n1", 5.0, true), 2.5);
+        let events = registry
+            .events
+            .iter()
+            .map(|event| format!("{}: {}", event.who, event.what))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            events,
+            [
+                "proc 200: listening on 127.0.0.1:8311",
+                "proc 200: answering at 127.0.0.1:8311",
+            ]
+        );
+        // A later scan or socket check that finds the same says nothing new.
+        registry.reconcile(vec![process(200, &["127.0.0.1:8311"])], 3.0);
+        registry.listening(200, 7, vec!["127.0.0.1:8311".parse().unwrap()], 3.0);
+        assert_eq!(registry.events.len(), 2);
     }
 
     #[test]

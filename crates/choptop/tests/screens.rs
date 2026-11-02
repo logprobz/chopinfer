@@ -1618,9 +1618,14 @@ fn a_long_list_scrolls_to_the_selection() {
 /// `S` on Qwen at TP2 on all four GPUs: the fresh reading, then `serve
 /// --check` resolving the profile with the form's value.
 fn confirming() -> App {
+    checked(qwen_tp2(), "tp2-mtp", &[("max-sequences", "48")])
+}
+
+/// `S` on `app`'s loader at `profile`: the fresh reading, then `serve
+/// --check` resolving the profile with `values`.
+fn checked(mut app: App, profile: &str, values: &[(&str, &str)]) -> App {
     use choptop::catalog::Check;
     use crossterm::event::KeyCode;
-    let mut app = qwen_tp2();
     app.host.apply(
         HostReport::Polled {
             reading: Box::new(host_reading(Machine::Workstation, NOW)),
@@ -1636,16 +1641,26 @@ fn confirming() -> App {
     let Some(Request::Check { generation, .. }) = app.catalog.outbox.pop() else {
         panic!("no check: {:?}", app.loader.flash);
     };
-    let profile = app.catalog.profile("qwen38", "tp2-mtp").unwrap();
-    let mut settings = profile.settings.clone();
-    settings.insert("max-sequences".to_owned(), "48".to_owned());
+    let mut settings = app
+        .catalog
+        .profile("qwen38", profile)
+        .unwrap()
+        .settings
+        .clone();
+    let mut warnings = Vec::new();
+    for (name, value) in values {
+        settings.insert((*name).to_owned(), (*value).to_owned());
+        warnings.push(format!(
+            "--{name} {value} is above the profile's evidence (none)"
+        ));
+    }
     app.catalog_reply(Reply::Check(
         generation,
         Ok(Check {
-            profile: "tp2-mtp".to_owned(),
+            profile: profile.to_owned(),
             settings,
             model_options: Vec::new(),
-            warnings: vec!["--max-sequences 48 is above the profile's evidence (none)".to_owned()],
+            warnings,
         }),
     ));
     app
@@ -1661,6 +1676,17 @@ fn the_start_and_stop_dialogs() {
         app.loader.flash
     );
     check("confirm-132x38", &app, 132, 38);
+    // One instance on all four GPUs: the address stays apart from them.
+    let mut loader = loader();
+    answer_loader(&mut loader);
+    assert_eq!(loader.loader.profile.as_deref(), Some("tp4-mtp"));
+    let app = checked(loader, "tp4-mtp", &[]);
+    assert!(
+        matches!(app.dialog, Some(Dialog::Start(_))),
+        "{:?}",
+        app.loader.flash
+    );
+    check("confirm-tp4-132x38", &app, 132, 38);
     let mut app = fleet();
     with_gpus(&mut app, false);
     app.dialog = Some(Dialog::Stop(Box::new(StopConfirm {

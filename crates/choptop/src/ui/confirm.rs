@@ -14,6 +14,9 @@ const STOP_WIDTH: u16 = 92;
 /// A line of styled pieces.
 type Line = Vec<(String, Style)>;
 
+/// Spaces after the widest entry of an instance row's column.
+const GAP: usize = 4;
+
 fn cyan() -> Style {
     Style::fg(Color::Cyan).bold()
 }
@@ -94,14 +97,33 @@ fn start_lines(app: &App, confirm: &Confirm) -> Vec<Line> {
         ],
         Vec::new(),
     ];
-    for (planned, log) in start.placement.instances.iter().zip(&confirm.logs) {
-        lines.push(vec![
-            (format!(" {}  ", planned.letter), cyan()),
+    // Each column as wide as its widest entry and the gap, so a TP4 or TP8
+    // list stays apart from the address.
+    let rows = start
+        .placement
+        .instances
+        .iter()
+        .map(|planned| {
             (
-                format!("{:<12}", format!("GPUs {}", indices(&planned.gpus))),
-                Style::PLAIN,
-            ),
-            (format!("{:<18}", sanitize(&planned.listen())), Style::PLAIN),
+                planned.letter,
+                format!("GPUs {}", indices(&planned.gpus)),
+                sanitize(&planned.listen()),
+            )
+        })
+        .collect::<Vec<_>>();
+    let width = |column: fn(&(char, String, String)) -> &String| {
+        rows.iter()
+            .map(|row| column(row).chars().count())
+            .max()
+            .unwrap_or(0)
+            + GAP
+    };
+    let (gpus, listen) = (width(|row| &row.1), width(|row| &row.2));
+    for ((letter, on, at), log) in rows.iter().zip(&confirm.logs) {
+        lines.push(vec![
+            (format!(" {letter}  "), cyan()),
+            (format!("{on:<gpus$}"), Style::PLAIN),
+            (format!("{at:<listen$}"), Style::PLAIN),
             (format!("log {}", sanitize(log)), dim),
         ]);
     }

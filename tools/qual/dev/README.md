@@ -6,7 +6,6 @@ list. Run them from the workspace root, for example
 model. KV preemption swap qualification now uses `kv_offload.py` through
 the correctness runner's full suite; see the [qualification tools](../README.md#correctness-runner).
 
-- `prefill_budget_soak.py`: compare queued load under prefill budgets.
 - `encoder_parallel.py`: compare encoder geometry, tokens and timings across
   ranks and parallel modes.
 - `spec_summary.py`: summarize speculative benchmark arms.

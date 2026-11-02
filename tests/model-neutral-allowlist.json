@@ -230,7 +230,6 @@
   "tools/qual/color_probe.py": {"matches": {"mimo": 1}, "reason": "Existing model qualification, profiling, or development integration; migrate new model behavior to its owner."},
   "tools/qual/determinism.py": {"matches": {"mimo": 3, "qwen": 3}, "reason": "Existing model qualification, profiling, or development integration; migrate new model behavior to its owner."},
   "tools/qual/dev/audio_check.py": {"matches": {"mimo": 1}, "reason": "Existing model qualification, profiling, or development integration; migrate new model behavior to its owner."},
-  "tools/qual/dev/prefill_budget_soak.py": {"matches": {"mimo": 1}, "reason": "Existing model qualification, profiling, or development integration; migrate new model behavior to its owner."},
   "tools/qual/dev/trace_inputs.py": {"matches": {"mimo": 1, "mimo26": 3, "qwen": 2, "qwen38": 1}, "reason": "Existing model qualification, profiling, or development integration; migrate new model behavior to its owner."},
   "tools/qual/encoder_parity.py": {"matches": {"mimo": 6, "mimo26": 1, "qwen38": 1}, "reason": "Existing model qualification, profiling, or development integration; migrate new model behavior to its owner."},
   "tools/qual/gates/mechanics.json": {"matches": {"mimo": 3, "mimo26": 13}, "reason": "Existing model qualification, profiling, or development integration; migrate new model behavior to its owner."},

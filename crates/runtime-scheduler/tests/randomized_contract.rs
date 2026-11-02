@@ -51,9 +51,9 @@ fn run_case(case: u64) {
     };
     let pages = 8 + rng.below(40) as usize;
     let seqs = 1 + rng.below(8) as usize;
-    let policy = match rng.below(3) {
+    let policy = match rng.below(2) {
         0 => PrefillBudget::Fixed,
-        1 => PrefillBudget::Tbt(
+        _ => PrefillBudget::Tbt(
             MixedPolicy::new(
                 1 + rng.below(50) as u32,
                 1 + rng.below(12) as usize,
@@ -61,7 +61,6 @@ fn run_case(case: u64) {
             )
             .unwrap(),
         ),
-        _ => PrefillBudget::DecodeAware(PrefillTarget::DecodeSteps(1)),
     };
     let admission = if rng.chance(80) {
         AdmissionPolicy::Optimistic(
@@ -281,11 +280,6 @@ fn run_case(case: u64) {
             1000 + (shape.prefill_tokens() as u64) * (50 + r2.below(100))
                 + shape.decode_items() as u64 * 300
                 + r2.below(5000),
-        );
-        s.observe_step_time(
-            shape.prefill_tokens(),
-            shape.decode_items(),
-            1000 + (shape.prefill_tokens() as u64) * 70 + r2.below(3000),
         );
         s.commit_batch(batch.id(), &outcomes)
             .unwrap_or_else(|e| panic!("case {case} step {step}: commit {e:?}"));

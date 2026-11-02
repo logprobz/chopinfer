@@ -3,8 +3,7 @@ use std::sync::Arc;
 use runtime_kv::{KvGeometry, PrefixChainV1};
 use runtime_scheduler::{
     AdmissionPolicy, Batch, BatchOutcome, BatchPhase, MixedPolicy, OptimisticAdmission,
-    PrefillBudget, PrefillTarget, PrefixRequestV1, RequestId, RequestSpec, Scheduler,
-    SchedulerConfig,
+    PrefillBudget, PrefixRequestV1, RequestId, RequestSpec, Scheduler, SchedulerConfig,
 };
 
 fn scheduler(policy: PrefillBudget, budget: usize) -> Scheduler {
@@ -46,7 +45,6 @@ fn commit(s: &mut Scheduler, batch: Batch) {
 fn lone_prompt_uses_step_budget_and_aligns_nonfinal_chunks() {
     for policy in [
         PrefillBudget::Fixed,
-        PrefillBudget::DecodeAware(PrefillTarget::default()),
         PrefillBudget::Tbt(MixedPolicy::default()),
     ] {
         for budget in [8192, 8223] {
@@ -80,7 +78,6 @@ fn competing_prefills_keep_configured_chunks() {
 fn a_decode_neighbor_keeps_its_mixed_step_budget() {
     for (policy, tokens) in [
         (PrefillBudget::Fixed, 2048),
-        (PrefillBudget::DecodeAware(PrefillTarget::default()), 512),
         (PrefillBudget::Tbt(MixedPolicy::default()), 512),
     ] {
         let mut s = scheduler(policy, 8192);

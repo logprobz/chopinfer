@@ -247,9 +247,6 @@ pub enum PrefillBudget {
     /// Configured chunks for competing requests and the whole step token budget.
     #[default]
     Fixed,
-    /// While requests decode, cap the step's prefill tokens by measured
-    /// execution times so the estimated mixed step meets the target.
-    DecodeAware(PrefillTarget),
     /// While requests decode, cap the step's prefill tokens so a fitted
     /// model of step time (decode, fixed, per-token and attention-context
     /// terms) meets a decode stall target. Use the progress floor until
@@ -332,35 +329,9 @@ impl Default for MixedPolicy {
     }
 }
 
-/// The default decode-aware target: an estimated mixed step of 200 ms.
-pub const DEFAULT_PREFILL_ITL_TARGET_MS: u32 = 200;
-
-/// What a decode-aware mixed step's estimated execution time must fit.
-///
-/// Both forms are approximate: the cap never falls below 512 tokens and
-/// rounds down to 512-token multiples.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PrefillTarget {
-    /// The whole mixed step, decode rows included, takes at most this many
-    /// milliseconds, a per-token latency bound for the decoding requests.
-    ItlMillis(u32),
-    /// The prefill part takes at most this many decode steps. `DecodeSteps(1)`
-    /// is the first decode-aware policy.
-    DecodeSteps(u32),
-}
-
-impl Default for PrefillTarget {
-    fn default() -> Self {
-        Self::ItlMillis(DEFAULT_PREFILL_ITL_TARGET_MS)
-    }
-}
-
 mod mixed_budget;
 use mixed_budget::StepModel;
 pub use mixed_budget::{MixedEstimates, StepShape};
-mod prefill_budget;
-pub use prefill_budget::StepTimeEstimates;
-use prefill_budget::StepTimes;
 
 /// The logits-row accounting of one batch's prefill items.
 struct PrefillRows<'a> {
@@ -1211,8 +1182,8 @@ impl Batch {
         &self.kv_plan
     }
 
-    /// The prefill token cap the decode-aware or TBT budget selected for this
-    /// batch, whether or not prefill used it. Both select a cap only beside a
+    /// The prefill token cap the TBT budget selected for this
+    /// batch, whether or not prefill used it. It selects a cap only beside a
     /// decoding request. None under the fixed budget and for prefill-only
     /// batches.
     #[must_use]
@@ -1608,7 +1579,6 @@ pub struct Scheduler {
     shared_blocks: BTreeMap<BlockId, usize>,
     /// Pages an optimistic admission leaves free of reservations.
     watermark_pages: usize,
-    step_times: StepTimes,
     step_model: StepModel,
     /// Observed batch time under `PrefillBudget::Tbt`, microseconds: the
     /// clock adaptive prefill ages queued prompts by.
@@ -1642,7 +1612,6 @@ impl Clone for Scheduler {
             captures: self.captures.clone(),
             shared_blocks: self.shared_blocks.clone(),
             watermark_pages: self.watermark_pages,
-            step_times: self.step_times.clone(),
             step_model: self.step_model.clone(),
             clock_micros: self.clock_micros,
             mixed_decode_steps: self.mixed_decode_steps,
@@ -1669,7 +1638,6 @@ impl PartialEq for Scheduler {
             && self.captures == other.captures
             && self.shared_blocks == other.shared_blocks
             && self.watermark_pages == other.watermark_pages
-            && self.step_times == other.step_times
             && self.step_model == other.step_model
             && self.clock_micros == other.clock_micros
             && self.mixed_decode_steps == other.mixed_decode_steps
@@ -1727,7 +1695,6 @@ impl Scheduler {
             captures: Vec::new(),
             shared_blocks: BTreeMap::new(),
             watermark_pages,
-            step_times: StepTimes::default(),
             step_model: StepModel::default(),
             clock_micros: 0,
             mixed_decode_steps: 0,
@@ -1735,15 +1702,6 @@ impl Scheduler {
             offload: None,
             resumes: BTreeMap::new(),
         })
-    }
-
-    /// Records successful engine wall time, including completion of device work.
-    /// Verify steps and media encodes are excluded by the engine: their extra
-    /// work cannot be attributed to ordinary decode or text prefill.
-    pub fn observe_step_time(&mut self, prefill_tokens: usize, decode_rows: usize, micros: u64) {
-        if matches!(self.config.prefill_budget, PrefillBudget::DecodeAware(_)) {
-            self.step_times.observe(prefill_tokens, decode_rows, micros);
-        }
     }
 
     /// Records the successful engine wall time of a committed batch for the
@@ -1761,13 +1719,6 @@ impl Scheduler {
     pub fn mixed_estimates(&self) -> Option<MixedEstimates> {
         matches!(self.config.prefill_budget, PrefillBudget::Tbt(_))
             .then(|| self.step_model.estimates())
-    }
-
-    /// The decode-aware estimator's current state; None under the fixed budget.
-    #[must_use]
-    pub fn step_time_estimates(&self) -> Option<StepTimeEstimates> {
-        matches!(self.config.prefill_budget, PrefillBudget::DecodeAware(_))
-            .then(|| self.step_times.estimates())
     }
 
     pub fn submit(&mut self, spec: RequestSpec) -> Result<(), SubmitError> {
@@ -2328,11 +2279,6 @@ impl Scheduler {
             .scheduled_token_budget
             .saturating_sub(decode.len().saturating_mul(self.config.decode_cost));
         let selected = match self.config.prefill_budget {
-            PrefillBudget::DecodeAware(target) if !decode.is_empty() => Some(
-                self.step_times
-                    .budget(decode.len(), target)
-                    .min(decode_room),
-            ),
             // Without decode work there is no TBT to protect. Use the whole
             // token budget independently of timings or training.
             PrefillBudget::Tbt(_) if decode.is_empty() => None,
@@ -4397,7 +4343,7 @@ impl Scheduler {
     ///
     /// Use the full chunk selected for this step or the authenticated tail
     /// up to the next capture point. Competing fixed-mode requests keep their chunk;
-    /// decode-aware mode selects a smaller chunk before packing, never from
+    /// TBT sizing selects a smaller chunk before packing, never from
     /// the leftover packing budget. A chunk that stops short of the prefill
     /// target ends on a multiple of `granule` in sequence position: the last
     /// one it reaches, or the next one when a limit below the granule

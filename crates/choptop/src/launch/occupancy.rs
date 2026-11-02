@@ -876,6 +876,7 @@ pub(crate) mod tests {
             gpus: gpus.iter().map(|index| uuid(*index)).collect(),
             port,
             process,
+            launch: u64::from(port),
         }
     }
 

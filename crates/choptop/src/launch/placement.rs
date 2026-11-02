@@ -392,6 +392,7 @@ mod tests {
                 gpus: vec![uuid(0), uuid(1)],
                 port: 8310,
                 process: None,
+                launch: 1,
             },
             Reservation {
                 label: "proc 61204".into(),
@@ -399,6 +400,7 @@ mod tests {
                 gpus: vec![uuid(2), uuid(3)],
                 port: 8311,
                 process: Some((61204, 7)),
+                launch: 2,
             },
         ];
         let gpus = vec![

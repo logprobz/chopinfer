@@ -80,7 +80,7 @@ impl Identity {
 
     /// Whether the process is still running, by its start time.
     pub fn running(&self) -> bool {
-        start_ticks(&Path::new(PROC).join(self.pid.to_string())) == Some(self.start_ticks)
+        alive(self.pid, self.start_ticks)
     }
 
     /// Sends SIGTERM through a pidfd once the process read again matches
@@ -106,6 +106,28 @@ impl Identity {
             None => Err(format!("proc {} is gone", self.pid)),
         }
     }
+}
+
+/// When process `pid` started, in clock ticks after boot.
+pub fn start_ticks_of(pid: u32) -> Option<u64> {
+    start_ticks(&Path::new(PROC).join(pid.to_string()))
+}
+
+/// Whether process `pid` that started at `start_ticks` still runs. A
+/// zombie has exited: its GPUs and port are free, though its parent has not
+/// reaped it.
+pub fn alive(pid: u32, start_ticks: u64) -> bool {
+    let Ok(stat) = fs::read_to_string(Path::new(PROC).join(pid.to_string()).join("stat")) else {
+        return false;
+    };
+    let Some(end) = stat.rfind(')') else {
+        return false;
+    };
+    let fields = stat[end + 1..].split_whitespace().collect::<Vec<_>>();
+    fields
+        .first()
+        .is_some_and(|state| !matches!(*state, "Z" | "X"))
+        && fields.get(19).and_then(|ticks| ticks.parse().ok()) == Some(start_ticks)
 }
 
 /// Sends SIGTERM to the process group of `child`, which choptop started as
@@ -227,6 +249,26 @@ pub(crate) mod tests {
     use super::*;
     use std::time::{Duration, Instant};
 
+    /// The start of every fake: it closes descriptors it inherited above
+    /// stderr, so a fake a failed test leaves behind holds no lock of the
+    /// test's runner.
+    pub(crate) const CLOSE: &str =
+        "for fd in 3 4 5 6 7 8 9; do eval \"exec $fd>&-\"; done 2>/dev/null\n";
+    /// A loop that runs about 30 s at most, until SIGTERM ends it.
+    pub(crate) const UNTIL_TERM: &str =
+        "trap 'exit 0' TERM\nn=0\nwhile [ $n -lt 600 ]; do sleep 0.05; n=$((n+1)); done\n";
+
+    /// A process a test started, whose group is sent SIGTERM and reaped
+    /// when the guard drops, a failed test's included.
+    pub(crate) struct Guard(pub(crate) Child);
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            let _ = terminate_group(&mut self.0);
+            let _ = self.0.wait();
+        }
+    }
+
     pub(crate) fn scratch(name: &str) -> PathBuf {
         let root =
             std::env::temp_dir().join(format!("choptop-launch-{name}-{}", std::process::id()));
@@ -254,32 +296,38 @@ pub(crate) mod tests {
     }
 
     /// A process that passes for `chopinfer serve` until SIGTERM: a copy of
-    /// the shell named chopinfer, running the script `serve` in `root`.
-    pub(crate) fn fake_serve(root: &Path) -> Child {
+    /// the shell named chopinfer, running the script `serve` in `root`, in
+    /// a process group of its own.
+    pub(crate) fn fake_serve(root: &Path) -> Guard {
+        fake_serve_running(root, UNTIL_TERM)
+    }
+
+    /// [`fake_serve`] running `body` after closing its descriptors; the
+    /// first call in `root` writes the script.
+    pub(crate) fn fake_serve_running(root: &Path, body: &str) -> Guard {
         let shell = root.join("chopinfer");
         if !shell.exists() {
+            fs::create_dir_all(root).unwrap();
             let status = Command::new("cp")
                 .arg("/bin/sh")
                 .arg(&shell)
                 .status()
                 .unwrap();
             assert!(status.success());
-            write_script(
-                &root.join("serve"),
-                "trap 'exit 0' TERM\nwhile :; do sleep 0.05; done\n",
-            );
+            write_script(&root.join("serve"), &format!("{CLOSE}{body}"));
         }
         let child = Command::new(&shell)
             .arg("serve")
             .current_dir(root)
             .stdin(Stdio::null())
+            .process_group(0)
             .spawn()
             .unwrap();
         // Until the shell has replaced the copy's arguments with its own.
         wait_for(|| {
             Identity::read(child.id()).is_some_and(|identity| identity.arguments.len() == 2)
         });
-        child
+        Guard(child)
     }
 
     pub(crate) fn wait_for(mut done: impl FnMut() -> bool) {
@@ -293,7 +341,8 @@ pub(crate) mod tests {
     #[test]
     fn a_recorded_serve_process_is_stopped_only_while_it_is_the_same() {
         let root = scratch("identity");
-        let mut serve = fake_serve(&root);
+        let mut guard = fake_serve(&root);
+        let serve = &mut guard.0;
         let ticks = Identity::read(serve.id()).unwrap().start_ticks;
         assert!(
             Identity::record(serve.id(), ticks + 1)
@@ -314,19 +363,20 @@ pub(crate) mod tests {
         wait_for(|| serve.try_wait().unwrap().is_some());
         assert!(!identity.running());
         assert!(identity.terminate().is_err());
-        // Not chopinfer serve: the test's own shell.
-        let mut other = Command::new("/bin/sh")
-            .args(["-c", "sleep 30"])
-            .spawn()
-            .unwrap();
-        let ticks = Identity::read(other.id()).unwrap().start_ticks;
+        // Not chopinfer serve: a shell of the test's own.
+        let other = Guard(
+            Command::new("/bin/sh")
+                .args(["-c", &format!("{CLOSE}{UNTIL_TERM}")])
+                .process_group(0)
+                .spawn()
+                .unwrap(),
+        );
+        let ticks = Identity::read(other.0.id()).unwrap().start_ticks;
         assert!(
-            Identity::record(other.id(), ticks)
+            Identity::record(other.0.id(), ticks)
                 .unwrap_err()
                 .contains("not chopinfer serve")
         );
-        other.kill().unwrap();
-        other.wait().unwrap();
     }
 
     #[test]
@@ -338,17 +388,22 @@ pub(crate) mod tests {
         let script = root.join("fake");
         write_script(
             &script,
-            "#!/bin/sh\necho \"started $*\"\nsleep 30 &\necho $! > \"$(dirname \"$0\")/grandchild\"\ntrap 'exit 0' TERM\nwhile :; do sleep 0.05; done\n",
+            &format!(
+                "#!/bin/sh\n{CLOSE}echo \"started $*\"\nsleep 30 &\necho $! > \"$(dirname \"$0\")/grandchild\"\n{UNTIL_TERM}"
+            ),
         );
         let log = log_path(&logs, "qwen38-tp2-mtp-a-20261102-153012");
-        let mut child = start(
-            &script,
-            &["serve".into(), "--listen".into(), "127.0.0.1:8310".into()],
-            &[("CHOPINFER_LOG_LEVEL".into(), "info".into())],
-            &log,
-            "# choptop launch A\n",
-        )
-        .unwrap();
+        let mut guard = Guard(
+            start(
+                &script,
+                &["serve".into(), "--listen".into(), "127.0.0.1:8310".into()],
+                &[("CHOPINFER_LOG_LEVEL".into(), "info".into())],
+                &log,
+                "# choptop launch A\n",
+            )
+            .unwrap(),
+        );
+        let child = &mut guard.0;
         assert_eq!(fs::metadata(&log).unwrap().mode() & 0o777, 0o600);
         // A second log of the same name gets a new one.
         let again = log_path(&logs, "qwen38-tp2-mtp-a-20261102-153012");
@@ -366,11 +421,11 @@ pub(crate) mod tests {
             .trim()
             .parse::<u32>()
             .unwrap();
-        terminate_group(&mut child).unwrap();
+        terminate_group(child).unwrap();
         wait_for(|| child.try_wait().unwrap().is_some());
         // The whole group ends, the grandchild with it.
         wait_for(|| Identity::read(grandchild).is_none_or(|seen| seen.arguments.is_empty()));
-        assert!(terminate_group(&mut child).is_err());
+        assert!(terminate_group(child).is_err());
         // A log that already exists is never written over.
         assert!(start(&script, &[], &[], &log, "").is_err());
     }

@@ -2125,6 +2125,7 @@ pub(crate) mod tests {
                 gpus: vec![uuid(0), uuid(1)],
                 port: 8312,
                 process: None,
+                launch: 1,
             },
             Reservation {
                 label: "proc 61204".into(),
@@ -2132,6 +2133,7 @@ pub(crate) mod tests {
                 gpus: vec![uuid(2), uuid(3)],
                 port: 8313,
                 process: Some((61204, 612_040)),
+                launch: 2,
             },
         ];
         let mut loader = Loader::open(Some(vec![0, 1, 2, 3]), Vec::new());

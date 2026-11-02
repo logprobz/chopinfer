@@ -287,6 +287,39 @@ impl Records {
         fs::rename(&partial, path).map_err(|error| format!("{}: {error}", path.display()))
     }
 
+    /// A name for a new switch confirmed at `stamp` that no record has:
+    /// `stamp`, else `stamp-2` and so on.
+    pub fn unused_switch(&self, stamp: &str) -> String {
+        let taken = |name: &str| self.records.iter().any(|record| record.switch == name);
+        let mut name = stamp.to_owned();
+        let mut number = 2;
+        while taken(&name) {
+            name = format!("{stamp}-{number}");
+            number += 1;
+        }
+        name
+    }
+
+    /// The choices of switch `switch`: the GPUs of all its instances.
+    pub fn choice(&self, switch: &str) -> Option<Choice> {
+        let records = self
+            .records
+            .iter()
+            .filter(|record| record.switch == switch)
+            .collect::<Vec<_>>();
+        let first = records.first()?;
+        Some(Choice {
+            model: first.model.clone(),
+            profile: first.profile.clone(),
+            gpus: records
+                .iter()
+                .flat_map(|record| record.gpus.iter().copied())
+                .collect::<BTreeSet<_>>(),
+            edits: first.edits.iter().cloned().collect(),
+            custom: first.custom.clone(),
+        })
+    }
+
     /// The latest switches, newest first, as the Models pane shows them.
     pub fn recent(&self, now: u64) -> Vec<Recent> {
         let mut switches = Vec::new();
@@ -317,16 +350,7 @@ impl Records {
                         }
                     ),
                     when: ago(first.queued, now),
-                    choice: Choice {
-                        model: first.model.clone(),
-                        profile: first.profile.clone(),
-                        gpus: records
-                            .iter()
-                            .flat_map(|record| record.gpus.iter().copied())
-                            .collect::<BTreeSet<_>>(),
-                        edits: first.edits.iter().cloned().collect(),
-                        custom: first.custom.clone(),
-                    },
+                    choice: self.choice(&switch)?,
                 })
             })
             .collect()
@@ -415,6 +439,12 @@ pub(crate) mod tests {
         }
         assert_eq!(records.records.len(), LIMIT);
         assert_eq!(records.records[0].switch, "s10");
+        // A switch confirmed in the same second as another gets a name of
+        // its own.
+        assert_eq!(records.unused_switch("s29"), "s29-2");
+        records.put(record("s29-2", 'A', &[0]));
+        assert_eq!(records.unused_switch("s29"), "s29-3");
+        assert_eq!(records.unused_switch("s30"), "s30");
     }
 
     #[test]

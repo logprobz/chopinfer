@@ -10,10 +10,8 @@
 //!
 //! choptop's own `chopinfer` children, which run serve to check a start or
 //! read a package's options, are left out by pid and process group: a
-//! wrapper that `--chopinfer` names may run serve as its own child. Once a
-//! child is reaped, its pid may name a new process and is no longer left
-//! out; its group is left out only while a process that started before the
-//! reap still holds it, which a new group with the same id cannot.
+//! wrapper that `--chopinfer` names may run serve as its own child. Only
+//! unreaped children count: a reaped one's ids may name new processes.
 
 use std::collections::HashSet;
 use std::fs;
@@ -26,7 +24,7 @@ use crate::catalog::Children;
 
 /// Clock ticks per second in `/proc/PID/stat`: `USER_HZ`, 100 in the x86_64
 /// Linux ABI.
-pub(crate) const USER_HZ: f64 = 100.0;
+const USER_HZ: f64 = 100.0;
 /// Largest command line read.
 const MAX_CMDLINE: usize = 64 * 1024;
 /// Largest environment read.
@@ -124,13 +122,7 @@ impl ProcScanner {
         if !is_serve(&arguments) {
             return None;
         }
-        let start_ticks = start_ticks(&directory)?;
-        if self
-            .children
-            .excludes(pid, group(&directory), start_ticks, |id, by| {
-                self.holds(id, by)
-            })
-        {
+        if self.children.excludes(pid, group(&directory)) {
             return None;
         }
         if let Some(namespace) = &self.namespace
@@ -138,6 +130,7 @@ impl ProcScanner {
         {
             return None;
         }
+        let start_ticks = start_ticks(&directory)?;
         Some(ServeProcess {
             pid,
             start_ticks,
@@ -148,22 +141,6 @@ impl ProcScanner {
             listening: self.listening(pid).unwrap_or_default(),
             cuda_visible_devices: environment_variable(&directory, "CUDA_VISIBLE_DEVICES"),
         })
-    }
-
-    /// Whether a process of process group `id` that started by clock tick
-    /// `by` is alive.
-    fn holds(&self, id: u32, by: u64) -> bool {
-        let Ok(entries) = fs::read_dir(&self.root) else {
-            return false;
-        };
-        entries
-            .filter_map(Result::ok)
-            .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
-            .map(|pid| self.root.join(pid.to_string()))
-            .any(|directory| {
-                group(&directory) == Some(id)
-                    && start_ticks(&directory).is_some_and(|start| start <= by)
-            })
     }
 
     /// The addresses a loading serve process listens on now; `None` when

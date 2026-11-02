@@ -819,28 +819,18 @@ pub enum Reply {
 /// and with a real package live long enough for a scan to take them for a
 /// serve process loading on the picked GPUs.
 ///
-/// While a child runs, its pid and its group are left out. Once it is
-/// reaped, its pid may name an unrelated process and no longer counts. Its
-/// group counts while a process of it that started before the reap is
-/// alive, since until then no new process can take the group's id, and
-/// only until choptop has read the child's output: a process that still
-/// holds it, as a wrapper's backgrounded serve does, is still the request.
+/// A child's pid and group are left out only while it is unreaped: once
+/// reaped, both ids may name unrelated processes, even while a descendant
+/// still holds its output. Such a descendant may then show as a discovered
+/// row until it exits, which is better than hiding a real server.
 #[derive(Clone, Debug, Default)]
 pub struct Children(Arc<Mutex<Groups>>);
 
 #[derive(Debug, Default)]
 struct Groups {
-    /// By the leading child's pid.
-    led: BTreeMap<u32, Led>,
+    /// The registration of each unreaped child, by its pid.
+    led: BTreeMap<u32, u64>,
     next: u64,
-}
-
-/// One child's group: which registration it is, and the clock tick since
-/// boot at which its leader was reaped.
-#[derive(Clone, Copy, Debug)]
-struct Led {
-    serial: u64,
-    reaped: Option<u64>,
 }
 
 impl Children {
@@ -848,46 +838,17 @@ impl Children {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Whether `id` leads the group of a child that runs now.
+    /// Whether `id` leads the group of a child that is not reaped yet.
     pub fn contains(&self, id: u32) -> bool {
-        self.lock()
-            .led
-            .get(&id)
-            .is_some_and(|led| led.reaped.is_none())
+        self.lock().led.contains_key(&id)
     }
 
-    /// Whether process `pid` of process group `group`, started at clock
-    /// tick `start_ticks`, is left out as one of them. A child's pid counts
-    /// only while the child runs. Its group counts until the child's run
-    /// ends, after the reap only while `held(group, reaped)` finds a process
-    /// of the group alive that started by tick `reaped`: until then no new
-    /// process can take the group's id.
-    pub fn excludes(
-        &self,
-        pid: u32,
-        group: Option<u32>,
-        start_ticks: u64,
-        held: impl FnOnce(u32, u64) -> bool,
-    ) -> bool {
-        let (runs, led) = {
-            let groups = self.lock();
-            let runs = groups.led.get(&pid).is_some_and(|led| led.reaped.is_none());
-            let led = group.and_then(|group| Some((group, *groups.led.get(&group)?)));
-            (runs, led)
-        };
-        runs || led.is_some_and(|(group, led)| {
-            led.reaped
-                .is_none_or(|reaped| start_ticks <= reaped || held(group, reaped))
-        })
+    /// Whether process `pid` of process group `group` is left out as one
+    /// of them.
+    pub fn excludes(&self, pid: u32, group: Option<u32>) -> bool {
+        let groups = self.lock();
+        groups.led.contains_key(&pid) || group.is_some_and(|group| groups.led.contains_key(&group))
     }
-}
-
-/// The clock tick since boot, as `/proc/PID/stat` counts a process's
-/// start, rounded up; `None` when `/proc/uptime` cannot be read.
-fn boot_ticks() -> Option<u64> {
-    let uptime = fs::read_to_string("/proc/uptime").ok()?;
-    let seconds = uptime.split_whitespace().next()?.parse::<f64>().ok()?;
-    Some((seconds * crate::discover::proc::USER_HZ).ceil() as u64)
 }
 
 /// A child's group while it is one of [`Children`].
@@ -905,13 +866,7 @@ impl<'a> Registered<'a> {
         let child = command.spawn()?;
         groups.next += 1;
         let serial = groups.next;
-        groups.led.insert(
-            child.id(),
-            Led {
-                serial,
-                reaped: None,
-            },
-        );
+        groups.led.insert(child.id(), serial);
         let registered = Self {
             children,
             group: child.id(),
@@ -921,9 +876,7 @@ impl<'a> Registered<'a> {
     }
 
     /// Runs `act` on `child` under the lock the scanner reads, then reaps
-    /// `child` if it has exited, in the same step marking it reaped so its
-    /// pid no longer counts and its group only while it holds a process
-    /// that started no later.
+    /// `child` if it has exited, in the same step leaving it out no more.
     fn act<T>(
         &self,
         child: &mut Child,
@@ -932,21 +885,8 @@ impl<'a> Registered<'a> {
         let mut groups = self.children.lock();
         let value = act(child);
         let status = child.try_wait();
-        let ours = groups
-            .led
-            .get(&self.group)
-            .is_some_and(|led| led.serial == self.serial && led.reaped.is_none());
-        if matches!(status, Ok(Some(_))) && ours {
-            match boot_ticks() {
-                Some(ticks) => {
-                    if let Some(led) = groups.led.get_mut(&self.group) {
-                        led.reaped = Some(ticks);
-                    }
-                }
-                None => {
-                    groups.led.remove(&self.group);
-                }
-            }
+        if matches!(status, Ok(Some(_))) {
+            remove(&mut groups, self.group, self.serial);
         }
         (value, status)
     }
@@ -958,14 +898,14 @@ impl<'a> Registered<'a> {
 
 impl Drop for Registered<'_> {
     fn drop(&mut self) {
-        let mut groups = self.children.lock();
-        if groups
-            .led
-            .get(&self.group)
-            .is_some_and(|led| led.serial == self.serial)
-        {
-            groups.led.remove(&self.group);
-        }
+        remove(&mut self.children.lock(), self.group, self.serial);
+    }
+}
+
+/// Leaves out `group` no more if registration `serial` still holds it.
+fn remove(groups: &mut Groups, group: u32, serial: u64) {
+    if groups.led.get(&group) == Some(&serial) {
+        groups.led.remove(&group);
     }
 }
 
@@ -1057,7 +997,7 @@ fn run_with_grace(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0);
-    // It stays one of `children` until its output is read.
+    // It is one of `children` until it is reaped.
     let (registered, mut child) = Registered::spawn(children, &mut command)
         .map_err(|error| format!("cannot run {}: {error}", binary.display()))?;
     let drain = |pipe: Option<Box<dyn Read + Send>>| {
@@ -2167,8 +2107,16 @@ mod tests {
         }
     }
 
+    /// The clock tick since boot, in the 10 ms ticks `/proc/PID/stat`
+    /// counts a process's start in.
+    fn ticks_now() -> u64 {
+        let uptime = fs::read_to_string("/proc/uptime").unwrap();
+        let seconds = uptime.split_whitespace().next().unwrap();
+        (seconds.parse::<f64>().unwrap() * 100.0) as u64
+    }
+
     #[test]
-    fn a_reaped_child_leaves_out_only_its_own_while_its_output_drains() {
+    fn a_reaped_child_leaves_nothing_out_while_its_output_drains() {
         use crate::discover::proc::ProcScanner;
         use crate::launch::process::tests::{CLOSE, wait_for};
         let root = scratch("reaped-child");
@@ -2181,7 +2129,7 @@ mod tests {
                 "#!/bin/sh\n{CLOSE}echo $$ > \"$ROOT/pid.tmp\" && mv \"$ROOT/pid.tmp\" \"$ROOT/pid\"\n(n=0; while [ ! -e \"$ROOT/helper\" ] && [ $n -lt 200 ]; do sleep 0.05; n=$((n+1)); done) &\nn=0\nwhile [ ! -e \"$ROOT/release\" ] && [ $n -lt 200 ]; do sleep 0.05; n=$((n+1)); done\necho '{{}}'\n"
             ),
         );
-        let before = boot_ticks().unwrap();
+        let before = ticks_now();
         let children = Children::default();
         let registry = children.clone();
         let environment = vec![("ROOT".to_owned(), root.display().to_string())];
@@ -2213,26 +2161,20 @@ mod tests {
                 .map(|process| process.pid)
                 .collect::<Vec<_>>()
         };
-        // A serve process of its group, started before it exits.
-        let member = pid + 3000;
-        serve_entry(&fake, member, pid, before);
+        // A serve process older than the reap in its group: left out while
+        // it runs.
+        let older = pid + 3000;
+        serve_entry(&fake, older, pid, before);
         assert!(seen(&children).is_empty());
         // It is reaped; the helper still holds its output.
         fs::write(root.join("release"), "").unwrap();
         wait_for(|| !Path::new(&format!("/proc/{pid}")).exists());
-        // The member still holds its group, so what joins the group now is
-        // the request's too.
-        let after = boot_ticks().unwrap() + 1;
-        serve_entry(&fake, pid + 2000, pid, after);
-        assert!(seen(&children).is_empty());
-        // Once the member is gone, a process started since may reuse its pid
-        // and lead a group of that id.
-        fs::remove_dir_all(fake.join(member.to_string())).unwrap();
-        serve_entry(&fake, pid, pid, after);
-        assert_eq!(seen(&children), [pid, pid + 2000]);
+        // A process started within the reap's own tick takes its pid and
+        // leads a group of that id, which the older process has joined.
+        serve_entry(&fake, pid, pid, ticks_now());
+        assert_eq!(seen(&children), [pid, older]);
         assert!(!children.contains(pid));
         assert!(!draining.task.as_ref().unwrap().is_finished());
-        // Once its output is read, it is no longer one of them.
         fs::write(root.join("helper"), "").unwrap();
         let output = draining.task.take().unwrap().join().unwrap();
         assert_eq!(output.unwrap(), "{}\n");

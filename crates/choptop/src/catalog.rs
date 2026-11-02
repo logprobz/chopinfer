@@ -35,6 +35,9 @@ const PACKAGE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const OUTPUT_LIMIT: u64 = 16 * 1024 * 1024;
 /// Longest error message kept from a command's stderr.
 const MESSAGE_LIMIT: usize = 400;
+/// How long output already written when a command exits may take to be
+/// read, even at its deadline.
+const OUTPUT_SETTLE: Duration = Duration::from_millis(250);
 /// The schema of the remembered checkpoints file.
 pub const CHECKPOINTS_SCHEMA: &str = "choptop.checkpoints.v1";
 
@@ -963,7 +966,8 @@ pub fn answer(binary: &Path, request: Request, children: &Children) -> Reply {
 /// Runs `binary` with `arguments` and `environment` added to choptop's
 /// own, stdin closed, for at most `timeout`, in a process group of its own
 /// that is one of `children` until it is done. Its stdout when it
-/// succeeds, else the end of its stderr.
+/// succeeds, else the end of its stderr. Its output must end within
+/// `timeout` too, though a process it started may hold it after it exits.
 pub fn run(
     binary: &Path,
     arguments: &[String],
@@ -1001,13 +1005,15 @@ fn run_with_grace(
     let (registered, mut child) = Registered::spawn(children, &mut command)
         .map_err(|error| format!("cannot run {}: {error}", binary.display()))?;
     let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        let (sender, receiver) = mpsc::channel();
         thread::spawn(move || {
             let mut bytes = Vec::new();
             if let Some(pipe) = pipe {
                 let _ = pipe.take(OUTPUT_LIMIT).read_to_end(&mut bytes);
             }
-            String::from_utf8_lossy(&bytes).into_owned()
-        })
+            let _ = sender.send(String::from_utf8_lossy(&bytes).into_owned());
+        });
+        receiver
     };
     let stdout = drain(
         child
@@ -1059,8 +1065,19 @@ fn run_with_grace(
             Err(error) => return Err(format!("cannot wait for it: {error}")),
         }
     };
-    let stdout = stdout.join().unwrap_or_default();
-    let stderr = stderr.join().unwrap_or_default();
+    // Once it is reaped its group id may name another group, so a process
+    // it started that still holds its output is not signalled; its readers
+    // are left to end on their own.
+    let until = deadline.max(Instant::now() + OUTPUT_SETTLE);
+    let read = |output: &Receiver<String>| {
+        output.recv_timeout(until.saturating_duration_since(Instant::now()))
+    };
+    let (Ok(stdout), Ok(stderr)) = (read(&stdout), read(&stderr)) else {
+        return Err(format!(
+            "no answer within {}s: a process it started still holds its output",
+            timeout.as_secs()
+        ));
+    };
     if status.success() {
         return Ok(stdout);
     }
@@ -2068,6 +2085,38 @@ mod tests {
                     .is_none_or(|identity| !identity.running())
             });
         }
+    }
+
+    #[test]
+    fn output_a_helper_holds_past_the_deadline_ends_the_request() {
+        use crate::launch::process::tests::CLOSE;
+        let root = scratch("held-output");
+        let script = root.join("chopinfer");
+        // It answers and exits at once, leaving a helper that holds its
+        // output until released.
+        write_script(
+            &script,
+            &format!(
+                "#!/bin/sh\n{CLOSE}(n=0; while [ ! -e \"$ROOT/release\" ] && [ $n -lt 200 ]; do sleep 0.05; n=$((n+1)); done) &\necho '{{}}'\n"
+            ),
+        );
+        let started = Instant::now();
+        let result = run(
+            &script,
+            &[],
+            &[("ROOT".into(), root.display().to_string())],
+            Duration::from_secs(1),
+            &Children::default(),
+        );
+        let elapsed = started.elapsed();
+        fs::write(root.join("release"), "").unwrap();
+        assert!(
+            result
+                .as_ref()
+                .is_err_and(|error| error.contains("still holds its output")),
+            "{result:?}"
+        );
+        assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
     }
 
     /// A serve process in the fake `/proc` at `root`: `pid` of process

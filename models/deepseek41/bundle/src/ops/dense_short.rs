@@ -47,12 +47,12 @@ pub(super) fn project(
     use kernel_core::backend::Counts;
     use kernel_core::contract::Refusal;
     use kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers;
-    use kernels_sm120::gemm::mxfp8_prefill as tiled;
     use runtime_bundle_abi::DeviceBufferSpanV1;
     let span = |source: DeviceBufferSpanV1, offset, bytes| {
         bundle_runtime::dma::subspan(source, offset, bytes).map_err(Refusal)
     };
-    let full = rows / tiled::TILE * tiled::TILE;
+    let tile = crate::Kernels::dense_prefill_tile();
+    let full = rows / tile * tile;
     let mut offset = 0;
     let mut scratch_offset = 0;
     let mut calls = Vec::new();
@@ -62,7 +62,7 @@ pub(super) fn project(
         } else {
             (rows - offset).min(MAX_ROWS)
         };
-        let op = if count >= tiled::TILE {
+        let op = if count >= tile {
             &ops.prefill_gemms
                 .iter()
                 .find(|(of, _)| *of == id)
@@ -180,7 +180,7 @@ mod tests {
     #[test]
     fn tail_partition_pins_routes_offsets_and_disjoint_workspaces() {
         use kernel_core::contract::Argument;
-        use kernels_sm120::gemm::mxfp8_prefill as tiled;
+        const TILE: u32 = 128;
         let shape = Shape::new(&FLASH, Ranks::TP4)
             .unwrap()
             .with_prefill_tail_folds(true);
@@ -210,7 +210,7 @@ mod tests {
                 let calls = ops
                     .project(d.id, Phase::Prefill { rows }, &views, span(99, 1 << 30))
                     .unwrap();
-                let full = rows / tiled::TILE * tiled::TILE;
+                let full = rows / TILE * TILE;
                 let mut expected = Vec::new();
                 if full != 0 {
                     expected.push((0, full));
@@ -233,7 +233,7 @@ mod tests {
                     assert_eq!(piece[0].launch.rows, count);
                     assert!(!piece.iter().any(|c| c.launch.symbol.contains("split_tail")
                         || c.launch.symbol.contains("split_full")));
-                    if count >= tiled::TILE {
+                    if count >= TILE {
                         assert_eq!(piece.len(), 2);
                         assert!(piece[1].launch.symbol.contains("_prefill_tma_v1"));
                     } else {

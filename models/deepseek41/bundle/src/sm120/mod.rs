@@ -984,6 +984,11 @@ impl crate::Kernels {
         })
     }
 
+    /// The row tile of the staged dense prefill route.
+    pub(crate) const fn dense_prefill_tile() -> u32 {
+        kernels_sm120::gemm::mxfp8_prefill::TILE
+    }
+
     /// The largest separately prepared dense decode bucket.
     pub(crate) fn dense_decode_capacity() -> u32 {
         mxfp8_fold::SMALL_CAPACITY

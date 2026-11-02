@@ -276,6 +276,74 @@ pub fn retain_copies(config: Config, item: CommitItem, staged_row: u64) -> Resul
     Ok(copies)
 }
 
+/// The raw rows of a prefill item that keeps `anchor` strictly inside it
+/// (`instance::execute::anchors`), so that both histories match those of
+/// the same item cut at the anchor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AnchorCopies {
+    /// Into entry `spare` of the anchor spares, a history of the same rows:
+    /// the rows a chunk of the item ending at the anchor retains.
+    pub spare: Vec<RetainCopy>,
+    /// Into the item's slot: the rows such a chunk retains that the item's
+    /// own last window overwrites in neither history. Only an item that
+    /// projects from staging retains less than all of its rows.
+    pub slot: Vec<RetainCopy>,
+}
+
+/// The copies that keep `item`'s raw history at `anchor` in spare `spare`
+/// of `spares`, besides the slot's entry before the commit, which seeds the
+/// spare first. A chunk from the item's start to the anchor retains every
+/// row while they fit the history, else its last window; the rest of the
+/// item then retains all of its rows.
+pub fn anchor_copies(
+    config: Config,
+    item: CommitItem,
+    staged_row: u64,
+    anchor: u64,
+    spare: u32,
+    spares: u32,
+) -> Result<AnchorCopies> {
+    commit(config, item)?;
+    let start = item.rows.start;
+    let end = start + u64::from(item.kept);
+    if !matches!(item.rows.kind, Kind::Prefill { .. })
+        || anchor <= start
+        || anchor >= end
+        || spare >= spares
+        || spares > config.slots
+    {
+        return Err("invalid DSpark anchor item");
+    }
+    let (window, history) = (u64::from(config.window), config.history_capacity());
+    let first = if anchor - start > history {
+        anchor - window
+    } else {
+        start
+    };
+    let rows = |slot: u32, from: u64, to: u64| {
+        let mut position = from;
+        let mut copies = Vec::new();
+        while position < to {
+            let count = (to - position).min(history - position % history);
+            copies.push(RetainCopy {
+                staged_row: staged_row + (position - start),
+                history_row: config.history_cell(slot, position),
+                rows: count as u32,
+            });
+            position += count;
+        }
+        copies
+    };
+    Ok(AnchorCopies {
+        spare: rows(spare, first, anchor),
+        slot: if item.project_from_staging {
+            rows(item.rows.slot, first.max(end - history), end - window)
+        } else {
+            Vec::new()
+        },
+    })
+}
+
 /// The same raw-row mapping for capture and restore. Snapshot rows are
 /// compact and chronological. Slot ownership and cursor readiness are
 /// validated by the lifecycle before any of these copies are issued.

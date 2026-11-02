@@ -397,7 +397,8 @@ impl Instance {
         sink: &mut ExecuteResultSinkV1,
         step: PackedStep,
     ) -> BundleStatusV1 {
-        if step.prefill.anchors.contains(&true) {
+        if let Err(error) = self.validate_prefill_anchors(&step.prefill) {
+            self.log(&error);
             return BundleStatusV1::InvalidArgument;
         }
         let prepare = || -> Result<(Vec<Input>, TextMasks), String> {

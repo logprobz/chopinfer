@@ -8,7 +8,7 @@
 
 use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -156,13 +156,29 @@ pub fn terminate_group(child: &mut Child) -> Result<(), String> {
     }
 }
 
-/// Makes `directory` and its parents, private to this user.
+/// Creates `directory` and makes it private. Refuses symlinks and
+/// directories owned by another user.
 pub fn private_directory(directory: &Path) -> Result<(), String> {
     DirBuilder::new()
         .recursive(true)
         .mode(0o700)
         .create(directory)
-        .map_err(|error| format!("cannot create {}: {error}", directory.display()))
+        .map_err(|error| format!("cannot create {}: {error}", directory.display()))?;
+    let failed = |error| format!("cannot secure {}: {error}", directory.display());
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+        .open(directory)
+        .map_err(failed)?;
+    let metadata = file.metadata().map_err(failed)?;
+    if metadata.uid() != rustix::process::getuid().as_raw() {
+        return Err(format!("{} belongs to another user", directory.display()));
+    }
+    if metadata.mode() & 0o7777 != 0o700 {
+        file.set_permissions(fs::Permissions::from_mode(0o700))
+            .map_err(failed)?;
+    }
+    Ok(())
 }
 
 /// A new log file in `directory` named after `stem`, unused so far.
@@ -419,6 +435,22 @@ pub(crate) mod tests {
                 .unwrap_err()
                 .contains("not chopinfer serve")
         );
+    }
+
+    #[test]
+    fn existing_private_directories_are_secured_and_symlinks_refused() {
+        let root = scratch("private-existing");
+        let directory = root.join("logs");
+        fs::create_dir(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
+        private_directory(&directory).unwrap();
+        assert_eq!(fs::metadata(&directory).unwrap().mode() & 0o7777, 0o700);
+        let link = root.join("link");
+        std::os::unix::fs::symlink(&directory, &link).unwrap();
+        assert!(private_directory(&link).is_err());
+        let file = root.join("file");
+        fs::write(&file, "").unwrap();
+        assert!(private_directory(&file).is_err());
     }
 
     #[test]

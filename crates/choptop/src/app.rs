@@ -579,6 +579,9 @@ impl App {
     /// processes SIGTERM. The list shows the launches.
     fn launch(&mut self, mut confirm: Confirm) {
         let now = self.clock;
+        if let Err(why) = self.launch_directories() {
+            return self.refuse_start(&why);
+        }
         confirm.switch = self.launches.records.unused_switch(&confirm.switch);
         let mut identities = Vec::new();
         for stopping in &confirm.stops {
@@ -638,6 +641,19 @@ impl App {
         if let Some(first) = first.and_then(|id| self.registry.launch_row(id)) {
             self.selected = Some(first.id);
         }
+    }
+
+    /// Establish private state and logs before any server is stopped.
+    fn launch_directories(&self) -> Result<(), String> {
+        let logs = self
+            .launches
+            .logs
+            .as_deref()
+            .ok_or("no state directory for logs")?;
+        if let Some(state) = logs.parent() {
+            process::private_directory(state)?;
+        }
+        process::private_directory(logs)
     }
 
     /// Runs a confirmed stop: a launch through its process group, or a
@@ -1391,6 +1407,40 @@ mod tests {
             .iter()
             .position(|event| event.who == who && event.what.starts_with(what))
             .unwrap_or_else(|| panic!("no event {who}: {what} in {:?}", app.registry.events))
+    }
+
+    #[test]
+    fn an_unsafe_log_directory_refuses_a_switch_before_stopping() {
+        let root = scratch("unsafe-log-directory");
+        let mut guard = fake_serve(&root.join("serve"));
+        let mut app = launching(&root, &root.join("unused"));
+        let logs = app.launches.logs.clone().unwrap();
+        std::fs::create_dir_all(logs.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&root, &logs).unwrap();
+        let serve = serve_of(&guard);
+        run(
+            &mut app,
+            confirm(
+                &[('A', &[0, 1], 8310, vec![Target::Serve(serve.clone())])],
+                vec![stopping(&serve)],
+            ),
+        );
+        assert!(
+            app.loader
+                .flash
+                .as_ref()
+                .unwrap()
+                .text
+                .contains("cannot secure")
+        );
+        assert!(app.launches.launches.is_empty());
+        assert!(guard.0.try_wait().unwrap().is_none());
+        assert!(
+            !app.registry
+                .events
+                .iter()
+                .any(|event| event.what.starts_with("stopping:"))
+        );
     }
 
     #[test]

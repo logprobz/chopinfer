@@ -410,7 +410,11 @@ fn prewarmed_views_are_resident_after_load() {
         .resident_pages()
         .unwrap();
     assert_eq!(resident, pages);
-    assert!(prewarm.resident_bytes >= prewarm.bytes);
+    assert!(
+        prewarm
+            .resident_bytes
+            .is_some_and(|bytes| bytes >= prewarm.bytes)
+    );
     assert_eq!(
         prewarm.margin_bytes,
         runtime_host::direct::PREWARM_MARGIN_BYTES_DEFAULT

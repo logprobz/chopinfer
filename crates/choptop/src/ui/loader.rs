@@ -1270,10 +1270,18 @@ fn command_box(buffer: &mut Buffer, app: &App, area: Area, now: f64) {
     let arguments = plan.command.clone().unwrap_or_else(|| draft(app));
     let mut lines: Vec<Vec<(String, Style)>> = Vec::new();
     if instances.is_empty() {
-        lines.push(vec![(
-            "   no GPUs picked; Space picks them in the placement pane".to_owned(),
-            Style::fg(Color::Dim),
-        )]);
+        let text = if loader.picked.is_empty() {
+            "no GPUs picked; Space picks them in the placement pane".to_owned()
+        } else {
+            let placement = &plan.placement;
+            let why = placement
+                .grouping
+                .as_ref()
+                .or(placement.problems.first())
+                .map_or_else(String::new, |why| sanitize(why));
+            format!("no instance yet: {why}")
+        };
+        lines.push(vec![(format!("   {text}"), Style::fg(Color::Dim))]);
     } else {
         let blocks = instances
             .iter()

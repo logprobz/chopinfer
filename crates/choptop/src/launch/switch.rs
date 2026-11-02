@@ -108,14 +108,14 @@ pub fn changed(before: &Placement, after: &Placement, reservations: &[Reservatio
 /// Two values the same: equal text. An option `serve --describe-options`
 /// gives as `N` compares as a whole number, exactly, one it gives as `F` as
 /// a number, so `1` is `1.0`, and one it gives as `JSON` or `JSON|off` as
-/// JSON, so spacing and key order do not count.
+/// JSON, as [`same_json`] compares it.
 fn same(left: &str, right: &str, shape: Option<Shape>) -> bool {
     match shape {
         Some(Shape::Json | Shape::JsonOrOff) => match (
             serde_json::from_str::<serde_json::Value>(left),
             serde_json::from_str::<serde_json::Value>(right),
         ) {
-            (Ok(left), Ok(right)) => left == right,
+            (Ok(left), Ok(right)) => same_json(&left, &right),
             _ => left == right,
         },
         Some(Shape::Count) => match (left.parse::<i128>(), right.parse::<i128>()) {
@@ -126,6 +126,33 @@ fn same(left: &str, right: &str, shape: Option<Shape>) -> bool {
             (Ok(left), Ok(right)) => left == right,
             _ => left == right,
         },
+        _ => left == right,
+    }
+}
+
+/// Two JSON values the same whatever their spacing and key order, with
+/// numbers equal at single precision: serve reads a calibration's numbers
+/// as `f32` and prints them back so, `[1,0]` as `[1.0,0.0]`.
+fn same_json(left: &serde_json::Value, right: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match (left, right) {
+        (Value::Number(left), Value::Number(right)) => match (left.as_f64(), right.as_f64()) {
+            (Some(left), Some(right)) => left as f32 == right as f32,
+            _ => left == right,
+        },
+        (Value::Array(left), Value::Array(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| same_json(left, right))
+        }
+        (Value::Object(left), Value::Object(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .all(|(name, left)| right.get(name).is_some_and(|right| same_json(left, right)))
+        }
         _ => left == right,
     }
 }
@@ -841,6 +868,19 @@ mod tests {
         assert!(!same("off", printed, shape));
         // As text, spacing counts.
         assert!(!same(printed, &printed.replace(',', ", "), None));
+        // What serve prints back for a calibration with whole numbers and a
+        // decimal past f32 precision (runtime-host's confidence tests pin
+        // this text) is the one given.
+        let given = r#"{"contract":"fixture.drafter-confidence.v1","floor":1,"greedy":[[1,0]],"sampled":[[0.123456789,-1]]}"#;
+        let resolved = r#"{"contract":"fixture.drafter-confidence.v1","floor":1,"greedy":[[1.0,0.0]],"sampled":[[0.12345679,-1.0]]}"#;
+        assert!(same(given, resolved, shape));
+        assert!(!same(
+            given,
+            &resolved.replace("0.12345679", "0.1234568"),
+            shape
+        ));
+        assert!(!same(r#"[1,2]"#, r#"[1,2,3]"#, shape));
+        assert!(!same(r#"{"a":1}"#, r#"{"b":1}"#, shape));
     }
 
     /// serve's other key variable is a secret too: a custom row or a form

@@ -153,6 +153,14 @@ mod tests {
         );
         assert_eq!(calibration().check(), Ok(checked.clone()));
         assert_eq!(parse(&checked.text()), Ok(Some(checked)));
+        // Its numbers print back as the f32 it reads: whole numbers as
+        // decimals, a decimal past f32 precision rounded. choptop compares a
+        // calibration it sets with this text (launch/switch.rs).
+        let given = r#"{"contract":"fixture.drafter-confidence.v1","floor":1,"greedy":[[1,0]],"sampled":[[0.123456789,-1]]}"#;
+        assert_eq!(
+            parse(given).unwrap().unwrap().text(),
+            r#"{"contract":"fixture.drafter-confidence.v1","floor":1,"greedy":[[1.0,0.0]],"sampled":[[0.12345679,-1.0]]}"#
+        );
     }
 
     #[test]

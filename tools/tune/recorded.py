@@ -69,6 +69,8 @@ def main(recorded, output):
             raise SystemExit(f'{label}: no engine step records')
         processes[label] = {'depth': None, 'args': [], 'memory_after_warmup': memory, 'kv_pages_per_rank': pages,
                             'weights': weights, 'metrics': counters, 'step_records': len(steps)}
+        original = source_summary.get('processes', {}).get(label, {})
+        processes[label].update({key: original[key] for key in ('install', 'revision') if key in original})
         for path in sorted((directory / 'windows').glob('*.json')):
             record = json.loads(path.read_text())
             parts = record['steps'] if record['steps'] and isinstance(record['steps'][0], list) else [record['steps']]
@@ -78,9 +80,10 @@ def main(recorded, output):
                 raise SystemExit(f'{label} {path.name}: no full-concurrency steps')
             cells = tune.merge_cells([tune.cells(part) for part in parts])
             for key in full['histogram']:
-                shapes.add(key if '-R' in key else key.rsplit('-v', 1)[0])
+                shapes.add((record.get('arm', label), key if '-R' in key else key.rsplit('-v', 1)[0]))
             processes[label]['depth'] = record['depth']
             value = {k: record[k] for k in ('name', 'kind', 'concurrency', 'depth', 'request_tokens_per_second')}
+            value.update({key: record[key] for key in ('arm', 'install', 'revision') if key in record})
             value.update(repeat=windows, full=full, cells=cells, energy=record.get('energy'))
             r.write(output / label / 'windows' / f"{record['name']}-{path.stem}.json", value)
             windows += 1
@@ -90,12 +93,14 @@ def main(recorded, output):
     r.write(output / 'summary.json', {**source_summary, 'status': provenance['status'],
                                      'source_validity': provenance, 'processes': processes})
     costs = report.costs(output)
-    missing = sorted(shapes - set(costs['cells']))
+    separate = any('arm' in cell for cell in costs['cells'].values())
+    expected = {f'{arm}/{shape}' if separate else shape for arm, shape in shapes}
+    missing = sorted(expected - set(costs['cells']))
     if missing:
         raise SystemExit(f'costs table lacks recorded shapes {missing}')
     result = {'passed': True, 'recorded': str(recorded), 'servers': len(processes), 'windows': windows,
               'source_validity': provenance,
-              'full_concurrency_shapes': len(shapes), 'cells': len(costs['cells'])}
+              'full_concurrency_shapes': len(expected), 'cells': len(costs['cells'])}
     r.write(output / 'recorded-check.json', result)
     print(f"PASS: {len(processes)} recorded servers and {windows} windows parsed, {len(costs['cells'])} cost cells: "
           f'{output}')

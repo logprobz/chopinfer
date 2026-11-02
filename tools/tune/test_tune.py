@@ -2061,6 +2061,37 @@ class Tuner(unittest.TestCase):
             self.assertEqual(summary['processes']['d3']['metrics']['prefix_cache_evictions'], 10)
             self.assertEqual(recorded.r.trace_rows(server / 'server.log'), steps)
             self.assertEqual(costs['cells']['i8-r32']['steps'], 3)
+            # Metadata-bearing runs must retain their observed identities.
+            identity = {'install': 'base', 'revision': '1' * 40}
+            config['model'].update(mode='exact', speculation_mode='balanced',
+                                   arms=[{'label': 'd3', 'depth': 3, 'install': 'base'}])
+            tune.r.write(run / 'config.json', config)
+            source_summary = {'status': 'passed', 'arm_installs': {'d3': identity},
+                              'processes': {'d3': identity}}
+            tune.r.write(run / 'summary.json', source_summary)
+            value = json.loads(window.read_text())
+            tune.r.write(window, {**value, 'arm': 'd3', **identity})
+            metadata = Path(directory) / 'metadata'
+            recorded.main(run, metadata)
+            adapted = json.loads((metadata / 'summary.json').read_text())
+            self.assertEqual(adapted['processes']['d3']['revision'], identity['revision'])
+            import shutil
+            shutil.copytree(run / 'd3', run / 'head')
+            head = {'install': 'head', 'revision': '2' * 40}
+            config['model']['arms'].append({'label': 'head', 'depth': 3, 'install': 'head'})
+            source_summary['arm_installs']['head'] = head
+            source_summary['processes']['head'] = head
+            tune.r.write(run / 'config.json', config)
+            tune.r.write(run / 'summary.json', source_summary)
+            head_window = run / 'head/windows/greedy-c8.json'
+            tune.r.write(head_window, {**value, 'arm': 'head', **head})
+            paired = Path(directory) / 'paired'
+            recorded.main(run, paired)
+            self.assertEqual(set(json.loads((paired / 'costs.json').read_text())['cells']),
+                             {'d3/i8-r32', 'head/i8-r32'})
+            tune.r.write(head_window, {**value, 'arm': 'head', **identity})
+            with self.assertRaisesRegex(ValueError, 'revision differs'):
+                recorded.main(run, Path(directory) / 'corrupt')
             (server / 'server.log').write_text('\n'.join(log[:3]) + '\n')
             with self.assertRaises(SystemExit):
                 recorded.main(run, Path(directory) / 'short')

@@ -247,7 +247,9 @@ impl Launches {
     /// Keeps `record` and writes the records, noting why they cannot be
     /// written.
     fn keep(&mut self, record: Record, registry: &mut Registry, now: f64) {
-        self.records.put(record);
+        if let Some(message) = self.records.put(record) {
+            registry.note(now, "choptop", message, Tone::Warning);
+        }
         if let Err(error) = self.records.save() {
             registry.note(
                 now,

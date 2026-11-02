@@ -398,9 +398,11 @@ up to `--drain-timeout-ms` before it exits.
 A launch runs in a process group of its own with stdin closed and its output
 in a new log under `$XDG_STATE_HOME/choptop/logs`, else
 `~/.local/state/choptop/logs`, readable by this user only. It keeps running
-after choptop exits. `launches.json` beside the logs keeps the last 20
-launches: their choices, GPU UUIDs, port, pid, start time, log and exit
-status. It feeds the loader's recent launches and lets a restarted choptop
+after choptop exits. `launches.json` beside the logs keeps up to 20
+launches, evicting completed history first: their choices, GPU UUIDs, port,
+pid, start time, log and exit status. Active records are always kept; if
+they alone exceed 20, choptop reports that it is keeping them all.
+It feeds the loader's recent launches and lets a restarted choptop
 take up the launches still running. A launch that exits during startup stays
 listed as `exited N` with the end of its log until `X` dismisses it; `l` on
 it reopens the loader with its choices.

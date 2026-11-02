@@ -17,7 +17,7 @@ use super::process::private_directory;
 use crate::loader::{Choice, Recent};
 
 pub const SCHEMA: &str = "choptop.launches.v1";
-/// Records kept, the newest.
+/// History limit; active ownership records are always kept.
 pub const LIMIT: usize = 20;
 
 /// choptop's state directory: `$XDG_STATE_HOME/choptop`, else
@@ -243,8 +243,9 @@ impl Records {
     }
 
     /// Adds `record`, or replaces the one of its switch and letter, and
-    /// keeps the newest [`LIMIT`].
-    pub fn put(&mut self, record: Record) {
+    /// evicts completed history first. Returns a message when active
+    /// records alone exceed [`LIMIT`].
+    pub fn put(&mut self, record: Record) -> Option<String> {
         match self
             .records
             .iter_mut()
@@ -253,8 +254,21 @@ impl Records {
             Some(seen) => *seen = record,
             None => self.records.push(record),
         }
-        let excess = self.records.len().saturating_sub(LIMIT);
-        self.records.drain(..excess);
+        let mut excess = self.records.len().saturating_sub(LIMIT);
+        self.records.retain(|record| {
+            if excess > 0 && record.over() {
+                excess -= 1;
+                false
+            } else {
+                true
+            }
+        });
+        (excess > 0).then(|| {
+            format!(
+                "keeping all {} active launch records, above the history limit of {LIMIT}",
+                self.records.len()
+            )
+        })
     }
 
     /// Writes the records: a new file beside the old one, renamed over it,
@@ -433,18 +447,56 @@ pub(crate) mod tests {
         assert_eq!(message, None);
         assert_eq!(again.records, records.records);
         assert_eq!(again.records[0], first);
-        // The newest twenty are kept.
+        // The live record stays beside the newest completed history.
         for number in 0..30 {
-            records.put(record(&format!("s{number:02}"), 'A', &[0]));
+            let mut completed = record(&format!("s{number:02}"), 'A', &[0]);
+            completed.exit_status = Some(1);
+            records.put(completed);
         }
         assert_eq!(records.records.len(), LIMIT);
-        assert_eq!(records.records[0].switch, "s10");
+        assert_eq!(records.records[0].letter, 'B');
+        assert_eq!(records.records[1].switch, "s11");
         // A switch confirmed in the same second as another gets a name of
         // its own.
         assert_eq!(records.unused_switch("s29"), "s29-2");
         records.put(record("s29-2", 'A', &[0]));
         assert_eq!(records.unused_switch("s29"), "s29-3");
         assert_eq!(records.unused_switch("s30"), "s30");
+    }
+
+    #[test]
+    fn active_records_survive_history_eviction_and_exceed_the_limit_explicitly() {
+        let root = scratch("active-records");
+        let path = root.join("launches.json");
+        let mut records = Records::load(Some(path.clone())).0;
+        for number in 0..3 {
+            let mut active = record(&format!("active-{number}"), 'A', &[number]);
+            if number > 0 {
+                active.pid = Some(4000 + number);
+                active.start_ticks = Some(100);
+            }
+            assert_eq!(records.put(active), None);
+        }
+        for number in 0..30 {
+            let mut completed = record(&format!("ended-{number}"), 'A', &[0]);
+            completed.ended = Some("cancelled".into());
+            records.put(completed);
+        }
+        records.save().unwrap();
+        let mut again = Records::load(Some(path.clone())).0;
+        assert_eq!(again.records.len(), LIMIT);
+        assert_eq!(
+            again.records.iter().filter(|record| !record.over()).count(),
+            3
+        );
+        for number in 3..=LIMIT {
+            let message = again.put(record(&format!("active-{number}"), 'A', &[0]));
+            assert_eq!(message.is_some(), number == LIMIT);
+        }
+        again.save().unwrap();
+        let restored = Records::load(Some(path)).0;
+        assert_eq!(restored.records.len(), LIMIT + 1);
+        assert!(restored.records.iter().all(|record| !record.over()));
     }
 
     #[test]

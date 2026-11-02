@@ -1,4 +1,5 @@
 """CPU checks for declarative trace scheduling and served token evidence."""
+import argparse
 import copy
 from contextlib import redirect_stdout
 import io
@@ -15,6 +16,27 @@ import agentic_trace as trace
 
 
 class TraceTests(unittest.TestCase):
+    def test_generator_append_range(self):
+        for bounds in ((1000, 2000), (1, 1), (32768, 32768)):
+            with self.subTest(bounds=bounds):
+                workload = trace.generate(4, 100, 'shape', [100000], 0, append_tokens=bounds)
+                self.assertEqual(workload, trace.validate(copy.deepcopy(workload)))
+                self.assertTrue(all(bounds[0] <= t['append_tokens'] <= bounds[1]
+                                    for s in workload['sessions'] for t in s['turns']))
+
+    def test_generator_default_append_range(self):
+        args = (4, 100, 'shape', [100000, 250000], 0)
+        self.assertEqual(json.dumps(trace.generate(*args), indent=2),
+                         json.dumps(trace.generate(*args, append_tokens=None), indent=2))
+
+    def test_append_range_parser(self):
+        for value, bounds in (('1000:2000', (1000, 2000)), ('1:32768', (1, 32768)), ('7:7', (7, 7))):
+            self.assertEqual(trace.append_range(value), bounds)
+        for value in ('', '1', '1:', ':2', '1:2:3', 'a:2', '1.0:2', '0:2', '-1:2',
+                      '2:1', '1:32769', '1_000:2000', '1: 2', '+1:2'):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                trace.append_range(value)
+
     def test_generator_distribution_and_no_content(self):
         workload = trace.generate(4, 100, 'shape', [100000, 250000], 0)
         rows = [t for s in workload['sessions'] for t in s['turns']]

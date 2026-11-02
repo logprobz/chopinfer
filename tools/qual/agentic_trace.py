@@ -13,6 +13,7 @@ import math
 import os
 from pathlib import Path
 import random
+import re
 import time
 import uuid
 
@@ -88,7 +89,20 @@ def validate(trace):
     return trace
 
 
-def generate(sessions=8, turns=100, seed='agentic-trace-v1', contexts=(100000, 250000), idle_pages=4096):
+def append_range(value):
+    try:
+        if not re.fullmatch(r'[0-9]+:[0-9]+', value):
+            raise ValueError
+        low, high = map(int, value.split(':'))
+        if not 1 <= low <= high <= 32768:
+            raise ValueError
+    except ValueError as error:
+        raise argparse.ArgumentTypeError('expected LOW:HIGH with 1 <= LOW <= HIGH <= 32768') from error
+    return low, high
+
+
+def generate(sessions=8, turns=100, seed='agentic-trace-v1', contexts=(100000, 250000), idle_pages=4096,
+             append_tokens=None):
     rng = random.Random(seed)
     classes = [index for index, count in enumerate((31, 40, 12, 7, 10)) for _ in range(count)]
     rng.shuffle(classes)
@@ -97,7 +111,7 @@ def generate(sessions=8, turns=100, seed='agentic-trace-v1', contexts=(100000, 2
         planned = []
         for turn in range(turns):
             ordinal = turn * sessions + session
-            low, high = RANGES[classes[ordinal % 100]]
+            low, high = RANGES[classes[ordinal % 100]] if append_tokens is None else append_tokens
             planned.append(dict(after=turn - 1 if turn else None, append_tokens=rng.randint(low, high),
                                 output_tokens=(128, 256, 550, 1266)[(turn + session) % 4],
                                 seed=mixed.request_seed(seed, sessions, session, turn),
@@ -433,8 +447,11 @@ if __name__ == '__main__':
     p.add_argument('--seed', default='agentic-trace-v1')
     p.add_argument('--contexts', default='100000,250000')
     p.add_argument('--idle-pages', type=int, default=4096)
+    p.add_argument('--append-tokens', type=append_range, metavar='LOW:HIGH',
+                   help='draw append tokens uniformly from this inclusive range (1 to 32768)')
     a = p.parse_args()
-    workload = generate(a.sessions, a.turns, a.seed, [int(n) for n in a.contexts.split(',')], a.idle_pages)
+    workload = generate(a.sessions, a.turns, a.seed, [int(n) for n in a.contexts.split(',')], a.idle_pages,
+                        append_tokens=a.append_tokens)
     with a.out.open('x') as out:
         json.dump(workload, out, indent=2)
         out.write('\n')

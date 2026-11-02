@@ -52,9 +52,11 @@ chopinfer serve --model "$CHOPINFER_MIMO_CHECKPOINT" --tensor-parallel-size 4 --
   frontend declaration and tokenizer, the topology with its context-parallel
   groups (selected as serving selects it, except that the device driver's
   devices are only planned), the media options, the engine's batch, chunk
-  and sequence limits, the declared media recipes, the instance
-  configuration (KV and state contracts, served items and context, and
-  whether the package needs `--checkpoint`), what the backend and build fix
+  and sequence limits, the declared media recipes, what prefix caching
+  needs of the package (copy-on-write batch records, and request state for a
+  state-slot restore), the instance configuration (KV and state contracts,
+  served items and context, and whether the package needs `--checkpoint`),
+  what the backend and build fix
   (host-memory device capacity, the device sampler
   `--debug-reference-tokens` needs), the `--debug-reference-tokens` file,
   and the `CHOPINFER_NVTX_RANGES` and `CHOPINFER_DEV_SKIP_WARMUP`

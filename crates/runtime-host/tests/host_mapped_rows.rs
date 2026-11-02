@@ -429,6 +429,65 @@ fn prewarmed_views_are_resident_after_load() {
     );
 }
 
+#[test]
+fn background_service_warms_views_that_did_not_request_startup_prewarm() {
+    use runtime_host::mapped_views::{
+        MappedPrewarmOutcomeV1, MappedPrewarmV1, MappedResidencyReportV1, MappedViewsV1,
+    };
+    use std::time::{Duration, Instant};
+
+    let root = temp("background-prewarm");
+    write_checkpoint(&root.0);
+    let image = planned(&root.0, (0..2).map(|rank| plan(2, rank)).collect()).unwrap();
+    assert_eq!(image.prewarm(), None);
+    let image_pages: u64 = [(1, b"codes".as_slice()), (0, b"scales"), (1, b"scales")]
+        .into_iter()
+        .map(|(rank, id)| {
+            image
+                .mapped_view(rank, id)
+                .unwrap()
+                .resident_pages()
+                .unwrap()
+                .1
+        })
+        .sum();
+    let report = MappedResidencyReportV1::default();
+    let mut guard = MappedViewsV1 {
+        mode: MappedPrewarmV1::On,
+        report: report.clone(),
+    }
+    .start();
+    let Some(MappedPrewarmOutcomeV1::Warmed(warm)) = guard.wait_for_prewarm() else {
+        panic!("the mapped-view service did not warm");
+    };
+    assert!(!warm.stopped);
+    assert!(warm.bytes >= image.mapped_bytes());
+    let (resident, pages) = image
+        .mapped_view(1, b"codes")
+        .unwrap()
+        .resident_pages()
+        .unwrap();
+    assert_eq!(resident, pages);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let sample = loop {
+        if let Some(sample) = report.sample() {
+            break sample;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the residency sample was not published"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    // Other tests in this process can hold authenticated mappings too.
+    assert!(sample.mapped_bytes >= image_pages * runtime_host::host_rows::page_bytes_v1() as u64);
+    assert!(
+        sample
+            .resident_bytes
+            .is_some_and(|bytes| bytes <= sample.mapped_bytes)
+    );
+}
+
 /// A mapped view takes exactly one plain copy of tensor bytes, whole or one
 /// leading-axis range, stored unchanged; anything else is refused by name
 /// before a byte is mapped.

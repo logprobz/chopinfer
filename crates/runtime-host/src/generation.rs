@@ -1163,6 +1163,7 @@ impl EngineGenerationBackend {
                 refusals: Arc::clone(&self.media_refusals),
             }),
             device_memory: self.device_memory.clone(),
+            mapped_residency: None,
         }
     }
 
@@ -1675,6 +1676,7 @@ pub struct NativeRuntimeMetricsV1 {
     state: Arc<AtomicU8>,
     media: Option<MediaHostMetricsV1>,
     device_memory: Option<crate::device_memory::DeviceMemoryReportV1>,
+    mapped_residency: Option<crate::mapped_views::MappedResidencyReportV1>,
 }
 
 /// The host memory media preparation holds and its refusals. The pool is the
@@ -1768,6 +1770,16 @@ impl MediaRefusalsV1 {
 }
 
 impl NativeRuntimeMetricsV1 {
+    /// Includes the mapped views' latest page-cache residency sample.
+    #[must_use]
+    pub fn with_mapped_residency(
+        mut self,
+        report: crate::mapped_views::MappedResidencyReportV1,
+    ) -> Self {
+        self.mapped_residency = Some(report);
+        self
+    }
+
     /// Renders one complete snapshot, at the monotonic time it was asked for.
     #[must_use]
     pub fn prometheus(&self, monotonic_micros: u64) -> String {
@@ -1798,6 +1810,9 @@ impl NativeRuntimeMetricsV1 {
         }
         if let Some(device_memory) = &self.device_memory {
             output.push_str(&device_memory.prometheus());
+        }
+        if let Some(mapped_residency) = &self.mapped_residency {
+            output.push_str(&mapped_residency.prometheus());
         }
         let kv = self.kv.snapshot();
         output.push_str(&kv.prometheus());
@@ -5063,7 +5078,19 @@ mod tests {
             state: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(super::READY)),
             media: None,
             device_memory: None,
+            mapped_residency: None,
         };
+
+        let report = crate::mapped_views::MappedResidencyReportV1::default();
+        let with_mappings = metrics.clone().with_mapped_residency(report.clone());
+        assert!(!with_mappings.prometheus(0).contains("chop_mapped_view_"));
+        report.publish(crate::mapped_views::ResidencySampleV1 {
+            mapped_bytes: 8192,
+            resident_bytes: Some(4096),
+            seconds: 0.25,
+        });
+        assert!(with_mappings.prometheus(0).contains(&report.prometheus()));
+        assert!(!metrics.prometheus(0).contains("chop_mapped_view_"));
 
         let summary = metrics.summary().unwrap();
 

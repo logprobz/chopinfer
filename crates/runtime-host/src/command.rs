@@ -1574,7 +1574,9 @@ impl ServeOptionV1 {
 const ON_OFF_V1: &[&str] = &["on", "off"];
 
 /// Every flag `serve` accepts, the list its parse refuses others against and
-/// `serve --describe-options` prints.
+/// `serve --describe-options` prints: those of the shared parser, of profile
+/// resolution (`--profile`) and the option catalog that ends the command.
+/// The host-wide `--help` is every command's, not serve's.
 pub(crate) const SERVE_OPTIONS_V1: &[ServeOptionV1] = {
     use ServeGroupV1::{
         Cache, Debug, Logging, Media, Memory, Model, Prefill, Scheduling, Server, Speculation,
@@ -1640,6 +1642,13 @@ pub(crate) const SERVE_OPTIONS_V1: &[ServeOptionV1] = {
         ),
         ServeOptionV1::new("--topology", Text, Model, "the package topology to serve").not_launch(),
         ServeOptionV1::new(
+            "--profile",
+            Text,
+            Model,
+            "a serving profile of a --bundle package, as NAME or FILE#NAME",
+        )
+        .not_launch(),
+        ServeOptionV1::new(
             "--devices",
             Text,
             Model,
@@ -1681,6 +1690,13 @@ pub(crate) const SERVE_OPTIONS_V1: &[ServeOptionV1] = {
             Flag,
             Model,
             "run the startup checks that need no device, print the result as JSON and exit",
+        )
+        .not_launch(),
+        ServeOptionV1::new(
+            "--describe-options",
+            Flag,
+            Model,
+            "print serve's options and environment as JSON and exit; it ends the command",
         )
         .not_launch(),
         ServeOptionV1::new(
@@ -12984,28 +13000,57 @@ mod serve_option_tests {
         })
     }
 
-    /// The flags `ArgumentsV1::parse` reads, as its source names them.
-    fn parsed_flags() -> std::collections::BTreeSet<String> {
-        let source = include_str!("command.rs");
-        let start = source
-            .find("    fn parse(arguments: &[String]) -> Result<Self, HostCommandErrorV1> {")
-            .expect("the shared parser");
-        let end = start + source[start..].find("fn present_flags").expect("its end");
+    /// The flag literals of `source` between `start` and the first `end`
+    /// after it.
+    fn flag_literals(source: &str, start: &str, end: &str) -> std::collections::BTreeSet<String> {
+        let start = source.find(start).expect("the region's start");
+        let end = start + source[start..].find(end).expect("the region's end");
         let mut flags = std::collections::BTreeSet::new();
         let mut rest = &source[start..end];
-        while let Some(at) = rest.find("\"--") {
+        while let Some(at) = rest.find("\"-") {
             let literal = &rest[at + 1..];
-            let length = literal[2..]
+            let length = literal[1..]
                 .find(|c: char| !(c.is_ascii_lowercase() || c == '-'))
-                .map_or(literal.len(), |length| length + 2);
-            if length > 2 && literal[length..].starts_with('"') {
-                flags.insert(literal[..length].to_owned());
+                .map_or(literal.len(), |length| length + 1);
+            let word = &literal[..length];
+            if !word.trim_start_matches('-').is_empty() && literal[length..].starts_with('"') {
+                flags.insert(word.to_owned());
             }
             rest = &literal[length..];
         }
+        flags
+    }
+
+    /// The flags `ArgumentsV1::parse` reads, as its source names them.
+    fn parsed_flags() -> std::collections::BTreeSet<String> {
+        let mut flags = flag_literals(
+            include_str!("command.rs"),
+            "    fn parse(arguments: &[String]) -> Result<Self, HostCommandErrorV1> {",
+            "fn present_flags",
+        );
         flags.extend(VALUELESS_FLAGS_V1.iter().map(|flag| (*flag).to_owned()));
         flags
     }
+
+    /// The flags a serve invocation consumes before the shared parser:
+    /// those profile resolution reads, and the words that end a command.
+    fn preparsed_flags() -> std::collections::BTreeSet<String> {
+        let mut flags = flag_literals(
+            include_str!("profiles.rs"),
+            "pub(crate) fn resolve(arguments: &[String])",
+            "\n}\n",
+        );
+        // Each call that ends a command at one of its words.
+        let source = include_str!("command.rs");
+        let call = ["terminal_flag_v1(arguments, &", "["].concat();
+        for (at, _) in source.match_indices(&call) {
+            flags.extend(flag_literals(&source[at..], &call, "]"));
+        }
+        flags
+    }
+
+    /// The help words every command honors as its last word.
+    const HELP_WORDS: &[&str] = &["--help", "-h"];
 
     /// `serve` accepts exactly the flags of [`SERVE_OPTIONS_V1`], each with
     /// the value shape the table gives it: every table flag reaches the
@@ -13016,8 +13061,10 @@ mod serve_option_tests {
         let mut seen = std::collections::BTreeSet::new();
         for option in SERVE_OPTIONS_V1 {
             assert!(seen.insert(option.flag), "{} listed twice", option.flag);
+            // A word that ends the command is consumed before the parser.
+            let terminal = option.flag == "--describe-options";
             assert_eq!(
-                option.value == ServeValueV1::Flag,
+                option.value == ServeValueV1::Flag && !terminal,
                 VALUELESS_FLAGS_V1.contains(&option.flag),
                 "{}",
                 option.flag
@@ -13038,15 +13085,36 @@ mod serve_option_tests {
             }
         }
         let parsed = parsed_flags();
+        let preparsed = preparsed_flags();
         assert!(parsed.len() > SERVE_OPTIONS_V1.len(), "{parsed:?}");
+        for flag in [
+            "--profile",
+            "--bundle",
+            "--describe-options",
+            "--help",
+            "-h",
+        ] {
+            assert!(preparsed.contains(flag), "{flag}: {preparsed:?}");
+        }
         for option in SERVE_OPTIONS_V1 {
             assert!(
-                parsed.contains(option.flag),
-                "{} is not parsed",
+                parsed.contains(option.flag) || preparsed.contains(option.flag),
+                "{} is not read",
                 option.flag
             );
         }
-        for flag in parsed.iter().filter(|flag| !seen.contains(flag.as_str())) {
+        // Every flag profile resolution or a terminal word consumes is a
+        // serve option, but the help every command honors.
+        for flag in &preparsed {
+            assert!(
+                seen.contains(flag.as_str()) || HELP_WORDS.contains(&flag.as_str()),
+                "{flag} is read before the parser and is not a serve option"
+            );
+        }
+        for flag in parsed
+            .iter()
+            .filter(|flag| !seen.contains(flag.as_str()) && !preparsed.contains(*flag))
+        {
             let mut invocation = words(&["serve", "--bundle", "/package", flag]);
             let value = if VALUELESS_FLAGS_V1.contains(&flag.as_str()) {
                 ServeValueV1::Flag

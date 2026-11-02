@@ -677,6 +677,7 @@ print(json.dumps(reply), flush=True)
         self.assertEqual(flags["--prefix-cache"]["choices"], ["on", "off"])
         self.assertTrue(flags["--model-option"]["repeatable"])
         self.assertFalse(flags["--bundle"]["model_launch"])
+        self.assertFalse(flags["--profile"]["model_launch"])
         self.assertEqual([entry["name"] for entry in document["environment"]],
                          ["CHOPINFER_API_KEY", "CHOPINFER_LOG_LEVEL", "CHOPINFER_LOG_SUMMARY_SECONDS",
                           "CHOPINFER_MODEL_OPTIONS"])

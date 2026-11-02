@@ -9,7 +9,7 @@
 //! package preparation holds back nothing else. The command and package
 //! lanes run only the latest request waiting for them.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Read;
@@ -18,6 +18,7 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -812,14 +813,45 @@ pub enum Reply {
     Check(u64, Result<Check, String>),
 }
 
+/// The process groups of choptop's own `chopinfer` children while they
+/// run, each led by the child itself, which discovery leaves out.
+/// `serve --check` and `serve --list-model-options` run serve with a
+/// launch's environment, and with a real package live long enough for a
+/// scan to take them for a serve process loading on the picked GPUs.
+#[derive(Clone, Debug, Default)]
+pub struct Children(Arc<Mutex<BTreeSet<u32>>>);
+
+impl Children {
+    fn lock(&self) -> MutexGuard<'_, BTreeSet<u32>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Whether `id`, a pid or a process group, is one of them.
+    pub fn contains(&self, id: u32) -> bool {
+        self.lock().contains(&id)
+    }
+}
+
+/// A child's process group while it is one of [`Children`].
+struct Registered<'a> {
+    children: &'a Children,
+    group: u32,
+}
+
+impl Drop for Registered<'_> {
+    fn drop(&mut self) {
+        self.children.lock().remove(&self.group);
+    }
+}
+
 /// Runs `request` with `binary` and reads its document.
-pub fn answer(binary: &Path, request: Request) -> Reply {
+pub fn answer(binary: &Path, request: Request, children: &Children) -> Reply {
     let (arguments, environment, timeout) = request.command();
     let shown = format!(
         "chopinfer {}",
         arguments[..2.min(arguments.len())].join(" ")
     );
-    let output = run(binary, &arguments, &environment, timeout);
+    let output = run(binary, &arguments, &environment, timeout, children);
     let failed = |message: String| format!("{shown}: {message}");
     match request {
         Request::Options => Reply::Options(
@@ -849,7 +881,7 @@ pub fn answer(binary: &Path, request: Request) -> Reply {
                 .map_err(failed)
                 .and_then(|mut arguments| {
                     arguments.push("--list-model-options".to_owned());
-                    run(binary, &arguments, &environment, PACKAGE_TIMEOUT)
+                    run(binary, &arguments, &environment, PACKAGE_TIMEOUT, children)
                         .and_then(|text| parse_package_options(&text))
                         .map_err(|message| {
                             format!("chopinfer serve --list-model-options: {message}")
@@ -864,13 +896,15 @@ pub fn answer(binary: &Path, request: Request) -> Reply {
 }
 
 /// Runs `binary` with `arguments` and `environment` added to choptop's
-/// own, stdin closed, for at most `timeout`. Its stdout when it succeeds,
-/// else the end of its stderr.
+/// own, stdin closed, for at most `timeout`, in a process group of its own
+/// that is one of `children` until it is done. Its stdout when it
+/// succeeds, else the end of its stderr.
 pub fn run(
     binary: &Path,
     arguments: &[String],
     environment: &[(String, String)],
     timeout: Duration,
+    children: &Children,
 ) -> Result<String, String> {
     run_with_grace(
         binary,
@@ -878,6 +912,7 @@ pub fn run(
         environment,
         timeout,
         Duration::from_secs(5),
+        children,
     )
 }
 
@@ -887,7 +922,10 @@ fn run_with_grace(
     environment: &[(String, String)],
     timeout: Duration,
     grace: Duration,
+    children: &Children,
 ) -> Result<String, String> {
+    // Held while it starts, so no scan finds it before it is one of them.
+    let mut groups = children.lock();
     let mut child = Command::new(binary)
         .args(arguments)
         .envs(environment.iter().map(|(name, value)| (name, value)))
@@ -897,6 +935,12 @@ fn run_with_grace(
         .process_group(0)
         .spawn()
         .map_err(|error| format!("cannot run {}: {error}", binary.display()))?;
+    groups.insert(child.id());
+    drop(groups);
+    let _group = Registered {
+        children,
+        group: child.id(),
+    };
     let drain = |pipe: Option<Box<dyn Read + Send>>| {
         thread::spawn(move || {
             let mut bytes = Vec::new();
@@ -980,13 +1024,15 @@ pub struct Worker {
 }
 
 impl Worker {
-    /// Runs requests with `binary` and sends each reply to `replies`.
-    pub fn spawn(binary: PathBuf, replies: Sender<Reply>) -> Self {
+    /// Runs requests with `binary` and sends each reply to `replies`; its
+    /// children are among `children` while they run.
+    pub fn spawn(binary: PathBuf, replies: Sender<Reply>, children: Children) -> Self {
         let lane = |latest: bool| {
             let (sender, receiver) = mpsc::channel();
             let binary = binary.clone();
             let replies = replies.clone();
-            thread::spawn(move || run_lane(&binary, &receiver, &replies, latest));
+            let children = children.clone();
+            thread::spawn(move || run_lane(&binary, &receiver, &replies, latest, &children));
             sender
         };
         Self {
@@ -1010,14 +1056,20 @@ impl Worker {
 
 /// Answers requests in turn; with `latest`, only the newest of those
 /// waiting, since each replaces the ones before it.
-fn run_lane(binary: &Path, requests: &Receiver<Request>, replies: &Sender<Reply>, latest: bool) {
+fn run_lane(
+    binary: &Path,
+    requests: &Receiver<Request>,
+    replies: &Sender<Reply>,
+    latest: bool,
+    children: &Children,
+) {
     while let Ok(mut request) = requests.recv() {
         if latest {
             while let Ok(newer) = requests.try_recv() {
                 request = newer;
             }
         }
-        if replies.send(answer(binary, request)).is_err() {
+        if replies.send(answer(binary, request, children)).is_err() {
             return;
         }
     }
@@ -1779,12 +1831,14 @@ mod tests {
         let root = scratch("answer");
         let binary = fake_chopinfer(&root);
         assert!(matches!(
-            answer(&binary, Request::Options),
+            answer(&binary, Request::Options, &Children::default()),
             Reply::Options(Ok(_))
         ));
-        let Reply::Pick(directory, Err(error)) =
-            answer(&binary, Request::Pick("/models/broken".into()))
-        else {
+        let Reply::Pick(directory, Err(error)) = answer(
+            &binary,
+            Request::Pick("/models/broken".into()),
+            &Children::default(),
+        ) else {
             panic!("a refused pick")
         };
         assert_eq!(directory, Path::new("/models/broken"));
@@ -1802,6 +1856,7 @@ mod tests {
                 profile: "tp4-ar".into(),
                 options: vec!["--max-sequences".into(), "48".into()],
             },
+            &Children::default(),
         );
         assert!(matches!(reply, Reply::Command(7, Ok(_))), "{reply:?}");
         assert_eq!(
@@ -1821,6 +1876,7 @@ mod tests {
                     options: vec!["--max-sequences".into(), "48".into()],
                     environment,
                 },
+                &Children::default(),
             )
         };
         assert_eq!(
@@ -1860,6 +1916,7 @@ mod tests {
                     arguments: parse_command(COMMAND).unwrap(),
                     environment,
                 },
+                &Children::default(),
             )
         };
         let Reply::Check(9, Ok(checked)) = check(Vec::new()) else {
@@ -1881,7 +1938,7 @@ mod tests {
                 Err("chopinfer: --context-parallel-size 3 does not divide 4".into())
             )
         );
-        let missing = answer(&root.join("absent"), Request::Models);
+        let missing = answer(&root.join("absent"), Request::Models, &Children::default());
         assert!(
             matches!(&missing, Reply::Models(Err(error)) if error.contains("cannot run")),
             "{missing:?}"
@@ -1916,6 +1973,7 @@ mod tests {
                 &[("ROOT".into(), root.display().to_string())],
                 Duration::from_secs(1),
                 Duration::from_millis(150),
+                &Children::default(),
             );
             assert!(result.unwrap_err().contains("no answer within"));
             assert!(started.elapsed() < Duration::from_secs(10));
@@ -1953,7 +2011,14 @@ mod tests {
             ),
         );
         let started = Instant::now();
-        let error = run(&script, &[], &[], Duration::from_millis(200)).unwrap_err();
+        let error = run(
+            &script,
+            &[],
+            &[],
+            Duration::from_millis(200),
+            &Children::default(),
+        )
+        .unwrap_err();
         assert!(error.contains("no answer within"), "{error}");
         assert!(started.elapsed() < Duration::from_secs(10));
     }
@@ -1962,7 +2027,7 @@ mod tests {
     fn the_worker_answers_every_catalog_request_and_the_latest_command() {
         let root = scratch("worker");
         let (replies, received) = mpsc::channel();
-        let worker = Worker::spawn(fake_chopinfer(&root), replies);
+        let worker = Worker::spawn(fake_chopinfer(&root), replies, Children::default());
         worker.send(Request::Options);
         worker.send(Request::Models);
         worker.send(Request::Pick("/models/deepseek".into()));

@@ -203,6 +203,14 @@ impl Discovery {
         }
     }
 
+    /// Leaves out choptop's own `chopinfer` children and their groups.
+    pub fn exclude(&mut self, children: &crate::catalog::Children) {
+        self.processes = self
+            .processes
+            .take()
+            .map(|scanner| scanner.excluding(children.clone()));
+    }
+
     /// Every instance found now, at `now` seconds; notes worth an event go
     /// to `events`.
     pub fn scan(&mut self, now: f64, events: &mut Vec<String>) -> Vec<Found> {

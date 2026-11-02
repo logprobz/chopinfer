@@ -2305,6 +2305,147 @@ mod tests {
         }
     }
 
+    /// Writes `release` when dropped, so a fake waiting for it ends however
+    /// the test does.
+    struct Release(std::path::PathBuf);
+
+    impl Drop for Release {
+        fn drop(&mut self) {
+            let _ = std::fs::write(&self.0, "");
+        }
+    }
+
+    #[test]
+    fn choptops_own_check_is_neither_a_row_nor_a_reservation_while_it_runs() {
+        use crate::catalog::{Children, Worker};
+        use crate::discover::proc::ProcScanner;
+        let root = scratch("own-check");
+        // A copy of the shell named chopinfer runs `serve`, which notes its
+        // pid, waits for `release` and answers as `serve --check` does.
+        let fake = root.join("fake");
+        std::fs::create_dir_all(&fake).unwrap();
+        let copied = std::process::Command::new("cp")
+            .arg("/bin/sh")
+            .arg(fake.join("chopinfer"))
+            .status()
+            .unwrap();
+        assert!(copied.success());
+        std::fs::write(root.join("check.json"), CHECK).unwrap();
+        let root_shown = root.display();
+        write_script(
+            &fake.join("serve"),
+            &format!(
+                "{CLOSE}echo $$ > \"{root_shown}/pid.tmp\" && mv \"{root_shown}/pid.tmp\" \"{root_shown}/pid\"\nn=0\nwhile [ ! -e \"{root_shown}/release\" ] && [ $n -lt 200 ]; do sleep 0.05; n=$((n+1)); done\ncat \"{root_shown}/check.json\"\n"
+            ),
+        );
+        // What --chopinfer names: a wrapper that runs serve as its child,
+        // which is in the wrapper's process group, not its own.
+        let wrapper = root.join("chopinfer");
+        write_script(
+            &wrapper,
+            &format!(
+                "#!/bin/sh\n{CLOSE}cd \"{}\" || exit 1\n./chopinfer \"$@\"\nstatus=$?\nexit $status\n",
+                fake.display()
+            ),
+        );
+        let release = Release(root.join("release"));
+        let mut app = launching(&root, &wrapper);
+        app.catalog = crate::loader::tests::catalog();
+        app.catalog.binary = Ok(wrapper.clone());
+        app.live.scanning = true;
+        read_reports(&mut app, 1.0, Vec::new());
+        app.clock = 1.0;
+        let edits = [
+            (Key::ModelOption("prefill_upper_skip".into()), "false"),
+            (Key::Flag("max-sequences".into()), "48"),
+        ];
+        let mut start = deepseek(&edits);
+        start.command = [
+            "serve",
+            "--model",
+            "/models/deepseek",
+            "--tensor-parallel-size",
+            "4",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        let first = start.placement.instances[0].clone();
+        checking(&mut app, start.clone(), 1);
+        // `serve --check` runs with the launch's environment.
+        let children = Children::default();
+        let (replies, answers) = std::sync::mpsc::channel();
+        let worker = Worker::spawn(wrapper.clone(), replies, children.clone());
+        worker.send(Request::Check {
+            generation: 1,
+            arguments: command::arguments(&start.command, &first.listen()),
+            environment: command::environment(&start.explicit, &first.uuids),
+        });
+        wait_for(|| root.join("pid").exists());
+        let pid = std::fs::read_to_string(root.join("pid"))
+            .unwrap()
+            .trim()
+            .parse::<u32>()
+            .unwrap();
+        // To a scan that does not know it, it is serve loading on the picked
+        // GPUs, and its pid is not its group's.
+        let unknown = ProcScanner::new("/proc").scan();
+        let seen = unknown.iter().find(|process| process.pid == pid);
+        assert_eq!(
+            seen.map(|process| process.cuda_visible_devices.clone()),
+            Some(Some(first.uuids.join(","))),
+            "{unknown:#?}"
+        );
+        assert!(!children.contains(pid));
+        // choptop's scan lands while it runs: of this test's processes.
+        let found = ProcScanner::new("/proc")
+            .excluding(children.clone())
+            .scan()
+            .into_iter()
+            .filter(|process| process.pid == pid)
+            .map(Found::Process)
+            .collect::<Vec<_>>();
+        let followups = app.registry.reconcile(found.clone(), 2.0);
+        app.live.scan(&crate::discover::Report::Scan {
+            found,
+            events: Vec::new(),
+            started: 2.0,
+        });
+        poll(&mut app, 2.0, &[], Vec::new());
+        app.clock = 2.0;
+        app.supervise(2.0);
+        // It answers, and the start goes on to its dialog on the GPUs and
+        // port it picked.
+        drop(release);
+        let reply = answers
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        assert!(!children.contains(pid));
+        app.catalog_reply(reply);
+        let Some(Dialog::Start(dialog)) = &app.dialog else {
+            panic!("{:?}\n{:#?}", app.loader.flash, events(&app))
+        };
+        assert_eq!(dialog.start.placement.instances[0].port, first.port);
+        assert_eq!(dialog.start.placement.instances[0].gpus, [0, 1, 2, 3]);
+        // It was never a row, an event, a reservation or a port's holder.
+        assert!(app.registry.instances.is_empty(), "{followups:?}");
+        assert!(app.registry.events.is_empty(), "{:#?}", events(&app));
+        let reservations = app.launches.reservations();
+        let inputs = occupancy::Inputs {
+            live: &app.live,
+            instances: &app.registry.instances,
+            reservations: &reservations,
+            waited: &[],
+            interval: app.interval,
+            now: 2.0,
+        };
+        assert!(
+            occupancy::occupancy(&inputs)
+                .iter()
+                .all(|gpu| gpu.occupancy == occupancy::Occupancy::Free)
+        );
+        assert!(!occupancy::ports(&inputs).contains_key(&first.port));
+    }
+
     #[test]
     fn waiting_launches_hold_on_unknown_readings_and_cancel_on_new_owners() {
         for change in ["blocked", "new launch"] {

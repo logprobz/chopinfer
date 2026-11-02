@@ -107,6 +107,8 @@ struct Workers {
     /// first request.
     catalog: Option<catalog::Worker>,
     catalog_replies: Sender<catalog::Reply>,
+    /// Those threads' children while they run, which discovery leaves out.
+    children: catalog::Children,
 }
 
 impl Workers {
@@ -194,7 +196,11 @@ impl Workers {
             return;
         };
         let worker = self.catalog.get_or_insert_with(|| {
-            catalog::Worker::spawn(binary.clone(), self.catalog_replies.clone())
+            catalog::Worker::spawn(
+                binary.clone(),
+                self.catalog_replies.clone(),
+                self.children.clone(),
+            )
         });
         for request in requests {
             worker.send(request);
@@ -297,7 +303,9 @@ pub fn run(setup: Setup) -> io::Result<()> {
     let (results, poll_results) = mpsc::channel();
     let (reports_sender, reports) = mpsc::channel::<Report>();
     let mut live = Live::default();
-    let commands = setup.discovery.map(|discovery| {
+    let children = catalog::Children::default();
+    let commands = setup.discovery.map(|mut discovery| {
+        discovery.exclude(&children);
         let (commands, receiver) = mpsc::channel();
         discover::spawn(
             discovery,
@@ -326,6 +334,7 @@ pub fn run(setup: Setup) -> io::Result<()> {
         limit_reported: false,
         catalog: None,
         catalog_replies,
+        children,
     };
     // Launches an earlier choptop started that still run keep their rows,
     // GPUs and port. A read-only choptop has no launches.
@@ -587,6 +596,7 @@ mod tests {
             limit_reported: false,
             catalog: None,
             catalog_replies,
+            children: catalog::Children::default(),
         };
         workers.follow(
             &mut registry,

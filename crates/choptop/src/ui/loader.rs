@@ -203,9 +203,8 @@ fn replacing(app: &App) -> Vec<String> {
         .stops
         .iter()
         .map(|serve| serve.label())
-        .chain(placement.replaces.iter().filter_map(|position| {
-            app.reservations
-                .get(*position)
+        .chain(placement.replaces.iter().filter_map(|id| {
+            crate::launch::reserved(&app.reservations, *id)
                 .map(|reservation| sanitize(&reservation.label))
         }))
         .collect()
@@ -599,9 +598,7 @@ fn placement_pane(buffer: &mut Buffer, app: &App, area: Area, alone_: bool) {
                     .iter()
                     .map(|holder| match holder {
                         Holder::Serve(serve) => serve.described(),
-                        Holder::Launch(position) => app
-                            .reservations
-                            .get(*position)
+                        Holder::Launch(id) => crate::launch::reserved(&app.reservations, *id)
                             .map_or_else(String::new, |launch| {
                                 sanitize(&format!("{} {}", launch.label, launch.model))
                             }),
@@ -610,7 +607,7 @@ fn placement_pane(buffer: &mut Buffer, app: &App, area: Area, alone_: bool) {
                     .join(", "),
                 if holders.iter().any(|holder| match holder {
                     Holder::Serve(serve) => placement.stops.contains(serve),
-                    Holder::Launch(position) => placement.replaces.contains(position),
+                    Holder::Launch(id) => placement.replaces.contains(id),
                 }) {
                     Color::Yellow
                 } else {

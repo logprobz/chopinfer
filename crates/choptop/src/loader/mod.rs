@@ -2176,14 +2176,14 @@ pub(crate) mod tests {
         );
         let placement = &loader.plan.placement;
         // Both launches are replaced: A is cancelled, B stopped.
-        assert_eq!(placement.replaces, [0, 1]);
+        assert_eq!(placement.replaces, [1, 2]);
         assert!(reservations[0].waiting() && !reservations[1].waiting());
         assert_eq!(
             placement.instances[0].after,
             [
                 Dependency::Serve(placement.stops[0].clone()),
-                Dependency::Launch(0),
                 Dependency::Launch(1),
+                Dependency::Launch(2),
             ]
         );
         // The pending launches' ports stay theirs; 48211's is reused.

@@ -175,8 +175,8 @@ impl Serve {
 pub enum Holder {
     /// A serve process of this user, stopped before the launch starts.
     Serve(Serve),
-    /// A pending choptop launch, by its position among the reservations.
-    Launch(usize),
+    /// A pending choptop launch, by its launch id.
+    Launch(u64),
 }
 
 /// Who holds one GPU.
@@ -210,7 +210,8 @@ pub struct Gpu {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PortHolder {
     Serve(Serve),
-    Launch(usize),
+    /// A pending choptop launch, by its launch id.
+    Launch(u64),
     /// Something choptop does not stop, and what.
     Other(String),
 }
@@ -272,13 +273,16 @@ impl Inputs<'_> {
             .collect()
     }
 
-    /// The reservation whose started process is `pid`.
-    fn launch_of(&self, pid: u32, start_ticks: Option<u64>) -> Option<usize> {
-        self.reservations.iter().position(|reservation| {
-            reservation.process.is_some_and(|(seen, ticks)| {
-                seen == pid && start_ticks.is_none_or(|start| start == ticks)
+    /// The launch id of the reservation whose started process is `pid`.
+    fn launch_of(&self, pid: u32, start_ticks: Option<u64>) -> Option<u64> {
+        self.reservations
+            .iter()
+            .find(|reservation| {
+                reservation.process.is_some_and(|(seen, ticks)| {
+                    seen == pid && start_ticks.is_none_or(|start| start == ticks)
+                })
             })
-        })
+            .map(|reservation| reservation.launch)
     }
 
     /// The container row named `id`, as `docker glm-tp4`.
@@ -378,16 +382,17 @@ pub fn occupancy(inputs: &Inputs) -> Vec<Gpu> {
         })
         .collect::<Vec<_>>();
     // Pending launches hold their GPUs before their processes show.
-    for (position, reservation) in inputs.reservations.iter().enumerate() {
+    for reservation in inputs.reservations {
+        let launch = reservation.launch;
         for gpu in gpus.iter_mut().filter(|gpu| {
             gpu.uuid
                 .as_ref()
                 .is_some_and(|uuid| reservation.gpus.contains(uuid))
         }) {
             match &mut gpu.occupancy {
-                Occupancy::Free => gpu.occupancy = Occupancy::Held(vec![Holder::Launch(position)]),
-                Occupancy::Held(holders) if !holders.contains(&Holder::Launch(position)) => {
-                    holders.push(Holder::Launch(position));
+                Occupancy::Free => gpu.occupancy = Occupancy::Held(vec![Holder::Launch(launch)]),
+                Occupancy::Held(holders) if !holders.contains(&Holder::Launch(launch)) => {
+                    holders.push(Holder::Launch(launch));
                 }
                 _ => {}
             }
@@ -456,8 +461,8 @@ fn holders(inputs: &Inputs, serves: &[Serve], processes: &[Process]) -> (Occupan
     let mut graphics = Vec::new();
     for process in processes {
         let owner = &process.owner;
-        if let Some(position) = inputs.launch_of(process.pid, owner.start_ticks) {
-            holders.push(Holder::Launch(position));
+        if let Some(launch) = inputs.launch_of(process.pid, owner.start_ticks) {
+            holders.push(Holder::Launch(launch));
         } else if let Some(serve) = serves
             .iter()
             .find(|serve| serve.pid == process.pid && owner.start_ticks == Some(serve.start_ticks))
@@ -503,14 +508,14 @@ pub fn ports(inputs: &Inputs) -> BTreeMap<u16, PortHolder> {
         .flat_map(|(_, processes)| processes.iter().map(|process| process.pid))
         .collect::<Vec<_>>();
     let mut ports = BTreeMap::new();
-    for (position, reservation) in inputs.reservations.iter().enumerate() {
+    for reservation in inputs.reservations {
         ports
             .entry(reservation.port)
-            .or_insert(PortHolder::Launch(position));
+            .or_insert(PortHolder::Launch(reservation.launch));
     }
     for serve in inputs.serves(&holding) {
         let holder = match inputs.launch_of(serve.pid, Some(serve.start_ticks)) {
-            Some(position) => PortHolder::Launch(position),
+            Some(launch) => PortHolder::Launch(launch),
             None => PortHolder::Serve(serve.clone()),
         };
         for port in &serve.ports {
@@ -917,15 +922,15 @@ pub(crate) mod tests {
         assert_eq!(
             held,
             [
-                Occupancy::Held(vec![Holder::Launch(0)]),
-                Occupancy::Held(vec![Holder::Launch(0)]),
-                Occupancy::Held(vec![Holder::Launch(1)]),
-                Occupancy::Held(vec![Holder::Launch(1)]),
+                Occupancy::Held(vec![Holder::Launch(8310)]),
+                Occupancy::Held(vec![Holder::Launch(8310)]),
+                Occupancy::Held(vec![Holder::Launch(8311)]),
+                Occupancy::Held(vec![Holder::Launch(8311)]),
             ]
         );
         let ports = ports(&inputs);
-        assert_eq!(ports[&8310], PortHolder::Launch(0));
-        assert_eq!(ports[&8311], PortHolder::Launch(1));
+        assert_eq!(ports[&8310], PortHolder::Launch(8310));
+        assert_eq!(ports[&8311], PortHolder::Launch(8311));
         // Once its process holds the GPUs it is still that launch.
         live.gpu(&polled(
             2.0,
@@ -943,7 +948,10 @@ pub(crate) mod tests {
             interval: 1.0,
             now: 2.0,
         });
-        assert_eq!(gpus[2].occupancy, Occupancy::Held(vec![Holder::Launch(1)]));
+        assert_eq!(
+            gpus[2].occupancy,
+            Occupancy::Held(vec![Holder::Launch(8311)])
+        );
     }
 
     #[test]

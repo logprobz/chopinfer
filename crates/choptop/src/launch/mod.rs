@@ -56,6 +56,13 @@ impl Reservation {
     }
 }
 
+/// The reservation of launch `id` among `reservations`.
+pub fn reserved(reservations: &[Reservation], id: u64) -> Option<&Reservation> {
+    reservations
+        .iter()
+        .find(|reservation| reservation.launch == id)
+}
+
 /// What a launch waits for before it starts.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Wait {

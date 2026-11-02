@@ -10,18 +10,47 @@ use super::occupancy::{Gpu, Holder, Occupancy, Serve};
 use super::placement::{Dependency, Placement};
 use super::process::{Identity, stamp};
 use super::records::Record;
-use super::{Queued, Reservation, Wait, indices};
+use super::{Queued, Reservation, Wait, indices, reserved};
 use crate::catalog::{Catalog, Check, Profile};
 use crate::loader::Start;
 
-/// What a change between the start checked and the fresh reading means:
-/// GPUs newly held, ports moved, launches to replace. Problems of the new
-/// placement are the loader's, given before these.
-pub fn changed(before: &Placement, after: &Placement) -> Vec<String> {
+/// What changed between the placement a start was confirmed or checked
+/// with and the one a later reading gives: serve processes newly holding a
+/// GPU picked or gone from them, launches to replace by id, ports moved,
+/// and what each instance waits for. Problems of the new placement are
+/// the loader's, given before these. `reservations` name the launches.
+pub fn changed(before: &Placement, after: &Placement, reservations: &[Reservation]) -> Vec<String> {
+    let launch = |id: &u64| {
+        reserved(reservations, *id).map_or_else(
+            || "a launch that has ended".to_owned(),
+            |reservation| reservation.label.clone(),
+        )
+    };
     let mut changes = Vec::new();
     for serve in &after.stops {
         if !before.stops.contains(serve) {
             changes.push(format!("{} newly holds a GPU picked", serve.described()));
+        }
+    }
+    for serve in &before.stops {
+        if !after.stops.contains(serve) {
+            changes.push(format!(
+                "{} no longer holds a GPU picked",
+                serve.described()
+            ));
+        }
+    }
+    for id in &after.replaces {
+        if !before.replaces.contains(id) {
+            changes.push(format!("{} newly holds a GPU or port picked", launch(id)));
+        }
+    }
+    for id in &before.replaces {
+        if !after.replaces.contains(id) {
+            changes.push(format!(
+                "{} no longer holds a GPU or port picked",
+                launch(id)
+            ));
         }
     }
     for planned in &after.instances {
@@ -30,16 +59,28 @@ pub fn changed(before: &Placement, after: &Placement) -> Vec<String> {
             .iter()
             .find(|seen| seen.letter == planned.letter)
         {
+            Some(seen) if seen.gpus != planned.gpus || seen.uuids != planned.uuids => {
+                changes.push(format!("instance {}'s GPUs changed", planned.letter));
+            }
             Some(seen) if seen.port != planned.port => changes.push(format!(
                 "port {} is taken now, so {} would listen on {}",
                 seen.port, planned.letter, planned.port
             )),
+            Some(seen) if seen.after != planned.after => {
+                changes.push(format!("what {} waits for changed", planned.letter))
+            }
             Some(_) => {}
             None => changes.push(format!("instance {} is new", planned.letter)),
         }
     }
-    if after.replaces.len() != before.replaces.len() {
-        changes.push("the launches it replaces changed".to_owned());
+    for seen in &before.instances {
+        if !after
+            .instances
+            .iter()
+            .any(|planned| planned.letter == seen.letter)
+        {
+            changes.push(format!("instance {} is gone", seen.letter));
+        }
     }
     changes
 }
@@ -220,8 +261,9 @@ pub struct Reading<'a> {
     pub wall: u64,
 }
 
-/// The confirm dialog of `start`.
-pub fn confirm(start: Box<Start>, reading: &Reading) -> Confirm {
+/// The confirm dialog of `start`, or why it cannot open: a launch the
+/// placement replaces or waits for has ended since the placement was read.
+pub fn confirm(start: Box<Start>, reading: &Reading) -> Result<Confirm, String> {
     let catalog = reading.catalog;
     let model = catalog.model(&start.model);
     let profile = catalog.profile(&start.model, &start.profile);
@@ -243,19 +285,30 @@ pub fn confirm(start: Box<Start>, reading: &Reading) -> Confirm {
             )
         })
         .collect();
+    // A launch the start replaces that has ended since its placement was
+    // worked out is no reason to go on with that placement.
+    let ended = |_: &u64| {
+        "a launch this start replaces has ended since its placement was read; press S again"
+            .to_owned()
+    };
     let target = |dependency: &Dependency| match dependency {
-        Dependency::Serve(serve) => Some(Target::Serve(serve.clone())),
-        Dependency::Launch(position) => reading
-            .reservations
-            .get(*position)
-            .map(|reservation| Target::Launch(reservation.launch)),
+        Dependency::Serve(serve) => Ok(Target::Serve(serve.clone())),
+        Dependency::Launch(id) => reserved(reading.reservations, *id)
+            .map(|reservation| Target::Launch(reservation.launch))
+            .ok_or_else(|| ended(id)),
     };
     let waits = start
         .placement
         .instances
         .iter()
-        .map(|planned| planned.after.iter().filter_map(target).collect())
-        .collect();
+        .map(|planned| {
+            planned
+                .after
+                .iter()
+                .map(target)
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let mut stops = Vec::new();
     for serve in &start.placement.stops {
         let how = if (reading.stopping)(serve.pid, serve.start_ticks) {
@@ -271,15 +324,13 @@ pub fn confirm(start: Box<Start>, reading: &Reading) -> Confirm {
             how: how.to_owned(),
         });
     }
-    for position in &start.placement.replaces {
-        let Some(reservation) = reading.reservations.get(*position) else {
-            continue;
-        };
+    for id in &start.placement.replaces {
+        let reservation = reserved(reading.reservations, *id).ok_or_else(|| ended(id))?;
         stops.push(Stopping {
             target: Target::Launch(reservation.launch),
             label: reservation.label.clone(),
             model: reservation.model.clone(),
-            gpus: held_by(reading.gpus, &Holder::Launch(*position)),
+            gpus: held_by(reading.gpus, &Holder::Launch(*id)),
             how: if reservation.waiting() {
                 "cancelled before it starts"
             } else {
@@ -324,7 +375,7 @@ pub fn confirm(start: Box<Start>, reading: &Reading) -> Confirm {
         }
     }
     let gib = |bytes: u64| bytes as f64 / f64::from(1u32 << 30);
-    Confirm {
+    Ok(Confirm {
         tensor_parallel: profile.map_or(1, |profile| profile.tensor_parallel),
         qualification: profile
             .filter(|profile| profile.qualified_max_sequences.is_none())
@@ -344,7 +395,7 @@ pub fn confirm(start: Box<Start>, reading: &Reading) -> Confirm {
         stops,
         warnings,
         start,
-    }
+    })
 }
 
 /// The instances `confirm` queues: their records, command lines and what
@@ -507,18 +558,103 @@ mod tests {
         }
     }
 
+    fn reservation(launch: u64, label: &str) -> Reservation {
+        Reservation {
+            label: label.into(),
+            model: "Qwen3.8-Flash".into(),
+            gpus: Vec::new(),
+            port: 8310,
+            process: None,
+            launch,
+        }
+    }
+
     #[test]
-    fn a_fresh_reading_names_gpus_newly_held_and_ports_taken() {
+    fn a_fresh_reading_names_every_change_to_the_placement() {
         let before = placement(&[48211], &[8310, 8311]);
-        assert!(changed(&before, &before.clone()).is_empty());
+        assert!(changed(&before, &before.clone(), &[]).is_empty());
         assert_eq!(
-            changed(&before, &placement(&[48211, 61204], &[8310, 8312])),
+            changed(&before, &placement(&[48211, 61204], &[8310, 8312]), &[]),
             [
                 "proc 61204 MiMo-V2.6-Flash newly holds a GPU picked",
                 "port 8311 is taken now, so B would listen on 8312",
             ]
         );
-        // A process that has left the GPUs is no reason to stop.
-        assert!(changed(&before, &placement(&[], &[8310, 8311])).is_empty());
+        // A process that has left the GPUs changes what the start does.
+        assert_eq!(
+            changed(&before, &placement(&[], &[8310, 8311]), &[]),
+            ["proc 48211 MiMo-V2.6-Flash no longer holds a GPU picked"]
+        );
+        // The launches replaced are compared by id, not by how many.
+        let reservations = [reservation(7, "launch A"), reservation(9, "launch B")];
+        let mut first = before.clone();
+        first.replaces = vec![7];
+        let mut second = before.clone();
+        second.replaces = vec![9];
+        assert_eq!(
+            changed(&first, &second, &reservations),
+            [
+                "launch B newly holds a GPU or port picked",
+                "launch A no longer holds a GPU or port picked",
+            ]
+        );
+        // So is what each instance waits for.
+        second.replaces = vec![7];
+        second.instances[0].after = vec![Dependency::Launch(7)];
+        assert_eq!(
+            changed(&first, &second, &reservations),
+            ["what A waits for changed"]
+        );
+    }
+
+    /// The dialog of a start that replaces launch 9 and waits for it.
+    fn replacing_nine(reservations: &[Reservation]) -> Result<Confirm, String> {
+        let mut placement = placement(&[], &[8310]);
+        placement.replaces = vec![9];
+        placement.instances[0].after = vec![Dependency::Launch(9)];
+        let start = Start {
+            model: "qwen38".into(),
+            profile: "tp2-mtp".into(),
+            placement,
+            command: vec!["serve".into()],
+            explicit: command::Explicit::default(),
+            choice: crate::loader::Choice::default(),
+        };
+        let check = Check {
+            profile: "tp2-mtp".into(),
+            settings: BTreeMap::new(),
+            model_options: Vec::new(),
+            warnings: Vec::new(),
+        };
+        confirm(
+            Box::new(start),
+            &Reading {
+                catalog: &Catalog::none(),
+                check: &check,
+                gpus: &[],
+                reservations,
+                stopping: &|_, _| false,
+                warnings: Vec::new(),
+                memory: None,
+                wall: 0,
+            },
+        )
+    }
+
+    #[test]
+    fn a_launch_that_ends_during_the_check_moves_no_dependency_to_another() {
+        // Launch 7 ended while serve --check ran, so launch 9 is now first
+        // among the reservations: the dialog still names launch 9.
+        let confirm = replacing_nine(&[reservation(9, "launch B")]).unwrap();
+        assert_eq!(confirm.waits, [vec![Target::Launch(9)]]);
+        assert_eq!(confirm.stops.len(), 1);
+        assert_eq!(
+            (&confirm.stops[0].target, confirm.stops[0].label.as_str()),
+            (&Target::Launch(9), "launch B")
+        );
+        // A replaced launch that ended refuses the start rather than
+        // dropping what it waits for.
+        let refused = replacing_nine(&[reservation(7, "launch A")]).unwrap_err();
+        assert!(refused.contains("has ended"), "{refused}");
     }
 }

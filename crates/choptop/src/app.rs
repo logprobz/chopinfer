@@ -425,7 +425,7 @@ impl App {
             Ok(fresh) => fresh,
             Err(why) => return self.refuse_start(&why),
         };
-        let changes = switch::changed(&start.placement, &fresh.placement);
+        let changes = switch::changed(&start.placement, &fresh.placement, &self.reservations);
         if !changes.is_empty() {
             return self.refuse_start(&format!(
                 "{}; check the placement and press S again",
@@ -492,7 +492,10 @@ impl App {
                 wall: (self.wall)(),
             },
         );
-        self.dialog = Some(Dialog::Start(Box::new(confirm)));
+        match confirm {
+            Ok(confirm) => self.dialog = Some(Dialog::Start(Box::new(confirm))),
+            Err(why) => self.refuse_start(&why),
+        }
     }
 
     /// Notes why row `row` is not stopped.

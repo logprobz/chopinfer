@@ -18,9 +18,8 @@ use crate::discover::DEFAULT_LISTEN;
 pub enum Dependency {
     /// A serve process this switch stops.
     Serve(Serve),
-    /// A pending launch this switch cancels or stops, by its position
-    /// among the reservations.
-    Launch(usize),
+    /// A pending launch this switch cancels or stops, by its launch id.
+    Launch(u64),
 }
 
 /// One instance of a launch.
@@ -51,8 +50,8 @@ pub struct Placement {
     pub instances: Vec<Planned>,
     /// Serve processes stopped first, in GPU order.
     pub stops: Vec<Serve>,
-    /// Pending launches replaced, by position among the reservations.
-    pub replaces: Vec<usize>,
+    /// Pending launches replaced, by launch id.
+    pub replaces: Vec<u64>,
     /// Why the GPUs picked make no instances: none, or not a whole number
     /// of groups.
     pub grouping: Option<String>,
@@ -84,9 +83,7 @@ impl Field<'_> {
     fn port_holder(&self, holder: &PortHolder) -> String {
         match holder {
             PortHolder::Serve(serve) => serve.label(),
-            PortHolder::Launch(position) => self
-                .reservations
-                .get(*position)
+            PortHolder::Launch(id) => super::reserved(self.reservations, *id)
                 .map_or_else(|| "a launch".to_owned(), |launch| launch.label.clone()),
             PortHolder::Other(what) => what.clone(),
         }
@@ -138,11 +135,11 @@ pub fn place(
                             }
                             after.push(Dependency::Serve(serve.clone()));
                         }
-                        Holder::Launch(position) => {
-                            if !placement.replaces.contains(position) {
-                                placement.replaces.push(*position);
+                        Holder::Launch(id) => {
+                            if !placement.replaces.contains(id) {
+                                placement.replaces.push(*id);
                             }
-                            after.push(Dependency::Launch(*position));
+                            after.push(Dependency::Launch(*id));
                         }
                     }
                 }
@@ -195,13 +192,11 @@ pub fn place(
                     }
                     break Some(port);
                 }
-                Some(PortHolder::Launch(position))
-                    if named || placement.replaces.contains(position) =>
-                {
-                    if !placement.replaces.contains(position) {
-                        placement.replaces.push(*position);
+                Some(PortHolder::Launch(id)) if named || placement.replaces.contains(id) => {
+                    if !placement.replaces.contains(id) {
+                        placement.replaces.push(*id);
                     }
-                    let dependency = Dependency::Launch(*position);
+                    let dependency = Dependency::Launch(*id);
                     if !after.contains(&dependency) {
                         after.push(dependency);
                     }
@@ -404,14 +399,14 @@ mod tests {
             },
         ];
         let gpus = vec![
-            gpu(0, Occupancy::Held(vec![Holder::Launch(0)])),
-            gpu(1, Occupancy::Held(vec![Holder::Launch(0)])),
-            gpu(2, Occupancy::Held(vec![Holder::Launch(1)])),
-            gpu(3, Occupancy::Held(vec![Holder::Launch(1)])),
+            gpu(0, Occupancy::Held(vec![Holder::Launch(1)])),
+            gpu(1, Occupancy::Held(vec![Holder::Launch(1)])),
+            gpu(2, Occupancy::Held(vec![Holder::Launch(2)])),
+            gpu(3, Occupancy::Held(vec![Holder::Launch(2)])),
         ];
         let mut ports = BTreeMap::new();
-        ports.insert(8310, PortHolder::Launch(0));
-        ports.insert(8311, PortHolder::Launch(1));
+        ports.insert(8310, PortHolder::Launch(1));
+        ports.insert(8311, PortHolder::Launch(2));
         let field = Field {
             gpus: &gpus,
             ports: &ports,
@@ -421,9 +416,9 @@ mod tests {
         // A second start on the waiting launch's GPUs replaces it, and
         // takes its port; the starting one's port is skipped.
         let placement = place(&field, &picked(&[0, 1]), 2, None, &mut free);
-        assert_eq!(placement.replaces, [0]);
+        assert_eq!(placement.replaces, [1]);
         assert_eq!(placement.instances[0].port, 8310);
-        assert_eq!(placement.instances[0].after, [Dependency::Launch(0)]);
+        assert_eq!(placement.instances[0].after, [Dependency::Launch(1)]);
         // Naming the starting launch's port replaces it too.
         let named = place(
             &field,
@@ -432,14 +427,14 @@ mod tests {
             Some("127.0.0.1:8311"),
             &mut free,
         );
-        assert_eq!(named.replaces, [0, 1]);
+        assert_eq!(named.replaces, [1, 2]);
         assert!(named.problems.is_empty());
         // Both launches, on all four GPUs.
         let both = place(&field, &picked(&[0, 1, 2, 3]), 4, None, &mut free);
-        assert_eq!(both.replaces, [0, 1]);
+        assert_eq!(both.replaces, [1, 2]);
         assert_eq!(
             both.instances[0].after,
-            [Dependency::Launch(0), Dependency::Launch(1)]
+            [Dependency::Launch(1), Dependency::Launch(2)]
         );
     }
 

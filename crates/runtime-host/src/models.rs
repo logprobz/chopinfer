@@ -6,6 +6,7 @@ use crate::command::HostCommandErrorV1;
 use crate::preparation::InstalledHelper;
 use crate::profiles::{Profile, Profiles, Status};
 use serde_json::{Value, json};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub(crate) const MODELS_USAGE_V1: &str = "models --json | models pick --model DIR --json | models command --model DIR \
@@ -112,8 +113,8 @@ fn take<'a>(
 
 /// `models pick --model DIR --json`: the model whose helper accepts the
 /// checkpoint, and for each rank count its profiles serve, the profile
-/// `serve --model` picks (or the helper's refusal) and how each other
-/// profile at that count is served over it, or why it cannot be.
+/// `serve --model` picks (or its refusal) and how each other profile at
+/// that count is served over it, or why it cannot be.
 fn pick_v1(arguments: &[String]) -> Result<String, HostCommandErrorV1> {
     let (mut model, mut json) = (None, false);
     let mut index = 0;
@@ -131,6 +132,49 @@ fn pick_v1(arguments: &[String]) -> Result<String, HostCommandErrorV1> {
     if !json {
         return Err(usage("models pick prints JSON: add --json"));
     }
+    let executable = std::env::current_exe().map_err(failure)?;
+    pick_document(Path::new(model), &executable)
+}
+
+/// The helper beside `executable` that `serve --model` selects for the
+/// checkpoint directory `checkpoint`, at the default rank count or else at
+/// the first other count an installed family declares, with the refusal of
+/// each count it was refused at. When none accepts it, the refusal at the
+/// default count.
+fn checkpoint_family(
+    checkpoint: &Path,
+    executable: &Path,
+) -> Result<(InstalledHelper, BTreeMap<u32, String>), String> {
+    let default = crate::preparation::DEFAULT_TENSOR_PARALLEL_SIZE;
+    let select = |ranks| {
+        crate::preparation::checkpoint_helper_with_executable(checkpoint, ranks, executable)
+            .map_err(|e| e.to_string())
+    };
+    let mut refusals = BTreeMap::new();
+    match select(default) {
+        Ok(helper) => return Ok((helper, refusals)),
+        Err(refusal) => refusals.insert(default, refusal),
+    };
+    let declared: BTreeSet<u32> = crate::preparation::installed_helpers_with_executable(executable)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|helper| serving_profiles(helper).ok())
+        .flat_map(|file| file.profiles.into_values())
+        .filter_map(|profile| u32::try_from(profile.tensor_parallel).ok())
+        .filter(|&ranks| ranks != default)
+        .collect();
+    for ranks in declared {
+        match select(ranks) {
+            Ok(helper) => return Ok((helper, refusals)),
+            Err(refusal) => refusals.insert(ranks, refusal),
+        };
+    }
+    Err(refusals.remove(&default).unwrap_or_default())
+}
+
+/// The `models pick` document of the checkpoint directory `checkpoint`,
+/// over the helpers installed beside `executable`.
+fn pick_document(checkpoint: &Path, executable: &Path) -> Result<String, HostCommandErrorV1> {
     let document = |model: Option<&str>, refusal: Option<String>, sizes: Vec<Value>| {
         json!({
             "schema": "chopinfer.models-pick.v1",
@@ -140,13 +184,9 @@ fn pick_v1(arguments: &[String]) -> Result<String, HostCommandErrorV1> {
         })
         .to_string()
     };
-    let checkpoint = Path::new(model);
-    let helper = match crate::preparation::checkpoint_helper(
-        checkpoint,
-        crate::preparation::DEFAULT_TENSOR_PARALLEL_SIZE,
-    ) {
-        Ok(helper) => helper,
-        Err(error) => return Ok(document(None, Some(error.to_string()), Vec::new())),
+    let (helper, refusals) = match checkpoint_family(checkpoint, executable) {
+        Ok(found) => found,
+        Err(refusal) => return Ok(document(None, Some(refusal), Vec::new())),
     };
     let name = helper.model().map_err(failure)?.to_owned();
     let file = match serving_profiles(&helper) {
@@ -159,7 +199,7 @@ fn pick_v1(arguments: &[String]) -> Result<String, HostCommandErrorV1> {
             ));
         }
     };
-    let sizes: std::collections::BTreeSet<usize> = file
+    let sizes: BTreeSet<usize> = file
         .profiles
         .values()
         .map(|profile| profile.tensor_parallel)
@@ -167,10 +207,13 @@ fn pick_v1(arguments: &[String]) -> Result<String, HostCommandErrorV1> {
     let sizes = sizes
         .into_iter()
         .map(|size| {
+            // A count every helper refused keeps serve's refusal.
             let picked = u32::try_from(size)
-                .map_err(Into::into)
-                .and_then(|ranks| helper.profile(checkpoint, ranks))
-                .map_err(|e| e.to_string());
+                .map_err(|e| e.to_string())
+                .and_then(|ranks| match refusals.get(&ranks) {
+                    Some(refusal) => Err(refusal.clone()),
+                    None => helper.profile(checkpoint, ranks).map_err(|e| e.to_string()),
+                });
             pick_size(picked, &file, size)
         })
         .collect();
@@ -656,5 +699,103 @@ mod tests {
         assert_eq!(ar["qualified_max_sequences"], 64);
         assert_eq!(ar["settings"]["speculative-tokens"], "0");
         assert!(ar["settings"].get("speculation").is_none());
+    }
+
+    /// An install beside a host binary with one fake helper,
+    /// `chopinfer-model-duo`, whose family serves the `family()` profiles
+    /// `names` and accepts the checkpoint only at two ranks; it names the
+    /// pick at each count it is asked about.
+    fn duo(label: &str, names: &[&str]) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("models-pick-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(bin.join("chopinfer"), b"").unwrap();
+        let mut document = family();
+        document["profiles"]
+            .as_object_mut()
+            .unwrap()
+            .retain(|name, _| names.contains(&name.as_str()));
+        let selected = |name: &str| {
+            json!({"result": "direct-profile-selected", "name": name,
+                   "profile": family()["profiles"][name]})
+        };
+        let script = format!(
+            "#!/bin/sh\nif [ \"$1\" = serving-profiles ]; then printf '%s' '{document}'; exit 0; fi\n\
+             read -r request\ncase \"$request\" in\n\
+             *'\"describe\"'*) echo '{{\"result\":\"description\",\"version\":2,\
+             \"provider\":\"chopinfer-model-duo\",\"profiles\":[],\
+             \"capabilities\":[\"prepare-direct\",\"direct-profile\"]}}' ;;\n\
+             *'\"probe\"'*) case \"$request\" in\n\
+             *'\"tensor_parallel_size\":2'*) echo '{{\"result\":\"probe\",\"compatible\":true,\
+             \"reason\":\"compatible\"}}' ;;\n\
+             *) echo '{{\"result\":\"probe\",\"compatible\":false,\
+             \"reason\":\"duo needs two ranks\"}}' ;;\nesac ;;\n\
+             *'\"tensor_parallel_size\":2'*) echo '{}' ;;\n\
+             *'\"direct-profile\"'*) echo '{}' ;;\nesac\n",
+            selected("tp2-ar"),
+            selected("tp4-ar"),
+        );
+        let helper = bin.join("chopinfer-model-duo");
+        std::fs::write(&helper, script).unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let checkpoint = root.join("checkpoint");
+        std::fs::create_dir_all(&checkpoint).unwrap();
+        std::fs::write(
+            checkpoint.join("config.json"),
+            r#"{"architectures": ["DuoForCausalLM"]}"#,
+        )
+        .unwrap();
+        root
+    }
+
+    fn pick(root: &Path) -> Value {
+        let document =
+            pick_document(&root.join("checkpoint"), &root.join("bin/chopinfer")).unwrap();
+        serde_json::from_str(&document).unwrap()
+    }
+
+    /// A family that serves a checkpoint only at a count other than the
+    /// default is found at that count; a count every helper refused keeps
+    /// serve's refusal though the helper would name a profile there.
+    #[test]
+    fn a_pick_finds_a_family_at_the_rank_counts_it_serves() {
+        let root = duo("two", &["tp2-ar"]);
+        let document = pick(&root);
+        assert_eq!(document["model"], "duo", "{document}");
+        assert!(document["refusal"].is_null());
+        let sizes = document["sizes"].as_array().unwrap();
+        assert_eq!(sizes.len(), 1);
+        assert_eq!(sizes[0]["tensor_parallel"], 2);
+        assert_eq!(sizes[0]["pick"], "tp2-ar");
+        std::fs::remove_dir_all(root).unwrap();
+
+        let root = duo("both", &["tp2-ar", "tp4-ar"]);
+        let document = pick(&root);
+        assert_eq!(document["model"], "duo", "{document}");
+        let sizes = document["sizes"].as_array().unwrap();
+        assert_eq!(sizes[0]["pick"], "tp2-ar");
+        assert_eq!(sizes[1]["tensor_parallel"], 4);
+        assert!(sizes[1]["pick"].is_null());
+        let refusal = sizes[1]["refusal"].as_str().unwrap();
+        assert!(
+            refusal.contains("--tensor-parallel-size 4") && refusal.contains("duo needs two ranks"),
+            "{refusal}"
+        );
+        assert_eq!(sizes[1]["profiles"][0]["available"], false);
+        std::fs::remove_dir_all(root).unwrap();
+
+        // Refused at every count: the refusal at the default count.
+        let root = duo("none", &["tp4-ar"]);
+        let document = pick(&root);
+        assert!(document["model"].is_null());
+        let refusal = document["refusal"].as_str().unwrap();
+        assert!(
+            refusal.contains("--tensor-parallel-size 4") && refusal.contains("duo needs two ranks"),
+            "{refusal}"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

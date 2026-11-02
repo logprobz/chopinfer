@@ -32,13 +32,16 @@ chopinfer serve --model "$CHOPINFER_MIMO_CHECKPOINT" --tensor-parallel-size 4 --
   effective settings `serve --model` resolves from each, keyed by flag name
   without `--`.
 - `models pick` names, for each rank count the model's profiles serve, the
-  profile `serve --model` picks for that checkpoint or the helper's
-  refusal. Each other profile at that count is either explicit options over
-  the pick, which resolve to exactly that profile's settings, or
-  unavailable with the reason: it drafts with another drafter than the
-  package carries, or it leaves a setting the pick sets at a default no
-  flag value names. Model options only the pick sets are listed as
-  inherited; a launcher resets them to the package defaults.
+  profile `serve --model` picks for that checkpoint or the helper's refusal.
+  It finds the model's helper as `serve --model` does at the default four
+  ranks, or else at another rank count an installed model's profiles serve;
+  a count at which every helper refused the checkpoint keeps that refusal.
+  Each other profile at that count is either explicit options over the pick,
+  which resolve to exactly that profile's settings, or unavailable with the
+  reason: it drafts with another drafter than the package carries, or it
+  leaves a setting the pick sets at a default no flag value names. Model
+  options only the pick sets are listed as inherited; a launcher resets them
+  to the package defaults.
 - `models command` prints the `serve --model` arguments that serve a profile
   with the given options. An option replaces the profile's flag of the same
   name, `--model-option` the same option name, and `--speculative-tokens 0`

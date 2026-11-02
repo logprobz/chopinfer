@@ -315,7 +315,7 @@ pub(crate) fn installed_helpers() -> Result<Vec<InstalledHelper>> {
     installed_helpers_with_executable(&std::env::current_exe()?)
 }
 
-fn installed_helpers_with_executable(executable: &Path) -> Result<Vec<InstalledHelper>> {
+pub(crate) fn installed_helpers_with_executable(executable: &Path) -> Result<Vec<InstalledHelper>> {
     Ok(installed_providers(executable)?
         .into_iter()
         .map(|provider| InstalledHelper { provider })
@@ -328,7 +328,7 @@ pub(crate) fn checkpoint_helper(path: &Path, ranks: u32) -> Result<InstalledHelp
     checkpoint_helper_with_executable(path, ranks, &std::env::current_exe()?)
 }
 
-fn checkpoint_helper_with_executable(
+pub(crate) fn checkpoint_helper_with_executable(
     path: &Path,
     ranks: u32,
     executable: &Path,

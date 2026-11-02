@@ -572,6 +572,72 @@ impl Launches {
         result
     }
 
+    /// Whether launch `id` can be stopped now, before a switch signals
+    /// anything: a waiting or stopping one can, one choptop started can
+    /// while it is not reaped, and one an earlier choptop started can while
+    /// it is still the process recorded.
+    pub fn stoppable(&mut self, id: u64) -> Result<(), String> {
+        let Some(launch) = self.launches.iter_mut().find(|launch| launch.id == id) else {
+            return Err("a launch this start replaces is gone".to_owned());
+        };
+        let label = launch.label();
+        match launch.phase {
+            Phase::Waiting | Phase::Stopping(_) => Ok(()),
+            Phase::Exited(..) => Err(format!("{label} has exited")),
+            Phase::Running => match &mut launch.child {
+                Some(child) => match child.try_wait() {
+                    Ok(None) => Ok(()),
+                    Ok(Some(_)) => Err(format!("{label} has exited")),
+                    Err(error) => Err(format!("cannot wait for {label}: {error}")),
+                },
+                None => {
+                    let (Some(pid), Some(ticks)) = (launch.record.pid, launch.record.start_ticks)
+                    else {
+                        return Err(format!("{label} has no process"));
+                    };
+                    Identity::record(pid, ticks).map(|_| ())
+                }
+            },
+        }
+    }
+
+    /// Stops what a switch replaces, the launches and then the serve
+    /// processes, each only while a waiting launch still waits for it. A
+    /// stop that fails cancels the launches waiting for it, and what only
+    /// those wanted stopped keeps running.
+    pub fn replace(
+        &mut self,
+        launches: &[u64],
+        serves: &[(Identity, Vec<u32>)],
+        why: &str,
+        registry: &mut Registry,
+        now: f64,
+    ) {
+        let skipped = "not stopped: the launches it was to make way for were cancelled";
+        for id in launches {
+            if !self.awaited(&Wait::Launch(*id)) {
+                let label = self
+                    .get(*id)
+                    .map_or_else(|| "a launch".to_owned(), Launch::label);
+                registry.note(now, label, skipped, Tone::Warning);
+                continue;
+            }
+            let _ = self.stop(*id, why, registry, now);
+        }
+        for (identity, gpus) in serves {
+            if !self.awaited(&Wait::Serve(identity.clone())) {
+                registry.note(
+                    now,
+                    format!("proc {}", identity.pid),
+                    skipped,
+                    Tone::Warning,
+                );
+                continue;
+            }
+            let _ = self.stop_serve(identity, gpus, why, registry, now);
+        }
+    }
+
     fn stop_launch(
         &mut self,
         id: u64,

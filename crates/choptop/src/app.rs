@@ -694,10 +694,11 @@ impl App {
         Ok(gpus)
     }
 
-    /// Runs a confirmed switch: records each serve process it stops, and
-    /// refuses if one changed since the reading; cancels or stops the
-    /// launches it replaces; queues its instances; then sends the serve
-    /// processes SIGTERM. The list shows the launches.
+    /// Runs a confirmed switch: records each serve process it stops and
+    /// checks each launch it replaces can be stopped, and refuses if any
+    /// cannot; queues its instances; cancels or stops the launches it
+    /// replaces; then sends the serve processes SIGTERM. The list shows the
+    /// launches.
     fn launch(&mut self, mut confirm: Confirm) {
         let now = self.clock;
         if let Err(why) = self.validate_start(&confirm.start) {
@@ -707,13 +708,19 @@ impl App {
             return self.refuse_start(&why);
         }
         confirm.switch = self.launches.records.unused_switch(&confirm.switch);
+        // Nothing is signalled unless everything can be.
         let mut identities = Vec::new();
+        let mut replaced = Vec::new();
         for stopping in &confirm.stops {
-            if let Target::Serve(serve) = &stopping.target {
-                match Identity::record(serve.pid, serve.start_ticks) {
+            match &stopping.target {
+                Target::Serve(serve) => match Identity::record(serve.pid, serve.start_ticks) {
                     Ok(identity) => identities.push((identity, stopping.gpus.clone())),
                     Err(why) => return self.refuse_start(&why),
-                }
+                },
+                Target::Launch(id) => match self.launches.stoppable(*id) {
+                    Ok(()) => replaced.push(*id),
+                    Err(why) => return self.refuse_start(&why),
+                },
             }
         }
         let recorded = identities
@@ -735,18 +742,10 @@ impl App {
             let id = self.launches.queue(item, &mut self.registry, now);
             first.get_or_insert(id);
         }
-        for stopping in &confirm.stops {
-            if let Target::Launch(id) = stopping.target {
-                let _ = self.launches.stop(id, &why, &mut self.registry, now);
-            }
-        }
-        for (identity, gpus) in &identities {
-            // A process that changed is not signalled; its launches are
-            // cancelled and the reason noted.
-            let _ = self
-                .launches
-                .stop_serve(identity, gpus, &why, &mut self.registry, now);
-        }
+        // A stop that still fails cancels its launches and is noted, and
+        // what only they wanted stopped keeps running.
+        self.launches
+            .replace(&replaced, &identities, &why, &mut self.registry, now);
         self.reservations = self.launches.reservations();
         self.trail.clear();
         self.view = View::List;
@@ -1689,6 +1688,190 @@ mod tests {
             .unwrap_or_else(|| panic!("no event {who}: {what} in {:?}", app.registry.events))
     }
 
+    /// Queues `confirm`'s instances as Enter does, with the serve processes
+    /// it stops as `identities` recorded them, and stops nothing.
+    fn queue_only(app: &mut App, confirm: &Confirm, identities: &[(Identity, Vec<u32>)]) {
+        let recorded = identities
+            .iter()
+            .map(|(identity, _)| identity.clone())
+            .collect::<Vec<_>>();
+        let queued = switch::queued(
+            confirm,
+            &app.catalog,
+            &recorded,
+            app.launches.logs.as_deref(),
+        )
+        .unwrap();
+        for item in queued {
+            app.launches.queue(item, &mut app.registry, app.clock);
+        }
+    }
+
+    /// Serve process `serve` as a scan finds it on `gpus`.
+    fn found_serve(serve: &Serve, gpus: &[u32]) -> Found {
+        Found::Process(ServeProcess {
+            pid: serve.pid,
+            start_ticks: serve.start_ticks,
+            executable: "chopinfer".into(),
+            arguments: vec!["chopinfer".into(), "serve".into()],
+            model_hint: serve.name.clone(),
+            age: None,
+            listening: serve
+                .ports
+                .iter()
+                .map(|port| format!("127.0.0.1:{port}").parse().unwrap())
+                .collect(),
+            cuda_visible_devices: Some(
+                gpus.iter()
+                    .map(|index| uuid(*index))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+        })
+    }
+
+    #[test]
+    fn a_replaced_launch_that_cannot_be_stopped_refuses_the_switch_before_any_signal() {
+        for case in ["adopted", "exited"] {
+            let root = scratch(&format!("unstoppable-{case}"));
+            let mut serve_guard = fake_serve(&root.join("serve"));
+            let binary = root.join("exits");
+            write_script(&binary, &format!("#!/bin/sh\n{CLOSE}exit 0\n"));
+            let mut app = launching(&root, &binary);
+            let mut adopted_guard = None;
+            let replaced = if case == "adopted" {
+                // Launched by an earlier choptop; its process is another
+                // one now.
+                let guard = fake_serve(&root.join("adopted"));
+                let mut record = crate::launch::records::tests::record("earlier", 'A', &[2, 3]);
+                record.uuids = vec![uuid(2), uuid(3)];
+                record.pid = Some(guard.0.id());
+                record.start_ticks = Some(process::start_ticks_of(guard.0.id()).unwrap() + 1);
+                adopted_guard = Some(guard);
+                app.launches
+                    .adopt(record, Phase::Running, &mut app.registry, 0.0)
+            } else {
+                // Launched by this choptop; its process has exited, and the
+                // loop has not reaped it yet.
+                run(
+                    &mut app,
+                    confirm(&[('A', &[2, 3], 8310, Vec::new())], Vec::new()),
+                );
+                let id = newest(&app);
+                read_reports(&mut app, 0.0, Vec::new());
+                app.supervise(0.0);
+                let record = &app.launches.get(id).unwrap().record;
+                let (pid, ticks) = (record.pid.unwrap(), record.start_ticks.unwrap());
+                wait_for(|| !process::alive(pid, ticks));
+                id
+            };
+            let label = app.launches.get(replaced).unwrap().label();
+            let mut serve = serve_of(&serve_guard);
+            serve.ports = vec![8311];
+            let start = confirm(
+                &[(
+                    'A',
+                    &[0, 1, 2, 3],
+                    8310,
+                    vec![Target::Serve(serve.clone()), Target::Launch(replaced)],
+                )],
+                vec![stopping(&serve), replacing(&app, replaced)],
+            );
+            app.live.found = vec![found_serve(&serve, &[0, 1])];
+            let found = app.live.found.clone();
+            read_reports(&mut app, 0.0, found);
+            app.launch(start);
+            let why = if case == "adopted" {
+                format!("{label} is another process now")
+            } else {
+                format!("{label} has exited")
+            };
+            assert_eq!(
+                app.loader.flash.as_ref().map(|flash| flash.text.clone()),
+                Some(format!("Not started: {why}")),
+                "{:#?}",
+                events(&app)
+            );
+            assert!(
+                app.launches
+                    .launches
+                    .iter()
+                    .all(|launch| launch.id == replaced),
+                "{:#?}",
+                events(&app)
+            );
+            assert!(
+                !events(&app).iter().any(|event| event.contains("stopping:")),
+                "{:#?}",
+                events(&app)
+            );
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            assert!(serve_guard.0.try_wait().unwrap().is_none());
+            if let Some(guard) = &mut adopted_guard {
+                assert!(guard.0.try_wait().unwrap().is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn a_failed_stop_leaves_running_what_only_its_cancelled_launches_needed() {
+        let root = scratch("failed-stop-skips");
+        let first = fake_serve(&root.join("first"));
+        let mut second = fake_serve(&root.join("second"));
+        let binary = root.join("never");
+        write_script(&binary, &format!("#!/bin/sh\n{CLOSE}exit 0\n"));
+        let mut app = launching(&root, &binary);
+        let serves = [serve_of(&first), serve_of(&second)];
+        let identities =
+            [(&serves[0], vec![0, 1]), (&serves[1], vec![2, 3])].map(|(serve, gpus)| {
+                (
+                    Identity::record(serve.pid, serve.start_ticks).unwrap(),
+                    gpus,
+                )
+            });
+        let start = confirm(
+            &[(
+                'A',
+                &[0, 1, 2, 3],
+                8310,
+                serves.iter().cloned().map(Target::Serve).collect(),
+            )],
+            serves.iter().map(stopping).collect(),
+        );
+        queue_only(&mut app, &start, &identities);
+        // The first exits after it was recorded, so its SIGTERM fails.
+        drop(first);
+        app.launches.replace(
+            &[],
+            &identities,
+            &switch::reason(&start),
+            &mut app.registry,
+            0.0,
+        );
+        let events = events(&app);
+        let [first, second_pid] = serves.map(|serve| serve.pid);
+        assert!(
+            events.iter().any(|event| event
+                .starts_with(&format!("proc {first}: not stopped: proc {first} is gone"))),
+            "{events:#?}"
+        );
+        assert!(
+            events.contains(&format!(
+                "launch A: cancelled: proc {first} was not stopped"
+            )),
+            "{events:#?}"
+        );
+        assert!(
+            events.contains(&format!(
+                "proc {second_pid}: not stopped: the launches it was to make way for were cancelled"
+            )),
+            "{events:#?}"
+        );
+        assert!(app.launches.launches.is_empty());
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(second.0.try_wait().unwrap().is_none(), "{events:#?}");
+    }
+
     #[test]
     fn a_refused_adopted_launch_stop_cancels_its_replacement_permanently() {
         let root = scratch("adopted-stop-refused");
@@ -1708,8 +1891,16 @@ mod tests {
             vec![replacing(&app, adopted)],
         );
         read_reports(&mut app, 0.0, Vec::new());
-        // Refuse the stop at admission before supervision closes the stale record.
-        app.launch(start);
+        // Its identity changes between Enter's check and its signal, before
+        // supervision closes the stale record.
+        queue_only(&mut app, &start, &[]);
+        app.launches.replace(
+            &[adopted],
+            &[],
+            &switch::reason(&start),
+            &mut app.registry,
+            0.0,
+        );
         assert!(guard.0.try_wait().unwrap().is_none());
         assert!(
             app.registry

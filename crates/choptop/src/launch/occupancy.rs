@@ -32,7 +32,9 @@ pub enum Gate {
 }
 
 /// A reservation never overrides a newer unknown or blocked reading.
-/// Expected owners hold the launch until the reading also shows them gone.
+/// Expected owners hold the launch until the reading also shows them gone;
+/// `gpus` must count the processes it waits for as what they stand for
+/// (see [`Waited`]).
 pub fn gate(launch: &super::Launch, gpus: &[Gpu]) -> Gate {
     if launch.record.gpus.len() != launch.record.uuids.len() {
         return Gate::Cancel("the saved GPU UUIDs are incomplete".into());
@@ -234,6 +236,17 @@ pub enum Holder {
     Launch(u64),
 }
 
+/// A process a queued launch waits for, by pid and start ticks, and the
+/// holder it stands for. A GPU reading taken before it exited may still
+/// show it after the scan has dropped it or its launch has left the list;
+/// it is still that holder, not a new owner.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Waited {
+    pub pid: u32,
+    pub start_ticks: u64,
+    pub holder: Holder,
+}
+
 /// Who holds one GPU.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Occupancy {
@@ -277,6 +290,9 @@ pub struct Inputs<'a> {
     /// The registry's rows, which name containers and targets.
     pub instances: &'a [Instance],
     pub reservations: &'a [Reservation],
+    /// The processes queued launches wait for; empty but for deciding
+    /// whether those launches go ahead.
+    pub waited: &'a [Waited],
     /// Seconds between GPU polls: a process list older than two is stale.
     pub interval: f64,
     pub now: f64,
@@ -338,6 +354,14 @@ impl Inputs<'_> {
                 })
             })
             .map(|reservation| reservation.launch)
+    }
+
+    /// The waited process `pid`; a GPU reading that could not read its
+    /// start ticks matches by pid, as [`Inputs::launch_of`] does.
+    fn waited(&self, pid: u32, start_ticks: Option<u64>) -> Option<&Waited> {
+        self.waited.iter().find(|waited| {
+            waited.pid == pid && start_ticks.is_none_or(|start| start == waited.start_ticks)
+        })
     }
 
     /// The container row named `id`, as `docker glm-tp4`.
@@ -457,9 +481,12 @@ pub fn occupancy(inputs: &Inputs) -> Vec<Gpu> {
     // GPUs its CUDA_VISIBLE_DEVICES names are its own. Without UUIDs there,
     // every GPU might be.
     for serve in serves.iter().filter(|serve| serve.starting) {
+        // A launch's process, or one a launch waits for, which may have
+        // let go of its GPUs while it drains.
         if inputs
             .launch_of(serve.pid, Some(serve.start_ticks))
             .is_some()
+            || inputs.waited(serve.pid, Some(serve.start_ticks)).is_some()
         {
             continue;
         }
@@ -518,6 +545,8 @@ fn holders(inputs: &Inputs, serves: &[Serve], processes: &[Process]) -> (Occupan
         let owner = &process.owner;
         if let Some(launch) = inputs.launch_of(process.pid, owner.start_ticks) {
             holders.push(Holder::Launch(launch));
+        } else if let Some(waited) = inputs.waited(process.pid, owner.start_ticks) {
+            holders.push(waited.holder.clone());
         } else if let Some(serve) = serves
             .iter()
             .find(|serve| serve.pid == process.pid && owner.start_ticks == Some(serve.start_ticks))
@@ -675,6 +704,7 @@ pub(crate) mod tests {
             live,
             instances: &[],
             reservations,
+            waited: &[],
             interval: 1.0,
             now,
         })
@@ -813,6 +843,7 @@ pub(crate) mod tests {
             live: &live,
             instances: &registry.instances,
             reservations: &[],
+            waited: &[],
             interval: 1.0,
             now: 1.0,
         });
@@ -855,6 +886,7 @@ pub(crate) mod tests {
             live: &live,
             instances: &registry.instances,
             reservations: &[],
+            waited: &[],
             interval: 1.0,
             now: 1.0,
         });
@@ -885,6 +917,7 @@ pub(crate) mod tests {
             live: &live,
             instances: &[],
             reservations: &[],
+            waited: &[],
             interval: 1.0,
             now: 1.0,
         })
@@ -967,6 +1000,7 @@ pub(crate) mod tests {
             live: &live,
             instances: &[],
             reservations: &reservations,
+            waited: &[],
             interval: 1.0,
             now: 1.5,
         };
@@ -1000,6 +1034,7 @@ pub(crate) mod tests {
             live: &live,
             instances: &[],
             reservations: &reservations,
+            waited: &[],
             interval: 1.0,
             now: 2.0,
         });
@@ -1059,6 +1094,108 @@ pub(crate) mod tests {
         assert_eq!(held[0], Occupancy::Free);
         assert!(
             matches!(&held[2], Occupancy::Held(holders) if matches!(&holders[0], Holder::Serve(serve) if serve.pid == 51022))
+        );
+    }
+
+    #[test]
+    fn a_waited_process_holds_its_gpu_as_what_it_stands_for() {
+        let mut live = Live::default();
+        live.gpu(&Report::Opened {
+            driver: None,
+            devices: devices(4),
+        });
+        // A reading taken before a replaced launch (500) and a stopped serve
+        // process (600) exited, the latter's start time no longer readable,
+        // and a new process that reuses pid 500.
+        let gone = Process {
+            owner: Owner::default(),
+            ..on_gpu(600)
+        };
+        let reused = Process {
+            owner: Owner {
+                start_ticks: Some(1),
+                ..Owner::default()
+            },
+            ..on_gpu(500)
+        };
+        live.gpu(&polled(
+            1.0,
+            vec![
+                Some(vec![on_gpu(500)]),
+                Some(vec![gone]),
+                Some(vec![reused]),
+                Some(Vec::new()),
+            ],
+        ));
+        // A scan from before the replaced launch exited, and another
+        // replaced launch that has let go of GPU 3 while it drains.
+        live.scan(&discover::Report::Scan {
+            found: vec![
+                serve_process(500, &["127.0.0.1:8310"], Some(&uuid(0))),
+                serve_process(700, &[], Some(&uuid(3))),
+            ],
+            events: Vec::new(),
+            started: 0.5,
+        });
+        let serve = Serve {
+            pid: 600,
+            start_ticks: 6000,
+            name: None,
+            ports: Vec::new(),
+            starting: false,
+        };
+        let waited = [
+            Waited {
+                pid: 500,
+                start_ticks: 5000,
+                holder: Holder::Launch(3),
+            },
+            Waited {
+                pid: 600,
+                start_ticks: 6000,
+                holder: Holder::Serve(serve.clone()),
+            },
+            Waited {
+                pid: 700,
+                start_ticks: 7000,
+                holder: Holder::Launch(4),
+            },
+        ];
+        let held = |waited: &[Waited]| {
+            occupancy(&Inputs {
+                live: &live,
+                instances: &[],
+                reservations: &[],
+                waited,
+                interval: 1.0,
+                now: 1.0,
+            })
+            .into_iter()
+            .map(|gpu| gpu.occupancy)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            held(&waited),
+            [
+                Occupancy::Held(vec![Holder::Launch(3)]),
+                Occupancy::Held(vec![Holder::Serve(serve)]),
+                Occupancy::Blocked("pid 500 (-, 80 GiB)".into()),
+                Occupancy::Free,
+            ]
+        );
+        // Unwaited, the first is a serve process of this user, the second a
+        // stranger, and the last a serve process that is loading.
+        let unwaited = held(&[]);
+        assert!(
+            matches!(&unwaited[0], Occupancy::Held(holders) if matches!(&holders[0], Holder::Serve(serve) if serve.pid == 500))
+        );
+        assert_eq!(
+            unwaited[1],
+            Occupancy::Blocked("pid 600 (-, 80 GiB)".into())
+        );
+        assert_eq!(
+            unwaited[3],
+            Occupancy::Blocked("reserved by proc 700 model-700, which is starting".into())
         );
     }
 

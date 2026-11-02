@@ -5,8 +5,10 @@
 //! A switch queues one launch per instance. Each waits until what it
 //! replaces has exited: the serve processes on its GPUs or port, which
 //! choptop sends SIGTERM through a pidfd, and earlier launches, which it
-//! cancels or stops through their process group. It then checks its port
-//! once more and starts. A launch that is queued or starting is a
+//! cancels or stops through their process group. Readings begun before
+//! that may still show them, so it then waits for a GPU reading and a scan
+//! begun after, checks its port once more and starts. A launch that is
+//! queued or starting is a
 //! [`Reservation`], which the occupancy and the placement read.
 
 pub mod command;
@@ -117,6 +119,10 @@ pub struct Launch {
     /// and for a launch an earlier choptop started.
     child: Option<Child>,
     pub queued_at: f64,
+    /// When everything it waits for was first seen gone. GPU readings and
+    /// scans begun before may still show what it replaces, so it goes
+    /// ahead only on ones begun after.
+    pub cleared: Option<f64>,
     pub started_at: Option<f64>,
     /// The end of its log, sanitized.
     pub tail: Vec<String>,
@@ -182,6 +188,12 @@ pub struct Launches {
     /// What the pollers and the discovery thread should do, taken by the
     /// caller after each change.
     pub followups: Vec<Followup>,
+    /// A waiting launch wants a GPU reading and a scan begun now; the
+    /// caller asks for both and clears this.
+    pub read: bool,
+    /// The processes of launches that left the list while a waiting launch
+    /// waits for them, by launch id, pid and start ticks.
+    gone: Vec<(u64, u32, u64)>,
     next: u64,
 }
 
@@ -211,6 +223,8 @@ impl Launches {
             launches: Vec::new(),
             stops: Vec::new(),
             followups: Vec::new(),
+            read: false,
+            gone: Vec::new(),
             next: 0,
         };
         (launches, message)
@@ -235,6 +249,72 @@ impl Launches {
                 launch: launch.id,
             })
             .collect()
+    }
+
+    /// The processes the waiting launches wait for, each as the holder it
+    /// stands for, those of launches that have left the list included.
+    pub fn waited(&self) -> Vec<occupancy::Waited> {
+        let mut waited = Vec::new();
+        let waits = self
+            .launches
+            .iter()
+            .filter(|launch| launch.phase == Phase::Waiting)
+            .flat_map(|launch| &launch.waits);
+        for wait in waits {
+            let process = match wait {
+                Wait::Serve(identity) => Some((
+                    identity.pid,
+                    identity.start_ticks,
+                    occupancy::Holder::Serve(occupancy::Serve {
+                        pid: identity.pid,
+                        start_ticks: identity.start_ticks,
+                        name: None,
+                        ports: Vec::new(),
+                        starting: false,
+                    }),
+                )),
+                Wait::Launch(id) => self
+                    .get(*id)
+                    .and_then(|launch| launch.record.pid.zip(launch.record.start_ticks))
+                    .or_else(|| {
+                        self.gone
+                            .iter()
+                            .find(|(gone, ..)| gone == id)
+                            .map(|(_, pid, ticks)| (*pid, *ticks))
+                    })
+                    .map(|(pid, ticks)| (pid, ticks, occupancy::Holder::Launch(*id))),
+            };
+            if let Some((pid, start_ticks, holder)) = process {
+                let process = occupancy::Waited {
+                    pid,
+                    start_ticks,
+                    holder,
+                };
+                if !waited.contains(&process) {
+                    waited.push(process);
+                }
+            }
+        }
+        waited
+    }
+
+    /// Whether a waiting launch waits for `wait`.
+    fn awaited(&self, wait: &Wait) -> bool {
+        self.launches
+            .iter()
+            .any(|launch| launch.phase == Phase::Waiting && launch.waits.contains(wait))
+    }
+
+    /// Takes the launch at `position` out of the list, keeping its process
+    /// while a waiting launch waits for it.
+    fn take(&mut self, position: usize) -> Launch {
+        let launch = self.launches.remove(position);
+        if let Some((pid, ticks)) = launch.record.pid.zip(launch.record.start_ticks)
+            && self.awaited(&Wait::Launch(launch.id))
+        {
+            self.gone.push((launch.id, pid, ticks));
+        }
+        launch
     }
 
     /// Whether the serve process `pid` is being stopped.
@@ -345,6 +425,7 @@ impl Launches {
             phase,
             child: None,
             queued_at: now,
+            cleared: None,
             started_at: record.pid.map(|_| now),
             tail: Vec::new(),
             tail_read: now,
@@ -383,6 +464,7 @@ impl Launches {
             phase: Phase::Waiting,
             child: None,
             queued_at: now,
+            cleared: None,
             started_at: None,
             tail: Vec::new(),
             tail_read: f64::NEG_INFINITY,
@@ -427,7 +509,7 @@ impl Launches {
         let Some(position) = self.launches.iter().position(|launch| launch.id == id) else {
             return;
         };
-        let launch = self.launches.remove(position);
+        let launch = self.take(position);
         registry.note(now, launch.label(), what, tone);
         if let Some(row) = registry.launch_row(id).map(|row| row.id) {
             self.followups.extend(registry.forget(row));
@@ -607,7 +689,7 @@ impl Launches {
         else {
             return;
         };
-        self.launches.remove(position);
+        self.take(position);
         if let Some(row) = registry.launch_row(id).map(|row| row.id) {
             self.followups.extend(registry.forget(row));
         }
@@ -624,9 +706,11 @@ impl Launches {
     }
 
     /// One turn of the loop: starts each waiting launch whose waits are
-    /// over once `probe` finds its port free, reaps launches that exited,
-    /// and notes stopped serve processes that are gone. Asks for a scan
-    /// when anything ended or started; says whether anything did.
+    /// over once `gate` clears it and `probe` finds its port free, reaps
+    /// launches that exited, and notes stopped serve processes that are
+    /// gone. A launch whose waits are first seen over notes when and asks
+    /// for a fresh reading, which `gate` waits for. Asks for a scan when
+    /// anything ended or started; says whether anything did.
     pub fn supervise(
         &mut self,
         registry: &mut Registry,
@@ -680,6 +764,14 @@ impl Launches {
             };
             match self.launches[index].phase {
                 Phase::Waiting => {
+                    let over = self.launches[index]
+                        .waits
+                        .iter()
+                        .all(|wait| self.over(wait));
+                    if over && self.launches[index].cleared.is_none() {
+                        self.launches[index].cleared = Some(now);
+                        self.read = true;
+                    }
                     match gate(&self.launches[index]) {
                         occupancy::Gate::Clear => {}
                         occupancy::Gate::Hold => continue,
@@ -689,8 +781,7 @@ impl Launches {
                             continue;
                         }
                     }
-                    let waits = self.launches[index].waits.clone();
-                    if waits.iter().all(|wait| self.over(wait)) {
+                    if over {
                         self.begin(id, registry, now, probe);
                         changed = true;
                     }
@@ -706,6 +797,12 @@ impl Launches {
                 Phase::Exited(..) => {}
             }
         }
+        let launches = &self.launches;
+        self.gone.retain(|(id, ..)| {
+            launches.iter().any(|launch| {
+                launch.phase == Phase::Waiting && launch.waits.contains(&Wait::Launch(*id))
+            })
+        });
         if changed {
             self.followups.push(Followup::Request);
         }

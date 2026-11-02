@@ -502,6 +502,9 @@ fn run_loop(
             app.catalog_reply(reply);
             dirty = true;
         }
+        dirty |= app.supervise(now());
+        // A start or stop that waits for a fresh reading, or a launch whose
+        // waits are over, goes on from a GPU reading and a scan begun now.
         if app.needs_read() {
             app.asked(now());
             if let Some(poller) = gpu_poller {
@@ -509,7 +512,6 @@ fn run_loop(
             }
             workers.command(Command::Force);
         }
-        dirty |= app.supervise(now());
         let followups = std::mem::take(&mut app.launches.followups);
         if !followups.is_empty() {
             workers.follow(&mut app.registry, followups, now());
@@ -669,6 +671,7 @@ mod tests {
             live: &app.live,
             instances: &app.registry.instances,
             reservations: &app.reservations,
+            waited: &[],
             interval: app.interval,
             now: 5.5,
         });

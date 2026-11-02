@@ -451,6 +451,7 @@ impl Loader {
             live,
             instances,
             reservations,
+            waited: &[],
             interval,
             now,
         };

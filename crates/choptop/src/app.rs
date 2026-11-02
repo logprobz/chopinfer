@@ -349,13 +349,17 @@ impl App {
         if let Some(pending) = &mut self.pending {
             pending.since.get_or_insert(now);
         }
+        self.launches.read = false;
     }
 
-    /// A background check needs a new read, just as pressing S does.
+    /// A background check needs a new read, just as pressing S does, or a
+    /// launch whose waits are over needs one begun after.
     pub fn needs_read(&self) -> bool {
-        self.pending
-            .as_ref()
-            .is_some_and(|pending| pending.since.is_none())
+        self.launches.read
+            || self
+                .pending
+                .as_ref()
+                .is_some_and(|pending| pending.since.is_none())
     }
 
     /// What the pending start is waiting for, as the command box says it.
@@ -390,17 +394,27 @@ impl App {
         self.clock = now;
         let mut probe = self.probe;
         let reservations = self.launches.reservations();
+        let waited = self.launches.waited();
         let gpus = occupancy::occupancy(&occupancy::Inputs {
             live: &self.live,
             instances: &self.registry.instances,
             reservations: &reservations,
+            waited: &waited,
             interval: self.interval,
             now,
         });
-        let fresh = self.live.fresh(now - 2.0 * self.interval);
-        let mut gate = |launch: &crate::launch::Launch| match occupancy::gate(launch, &gpus) {
-            Gate::Clear if !fresh => Gate::Hold,
-            other => other,
+        let live = &self.live;
+        let fresh = live.fresh(now - 2.0 * self.interval);
+        let mut gate = |launch: &crate::launch::Launch| {
+            // Readings begun before what it waits for was seen gone may
+            // still show it: they neither start nor cancel the launch.
+            if launch.cleared.is_some_and(|at| !live.fresh(at)) {
+                return Gate::Hold;
+            }
+            match occupancy::gate(launch, &gpus) {
+                Gate::Clear if !fresh => Gate::Hold,
+                other => other,
+            }
         };
         let mut changed = self
             .launches
@@ -643,6 +657,7 @@ impl App {
             live: &self.live,
             instances: &self.registry.instances,
             reservations: &reservations,
+            waited: &[],
             interval: self.interval,
             now: self.clock,
         };
@@ -1531,6 +1546,17 @@ mod tests {
     }
 
     fn read_reports(app: &mut App, at: f64, found: Vec<Found>) {
+        app.live.scan(&crate::discover::Report::Scan {
+            found: found.clone(),
+            events: Vec::new(),
+            started: at,
+        });
+        poll(app, at, &found, Vec::new());
+    }
+
+    /// A GPU reading at `at`: the processes of `found` on the GPUs their
+    /// CUDA_VISIBLE_DEVICES names, and `others` on GPU 0.
+    fn poll(app: &mut App, at: f64, found: &[Found], others: Vec<Process>) {
         if app.live.devices.is_empty() {
             app.live.gpu(&Report::Opened {
                 driver: None,
@@ -1562,17 +1588,50 @@ mod tests {
                             }
                             _ => None,
                         })
+                        .chain(others.iter().filter(|_| index == 0).cloned())
                         .collect(),
                 ),
                 ..Reading::default()
             })
             .collect();
-        app.live.scan(&crate::discover::Report::Scan {
-            found,
-            events: Vec::new(),
-            started: at,
-        });
         app.live.gpu(&Report::Polled(readings));
+    }
+
+    /// The serve process of launch `id`, as a scan finds it.
+    fn found_launch(app: &App, id: u64) -> Found {
+        let record = &app.launches.get(id).unwrap().record;
+        Found::Process(ServeProcess {
+            pid: record.pid.unwrap(),
+            start_ticks: record.start_ticks.unwrap(),
+            executable: "chopinfer".into(),
+            arguments: vec!["chopinfer".into(), "serve".into()],
+            model_hint: Some(record.served_model_name.clone()),
+            age: None,
+            listening: vec![format!("{}:{}", record.host, record.port).parse().unwrap()],
+            cuda_visible_devices: Some(record.uuids.join(",")),
+        })
+    }
+
+    /// A compute process choptop does not stop.
+    fn stranger() -> Process {
+        Process {
+            pid: 7777,
+            kind: Kind::Compute,
+            owner: Owner {
+                start_ticks: Some(1),
+                name: Some("python3".into()),
+                ..Owner::default()
+            },
+            ..Process::default()
+        }
+    }
+
+    fn events(app: &App) -> Vec<String> {
+        app.registry
+            .events
+            .iter()
+            .map(|event| format!("{}: {}", event.who, event.what))
+            .collect()
     }
 
     fn supervise_launches(app: &mut App, at: f64) {
@@ -2084,6 +2143,175 @@ mod tests {
         read_reports(&mut app, 10.1, Vec::new());
         app.supervise(10.2);
         assert_eq!(app.launches.get(id).unwrap().phase, Phase::Running);
+    }
+
+    #[test]
+    fn a_replacement_goes_on_readings_begun_after_the_launch_it_replaces_exited() {
+        for then in ["free", "taken"] {
+            let root = scratch(&format!("replaced-launch-{then}"));
+            let binary = root.join("sleeps");
+            write_script(
+                &binary,
+                &format!(
+                    "#!/bin/sh\n{CLOSE}{}",
+                    crate::launch::process::tests::UNTIL_TERM
+                ),
+            );
+            let mut app = launching(&root, &binary);
+            app.live.scanning = true;
+            run(
+                &mut app,
+                confirm(&[('A', &[0, 1], 8310, Vec::new())], Vec::new()),
+            );
+            let first = newest(&app);
+            read_reports(&mut app, 1.0, Vec::new());
+            app.supervise(1.0);
+            let found = found_launch(&app, first);
+            app.clock = 2.0;
+            read_reports(&mut app, 2.0, vec![found.clone()]);
+            app.supervise(2.0);
+            let start = confirm(
+                &[('A', &[0, 1], 8310, vec![Target::Launch(first)])],
+                vec![replacing(&app, first)],
+            );
+            run(&mut app, start);
+            let second = newest(&app);
+            assert_ne!(second, first, "{:?}", app.loader.flash);
+            // The latest reading and scan were begun before it exited. The
+            // scan still finds it; the reading has its pid on its GPUs, or,
+            // once it let go of them while it drained, nothing.
+            app.live.scan(&crate::discover::Report::Scan {
+                found: vec![found.clone()],
+                events: Vec::new(),
+                started: 2.5,
+            });
+            let on = if then == "free" {
+                vec![found]
+            } else {
+                Vec::new()
+            };
+            poll(&mut app, 2.5, &on, Vec::new());
+            wait_for(|| {
+                app.supervise(2.6);
+                app.launches.get(first).is_none()
+            });
+            app.supervise(2.7);
+            let launch = app.launches.get(second);
+            assert!(
+                launch.is_some_and(|launch| launch.phase == Phase::Waiting),
+                "{:#?}",
+                events(&app)
+            );
+            assert!(app.needs_read());
+            app.asked(2.7);
+            assert!(!app.needs_read());
+            // A scan begun after it exited is not enough.
+            app.live.scan(&crate::discover::Report::Scan {
+                found: Vec::new(),
+                events: Vec::new(),
+                started: 2.8,
+            });
+            app.supervise(2.85);
+            assert_eq!(app.launches.get(second).unwrap().phase, Phase::Waiting);
+            // The GPU reading after decides: free, or held by a new process.
+            let others = if then == "free" {
+                Vec::new()
+            } else {
+                vec![stranger()]
+            };
+            poll(&mut app, 2.9, &[], others);
+            app.supervise(3.0);
+            if then == "free" {
+                assert_eq!(
+                    app.launches.get(second).unwrap().phase,
+                    Phase::Running,
+                    "{:#?}",
+                    events(&app)
+                );
+            } else {
+                assert!(app.launches.get(second).is_none());
+                assert!(
+                    events(&app).contains(
+                        &"launch A: cancelled: GPU 0 is held by pid 7777 (python3)".into()
+                    ),
+                    "{:#?}",
+                    events(&app)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_replacement_goes_on_readings_begun_after_the_serve_process_it_stops_exited() {
+        for then in ["free", "taken"] {
+            let root = scratch(&format!("replaced-serve-{then}"));
+            let guard = fake_serve(&root.join("serve"));
+            let binary = root.join("sleeps");
+            write_script(
+                &binary,
+                &format!(
+                    "#!/bin/sh\n{CLOSE}{}",
+                    crate::launch::process::tests::UNTIL_TERM
+                ),
+            );
+            let mut app = launching(&root, &binary);
+            app.live.scanning = true;
+            let serve = serve_of(&guard);
+            // The confirm's reading, the latest, has it on GPUs 0 and 1.
+            run(
+                &mut app,
+                confirm(
+                    &[('A', &[0, 1], 8310, vec![Target::Serve(serve.clone())])],
+                    vec![stopping(&serve)],
+                ),
+            );
+            let id = newest(&app);
+            wait_for(|| !process::alive(serve.pid, serve.start_ticks));
+            app.supervise(0.1);
+            assert!(app.launches.stops.is_empty());
+            assert_eq!(app.launches.get(id).unwrap().phase, Phase::Waiting);
+            // The scan begun after it exited arrives before the next GPU
+            // reading; the latest still has its pid.
+            app.live.scan(&crate::discover::Report::Scan {
+                found: Vec::new(),
+                events: Vec::new(),
+                started: 0.2,
+            });
+            app.supervise(0.3);
+            let launch = app.launches.get(id);
+            assert!(
+                launch.is_some_and(|launch| launch.phase == Phase::Waiting),
+                "{:#?}",
+                events(&app)
+            );
+            assert!(app.needs_read());
+            app.asked(0.3);
+            let others = if then == "free" {
+                Vec::new()
+            } else {
+                vec![stranger()]
+            };
+            poll(&mut app, 0.4, &[], others);
+            app.supervise(0.5);
+            if then == "free" {
+                assert_eq!(
+                    app.launches.get(id).unwrap().phase,
+                    Phase::Running,
+                    "{:#?}",
+                    events(&app)
+                );
+            } else {
+                assert!(app.launches.get(id).is_none());
+                assert!(
+                    events(&app).contains(
+                        &"launch A: cancelled: GPU 0 is held by pid 7777 (python3)".into()
+                    ),
+                    "{:#?}",
+                    events(&app)
+                );
+            }
+            drop(guard);
+        }
     }
 
     #[test]

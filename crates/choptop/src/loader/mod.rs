@@ -112,6 +112,8 @@ pub struct Start {
     /// The final `serve` arguments, without `--listen`.
     pub command: Vec<String>,
     pub explicit: Explicit,
+    /// The form's choices, which the launch records keep.
+    pub choice: Choice,
 }
 
 /// What a key did in the loader.
@@ -821,7 +823,7 @@ impl Loader {
     }
 
     /// The switch `S` starts, or why not.
-    fn start(&self) -> Result<Start, String> {
+    pub fn start(&self) -> Result<Start, String> {
         // The checkpoint row names a directory the plan does not use yet.
         if self.typed_checkpoint.is_some() {
             return Err("still checking the checkpoint".to_owned());
@@ -847,7 +849,39 @@ impl Loader {
             placement: self.plan.placement.clone(),
             command: command.clone(),
             explicit: self.plan.explicit.clone(),
+            choice: Choice {
+                model: model.clone(),
+                profile: profile.clone(),
+                gpus: self.picked.clone(),
+                edits: self.edits.clone(),
+                custom: self.custom.clone(),
+            },
         })
+    }
+
+    /// The warnings the Options pane notes for the form's serve values,
+    /// such as an evidence limit: `--max-sequences 48: no evidence`.
+    pub fn warnings(&self, catalog: &Catalog) -> Vec<String> {
+        let context = self.context(catalog);
+        self.edits
+            .iter()
+            .filter(|(key, _)| matches!(key, Key::Flag(_)))
+            .filter_map(|(key, value)| {
+                let warning = context.warning(key)?;
+                Some(sanitize(&format!("{} {value}: {warning}", key.shown())))
+            })
+            .collect()
+    }
+
+    /// Takes the choices of an earlier launch.
+    pub fn restore(&mut self, choice: Choice) {
+        self.model = Some(choice.model);
+        self.profile = Some(choice.profile);
+        self.profile_chosen = true;
+        self.picked = choice.gpus;
+        self.preselect = None;
+        self.edits = choice.edits;
+        self.custom = choice.custom;
     }
 
     /// Sets `key` to `value`, or drops the edit when that is the value it
@@ -991,13 +1025,7 @@ impl Loader {
                     .and_then(|index| self.recent.get(index))
                     .cloned()
                 {
-                    let choice = recent.choice;
-                    self.model = Some(choice.model);
-                    self.profile = Some(choice.profile);
-                    self.profile_chosen = true;
-                    self.picked = choice.gpus;
-                    self.edits = choice.edits;
-                    self.custom = choice.custom;
+                    self.restore(recent.choice);
                     self.flash(
                         now,
                         format!("restored {} from {}", recent.label, recent.when),

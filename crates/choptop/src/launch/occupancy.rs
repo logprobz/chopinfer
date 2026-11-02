@@ -57,6 +57,8 @@ pub struct Live {
     /// taken; a start waits for both to be newer than its request.
     pub scanned: Option<f64>,
     pub polled: Option<f64>,
+    /// Whether discovery runs; without it no scan is waited for.
+    pub scanning: bool,
 }
 
 impl Live {
@@ -106,10 +108,12 @@ impl Live {
     }
 
     /// Whether a scan began and the GPUs were read at or after `since`;
-    /// GPUs that cannot be read are not waited for.
+    /// GPUs that cannot be read, and scans while discovery is off, are not
+    /// waited for.
     pub fn fresh(&self, since: f64) -> bool {
         let read = self.unavailable.is_some() || self.polled.is_some_and(|at| at >= since);
-        read && self.scanned.is_some_and(|at| at >= since)
+        let scanned = !self.scanning || self.scanned.is_some_and(|at| at >= since);
+        read && scanned
     }
 
     /// Takes a discovery report.
@@ -997,7 +1001,10 @@ pub(crate) mod tests {
 
     #[test]
     fn readings_are_fresh_once_a_scan_and_a_gpu_read_follow_the_request() {
-        let mut live = Live::default();
+        let mut live = Live {
+            scanning: true,
+            ..Live::default()
+        };
         assert!(!live.fresh(5.0));
         live.gpu(&Report::Opened {
             driver: None,
@@ -1018,9 +1025,13 @@ pub(crate) mod tests {
         });
         assert!(live.fresh(5.0));
         assert!(!live.fresh(5.6));
-        // Without GPUs there is no read to wait for.
+        // Without GPUs there is no read to wait for, and without
+        // discovery no scan.
         live.gpu(&Report::Unavailable("no driver".into()));
         assert!(live.fresh(5.1));
+        assert!(!live.fresh(5.2));
+        live.scanning = false;
+        assert!(live.fresh(5.2));
     }
 
     #[test]

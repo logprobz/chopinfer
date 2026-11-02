@@ -14,6 +14,7 @@ pub mod occupancy;
 pub mod placement;
 pub mod process;
 pub mod records;
+pub mod switch;
 
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};

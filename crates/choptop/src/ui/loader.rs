@@ -1117,16 +1117,7 @@ fn draft(app: &App) -> Vec<String> {
         "--tensor-parallel-size".to_owned(),
         plan.tensor_parallel.unwrap_or(1).to_string(),
     ];
-    if let (Some(pick), Some(profile)) = (loader.pick(&app.catalog), loader.profile(&app.catalog))
-        && let Some(Availability::Available {
-            arguments: flags, ..
-        }) = pick
-            .size(profile.tensor_parallel)
-            .and_then(|size| size.profile(&profile.name))
-            .map(|profile| &profile.availability)
-    {
-        arguments.extend(flags.iter().cloned());
-    }
+    arguments.extend(loader.profile_arguments(&app.catalog));
     arguments.extend(plan.explicit.arguments());
     arguments
 }

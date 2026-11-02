@@ -1053,9 +1053,15 @@ pub fn parse_conformance_host_command_v1(
 }
 
 fn terminal_help_v1(arguments: &[String]) -> bool {
+    terminal_flag_v1(arguments, &["--help", "-h"])
+}
+
+/// Whether one of `flags` ends the invocation as a flag rather than as
+/// another flag's value.
+fn terminal_flag_v1(arguments: &[String], flags: &[&str]) -> bool {
     let mut words = arguments.iter().peekable();
     while let Some(word) = words.next() {
-        if matches!(word.as_str(), "--help" | "-h") {
+        if flags.contains(&word.as_str()) {
             return words.peek().is_none();
         }
         if !word.starts_with('-') || VALUELESS_FLAGS_V1.contains(&word.as_str()) {
@@ -1082,6 +1088,14 @@ fn parse_named_command_v1(
             HOST_COMMAND_USAGE_V1
         };
         return Ok(HostCommandV1::Display { text: text.into() });
+    }
+    // Like `--help`, the option catalog ends a serve invocation.
+    if arguments.first().is_some_and(|command| command == "serve")
+        && terminal_flag_v1(arguments, &["--describe-options"])
+    {
+        return Ok(HostCommandV1::Display {
+            text: describe_serve_options_v1(),
+        });
     }
     let command = arguments.first().ok_or_else(|| usage_error("no command"))?;
     match command.as_str() {
@@ -1446,94 +1460,662 @@ fn model_options_environment_v1(value: Option<&str>) -> Result<Vec<String>, Host
     Ok(args)
 }
 
+/// The shape of a serve flag's value, as `serve --describe-options` names it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ServeValueV1 {
+    /// A whole number.
+    Count,
+    /// A decimal number.
+    Number,
+    Text,
+    Directory,
+    File,
+    Json,
+    /// One of the listed words.
+    Choice(&'static [&'static str]),
+    /// A flag without a value.
+    Flag,
+}
+
+/// Which part of serving a serve flag configures.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ServeGroupV1 {
+    Model,
+    Scheduling,
+    Memory,
+    Speculation,
+    Prefill,
+    Cache,
+    Server,
+    Media,
+    Logging,
+    Debug,
+}
+
+impl ServeGroupV1 {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Model => "model",
+            Self::Scheduling => "scheduling",
+            Self::Memory => "memory",
+            Self::Speculation => "speculation",
+            Self::Prefill => "prefill",
+            Self::Cache => "cache",
+            Self::Server => "server",
+            Self::Media => "media",
+            Self::Logging => "logging",
+            Self::Debug => "debug",
+        }
+    }
+}
+
+/// One flag `serve` accepts.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ServeOptionV1 {
+    pub flag: &'static str,
+    pub value: ServeValueV1,
+    pub group: ServeGroupV1,
+    pub help: &'static str,
+    /// Whether a `serve --model` start takes it: false for the flags of an
+    /// explicit package and for those that print instead of serving.
+    pub model_launch: bool,
+    /// Whether it may be given more than once.
+    pub repeatable: bool,
+}
+
+impl ServeOptionV1 {
+    const fn new(
+        flag: &'static str,
+        value: ServeValueV1,
+        group: ServeGroupV1,
+        help: &'static str,
+    ) -> Self {
+        Self {
+            flag,
+            value,
+            group,
+            help,
+            model_launch: true,
+            repeatable: false,
+        }
+    }
+
+    const fn not_launch(mut self) -> Self {
+        self.model_launch = false;
+        self
+    }
+
+    const fn repeatable(mut self) -> Self {
+        self.repeatable = true;
+        self
+    }
+}
+
+const ON_OFF_V1: &[&str] = &["on", "off"];
+
+/// Every flag `serve` accepts, the list its parse refuses others against and
+/// `serve --describe-options` prints.
+pub(crate) const SERVE_OPTIONS_V1: &[ServeOptionV1] = {
+    use ServeGroupV1::{
+        Cache, Debug, Logging, Media, Memory, Model, Prefill, Scheduling, Server, Speculation,
+    };
+    use ServeValueV1::{Choice, Count, Directory, File, Flag, Json, Number, Text};
+    &[
+        ServeOptionV1::new(
+            "--bundle",
+            Directory,
+            Model,
+            "the package directory to serve",
+        )
+        .not_launch(),
+        ServeOptionV1::new(
+            "--model",
+            Directory,
+            Model,
+            "the checkpoint directory to prepare a package for and serve",
+        ),
+        ServeOptionV1::new(
+            "--tensor-parallel-size",
+            Count,
+            Model,
+            "the rank count --model prepares and serves (default 4)",
+        ),
+        ServeOptionV1::new(
+            "--model-cache-dir",
+            Directory,
+            Model,
+            "where --model keeps prepared packages",
+        ),
+        ServeOptionV1::new(
+            "--model-option",
+            Text,
+            Model,
+            "a model option the package declares, as NAME=VALUE",
+        )
+        .repeatable(),
+        ServeOptionV1::new(
+            "--list-model-options",
+            Flag,
+            Model,
+            "print the package's model options as JSON and exit",
+        )
+        .not_launch(),
+        ServeOptionV1::new(
+            "--activation-policy",
+            Choice(&["auto", "checkpoint", "bf16"]),
+            Model,
+            "the activation precision --model prepares the package for",
+        ),
+        ServeOptionV1::new(
+            "--modalities",
+            Text,
+            Model,
+            "auto, all, or a list of text, image, video and audio",
+        ),
+        ServeOptionV1::new(
+            "--served-model-name",
+            Text,
+            Model,
+            "the names clients request the model by, one or more",
+        ),
+        ServeOptionV1::new("--topology", Text, Model, "the package topology to serve").not_launch(),
+        ServeOptionV1::new(
+            "--devices",
+            Text,
+            Model,
+            "visible device ordinals, one per rank, as 0,1,...",
+        ),
+        ServeOptionV1::new(
+            "--checkpoint",
+            Directory,
+            Model,
+            "the checkpoint a --bundle package's weight plan loads",
+        )
+        .not_launch(),
+        ServeOptionV1::new(
+            "--load-threads",
+            Count,
+            Model,
+            "packing workers per rank of a direct load",
+        ),
+        ServeOptionV1::new(
+            "--weight-keeper",
+            Directory,
+            Model,
+            "map the rank images the weight keeper in DIR lends",
+        ),
+        ServeOptionV1::new(
+            "--weight-keeper-policy",
+            Choice(&["prefer", "require"]),
+            Model,
+            "load without the keeper when it lends nothing (prefer), or fail (require)",
+        ),
+        ServeOptionV1::new(
+            "--weight-keeper-identity",
+            File,
+            Model,
+            "the content proof that lets this build borrow a keeper's rank images",
+        ),
+        ServeOptionV1::new(
+            "--listen",
+            Text,
+            Server,
+            "the address and port to listen on (default 127.0.0.1:8310)",
+        ),
+        ServeOptionV1::new(
+            "--enable-request-id-headers",
+            Flag,
+            Server,
+            "return each request's ID in response headers",
+        ),
+        ServeOptionV1::new(
+            "--api-key",
+            Text,
+            Server,
+            "the key clients must send; CHOPINFER_API_KEY keeps it off the command line",
+        ),
+        ServeOptionV1::new(
+            "--allowed-origins",
+            Json,
+            Server,
+            "CORS origins, as a JSON array of strings",
+        ),
+        ServeOptionV1::new(
+            "--allowed-methods",
+            Json,
+            Server,
+            "CORS methods, as a JSON array of strings",
+        ),
+        ServeOptionV1::new(
+            "--allowed-headers",
+            Json,
+            Server,
+            "CORS headers, as a JSON array of strings",
+        ),
+        ServeOptionV1::new(
+            "--allow-credentials",
+            Flag,
+            Server,
+            "allow CORS credentials",
+        ),
+        ServeOptionV1::new(
+            "--max-context-tokens",
+            Count,
+            Scheduling,
+            "the most tokens one request may hold; the package's context by default",
+        ),
+        ServeOptionV1::new(
+            "--gpu-memory-utilization",
+            Number,
+            Memory,
+            "the share of each GPU's total memory this server may take, in (0, 1]",
+        ),
+        ServeOptionV1::new(
+            "--graph-memory-reserve-mib",
+            Count,
+            Memory,
+            "MiB per rank kept out of the KV pool for CUDA graphs (default 1024)",
+        ),
+        ServeOptionV1::new(
+            "--kv-pages",
+            Count,
+            Memory,
+            "the most KV pages to allocate; as many as fit by default",
+        ),
+        ServeOptionV1::new(
+            "--context-parallel-size",
+            Count,
+            Memory,
+            "ranks of one context-parallel group, which must divide the rank count (default 1)",
+        ),
+        ServeOptionV1::new(
+            "--kv-cache-dtype",
+            Choice(&["auto", "bf16", "fp8", "mixed"]),
+            Memory,
+            "the KV cache element; auto runs the package's preference",
+        ),
+        ServeOptionV1::new(
+            "--speculative-tokens",
+            Count,
+            Speculation,
+            "draft tokens per item and step; 0 serves without speculation",
+        ),
+        ServeOptionV1::new(
+            "--speculative-rows",
+            Count,
+            Speculation,
+            "the most verify rows of one step; the package's by default",
+        ),
+        ServeOptionV1::new(
+            "--speculation",
+            Choice(&["fixed", "balanced", "adaptive", "table"]),
+            Speculation,
+            "how many drafts each step verifies (default adaptive)",
+        ),
+        ServeOptionV1::new(
+            "--speculation-costs",
+            Text,
+            Speculation,
+            "table mode's step costs, as ITEMS:BASE:STEP:DRAFTING:ROW,...",
+        ),
+        ServeOptionV1::new(
+            "--speculation-depths",
+            Text,
+            Speculation,
+            "balanced mode's depth schedule, as ITEMS:DEPTH,...",
+        ),
+        ServeOptionV1::new(
+            "--speculation-widths",
+            Text,
+            Speculation,
+            "the verify widths balanced plans land on, as ROWS,...",
+        ),
+        ServeOptionV1::new(
+            "--speculation-graph-rows",
+            Count,
+            Speculation,
+            "the widest verify step captured in a graph",
+        ),
+        ServeOptionV1::new(
+            "--speculation-confidence",
+            Json,
+            Speculation,
+            "a drafter confidence calibration for balanced mode, as JSON, or off",
+        ),
+        ServeOptionV1::new(
+            "--draft-cost",
+            Choice(&["per-token", "per-block"]),
+            Speculation,
+            "how the drafter's cost grows with the drafts of a step",
+        ),
+        ServeOptionV1::new(
+            "--prefix-cache",
+            Choice(ON_OFF_V1),
+            Cache,
+            "reuse cached prompt prefixes when the package declares it (default on)",
+        ),
+        ServeOptionV1::new(
+            "--verify-warmup",
+            Choice(ON_OFF_V1),
+            Speculation,
+            "warm up every verify graph shape at startup (default on)",
+        ),
+        ServeOptionV1::new(
+            "--prefill-budget",
+            Choice(&["fixed", "decode-aware", "tbt"]),
+            Prefill,
+            "how prefill shares a step with decoding requests (default fixed)",
+        ),
+        ServeOptionV1::new(
+            "--prefill-timing-cuts",
+            Choice(&["off", "fixed", "adaptive"]),
+            Prefill,
+            "timing-selected prefill cuts beside decoding; fixed and adaptive need tbt",
+        ),
+        ServeOptionV1::new(
+            "--prefill-itl-target-ms",
+            Count,
+            Prefill,
+            "decode-aware: the mixed step's time target in ms, 1 to 60000",
+        ),
+        ServeOptionV1::new(
+            "--prefill-decode-steps",
+            Count,
+            Prefill,
+            "decode-aware: the most decode steps the prefill part takes, 1 to 64",
+        ),
+        ServeOptionV1::new(
+            "--decode-tbt-target-ms",
+            Count,
+            Prefill,
+            "tbt: the decode stall target in ms (default 100)",
+        ),
+        ServeOptionV1::new(
+            "--mixed-min-prefill-tokens",
+            Count,
+            Prefill,
+            "tbt: the prefill tokens every mixed step takes at least (default 512)",
+        ),
+        ServeOptionV1::new(
+            "--mixed-decode-steps",
+            Count,
+            Prefill,
+            "tbt: decode-only steps after each mixed step, 0 to 8 (default 0)",
+        ),
+        ServeOptionV1::new(
+            "--kv-offload-gib",
+            Count,
+            Cache,
+            "host memory for offloaded KV pages in GiB; 0 turns offload off",
+        ),
+        ServeOptionV1::new(
+            "--kv-offload-min-tokens",
+            Count,
+            Cache,
+            "the fewest tokens a sequence offloads (default 64)",
+        ),
+        ServeOptionV1::new(
+            "--kv-offload-gbps",
+            Number,
+            Cache,
+            "the offload rate cap per link in GB/s; uncapped by default",
+        ),
+        ServeOptionV1::new(
+            "--kv-offload-prefix",
+            Choice(ON_OFF_V1),
+            Cache,
+            "offload cached prefixes; only off is served",
+        ),
+        ServeOptionV1::new(
+            "--admission",
+            Choice(&["reserved", "optimistic"]),
+            Scheduling,
+            "how admission reserves KV pages (default optimistic)",
+        ),
+        ServeOptionV1::new(
+            "--admission-watermark",
+            Number,
+            Scheduling,
+            "optimistic: the share of pages kept free of reservations, in [0, 1)",
+        ),
+        ServeOptionV1::new(
+            "--max-preemptions",
+            Count,
+            Scheduling,
+            "optimistic: preemptions before a request keeps its worst case (default 3)",
+        ),
+        ServeOptionV1::new(
+            "--debug-preempt-every",
+            Count,
+            Debug,
+            "qualification only: preempt decoding requests every N tokens",
+        ),
+        ServeOptionV1::new(
+            "--debug-swap-every",
+            Count,
+            Debug,
+            "qualification only: swap decoding requests to host memory every N tokens",
+        ),
+        ServeOptionV1::new(
+            "--max-sequences",
+            Count,
+            Scheduling,
+            "the most sequences served at once (default 8)",
+        ),
+        ServeOptionV1::new(
+            "--max-batch-tokens",
+            Count,
+            Scheduling,
+            "the token budget of one scheduled batch",
+        ),
+        ServeOptionV1::new(
+            "--prefill-chunk-tokens",
+            Count,
+            Prefill,
+            "prompt tokens per prefill chunk, within the batch budget",
+        ),
+        ServeOptionV1::new(
+            "--queue-depth",
+            Count,
+            Scheduling,
+            "requests that may wait beyond the served sequences; unbounded by default",
+        ),
+        ServeOptionV1::new(
+            "--queue-wait-ms",
+            Count,
+            Scheduling,
+            "how long a request may wait for admission; 0 waits without limit",
+        ),
+        ServeOptionV1::new(
+            "--drain-timeout-ms",
+            Count,
+            Server,
+            "how long a stop drains admitted requests (default 30000)",
+        ),
+        ServeOptionV1::new(
+            "--log-level",
+            Choice(&["error", "warn", "info", "debug"]),
+            Logging,
+            "the log level; CHOPINFER_LOG_LEVEL or info by default",
+        ),
+        ServeOptionV1::new(
+            "--max-request-body-bytes",
+            Count,
+            Server,
+            "the largest request body accepted",
+        ),
+        ServeOptionV1::new(
+            "--max-request-string-bytes",
+            Count,
+            Server,
+            "the largest string one request may carry",
+        ),
+        ServeOptionV1::new(
+            "--responses-store-bytes",
+            Count,
+            Server,
+            "the byte budget of stored Responses; 0 stores none",
+        ),
+        ServeOptionV1::new(
+            "--max-tokenizer-input-bytes",
+            Count,
+            Server,
+            "the most bytes one tokenizer input may carry, 1 to 67108864",
+        ),
+        ServeOptionV1::new(
+            "--max-images-per-request",
+            Count,
+            Media,
+            "the most images one request may carry; the package's count by default",
+        ),
+        ServeOptionV1::new(
+            "--allowed-local-media-path",
+            Directory,
+            Media,
+            "the directory file:// media may be read from",
+        ),
+        ServeOptionV1::new(
+            "--allowed-media-domains",
+            Text,
+            Media,
+            "the hosts remote media may come from, as HOST,...",
+        )
+        .repeatable(),
+        ServeOptionV1::new(
+            "--media-allow-private-addresses",
+            Choice(ON_OFF_V1),
+            Media,
+            "let remote media resolve to private addresses (default off)",
+        ),
+        ServeOptionV1::new(
+            "--media-request-timeout-ms",
+            Count,
+            Media,
+            "the time limit of one remote media request, 1 to 300000 ms",
+        ),
+        ServeOptionV1::new(
+            "--media-fetch-timeout-ms",
+            Count,
+            Media,
+            "the time limit of one remote media fetch with its redirects, 1 to 300000 ms",
+        ),
+        ServeOptionV1::new(
+            "--media-connect-timeout-ms",
+            Count,
+            Media,
+            "the time limit of one remote media connection, 1 to 300000 ms",
+        ),
+        ServeOptionV1::new(
+            "--media-max-redirects",
+            Count,
+            Media,
+            "the most redirects one remote media fetch follows",
+        ),
+        ServeOptionV1::new(
+            "--debug-reference-tokens",
+            File,
+            Debug,
+            "qualification only: teacher-forced reference tokens",
+        ),
+        ServeOptionV1::new(
+            "--fake-host-services",
+            Flag,
+            Debug,
+            "serve on host-memory device services, for CPU tests",
+        ),
+        ServeOptionV1::new(
+            "--architecture",
+            Text,
+            Debug,
+            "the device architecture the host answers a package with (default sm_120f)",
+        ),
+        ServeOptionV1::new(
+            "--capability",
+            Text,
+            Debug,
+            "a host capability to declare beyond the built-in ones",
+        )
+        .repeatable(),
+    ]
+};
+
+/// The environment variables serve reads that an operator sets.
+const SERVE_ENVIRONMENT_V1: &[(&str, &str, bool, &str)] = &[
+    (
+        "CHOPINFER_API_KEY",
+        "TEXT",
+        true,
+        "the key clients must send when --api-key is not given (VLLM_API_KEY when it is unset)",
+    ),
+    (
+        "CHOPINFER_LOG_LEVEL",
+        "TEXT",
+        false,
+        "error, warn, info or debug: the log level when --log-level is not given",
+    ),
+    (
+        "CHOPINFER_LOG_SUMMARY_SECONDS",
+        "N",
+        false,
+        "seconds between summary lines, 1 to 86400 (default 60)",
+    ),
+    (
+        "CHOPINFER_MODEL_OPTIONS",
+        "TEXT",
+        false,
+        "model options as NAME=VALUE,..., under the profile's and any --model-option",
+    ),
+];
+
+/// `serve --describe-options`: [`SERVE_OPTIONS_V1`] and
+/// [`SERVE_ENVIRONMENT_V1`] as a `chopinfer.serve-options.v1` document.
+fn describe_serve_options_v1() -> String {
+    let options: Vec<serde_json::Value> = SERVE_OPTIONS_V1
+        .iter()
+        .map(|option| {
+            let (value, choices) = match option.value {
+                ServeValueV1::Count => ("N", None),
+                ServeValueV1::Number => ("F", None),
+                ServeValueV1::Text => ("TEXT", None),
+                ServeValueV1::Directory => ("DIR", None),
+                ServeValueV1::File => ("FILE", None),
+                ServeValueV1::Json => ("JSON", None),
+                ServeValueV1::Choice(choices) => ("TEXT", Some(choices)),
+                ServeValueV1::Flag => ("none", None),
+            };
+            serde_json::json!({
+                "flag": option.flag,
+                "value": value,
+                "choices": choices,
+                "group": option.group.name(),
+                "help": option.help,
+                "model_launch": option.model_launch,
+                "repeatable": option.repeatable,
+            })
+        })
+        .collect();
+    let environment: Vec<serde_json::Value> = SERVE_ENVIRONMENT_V1
+        .iter()
+        .map(|(name, value, secret, help)| {
+            serde_json::json!({"name": name, "value": value, "secret": secret, "help": help})
+        })
+        .collect();
+    serde_json::json!({
+        "schema": "chopinfer.serve-options.v1",
+        "options": options,
+        "environment": environment,
+    })
+    .to_string()
+}
+
 fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCommandErrorV1> {
     let env_defaults =
         model_options_environment_v1(std::env::var("CHOPINFER_MODEL_OPTIONS").ok().as_deref())?;
     let arguments = crate::profiles::apply_defaults(&env_defaults, arguments);
     let resolved = crate::profiles::resolve(&arguments)?;
     let parsed = ArgumentsV1::parse(&resolved.arguments)?;
-    parsed.reject_unsupported(
-        "serve",
-        &[
-            "--bundle",
-            "--model",
-            "--tensor-parallel-size",
-            "--model-cache-dir",
-            "--model-option",
-            "--list-model-options",
-            "--activation-policy",
-            "--modalities",
-            "--listen",
-            "--served-model-name",
-            "--enable-request-id-headers",
-            "--api-key",
-            "--allowed-origins",
-            "--allowed-methods",
-            "--allowed-headers",
-            "--allow-credentials",
-            "--topology",
-            "--devices",
-            "--max-context-tokens",
-            "--gpu-memory-utilization",
-            "--graph-memory-reserve-mib",
-            "--kv-pages",
-            "--context-parallel-size",
-            "--kv-cache-dtype",
-            "--speculative-tokens",
-            "--speculative-rows",
-            "--speculation",
-            "--speculation-costs",
-            "--speculation-depths",
-            "--speculation-widths",
-            "--speculation-graph-rows",
-            "--speculation-confidence",
-            "--draft-cost",
-            "--prefix-cache",
-            "--verify-warmup",
-            "--prefill-budget",
-            "--prefill-timing-cuts",
-            "--prefill-itl-target-ms",
-            "--prefill-decode-steps",
-            "--decode-tbt-target-ms",
-            "--mixed-min-prefill-tokens",
-            "--mixed-decode-steps",
-            "--kv-offload-gib",
-            "--kv-offload-min-tokens",
-            "--kv-offload-gbps",
-            "--kv-offload-prefix",
-            "--admission",
-            "--admission-watermark",
-            "--max-preemptions",
-            "--debug-preempt-every",
-            "--debug-swap-every",
-            "--max-sequences",
-            "--max-batch-tokens",
-            "--prefill-chunk-tokens",
-            "--queue-depth",
-            "--queue-wait-ms",
-            "--drain-timeout-ms",
-            "--log-level",
-            "--max-request-body-bytes",
-            "--max-request-string-bytes",
-            "--responses-store-bytes",
-            "--max-tokenizer-input-bytes",
-            "--max-images-per-request",
-            "--allowed-local-media-path",
-            "--allowed-media-domains",
-            "--media-allow-private-addresses",
-            "--media-request-timeout-ms",
-            "--media-fetch-timeout-ms",
-            "--media-connect-timeout-ms",
-            "--media-max-redirects",
-            "--debug-reference-tokens",
-            "--checkpoint",
-            "--load-threads",
-            "--weight-keeper",
-            "--weight-keeper-policy",
-            "--weight-keeper-identity",
-            "--fake-host-services",
-        ],
-    )?;
+    let accepted: Vec<&'static str> = SERVE_OPTIONS_V1.iter().map(|option| option.flag).collect();
+    parsed.reject_unsupported("serve", &accepted)?;
     let direct_checkpoint = match &parsed.direct_checkpoint {
         Some(_) if parsed.model.is_some() => {
             return Err(usage_error(
@@ -11839,3 +12421,198 @@ mod model_option_tests {
 #[cfg(test)]
 #[path = "command_device_results_tests.rs"]
 mod device_results_tests;
+
+#[cfg(test)]
+mod serve_option_tests {
+    use super::*;
+
+    fn words(words: &[&str]) -> Vec<String> {
+        words.iter().map(|word| (*word).to_owned()).collect()
+    }
+
+    /// A value each flag's parse accepts, so a refusal can only be the
+    /// command's.
+    fn sample(flag: &str, value: ServeValueV1) -> Option<&'static str> {
+        Some(match (flag, value) {
+            (_, ServeValueV1::Flag) => return None,
+            ("--devices", _) => "0",
+            ("--listen", _) => "127.0.0.1:0",
+            ("--modalities", _) => "auto",
+            ("--model-option", _) => "name=1",
+            ("--speculation-costs", _) => "1:10000:1:0:1",
+            ("--speculation-depths", _) => "1:3",
+            ("--speculation-widths", _) => "8",
+            ("--allowed-media-domains", _) => "example.com",
+            ("--speculation-confidence", _) => "off",
+            ("--scenario", _) => "commit",
+            ("--fixture-tokens", _) => "1",
+            (_, ServeValueV1::Json) => "[]",
+            (_, ServeValueV1::Count) => "1",
+            (_, ServeValueV1::Number) => "0.5",
+            (_, ServeValueV1::Choice(choices)) => choices[0],
+            _ => "value",
+        })
+    }
+
+    /// The flags `ArgumentsV1::parse` reads, as its source names them.
+    fn parsed_flags() -> std::collections::BTreeSet<String> {
+        let source = include_str!("command.rs");
+        let start = source
+            .find("    fn parse(arguments: &[String]) -> Result<Self, HostCommandErrorV1> {")
+            .expect("the shared parser");
+        let end = start + source[start..].find("fn present_flags").expect("its end");
+        let mut flags = std::collections::BTreeSet::new();
+        let mut rest = &source[start..end];
+        while let Some(at) = rest.find("\"--") {
+            let literal = &rest[at + 1..];
+            let length = literal[2..]
+                .find(|c: char| !(c.is_ascii_lowercase() || c == '-'))
+                .map_or(literal.len(), |length| length + 2);
+            if length > 2 && literal[length..].starts_with('"') {
+                flags.insert(literal[..length].to_owned());
+            }
+            rest = &literal[length..];
+        }
+        flags.extend(VALUELESS_FLAGS_V1.iter().map(|flag| (*flag).to_owned()));
+        flags
+    }
+
+    /// `serve` accepts exactly the flags of [`SERVE_OPTIONS_V1`], each with
+    /// the value shape the table gives it: every table flag reaches the
+    /// command's checks, and every other flag the shared parser knows is
+    /// refused as one serve does not accept.
+    #[test]
+    fn serve_options_and_the_serve_parser_accept_the_same_flags() {
+        let mut seen = std::collections::BTreeSet::new();
+        for option in SERVE_OPTIONS_V1 {
+            assert!(seen.insert(option.flag), "{} listed twice", option.flag);
+            assert_eq!(
+                option.value == ServeValueV1::Flag,
+                VALUELESS_FLAGS_V1.contains(&option.flag),
+                "{}",
+                option.flag
+            );
+            assert!(!option.help.is_empty() && !option.help.contains('\n'));
+            let mut invocation = words(&["serve", "--bundle", "/package"]);
+            if option.flag != "--bundle" {
+                invocation.push(option.flag.to_owned());
+                invocation.extend(sample(option.flag, option.value).map(str::to_owned));
+            }
+            if let Err(error) = parse_host_command_v1(&invocation) {
+                let error = error.to_string();
+                assert!(
+                    !error.contains("does not accept") && !error.contains("unsupported argument"),
+                    "{}: {error}",
+                    option.flag
+                );
+            }
+        }
+        let parsed = parsed_flags();
+        assert!(parsed.len() > SERVE_OPTIONS_V1.len(), "{parsed:?}");
+        for option in SERVE_OPTIONS_V1 {
+            assert!(
+                parsed.contains(option.flag),
+                "{} is not parsed",
+                option.flag
+            );
+        }
+        for flag in parsed.iter().filter(|flag| !seen.contains(flag.as_str())) {
+            let mut invocation = words(&["serve", "--bundle", "/package", flag]);
+            let value = if VALUELESS_FLAGS_V1.contains(&flag.as_str()) {
+                ServeValueV1::Flag
+            } else {
+                ServeValueV1::Text
+            };
+            invocation.extend(sample(flag, value).map(str::to_owned));
+            let error = parse_host_command_v1(&invocation).unwrap_err().to_string();
+            assert!(
+                error.starts_with(&format!("serve does not accept {flag}")),
+                "{flag}: {error}"
+            );
+        }
+    }
+
+    /// `serve --describe-options` ends a serve invocation like `--help`, and
+    /// prints every option and the environment serve reads.
+    #[test]
+    fn describe_options_prints_the_option_table() {
+        for invocation in [
+            &["serve", "--describe-options"][..],
+            &[
+                "serve",
+                "--model",
+                "--describe-options",
+                "--describe-options",
+            ],
+        ] {
+            let HostCommandV1::Display { text } =
+                parse_host_command_v1(&words(invocation)).unwrap()
+            else {
+                panic!("a description");
+            };
+            let document: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(document["schema"], "chopinfer.serve-options.v1");
+            let options = document["options"].as_array().unwrap();
+            assert_eq!(options.len(), SERVE_OPTIONS_V1.len());
+            for (option, entry) in options.iter().zip(SERVE_OPTIONS_V1) {
+                let mut keys: Vec<&str> = option
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(String::as_str)
+                    .collect();
+                keys.sort_unstable();
+                assert_eq!(
+                    keys,
+                    [
+                        "choices",
+                        "flag",
+                        "group",
+                        "help",
+                        "model_launch",
+                        "repeatable",
+                        "value"
+                    ]
+                );
+                assert_eq!(option["flag"], entry.flag);
+                assert!(
+                    ["N", "F", "TEXT", "DIR", "FILE", "JSON", "none"]
+                        .contains(&option["value"].as_str().unwrap())
+                );
+                assert_eq!(
+                    option["choices"].is_array(),
+                    matches!(entry.value, ServeValueV1::Choice(_))
+                );
+            }
+            let prefix = options
+                .iter()
+                .find(|option| option["flag"] == "--prefix-cache")
+                .unwrap();
+            assert_eq!(prefix["choices"], serde_json::json!(["on", "off"]));
+            assert_eq!(prefix["group"], "cache");
+            let names: Vec<&str> = document["environment"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| entry["name"].as_str().unwrap())
+                .collect();
+            assert_eq!(
+                names,
+                [
+                    "CHOPINFER_API_KEY",
+                    "CHOPINFER_LOG_LEVEL",
+                    "CHOPINFER_LOG_SUMMARY_SECONDS",
+                    "CHOPINFER_MODEL_OPTIONS"
+                ]
+            );
+            assert_eq!(document["environment"][0]["secret"], true);
+        }
+        // Only the last word describes; as a value it is not one.
+        assert!(
+            parse_host_command_v1(&words(&["serve", "--describe-options", "--bundle", "a"]))
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported argument '--describe-options'")
+        );
+    }
+}

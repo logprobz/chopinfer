@@ -800,6 +800,10 @@ print(json.dumps(reply), flush=True)
         cache = self.root / "parity-cache"
         directory_file = self.root / "parity-not-a-directory"
         directory_file.write_text("")
+        malformed = self.root / "parity-malformed-tokens.json"
+        malformed.write_text("{")
+        empty = self.root / "parity-empty-tokens.json"
+        empty.write_text('{"sequences": []}')
         # One invocation per check a check runs that the fixture can reach:
         # the preparation path's, the shared preflight's, and each check made
         # after the native module opens that needs neither it nor a device.
@@ -817,10 +821,16 @@ print(json.dumps(reply), flush=True)
             (["--allowed-local-media-path", str(directory_file)], {}, "must name a directory"),
             (["--max-batch-tokens", "8", "--prefill-chunk-tokens", "16"], {}, "exceeds the effective batch budget"),
             ([], {"CHOPINFER_BATCH_REFUSAL_MAX_CONSECUTIVE": "many"}, "CHOPINFER_BATCH_REFUSAL_MAX_CONSECUTIVE"),
+            # What the generation worker refuses as it starts.
+            ([], {"CHOPINFER_NVTX_RANGES": "1"}, "requires the profiling preload helper"),
+            (["--debug-reference-tokens", str(self.root / "parity-missing-tokens.json")], {}, "cannot read"),
+            (["--debug-reference-tokens", str(malformed)], {}, "invalid reference token file"),
+            (["--debug-reference-tokens", str(empty)], {}, "needs nonempty sequences"),
         ]
         base = [self.host, "serve", "--model", checkpoint, "--model-cache-dir", cache, "--tensor-parallel-size", "4",
                 "--listen", "127.0.0.1:0", "--fake-host-services"]
-        for options, variables, reason in cases:
+
+        def agree(base, options, variables, reason):
             environment = dict(self.environment, **variables)
             check = subprocess.run([*base, *options, "--check"], env=environment, text=True, capture_output=True,
                                    timeout=HANG_SECONDS)
@@ -834,6 +844,22 @@ print(json.dumps(reply), flush=True)
             message = self.refusal_message(check.stderr)
             self.assertIn(reason, message)
             self.assertEqual(message, self.refusal_message(served.stderr), (options, variables))
+
+        for options, variables, reason in cases:
+            agree(base, options, variables, reason)
+        # A package served by --bundle reads the warmup switch only as its
+        # transport starts; serve --model reads it before package work.
+        prepared = subprocess.run([*base, "--check"], env=self.environment, text=True, capture_output=True,
+                                  timeout=HANG_SECONDS)
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        package = next(json.loads(line.split(": ", 1)[1]) for line in prepared.stderr.splitlines()
+                       if line.startswith("startup direct_package: "))
+        bundle = [self.host, "serve", "--bundle", package["bundle"], "--checkpoint", checkpoint,
+                  "--listen", "127.0.0.1:0", "--fake-host-services"]
+        for options, variables, reason in (
+                ([], {"CHOPINFER_DEV_SKIP_WARMUP": "2"}, "CHOPINFER_DEV_SKIP_WARMUP must be 0 or 1"),
+                (["--debug-reference-tokens", str(empty)], {}, "needs nonempty sequences")):
+            agree(bundle, options, variables, reason)
         # A context past what one sequence holds is refused without a device;
         # serving names the capacity its devices acquired, which only a start
         # can know, so the messages agree up to that capacity.

@@ -3096,10 +3096,7 @@ fn run_host_command_from_v1(
                     server_config_v1(**serving, surface, None)?;
                     refuse_reference_tokens_variable_v1(std::env::var_os(REFERENCE_TOKENS_ENV_V1))
                         .map_err(usage_error)?;
-                    crate::startup::development_skip_warmup(
-                        std::env::var_os("CHOPINFER_DEV_SKIP_WARMUP").as_deref(),
-                    )
-                    .map_err(usage_error)?;
+                    development_skip_warmup_v1()?;
                     if serving
                         .maximum_tokenizer_input_bytes
                         .is_some_and(|n| n == 0 || n > 64 * 1024 * 1024)
@@ -3954,6 +3951,57 @@ fn served_engine_config_v1(
     Ok(engine_config)
 }
 
+/// The refusal of a generation worker that did not start.
+fn worker_refusal_v1(error: impl std::fmt::Display) -> HostCommandErrorV1 {
+    run_error(format!("the generation worker did not start: {error}"))
+}
+
+/// Whether a development start skips its warmup (`CHOPINFER_DEV_SKIP_WARMUP`).
+fn development_skip_warmup_v1() -> Result<bool, HostCommandErrorV1> {
+    crate::startup::development_skip_warmup(
+        std::env::var_os("CHOPINFER_DEV_SKIP_WARMUP").as_deref(),
+    )
+    .map_err(usage_error)
+}
+
+/// The recurrent state slots of a served engine, one per sequence.
+fn state_slot_pool_v1(
+    manifest: &BundleManifestV1,
+    maximum_rows: usize,
+    speculation: Option<SpeculationConfig>,
+) -> Result<crate::recurrent::StateSlotPoolV1, String> {
+    crate::recurrent::StateSlotPoolV1::new(
+        manifest,
+        maximum_rows,
+        // One item verifies at most its drafts plus the bonus row; the
+        // verify-token bound spans the whole batch.
+        speculation.map_or(1, |config| config.maximum_draft_tokens() + 1),
+    )
+}
+
+/// What the generation worker refuses as it starts that needs neither the
+/// native module nor a device, in its order and with its messages: the
+/// declared media recipes, the profiling helper `CHOPINFER_NVTX_RANGES`
+/// asks for, the recurrent state slots and the `--debug-reference-tokens`
+/// file.
+fn check_worker_start_v1(
+    manifest: &BundleManifestV1,
+    declaration: &runtime_frontend::FrontendDescriptorV1,
+    maximum_rows: usize,
+    speculation: Option<SpeculationConfig>,
+    debug_reference_tokens: Option<&Path>,
+) -> Result<(), HostCommandErrorV1> {
+    crate::validate_media_recipes_v1(declaration).map_err(worker_refusal_v1)?;
+    crate::profile_ranges::initialize().map_err(worker_refusal_v1)?;
+    if !manifest.recurrent_state_layouts().is_empty() {
+        state_slot_pool_v1(manifest, maximum_rows, speculation).map_err(worker_refusal_v1)?;
+    }
+    if let Some(path) = debug_reference_tokens {
+        ReferenceTokensV1::from_file(path).map_err(worker_refusal_v1)?;
+    }
+    Ok(())
+}
+
 /// What `serve --check` reports besides what the package resolves: the
 /// command's effective settings and the profile's qualified limit.
 pub(crate) struct ServeCheckV1 {
@@ -3965,12 +4013,14 @@ pub(crate) struct ServeCheckV1 {
 /// once its native module and devices are open that need neither, in its
 /// order and with its messages, then a `chopinfer.serve-check.v1` document.
 /// They read the package's frontend declaration and tokenizer, plan the
-/// topology at its rank count with its context-parallel groups, and size
-/// the engine from the declaration. Only what the native module, a device
-/// or the moment of the start decides is left to it: the frontend export,
-/// device memory and peer access, the KV capacity the devices acquire (a
-/// context limit past the engine's sequence limit is refused here), and
-/// binding the listener.
+/// topology at its rank count with its context-parallel groups, gather the
+/// serving identity, size the engine from the declaration, and run what the
+/// generation worker and the transport refuse before they touch either.
+/// Only what the native module, a device or the moment of the start decides
+/// is left to it: the frontend export and the module's callbacks, device
+/// memory and peer access, the KV capacity the devices acquire (a context
+/// limit past the engine's sequence limit is refused here), and binding the
+/// listener.
 #[allow(clippy::too_many_arguments)]
 fn serve_check_v1(
     preflight: &ServePreflightV1,
@@ -3978,16 +4028,27 @@ fn serve_check_v1(
     serving: &ServingOptionsV1,
     envelope: Option<DeveloperServingEnvelopeV1>,
     remote_media: &runtime_media::remote::RemoteMediaPolicy,
-    allowed_local_media_path: Option<&Path>,
-    profile_name: Option<&str>,
+    (allowed_local_media_path, debug_reference_tokens): (Option<&Path>, Option<&Path>),
+    (profile_name, direct_package): (Option<&str>, Option<&DirectPackageIdentityV1>),
     check: ServeCheckV1,
 ) -> Result<String, HostCommandErrorV1> {
     let manifest = preflight.package.manifest();
     crate::deployment::require_frontend_capability_v1(manifest).map_err(unservable_v1)?;
     let frontend =
         crate::deployment::package_frontend_v1(&preflight.package).map_err(unservable_v1)?;
-    ServedTopologyV1::planned(manifest, topology, devices)?
+    let topology = ServedTopologyV1::planned(manifest, topology, devices)?
         .with_context_parallel(manifest, serving.context_parallel_size)?;
+    serving_identity_v1(
+        manifest,
+        (profile_name, direct_package),
+        (
+            topology.device_ordinals.len(),
+            topology.reported_context_parallel(manifest)?,
+        ),
+        preflight.kv_cache,
+        preflight.speculation,
+        serving,
+    )?;
     validate_remote_media_v1(remote_media)?;
     crate::deployment::check_served_images_v1(
         &frontend.declaration,
@@ -4015,6 +4076,13 @@ fn serve_check_v1(
         preflight.speculation,
     )?;
     serving_backend_config_v1(serving)?;
+    check_worker_start_v1(
+        manifest,
+        &frontend.declaration,
+        serving.maximum_sequences,
+        preflight.speculation,
+        debug_reference_tokens,
+    )?;
     // Serving refuses a requested context past the KV capacity its devices
     // acquire, which never exceeds the engine's sequence limit, so a request
     // past that limit is refused here.
@@ -4029,6 +4097,7 @@ fn serve_check_v1(
              sequence of the selected bundle holds, more than any acquired KV capacity"
         )));
     }
+    development_skip_warmup_v1()?;
     let text = |value: &serde_json::Value| match value {
         serde_json::Value::String(text) => text.clone(),
         value => value.to_string(),
@@ -4143,8 +4212,8 @@ fn serve_v1(
             &serving,
             envelope,
             remote_media,
-            allowed_local_media_path,
-            profile_name,
+            (allowed_local_media_path, debug_reference_tokens),
+            (profile_name, direct_package),
             check,
         );
     }
@@ -4356,7 +4425,7 @@ fn serve_v1(
         serving_backend_config_v1(&serving)?.with_tokenizer_input_bytes(tokenizer_input_bytes),
         policy,
     )
-    .map_err(|error| run_error(format!("the generation worker did not start: {error}")))?
+    .map_err(worker_refusal_v1)?
     .with_device_memory(device_memory);
     let backend = if media_enabled {
         backend.with_media_processing(
@@ -4452,10 +4521,7 @@ fn serve_transport_v1(
     verify_warmup: Option<runtime_engine::warmup::VerifyWarmup>,
     warmup_steps: Option<Arc<crate::startup::StartupStepLog>>,
 ) -> Result<String, HostCommandErrorV1> {
-    let skip_warmup = crate::startup::development_skip_warmup(
-        std::env::var_os("CHOPINFER_DEV_SKIP_WARMUP").as_deref(),
-    )
-    .map_err(usage_error)?;
+    let skip_warmup = development_skip_warmup_v1()?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -4672,13 +4738,10 @@ impl ServedEngineV1 {
             if !loaded.library().supports_request_retirement() {
                 return Err("recurrent state requires request retirement".to_owned());
             }
-            Some(crate::recurrent::StateSlotPoolV1::new(
+            Some(state_slot_pool_v1(
                 loaded.manifest(),
                 self.maximum_rows as usize,
-                // One item verifies at most its drafts plus the bonus row;
-                // the verify-token bound spans the whole batch.
-                self.speculation
-                    .map_or(1, |config| config.maximum_draft_tokens() + 1),
+                self.speculation,
             )?)
         };
         let mut serving_policy = self.serving_kv_policy;
@@ -10181,6 +10244,64 @@ mod tests {
                 "{flag}"
             );
         }
+    }
+
+    /// A media recipe the declaration admits and the generation worker
+    /// refuses as it starts is refused by `serve --check` with the message
+    /// serving gives.
+    #[test]
+    fn a_check_refuses_the_media_recipes_the_generation_worker_refuses() {
+        use crate::generation::stop_tests::{declarations, tokenizer};
+        let declared = |orientation: Option<bool>| {
+            let mut parameters = serde_json::json!({
+                "factor": 32, "minimum_pixels": 8192, "maximum_pixels": 1_048_576,
+                "patch": 16, "temporal_patch": 2, "merge": 2, "value_scale": 1.0,
+                "mean": [0.0, 0.0, 0.0], "std": [1.0, 1.0, 1.0]
+            });
+            if let Some(orientation) = orientation {
+                parameters["exif_orientation"] = orientation.into();
+            }
+            let mut declaration = runtime_frontend::FrontendDescriptorV1::from_component_bytes(
+                declarations::KEY_VALUE.as_bytes(),
+            )
+            .unwrap();
+            declaration.multimodal = Some(
+                serde_json::from_value(serde_json::json!({
+                    "arena": {"rows": 64, "page_rows": 64, "hidden": 8, "element": "bf16"},
+                    "encoders": [],
+                    "modalities": [{
+                        "kind": "image", "part_types": ["image_url"], "maximum_items": 1,
+                        "maximum_bytes": 64, "maximum_tokens": 8192, "encoder": 0,
+                        "recipe": {"tag": "image.patch-grid.v1", "parameters": parameters},
+                        "render": {"pad": "<image>"}
+                    }]
+                }))
+                .unwrap(),
+            );
+            declaration
+        };
+        let manifest = manifest(vec![topology("tp1", 1)], 16);
+        let check = |declaration: &runtime_frontend::FrontendDescriptorV1| {
+            super::check_worker_start_v1(&manifest, declaration, 1, None, None)
+        };
+        check(&declared(None)).unwrap();
+        check(&declared(Some(true))).unwrap();
+        let refused = declared(Some(false));
+        let served = crate::EngineGenerationBackend::try_new_with_factory(
+            tokenizer(),
+            || -> Result<runtime_engine::Engine<super::ServedExecutorV1>, String> {
+                Err("the worker built its engine".to_owned())
+            },
+            crate::EngineBackendConfig::new(1).unwrap(),
+            crate::generation::EngineModelPolicyV1::from_declaration(&refused),
+        )
+        .map(drop)
+        .map_err(super::worker_refusal_v1)
+        .unwrap_err()
+        .to_string();
+        let checked = check(&refused).unwrap_err().to_string();
+        assert_eq!(checked, served);
+        assert!(checked.contains("exif_orientation"), "{checked}");
     }
 
     #[test]

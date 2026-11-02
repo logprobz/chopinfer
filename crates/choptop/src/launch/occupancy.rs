@@ -253,9 +253,9 @@ pub enum Occupancy {
     Free,
     /// Rows a switch may stop or replace.
     Held(Vec<Holder>),
-    /// Something choptop does not stop, and what: a container, a remote
-    /// target, a process that is not serve, a starting process's
-    /// reservation.
+    /// Something a switch does not stop, and who, as it reads after "held
+    /// by": a container, a remote target, a process that is not serve, a
+    /// serve process that is starting there.
     Blocked(String),
     /// Not known, and why; it cannot be picked.
     Unknown(String),
@@ -513,10 +513,8 @@ pub fn occupancy(inputs: &Inputs) -> Vec<Gpu> {
                     gpu.uuid.as_ref().is_some_and(|uuid| uuids.contains(uuid))
                         && !matches!(gpu.occupancy, Occupancy::Unknown(_))
                 }) {
-                    gpu.occupancy = Occupancy::Blocked(format!(
-                        "reserved by {}, which is starting",
-                        serve.described()
-                    ));
+                    gpu.occupancy =
+                        Occupancy::Blocked(format!("{}, which is starting", serve.described()));
                 }
             }
             None => {
@@ -1062,9 +1060,36 @@ pub(crate) mod tests {
         assert_eq!(held[0], Occupancy::Free);
         assert_eq!(
             held[2],
-            Occupancy::Blocked("reserved by proc 51022 model-51022, which is starting".into())
+            Occupancy::Blocked("proc 51022 model-51022, which is starting".into())
         );
         assert_eq!(held[3], held[2]);
+        // Each reads after "held by".
+        let gpus = occupancy(&Inputs {
+            live: &live,
+            instances: &[],
+            reservations: &[],
+            waited: &[],
+            interval: 1.0,
+            now: 1.0,
+        });
+        let placement = crate::launch::placement::place(
+            &crate::launch::placement::Field {
+                gpus: &gpus,
+                ports: &BTreeMap::new(),
+                reservations: &[],
+            },
+            &[2, 3].into(),
+            2,
+            None,
+            &mut |_, _| true,
+        );
+        assert_eq!(
+            placement.problems,
+            [
+                "GPU 2 is held by proc 51022 model-51022, which is starting",
+                "GPU 3 is held by proc 51022 model-51022, which is starting",
+            ]
+        );
         // With ordinals, or without the variable, any GPU may be its.
         for visible in [Some("2,3"), None, Some(&format!("{},1", uuid(2))[..])] {
             live.scan(&discover::Report::Scan {
@@ -1195,7 +1220,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             unwaited[3],
-            Occupancy::Blocked("reserved by proc 700 model-700, which is starting".into())
+            Occupancy::Blocked("proc 700 model-700, which is starting".into())
         );
     }
 

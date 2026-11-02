@@ -909,7 +909,7 @@ fn pane_help(app: &App, lines: &[(Row, Line)]) -> (String, String, Color) {
                 Some((index, Occupancy::Blocked(what))) => (
                     format!("GPU {index}"),
                     sanitize(&format!(
-                        "held by {what}, which choptop does not stop, so a launch cannot use it."
+                        "held by {what}; a switch does not stop it, so a launch cannot use it."
                     )),
                     Color::Yellow,
                 ),
@@ -1501,6 +1501,28 @@ mod tests {
                 format!("     {}", "q".repeat(16)),
                 "     --served-model-name Qwen".to_owned(),
             ]
+        );
+    }
+
+    #[test]
+    fn a_gpu_held_by_what_a_switch_does_not_stop_says_so_in_one_sentence() {
+        let mut app = App::new(crate::instances::Registry::new(1.0), 1.0, 15.0, Vec::new());
+        app.loader.pane = Pane::Placement;
+        app.loader.plan.gpus = vec![occupancy::Gpu {
+            index: 2,
+            uuid: None,
+            memory_total: None,
+            occupancy: Occupancy::Blocked("proc 51022 Qwen3.8-Flash, which is starting".into()),
+            graphics: Vec::new(),
+        }];
+        app.loader.gpu_cursor = 0;
+        assert_eq!(
+            pane_help(&app, &[]),
+            (
+                "GPU 2".to_owned(),
+                "held by proc 51022 Qwen3.8-Flash, which is starting; a switch does not stop it, so a launch cannot use it.".to_owned(),
+                Color::Yellow
+            )
         );
     }
 

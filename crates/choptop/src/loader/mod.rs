@@ -130,6 +130,8 @@ pub enum Outcome {
 /// What the loader works out each frame.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Plan {
+    /// The form's revision it was worked out for.
+    pub revision: u64,
     pub gpus: Vec<Gpu>,
     pub placement: Placement,
     pub explicit: Explicit,
@@ -143,6 +145,17 @@ pub struct Plan {
     pub command: Option<Vec<String>>,
     /// The checkpoint directory.
     pub checkpoint: Option<PathBuf>,
+}
+
+/// What the plan is worked out from, to tell when a key changed it.
+#[derive(Clone, Debug, PartialEq)]
+struct Snapshot {
+    model: Option<String>,
+    profile: Option<String>,
+    picked: BTreeSet<u32>,
+    edits: BTreeMap<Key, String>,
+    custom: Vec<String>,
+    typed_checkpoint: Option<PathBuf>,
 }
 
 /// The model loader.
@@ -173,6 +186,10 @@ pub struct Loader {
     pub recent: Vec<Recent>,
     /// A checkpoint typed in, kept once `models pick` names its model.
     pub typed_checkpoint: Option<PathBuf>,
+    /// Counts changes to the form: the TUI takes several keys before it
+    /// works out the plan again, and a plan of an earlier revision does
+    /// not start.
+    revision: u64,
     pub plan: Plan,
     /// The `models command` asked last, the catalog's ticket of the
     /// request whose answer is awaited, and its answer.
@@ -210,6 +227,7 @@ impl Default for Loader {
             flash: None,
             recent: Vec::new(),
             typed_checkpoint: None,
+            revision: 0,
             plan: Plan::default(),
             command_asked: None,
             command_ticket: None,
@@ -399,6 +417,7 @@ impl Loader {
         now: f64,
         probe: &mut dyn FnMut(&str, u16) -> bool,
     ) {
+        let before = self.snapshot();
         self.keep_typed_checkpoint(catalog, now);
         let inputs = Inputs {
             live,
@@ -443,6 +462,9 @@ impl Loader {
             self.profile = self.auto_profile(catalog);
             self.profile_chosen = self.profile_chosen && valid;
         }
+        if self.snapshot() != before {
+            self.revision += 1;
+        }
         let ports = occupancy::ports(&inputs);
         let tensor_parallel = self.profile(catalog).map(|profile| profile.tensor_parallel);
         let explicit = command::explicit(
@@ -473,6 +495,7 @@ impl Loader {
             .as_deref()
             .and_then(|model| catalog.checkpoint(model).directory().map(PathBuf::from));
         self.plan = Plan {
+            revision: self.revision,
             gpus,
             placement,
             explicit,
@@ -752,6 +775,10 @@ impl Loader {
 
     /// The switch `S` starts, or why not.
     fn start(&self) -> Result<Start, String> {
+        // The checks and the command line must be the current form's.
+        if self.plan.revision != self.revision {
+            return Err("still computing the command".to_owned());
+        }
         if !self.plan.problems.is_empty() {
             return Err(self.plan.problems.join("; "));
         }
@@ -806,8 +833,31 @@ impl Loader {
         self.set(catalog, key.clone(), choices[next].clone());
     }
 
-    /// Takes a key; `now` stamps any message.
+    /// What the plan is worked out from now.
+    fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            model: self.model.clone(),
+            profile: self.profile.clone(),
+            picked: self.picked.clone(),
+            edits: self.edits.clone(),
+            custom: self.custom.clone(),
+            typed_checkpoint: self.typed_checkpoint.clone(),
+        }
+    }
+
+    /// Takes a key; `now` stamps any message. A key that changes the form
+    /// makes the plan out of date until the next refresh.
     pub fn key(&mut self, code: KeyCode, catalog: &mut Catalog, now: f64) -> Outcome {
+        let before = self.snapshot();
+        let outcome = self.take_key(code, catalog, now);
+        if self.snapshot() != before {
+            self.revision += 1;
+            self.plan.command = None;
+        }
+        outcome
+    }
+
+    fn take_key(&mut self, code: KeyCode, catalog: &mut Catalog, now: f64) -> Outcome {
         if self.edit.is_some() {
             match code {
                 KeyCode::Enter => self.commit(catalog, now),
@@ -1543,6 +1593,90 @@ pub(crate) mod tests {
         loader.option_cursor = rows.iter().position(|row| *row == Row::Custom(0)).unwrap();
         press(&mut loader, &mut catalog, KeyCode::Char('x'));
         assert!(loader.custom.is_empty());
+    }
+
+    /// Answers the requests in the outbox as chopinfer would: the
+    /// package's options, and a command line of the options asked for.
+    fn answer(loader: &mut Loader, catalog: &mut Catalog) {
+        for request in std::mem::take(&mut catalog.outbox) {
+            match request {
+                Request::PackageOptions { generation, .. } => loader.reply(Reply::PackageOptions(
+                    generation,
+                    parse_package_options(PACKAGE),
+                )),
+                Request::Command {
+                    generation,
+                    options,
+                    ..
+                } => {
+                    let mut arguments = vec!["serve".to_owned()];
+                    arguments.extend(options);
+                    loader.reply(Reply::Command(generation, Ok(arguments)));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn a_start_right_after_a_change_waits_for_that_changes_plan() {
+        let (mut catalog, live) = (catalog(), live());
+        let mut loader = Loader::open(Some(vec![0, 1, 2, 3]), Vec::new());
+        refresh(&mut loader, &mut catalog, &live);
+        answer(&mut loader, &mut catalog);
+        refresh(&mut loader, &mut catalog, &live);
+        assert!(
+            loader.plan.problems.is_empty() && loader.plan.command.is_some(),
+            "{:?}",
+            loader.plan
+        );
+        // The TUI takes a change of profile and S before it refreshes: S
+        // does not start the old profile's command under the new name.
+        loader.pane = Pane::Profiles;
+        press(&mut loader, &mut catalog, KeyCode::Down);
+        assert_eq!(loader.profile.as_deref(), Some("tp8-dspark-wide"));
+        assert_eq!(
+            press(&mut loader, &mut catalog, KeyCode::Char('S')),
+            Outcome::Handled
+        );
+        assert_eq!(
+            loader.flash.clone().unwrap().text,
+            "Not started: still computing the command"
+        );
+        assert_eq!(loader.plan.command, None);
+        // Back to the pick, and an edit, then S, still before a refresh.
+        press(&mut loader, &mut catalog, KeyCode::Up);
+        press(&mut loader, &mut catalog, KeyCode::Char('/'));
+        typed(&mut loader, &mut catalog, "max-seq");
+        press(&mut loader, &mut catalog, KeyCode::Enter);
+        for _ in 0..8 {
+            press(&mut loader, &mut catalog, KeyCode::Backspace);
+        }
+        typed(&mut loader, &mut catalog, "16");
+        assert_eq!(
+            loader.edits.get(&Key::Flag("max-sequences".into())),
+            Some(&"16".to_owned())
+        );
+        assert!(matches!(
+            press(&mut loader, &mut catalog, KeyCode::Char('S')),
+            Outcome::Handled
+        ));
+        // Once the plan and the command line are this form's, S starts it.
+        refresh(&mut loader, &mut catalog, &live);
+        answer(&mut loader, &mut catalog);
+        refresh(&mut loader, &mut catalog, &live);
+        let Outcome::Start(start) = press(&mut loader, &mut catalog, KeyCode::Char('S')) else {
+            panic!("a start: {:?}", loader.plan)
+        };
+        assert_eq!(start.profile, "tp4-dspark");
+        assert!(
+            start
+                .command
+                .windows(2)
+                .any(|pair| pair == ["--max-sequences", "16"]),
+            "{:?}",
+            start.command
+        );
     }
 
     #[test]

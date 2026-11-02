@@ -591,6 +591,8 @@ fn placement_pane(buffer: &mut Buffer, app: &App, area: Area, alone_: bool) {
             ),
             Occupancy::Unknown(_) => ("unknown".to_owned(), Color::Yellow),
             Occupancy::Blocked(what) => (sanitize(what), if on { Color::Red } else { Color::Dim }),
+            // Yellow when the switch stops what holds it, on every GPU it
+            // holds, picked or not.
             Occupancy::Held(holders) => (
                 holders
                     .iter()
@@ -605,7 +607,14 @@ fn placement_pane(buffer: &mut Buffer, app: &App, area: Area, alone_: bool) {
                     })
                     .collect::<Vec<_>>()
                     .join(", "),
-                if on { Color::Yellow } else { Color::Dim },
+                if holders.iter().any(|holder| match holder {
+                    Holder::Serve(serve) => placement.stops.contains(serve),
+                    Holder::Launch(position) => placement.replaces.contains(position),
+                }) {
+                    Color::Yellow
+                } else {
+                    Color::Dim
+                },
             ),
         };
         // A graphics process keeps running beside a launch; it is named on

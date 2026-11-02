@@ -1022,6 +1022,45 @@ fn loader_view() {
 }
 
 #[test]
+fn a_process_the_switch_stops_is_yellow_on_every_gpu_it_holds() {
+    use choptop::ui::buffer::Color;
+    use crossterm::event::KeyCode;
+    let mut app = qwen_tp2();
+    // One instance on GPUs 0 and 1 still stops process 48211, which holds
+    // GPUs 2 and 3 too.
+    press(&mut app, KeyCode::BackTab);
+    for _ in 0..2 {
+        press(&mut app, KeyCode::Down);
+    }
+    press(&mut app, KeyCode::Char(' '));
+    press(&mut app, KeyCode::Down);
+    press(&mut app, KeyCode::Char(' '));
+    answer_loader(&mut app);
+    assert_eq!(app.loader.plan.placement.instances.len(), 1);
+    app.settle(132, 38);
+    let frame = ui::draw(&app, 132, 38, NOW);
+    let text = frame.text();
+    for gpu in 0..4 {
+        let y = text
+            .lines()
+            .position(|line| {
+                line.chars()
+                    .skip(2)
+                    .collect::<String>()
+                    .starts_with(&format!("GPU {gpu} "))
+            })
+            .unwrap();
+        let line = text.lines().nth(y).unwrap();
+        assert!(line.contains("proc 48211"), "{line}");
+        assert_eq!(
+            frame.cell(13, y as u16).unwrap().style.fg,
+            Color::Yellow,
+            "{line}"
+        );
+    }
+}
+
+#[test]
 fn list_view() {
     let app = fleet();
     check("list-132x38", &app, 132, 38);

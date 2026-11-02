@@ -701,17 +701,49 @@ pub enum Request {
         profile: String,
         options: Vec<String>,
     },
-    /// `serve ARGUMENTS --list-model-options` with these variables set.
+    /// The options of the package a profile and options prepare: `models
+    /// command` merges the options over the profile, as for
+    /// [`Request::Command`], so each flag is given once, then `serve` with
+    /// those arguments and `--list-model-options` runs with these variables
+    /// set.
     PackageOptions {
         generation: u64,
-        arguments: Vec<String>,
+        checkpoint: PathBuf,
+        tensor_parallel: u32,
+        profile: String,
+        options: Vec<String>,
         environment: Vec<(String, String)>,
     },
 }
 
+/// `models command` for `profile` at `tensor_parallel` on `checkpoint`,
+/// with `options` merged over it.
+fn models_command(
+    checkpoint: &Path,
+    tensor_parallel: u32,
+    profile: &str,
+    options: &[String],
+) -> Vec<String> {
+    let mut arguments = vec![
+        "models".to_owned(),
+        "command".to_owned(),
+        "--model".to_owned(),
+        checkpoint.display().to_string(),
+        "--tensor-parallel-size".to_owned(),
+        tensor_parallel.to_string(),
+        "--profile".to_owned(),
+        profile.to_owned(),
+    ];
+    if !options.is_empty() {
+        arguments.push("--".to_owned());
+        arguments.extend(options.iter().cloned());
+    }
+    arguments
+}
+
 impl Request {
     /// The `chopinfer` arguments, the variables to set, and how long it may
-    /// run.
+    /// run; for package options, of the first of the two commands.
     fn command(&self) -> (Vec<String>, Vec<(String, String)>, Duration) {
         let owned = |arguments: &[&str]| arguments.iter().map(|text| (*text).to_owned()).collect();
         match self {
@@ -733,29 +765,18 @@ impl Request {
                 profile,
                 options,
                 ..
-            } => {
-                let mut arguments: Vec<String> = owned(&["models", "command", "--model"]);
-                arguments.push(checkpoint.display().to_string());
-                arguments.push("--tensor-parallel-size".to_owned());
-                arguments.push(tensor_parallel.to_string());
-                arguments.push("--profile".to_owned());
-                arguments.push(profile.clone());
-                if !options.is_empty() {
-                    arguments.push("--".to_owned());
-                    arguments.extend(options.iter().cloned());
-                }
-                (arguments, Vec::new(), CATALOG_TIMEOUT)
             }
-            Self::PackageOptions {
-                arguments,
-                environment,
+            | Self::PackageOptions {
+                checkpoint,
+                tensor_parallel,
+                profile,
+                options,
                 ..
-            } => {
-                let mut all = vec!["serve".to_owned()];
-                all.extend(arguments.iter().cloned());
-                all.push("--list-model-options".to_owned());
-                (all, environment.clone(), PACKAGE_TIMEOUT)
-            }
+            } => (
+                models_command(checkpoint, *tensor_parallel, profile, options),
+                Vec::new(),
+                CATALOG_TIMEOUT,
+            ),
         }
     }
 }
@@ -796,11 +817,23 @@ pub fn answer(binary: &Path, request: Request) -> Reply {
             generation,
             output.and_then(|text| parse_command(&text)).map_err(failed),
         ),
-        Request::PackageOptions { generation, .. } => Reply::PackageOptions(
+        Request::PackageOptions {
+            generation,
+            environment,
+            ..
+        } => Reply::PackageOptions(
             generation,
             output
-                .and_then(|text| parse_package_options(&text))
-                .map_err(failed),
+                .and_then(|text| parse_command(&text))
+                .map_err(failed)
+                .and_then(|mut arguments| {
+                    arguments.push("--list-model-options".to_owned());
+                    run(binary, &arguments, &environment, PACKAGE_TIMEOUT)
+                        .and_then(|text| parse_package_options(&text))
+                        .map_err(|message| {
+                            format!("chopinfer serve --list-model-options: {message}")
+                        })
+                }),
         ),
     }
 }
@@ -1648,7 +1681,8 @@ mod tests {
                if [ \"$4\" = /models/broken ]; then echo 'warming up' >&2; echo 'error: no helper takes /models/broken' >&2; exit 2; fi\n\
                cat \"$fixtures/models-pick.json\" ;;\n\
              'models command') echo \"$*\" > \"$(dirname \"$0\")/last-command\"; cat \"$fixtures/models-command.json\" ;;\n\
-             *) if [ \"$CHOPINFER_LOG_LEVEL\" = debug ]; then cat \"$fixtures/list-model-options.json\"; else echo null; fi ;;\n\
+             *) echo \"$*\" >> \"$(dirname \"$0\")/serve-calls\"\n\
+               if [ \"$CHOPINFER_LOG_LEVEL\" = debug ]; then cat \"$fixtures/list-model-options.json\"; else echo null; fi ;;\n\
              esac\n",
             fixtures.display()
         );
@@ -1717,7 +1751,10 @@ mod tests {
                 &binary,
                 Request::PackageOptions {
                     generation: 3,
-                    arguments: vec!["--model".into(), "/models/deepseek".into()],
+                    checkpoint: "/models/deepseek".into(),
+                    tensor_parallel: 4,
+                    profile: "tp4-ar".into(),
+                    options: vec!["--max-sequences".into(), "48".into()],
                     environment,
                 },
             )
@@ -1726,6 +1763,24 @@ mod tests {
             package(Vec::new()),
             Reply::PackageOptions(3, Ok(Vec::new()))
         );
+        // models command merges the options over the profile first, and
+        // serve lists the options of what it gives, each flag once.
+        assert_eq!(
+            fs::read_to_string(root.join("last-command"))
+                .unwrap()
+                .trim(),
+            "models command --model /models/deepseek --tensor-parallel-size 4 --profile tp4-ar -- --max-sequences 48"
+        );
+        let serve = fs::read_to_string(root.join("serve-calls")).unwrap();
+        assert_eq!(
+            serve.trim(),
+            [
+                parse_command(COMMAND).unwrap().join(" "),
+                "--list-model-options".to_owned()
+            ]
+            .join(" ")
+        );
+        assert_eq!(serve.matches("--max-sequences").count(), 1);
         let Reply::PackageOptions(3, Ok(options)) =
             package(vec![("CHOPINFER_LOG_LEVEL".into(), "debug".into())])
         else {

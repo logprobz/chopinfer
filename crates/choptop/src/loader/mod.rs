@@ -147,8 +147,16 @@ pub struct Plan {
     pub checkpoint: Option<PathBuf>,
 }
 
-/// The arguments and variables of a `--list-model-options` request.
-type PackageRequest = (Vec<String>, Vec<(String, String)>);
+/// What a package options request is asked for.
+#[derive(Clone, Debug, PartialEq)]
+struct PackageQuery {
+    checkpoint: PathBuf,
+    tensor_parallel: u32,
+    profile: String,
+    /// The form's options, which `models command` merges over the profile.
+    options: Vec<String>,
+    environment: Vec<(String, String)>,
+}
 
 /// What the plan is worked out from, to tell when a key changed it.
 #[derive(Clone, Debug, PartialEq)]
@@ -200,7 +208,7 @@ pub struct Loader {
     command_ticket: Option<u64>,
     command_answer: Option<Result<Vec<String>, String>>,
     /// The package options asked last, by what the request runs with.
-    package_asked: Option<PackageRequest>,
+    package_asked: Option<PackageQuery>,
     package_ticket: Option<u64>,
     pub package: Option<Fetch<Vec<PackageOption>>>,
 }
@@ -578,34 +586,29 @@ impl Loader {
     /// Asks for the package's options and the command line when what they
     /// depend on changed.
     fn ask(&mut self, catalog: &mut Catalog) {
-        let (Some(checkpoint), Some(tensor_parallel)) =
-            (self.plan.checkpoint.clone(), self.plan.tensor_parallel)
-        else {
+        let (Some(checkpoint), Some(tensor_parallel), Some(profile)) = (
+            self.plan.checkpoint.clone(),
+            self.plan.tensor_parallel,
+            self.profile.clone(),
+        ) else {
             self.forget_package();
             self.forget_command();
             return;
         };
-        // The package's options are read for the package this command
-        // prepares: the profile's flags and the form's options, which
-        // include the preparation ones, with the variables the first
-        // instance runs with. Model option values are left out: they do not
-        // change what the package declares, and resetting the inherited
-        // ones waits for these defaults.
-        let mut arguments = vec![
-            "--model".to_owned(),
-            checkpoint.display().to_string(),
-            "--tensor-parallel-size".to_owned(),
-            tensor_parallel.to_string(),
-        ];
-        arguments.extend(self.profile_arguments(catalog));
-        arguments.extend(
-            self.plan
-                .explicit
-                .options
-                .iter()
-                .filter(|(group, _)| group.first().map(String::as_str) != Some("--model-option"))
-                .flat_map(|(group, _)| group.iter().cloned()),
-        );
+        // The package's options are read for the package the command
+        // prepares: the form's options, the preparation ones among them,
+        // merged over the profile by models command, with the variables the
+        // first instance runs with. Model option values are left out: they
+        // do not change what the package declares, and the resets of the
+        // inherited ones wait for these defaults.
+        let options = self
+            .plan
+            .explicit
+            .options
+            .iter()
+            .filter(|(group, _)| group.first().map(String::as_str) != Some("--model-option"))
+            .flat_map(|(group, _)| group.iter().cloned())
+            .collect();
         let instances = &self.plan.placement.instances;
         let mut environment = command::environment(
             &self.plan.explicit,
@@ -615,27 +618,32 @@ impl Loader {
         if instances.is_empty() {
             environment.remove(0);
         }
-        let package_key = (arguments, environment);
-        if self.package_asked.as_ref() != Some(&package_key) {
+        let package = PackageQuery {
+            checkpoint: checkpoint.clone(),
+            tensor_parallel,
+            profile: profile.clone(),
+            options,
+            environment,
+        };
+        if self.package_asked.as_ref() != Some(&package) {
             let ticket = catalog.ticket();
             self.package_ticket = Some(ticket);
             self.package = Some(Fetch::Waiting);
             catalog.send(Request::PackageOptions {
                 generation: ticket,
-                arguments: package_key.0.clone(),
-                environment: package_key.1.clone(),
+                checkpoint: package.checkpoint.clone(),
+                tensor_parallel,
+                profile: package.profile.clone(),
+                options: package.options.clone(),
+                environment: package.environment.clone(),
             });
-            self.package_asked = Some(package_key);
+            self.package_asked = Some(package);
         }
         let explicit = &self.plan.explicit;
-        let Some(profile) = self
-            .profile
-            .clone()
-            .filter(|_| explicit.blocked.is_empty() && explicit.waiting.is_empty())
-        else {
+        if !explicit.blocked.is_empty() || !explicit.waiting.is_empty() {
             self.forget_command();
             return;
-        };
+        }
         let command_key = (checkpoint, tensor_parallel, profile, explicit.arguments());
         if self.command_asked.as_ref() != Some(&command_key) {
             let ticket = catalog.ticket();
@@ -1798,13 +1806,12 @@ pub(crate) mod tests {
         );
     }
 
-    #[test]
-    fn the_package_options_follow_the_profile_the_form_and_the_gpus() {
+    /// The contract catalog where, at TP4, serve --model picks a profile
+    /// the file does not list, and tp4-dspark runs as that pick with
+    /// `--max-sequences 16`.
+    fn renamed_pick() -> Catalog {
         use crate::catalog::PickProfile;
-        use crate::launch::occupancy::tests::uuid;
-        let (mut catalog, live) = (catalog(), live());
-        // At TP4 serve --model picks a profile the file does not list, and
-        // tp4-dspark runs as that pick with a flag.
+        let mut catalog = catalog();
         let mut pick = Pick::parse(PICK).unwrap();
         pick.sizes[0].pick = Some("tp4-other".into());
         pick.sizes[0].profiles = vec![
@@ -1818,32 +1825,42 @@ pub(crate) mod tests {
             PickProfile {
                 name: "tp4-dspark".into(),
                 availability: Availability::Available {
-                    arguments: vec!["--speculative-tokens".into(), "0".into()],
+                    arguments: vec!["--max-sequences".into(), "16".into()],
                     inherited_model_options: Vec::new(),
                 },
             },
         ];
         catalog.apply(Reply::Pick("/models/deepseek".into(), Ok(pick)));
-        let asked = |catalog: &mut Catalog| {
-            std::mem::take(&mut catalog.outbox)
-                .into_iter()
-                .find_map(|request| match request {
-                    Request::PackageOptions {
-                        arguments,
-                        environment,
-                        ..
-                    } => Some((arguments.join(" "), environment)),
-                    _ => None,
-                })
-        };
+        catalog
+    }
+
+    /// A package options request's profile, options and variables.
+    type Asked = (String, String, Vec<(String, String)>);
+
+    /// The package options request in the outbox, if any.
+    fn package_asked(catalog: &mut Catalog) -> Option<Asked> {
+        std::mem::take(&mut catalog.outbox)
+            .into_iter()
+            .find_map(|request| match request {
+                Request::PackageOptions {
+                    profile,
+                    options,
+                    environment,
+                    ..
+                } => Some((profile, options.join(" "), environment)),
+                _ => None,
+            })
+    }
+
+    #[test]
+    fn the_package_options_follow_the_profile_the_form_and_the_gpus() {
+        use crate::launch::occupancy::tests::uuid;
+        let (mut catalog, live) = (renamed_pick(), live());
         let mut loader = Loader::open(Some(vec![0, 1, 2, 3]), Vec::new());
         refresh(&mut loader, &mut catalog, &live);
         assert_eq!(loader.profile.as_deref(), Some("tp4-other"));
-        let (arguments, environment) = asked(&mut catalog).unwrap();
-        assert_eq!(
-            arguments,
-            "--model /models/deepseek --tensor-parallel-size 4"
-        );
+        let (profile, options, environment) = package_asked(&mut catalog).unwrap();
+        assert_eq!((profile.as_str(), options.as_str()), ("tp4-other", ""));
         let uuids = (0..4).map(uuid).collect::<Vec<_>>().join(",");
         assert_eq!(environment, [("CUDA_VISIBLE_DEVICES".to_owned(), uuids)]);
         loader.reply(Reply::PackageOptions(
@@ -1851,18 +1868,15 @@ pub(crate) mod tests {
             parse_package_options(PACKAGE),
         ));
         refresh(&mut loader, &mut catalog, &live);
-        assert_eq!(asked(&mut catalog), None);
-        // Another profile asks with its flags, and its defaults are not
-        // read from the other package.
+        assert_eq!(package_asked(&mut catalog), None);
+        // Another profile asks again, and its defaults are not read from
+        // the other package.
         loader.pane = Pane::Profiles;
         press(&mut loader, &mut catalog, KeyCode::Up);
         refresh(&mut loader, &mut catalog, &live);
         assert_eq!(loader.profile.as_deref(), Some("tp4-dspark"));
-        let (arguments, _) = asked(&mut catalog).unwrap();
-        assert!(
-            arguments.ends_with(" --speculative-tokens 0"),
-            "{arguments}"
-        );
+        let (profile, options, _) = package_asked(&mut catalog).unwrap();
+        assert_eq!((profile.as_str(), options.as_str()), ("tp4-dspark", ""));
         assert_eq!(loader.package, Some(Fetch::Waiting));
         // So does a preparation option set in the form, and a variable.
         loader
@@ -1873,8 +1887,8 @@ pub(crate) mod tests {
             "30".into(),
         );
         refresh(&mut loader, &mut catalog, &live);
-        let (arguments, environment) = asked(&mut catalog).unwrap();
-        assert!(arguments.ends_with(" --modalities text"), "{arguments}");
+        let (_, options, environment) = package_asked(&mut catalog).unwrap();
+        assert_eq!(options, "--modalities text");
         assert_eq!(
             environment[1],
             ("CHOPINFER_LOG_SUMMARY_SECONDS".to_owned(), "30".to_owned())
@@ -1885,15 +1899,33 @@ pub(crate) mod tests {
             "false".into(),
         );
         refresh(&mut loader, &mut catalog, &live);
-        assert_eq!(asked(&mut catalog), None);
+        assert_eq!(package_asked(&mut catalog), None);
         // Other GPUs are: before an instance is placed none are named.
         loader.picked = BTreeSet::from([0, 1]);
         refresh(&mut loader, &mut catalog, &live);
-        let (_, environment) = asked(&mut catalog).unwrap();
+        let (_, _, environment) = package_asked(&mut catalog).unwrap();
         assert_eq!(
             environment,
             [("CHOPINFER_LOG_SUMMARY_SECONDS".to_owned(), "30".to_owned())]
         );
+    }
+
+    #[test]
+    fn a_flag_the_profile_and_the_form_both_set_is_asked_once() {
+        let (mut catalog, live) = (renamed_pick(), live());
+        let mut loader = Loader::open(Some(vec![0, 1, 2, 3]), Vec::new());
+        loader.profile = Some("tp4-dspark".into());
+        loader.profile_chosen = true;
+        loader
+            .edits
+            .insert(Key::Flag("max-sequences".into()), "48".into());
+        refresh(&mut loader, &mut catalog, &live);
+        // tp4-dspark runs as the pick with --max-sequences 16; the form's
+        // 48 goes to models command, which merges it over the profile, and
+        // the profile's own flag is not added beside it.
+        let (profile, options, _) = package_asked(&mut catalog).unwrap();
+        assert_eq!(profile, "tp4-dspark");
+        assert_eq!(options, "--max-sequences 48");
     }
 
     #[test]
@@ -1905,16 +1937,28 @@ pub(crate) mod tests {
         let package = catalog.outbox.iter().find_map(|request| match request {
             Request::PackageOptions {
                 generation,
-                arguments,
+                checkpoint,
+                tensor_parallel,
+                profile,
+                options,
                 ..
-            } => Some((*generation, arguments.clone())),
+            } => Some((
+                *generation,
+                (checkpoint.clone(), *tensor_parallel, profile.clone()),
+                options.clone(),
+            )),
             _ => None,
         });
-        let (generation, arguments) = package.unwrap();
+        let (generation, asked, options) = package.unwrap();
         assert_eq!(
-            arguments.join(" "),
-            "--model /models/deepseek --tensor-parallel-size 4"
+            asked,
+            (
+                PathBuf::from("/models/deepseek"),
+                4,
+                "tp4-dspark".to_owned()
+            )
         );
+        assert!(options.is_empty());
         // The pick inherits nothing, so the command line is asked at once.
         let command = catalog.outbox.iter().find_map(|request| match request {
             Request::Command {

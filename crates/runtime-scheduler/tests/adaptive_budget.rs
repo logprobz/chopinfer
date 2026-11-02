@@ -641,6 +641,82 @@ fn adaptive_caps_price_the_uncapped_manifest_anchor_tail() {
     }
 }
 
+#[test]
+fn adaptive_caps_price_grid_anchor_tails_with_current_cadence_bounds() {
+    // At 200 ms the transient ceiling with 5% margin admits 253.97 ms:
+    // 640 rows cost 249.0 ms, but 703 cost 255.7 ms. Fusion therefore
+    // changes an uncapped step into a 640-token cap. Under a sustained
+    // backlog, 750 ms admits 5248 rows (743.4 ms), while 252 ms admits
+    // 640. The long grid chunk always takes a cap beside decoders.
+    for (anchors, decode, backlog, target_ms, cap, rows, anchor) in [
+        (0, 1, false, 200, None, 640, None),
+        (8, 1, false, 200, Some(640), 640, None),
+        (8, 1, false, TARGET_MS, None, 703, Some(640)),
+        (8, 0, false, 200, None, 703, Some(640)),
+        (8, 1, true, TARGET_MS, Some(5248), 703, Some(640)),
+        (8, 1, true, 252, Some(640), 640, None),
+    ] {
+        let config = SchedulerConfig::new(64, 256, GRID, GRID, 1)
+            .unwrap()
+            .with_prefill_granule(GRANULE)
+            .unwrap()
+            .with_guaranteed_prefill_chunks(GRID)
+            .unwrap()
+            .with_prefix_cache(1)
+            .with_prefill_cuts(true)
+            .with_grid_anchor_items(anchors)
+            .with_prefill_timing_cuts(true)
+            .with_prefill_budget(PrefillBudget::Tbt(
+                MixedPolicy::new(target_ms, FLOOR, 0).unwrap(),
+            ))
+            .with_adaptive_prefill_budget(true);
+        let mut s = Scheduler::new(config, KvGeometry::new(GRANULE, 65536).unwrap()).unwrap();
+        train(&mut s);
+        decoders(&mut s, decode);
+        submit_prefix(&mut s, 1, (0..703).map(|n| 10_000 + n).collect(), 4);
+        if backlog {
+            submit(&mut s, 2, 6 * GRID, 4);
+        }
+        let batch = s.next_batch().unwrap().unwrap();
+        assert_eq!(
+            batch.prefill_cap(),
+            cap,
+            "{anchors} {decode} {backlog} {target_ms}"
+        );
+        let item = batch
+            .items()
+            .iter()
+            .find(|item| item.request_id().get() == 1)
+            .unwrap();
+        assert_eq!(item.phase(), BatchPhase::Prefill { tokens: rows });
+        assert_eq!(item.anchor_tokens(), anchor);
+        if let Some(cuts) = batch.timing_cuts() {
+            let chunk = cuts
+                .chunks()
+                .iter()
+                .find(|chunk| chunk.request_id().get() == 1)
+                .unwrap();
+            assert_eq!(
+                (chunk.start(), chunk.end(), chunk.forced()),
+                (0, rows, false)
+            );
+            assert_eq!(
+                chunk.reason(),
+                if anchor.is_some() {
+                    PrefillEnd::Prompt
+                } else {
+                    PrefillEnd::Capture
+                }
+            );
+        }
+        if backlog {
+            assert!(cost(batch.shape()) <= u64::from(target_ms) * 1000);
+        } else if decode > 0 {
+            assert!(cost(batch.shape()) * 105 * 3 <= u64::from(target_ms) * 4 * 100_000);
+        }
+    }
+}
+
 fn owing(decode_steps: u32) -> PrefillBudget {
     PrefillBudget::Tbt(MixedPolicy::new(TARGET_MS, FLOOR, decode_steps).unwrap())
 }

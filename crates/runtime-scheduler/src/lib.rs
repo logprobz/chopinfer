@@ -437,6 +437,7 @@ pub struct SchedulerConfig {
     rewrites_last_page: bool,
     prefix_ancestry: bool,
     anchor_items: usize,
+    grid_anchor_items: usize,
 }
 
 impl SchedulerConfig {
@@ -493,6 +494,7 @@ impl SchedulerConfig {
             rewrites_last_page: false,
             prefix_ancestry: false,
             anchor_items: 0,
+            grid_anchor_items: 0,
         })
     }
 
@@ -667,6 +669,27 @@ impl SchedulerConfig {
     #[must_use]
     pub const fn anchor_items(self) -> usize {
         self.anchor_items
+    }
+
+    /// Prompt-ending anchor items per step on a guaranteed grid with cuts,
+    /// separate from the manifest's allowance ([`Self::with_anchor_items`]).
+    /// A nonzero allowance lets an item run past its prompt-end anchor and
+    /// capture both the anchor and prompt end after the step. Grid ends and
+    /// other cuts are unchanged. A host sets the value its instance declares.
+    #[must_use]
+    pub const fn with_grid_anchor_items(mut self, items: usize) -> Self {
+        self.grid_anchor_items = items;
+        self
+    }
+
+    #[must_use]
+    pub const fn grid_anchors(self) -> bool {
+        self.grid_anchor_items > 0
+    }
+
+    #[must_use]
+    pub const fn grid_anchor_items(self) -> usize {
+        self.grid_anchor_items
     }
 
     /// Selects the mixed-step prefill policy. Fixed preserves competing chunks.
@@ -1392,6 +1415,8 @@ struct RequestRecord {
     spec: RequestSpec,
     guaranteed_prefill_chunks: Option<usize>,
     prefill_cuts: bool,
+    /// A guaranteed-grid request with cuts whose instance keeps anchors.
+    grid_anchors: bool,
     state: RequestState,
     handle: Option<SequenceHandle>,
     reserved_blocks: usize,
@@ -1832,6 +1857,9 @@ impl Scheduler {
             spec,
             guaranteed_prefill_chunks,
             prefill_cuts: guaranteed_prefill_chunks.is_some() && self.config.prefill_cuts,
+            grid_anchors: guaranteed_prefill_chunks.is_some()
+                && self.config.prefill_cuts
+                && self.config.grid_anchor_items > 0,
             state: RequestState::Queued,
             handle: None,
             reserved_blocks: 0,
@@ -2189,10 +2217,14 @@ impl Scheduler {
             let granule = self.config.prefill_granule;
             let prompt = self.requests[index].spec.prompt_tokens;
             let end = prompt / granule * granule;
-            self.requests[index].end_anchor = (self.config.anchor_items > 0
-                && end < prompt
-                && self.requests[index].captures.contains(&end))
-            .then_some(end);
+            let allowance = if self.requests[index].grid_anchors {
+                self.config.grid_anchor_items
+            } else {
+                self.config.anchor_items
+            };
+            self.requests[index].end_anchor =
+                (allowance > 0 && end < prompt && self.requests[index].captures.contains(&end))
+                    .then_some(end);
             self.requests[index].prefilled_tokens = prefilled;
             if self.requests[index].preemptions == 0 {
                 self.requests[index].cached_tokens = prefilled;
@@ -2370,7 +2402,8 @@ impl Scheduler {
                             // long to share the step runs alone when uncapped.
                             let (mut tokens, mut mixed, mut longest, mut alone) =
                                 (0usize, 0usize, 0usize, 0usize);
-                            let mut anchors = self.config.anchor_items;
+                            let mut manifest_anchors = self.config.anchor_items;
+                            let mut grid_anchors = self.config.grid_anchor_items;
                             for &index in &prefill {
                                 let record = &self.requests[index];
                                 let chunk = Self::chunk_tokens(
@@ -2383,13 +2416,16 @@ impl Scheduler {
                                 );
                                 let remaining =
                                     Self::prefill_target(record) - record.prefilled_tokens;
+                                let anchors = if record.grid_anchors {
+                                    &mut grid_anchors
+                                } else {
+                                    &mut manifest_anchors
+                                };
                                 let runs_alone = self.config.guaranteed_prefill_chunks.is_some()
                                     && chunk > decode_room;
-                                // A timing cap stops at the anchor, but an
-                                // uncapped item may include its tail. Price
-                                // those separately: the uncapped step with the
-                                // fused tail, the cuts up to the anchor.
-                                let whole = if anchors > 0
+                                // Keep the anchor length as a cap candidate;
+                                // price the uncapped item with its fused tail.
+                                let whole = if *anchors > 0
                                     && remaining <= self.config.scheduled_token_budget
                                     && (remaining <= decode_room || runs_alone)
                                     && Self::spannable_anchor(
@@ -2399,7 +2435,7 @@ impl Scheduler {
                                     )
                                     .is_some()
                                 {
-                                    anchors -= 1;
+                                    *anchors -= 1;
                                     remaining
                                 } else {
                                     chunk
@@ -2586,6 +2622,7 @@ impl Scheduler {
         // A prompt-ending chunk that reaches its prompt-end anchor runs past
         // it while the bundle's anchor items last (`push_prefill`).
         let mut anchors = self.config.anchor_items;
+        let mut grid_anchors = self.config.grid_anchor_items;
         let media_arena = self.config.media_pages;
         let mut media_budget = media_arena;
 
@@ -2700,7 +2737,11 @@ impl Scheduler {
                     0,
                     &mut chunk_media,
                     &mut overrun,
-                    &mut anchors,
+                    if self.requests[$index].grid_anchors {
+                        &mut grid_anchors
+                    } else {
+                        &mut anchors
+                    },
                 )
             };
         }
@@ -3085,7 +3126,7 @@ impl Scheduler {
             return Err(ScheduleError::PreparedCommitMismatch);
         }
         self.captures
-            .try_reserve(prepared.items.len())
+            .try_reserve(prepared.items.len().saturating_mul(2))
             .map_err(|_| ScheduleError::MetadataAllocationFailed)?;
         self.kv
             .apply_prepared_commit(prepared.kv_commit)
@@ -3096,33 +3137,37 @@ impl Scheduler {
         self.count_recomputed_prefill(&prepared.items);
         for item in &prepared.items {
             let record = &mut self.requests[item.record_index];
-            // A prompt-ending item captures either its end or the anchor it
-            // kept inside its rows, never both: the prompt end is a capture
-            // point only when it is its own anchor.
-            let captured = match item.anchor {
-                Some(anchor) => Some((anchor, true)),
-                None => item.capture.then_some((item.prefilled_tokens, false)),
-            };
-            if let Some((tokens, interior)) = captured
-                && let (Some(prefix), Some(handle)) = (&record.prefix, record.handle)
-                && let (Some(key), Some(chain)) = (
-                    prefix.chain.key_at(tokens),
-                    prefix.chain.chain(tokens / prefix.chain.block_tokens()),
-                )
-            {
-                // The capture list was reserved for every item of the batch.
-                self.captures.push(PrefixCaptureV1 {
-                    request_id: record.spec.id,
-                    swap: false,
-                    private: false,
-                    interior,
-                    tokens,
-                    key,
-                    chain,
-                    ancestry: self.config.prefix_ancestry.then(|| prefix.chain.clone()),
-                    handle,
-                    deferred: item.terminal,
-                });
+            // A manifest item captures its end or its interior anchor.
+            // A grid item captures both, with the interior anchor first.
+            let anchor = item.anchor.map(|anchor| (anchor, true));
+            let end = (item.capture && (item.anchor.is_none() || record.grid_anchors))
+                .then_some((item.prefilled_tokens, false));
+            let first = self.captures.len();
+            for (tokens, interior) in anchor.into_iter().chain(end) {
+                if let (Some(prefix), Some(handle)) = (&record.prefix, record.handle)
+                    && let (Some(key), Some(chain)) = (
+                        prefix.chain.key_at(tokens),
+                        prefix.chain.chain(tokens / prefix.chain.block_tokens()),
+                    )
+                {
+                    // The capture list was reserved for two captures per item.
+                    self.captures.push(PrefixCaptureV1 {
+                        request_id: record.spec.id,
+                        swap: false,
+                        private: false,
+                        interior,
+                        tokens,
+                        key,
+                        chain,
+                        ancestry: self.config.prefix_ancestry.then(|| prefix.chain.clone()),
+                        handle,
+                        deferred: false,
+                    });
+                }
+            }
+            // A finished sequence stays live until its last capture ends.
+            if let Some(last) = self.captures[first..].last_mut() {
+                last.deferred = item.terminal;
             }
             record.last_scheduled = prepared.next_tick;
             record.prefilled_tokens = item.prefilled_tokens;
@@ -3368,14 +3413,20 @@ impl Scheduler {
                 record.captures.push(end);
                 record.captures.sort_unstable();
             }
-            record.end_anchor =
-                (self.config.anchor_items > 0 && end < prompt && record.captures.contains(&end))
-                    .then_some(end);
         }
         if self.requests[index].guaranteed_prefill_chunks.is_some() {
             self.requests[index].captures = self.capture_points(index, 0, false);
-            self.requests[index].end_anchor = None;
         }
+        let record = &mut self.requests[index];
+        let prompt = record.spec.prompt_tokens;
+        let end = prompt / self.config.prefill_granule * self.config.prefill_granule;
+        let allowance = if record.grid_anchors {
+            self.config.grid_anchor_items
+        } else {
+            self.config.anchor_items
+        };
+        record.end_anchor =
+            (allowance > 0 && end < prompt && record.captures.contains(&end)).then_some(end);
         self.drop_own_anchor(index)
     }
 
@@ -4019,19 +4070,27 @@ impl Scheduler {
         chunk_limit: usize,
         maximum_scored_rows: usize,
     ) -> Option<usize> {
-        if record.guaranteed_prefill_chunks.is_some() {
+        if record.guaranteed_prefill_chunks.is_some() && !record.grid_anchors {
             return None;
         }
         let start = record.prefilled_tokens;
-        let anchor = record.end_anchor.filter(|&anchor| anchor > start)?;
+        let anchor = record.end_anchor.filter(|&anchor| {
+            anchor > start
+                && record
+                    .guaranteed_prefill_chunks
+                    .is_none_or(|grid| !anchor.is_multiple_of(grid))
+        })?;
         let next = record
             .captures
             .iter()
             .copied()
             .find(|&boundary| boundary > start);
+        let remaining = Self::prefill_target(record) - start;
+        // A replay after a failed restore also captures the original prompt
+        // end. Fusion may skip only the anchor, never that later capture.
         (next == Some(anchor)
-            && Self::prefill_target(record) - start
-                <= Self::request_chunk_limit(record, chunk_limit, maximum_scored_rows))
+            && (!record.grid_anchors || Self::chunk_remaining(record, true) == remaining)
+            && remaining <= Self::request_chunk_limit(record, chunk_limit, maximum_scored_rows))
         .then_some(anchor)
     }
 
@@ -4480,12 +4539,19 @@ impl Scheduler {
         let media_budget = rows.media_budget;
         let remaining = Self::prefill_target(record) - record.prefilled_tokens;
         let available = budget.saturating_sub(reserved_budget.saturating_add(held_tokens));
-        // A grid chunk with cuts under a timing cap. An anchor item never
-        // spans past a timing cut.
-        let timing = rows.timing.as_mut().filter(|_| record.prefill_cuts);
+        // Grid chunks share the timing cap, including a fused prompt tail.
+        let mut timing = rows.timing.as_mut().filter(|_| record.prefill_cuts);
         let cap = timing.as_ref().map(|timing| timing.limit);
+        let reason = Self::grid_chunk(record, cap, rows.granule).map(|(_, reason)| reason);
         if let Some(anchor) = Self::spannable_anchor(record, chunk_limit, rows.maximum_scored_rows)
-            .filter(|_| *anchors > 0 && cap.is_none())
+            .filter(|_| {
+                *anchors > 0
+                    && timing.as_ref().is_none_or(|timing| {
+                        remaining <= timing.tokens
+                            && !matches!(reason, Some(PrefillEnd::Floor | PrefillEnd::Progress))
+                            && !(timing.cut && reason == Some(PrefillEnd::Timing))
+                    })
+            })
         {
             let tokens = remaining;
             let scored_rows = Self::logit_rows(record, tokens);
@@ -4503,6 +4569,10 @@ impl Scheduler {
                         expects_output: true,
                         anchor: Some(anchor),
                     });
+                    if let Some(timing) = &mut timing {
+                        timing.tokens -= tokens;
+                        timing.taken = true;
+                    }
                     *anchors -= 1;
                     *prefill_budget -= tokens;
                     *budget -= token_cost;
@@ -4529,8 +4599,7 @@ impl Scheduler {
         // Chunks share the cap, but the first may exceed it to reach the
         // floor or progress. One that ends at the cap or floor is the only
         // one in its batch.
-        let timed = Self::grid_chunk(record, cap, rows.granule)
-            .is_some_and(|(_, reason)| matches!(reason, PrefillEnd::Timing | PrefillEnd::Floor));
+        let timed = matches!(reason, Some(PrefillEnd::Timing | PrefillEnd::Floor));
         if let Some(timing) = &timing
             && ((tokens > timing.tokens && timing.taken) || (timing.cut && timed))
         {
@@ -4633,9 +4702,15 @@ impl Scheduler {
             if !record.prefill_cuts {
                 continue;
             }
-            let (expected, reason) =
+            let (expected, reason) = if item.anchor.is_some() {
+                (
+                    Self::prefill_target(record) - record.prefilled_tokens,
+                    PrefillEnd::Prompt,
+                )
+            } else {
                 Self::grid_chunk(record, Some(limit), self.config.prefill_granule)
-                    .ok_or(ScheduleError::InvariantViolation)?;
+                    .ok_or(ScheduleError::InvariantViolation)?
+            };
             if expected != tokens {
                 return Err(ScheduleError::InvariantViolation);
             }
@@ -4645,7 +4720,8 @@ impl Scheduler {
                     .map_err(|_| ScheduleError::MetadataAllocationFailed)?;
             }
             let start = record.prefilled_tokens;
-            let forced = tokens > limit.cap
+            let forced = item.anchor.is_none()
+                && tokens > limit.cap
                 && Self::timed_end(start, limit, self.config.prefill_granule).1
                     == PrefillEnd::Progress;
             chunks.push(TimedChunk {
@@ -5755,6 +5831,151 @@ mod tests {
             .unwrap();
         scheduler.kv.release_transfer_pages(&lease).unwrap();
         scheduler.audit().unwrap();
+    }
+
+    #[test]
+    fn grid_anchor_replay_keeps_the_prompt_end_after_an_abandoned_restore() {
+        let config = SchedulerConfig::new(1, 8, 512, 512, 1)
+            .unwrap()
+            .with_prefill_granule(64)
+            .unwrap()
+            .with_guaranteed_prefill_chunks(512)
+            .unwrap()
+            .with_prefix_cache(1)
+            .with_prefill_cuts(true)
+            .with_grid_anchor_items(1);
+        let mut scheduler = Scheduler::new(config, KvGeometry::new(64, 128).unwrap()).unwrap();
+        let id = RequestId::new(1);
+        let mut prefix = |_: RequestId, tokens: usize| {
+            Some(PrefixRequestV1::new(
+                Arc::new(PrefixChainV1::new(64, vec![1; tokens].into(), vec![]).unwrap()),
+                true,
+            ))
+        };
+        scheduler
+            .submit_with_prefix(RequestSpec::new(id, 300, 100).unwrap(), prefix(id, 300))
+            .unwrap();
+        let commit = |s: &mut Scheduler| {
+            let batch = s.next_batch().unwrap().unwrap();
+            let item = batch.items()[0];
+            s.commit_batch(
+                batch.id(),
+                &[BatchOutcome::success(
+                    id,
+                    item.phase(),
+                    usize::from(item.expects_output()),
+                    false,
+                )],
+            )
+            .unwrap();
+            let captures = s.take_prefix_captures();
+            for capture in &captures {
+                s.begin_prefix_capture(capture).unwrap();
+                s.end_prefix_capture(capture).unwrap();
+            }
+            s.audit().unwrap();
+            (item, captures)
+        };
+        // Replay extends past the next granule, so a fused target at 365
+        // would also disagree with the original prompt's anchor at 256.
+        for _ in 0..65 {
+            commit(&mut scheduler);
+        }
+        scheduler.preempt(0, &mut prefix).unwrap();
+        for capture in scheduler.take_prefix_captures() {
+            assert!(capture.private);
+            assert_eq!(capture.tokens(), 364);
+            scheduler.begin_prefix_capture(&capture).unwrap().unwrap();
+            scheduler.end_prefix_capture(&capture).unwrap();
+        }
+        scheduler.admit().unwrap();
+        assert_eq!(scheduler.pending_prefix_restores()[0].tokens(), 364);
+        scheduler.abandon_prefix_restore(id).unwrap();
+        let mut captured = Vec::new();
+        for tokens in [256, 44, 65] {
+            let (item, captures) = commit(&mut scheduler);
+            assert_eq!(item.phase(), BatchPhase::Prefill { tokens });
+            assert_eq!(item.anchor_tokens(), None);
+            captured.extend(captures.iter().map(PrefixCaptureV1::tokens));
+        }
+        assert_eq!(captured, [256, 300]);
+        assert_eq!(scheduler.request_state(id).unwrap(), RequestState::Decoding);
+    }
+
+    #[test]
+    fn timing_cuts_reject_lengths_other_than_the_fused_remainder() {
+        let policy = MixedPolicy::new(150, 512, 0).unwrap();
+        let config = SchedulerConfig::new(4, 16, 1024, 512, 1)
+            .unwrap()
+            .with_prefill_granule(64)
+            .unwrap()
+            .with_guaranteed_prefill_chunks(512)
+            .unwrap()
+            .with_prefix_cache(1)
+            .with_prefill_cuts(true)
+            .with_grid_anchor_items(1)
+            .with_prefill_timing_cuts(true)
+            .with_prefill_budget(PrefillBudget::Tbt(policy));
+        let mut scheduler = Scheduler::new(config, KvGeometry::new(64, 128).unwrap()).unwrap();
+        let id = RequestId::new(1);
+        scheduler
+            .submit(RequestSpec::new(id, 1, 8).unwrap())
+            .unwrap();
+        let batch = scheduler.next_batch().unwrap().unwrap();
+        scheduler
+            .commit_batch(
+                batch.id(),
+                &[BatchOutcome::success(
+                    id,
+                    batch.items()[0].phase(),
+                    1,
+                    false,
+                )],
+            )
+            .unwrap();
+        let chain = PrefixChainV1::new(64, Arc::from(vec![1; 300]), Vec::new()).unwrap();
+        scheduler
+            .submit_with_prefix(
+                RequestSpec::new(RequestId::new(2), 300, 4).unwrap(),
+                Some(PrefixRequestV1::new(Arc::new(chain), true)),
+            )
+            .unwrap();
+        let batch = scheduler.next_batch().unwrap().unwrap();
+        let item = *batch
+            .items()
+            .iter()
+            .find(|item| item.request_id.get() == 2)
+            .unwrap();
+        assert_eq!(item.anchor, Some(256));
+        let limit = TimingCap {
+            cap: 512,
+            floor: 512,
+            room: 1023,
+        };
+        assert!(
+            scheduler
+                .timing_cuts(&[item], limit, policy)
+                .unwrap()
+                .is_some()
+        );
+        for tokens in [256, 299, 301] {
+            let wrong = BatchItem {
+                phase: BatchPhase::Prefill { tokens },
+                ..item
+            };
+            assert_eq!(
+                scheduler.timing_cuts(&[wrong], limit, policy),
+                Err(ScheduleError::InvariantViolation)
+            );
+        }
+        let unanchored = BatchItem {
+            anchor: None,
+            ..item
+        };
+        assert_eq!(
+            scheduler.timing_cuts(&[unanchored], limit, policy),
+            Err(ScheduleError::InvariantViolation)
+        );
     }
 
     #[test]

@@ -19,6 +19,7 @@ struct Setup {
     timing: bool,
     cuts: bool,
     grid: bool,
+    grid_anchors: usize,
     budget: PrefillBudget,
     decode_cost: usize,
     admission: AdmissionPolicy,
@@ -33,6 +34,7 @@ const fn on(budget: PrefillBudget) -> Setup {
         timing: true,
         cuts: true,
         grid: true,
+        grid_anchors: 0,
         budget,
         decode_cost: 1,
         admission: AdmissionPolicy::Reserved,
@@ -53,6 +55,7 @@ fn scheduler(setup: Setup) -> Scheduler {
     };
     let config = config
         .with_prefill_cuts(setup.cuts)
+        .with_grid_anchor_items(setup.grid_anchors)
         .with_prefill_budget(setup.budget)
         .with_admission(setup.admission)
         .with_prefill_timing_cuts(setup.timing);
@@ -86,6 +89,7 @@ struct Step {
     prefills: Vec<(u64, usize, usize)>,
     decodes: Vec<u64>,
     captures: Vec<(u64, usize)>,
+    anchors: Vec<(u64, usize)>,
     cap: Option<usize>,
     cuts: Option<TimingCuts>,
 }
@@ -99,6 +103,9 @@ fn step(s: &mut Scheduler) -> Option<Step> {
     };
     for (item, append) in batch.items().iter().zip(batch.kv_plan().appends()) {
         let id = item.request_id().get();
+        if let Some(anchor) = item.anchor_tokens() {
+            result.anchors.push((id, anchor));
+        }
         match item.phase() {
             BatchPhase::Prefill { tokens } => {
                 result.prefills.push((id, append.previous_tokens(), tokens));
@@ -775,4 +782,193 @@ fn continuous_arrivals_do_not_starve_a_cut_prompt() {
     // Twelve 512-token cuts, with at most one other prompt's chunk between
     // each.
     assert!(steps <= 24, "{steps}");
+}
+
+#[test]
+fn grid_anchor_items_span_a_fitting_timing_cap_beside_decodes() {
+    for prompt in [300, 511] {
+        let mut s = scheduler(Setup {
+            grid_anchors: 8,
+            ..on(tbt(512))
+        });
+        decoders(&mut s, 2);
+        submit(&mut s, 1, prompt, 4);
+        let batch = s.next_batch().unwrap().unwrap();
+        assert_eq!(batch.prefill_cap(), Some(512));
+        let item = batch
+            .items()
+            .iter()
+            .find(|item| item.request_id().get() == 1)
+            .unwrap();
+        assert_eq!(item.phase(), BatchPhase::Prefill { tokens: prompt });
+        assert_eq!(item.anchor_tokens(), Some(prompt / GRANULE * GRANULE));
+        let [chunk] = batch.timing_cuts().unwrap().chunks() else {
+            panic!("one timed chunk")
+        };
+        assert_eq!(
+            (
+                chunk.request_id(),
+                chunk.start(),
+                chunk.end(),
+                chunk.reason(),
+                chunk.forced()
+            ),
+            (RequestId::new(1), 0, prompt, PrefillEnd::Prompt, false)
+        );
+        s.rollback_batch(batch.id()).unwrap();
+        let step = step(&mut s).unwrap();
+        assert_eq!(step.prefills, [(1, 0, prompt)]);
+        assert_eq!(step.decodes.len(), 2);
+        assert_eq!(
+            step.captures,
+            [(1, prompt / GRANULE * GRANULE), (1, prompt)]
+        );
+    }
+}
+
+#[test]
+fn grid_anchor_items_stop_at_a_cap_then_span_a_fitting_continuation() {
+    let mut s = scheduler(Setup {
+        grid_anchors: 8,
+        ..on(tbt(512))
+    });
+    decoders(&mut s, 1);
+    submit(&mut s, 1, 789, 4);
+    let steps = prefill(&mut s, 1, 4);
+    assert_eq!(chunks(&steps, 1), [(0, 512), (512, 277)]);
+    assert!(steps[0].anchors.is_empty());
+    assert_eq!(steps[1].anchors, [(1, 768)]);
+    assert_eq!(captures(&steps, 1), [768, 789]);
+    for (step, reason) in steps.iter().zip([PrefillEnd::Timing, PrefillEnd::Prompt]) {
+        let chunk = &step.cuts.as_ref().unwrap().chunks()[0];
+        assert_eq!(chunk.reason(), reason);
+        assert!(!chunk.forced());
+        assert_eq!(step.decodes, [100]);
+    }
+}
+
+#[test]
+fn grid_anchor_items_fit_restored_remainders_up_to_the_exact_cap() {
+    for remaining in [511, 512, 513] {
+        let mut s = scheduler(Setup {
+            grid_anchors: 1,
+            ..on(tbt(512))
+        });
+        decoders(&mut s, 1);
+        let prefix = tokens(1, 77);
+        submit_tokens(&mut s, 1, &prefix, 1, false);
+        prefill(&mut s, 1, 4);
+        let mut prompt = prefix;
+        prompt.extend(tokens(2, remaining));
+        submit_tokens(&mut s, 2, &prompt, 4, false);
+        s.admit().unwrap();
+        assert_eq!(s.cached_tokens(RequestId::new(2)).unwrap(), 77);
+        s.complete_prefix_restore(RequestId::new(2)).unwrap();
+
+        let step = step(&mut s).unwrap();
+        let fits = remaining <= 512;
+        // The anchor is at 576 for all three prompts. At 513 rows the
+        // remainder exceeds the cap by one, so the chunk stops after 499.
+        let rows = if fits { remaining } else { 499 };
+        assert_eq!(step.cap, Some(512));
+        assert_eq!(step.prefills, [(2, 77, rows)]);
+        assert_eq!(step.anchors, if fits { vec![(2, 576)] } else { vec![] });
+        assert_eq!(step.decodes, [100]);
+        let chunk = &step.cuts.as_ref().unwrap().chunks()[0];
+        assert_eq!(
+            (chunk.start(), chunk.end(), chunk.forced()),
+            (77, 77 + rows, false)
+        );
+        assert_eq!(
+            chunk.reason(),
+            if fits {
+                PrefillEnd::Prompt
+            } else {
+                PrefillEnd::Capture
+            }
+        );
+    }
+}
+
+#[test]
+fn grid_anchor_items_share_the_cap_with_other_prefills() {
+    for (first, second, expected, anchor) in [
+        (200, 300, 300, Some(256)),
+        (200, 312, 312, Some(256)),
+        (200, 313, 256, None),
+        (256, 300, 256, None),
+        (300, 200, 200, Some(192)),
+        (300, 300, 0, None),
+        (512, 300, 0, None),
+    ] {
+        let mut s = scheduler(Setup {
+            grid_anchors: 8,
+            ..on(tbt(512))
+        });
+        decoders(&mut s, 1);
+        submit(&mut s, 1, first, 4);
+        submit(&mut s, 2, second, 4);
+        let step = step(&mut s).unwrap();
+        assert_eq!(chunks(std::slice::from_ref(&step), 1), [(0, first)]);
+        assert_eq!(
+            chunks(std::slice::from_ref(&step), 2),
+            if expected == 0 {
+                vec![]
+            } else {
+                vec![(0, expected)]
+            }
+        );
+        assert_eq!(
+            step.anchors
+                .iter()
+                .find(|item| item.0 == 2)
+                .map(|item| item.1),
+            anchor
+        );
+        assert!(step.prefills.iter().map(|item| item.2).sum::<usize>() <= 512);
+    }
+}
+
+#[test]
+fn a_declined_grid_fusion_keeps_its_allowance_for_a_later_item() {
+    let mut s = scheduler(Setup {
+        grid_anchors: 1,
+        ..on(tbt(512))
+    });
+    decoders(&mut s, 1);
+    let first = tokens(2, 125);
+    submit_tokens(&mut s, 2, &first, 1, false);
+    prefill(&mut s, 2, 4);
+    submit(&mut s, 1, 50, 4);
+    submit(&mut s, 3, 511, 4);
+    let mut continuation = first;
+    continuation.extend(tokens(4, 5));
+    submit_tokens(&mut s, 4, &continuation, 4, false);
+    s.admit().unwrap();
+    assert_eq!(s.cached_tokens(RequestId::new(4)).unwrap(), 125);
+    s.complete_prefix_restore(RequestId::new(4)).unwrap();
+    // The first 50 tokens leave 462: the 511-row item stops at 448,
+    // leaving 14 tokens and the unused allowance for the five-row item.
+    let step = step(&mut s).unwrap();
+    assert_eq!(step.prefills, [(1, 0, 50), (3, 0, 448), (4, 125, 5)]);
+    assert_eq!(step.anchors, [(4, 128)]);
+}
+
+#[test]
+fn grid_anchor_items_never_fuse_floor_or_progress_forced_chunks() {
+    for (floor, decode_cost, decode_count, expected) in
+        [(500, 1, 1, 512), (1, 1, 1, 64), (512, GRID / 2, 2, 64)]
+    {
+        let mut s = scheduler(Setup {
+            grid_anchors: 8,
+            decode_cost,
+            ..on(tbt(floor))
+        });
+        decoders(&mut s, decode_count);
+        submit(&mut s, 1, expected + 1, 4);
+        let steps = prefill(&mut s, 1, 4);
+        assert_eq!(chunks(&steps, 1), [(0, expected), (expected, 1)]);
+        assert!(steps.iter().all(|step| step.anchors.is_empty()));
+        assert_eq!(captures(&steps, 1), [expected, expected + 1]);
+    }
 }

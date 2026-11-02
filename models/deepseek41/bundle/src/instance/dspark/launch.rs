@@ -206,8 +206,39 @@ impl Instance {
             .map_or(crate::dspark::state::BATCH_PROJECTION_ROWS, |runtime| {
                 runtime.state().batch_rows()
             });
+        // Anchor catch-up runs while the fused target's tails still occupy
+        // packed staging. Ordinary catch-up runs before target execution.
+        let preserve = self
+            .ledger
+            .step()
+            .is_some_and(|step| !step.anchors.is_empty());
+        let saved = if preserve {
+            device
+                .ranks
+                .iter()
+                .map(|stored| {
+                    let bytes = u64::from(batch_rows) * device.features.row_bytes();
+                    Ok((
+                        slice(stored.packed, 0, bytes)?,
+                        slice(stored.taps, 0, bytes)?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, String>>()?
+        } else {
+            Vec::new()
+        };
+        for (rank, &(source, destination)) in saved.iter().enumerate() {
+            self.services
+                .copy_device_to_device(self.ranks[rank].2, destination, source)
+                .map_err(|e| format!("DSpark anchor staging save: {e:?}"))?;
+        }
         for batch in transfers::batched_projection(config, passes, batch_rows)? {
             self.project_batch(&batch, None)?;
+        }
+        for (rank, &(destination, source)) in saved.iter().enumerate() {
+            self.services
+                .copy_device_to_device(self.ranks[rank].2, destination, source)
+                .map_err(|e| format!("DSpark anchor staging restore: {e:?}"))?;
         }
         Ok(())
     }
@@ -397,12 +428,12 @@ impl Instance {
     ) -> Result<(), String> {
         let started = times.as_ref().map(|_| std::time::Instant::now());
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
-        let mut offsets = [0, u64::from(DECODE_BASE)];
         let mut copies = Vec::new();
         // Bind every retention copy before issuing any physical mutation.
-        for item in plan.items() {
-            let phase = usize::from(!matches!(item.rows.kind, Kind::Prefill { .. }));
-            let retention = transfers::retain_copies(device.config, *item, offsets[phase])?;
+        for (index, item) in plan.items().iter().enumerate() {
+            let decode = !matches!(item.rows.kind, Kind::Prefill { .. });
+            let offset = plan.offset(index) + if decode { u64::from(DECODE_BASE) } else { 0 };
+            let retention = transfers::retain_copies(device.config, *item, offset)?;
             for (rank, buffers) in self.buffers.iter().enumerate() {
                 let features = device.features.bind(
                     buffers
@@ -418,23 +449,12 @@ impl Instance {
                         .map(|copy| (rank, copy)),
                 );
             }
-            offsets[phase] += u64::from(item.rows.kind.target_rows()?);
         }
         let indexed = self.prepare_indexed_retention(plan, &copies)?;
         let anchored = self.anchor_feature_copies(plan)?;
         finish(times.as_deref_mut().map(|t| &mut t.retention_us), started);
         self.project_commit_batches(plan, times.as_deref_mut())?;
         let started = times.as_ref().map(|_| std::time::Instant::now());
-        // Each anchor spare takes its slot's entry before the slot's own
-        // retention below overwrites it.
-        for (rank, copy) in anchored {
-            self.services
-                .copy_device_to_device(self.ranks[rank].2, copy.destination, copy.source)
-                .map_err(|e| format!("DSpark anchor feature retention: {e:?}"))?;
-            if let Some(times) = times.as_deref_mut() {
-                times.retention_copy_calls += 1;
-            }
-        }
         if let Some(indexed) = indexed {
             self.submit_indexed_retention(indexed)?;
             if let Some(times) = times.as_deref_mut() {
@@ -451,6 +471,16 @@ impl Instance {
                 }
             }
         }
+        // The head is now committed. Preserve its whole raw history before
+        // catch-up and the separate tail commit can reuse either buffer.
+        for (rank, copy) in anchored {
+            self.services
+                .copy_device_to_device(self.ranks[rank].2, copy.destination, copy.source)
+                .map_err(|e| format!("DSpark anchor feature retention: {e:?}"))?;
+            if let Some(times) = times.as_deref_mut() {
+                times.retention_copy_calls += 1;
+            }
+        }
         finish(times.as_deref_mut().map(|t| &mut t.retention_us), started);
         // Copies remain ordered on each rank's stream. Any following draft,
         // prefix copy or slot reuse uses that same stream. Staged projections
@@ -458,73 +488,53 @@ impl Instance {
         measure(times.map(|t| &mut t.wait_us), || self.check_dspark_status())
     }
 
-    /// Every rank's copies, in order, that keep each anchor item's raw
-    /// feature history at its anchor (`execute::anchors`): its slot's entry
-    /// before this commit and the rows a chunk ending at the anchor retains,
-    /// in the anchor's spare, then the rows such a chunk leaves in the slot
-    /// that this commit's retention keeps in neither history
-    /// (`transfers::anchor_copies`). None without a kept anchor.
+    /// Copy the head's committed history into its anchor spare. The tail
+    /// retains separately, preserving even the six cells outside the window.
     fn anchor_feature_copies(
         &self,
         plan: &CommitPlan,
     ) -> Result<Vec<(usize, crate::dspark::features::Copy)>, String> {
-        let kept = self.ledger.step().map_or(&[][..], |step| &step.anchors[..]);
-        if kept.is_empty() {
+        if plan.tails().is_empty() {
             return Ok(Vec::new());
         }
+        let kept = &self
+            .ledger
+            .step()
+            .ok_or("DSpark anchor has no target step")?
+            .anchors;
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
-        let spares = self.anchor_spare_count();
         let buffer = self
             .state
             .buffers
             .iter()
-            .position(|buffer| buffer.name == "dspark.features")
+            .position(|b| b.name == "dspark.features")
             .ok_or("DSpark features are absent")?;
-        let layout = device.features.with_slots(spares)?;
-        let mut offsets = [0, u64::from(DECODE_BASE)];
+        let layout = device.features.with_slots(self.anchor_spare_count())?;
         let mut copies = Vec::new();
-        for item in plan.items() {
-            let phase = usize::from(!matches!(item.rows.kind, Kind::Prefill { .. }));
-            if let Some(spare) = kept
+        for &(tail, _) in plan.tails() {
+            let spare = kept
                 .iter()
-                .position(|&(request, _)| request == item.rows.request)
-            {
-                let anchor = transfers::anchor_copies(
-                    device.config,
-                    *item,
-                    offsets[phase],
-                    kept[spare].1,
-                    spare as u32,
-                    spares,
+                .position(|&(request, end)| request == tail.request && end == tail.start)
+                .ok_or("DSpark commit anchor has no spare")?;
+            for (rank, buffers) in self.buffers.iter().enumerate() {
+                let packed = device.ranks[rank].packed;
+                let slot = device.features.bind(
+                    buffers
+                        .state
+                        .named("dspark.features")
+                        .ok_or("DSpark features are absent")?,
+                    packed,
                 )?;
-                for (rank, buffers) in self.buffers.iter().enumerate() {
-                    let packed = device.ranks[rank].packed;
-                    let slot = device.features.bind(
-                        buffers
-                            .state
-                            .named("dspark.features")
-                            .ok_or("DSpark features are absent")?,
-                        packed,
-                    )?;
-                    let spare_features = layout.bind(
-                        self.anchor_spares[rank].buffers[buffer]
-                            .ok_or("DSpark features have no anchor spare")?,
-                        packed,
-                    )?;
-                    copies.push((
-                        rank,
-                        slot.seed_spare(item.rows.slot, spare_features, spare as u32)?,
-                    ));
-                    for copy in spare_features
-                        .retain(&anchor.spare)?
-                        .into_iter()
-                        .chain(slot.retain(&anchor.slot)?)
-                    {
-                        copies.push((rank, copy));
-                    }
-                }
+                let spare_features = layout.bind(
+                    self.anchor_spares[rank].buffers[buffer]
+                        .ok_or("DSpark features have no anchor spare")?,
+                    packed,
+                )?;
+                copies.push((
+                    rank,
+                    slot.seed_spare(tail.slot, spare_features, spare as u32)?,
+                ));
             }
-            offsets[phase] += u64::from(item.rows.kind.target_rows()?);
         }
         Ok(copies)
     }

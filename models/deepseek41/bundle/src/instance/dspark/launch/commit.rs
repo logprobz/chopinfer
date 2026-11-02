@@ -19,9 +19,14 @@ impl Instance {
         let device = self.dspark.as_ref().ok_or("DSpark is absent")?;
         let mut chunks = Vec::new();
         for stage in 0..device.config.stages {
-            let mut offsets = [0, u64::from(DECODE_BASE)];
-            for item in plan.items() {
+            for (index, item) in plan.items().iter().enumerate() {
                 let phase = usize::from(!matches!(item.rows.kind, Kind::Prefill { .. }));
+                let offset = plan.offset(index)
+                    + if phase == 0 {
+                        0
+                    } else {
+                        u64::from(DECODE_BASE)
+                    };
                 if item.project_from_staging {
                     let project = if self.skip_prefill && phase == 0 {
                         transfers::staged_retained_projection
@@ -32,13 +37,10 @@ impl Instance {
                         device.config,
                         *item,
                         stage,
-                        offsets[phase],
+                        offset,
                         device.config.window,
                     )?);
                 }
-                // Short and partially accepted items still occupy their full
-                // target row domain in the packed source.
-                offsets[phase] += u64::from(item.rows.kind.target_rows()?);
             }
         }
         transfers::staged_batches(device.config, &chunks, COMMIT_ROWS)?

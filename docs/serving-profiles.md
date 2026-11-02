@@ -50,11 +50,14 @@ chopinfer serve --model "$CHOPINFER_MIMO_CHECKPOINT" --tensor-parallel-size 4 --
   and verification, the drafter, model options, speculation bounds, KV
   offload host memory, the frontend declaration and tokenizer, the topology
   at the planned rank count with its context-parallel groups, the media
-  options, and the engine's batch, chunk and sequence limits. It prints the
-  profile, the same effective settings and every model option with its
-  value and default. A failure exits nonzero with the message serving would
-  give. A start can still fail on what only it decides: device memory and
-  peer access, the KV capacity the devices hold, and the listen address.
+  options, the engine's batch, chunk and sequence limits, the declared media
+  recipes, the `--debug-reference-tokens` file, and the
+  `CHOPINFER_NVTX_RANGES` and `CHOPINFER_DEV_SKIP_WARMUP` variables. It
+  prints the profile, the same effective settings and every model option
+  with its value and default. A failure exits nonzero with the message
+  serving would give. A start can still fail on what only it decides: the
+  native module's frontend export and callbacks, device memory and peer
+  access, the KV capacity the devices hold, and the listen address.
   `--check` refuses a `--max-context-tokens` past what one sequence of the
   package holds, which no KV capacity can serve.
 

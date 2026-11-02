@@ -1038,3 +1038,84 @@ fn deferred_failure_poison_and_cancellation_keep_committed_history() {
     assert!(runtime.execute(&mut host, &[input(1)]).is_err());
     assert!(runtime.state().is_poisoned());
 }
+
+fn anchored_target() -> (Runtime, FakeHost) {
+    let state = State::new(Config {
+        slots: 1,
+        stages: 3,
+        window: 128,
+        max_prefill_rows: 512,
+        context_tokens: 512,
+        position_capacity: 512,
+    })
+    .unwrap();
+    let mut runtime = Runtime::new(state, VOCAB as u32, 128).unwrap();
+    let mut host = FakeHost::default();
+    runtime
+        .execute(
+            &mut host,
+            &[Input {
+                rows: Rows {
+                    request: 41,
+                    slot: 0,
+                    start: 0,
+                    kind: Kind::Prefill { rows: 100 },
+                },
+                tokens: vec![7; 100],
+                noise: Noise::GREEDY,
+            }],
+        )
+        .unwrap();
+    (runtime, host)
+}
+
+#[test]
+fn anchor_catch_up_state_error_poisons_the_published_head() {
+    let (mut runtime, mut host) = anchored_target();
+    // Corrupt the internal projection capacity after target execution. The
+    // head retains successfully before catch-up detects the invalid pass.
+    runtime.projection_rows = 0;
+    assert_eq!(
+        runtime.commit_with_anchors(&mut host, &[], &[(41, 64)]),
+        Err(Error::State("DSpark projection history is unavailable"))
+    );
+    assert_eq!(runtime.state().context(41).unwrap().end, 64);
+    assert_eq!(host.committed[&41].len(), 64);
+    assert!(runtime.state().is_poisoned());
+    assert!(runtime.cancel(&mut host).is_err());
+    assert!(
+        !host
+            .journal
+            .iter()
+            .any(|line| line.starts_with("diagnostics "))
+    );
+}
+
+#[test]
+fn anchor_tail_admission_state_error_poisons_the_published_head() {
+    let (mut runtime, mut host) = anchored_target();
+    let plan = runtime
+        .state
+        .begin_commit_with_anchors(&[], &[(41, 64)])
+        .unwrap();
+    let mut tails = plan.tails().to_vec();
+    host.commit_features(&plan).unwrap();
+    runtime.state.complete_commit(plan).unwrap();
+    // A stale tail must not leave the already published head usable.
+    tails[0].0.start += 1;
+    assert_eq!(
+        runtime.commit_tails(&mut host, &tails),
+        Err(Error::State("DSpark request is not contiguous in its slot"))
+    );
+    assert_eq!(runtime.state().context(41).unwrap().end, 64);
+    assert_eq!(host.committed[&41].len(), 64);
+    assert!(runtime.state().is_poisoned());
+    assert_eq!(
+        host.journal
+            .iter()
+            .filter(|line| line.starts_with("commit "))
+            .count(),
+        1
+    );
+    assert!(runtime.cancel(&mut host).is_err());
+}

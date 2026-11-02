@@ -20,6 +20,10 @@ const LEFT: u16 = 44;
 const COMMAND: u16 = 7;
 /// Most recent launches shown.
 const RECENT: usize = 2;
+/// What the focused Profiles pane says while its profile follows the
+/// picked GPUs.
+const FOLLOWS: &str =
+    "Follows the picked GPUs to serve --model's pick until you choose one with ↑↓ or Space.";
 
 type Area = (u16, u16, u16, u16);
 
@@ -494,8 +498,21 @@ fn profiles_pane(buffer: &mut Buffer, app: &App, area: Area, alone_: bool) {
         return;
     }
     let inner = usize::from(width.saturating_sub(4));
-    let lines = wrap(&sanitize(&text), inner);
+    // Alone, with no Options pane to say so, the box's last rows say that
+    // the profile follows the GPUs.
+    let follows = if alone_ && focus && loader.profile_follows() {
+        wrap(FOLLOWS, inner)
+    } else {
+        Vec::new()
+    };
     let room = usize::from(bottom - top);
+    let follows = &follows[..follows.len().min(room)];
+    for (index, line) in follows.iter().enumerate() {
+        let row = bottom - (follows.len() - index) as u16;
+        buffer.put(x + 2, row, line, Style::PLAIN);
+    }
+    let lines = wrap(&sanitize(&text), inner);
+    let room = room - follows.len();
     for (index, line) in lines.iter().take(room).enumerate() {
         let cut = index + 1 == room && lines.len() > room;
         let shown = if cut {
@@ -879,19 +896,11 @@ fn pane_help(app: &App, lines: &[(Row, Line)]) -> (String, String, Color) {
                 ),
                 None => String::new(),
             };
-            let follows = if loader.profile_follows() {
-                " Follows the picked GPUs to serve --model's pick until you choose one with ↑↓ or Space."
-            } else {
-                ""
-            };
-            (
-                sanitize(&profile.name),
-                format!(
-                    "{}{follows}",
-                    sanitize(&format!("{how}Status: {}.", profile.status))
-                ),
-                Color::Default,
-            )
+            let mut help = sanitize(&format!("{how}Status: {}.", profile.status));
+            if loader.profile_follows() {
+                help = format!("{help} {FOLLOWS}");
+            }
+            (sanitize(&profile.name), help, Color::Default)
         }
         Pane::Placement => {
             let size = loader.plan.tensor_parallel.unwrap_or(1);

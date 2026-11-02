@@ -1079,6 +1079,40 @@ fn the_profiles_pane_says_when_its_profile_follows_the_gpus() {
 }
 
 #[test]
+fn the_profiles_pane_alone_says_when_its_profile_follows_the_gpus() {
+    use crossterm::event::KeyCode;
+    // The words on the screen, with the boxes' borders and the line breaks
+    // of wrapped text gone.
+    let words = |app: &App, height| {
+        ui::draw(app, 80, height, NOW)
+            .text()
+            .replace(['│', '┌', '└', '┐', '┘', '─'], " ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let follows =
+        "Follows the picked GPUs to serve --model's pick until you choose one with ↑↓ or Space.";
+    let mut app = loader();
+    press(&mut app, KeyCode::Tab);
+    for height in [24, 38] {
+        app.settle(80, height);
+        assert!(words(&app, height).contains(follows), "80x{height}");
+    }
+    app.settle(80, 24);
+    check("loader-profiles-80x24", &app, 80, 24);
+    press(&mut app, KeyCode::Char(' '));
+    app.tick(NOW);
+    for height in [24, 38] {
+        app.settle(80, height);
+        assert!(
+            !words(&app, height).contains("Follows the picked"),
+            "80x{height}"
+        );
+    }
+}
+
+#[test]
 fn a_long_model_name_stays_apart_from_its_id() {
     let mut app = loader();
     let mut models = Models::parse(&loader_fixture("models.json")).unwrap();

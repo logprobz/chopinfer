@@ -496,6 +496,18 @@ serving options: `fixed` keeps the lowest collapse share in the
 sixteen-session cell, and `off` the highest output rate in all three
 cells.
 
+These cells ran with the four GPUs limited to 275, 250, 250 and 250 W. On
+2026-11-02, at the 300 W default limit on main 0c620f1a66, a replay of the
+same cells was set up to compare the 750 ms target with 1000 ms, both
+adaptive. Before any timing, the two targets produced bit-identical output
+tokens and logprobs on a cold burst and at one stream, and the
+prefix-cache exactness suite and determinism screens passed at each
+target. No job in that gate took a timing cut, so it did not move a chunk
+boundary. The replay was stopped before any cell produced a valid
+comparison, so it has no verdict, and `adaptive` against `off` was not
+rerun at 300 W. `tp4-dspark` keeps `adaptive` cuts at 750 ms on the
+evidence above; neither setting has been re-measured at 300 W.
+
 ### Fixed timing-cut tradeoff
 
 On 2026-10-28, DeepSeek TP4 DSpark stateful replay at C8 (eight sessions,

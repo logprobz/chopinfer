@@ -276,8 +276,8 @@ them. A non-default value is unqualified.
 | `text_config.indexer_mma` | `true` | Use the guarded native Flash index scorer where eligible. |
 | `text_config.indexer_prefill_tile` | `true` | Enable the qualified Flash tiled indexer routes. |
 | `verify_graph_rows` | `64` | Widest graphed verify step; wider admitted steps run eagerly. |
-| `wide_draft` | `false` | Candidate, requires `wide_verify`: a Flash TP4 drafter step of more than twelve drafting items runs them in the fewest forwards the widest wide verify bucket holds (25 items at 128 verify rows, 32 at 192), on the wide dense folds and the head's exact F32 row tiles, instead of chunks of at most twelve. Fixed-batch GPU replays matched the default bitwise. Kept off with `wide_verify` (see its row). |
-| `wide_verify` | `false` | Candidate: Flash TP4 eager verify steps of 65 to 192 rows prepare their row-local stages and HC boundaries at the wide verify buckets (128 rows and the verify rows) and launch the decode entries a 64-row step uses, fold their dense projections through wide folds at those buckets, run their routed experts through the wide direct MoE queues, and run the vocabulary head, router and compressor in their measured exact F32 row tiles. Fixed-batch GPU replays and kernel-lab MoE pairs matched the default bitwise. Kept off on this host: served depth sweeps on 2026-11-01, at a 250 W limit per GPU, chose no step above 64 rows (see the served acceptance paragraph below). |
+| `wide_draft` | `false` | Candidate, requires `wide_verify`: a Flash TP4 drafter step of more than twelve drafting items runs them in the fewest forwards the widest wide verify bucket holds (25 items at 128 verify rows, 32 at 192), on the wide dense folds and the head's exact F32 row tiles, instead of chunks of at most twelve. Fixed-batch GPU replays matched the default bitwise. Kept off with `wide_verify` at both measured power limits (see its row). |
+| `wide_verify` | `false` | Candidate: Flash TP4 eager verify steps of 65 to 192 rows prepare their row-local stages and HC boundaries at the wide verify buckets (128 rows and the verify rows) and launch the decode entries a 64-row step uses, fold their dense projections through wide folds at those buckets, run their routed experts through the wide direct MoE queues, and run the vocabulary head, router and compressor in their measured exact F32 row tiles. Fixed-batch GPU replays and kernel-lab MoE pairs matched the default bitwise. Kept off on this host: served depth sweeps on 2026-11-01, at a 250 W limit per GPU, and on 2026-11-02, at the 300 W default limit, chose no step above 64 rows (see the served acceptance paragraphs below). |
 
 TP4 native-KV single-item DMA prefill overlaps both prepared Engram gathers
 by default at 512-8192 rows. The model joins each layer before its decoder;
@@ -673,6 +673,30 @@ times its request tok/s; the 160- and 192-row steps (110.1 and 124.4 ms)
 fell below plain decode. Without the option the same 80- to 192-row steps
 took 191.9 to 286.7 ms, 2.3 to 2.9 times the wide route. The software power
 cap held the SM clocks in 76 to 97% of samples in every arm.
+
+The GPUs now enforce their default 300 W limit. On 2026-11-02 the decode
+bench and the depth sweeps ran again at 300 W on main 0c620f1a66. The 250
+W bench used 5e864484fe and the 250 W sweeps cd1eab92ef, so the comparison
+across limits is indicative only; each choice below compares runs of one
+build at 300 W. The default profile's decode bench (medians of three
+trials of 2048 output tokens) gave 281, 976, 1,140 and 1,269 tok/s at one,
+eight, 16 and 32 streams, against 282, 894, 1,030 and 1,151 at 250 W: flat
+at one stream and 9.1 to 10.8% higher from eight. Depth sweeps at the
+profile's 64 verify rows (same workload and pool as above) chose depth 3
+at C8 (1.198 times plain decode's request tok/s), depth 3 at C16 (1.172)
+and depth 0 at C32 (depth 1 gave 0.978), the profile's 8:3, 16:3 and 32:0.
+With `wide_verify` and `wide_draft` at 192 verify and graph rows, the 80-
+and 96-row steps at C16 gave 1.033 and 1.006 times plain decode's request
+tok/s and the 96- to 192-row steps at C32 0.863 to 0.927 (on the same
+request basis the 250 W sweeps gave 1.023 and 0.986 at C16 and 0.897 to
+0.975 at C32). The best wide depth at C32, one draft at 64 rows, gave
+1.002, under the 1.5% selection margin. In the sweeps each GPU's mean SM
+clock per arm was 2,120 to 2,260 MHz, with the power cap active in 0 to
+87% of its samples, against 1,870 to 2,220 MHz and 76 to 96% in the 250 W
+sweeps. No setting cleared the margin over the current entry, so the depth
+table, rows, graph rows and widths stay and both options stay off. Every
+sweep window matched its reference bitwise, with no major faults,
+preemptions or prefix-cache evictions.
 
 The drafter cost candidates merged into this branch with every existing
 journal identical ([merge note](journal-changes/wide-verify-merge-drafter.md)).

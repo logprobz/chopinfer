@@ -187,8 +187,7 @@ class RequestLogging(unittest.TestCase):
     def check_failure_lines(self, lines):
         for line in lines:
             self.assertEqual(set(line), FIELDS | ({"json_error"} if "json_error" in line else set())
-                             | ({"served"} if "served" in line else set())
-                             | ({"output_refusal"} if "output_refusal" in line else set()), line)
+                             | ({"served"} if "served" in line else set()), line)
             self.assertNotIn("output_refusal", line)
             self.assertTrue(line["peer"].startswith("127.0.0.1:"), line)
         malformed, unknown, capacity, refused = lines
@@ -235,6 +234,7 @@ class RequestLogging(unittest.TestCase):
         self.assertEqual(chunks[-1]["error"]["code"], "invalid_model_output", chunks)
         self.assertNotIn("output_refusal", chunks[-1]["error"])
         line, = self.failures(1)
+        self.assertEqual(set(line), FIELDS | {"output_refusal"}, line)
         self.assertEqual(line["code"], "invalid_model_output")
         self.assertEqual(line["message"], "backend failure")
         self.assertEqual(line["output_refusal"], {

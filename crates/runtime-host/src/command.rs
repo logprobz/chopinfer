@@ -156,6 +156,7 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]
   [--speculation-widths ROWS,...] [--speculation-graph-rows N] [--speculation-confidence JSON|off]
   [--draft-cost per-token|per-block] [--prefix-cache on|off] [--verify-warmup on|off]
   [--prewarm-mapped-views off|on|auto] (default off)
+  [--reply-history-observer on|off]
   [--prefill-budget fixed|decode-aware|tbt] [--prefill-timing-cuts off|fixed|adaptive] [--prefill-itl-target-ms N | --prefill-decode-steps N]
   [--decode-tbt-target-ms N] [--mixed-min-prefill-tokens N] [--mixed-decode-steps N]
   [--kv-offload-gib N] [--kv-offload-min-tokens N] [--kv-offload-gbps F] [--kv-offload-prefix off]
@@ -449,6 +450,8 @@ pub struct ServingOptionsV1 {
     pub kv_cache_dtype: KvCacheDtypeV1,
     /// Enables prefix caching for a bundle that declares it; on by default.
     pub prefix_cache: bool,
+    /// Bounded reply repetition measurement; off by default.
+    pub reply_history_observer: bool,
     pub debug_swap: bool,
     pub kv_offload: crate::offload::KvOffloadOptionsV1,
     /// With speculation, startup warmup also reaches every verify graph
@@ -484,6 +487,7 @@ impl Default for ServingOptionsV1 {
             context_parallel_size: 1,
             kv_cache_dtype: KvCacheDtypeV1::Auto,
             prefix_cache: true,
+            reply_history_observer: false,
             debug_swap: false,
             kv_offload: crate::offload::KvOffloadOptionsV1::default(),
             verify_warmup: true,
@@ -1494,6 +1498,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             "--speculation-confidence",
             "--draft-cost",
             "--prefix-cache",
+            "--reply-history-observer",
             "--verify-warmup",
             "--prefill-budget",
             "--prefill-timing-cuts",
@@ -1847,6 +1852,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             },
             kv_cache_dtype: parsed.kv_cache_dtype.unwrap_or_default(),
             prefix_cache: parsed.prefix_cache.unwrap_or(true),
+            reply_history_observer: parsed.reply_history_observer.unwrap_or(false),
             debug_swap: parsed.debug_swap_every.is_some(),
             kv_offload,
             verify_warmup: parsed.verify_warmup.unwrap_or(true),
@@ -4789,7 +4795,9 @@ fn engine_config_v1(
             std::env::var_os(name).map(|value| value.to_string_lossy().into_owned())
         })
         .map(|limits| {
-            let config = config.with_batch_refusal_limits(limits);
+            let config = config
+                .with_batch_refusal_limits(limits)
+                .with_reply_history_observer(serving.reply_history_observer);
             if serving.debug_swap {
                 config.with_forced_swaps()
             } else {
@@ -5568,6 +5576,7 @@ struct ArgumentsV1 {
     speculation_graph_rows: Option<usize>,
     draft_cost_model: Option<DraftCostModel>,
     prefix_cache: Option<bool>,
+    reply_history_observer: Option<bool>,
     kv_offload_gib: Option<u64>,
     kv_offload_min_tokens: Option<usize>,
     kv_offload_rate: Option<u64>,
@@ -6001,6 +6010,14 @@ impl ArgumentsV1 {
                     })?;
                     set_once_v1(&mut parsed.kv_cache_dtype, dtype, flag)?;
                 }
+                "--reply-history-observer" => {
+                    let enabled = match value.as_str() {
+                        "on" => true,
+                        "off" => false,
+                        _ => return Err(usage_error("--reply-history-observer must be on or off")),
+                    };
+                    set_once_v1(&mut parsed.reply_history_observer, enabled, flag)?;
+                }
                 "--prefix-cache" => {
                     let enabled = match value.as_str() {
                         "on" => true,
@@ -6233,6 +6250,10 @@ impl ArgumentsV1 {
             ("--kv-offload-gbps", self.kv_offload_rate.is_some()),
             ("--kv-offload-prefix", self.kv_offload_prefix.is_some()),
             ("--prefix-cache", self.prefix_cache.is_some()),
+            (
+                "--reply-history-observer",
+                self.reply_history_observer.is_some(),
+            ),
             ("--verify-warmup", self.verify_warmup.is_some()),
             ("--prefill-budget", self.prefill_budget.is_some()),
             ("--prefill-timing-cuts", self.prefill_timing_cuts.is_some()),
@@ -7638,6 +7659,7 @@ mod tests {
                 context_parallel_size: 1,
                 kv_cache_dtype: KvCacheDtypeV1::Auto,
                 prefix_cache: true,
+                reply_history_observer: false,
                 debug_swap: false,
                 kv_offload: crate::offload::KvOffloadOptionsV1::default(),
                 verify_warmup: true,
@@ -8497,6 +8519,59 @@ mod tests {
                 .concat()
             )
             .contains("give one of them")
+        );
+    }
+
+    #[test]
+    fn reply_history_is_a_declared_default_off_serve_option() {
+        for (value, expected) in [(None, false), (Some("on"), true), (Some("off"), false)] {
+            let mut args = arguments(&["serve", "--bundle", "a"]);
+            if let Some(value) = value {
+                args.extend(arguments(&["--reply-history-observer", value]));
+            }
+            let HostCommandV1::Serve { serving, .. } = parse_host_command_v1(&args).unwrap() else {
+                panic!("serve");
+            };
+            assert_eq!(serving.reply_history_observer, expected);
+        }
+        for value in ["yes", "true", "1", ""] {
+            assert!(
+                refusal(&["serve", "--bundle", "a", "--reply-history-observer", value])
+                    .contains("must be on or off")
+            );
+        }
+        assert!(
+            parse_host_command_v1(&arguments(&[
+                "serve",
+                "--bundle",
+                "a",
+                "--reply-history-observer"
+            ]))
+            .is_err()
+        );
+        assert!(
+            parse_host_command_v1(&arguments(&[
+                "serve",
+                "--bundle",
+                "a",
+                "--reply-history-observer",
+                "on",
+                "--reply-history-observer",
+                "off"
+            ]))
+            .is_err()
+        );
+        assert!(
+            refusal(&[
+                "conformance-run",
+                "--bundle",
+                "a",
+                "--fixture-request",
+                "x",
+                "--reply-history-observer",
+                "on"
+            ])
+            .contains("does not accept --reply-history-observer")
         );
     }
 

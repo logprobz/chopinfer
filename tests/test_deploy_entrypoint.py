@@ -356,7 +356,7 @@ sys.exit(int(os.environ.get("VERIFY_STATUS", "0")) if sys.argv[1:2] == ["verify"
 
     def test_prepare_and_forward(self):
         result = self.run_entrypoint("--speculative-tokens", "3", "--speculation", "fixed",
-                                     "--devices", "1,0,2,3")
+                                     "--devices", "1,0,2,3", "--reply-history-observer", "on")
         self.assertEqual(result.returncode, 0, result.stderr)
         commands = self.commands()
         self.assertEqual([command[:2] for command in commands[:-1]],
@@ -364,7 +364,8 @@ sys.exit(int(os.environ.get("VERIFY_STATUS", "0")) if sys.argv[1:2] == ["verify"
         serve = commands[-1]
         self.assertEqual(serve[0], "serve")
         for key, value in [("--listen", "0.0.0.0:8000"), ("--speculative-tokens", "3"),
-                           ("--devices", "1,0,2,3"), ("--tensor-parallel-size", "4")]:
+                           ("--devices", "1,0,2,3"), ("--tensor-parallel-size", "4"),
+                           ("--reply-history-observer", "on")] :
             self.assertEqual(serve[serve.index(key) + 1], value)
         self.assertNotIn("--queue-depth", serve)
         self.assertTrue(self.cache.is_dir())
@@ -458,12 +459,12 @@ sys.exit(int(os.environ.get("VERIFY_STATUS", "0")) if sys.argv[1:2] == ["verify"
                          ['--speculative-tokens', '0'])
 
     def test_systemd_serve_args_must_be_expanded(self):
-        self.env['CHOPINFER_SERVE_ARGS'] = '--prefix-cache off'
-        result = self.run_entrypoint('--prefix-cache', 'off')
+        self.env['CHOPINFER_SERVE_ARGS'] = '--prefix-cache off --reply-history-observer on'
+        result = self.run_entrypoint('--prefix-cache', 'off', '--reply-history-observer', 'on')
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_standalone_speculation_reaches_real_parser(self):
-        self.serve_arguments('--speculation', 'fixed', drafter='dflash')
+        self.serve_arguments('--speculation', 'fixed', '--reply-history-observer', 'on', drafter='dflash')
         serve = self.commands()[-1]
         self.assertEqual(serve.count('--speculation'), 1)
         # Stop at the checkpoint check after parsing, before any helper or

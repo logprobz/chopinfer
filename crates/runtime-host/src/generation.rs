@@ -336,6 +336,7 @@ impl fmt::Display for EngineBackendStartupError {
 impl std::error::Error for EngineBackendStartupError {}
 
 pub struct EngineGenerationBackend {
+    reply_history: Option<runtime_engine::ReplyHistoryObserver>,
     tokenizer: Arc<Tokenizer>,
     grammars: Arc<crate::grammar::GrammarServiceV1>,
     policy: EngineModelPolicyV1,
@@ -476,6 +477,7 @@ impl EngineGenerationBackend {
                     // only way a metrics reader on another thread sees what
                     // this worker's scheduler, engine and KV pool record.
                     let started = WorkerStartupV1 {
+                        reply_history: engine.reply_history_observer(),
                         maximum_sequence_tokens: engine.maximum_sequence_tokens(),
                         startup_page_tokens: engine.startup_page_tokens(),
                         startup_pages: engine.kv_stats().free_blocks(),
@@ -564,6 +566,7 @@ impl EngineGenerationBackend {
             startup_pages: started.startup_pages,
             metrics: started.metrics,
             kv_metrics: started.kv_metrics,
+            reply_history: started.reply_history,
             worker: Mutex::new(Some(worker)),
             progress,
             media_root: None,
@@ -1489,13 +1492,22 @@ impl GenerationBackend for EngineGenerationBackend {
             };
             let (forward_sender, forward_receiver) =
                 tokio::sync::mpsc::channel(self.forwarding_capacity);
-            tokio::spawn(forward_events(
+            let receipt = self
+                .reply_history
+                .as_ref()
+                .and_then(|observer| observer.delivery(id));
+            let observe_delivery = receipt.is_some();
+            let skip_reply_history = self.reply_history.is_some() && !observe_delivery;
+            tokio::spawn(forward_events_observed(
                 forward_receiver,
                 events,
                 request.cancellation.clone(),
+                receipt,
             ));
             let (response, admitted) = oneshot::channel();
             submissions.push(WorkerSubmission {
+                observe_delivery,
+                skip_reply_history,
                 id,
                 request: Box::new(request),
                 constraint: None,
@@ -1621,10 +1633,20 @@ impl Drop for EngineGenerationBackend {
 /// client, waiting on the client, until either side ends or it is cancelled.
 /// Cancellation also ends a send that waits on a full client channel; events
 /// still go out one at a time, in the order the worker queued them.
+#[cfg(test)]
 async fn forward_events(
+    forward_receiver: tokio::sync::mpsc::Receiver<GenerationEvent>,
+    events: EventSender,
+    cancellation: CancellationSignal,
+) {
+    forward_events_observed(forward_receiver, events, cancellation, None).await;
+}
+
+async fn forward_events_observed(
     mut forward_receiver: tokio::sync::mpsc::Receiver<GenerationEvent>,
     events: EventSender,
     cancellation: CancellationSignal,
+    mut observation: Option<runtime_engine::ReplyHistoryDelivery>,
 ) {
     loop {
         let event = tokio::select! {
@@ -1635,6 +1657,7 @@ async fn forward_events(
         let Some(event) = event else {
             return;
         };
+        let terminal = matches!(&event, GenerationEvent::Finished { .. });
         let sent = tokio::select! {
             biased;
             () = cancellation.cancelled() => return,
@@ -1644,11 +1667,15 @@ async fn forward_events(
             cancellation.cancel();
             return;
         }
+        if terminal && let Some(observation) = observation.take() {
+            observation.succeeded();
+        }
     }
 }
 
 /// What the worker reports about the engine it built on its own thread.
 struct WorkerStartupV1 {
+    reply_history: Option<runtime_engine::ReplyHistoryObserver>,
     maximum_sequence_tokens: usize,
     startup_page_tokens: usize,
     startup_pages: usize,
@@ -1893,6 +1920,8 @@ impl MetricsSnapshotProvider for NativeRuntimeMetricsV1 {
 }
 
 struct WorkerSubmission {
+    observe_delivery: bool,
+    skip_reply_history: bool,
     id: RequestId,
     request: Box<PreparedRequest>,
     constraint: Option<Arc<CompiledGrammar>>,
@@ -2208,6 +2237,8 @@ where
             let mut ids = Vec::with_capacity(batch.len());
             for submission in batch {
                 let WorkerSubmission {
+                    observe_delivery,
+                    skip_reply_history,
                     id,
                     request,
                     constraint,
@@ -2235,6 +2266,12 @@ where
                     state.store(FAILED, Ordering::Release);
                     fail_all(&mut engine, &mut active);
                     return WorkerExit::Fatal;
+                }
+                if observe_delivery {
+                    engine.require_reply_history_delivery(id);
+                }
+                if skip_reply_history {
+                    engine.drop_reply_history_observation(id);
                 }
                 if let Some(generation) = active.get_mut(&id) {
                     generation.group_admitted = Rc::clone(&group_admitted);
@@ -4668,6 +4705,21 @@ fn handle_engine_event<E: ModelExecutor>(
             }
             generation.logprob_context.rotate_left(1);
             generation.logprob_context[3] = Some(*token_id);
+            let observed_end = engine
+                .reply_history_observer_enabled()
+                .then(|| generation.decoder.declared_end_token(*token_id))
+                .flatten();
+            if let Some(ignored) = observed_end {
+                engine.annotate_reply_token(
+                    id,
+                    generation.completion_tokens - 1,
+                    if ignored {
+                        runtime_engine::ReplyRegion::IgnoredEndToken
+                    } else {
+                        runtime_engine::ReplyRegion::EndToken
+                    },
+                );
+            }
             let updates = match generation.decoder.push_engine_token(decoded) {
                 Ok(updates) => updates,
                 Err(message) => {
@@ -4685,7 +4737,13 @@ fn handle_engine_event<E: ModelExecutor>(
             let terminal = updates
                 .iter()
                 .any(|update| matches!(update, CompletionUpdateV1::Finished(_)));
-            if let Err(error) = deliver_engine_updates(engine, id, &mut generation, updates) {
+            if let Err(error) = deliver_engine_updates(
+                engine,
+                id,
+                &mut generation,
+                updates,
+                observed_end == Some(true),
+            ) {
                 handle_delivery_error(&generation, error);
                 return cancel_live_request(engine, id);
             }
@@ -4709,7 +4767,8 @@ fn handle_engine_event<E: ModelExecutor>(
                     return cancel_live_request(engine, id);
                 }
             };
-            if let Err(error) = deliver_engine_updates(engine, id, &mut generation, updates) {
+            if let Err(error) = deliver_engine_updates(engine, id, &mut generation, updates, false)
+            {
                 handle_delivery_error(&generation, error);
                 return cancel_live_request(engine, id);
             }
@@ -4730,6 +4789,7 @@ fn deliver_engine_updates<E: ModelExecutor>(
     id: RequestId,
     generation: &mut ActiveGeneration,
     updates: Vec<CompletionUpdateV1>,
+    ignored_end: bool,
 ) -> Result<(), UpdateDeliveryError> {
     let reason = updates.iter().find_map(|update| match update {
         CompletionUpdateV1::Finished(done) => Some(match done.reason {
@@ -4738,8 +4798,46 @@ fn deliver_engine_updates<E: ModelExecutor>(
         }),
         _ => None,
     });
+    if engine.reply_history_observer_enabled() {
+        for update in &updates {
+            let partial_tools = matches!(update, CompletionUpdateV1::ToolCalls(_))
+                && (ignored_end || reason == Some(EngineFinishReason::Length));
+            let (region, contributions) = match update {
+                CompletionUpdateV1::Reasoning(text) => {
+                    (runtime_engine::ReplyRegion::Reasoning, &text.contributions)
+                }
+                CompletionUpdateV1::Content(text) => {
+                    (runtime_engine::ReplyRegion::Content, &text.contributions)
+                }
+                CompletionUpdateV1::ToolCalls(tool) => {
+                    (runtime_engine::ReplyRegion::ToolCalls, &tool.contributions)
+                }
+                CompletionUpdateV1::Finished(done) => {
+                    if done.reason == CompletionFinishV1::ToolCalls {
+                        engine.note_reply_history_tool_finish(id);
+                    }
+                    break;
+                }
+                _ => continue,
+            };
+            for contribution in contributions {
+                if let Ok(ordinal) = usize::try_from(contribution.ordinal) {
+                    engine.annotate_reply_token(id, ordinal, region);
+                    if partial_tools || !generation.decoder.contribution_covers_token(contribution)
+                    {
+                        engine.annotate_reply_token(
+                            id,
+                            ordinal,
+                            runtime_engine::ReplyRegion::Partial,
+                        );
+                    }
+                }
+            }
+        }
+    }
     deliver_updates(generation, updates)?;
     if let Some(reason) = reason {
+        engine.finish_reply_history_delivery(id, reason, generation.completion_tokens);
         engine.finish_completion_metrics(id, reason);
     }
     Ok(())

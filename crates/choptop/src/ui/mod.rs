@@ -342,6 +342,9 @@ pub fn state_group(state: &State) -> &'static str {
         State::Unreachable(_) | State::NotChopinfer => "unreachable",
         State::Failed => "failed",
         State::Poisoned => "poisoned",
+        State::Waiting => "starting",
+        State::Stopping => "stopping",
+        State::Exited(_) => "exited",
     }
 }
 

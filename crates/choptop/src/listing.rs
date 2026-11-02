@@ -325,6 +325,7 @@ fn row(instance: &Instance, now: f64) -> Value {
         Source::Process { pid, .. } => (Some(*pid), None, None, None),
         Source::Container { name, id, .. } => (None, Some(name.clone()), Some(id.clone()), None),
         Source::Target(target) => (None, None, None, Some(target.display())),
+        Source::Launch { .. } => (None, None, None, None),
     };
     let identity = instance
         .health

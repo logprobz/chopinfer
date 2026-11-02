@@ -21,6 +21,8 @@ use super::{is_serve, model_hint, reachable};
 const USER_HZ: f64 = 100.0;
 /// Largest command line read.
 const MAX_CMDLINE: usize = 64 * 1024;
+/// Largest environment read.
+const MAX_ENVIRON: usize = 1024 * 1024;
 
 /// One serve process.
 #[derive(Clone, Debug, PartialEq)]
@@ -37,6 +39,9 @@ pub struct ServeProcess {
     pub age: Option<f64>,
     /// The addresses it listens on, wildcards mapped to loopback.
     pub listening: Vec<SocketAddr>,
+    /// Its `CUDA_VISIBLE_DEVICES`, which says the GPUs it will hold while it
+    /// starts; `None` when unset or unreadable.
+    pub cuda_visible_devices: Option<String>,
 }
 
 /// Reads one `/proc` tree.
@@ -116,6 +121,7 @@ impl ProcScanner {
             arguments,
             age: uptime.map(|uptime| (uptime - start_ticks as f64 / USER_HZ).max(0.0)),
             listening: self.listening(pid).unwrap_or_default(),
+            cuda_visible_devices: environment_variable(&directory, "CUDA_VISIBLE_DEVICES"),
         })
     }
 
@@ -193,6 +199,18 @@ pub(crate) fn read_cmdline(path: &Path) -> Option<Vec<String>> {
             .map(|argument| String::from_utf8_lossy(argument).into_owned())
             .collect(),
     )
+}
+
+/// The value of `name` in `/proc/PID/environ`: the environment the process
+/// started with. `None` when it is unset or cannot be read.
+pub(crate) fn environment_variable(directory: &Path, name: &str) -> Option<String> {
+    let bytes = fs::read(directory.join("environ")).ok()?;
+    let bytes = &bytes[..bytes.len().min(MAX_ENVIRON)];
+    let prefix = format!("{name}=");
+    bytes
+        .split(|byte| *byte == 0)
+        .find_map(|entry| entry.strip_prefix(prefix.as_bytes()))
+        .map(|value| String::from_utf8_lossy(value).into_owned())
 }
 
 /// Field 22 of `/proc/PID/stat`, counted after the command name, which can
@@ -310,6 +328,11 @@ mod tests {
             symlink(namespace, directory.join("ns/net")).unwrap();
             fs::write(directory.join("cmdline"), arguments.join("\0") + "\0").unwrap();
             fs::write(
+                directory.join("environ"),
+                format!("LANG=C\0CUDA_VISIBLE_DEVICES=0,{pid}\0"),
+            )
+            .unwrap();
+            fs::write(
                 directory.join("stat"),
                 format!(
                     "{pid} (chop (x) y) S 1 1 1 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 90000 0 0\n"
@@ -413,6 +436,7 @@ mod tests {
                 "[::1]:8401".parse().unwrap()
             ]
         );
+        assert_eq!(serve.cuda_visible_devices.as_deref(), Some("0,200"));
         let loading = &found[1];
         assert_eq!(loading.executable, "chopinfer-host");
         assert_eq!(loading.model_hint.as_deref(), Some("fixture"));
@@ -474,6 +498,22 @@ mod tests {
             [301]
         );
         assert_eq!(left[0].listening, ["[::1]:8402".parse().unwrap()]);
+    }
+
+    #[test]
+    fn reads_one_variable_of_a_process_environment() {
+        let proc = FakeProc::new("environ");
+        let directory = proc.root.join("1");
+        fs::write(
+            directory.join("environ"),
+            "CUDA_VISIBLE_DEVICES_X=1\0CUDA_VISIBLE_DEVICES=0,1\0EMPTY=\0",
+        )
+        .unwrap();
+        let read = |name| environment_variable(&directory, name);
+        assert_eq!(read("CUDA_VISIBLE_DEVICES").as_deref(), Some("0,1"));
+        assert_eq!(read("EMPTY").as_deref(), Some(""));
+        assert_eq!(read("UNSET"), None);
+        assert_eq!(environment_variable(&proc.root.join("9"), "HOME"), None);
     }
 
     #[cfg(target_os = "linux")]

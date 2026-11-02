@@ -504,3 +504,12 @@ evidence stays unavailable. Stall count and total stall time are normalized
 per 1,000 eligible burst gaps, with raw totals retained. Append-class
 p50/p95/p99 values require 2/20/100 observations; unsupported tails are
 unavailable, while sample counts and observed maxima remain visible.
+
+Current agentic qualification records explicit `fixed`, `tbt` or `adaptive`
+prefill policy identity from verified listener arguments or
+`chop_prefill_policy_info`. Shared TBT metrics cannot establish that identity.
+Use `--fake-prefill-policy fixed|tbt|adaptive` for CPU mechanics runs.
+Decode-aware arm labels, including suffixed labels, fail current verification.
+Historical receipt comparisons retain their original budget evidence; an
+old TBT label does not distinguish today's TBT and adaptive policies and
+cannot be compared as canonical policy evidence.

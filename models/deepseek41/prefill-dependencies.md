@@ -17,10 +17,8 @@ chunk is split again. Profiles with no guaranteed grid do not enable it. The
 scheduler retains the absolute grid after an extra cut, so a cut at 4032 is
 followed by 8192 unless another selected anchor or the prompt end comes
 first. This mechanism does not enable timing-budget cuts. TBT-selected
-timing cuts are a separate serving option
-(`--prefill-timing-cuts fixed|adaptive` with `--prefill-budget tbt`),
-described below. `tp4-dspark` selects `adaptive` by default and `tp4-ar`
-keeps `off`.
+timing cuts are enabled by `--prefill-policy adaptive`, described below.
+`tp4-dspark` selects `adaptive` by default and `tp4-ar` keeps `fixed`.
 
 On default `tp4-ar` and `tp4-dspark`, every eligible prompt with a complete
 64-token block and a trailing 1-63 tokens is cut at `prompt / 64 * 64`,
@@ -392,7 +390,7 @@ bitwise equality.
 
 An online implementation also has to specify what it knows about future
 chunks. The current scheduler can switch between expanded, configured and
-decode-aware chunks as traffic changes, and optimistic admission can
+adaptive chunks as traffic changes, and optimistic admission can
 preempt a request before its planned captures. Boundary counts alone do
 not promise a future chunk history. A safe alternative keeps the complete
 persistent state exact at every actual chunk end. Treating every chunk end

@@ -16,10 +16,8 @@
       "fixed",
       "--speculative-tokens",
       "0",
-      "--prefill-budget",
+      "--prefill-policy",
       "fixed",
-      "--prefill-timing-cuts",
-      "off",
       "--graph-memory-reserve-mib",
       "320"
      ],

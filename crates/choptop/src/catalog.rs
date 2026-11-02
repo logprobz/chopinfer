@@ -1756,7 +1756,7 @@ mod tests {
                 arguments: vec![
                     "--speculative-tokens".into(),
                     "0".into(),
-                    "--prefill-budget".into(),
+                    "--prefill-policy".into(),
                     "fixed".into()
                 ],
                 inherited_model_options: vec!["dspark_draft_chunk_items".into()],

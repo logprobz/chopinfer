@@ -120,6 +120,7 @@ class PreparationProcess(unittest.TestCase):
                     self.assertIn("startup verify:", text)
                     self.assertIn("startup generation warmup: skipped (development)", text)
                     self.assertIn("startup readiness:", text)
+                    self.assertRegex(text, r"prefill policy: (fixed|tbt|adaptive)\b")
                     self.assertEqual(package["qualification"], "compatible-not-evaluated")
                     # No rank image is materialized, packaged or cached.
                     bundle = Path(package["bundle"])
@@ -608,7 +609,7 @@ print(json.dumps(reply), flush=True)
                                  "--fake-host-services", "--decode-tbt-target-ms", "100"],
                                 env=self.environment, text=True, capture_output=True, timeout=HANG_SECONDS)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("requires --prefill-budget tbt", result.stderr)
+        self.assertIn("requires --prefill-policy tbt", result.stderr)
         self.assertNotIn("startup direct_package", result.stderr)
         self.assertFalse(cache.exists())
         # An autoregressive profile has no draft length for --speculation.
@@ -636,7 +637,7 @@ print(json.dumps(reply), flush=True)
                                  "--fake-host-services", "--decode-tbt-target-ms", "100"],
                                 env=environment, text=True, capture_output=True, timeout=HANG_SECONDS)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("requires --prefill-budget tbt", result.stderr)
+        self.assertIn("requires --prefill-policy tbt", result.stderr)
         self.assertIn("startup direct_package", result.stderr)
 
     def test_readiness_counts_package_selection(self):
@@ -680,6 +681,11 @@ print(json.dumps(reply), flush=True)
         flags = {option["flag"]: option for option in document["options"]}
         self.assertEqual(flags["--max-sequences"]["value"], "N")
         self.assertEqual(flags["--prefix-cache"]["choices"], ["on", "off"])
+        self.assertEqual(flags["--prefill-policy"]["choices"], ["fixed", "tbt", "adaptive"])
+        self.assertEqual(flags["--decode-tbt-target-ms"]["value"], "N")
+        for retired in ("--prefill-budget", "--prefill-timing-cuts", "--prefill-itl-target-ms",
+                        "--prefill-decode-steps", "--mixed-min-prefill-tokens", "--mixed-decode-steps"):
+            self.assertNotIn(retired, flags)
         self.assertTrue(flags["--model-option"]["repeatable"])
         self.assertEqual(flags["--served-model-name"]["value"], "TEXT...")
         self.assertEqual(flags["--speculation-confidence"]["value"], "JSON|off")
@@ -704,7 +710,7 @@ print(json.dumps(reply), flush=True)
                                             "max_sequences", "qualified_max_sequences", "qualification",
                                             "settings", "model_options"})
             self.assertTrue(all(isinstance(value, str) for value in profile["settings"].values()))
-        self.assertEqual(profiles["tp4-dflash"]["settings"]["prefill-budget"], "tbt")
+        self.assertEqual(profiles["tp4-dflash"]["settings"]["prefill-policy"], "tbt")
         self.assertEqual(profiles["tp4-dflash"]["settings"]["decode-tbt-target-ms"], "150")
         self.assertEqual(profiles["tp4-ar"]["settings"]["speculative-tokens"], "0")
         self.assertEqual((profiles["tp4-mtp"]["drafter"], profiles["tp4-mtp"]["status"]), ("mtp", "experimental"))
@@ -729,7 +735,7 @@ print(json.dumps(reply), flush=True)
         entries = {entry["name"]: entry for entry in over["sizes"][0]["profiles"]}
         self.assertEqual(over["sizes"][0]["pick"], "tp4-dflash")
         arguments = entries["tp4-ar"]["arguments"]
-        self.assertEqual(arguments[arguments.index("--prefill-budget") + 1], "fixed")
+        self.assertEqual(arguments[arguments.index("--prefill-policy") + 1], "fixed")
         self.assertFalse(entries["tp4-mtp"]["available"])
         refused, _ = self.host_document("models", "pick", "--model", self.root / "no-such-checkpoint", "--json",
                                         schema="chopinfer.models-pick.v1")

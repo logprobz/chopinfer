@@ -255,6 +255,28 @@ impl EngineConfig {
         self.scheduler.prefill_budget()
     }
 
+    /// Canonical serving identity after capability negotiation. Library-only
+    /// combinations have no public policy name.
+    #[must_use]
+    pub const fn prefill_policy_name(self) -> Option<&'static str> {
+        use runtime_scheduler::PrefillBudget;
+        let adaptive = self.adaptive_prefill_budget();
+        let cuts = self.prefill_timing_cuts();
+        match self.prefill_budget() {
+            PrefillBudget::Fixed if !adaptive && !cuts => Some("fixed"),
+            PrefillBudget::Tbt(policy)
+                if policy.min_prefill_tokens() == 512 && policy.decode_steps() == 0 =>
+            {
+                match (adaptive, cuts, self.guaranteed_prefill_chunks().is_some()) {
+                    (false, false, _) => Some("tbt"),
+                    (true, false, false) | (true, true, true) => Some("adaptive"),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Bind logical page IDs to the physical capacity acquired during bundle create.
     pub fn with_kv_page_capacity(mut self, pages: usize) -> Result<Self, EngineConfigError> {
         let geometry = KvGeometry::new(self.kv_geometry.block_tokens(), pages)
@@ -1898,7 +1920,10 @@ impl<E: ModelExecutor> Engine<E> {
             .transpose()
             .map_err(|error| error.to_string())?;
         let metrics = EngineMetrics::default();
-        metrics.compatibility(|metrics| metrics.configure(self.maximum_sequence_tokens));
+        metrics.compatibility(|metrics| {
+            metrics.configure(self.maximum_sequence_tokens);
+            metrics.prefill_policy = self.metrics.compatibility(|live| live.prefill_policy);
+        });
         self.startup_checkpoint = Some(StartupCheckpoint {
             reply_history: self.reply_history.take(),
             host_clock: self.host_clock.clone(),
@@ -1987,7 +2012,10 @@ impl<E: ModelExecutor> Engine<E> {
         pending_retirements
             .try_reserve_exact(config.scheduler.maximum_sequences())
             .map_err(|_| EngineError::MetadataAllocationFailed)?;
-        metrics.compatibility(|metrics| metrics.configure(config.maximum_sequence_tokens));
+        metrics.compatibility(|metrics| {
+            metrics.configure(config.maximum_sequence_tokens);
+            metrics.prefill_policy = config.prefill_policy_name();
+        });
         let step_trace = metrics.compatibility(|metrics| metrics.step_trace_enabled);
         if config
             .speculation
@@ -2847,16 +2875,6 @@ impl<E: ModelExecutor> Engine<E> {
         apply_committed_parts(requests, events, next_event_sequence, prepared_engine);
         drop(pending_batch);
         drop(publication_timer);
-        let assumed = self.scheduler.step_time_estimates();
-        let trained = verify_items == 0 && placement.pinned.is_empty();
-        if trained {
-            self.scheduler
-                .observe_step_time(prefill_tokens, decode_rows, execution_micros);
-            if let Some(estimates) = self.scheduler.step_time_estimates() {
-                self.metrics
-                    .compatibility(|metrics| metrics.step_estimates = Some(estimates));
-            }
-        }
         // The TBT model also learns from verify steps; a media encode's time
         // is neither prefill nor decode work.
         if placement.pinned.is_empty() {
@@ -2904,15 +2922,8 @@ impl<E: ModelExecutor> Engine<E> {
                 prefill_cap: batch.prefill_cap(),
                 execution_micros,
                 completed_unix_ns,
-                predicted_micros: batch.predicted_micros().or_else(|| {
-                    assumed.and_then(|estimates| {
-                        estimates.predicted_micros(prefill_tokens, decode_rows)
-                    })
-                }),
-                decode_estimate_micros: assumed
-                    .and_then(|estimates| estimates.decode_micros(decode_rows)),
+                predicted_micros: batch.predicted_micros(),
                 timing_cuts: batch.timing_cuts().cloned(),
-                trained,
                 host: self.host_clock.executed(),
                 speculation: self
                     .speculation

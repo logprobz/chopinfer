@@ -1,6 +1,6 @@
  choptop  >  Load model   replacing proc 48211   4 models  4 GPUs                                   window 60s  poll 1s  rescan 15s
 
-┌─ Models  installed beside chopinfer ─────┐┌─ Options  49 serve options  1 set ───────────────────────────────────────────────────┐
+┌─ Models  installed beside chopinfer ─────┐┌─ Options  47 serve options  1 set ───────────────────────────────────────────────────┐
 │ Qwen3.8-Flash        qwen38     found   ●││   OPTION                    VALUE                        FROM     NOTE               │
 │ MiMo-V2.6-Flash      mimo26     found    ││ ▸ Model  6                                                                           │
 │ DeepSeek-V4.1-Flash  deepseek41 found    ││ ▾ Scheduling  1 set                                                                  │
@@ -27,7 +27,7 @@
 │ GPU 3 ■ B  proc 48211 MiMo-V2.6-Flash    ││                                                                                      │
 │ A 127.0.0.1:8310   B 127.0.0.1:8311      ││ --max-batch-tokens  the most tokens one step carries                                 │
 │ stops proc 48211 first                   ││                                                                                      │
-└──────────────────────────────────────────┘└───────────────────────────────────────────────────────────────────────── 1-22 of 42 ─┘
+└──────────────────────────────────────────┘└───────────────────────────────────────────────────────────────────────── 1-22 of 40 ─┘
 ┌─ Command  2 processes of this user ──────────────────────────────────────────────────────────────────────────────────────────────┐
 │ A  CUDA_VISIBLE_DEVICES=0,1 chopinfer serve --model /models/qwen --tensor-parallel-size 2 --max-sequences 48                     │
 │      --listen 127.0.0.1:8310                                                                                                     │

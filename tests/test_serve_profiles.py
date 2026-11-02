@@ -311,7 +311,7 @@ print(json.dumps({'result': 'prepared-direct', 'bundle': str(bundle)}))
                     # DeepSeek DSpark serves adaptive timing cuts at a 750 ms
                     # cadence target; every other profile keeps whole grid chunks.
                     dspark = (data['model'], name) == ('deepseek41', 'tp4-dspark')
-                    self.assertEqual(profile['prefill_timing_cuts'], 'adaptive' if dspark else 'off')
+                    self.assertIn(profile['prefill_policy'], ('fixed', 'tbt', 'adaptive'))
                     at_64 = self.qualified_at_64(path, name) or (data['model'], name) == ('mimo26', 'tp4-dflash')
                     self.check_cap(profile, at_64)
                     if (data['model'], name) == ('mimo26', 'tp4-dflash'):
@@ -331,13 +331,13 @@ print(json.dumps({'result': 'prepared-direct', 'bundle': str(bundle)}))
                     elif not at_64:
                         self.assertIsNone(profile['qualified_max_sequences'])
                     if data['model'] == 'mimo26' and name in ('tp4-mtp', 'tp4-dflash'):
-                        self.assertEqual(profile['prefill_budget'], 'tbt')
+                        self.assertEqual(profile['prefill_policy'], 'tbt')
                         self.assertEqual(profile['decode_tbt_target_ms'], 150)
                     elif dspark:
-                        self.assertEqual(profile['prefill_budget'], 'tbt')
+                        self.assertEqual(profile['prefill_policy'], 'adaptive')
                         self.assertEqual(profile['decode_tbt_target_ms'], 750)
                     else:
-                        self.assertEqual(profile.get('prefill_budget', 'fixed'), 'fixed')
+                        self.assertEqual(profile.get('prefill_policy', 'fixed'), 'fixed')
                         self.assertNotIn('decode_tbt_target_ms', profile)
                     if name in ('tp4-mtp', 'tp4-dflash'):
                         spec = profile['speculation']
@@ -358,9 +358,8 @@ print(json.dumps({'result': 'prepared-direct', 'bundle': str(bundle)}))
                     self.assertEqual(result.returncode, 0, result.stderr)
                     expected = dict(profile)
                     expected.setdefault('reply_history_observer', False)
-                    expected.setdefault('prefill_budget', 'fixed')
-                    expected.setdefault('prefill_timing_cuts', 'off')
-                    if expected['prefill_budget'] == 'tbt':
+                    expected.setdefault('prefill_policy', 'fixed')
+                    if expected['prefill_policy'] in ('tbt', 'adaptive'):
                         expected.setdefault('decode_tbt_target_ms', 100)
                     self.assertEqual(profile_comparison(json.loads(result.stdout)), profile_comparison(expected))
             subprocess.run([host, 'profiles', 'list', path], check=True, capture_output=True)

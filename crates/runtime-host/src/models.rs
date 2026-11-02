@@ -428,7 +428,7 @@ mod tests {
                    "drafter": "block", "depths": depths, "widths": widths, "rows": 64,
                    "graph_rows": 64})
         };
-        let tbt = json!({"prefill_budget": "tbt", "decode_tbt_target_ms": 750,
+        let tbt = json!({"prefill_policy": "tbt", "decode_tbt_target_ms": 750,
                          "model_options": {"chunk": "8192", "draft_items": "12"},
                          "qualified_max_sequences": null, "status": "experimental"});
         json!({
@@ -687,7 +687,7 @@ mod tests {
             json!({"chunk": "8192", "draft_items": "12"})
         );
         let settings = &entry["settings"];
-        assert_eq!(settings["prefill-budget"], "tbt");
+        assert_eq!(settings["prefill-policy"], "tbt");
         assert_eq!(settings["decode-tbt-target-ms"], "750");
         assert_eq!(settings["speculation"], "balanced");
         assert_eq!(settings["speculation-depths"], "1:5,8:3,16:0");

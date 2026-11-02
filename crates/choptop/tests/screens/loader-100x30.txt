@@ -1,6 +1,6 @@
  choptop  >  Load model   replacing proc 48211   4 models  4 GPUs   window 60s  poll 1s  rescan 15s
 
-┌─ Options  49 serve options  1 set ───────────────────────────────────────────────────────────────┐
+┌─ Options  47 serve options  1 set ───────────────────────────────────────────────────────────────┐
 │   OPTION                    VALUE                        FROM     NOTE                           │
 │ ▾ Model                                                                                          │
 │   checkpoint                $CHOPINFER_QWEN38_CHECKPOINT env                                     │
@@ -19,7 +19,7 @@
 │                                                                                                  │
 │ --max-sequences  no evidence; the most sequences served at once (default 8)                      │
 │                                                                                                  │
-└─ Tab: Models ─────────────────────────────────────────────────────────────────────── 1-14 of 48 ─┘
+└─ Tab: Models ─────────────────────────────────────────────────────────────────────── 1-14 of 46 ─┘
 ┌─ Command  2 processes of this user ──────────────────────────────────────────────────────────────┐
 │ A  CUDA_VISIBLE_DEVICES=0,1 chopinfer serve --model /models/qwen --tensor-parallel-size 2        │
 │      --max-sequences 48 --listen 127.0.0.1:8310                                                  │

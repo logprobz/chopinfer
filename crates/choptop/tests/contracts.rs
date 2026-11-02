@@ -32,6 +32,21 @@ fn reads_the_options_serve_describes() {
         Some(&["on".to_owned(), "off".to_owned()][..])
     );
     assert!(flag("--model-option").repeatable);
+    assert_eq!(
+        flag("--prefill-policy").choices.as_deref(),
+        Some(&["fixed".to_owned(), "tbt".to_owned(), "adaptive".to_owned()][..])
+    );
+    assert_eq!(flag("--decode-tbt-target-ms").shape, Shape::Count);
+    for retired in [
+        "--prefill-budget",
+        "--prefill-timing-cuts",
+        "--prefill-itl-target-ms",
+        "--prefill-decode-steps",
+        "--mixed-min-prefill-tokens",
+        "--mixed-decode-steps",
+    ] {
+        assert!(options.options.iter().all(|option| option.flag != retired));
+    }
     assert_eq!(flag("--served-model-name").shape, Shape::Words);
     assert_eq!(flag("--speculation-confidence").shape, Shape::JsonOrOff);
     // Flags a loader must not offer for `serve --model`.

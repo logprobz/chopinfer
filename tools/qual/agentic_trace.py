@@ -389,7 +389,7 @@ def main(args, levels):
     common.startup()
     trace = validate(json.loads(args.trace.read_text()))
     profile = {k: v for k, v in vars(args).items() if k not in
-               ('trace', 'corpus', 'url', 'model', 'label', 'arm', 'dry_run', 'fake_prefill_budget', 'frontend', 'model_root')}
+               ('trace', 'corpus', 'url', 'model', 'label', 'arm', 'dry_run', 'fake_prefill_policy', 'frontend', 'model_root')}
     profile.update(levels=levels, trace_digest=digest(trace), trace_schema=SCHEMA)
     result = dict(workload_schema=mixed.REVISION, source_revision=SCHEMA, source_commit=None,
                   corpus_digest=digest(trace), workload_digest=digest(trace), profile=profile,
@@ -397,7 +397,7 @@ def main(args, levels):
                   run_id=uuid.uuid4().hex, dry_run=args.dry_run, levels=[], decode=None,
                   aborted=None, passed=False, receipt_kind='sweep', level_receipts=[])
     from agentic_fake import fake_server
-    context = fake_server({}, mode=args.fake_prefill_budget) if args.dry_run else nullcontext(args.url)
+    context = fake_server({}, mode=args.fake_prefill_policy) if args.dry_run else nullcontext(args.url)
     identity = dict(url=None, model=args.model, models=None, context_window=None)
     try:
         with context as url:

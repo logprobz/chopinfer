@@ -2154,23 +2154,21 @@ class Tuner(unittest.TestCase):
                     continue
                 self.assertEqual(set(job.get('kinds', model['kinds'])), {'sampled'}, (path, name))
 
-    def test_model_configs_serve_without_timing_cuts_on_a_fixed_budget(self):
-        # A profile's timing cuts survive an explicit non-tbt budget, and
-        # startup refuses cuts without tbt, so such jobs must turn them off.
+    def test_model_configs_use_current_prefill_policies(self):
         for path in sorted((HERE.parents[1] / 'models').glob('*/depth-tune.json')):
-            profiles = json.loads(path.with_name('profiles.json').read_text())['profiles']
-            if not any(profile.get('prefill_timing_cuts', 'off') != 'off' for profile in profiles.values()):
-                continue
             model = json.loads(path.read_text())
             jobs = model.pop('jobs', {})
             for name, job in [('', {}), *jobs.items()]:
                 config = {'model': {**model, **job}}
                 for arm in tune.arms(config):
                     arguments = [*config['model'].get('serve_arguments', []), *tune.arm_arguments(config, arm)]
-                    budget = tune.argument_value(arguments, '--prefill-budget')
-                    if budget is not None and budget != 'tbt':
-                        self.assertEqual(tune.argument_value(arguments, '--prefill-timing-cuts'), 'off',
-                                         (path, name, arm['label']))
+                    policy = tune.argument_value(arguments, '--prefill-policy')
+                    if policy is not None:
+                        self.assertIn(policy, ('fixed', 'tbt', 'adaptive'), (path, name, arm['label']))
+                    for retired in ('--prefill-budget', '--prefill-timing-cuts', '--mixed-min-prefill-tokens', '--mixed-decode-steps'):
+                        self.assertNotIn(retired, arguments)
+                    if policy == 'fixed':
+                        self.assertIsNone(tune.argument_value(arguments, '--decode-tbt-target-ms'))
 
     def test_model_configs_allow_their_profiles_route_fallbacks(self):
         # Served windows refuse fallback launches outside the config's

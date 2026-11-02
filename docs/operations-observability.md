@@ -77,13 +77,12 @@ count lookups; the vLLM ones count tokens.
 | `chop_step_execution_seconds{model_name,engine,phase}` | Histogram of engine wall time from execute through model commit per committed step; `phase` is `decode`, `mixed` or `prefill` by whether the batch had prefill items and decode or verify items |
 | `chop_step_rows_total{model_name,engine,decode_rows,verify_rows,row_capacity}` | Exact count of committed decode/verify steps with this target-row geometry; excludes any prefill-bearing step. Capacity is `unknown` when the executor cannot report it |
 | `chop_step_rows_dropped_total{model_name,engine}` | Observations of new geometries beyond the 4096-bin process limit; existing bins continue counting |
+| `chop_prefill_policy_info{model_name,engine,policy}` | Gauge 1 for the canonical negotiated policy, before any step; omitted for unsupported library-only combinations |
 | `chop_step_prefill_tokens{model_name,engine}` | Histogram of prompt tokens per prefill-bearing step |
-| `chop_prefill_budget_selected_tokens{model_name,engine}` | Decode-aware and tbt modes only: histogram of the prefill cap selected for each step beside decoding requests, whether or not prefill used it; prefill-only steps select none |
-| `chop_prefill_budget_decode_estimate_seconds{model_name,engine,rows_le}`, `..._samples` | Decode-aware mode only: the decode step estimate per power-of-two row bucket and its sample count; two samples qualify it |
-| `chop_prefill_budget_prefill_token_seconds{model_name,engine,tokens_le}` | Decode-aware mode only: estimated prefill time per token per power-of-two step-token bucket |
-| `chop_mixed_step_predicted_seconds{model_name,engine}`, `chop_mixed_step_actual_over_predicted{model_name,engine}` | Tbt mode only: histograms of each mixed step's predicted time, for the batch as packed, and of its execution time over that prediction |
-| `chop_prefill_timing_cut_steps_total{model_name,engine}`, `chop_prefill_timing_cut_chunks_total{model_name,engine,end}`, `chop_prefill_timing_cut_forced_steps_total`, `chop_prefill_timing_cut_over_target_steps_total` | Timing cuts only (`--prefill-timing-cuts fixed`, or `adaptive` on a grid bundle): steps whose grid chunks were sized against the tbt cap while requests decoded, those chunks by where they ended (`grid`, `capture`, `prompt`, `timing`, `floor` or `progress`), steps where a chunk exceeded the cap only to progress (neither the cap nor the floor reached a granule multiple within the step's room), and steps whose predicted time exceeded the target |
-| `chop_mixed_budget_term_seconds{model_name,engine,term}`, `chop_mixed_budget_samples`, `chop_mixed_budget_trained`, `chop_mixed_budget_decode_estimate_seconds{items_le}` | Tbt mode only: the fitted fixed, mixed, per-token and per-attention-pair terms, prefill steps in the fit window, whether the fit sets budgets, and the decode estimate per power-of-two item bucket ([mixed scheduling](serving-profiles.md#prefill-policy)) |
+| `chop_prefill_budget_selected_tokens{model_name,engine}` | `tbt` and `adaptive` only: histogram of the prefill cap selected for each step beside decoding requests, whether or not prefill used it; prefill-only steps select none |
+| `chop_mixed_step_predicted_seconds{model_name,engine}`, `chop_mixed_step_actual_over_predicted{model_name,engine}` | `tbt` and `adaptive` only: histograms of each mixed step's predicted time, for the batch as packed, and of its execution time over that prediction |
+| `chop_prefill_timing_cut_steps_total{model_name,engine}`, `chop_prefill_timing_cut_chunks_total{model_name,engine,end}`, `chop_prefill_timing_cut_forced_steps_total`, `chop_prefill_timing_cut_over_target_steps_total` | Timing cuts only (`--prefill-policy adaptive` on a grid bundle): steps whose grid chunks were sized against the tbt cap while requests decoded, those chunks by where they ended (`grid`, `capture`, `prompt`, `timing`, `floor` or `progress`), steps where a chunk exceeded the cap only to progress (neither the cap nor the floor reached a granule multiple within the step's room), and steps whose predicted time exceeded the target |
+| `chop_mixed_budget_term_seconds{model_name,engine,term}`, `chop_mixed_budget_samples`, `chop_mixed_budget_trained`, `chop_mixed_budget_decode_estimate_seconds{items_le}` | `tbt` and `adaptive` only: the fitted fixed, mixed, per-token and per-attention-pair terms, prefill steps in the fit window, whether the fit sets budgets, and the decode estimate per power-of-two item bucket ([mixed scheduling](serving-profiles.md#prefill-policy)) |
 | `chop_prefix_cache_{queries,hits}_total`, `chop_prefix_cache_{queried,reused}_tokens_total` | Prefix-cache lookups and restored hits, and their prompt and reused tokens |
 | `chop_prefix_cache_recomputed_seen_tokens_total` | Prompt tokens a committed prefill computed although an earlier request's committed prefill had computed the same leading full pages, short of the last prompt token: repeats and shared prefixes no anchor covered ([where anchors are captured](numerics.md#kv-offload-and-prefix-state)) |
 | `chop_prefix_cache_recomputed_generated_tokens_total` | Whole generated pages from earlier completed replies that a later prompt successfully prefills; requires the optional reply-history observer |
@@ -948,11 +947,13 @@ Step and request logs are not replay inputs; they omit token contents.
   (nanoseconds since the Unix epoch). Lines reach stderr through the queue,
   so align steps with client timings by this field, not by when a line is
   read.
-- `prefill_cap`, `predicted_us`, `decode_estimate_us`, `trained`: the
-  [mixed scheduling](serving-profiles.md#prefill-policy) cap and estimates; null under the
-  fixed budget or before an estimate exists.
+- `prefill_cap`, `predicted_us`: the
+  [mixed scheduling](serving-profiles.md#prefill-policy) cap and TBT prediction;
+  null under the fixed budget or before an estimate exists.
+- `decode_estimate_us` is always null and `trained` is always false. These
+  retired decode-aware slots retain their names and types in `chopinfer.step.v1`.
 - `timing_cuts`: present only when grid chunks were sized against the tbt
-  cap (`--prefill-timing-cuts fixed`, or `adaptive` on a grid bundle): the
+  cap (`--prefill-policy adaptive` on a grid bundle): the
   cap, the progress floor (limited to the room beside the decodes), the
   target, whether a chunk
   exceeded the cap only to progress because neither the cap nor the floor
@@ -1033,17 +1034,26 @@ activity fall inside the window before reading timings.
 
 ### Timing-cut serving option
 
-`--prefill-timing-cuts off|fixed|adaptive` resolves from the profile field
-`prefill_timing_cuts`, with an explicit flag taking precedence. Every profile
-keeps `off` except DeepSeek's `tp4-dspark`, which selects `adaptive`. `profiles show` reports the resolved value; the `resolved serve`
-startup settings line includes `prefill_timing_cuts: Off|Fixed|Adaptive`. Retain this
-line with replay receipts, together with the TBT target and
-`--mixed-min-prefill-tokens` progress floor. `fixed` requires the TBT budget and
-negotiated bundle cut support. `adaptive` requires the TBT
-budget, and cut support only on a bundle with a prefill grid. A mixed step's
-`prefill_cap` in the step record is the cap it chose, or null when it chose
-no cap. The timing-cut counters and step records
-above show whether the policy actually cut eligible mixed steps.
+`--prefill-policy fixed|tbt|adaptive` resolves from `prefill_policy` with an
+explicit flag taking precedence. `profiles show` and `serve --check` report
+that identity. Retain the resolved settings and negotiated startup marker
+`prefill policy: fixed|tbt|adaptive` with replay receipts, together with the
+TBT target. Serving uses a 512-token floor and zero extra decode-only steps.
+Adaptive needs cut support only on a bundle with a prefill grid. Its grid
+and no-grid startup markers remain `prefill timing cuts on (adaptive): ...`.
+
+Use `chop_prefill_policy_info` for remote identity. TBT model metrics and
+selected-cap histograms are shared by `tbt` and `adaptive` and cannot tell
+them apart. Current qualification rejects missing, conflicting or retired
+identity. Historical receipt readers retain old budget evidence without
+claiming it identifies a current policy. The three decode-aware estimator
+gauges have been removed; step, selected-cap, timing-cut and TBT model
+metrics retain their names and meanings.
+
+A mixed step's `prefill_cap` is its chosen cap, or null when uncapped. The
+cut counters and step records show whether eligible mixed steps actually
+cut chunks. The measurements below describe the retired fixed timing-cut
+arm, not the current fixed token-budget policy.
 
 On 2026-10-28, DeepSeek TP4 DSpark C8 replay (eight sessions, three turns,
 32K/64K contexts, session-specific cache salts, temperature 1, 150 ms TBT
@@ -1053,6 +1063,6 @@ TTFT p95 rose from 1.764 to 3.061 s (+73.6%) and from 1.911 to 3.046 s
 (+59.4%). Energy per output token rose from 3.353 to 3.764 J (+12.3%) and
 from 3.440 to 3.746 J (+8.9%). Output tok/s fell 4.0% and 3.0%, averaging
 3.5%. These are changes in the measured quantities within each pair.
-`fixed` remains off by default. See the
+The fixed timing-cut arm is now retired. See the
 [fixed timing-cut tradeoff](serving-profiles.md#fixed-timing-cut-tradeoff)
 for the measurement envelope and policy choice.

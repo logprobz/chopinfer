@@ -1,6 +1,6 @@
  choptop  >  Load model   replacing proc 48211   4 models  4 GPUs                                   window 60s  poll 1s  rescan 15s
 
-┌─ Models  installed beside chopinfer ─────┐┌─ Options  49 serve options ──────────────────────────────────────────────────────────┐
+┌─ Models  installed beside chopinfer ─────┐┌─ Options  47 serve options ──────────────────────────────────────────────────────────┐
 │▌Qwen3.8-Flash        qwen38     found   ●││   OPTION                    VALUE                        FROM     NOTE               │
 │ MiMo-V2.6-Flash      mimo26     found    ││ ▾ Model                                                                              │
 │ DeepSeek-V4.1-Flash  deepseek41 found    ││   checkpoint                $CHOPINFER_QWEN38_CHECKPOINT env                         │
@@ -27,7 +27,7 @@
 │ GPU 3 ■ A  proc │ Enter start   Esc back to the loader                                                         │                 │
 │ A 127.0.0.1:8310└──────────────────────────────────────────────────────────────────────────────────────────────┘ models pick     │
 │ stops proc 48211 first                   ││ names it for a checkpoint directory. Enter on a recent launch restores it.           │
-└──────────────────────────────────────────┘└───────────────────────────────────────────────────────────────────────── 1-22 of 48 ─┘
+└──────────────────────────────────────────┘└───────────────────────────────────────────────────────────────────────── 1-22 of 46 ─┘
 ┌─ Command  1 process of this user ────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ A  CUDA_VISIBLE_DEVICES=0,1,2,3 chopinfer serve --model /models/qwen --tensor-parallel-size 4 --listen 127.0.0.1:8310            │
 │                                                                                                                                  │

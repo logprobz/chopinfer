@@ -216,7 +216,7 @@ Adoption deletes candidate switches, not serving options.
   or flag added for the candidate. Step 3 deletes it.
 - A serving option is a documented `serve` flag with a profile field that
   selects between policies with different tradeoffs, such as
-  `--prefill-budget fixed|tbt|decode-aware` (`prefill_budget`) and its
+  `--prefill-policy fixed|tbt|adaptive` (`prefill_policy`) and its
   `--decode-tbt-target-ms` target. It stays after adoption, and an
   explicit flag still overrides the profile default.
 

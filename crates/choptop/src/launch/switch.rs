@@ -939,7 +939,7 @@ mod tests {
         profile.settings = [
             ("max-sequences", "32"),
             ("gpu-memory-utilization", "0.9"),
-            ("prefill-budget", "tbt"),
+            ("prefill-policy", "tbt"),
             ("decode-tbt-target-ms", "750"),
         ]
         .into_iter()
@@ -969,7 +969,7 @@ mod tests {
                 // F compares as numbers.
                 ("gpu-memory-utilization", "1.0"),
                 // Neither is N or F here, so they compare as text.
-                ("prefill-budget", "TBT"),
+                ("prefill-policy", "TBT"),
                 ("decode-tbt-target-ms", "750.0"),
             ]
             .into_iter()
@@ -988,7 +988,7 @@ mod tests {
             [
                 "--decode-tbt-target-ms resolves to 750.0, not 750",
                 "--max-sequences resolves to 9007199254740993, not 9007199254740992",
-                "--prefill-budget resolves to TBT, not tbt",
+                "--prefill-policy resolves to TBT, not tbt",
                 "model option verify_graph_rows resolves to 64.0, not 64",
             ]
         );

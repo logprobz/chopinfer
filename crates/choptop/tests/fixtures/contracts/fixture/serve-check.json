@@ -13,16 +13,15 @@
     "max-batch-tokens": "128",
     "max-preemptions": "3",
     "max-sequences": "1",
-    "prefill-budget": "fixed",
     "prefill-chunk-tokens": "128",
-    "prefill-timing-cuts": "off",
     "prefix-cache": "off",
     "queue-depth": "8",
     "queue-wait-ms": "0",
     "reply-history-observer": "off",
     "speculation": "adaptive",
     "speculative-tokens": "3",
-    "verify-warmup": "on"
+    "verify-warmup": "on",
+    "prefill-policy": "fixed"
   },
   "model_options": [
     {

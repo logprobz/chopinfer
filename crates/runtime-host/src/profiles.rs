@@ -37,9 +37,49 @@ pub(crate) struct Profile {
     pub max_batch_tokens: usize,
     pub prefill_chunk_tokens: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prefill_budget: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prefill_timing_cuts: Option<String>,
+    pub prefill_policy: Option<crate::PrefillPolicyV1>,
+    #[serde(
+        rename = "prefill_budget",
+        default,
+        deserialize_with = "retired_prefill_field",
+        skip_serializing
+    )]
+    _retired_prefill_budget: (),
+    #[serde(
+        rename = "prefill_timing_cuts",
+        default,
+        deserialize_with = "retired_prefill_field",
+        skip_serializing
+    )]
+    _retired_prefill_timing_cuts: (),
+    #[serde(
+        rename = "prefill_itl_target_ms",
+        default,
+        deserialize_with = "retired_prefill_field",
+        skip_serializing
+    )]
+    _retired_prefill_itl_target_ms: (),
+    #[serde(
+        rename = "prefill_decode_steps",
+        default,
+        deserialize_with = "retired_prefill_field",
+        skip_serializing
+    )]
+    _retired_prefill_decode_steps: (),
+    #[serde(
+        rename = "mixed_min_prefill_tokens",
+        default,
+        deserialize_with = "retired_prefill_field",
+        skip_serializing
+    )]
+    _retired_mixed_min_prefill_tokens: (),
+    #[serde(
+        rename = "mixed_decode_steps",
+        default,
+        deserialize_with = "retired_prefill_field",
+        skip_serializing
+    )]
+    _retired_mixed_decode_steps: (),
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decode_tbt_target_ms: Option<u32>,
     pub queue_depth: Option<usize>,
@@ -54,6 +94,16 @@ pub(crate) struct Profile {
     pub graph_memory_reserve_mib: Option<u64>,
     pub status: Status,
     pub evidence: Vec<String>,
+}
+
+/// Deserialize a retired key before any value, including null, can hide it.
+fn retired_prefill_field<'de, D>(_: D) -> Result<(), D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Err(serde::de::Error::custom(
+        "retired prefill field: use prefill_policy (fixed, tbt or adaptive); remove retired fields before deploying",
+    ))
 }
 
 fn deserialize_model_options<'de, D>(
@@ -361,11 +411,8 @@ impl Profile {
         if let Some(mib) = self.graph_memory_reserve_mib {
             args.extend(["--graph-memory-reserve-mib".into(), mib.to_string()]);
         }
-        if let Some(budget) = &self.prefill_budget {
-            args.extend(["--prefill-budget".into(), budget.clone()]);
-        }
-        if let Some(cuts) = &self.prefill_timing_cuts {
-            args.extend(["--prefill-timing-cuts".into(), cuts.clone()]);
+        if let Some(policy) = self.prefill_policy {
+            args.extend(["--prefill-policy".into(), policy.name().into()]);
         }
         if let Some(target) = self.decode_tbt_target_ms {
             args.extend(["--decode-tbt-target-ms".into(), target.to_string()]);
@@ -440,7 +487,7 @@ fn options(arguments: &[String]) -> Vec<(String, Vec<String>)> {
 /// than `balanced` or zero speculative tokens the default depth schedule,
 /// verify widths and confidence, zero speculative tokens the default
 /// speculative and graph
-/// rows, a non-TBT `--prefill-budget` the default TBT target. Duplicate
+/// rows, a fixed `--prefill-policy` the default TBT target. Duplicate
 /// explicit flags are kept for the serve parser to refuse.
 pub(crate) fn apply_defaults(defaults: &[String], explicit: &[String]) -> Vec<String> {
     let explicit = options(explicit);
@@ -459,7 +506,7 @@ pub(crate) fn apply_defaults(defaults: &[String], explicit: &[String]) -> Vec<St
             flag == "--speculation" && values.first().is_some_and(|v| v != "balanced")
         });
     let disable_tbt = explicit.iter().any(|(flag, values)| {
-        flag == "--prefill-budget" && values.first().is_some_and(|v| v != "tbt")
+        flag == "--prefill-policy" && values.first().is_some_and(|v| v == "fixed")
     });
     let mut resolved = Vec::new();
     for (flag, values) in options(defaults) {
@@ -506,6 +553,9 @@ pub(crate) fn resolve(arguments: &[String]) -> Result<Resolution, HostCommandErr
     // An option's value is never read as `--profile`, even an API key or a
     // path that looks like one.
     for (flag, values) in options(arguments) {
+        if let Some(message) = crate::command::retired_flag_message_v1(&flag) {
+            return Err(error(message));
+        }
         if flag == "--profile" {
             if reference.is_some() {
                 return Err(error("--profile given more than once"));
@@ -1016,16 +1066,12 @@ pub(crate) fn inspect(arguments: &[String]) -> Result<String, HostCommandErrorV1
                 unreachable!("profile arguments name serve");
             };
             let mut shown = serde_json::to_value(profile).map_err(|e| error(e.to_string()))?;
-            let (budget, target) = match serving.prefill_budget {
-                runtime_scheduler::PrefillBudget::Fixed => ("fixed", None),
-                runtime_scheduler::PrefillBudget::DecodeAware(_) => ("decode-aware", None),
-                runtime_scheduler::PrefillBudget::Tbt(policy) => {
-                    ("tbt", Some(policy.target_millis()))
-                }
+            let target = match serving.prefill_budget {
+                runtime_scheduler::PrefillBudget::Tbt(policy) => Some(policy.target_millis()),
+                _ => None,
             };
             shown["reply_history_observer"] = serving.reply_history_observer.into();
-            shown["prefill_budget"] = budget.into();
-            shown["prefill_timing_cuts"] = serving.prefill_timing_cuts.name().into();
+            shown["prefill_policy"] = serving.prefill_policy.name().into();
             if let Some(target) = target {
                 shown["decode_tbt_target_ms"] = target.into();
             }
@@ -1549,14 +1595,14 @@ mod tests {
 
     #[test]
     fn scheduling_fields_validate_through_the_serve_parser() {
-        use runtime_scheduler::{MixedPolicy, PrefillBudget, PrefillTarget};
+        use runtime_scheduler::{MixedPolicy, PrefillBudget};
         for (policy, target, expected) in [
             (None, None, PrefillBudget::Fixed),
             (Some("fixed"), None, PrefillBudget::Fixed),
             (
-                Some("decode-aware"),
+                Some("adaptive"),
                 None,
-                PrefillBudget::DecodeAware(PrefillTarget::default()),
+                PrefillBudget::Tbt(MixedPolicy::default()),
             ),
             (
                 Some("tbt"),
@@ -1581,7 +1627,7 @@ mod tests {
         ] {
             let mut value = fixture();
             if let Some(policy) = policy {
-                value["profiles"]["test"]["prefill_budget"] = policy.into();
+                value["profiles"]["test"]["prefill_policy"] = policy.into();
             }
             if let Some(target) = target {
                 value["profiles"]["test"]["decode_tbt_target_ms"] = target.into();
@@ -1600,16 +1646,16 @@ mod tests {
             );
         }
         for fields in [
-            serde_json::json!({"prefill_budget":"unknown"}),
-            serde_json::json!({"prefill_budget":false}),
+            serde_json::json!({"prefill_policy":"unknown"}),
+            serde_json::json!({"prefill_policy":false}),
             serde_json::json!({"decode_tbt_target_ms":150}),
-            serde_json::json!({"prefill_budget":"fixed","decode_tbt_target_ms":150}),
-            serde_json::json!({"prefill_budget":"decode-aware","decode_tbt_target_ms":150}),
-            serde_json::json!({"prefill_budget":"tbt","decode_tbt_target_ms":0}),
-            serde_json::json!({"prefill_budget":"tbt","decode_tbt_target_ms":60001}),
-            serde_json::json!({"prefill_budget":"tbt","decode_tbt_target_ms":-1}),
-            serde_json::json!({"prefill_budget":"tbt","decode_tbt_target_ms":1.5}),
-            serde_json::json!({"prefill_budget":"tbt","decode_tbt_target_ms":"150"}),
+            serde_json::json!({"prefill_policy":"fixed","decode_tbt_target_ms":150}),
+            serde_json::json!({"prefill_policy":"retired","decode_tbt_target_ms":150}),
+            serde_json::json!({"prefill_policy":"tbt","decode_tbt_target_ms":0}),
+            serde_json::json!({"prefill_policy":"tbt","decode_tbt_target_ms":60001}),
+            serde_json::json!({"prefill_policy":"tbt","decode_tbt_target_ms":-1}),
+            serde_json::json!({"prefill_policy":"tbt","decode_tbt_target_ms":1.5}),
+            serde_json::json!({"prefill_policy":"tbt","decode_tbt_target_ms":"150"}),
         ] {
             let mut value = fixture();
             value["profiles"]["test"]
@@ -1625,9 +1671,9 @@ mod tests {
 
     #[test]
     fn scheduling_profile_is_inspectable_and_cli_overrides_in_either_order() {
-        use runtime_scheduler::{MixedPolicy, PrefillBudget, PrefillTarget};
+        use runtime_scheduler::{MixedPolicy, PrefillBudget};
         let mut value = fixture();
-        value["profiles"]["test"]["prefill_budget"] = "tbt".into();
+        value["profiles"]["test"]["prefill_policy"] = "tbt".into();
         value["profiles"]["test"]["decode_tbt_target_ms"] = 150.into();
         let path =
             std::env::temp_dir().join(format!("scheduling-profile-{}.json", std::process::id()));
@@ -1657,32 +1703,32 @@ mod tests {
                     PrefillBudget::Tbt(MixedPolicy::new(150, 512, 0).unwrap()),
                 ),
                 (
-                    vec!["--prefill-budget", "tbt"],
+                    vec!["--prefill-policy", "tbt"],
                     PrefillBudget::Tbt(MixedPolicy::new(150, 512, 0).unwrap()),
                 ),
                 (
                     vec!["--decode-tbt-target-ms", "75"],
                     PrefillBudget::Tbt(MixedPolicy::new(75, 512, 0).unwrap()),
                 ),
-                (vec!["--prefill-budget", "fixed"], PrefillBudget::Fixed),
+                (vec!["--prefill-policy", "fixed"], PrefillBudget::Fixed),
                 (
-                    vec!["--prefill-budget", "decode-aware"],
-                    PrefillBudget::DecodeAware(PrefillTarget::default()),
+                    vec!["--prefill-policy", "adaptive"],
+                    PrefillBudget::Tbt(MixedPolicy::new(150, 512, 0).unwrap()),
                 ),
             ] {
                 assert_eq!(budget(parse(&extra, profile_first).unwrap()), expected);
             }
             for extra in [
-                vec!["--prefill-budget", "fixed", "--decode-tbt-target-ms", "75"],
+                vec!["--prefill-policy", "fixed", "--decode-tbt-target-ms", "75"],
                 vec![
-                    "--prefill-budget",
+                    "--prefill-policy",
                     "decode-aware",
                     "--decode-tbt-target-ms",
                     "75",
                 ],
                 vec!["--decode-tbt-target-ms", "0"],
                 vec!["--decode-tbt-target-ms", "60001"],
-                vec!["--prefill-budget", "fixed", "--prefill-budget", "tbt"],
+                vec!["--prefill-policy", "fixed", "--prefill-policy", "tbt"],
                 vec![
                     "--decode-tbt-target-ms",
                     "75",
@@ -1700,7 +1746,6 @@ mod tests {
         };
         let mut expected = value["profiles"]["test"].clone();
         expected["reply_history_observer"] = false.into();
-        expected["prefill_timing_cuts"] = "off".into();
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&text).unwrap(),
             expected
@@ -1712,7 +1757,7 @@ mod tests {
         assert_eq!(
             budget(
                 parse(
-                    &["--prefill-budget", "tbt", "--decode-tbt-target-ms", "150"],
+                    &["--prefill-policy", "tbt", "--decode-tbt-target-ms", "150"],
                     false
                 )
                 .unwrap()
@@ -1760,16 +1805,18 @@ mod tests {
     }
 
     #[test]
-    fn prefill_timing_cuts_profile_resolution_and_flag_override() {
-        for value in ["off", "fixed", "adaptive"] {
+    fn prefill_policy_profile_resolution_and_flag_override() {
+        for value in ["fixed", "tbt", "adaptive"] {
             let mut data = fixture();
-            data["profiles"]["test"]["prefill_budget"] = "tbt".into();
-            data["profiles"]["test"]["prefill_timing_cuts"] = value.into();
+            data["profiles"]["test"]["prefill_policy"] = value.into();
+            if value != "fixed" {
+                data["profiles"]["test"]["decode_tbt_target_ms"] = 150.into();
+            }
             let file = Profiles::parse(&serde_json::to_vec(&data).unwrap()).unwrap();
             let defaults = file.get("test").unwrap().arguments(&file.served_model_name);
-            for override_value in [None, Some("off"), Some("fixed"), Some("adaptive")] {
+            for override_value in [None, Some("fixed"), Some("tbt"), Some("adaptive")] {
                 let explicit = override_value
-                    .map(|v| vec!["--prefill-timing-cuts".into(), v.into()])
+                    .map(|v| vec!["--prefill-policy".into(), v.into()])
                     .unwrap_or_default();
                 let mut args = vec!["serve".into()];
                 args.extend(apply_defaults(&defaults, &explicit));
@@ -1779,73 +1826,45 @@ mod tests {
                     panic!("serve command");
                 };
                 assert_eq!(
-                    serving.prefill_timing_cuts.name(),
+                    serving.prefill_policy.name(),
                     override_value.unwrap_or(value)
                 );
+                if let runtime_scheduler::PrefillBudget::Tbt(policy) = serving.prefill_budget {
+                    assert_eq!(
+                        policy.target_millis(),
+                        if value == "fixed" { 100 } else { 150 }
+                    );
+                    assert_eq!(policy.min_prefill_tokens(), 512);
+                    assert_eq!(policy.decode_steps(), 0);
+                } else {
+                    assert_eq!(
+                        serving.prefill_budget,
+                        runtime_scheduler::PrefillBudget::Fixed
+                    );
+                    assert_eq!(serving.prefill_policy, crate::PrefillPolicyV1::Fixed);
+                }
             }
         }
     }
 
     #[test]
-    fn prefill_timing_cuts_profile_refuses_invalid_values_and_budgets() {
-        for (fields, expected) in [
-            (
-                serde_json::json!({"prefill_timing_cuts": "fixed"}),
-                "--prefill-timing-cuts fixed needs --prefill-budget tbt",
-            ),
-            (
-                serde_json::json!({"prefill_timing_cuts": "fixed", "prefill_budget": "fixed"}),
-                "--prefill-timing-cuts fixed needs --prefill-budget tbt",
-            ),
-            (
-                serde_json::json!({"prefill_timing_cuts": "fixed", "prefill_budget": "decode-aware"}),
-                "--prefill-timing-cuts fixed needs --prefill-budget tbt",
-            ),
-            (
-                serde_json::json!({"prefill_timing_cuts": "auto", "prefill_budget": "tbt"}),
-                "--prefill-timing-cuts must be off, fixed or adaptive",
-            ),
-            (
-                serde_json::json!({"prefill_timing_cuts": true, "prefill_budget": "tbt"}),
-                "invalid type: boolean `true`, expected a string",
-            ),
-        ] {
-            let mut data = fixture();
-            data["profiles"]["test"]
-                .as_object_mut()
-                .unwrap()
-                .extend(fields.as_object().unwrap().clone());
-            let refusal = Profiles::parse(&serde_json::to_vec(&data).unwrap())
-                .unwrap_err()
-                .to_string();
-            assert!(refusal.contains(expected), "{fields}: {refusal}");
-            assert!(!refusal.contains("unknown field"), "{fields}: {refusal}");
-        }
-        let mut data = fixture();
-        data["profiles"]["test"]["prefill_timing_cuts"] = "fixed".into();
-        data["profiles"]["test"]["prefill_budget"] = "tbt".into();
-        Profiles::parse(&serde_json::to_vec(&data).unwrap()).unwrap();
-    }
-
-    #[test]
-    fn prefill_timing_cuts_file_profile_override_and_inspection() {
+    fn prefill_policy_file_profile_override_and_inspection() {
         let path =
             std::env::temp_dir().join(format!("timing-cuts-profile-{}.json", std::process::id()));
         let bundle = package("timing-cuts");
         let mut data = fixture();
-        data["profiles"]["test"]["prefill_budget"] = "tbt".into();
-        for default in ["off", "fixed", "adaptive"] {
-            data["profiles"]["test"]["prefill_timing_cuts"] = default.into();
+        for default in ["fixed", "tbt", "adaptive"] {
+            data["profiles"]["test"]["prefill_policy"] = default.into();
             std::fs::write(&path, serde_json::to_vec(&data).unwrap()).unwrap();
             for profile_first in [false, true] {
-                for explicit in ["off", "fixed", "adaptive"] {
+                for explicit in ["fixed", "tbt", "adaptive"] {
                     let mut args = vec![
                         "serve".into(),
                         "--bundle".into(),
                         bundle.display().to_string(),
                     ];
                     let profile = vec!["--profile".into(), format!("{}#test", path.display())];
-                    let flags = vec!["--prefill-timing-cuts".into(), explicit.into()];
+                    let flags = vec!["--prefill-policy".into(), explicit.into()];
                     if profile_first {
                         args.extend(profile);
                         args.extend(flags);
@@ -1858,11 +1877,11 @@ mod tests {
                     else {
                         panic!("serve command");
                     };
-                    assert_eq!(serving.prefill_timing_cuts.name(), explicit);
-                    assert!(format!("{serving:?}").contains(&format!(
-                        "prefill_timing_cuts: {:?}",
-                        serving.prefill_timing_cuts
-                    )));
+                    assert_eq!(serving.prefill_policy.name(), explicit);
+                    assert!(
+                        format!("{serving:?}")
+                            .contains(&format!("prefill_policy: {:?}", serving.prefill_policy))
+                    );
                 }
             }
             let args = ["profiles", "show", path.to_str().unwrap(), "test"].map(String::from);
@@ -1872,7 +1891,7 @@ mod tests {
                 panic!("profile inspection");
             };
             let shown: serde_json::Value = serde_json::from_str(&text).unwrap();
-            assert_eq!(shown["prefill_timing_cuts"], default);
+            assert_eq!(shown["prefill_policy"], default);
         }
         std::fs::remove_file(path).unwrap();
         std::fs::remove_dir_all(bundle).unwrap();
@@ -1884,19 +1903,19 @@ mod tests {
             std::env::temp_dir().join(format!("inspect-profile-{}.json", std::process::id()));
         for (fields, policy, target) in [
             (serde_json::json!({}), "fixed", None),
-            (serde_json::json!({"prefill_budget":"fixed"}), "fixed", None),
+            (serde_json::json!({"prefill_policy":"fixed"}), "fixed", None),
             (
-                serde_json::json!({"prefill_budget":"decode-aware"}),
-                "decode-aware",
-                None,
+                serde_json::json!({"prefill_policy":"adaptive"}),
+                "adaptive",
+                Some(100),
             ),
             (
-                serde_json::json!({"prefill_budget":"tbt"}),
+                serde_json::json!({"prefill_policy":"tbt"}),
                 "tbt",
                 Some(100),
             ),
             (
-                serde_json::json!({"prefill_budget":"tbt","decode_tbt_target_ms":150}),
+                serde_json::json!({"prefill_policy":"tbt","decode_tbt_target_ms":150}),
                 "tbt",
                 Some(150),
             ),
@@ -1915,8 +1934,7 @@ mod tests {
             };
             let mut expected = value["profiles"]["test"].clone();
             expected["reply_history_observer"] = false.into();
-            expected["prefill_budget"] = policy.into();
-            expected["prefill_timing_cuts"] = "off".into();
+            expected["prefill_policy"] = policy.into();
             if let Some(target) = target {
                 expected["decode_tbt_target_ms"] = target.into();
             }
@@ -2597,7 +2615,7 @@ mod translate_tests {
         let mut base = serde_json::json!({
             "speculation": {"mode": "adaptive", "tokens": 7, "draft_cost": "per-block",
                             "drafter": "block"},
-            "prefill_budget": "tbt", "decode_tbt_target_ms": 150,
+            "prefill_policy": "tbt", "decode_tbt_target_ms": 150,
             "graph_memory_reserve_mib": 384,
         });
         for (field, value) in changes.as_object().unwrap() {
@@ -2628,14 +2646,14 @@ mod translate_tests {
         let target = profile(serde_json::json!({}));
         let translation = translate(&pick, &target).unwrap();
         let joined = translation.arguments.join(" ");
-        assert!(joined.contains("--prefill-budget fixed"), "{joined}");
+        assert!(joined.contains("--prefill-policy fixed"), "{joined}");
         assert!(joined.contains("--speculative-tokens 0"), "{joined}");
         assert!(!flags(&translation.arguments).contains(&"--devices".to_owned()));
         assert!(translation.inherited_model_options.is_empty());
         let reference = direct_command(&direct_defaults(&target)).unwrap();
         assert_eq!(served(&pick, &translation.arguments), reference);
         assert_eq!(
-            crate::command::effective_settings_v1(&reference)["prefill-budget"],
+            crate::command::effective_settings_v1(&reference)["prefill-policy"],
             "fixed"
         );
     }
@@ -2649,11 +2667,11 @@ mod translate_tests {
             "speculation": {"mode": "balanced", "tokens": 5, "draft_cost": "per-block",
                             "drafter": "block", "depths": "1:5,8:3,16:0", "widths": "6,8,16,32",
                             "rows": 64, "graph_rows": 64},
-            "decode_tbt_target_ms": 750, "prefill_timing_cuts": "adaptive",
+            "decode_tbt_target_ms": 750, "prefill_policy": "adaptive",
             "model_options": {"chunk": "8192", "skip": "true", "draft_items": "12"},
         }));
         let target = profile(serde_json::json!({
-            "prefill_timing_cuts": "off",
+            "prefill_policy": "fixed",
             "model_options": {"chunk": "8192", "skip": "true"},
         }));
         let translation = translate(&pick, &target).unwrap();
@@ -2680,7 +2698,7 @@ mod translate_tests {
             serving.prefill_budget,
             runtime_scheduler::PrefillBudget::Fixed
         );
-        assert_eq!(serving.prefill_timing_cuts.name(), "off");
+        assert_eq!(serving.prefill_policy.name(), "fixed");
         assert_eq!(model_options["draft_items"], "12");
         assert_eq!(model_options["chunk"], "8192");
     }
@@ -2932,10 +2950,10 @@ mod translate_tests {
         let at = other
             .arguments
             .iter()
-            .position(|w| w == "--prefill-budget")
+            .position(|w| w == "--prefill-policy")
             .unwrap();
         other.arguments[at + 1] = "decode-aware".into();
-        refused(Ok(other), "--prefill-budget");
+        refused(Ok(other), "--prefill-policy");
         let mut missing = good.clone();
         missing.inherited_model_options.clear();
         refused(Ok(missing), "inherited model options");

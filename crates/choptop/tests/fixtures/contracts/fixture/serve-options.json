@@ -428,46 +428,15 @@
       "repeatable": false
     },
     {
-      "flag": "--prefill-budget",
+      "flag": "--prefill-policy",
       "value": "TEXT",
       "choices": [
         "fixed",
-        "decode-aware",
-        "tbt"
-      ],
-      "group": "prefill",
-      "help": "how prefill shares a step with decoding requests (default fixed)",
-      "model_launch": true,
-      "repeatable": false
-    },
-    {
-      "flag": "--prefill-timing-cuts",
-      "value": "TEXT",
-      "choices": [
-        "off",
-        "fixed",
+        "tbt",
         "adaptive"
       ],
       "group": "prefill",
-      "help": "timing-selected prefill cuts beside decoding; fixed and adaptive need tbt",
-      "model_launch": true,
-      "repeatable": false
-    },
-    {
-      "flag": "--prefill-itl-target-ms",
-      "value": "N",
-      "choices": null,
-      "group": "prefill",
-      "help": "decode-aware: the mixed step's time target in ms, 1 to 60000",
-      "model_launch": true,
-      "repeatable": false
-    },
-    {
-      "flag": "--prefill-decode-steps",
-      "value": "N",
-      "choices": null,
-      "group": "prefill",
-      "help": "decode-aware: the most decode steps the prefill part takes, 1 to 64",
+      "help": "how prefill shares a step with decoding requests (default fixed)",
       "model_launch": true,
       "repeatable": false
     },
@@ -476,25 +445,7 @@
       "value": "N",
       "choices": null,
       "group": "prefill",
-      "help": "tbt: the decode stall target in ms (default 100)",
-      "model_launch": true,
-      "repeatable": false
-    },
-    {
-      "flag": "--mixed-min-prefill-tokens",
-      "value": "N",
-      "choices": null,
-      "group": "prefill",
-      "help": "tbt: the prefill tokens every mixed step takes at least (default 512)",
-      "model_launch": true,
-      "repeatable": false
-    },
-    {
-      "flag": "--mixed-decode-steps",
-      "value": "N",
-      "choices": null,
-      "group": "prefill",
-      "help": "tbt: decode-only steps after each mixed step, 0 to 8 (default 0)",
+      "help": "tbt and adaptive: estimated decode stall target in ms, 1 to 60000 (default 100)",
       "model_launch": true,
       "repeatable": false
     },

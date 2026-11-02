@@ -25,8 +25,8 @@
       "speculation": "fixed",
       "speculative-tokens": "0",
       "draft-cost": "per-token",
-      "prefill-timing-cuts": "off",
-      "prefix-cache": "on"
+      "prefix-cache": "on",
+      "prefill-policy": "fixed"
      },
      "model_options": {}
     },
@@ -49,8 +49,8 @@
       "speculation": "adaptive",
       "speculative-tokens": "3",
       "draft-cost": "per-token",
-      "prefill-timing-cuts": "off",
-      "prefix-cache": "on"
+      "prefix-cache": "on",
+      "prefill-policy": "fixed"
      },
      "model_options": {}
     },
@@ -73,9 +73,9 @@
       "speculation": "fixed",
       "speculative-tokens": "0",
       "draft-cost": "per-token",
-      "prefill-timing-cuts": "off",
       "prefix-cache": "on",
-      "context-parallel-size": "2"
+      "context-parallel-size": "2",
+      "prefill-policy": "fixed"
      },
      "model_options": {}
     },
@@ -98,9 +98,9 @@
       "speculation": "adaptive",
       "speculative-tokens": "3",
       "draft-cost": "per-token",
-      "prefill-timing-cuts": "off",
       "prefix-cache": "on",
-      "context-parallel-size": "2"
+      "context-parallel-size": "2",
+      "prefill-policy": "fixed"
      },
      "model_options": {}
     },
@@ -123,8 +123,8 @@
       "speculation": "fixed",
       "speculative-tokens": "0",
       "draft-cost": "per-token",
-      "prefill-timing-cuts": "off",
-      "prefix-cache": "on"
+      "prefix-cache": "on",
+      "prefill-policy": "fixed"
      },
      "model_options": {}
     },
@@ -147,8 +147,8 @@
       "speculation": "adaptive",
       "speculative-tokens": "3",
       "draft-cost": "per-token",
-      "prefill-timing-cuts": "off",
-      "prefix-cache": "on"
+      "prefix-cache": "on",
+      "prefill-policy": "fixed"
      },
      "model_options": {}
     }
@@ -178,8 +178,8 @@
       "speculation": "fixed",
       "speculative-tokens": "0",
       "draft-cost": "per-token",
-      "prefill-timing-cuts": "off",
-      "prefix-cache": "on"
+      "prefix-cache": "on",
+      "prefill-policy": "fixed"
      },
      "model_options": {}
     },
@@ -202,10 +202,9 @@
       "speculation": "adaptive",
       "speculative-tokens": "3",
       "draft-cost": "per-token",
-      "prefill-timing-cuts": "off",
       "prefix-cache": "on",
-      "prefill-budget": "tbt",
-      "decode-tbt-target-ms": "150"
+      "decode-tbt-target-ms": "150",
+      "prefill-policy": "tbt"
      },
      "model_options": {}
     },
@@ -228,10 +227,9 @@
       "speculation": "adaptive",
       "speculative-tokens": "7",
       "draft-cost": "per-block",
-      "prefill-timing-cuts": "off",
       "prefix-cache": "on",
-      "prefill-budget": "tbt",
-      "decode-tbt-target-ms": "150"
+      "decode-tbt-target-ms": "150",
+      "prefill-policy": "tbt"
      },
      "model_options": {}
     },
@@ -254,8 +252,8 @@
       "speculation": "fixed",
       "speculative-tokens": "0",
       "draft-cost": "per-token",
-      "prefill-timing-cuts": "off",
-      "prefix-cache": "on"
+      "prefix-cache": "on",
+      "prefill-policy": "fixed"
      },
      "model_options": {}
     }
@@ -285,8 +283,8 @@
       "speculation": "fixed",
       "speculative-tokens": "0",
       "draft-cost": "per-token",
-      "prefill-timing-cuts": "off",
-      "prefix-cache": "on"
+      "prefix-cache": "on",
+      "prefill-policy": "fixed"
      },
      "model_options": {
       "prefill_chunk_tokens": "8192",
@@ -312,14 +310,13 @@
       "speculation": "balanced",
       "speculative-tokens": "5",
       "draft-cost": "per-block",
-      "prefill-timing-cuts": "adaptive",
       "prefix-cache": "on",
       "speculative-rows": "64",
       "speculation-graph-rows": "64",
       "speculation-depths": "1:5,8:3,16:3,32:0",
       "speculation-widths": "6,8,16,32,64",
-      "prefill-budget": "tbt",
-      "decode-tbt-target-ms": "750"
+      "decode-tbt-target-ms": "750",
+      "prefill-policy": "adaptive"
      },
      "model_options": {
       "prefill_chunk_tokens": "8192",
@@ -353,8 +350,8 @@
       "speculation": "adaptive",
       "speculative-tokens": "3",
       "draft-cost": "per-token",
-      "prefill-timing-cuts": "off",
-      "prefix-cache": "on"
+      "prefix-cache": "on",
+      "prefill-policy": "fixed"
      },
      "model_options": {}
     },
@@ -377,8 +374,8 @@
       "speculation": "adaptive",
       "speculative-tokens": "5",
       "draft-cost": "per-token",
-      "prefill-timing-cuts": "off",
-      "prefix-cache": "on"
+      "prefix-cache": "on",
+      "prefill-policy": "fixed"
      },
      "model_options": {}
     },
@@ -401,8 +398,8 @@
       "speculation": "fixed",
       "speculative-tokens": "0",
       "draft-cost": "per-token",
-      "prefill-timing-cuts": "off",
-      "prefix-cache": "on"
+      "prefix-cache": "on",
+      "prefill-policy": "fixed"
      },
      "model_options": {}
     },
@@ -425,9 +422,9 @@
       "speculation": "adaptive",
       "speculative-tokens": "3",
       "draft-cost": "per-token",
-      "prefill-timing-cuts": "off",
       "prefix-cache": "on",
-      "context-parallel-size": "2"
+      "context-parallel-size": "2",
+      "prefill-policy": "fixed"
      },
      "model_options": {}
     },
@@ -450,9 +447,9 @@
       "speculation": "adaptive",
       "speculative-tokens": "3",
       "draft-cost": "per-token",
-      "prefill-timing-cuts": "off",
       "prefix-cache": "on",
-      "context-parallel-size": "4"
+      "context-parallel-size": "4",
+      "prefill-policy": "fixed"
      },
      "model_options": {}
     }

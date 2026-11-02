@@ -5,7 +5,7 @@ of the other. Each level reports every replica's pair and the spread of each
 figure across replicas, never tails pooled over them. Two v2 receipts still
 compare as they did (`compare_v2`); a v2 receipt never pairs with a v3 one.
 
-An arm label is a prefill-budget mode (`fixed`, `tbt`, `decode-aware`),
+An arm label is a prefill policy (`fixed`, `tbt`, `adaptive`),
 alone or with a `-` suffix naming the arm's other server settings
 (`fixed-mbt4096`); the mode is verified against each level's evidence. The first receipt is the
 baseline, except that of two arms of different modes the `fixed` one is."""
@@ -17,13 +17,29 @@ from pathlib import Path
 from agentic_metrics import replica_figures, span
 from agentic_mixed import REVISION
 from agentic_server import arm_mode, mode_evidence, verify_arm
+from agentic_legacy_policy import historical_arm_mode, historical_mode_evidence, verify_historical_arm
+
+
+def policy_readers(receipt):
+    identities = {level['prefill_budget'].get('identity', 'historical-budget') for level in receipt['levels']}
+    if len(identities) != 1:
+        raise ValueError('mixed historical budget and canonical policy evidence')
+    identity = identities.pop()
+    if identity == 'historical-budget':
+        return identity, historical_arm_mode, historical_mode_evidence, verify_historical_arm
+    if identity != 'prefill-policy':
+        raise ValueError('unknown prefill identity')
+    return identity, arm_mode, mode_evidence, verify_arm
 from common import compared_timing
 
 
 def validate_pair(left, right):
+    identity, label_mode, _, _ = policy_readers(left)
+    if identity != policy_readers(right)[0]:
+        raise ValueError('historical budget evidence cannot compare with canonical policy evidence')
     labels = [left.get('arm'), right.get('arm')]
-    if not all(isinstance(label, str) and arm_mode(label) for label in labels):
-        raise ValueError('arm labels must name a verified mode (fixed, tbt or decode-aware), optionally with a -suffix')
+    if not all(isinstance(label, str) and label_mode(label) for label in labels):
+        raise ValueError('arm labels must name a verified mode (fixed, tbt or adaptive), optionally with a -suffix')
     if labels[0] == labels[1]:
         raise ValueError('expected two different arms')
     for receipt in (left, right):
@@ -42,11 +58,12 @@ def validate_pair(left, right):
         expected = [(c, replica) for c in profile['levels'] for replica in range(profile['replicas'])]
         if [(level['concurrency'], level.get('replica')) for level in receipt['levels']] != expected:
             raise ValueError('recorded levels and replicas do not match the profile')
+        _, _, read_evidence, check_arm = policy_readers(receipt)
         for level in receipt['levels']:
             evidence = level['prefill_budget']
-            actual = mode_evidence(level['server_metrics']['before'], level['server_metrics']['after'],
+            actual = read_evidence(level['server_metrics']['before'], level['server_metrics']['after'],
                                    receipt['server']['model'], evidence.get('startup_before'), evidence.get('startup_after'))
-            check = verify_arm(receipt['arm'], actual)
+            check = check_arm(receipt['arm'], actual)
             if actual['mode'] != evidence['mode'] or not check['passed']:
                 raise ValueError(check['reason'] or 'stored mode disagrees with raw evidence')
     if not left.get('label') or left['label'] != right.get('label'):
@@ -163,6 +180,7 @@ def compare(left, right):
     # Throughput and latency compared across the arms count only when both
     # ran on an idle host (common.HOST_LOAD_RULE); the label gates nothing.
     return dict(schema='chopinfer.agentic-mixed-comparison.v2', label=left['label'], mechanics_only=left['mechanics_only'],
+                prefill_identity=policy_readers(left)[0],
                 arms={arm: receipts[arm]['arm'] for arm in ARMS},
                 profile_digest=left['profile_digest'], levels=results,
                 host_load=compared_timing({receipts[arm]['arm']: receipts[arm].get('host_load') for arm in ARMS}))
@@ -192,11 +210,12 @@ def validate_pair_v2(left, right):
             raise ValueError('profile digest does not match recorded settings')
         if [level['concurrency'] for level in receipt['levels']] != profile['levels']:
             raise ValueError('recorded levels do not match the profile')
+        _, _, read_evidence, check_arm = policy_readers(receipt)
         for level in receipt['levels']:
             evidence = level['prefill_budget']
-            actual = mode_evidence(level['server_metrics']['before'], level['server_metrics']['after'],
+            actual = read_evidence(level['server_metrics']['before'], level['server_metrics']['after'],
                                    receipt['server']['model'], evidence.get('startup_before'), evidence.get('startup_after'))
-            check = verify_arm(receipt['arm'], actual)
+            check = check_arm(receipt['arm'], actual)
             if actual['mode'] != evidence['mode'] or not check['passed']:
                 raise ValueError(check['reason'] or 'stored mode disagrees with raw evidence')
     if not left.get('label') or left['label'] != right.get('label'):

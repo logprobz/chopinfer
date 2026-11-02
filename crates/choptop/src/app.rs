@@ -3050,14 +3050,14 @@ mod tests {
         let mut other = check.clone();
         other
             .settings
-            .insert("prefill-budget".into(), "fixed".into());
+            .insert("prefill-policy".into(), "fixed".into());
         checking(&mut app, deepseek(&edits[1..]), 10);
         app.catalog_reply(Reply::Check(10, Ok(other)));
         assert!(app.dialog.is_none());
         assert_eq!(
             app.loader.flash.clone().unwrap().text,
             "Not started: serve --check resolves what the profile and form do not say: \
-             --prefill-budget resolves to fixed, not tbt; \
+             --prefill-policy resolves to fixed, not tbt; \
              model option prefill_upper_skip resolves to false, not true"
         );
         // A key one side leaves out is not governed there: the check's

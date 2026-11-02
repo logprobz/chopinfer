@@ -18,7 +18,7 @@
       "0",
       "--draft-cost",
       "per-token",
-      "--prefill-budget",
+      "--prefill-policy",
       "fixed",
       "--graph-memory-reserve-mib",
       "320"

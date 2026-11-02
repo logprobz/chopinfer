@@ -327,28 +327,15 @@
    "repeatable": false
   },
   {
-   "flag": "--prefill-budget",
+   "flag": "--prefill-policy",
    "value": "TEXT",
    "choices": [
     "fixed",
-    "decode-aware",
-    "tbt"
-   ],
-   "group": "prefill",
-   "help": "how much prefill a step may add beside decoding",
-   "model_launch": true,
-   "repeatable": false
-  },
-  {
-   "flag": "--prefill-timing-cuts",
-   "value": "TEXT",
-   "choices": [
-    "off",
-    "fixed",
+    "tbt",
     "adaptive"
    ],
    "group": "prefill",
-   "help": "cut prefill chunks short to protect decode step time",
+   "help": "how much prefill a step may add beside decoding",
    "model_launch": true,
    "repeatable": false
   },
@@ -357,16 +344,7 @@
    "value": "N",
    "choices": null,
    "group": "prefill",
-   "help": "the decode step time the tbt budget aims for",
-   "model_launch": true,
-   "repeatable": false
-  },
-  {
-   "flag": "--mixed-min-prefill-tokens",
-   "value": "N",
-   "choices": null,
-   "group": "prefill",
-   "help": "the fewest prefill tokens a mixed step carries",
+   "help": "tbt and adaptive: estimated decode stall target in ms, 1 to 60000 (default 100)",
    "model_launch": true,
    "repeatable": false
   },

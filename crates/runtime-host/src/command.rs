@@ -163,8 +163,7 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]
   [--draft-cost per-token|per-block] [--prefix-cache on|off] [--verify-warmup on|off]
   [--prewarm-mapped-views off|on|auto] (default off)
   [--reply-history-observer on|off]
-  [--prefill-budget fixed|decode-aware|tbt] [--prefill-timing-cuts off|fixed|adaptive] [--prefill-itl-target-ms N | --prefill-decode-steps N]
-  [--decode-tbt-target-ms N] [--mixed-min-prefill-tokens N] [--mixed-decode-steps N]
+  [--prefill-policy fixed|tbt|adaptive] [--decode-tbt-target-ms N]
   [--kv-offload-gib N] [--kv-offload-min-tokens N] [--kv-offload-gbps F] [--kv-offload-prefix off]
   [--admission reserved|optimistic] [--admission-watermark F] [--max-preemptions N]
   [--debug-preempt-every N] [--debug-swap-every N]
@@ -375,45 +374,40 @@ pub struct FixtureScenarioReportV1 {
     pub live_resources: usize,
 }
 
-const FIXED_PREFILL_TIMING_CUTS_STARTUP_V1: &str = "prefill timing cuts on (fixed): grid chunks beside decoding \
-     requests end at the TBT cap";
 const ADAPTIVE_PREFILL_TIMING_CUTS_STARTUP_V1: &str = "prefill timing cuts on (adaptive): grid chunks beside \
      decoding requests end at the demand-adaptive TBT cap";
 const ADAPTIVE_PREFILL_BUDGET_STARTUP_V1: &str = "prefill timing cuts on (adaptive): the TBT cap beside decoding \
      requests is sized from demand (no prefill grid)";
 
-/// The serving policy for timing-selected prefill cuts beside decoding requests.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum PrefillTimingCutsV1 {
-    /// Keep the bundle's grid chunks whole.
+/// How serving shares prefill work with decoding requests.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PrefillPolicyV1 {
+    /// Use the configured token and chunk limits.
     #[default]
-    Off,
-    /// Size cuts against the configured TBT target and progress floor.
     Fixed,
-    /// Under a prefill backlog, size the TBT cap beside decoding
-    /// requests from the TBT target as a decode cadence
-    /// (`SchedulerConfig::with_adaptive_prefill_budget`). Grid bundles cut
-    /// their chunks at it; bundles without a grid take it as the ordinary
-    /// TBT cap.
+    /// Size ordinary mixed steps against the decode TBT target.
+    Tbt,
+    /// Size the TBT cap from demand, cutting grid chunks when negotiated.
     Adaptive,
 }
 
-impl PrefillTimingCutsV1 {
+impl PrefillPolicyV1 {
     fn parse(value: &str) -> Option<Self> {
         match value {
-            "off" => Some(Self::Off),
             "fixed" => Some(Self::Fixed),
+            "tbt" => Some(Self::Tbt),
             "adaptive" => Some(Self::Adaptive),
             _ => None,
         }
     }
 
-    /// The flag and profile value for the resolved policy.
+    /// The canonical CLI, profile and inspection value.
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
-            Self::Off => "off",
             Self::Fixed => "fixed",
+            Self::Tbt => "tbt",
             Self::Adaptive => "adaptive",
         }
     }
@@ -466,8 +460,8 @@ pub struct ServingOptionsV1 {
     /// How the scheduler reserves pages; optimistic by default.
     pub admission: AdmissionPolicy,
     pub prefill_budget: runtime_scheduler::PrefillBudget,
-    /// Allow timing-selected grid cuts beside decoding requests; off by default.
-    pub prefill_timing_cuts: PrefillTimingCutsV1,
+    /// Canonical public policy, resolved into the budget above.
+    pub prefill_policy: PrefillPolicyV1,
     /// Warm mapped views after readiness; off by default.
     pub prewarm_mapped_views: MappedPrewarmV1,
 }
@@ -499,7 +493,7 @@ impl Default for ServingOptionsV1 {
             verify_warmup: true,
             admission: AdmissionPolicy::Optimistic(OptimisticAdmission::DEFAULT),
             prefill_budget: runtime_scheduler::PrefillBudget::Fixed,
-            prefill_timing_cuts: PrefillTimingCutsV1::Off,
+            prefill_policy: PrefillPolicyV1::Fixed,
             prewarm_mapped_views: MappedPrewarmV1::Off,
         }
     }
@@ -1865,46 +1859,16 @@ pub(crate) const SERVE_OPTIONS_V1: &[ServeOptionV1] = {
             "warm up every verify graph shape at startup (default on)",
         ),
         ServeOptionV1::new(
-            "--prefill-budget",
-            Choice(&["fixed", "decode-aware", "tbt"]),
+            "--prefill-policy",
+            Choice(&["fixed", "tbt", "adaptive"]),
             Prefill,
             "how prefill shares a step with decoding requests (default fixed)",
-        ),
-        ServeOptionV1::new(
-            "--prefill-timing-cuts",
-            Choice(&["off", "fixed", "adaptive"]),
-            Prefill,
-            "timing-selected prefill cuts beside decoding; fixed and adaptive need tbt",
-        ),
-        ServeOptionV1::new(
-            "--prefill-itl-target-ms",
-            Count,
-            Prefill,
-            "decode-aware: the mixed step's time target in ms, 1 to 60000",
-        ),
-        ServeOptionV1::new(
-            "--prefill-decode-steps",
-            Count,
-            Prefill,
-            "decode-aware: the most decode steps the prefill part takes, 1 to 64",
         ),
         ServeOptionV1::new(
             "--decode-tbt-target-ms",
             Count,
             Prefill,
-            "tbt: the decode stall target in ms (default 100)",
-        ),
-        ServeOptionV1::new(
-            "--mixed-min-prefill-tokens",
-            Count,
-            Prefill,
-            "tbt: the prefill tokens every mixed step takes at least (default 512)",
-        ),
-        ServeOptionV1::new(
-            "--mixed-decode-steps",
-            Count,
-            Prefill,
-            "tbt: decode-only steps after each mixed step, 0 to 8 (default 0)",
+            "tbt and adaptive: estimated decode stall target in ms, 1 to 60000 (default 100)",
         ),
         ServeOptionV1::new(
             "--kv-offload-gib",
@@ -2195,7 +2159,7 @@ fn describe_serve_options_v1() -> String {
 pub(crate) fn effective_settings_v1(
     command: &HostCommandV1,
 ) -> std::collections::BTreeMap<String, String> {
-    use runtime_scheduler::{PrefillBudget, PrefillTarget};
+    use runtime_scheduler::PrefillBudget;
     let mut settings = std::collections::BTreeMap::new();
     let HostCommandV1::Serve {
         serving,
@@ -2277,33 +2241,10 @@ pub(crate) fn effective_settings_v1(
             set("kv-offload-gbps", (rate as f64 / 1e9).to_string());
         }
     }
-    match serving.prefill_budget {
-        PrefillBudget::Fixed => set("prefill-budget", "fixed".into()),
-        PrefillBudget::DecodeAware(target) => {
-            set("prefill-budget", "decode-aware".into());
-            match target {
-                PrefillTarget::ItlMillis(millis) => {
-                    set("prefill-itl-target-ms", millis.to_string());
-                }
-                PrefillTarget::DecodeSteps(steps) => {
-                    set("prefill-decode-steps", steps.to_string());
-                }
-            }
-        }
-        PrefillBudget::Tbt(policy) => {
-            set("prefill-budget", "tbt".into());
-            set("decode-tbt-target-ms", policy.target_millis().to_string());
-            set(
-                "mixed-min-prefill-tokens",
-                policy.min_prefill_tokens().to_string(),
-            );
-            set("mixed-decode-steps", policy.decode_steps().to_string());
-        }
+    set("prefill-policy", serving.prefill_policy.name().into());
+    if let PrefillBudget::Tbt(policy) = serving.prefill_budget {
+        set("decode-tbt-target-ms", policy.target_millis().to_string());
     }
-    set(
-        "prefill-timing-cuts",
-        serving.prefill_timing_cuts.name().into(),
-    );
     set("speculative-tokens", speculative_tokens.to_string());
     if *speculative_tokens == 0 {
         return settings;
@@ -2531,11 +2472,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
     // budget) wait for that parse; every explicit value is checked here.
     let profile_pending = parsed.model.is_some();
     let prefill_budget = prefill_budget_v1(&parsed, profile_pending)?;
-    let prefill_timing_cuts = parsed.prefill_timing_cuts.unwrap_or_default();
-    if !(profile_pending && parsed.prefill_budget.is_none()) {
-        validate_prefill_timing_cuts_v1(prefill_timing_cuts, prefill_budget)
-            .map_err(usage_error)?;
-    }
+    let prefill_policy = parsed.prefill_policy.unwrap_or_default();
     if !profile_pending
         && parsed.speculation_mode.is_some()
         && parsed.speculative_tokens.unwrap_or(0) == 0
@@ -2700,7 +2637,7 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
             verify_warmup: parsed.verify_warmup.unwrap_or(true),
             admission,
             prefill_budget,
-            prefill_timing_cuts,
+            prefill_policy,
             prewarm_mapped_views: parsed.prewarm_mapped_views.unwrap_or_default(),
         }),
         speculative_tokens: parsed.speculative_tokens.unwrap_or(0),
@@ -4571,7 +4508,7 @@ fn serve_v1(
         device_results,
         speculation,
         prefix_cache: serving.prefix_cache,
-        prefill_timing_cuts: serving.prefill_timing_cuts,
+        prefill_policy: serving.prefill_policy,
         kv_offload: serving.kv_offload,
         debug_reference_tokens: debug_reference_tokens.map(Path::to_path_buf),
         device_memory: device_memory.clone(),
@@ -4792,7 +4729,7 @@ struct ServedEngineV1 {
     device_results: bool,
     speculation: Option<SpeculationConfig>,
     prefix_cache: bool,
-    prefill_timing_cuts: PrefillTimingCutsV1,
+    prefill_policy: PrefillPolicyV1,
     kv_offload: crate::offload::KvOffloadOptionsV1,
     debug_reference_tokens: Option<PathBuf>,
     /// Where the host services publish each rank's device memory.
@@ -4983,7 +4920,10 @@ impl ServedEngineV1 {
                 .map_err(|error| format!("unusable bundle prefill chunk size: {error:?}"))?
                 .with_prefill_cuts(prefill_cuts.chunk_tokens != 0)
         };
-        let config = negotiate_prefill_timing_cuts_v1(config, self.prefill_timing_cuts)?;
+        let config = negotiate_prefill_timing_cuts_v1(config, self.prefill_policy)?;
+        if let Some(policy) = config.prefill_policy_name() {
+            runtime_log::info_stdout!("prefill policy: {policy}");
+        }
         if let Some(marker) = prefill_timing_cuts_startup_v1(config) {
             runtime_log::info_stdout!("{marker}");
         }
@@ -6170,12 +6110,6 @@ fn engine_config_v1(
     )
     .map_err(|error| run_error(format!("the serving engine is unusable: {error:?}")))
     .and_then(|config| {
-        // Refused here too, before the bundle loads.
-        validate_prefill_timing_cuts_v1(serving.prefill_timing_cuts, serving.prefill_budget)
-            .map_err(usage_error)?;
-        Ok(config)
-    })
-    .and_then(|config| {
         batch_refusal_limits_v1(|name| {
             std::env::var_os(name).map(|value| value.to_string_lossy().into_owned())
         })
@@ -6218,32 +6152,6 @@ fn serving_backend_config_v1(
         .with_watchdog(Some(crate::WorkerWatchdogV1::serving())))
 }
 
-/// Check the policy before loading a bundle; capability negotiation follows open.
-fn validate_prefill_timing_cuts_v1(
-    policy: PrefillTimingCutsV1,
-    budget: runtime_scheduler::PrefillBudget,
-) -> Result<(), String> {
-    match policy {
-        PrefillTimingCutsV1::Off => Ok(()),
-        PrefillTimingCutsV1::Fixed
-            if matches!(budget, runtime_scheduler::PrefillBudget::Tbt(_)) =>
-        {
-            Ok(())
-        }
-        PrefillTimingCutsV1::Fixed => {
-            Err("--prefill-timing-cuts fixed needs --prefill-budget tbt".into())
-        }
-        PrefillTimingCutsV1::Adaptive
-            if matches!(budget, runtime_scheduler::PrefillBudget::Tbt(_)) =>
-        {
-            Ok(())
-        }
-        PrefillTimingCutsV1::Adaptive => {
-            Err("--prefill-timing-cuts adaptive needs --prefill-budget tbt".into())
-        }
-    }
-}
-
 /// The startup marker of the negotiated policy, when it is on.
 const fn prefill_timing_cuts_startup_v1(config: EngineConfig) -> Option<&'static str> {
     match (
@@ -6252,7 +6160,7 @@ const fn prefill_timing_cuts_startup_v1(config: EngineConfig) -> Option<&'static
     ) {
         (true, true) => Some(ADAPTIVE_PREFILL_TIMING_CUTS_STARTUP_V1),
         (true, false) => Some(ADAPTIVE_PREFILL_BUDGET_STARTUP_V1),
-        (false, true) => Some(FIXED_PREFILL_TIMING_CUTS_STARTUP_V1),
+        (false, true) => None,
         (false, false) => None,
     }
 }
@@ -6260,30 +6168,20 @@ const fn prefill_timing_cuts_startup_v1(config: EngineConfig) -> Option<&'static
 /// Refuse an explicit timing-cut policy the negotiated bundle cannot execute.
 fn negotiate_prefill_timing_cuts_v1(
     config: EngineConfig,
-    policy: PrefillTimingCutsV1,
+    policy: PrefillPolicyV1,
 ) -> Result<EngineConfig, String> {
     match policy {
-        PrefillTimingCutsV1::Off => Ok(config
+        PrefillPolicyV1::Fixed | PrefillPolicyV1::Tbt => Ok(config
             .with_prefill_timing_cuts(false)
             .with_adaptive_prefill_budget(false)),
-        PrefillTimingCutsV1::Fixed => {
-            let config = config.with_prefill_timing_cuts(true);
-            if !config.prefill_timing_cuts() {
-                return Err(
-                    "--prefill-timing-cuts fixed needs --prefill-budget tbt and a bundle that declares prefill cuts"
-                        .into(),
-                );
-            }
-            Ok(config)
-        }
         // The adaptive cap applies to every model through the TBT cap. A
         // bundle with a prefill grid keeps whole chunks unless it can cut
-        // them, so there it needs negotiated cuts like `fixed`; without a
+        // them, so there it needs negotiated cuts; without a
         // grid it sizes the ordinary TBT cap and takes no timing cut.
-        PrefillTimingCutsV1::Adaptive => {
+        PrefillPolicyV1::Adaptive => {
             let config = config.with_adaptive_prefill_budget(true);
             if !config.adaptive_prefill_budget() {
-                return Err("--prefill-timing-cuts adaptive needs --prefill-budget tbt".into());
+                return Err("--prefill-policy adaptive needs a TBT budget".into());
             }
             if config.guaranteed_prefill_chunks().is_none() {
                 return Ok(config.with_prefill_timing_cuts(false));
@@ -6291,7 +6189,7 @@ fn negotiate_prefill_timing_cuts_v1(
             let config = config.with_prefill_timing_cuts(true);
             if !config.prefill_timing_cuts() {
                 return Err(
-                    "--prefill-timing-cuts adaptive needs a bundle that declares prefill cuts when it declares a prefill grid"
+                    "--prefill-policy adaptive needs a bundle that declares prefill cuts when it declares a prefill grid"
                         .into(),
                 );
             }
@@ -6970,14 +6868,9 @@ struct ArgumentsV1 {
     kv_offload_prefix: Option<bool>,
     verify_warmup: Option<bool>,
     optimistic_admission: Option<bool>,
-    prefill_budget: Option<runtime_scheduler::PrefillBudget>,
-    prefill_timing_cuts: Option<PrefillTimingCutsV1>,
+    prefill_policy: Option<PrefillPolicyV1>,
     prewarm_mapped_views: Option<MappedPrewarmV1>,
-    prefill_itl_target_ms: Option<usize>,
-    prefill_decode_steps: Option<usize>,
     decode_tbt_target_ms: Option<usize>,
-    mixed_min_prefill_tokens: Option<usize>,
-    mixed_decode_steps: Option<usize>,
     admission_watermark_millionths: Option<u32>,
     maximum_preemptions: Option<usize>,
     debug_preempt_every: Option<usize>,
@@ -7020,6 +6913,30 @@ pub(crate) const VALUELESS_FLAGS_V1: &[&str] = &[
 /// Removed flags, refused with what replaced them.
 const REMOVED_FLAGS_V1: &[(&str, &str)] = &[
     (
+        "--mixed-decode-steps",
+        "--mixed-decode-steps is retired: use --prefill-policy fixed|tbt|adaptive; remove the retired flag before deploying",
+    ),
+    (
+        "--mixed-min-prefill-tokens",
+        "--mixed-min-prefill-tokens is retired: use --prefill-policy fixed|tbt|adaptive; remove the retired flag before deploying",
+    ),
+    (
+        "--prefill-decode-steps",
+        "--prefill-decode-steps is retired: use --prefill-policy fixed|tbt|adaptive; remove the retired flag before deploying",
+    ),
+    (
+        "--prefill-itl-target-ms",
+        "--prefill-itl-target-ms is retired: use --prefill-policy fixed|tbt|adaptive; remove the retired flag before deploying",
+    ),
+    (
+        "--prefill-timing-cuts",
+        "--prefill-timing-cuts is retired: use --prefill-policy fixed|tbt|adaptive; remove the retired flag before deploying",
+    ),
+    (
+        "--prefill-budget",
+        "--prefill-budget is retired: use --prefill-policy fixed|tbt|adaptive; remove the retired flag before deploying",
+    ),
+    (
         "--fold-ranks",
         "--fold-ranks is gone: rank folding is no longer supported; use one distinct device per rank",
     ),
@@ -7057,13 +6974,20 @@ const REMOVED_FLAGS_V1: &[(&str, &str)] = &[
     ),
 ];
 
+pub(crate) fn retired_flag_message_v1(flag: &str) -> Option<&'static str> {
+    let name = flag.split_once('=').map_or(flag, |(name, _)| name);
+    REMOVED_FLAGS_V1
+        .iter()
+        .find_map(|(retired, message)| (*retired == name).then_some(*message))
+}
+
 impl ArgumentsV1 {
     fn parse(arguments: &[String]) -> Result<Self, HostCommandErrorV1> {
         let mut parsed = Self::default();
         let mut remaining = arguments.iter().peekable();
         while let Some(flag) = remaining.next() {
-            if let Some((_, message)) = REMOVED_FLAGS_V1.iter().find(|(name, _)| name == flag) {
-                return Err(usage_error(*message));
+            if let Some(message) = retired_flag_message_v1(flag) {
+                return Err(usage_error(message));
             }
             if VALUELESS_FLAGS_V1.contains(&flag.as_str()) {
                 let slot = match flag.as_str() {
@@ -7222,11 +7146,11 @@ impl ArgumentsV1 {
                     count_v1(flag, value)?,
                     flag,
                 )?,
-                "--prefill-timing-cuts" => {
-                    let policy = PrefillTimingCutsV1::parse(value).ok_or_else(|| {
-                        usage_error("--prefill-timing-cuts must be off, fixed or adaptive")
+                "--prefill-policy" => {
+                    let policy = PrefillPolicyV1::parse(value).ok_or_else(|| {
+                        usage_error("--prefill-policy must be fixed, tbt or adaptive")
                     })?;
-                    set_once_v1(&mut parsed.prefill_timing_cuts, policy, flag)?;
+                    set_once_v1(&mut parsed.prefill_policy, policy, flag)?;
                 }
                 "--prewarm-mapped-views" => {
                     let mode = MappedPrewarmV1::parse(value).ok_or_else(|| {
@@ -7234,46 +7158,11 @@ impl ArgumentsV1 {
                     })?;
                     set_once_v1(&mut parsed.prewarm_mapped_views, mode, flag)?;
                 }
-                "--prefill-budget" => {
-                    let policy = match value.as_str() {
-                        "fixed" => runtime_scheduler::PrefillBudget::Fixed,
-                        "decode-aware" => runtime_scheduler::PrefillBudget::DecodeAware(
-                            runtime_scheduler::PrefillTarget::default(),
-                        ),
-                        "tbt" => runtime_scheduler::PrefillBudget::Tbt(
-                            runtime_scheduler::MixedPolicy::default(),
-                        ),
-                        _ => {
-                            return Err(usage_error(
-                                "--prefill-budget must be fixed, decode-aware or tbt",
-                            ));
-                        }
-                    };
-                    set_once_v1(&mut parsed.prefill_budget, policy, flag)?;
-                }
-                "--prefill-itl-target-ms" => set_once_v1(
-                    &mut parsed.prefill_itl_target_ms,
-                    count_v1(flag, value)?,
-                    flag,
-                )?,
-                "--prefill-decode-steps" => set_once_v1(
-                    &mut parsed.prefill_decode_steps,
-                    count_v1(flag, value)?,
-                    flag,
-                )?,
                 "--decode-tbt-target-ms" => set_once_v1(
                     &mut parsed.decode_tbt_target_ms,
                     count_v1(flag, value)?,
                     flag,
                 )?,
-                "--mixed-min-prefill-tokens" => set_once_v1(
-                    &mut parsed.mixed_min_prefill_tokens,
-                    count_v1(flag, value)?,
-                    flag,
-                )?,
-                "--mixed-decode-steps" => {
-                    set_once_v1(&mut parsed.mixed_decode_steps, count_v1(flag, value)?, flag)?
-                }
                 "--kv-offload-gib" => set_once_v1(
                     &mut parsed.kv_offload_gib,
                     count_v1(flag, value)? as u64,
@@ -7645,29 +7534,15 @@ impl ArgumentsV1 {
                 self.reply_history_observer.is_some(),
             ),
             ("--verify-warmup", self.verify_warmup.is_some()),
-            ("--prefill-budget", self.prefill_budget.is_some()),
-            ("--prefill-timing-cuts", self.prefill_timing_cuts.is_some()),
+            ("--prefill-policy", self.prefill_policy.is_some()),
             (
                 "--prewarm-mapped-views",
                 self.prewarm_mapped_views.is_some(),
             ),
             (
-                "--prefill-itl-target-ms",
-                self.prefill_itl_target_ms.is_some(),
-            ),
-            (
-                "--prefill-decode-steps",
-                self.prefill_decode_steps.is_some(),
-            ),
-            (
                 "--decode-tbt-target-ms",
                 self.decode_tbt_target_ms.is_some(),
             ),
-            (
-                "--mixed-min-prefill-tokens",
-                self.mixed_min_prefill_tokens.is_some(),
-            ),
-            ("--mixed-decode-steps", self.mixed_decode_steps.is_some()),
             ("--admission", self.optimistic_admission.is_some()),
             (
                 "--admission-watermark",
@@ -7909,138 +7784,37 @@ impl ArgumentsV1 {
     }
 }
 
-/// The largest `--prefill-itl-target-ms`, one minute.
-const MAXIMUM_PREFILL_ITL_TARGET_MS_V1: usize = 60_000;
-/// The largest `--prefill-decode-steps`.
-const MAXIMUM_PREFILL_DECODE_STEPS_V1: usize = 64;
+/// The largest decode TBT target, one minute.
+const MAXIMUM_DECODE_TBT_TARGET_MS_V1: usize = 60_000;
 
-/// Applies the target flags of `--prefill-budget decode-aware` or `tbt`.
-/// The prefill budget of `parsed`. With `profile_pending` (`serve --model`,
-/// whose profile may still supply `--prefill-budget`), options that need a
-/// budget the invocation does not name are checked for their own values
-/// only; the parse after the profile's defaults checks the pairing.
+/// Resolve the public policy into the scheduler's existing budget. A direct
+/// model profile can supply an omitted policy after package selection.
 fn prefill_budget_v1(
     parsed: &ArgumentsV1,
     profile_pending: bool,
 ) -> Result<runtime_scheduler::PrefillBudget, HostCommandErrorV1> {
-    use runtime_scheduler::{PrefillBudget, PrefillTarget};
-    let budget_pending = profile_pending && parsed.prefill_budget.is_none();
-    if matches!(parsed.prefill_budget, Some(PrefillBudget::Tbt(_))) {
-        if let Some(flag) = [
-            ("--prefill-itl-target-ms", parsed.prefill_itl_target_ms),
-            ("--prefill-decode-steps", parsed.prefill_decode_steps),
-        ]
-        .into_iter()
-        .find_map(|(flag, value)| value.map(|_| flag))
-        {
-            return Err(usage_error(format!(
-                "{flag} requires --prefill-budget decode-aware"
-            )));
-        }
-        return mixed_policy_v1(parsed).map(PrefillBudget::Tbt);
-    }
-    if let Some(flag) = [
-        ("--decode-tbt-target-ms", parsed.decode_tbt_target_ms),
-        (
-            "--mixed-min-prefill-tokens",
-            parsed.mixed_min_prefill_tokens,
-        ),
-        ("--mixed-decode-steps", parsed.mixed_decode_steps),
-    ]
-    .into_iter()
-    .find_map(|(flag, value)| value.map(|_| flag))
-    {
-        if !budget_pending {
-            return Err(usage_error(format!("{flag} requires --prefill-budget tbt")));
-        }
-        mixed_policy_v1(parsed)?;
-    }
-    let target = match (parsed.prefill_itl_target_ms, parsed.prefill_decode_steps) {
-        (Some(_), Some(_)) => {
-            return Err(usage_error(
-                "--prefill-itl-target-ms and --prefill-decode-steps are exclusive",
-            ));
-        }
-        (Some(millis), None) => {
-            if !(1..=MAXIMUM_PREFILL_ITL_TARGET_MS_V1).contains(&millis) {
-                return Err(usage_error(format!(
-                    "--prefill-itl-target-ms must be 1 to {MAXIMUM_PREFILL_ITL_TARGET_MS_V1}"
-                )));
-            }
-            Some((
-                "--prefill-itl-target-ms",
-                PrefillTarget::ItlMillis(millis as u32),
-            ))
-        }
-        (None, Some(steps)) => {
-            if !(1..=MAXIMUM_PREFILL_DECODE_STEPS_V1).contains(&steps) {
-                return Err(usage_error(format!(
-                    "--prefill-decode-steps must be 1 to {MAXIMUM_PREFILL_DECODE_STEPS_V1}"
-                )));
-            }
-            Some((
-                "--prefill-decode-steps",
-                PrefillTarget::DecodeSteps(steps as u32),
-            ))
-        }
-        (None, None) => None,
-    };
-    match (parsed.prefill_budget.unwrap_or_default(), target) {
-        (PrefillBudget::DecodeAware(_), Some((_, target))) => {
-            Ok(PrefillBudget::DecodeAware(target))
-        }
-        (_, Some((flag, _)))
-            if budget_pending
-                && [
-                    parsed.decode_tbt_target_ms,
-                    parsed.mixed_min_prefill_tokens,
-                    parsed.mixed_decode_steps,
-                ]
-                .iter()
-                .any(Option::is_some) =>
-        {
-            // A TBT option needs the tbt budget and a decode-aware target the
-            // decode-aware one, so no profile's budget can serve both.
-            Err(usage_error(format!(
-                "{flag} and the TBT options need different --prefill-budget values"
-            )))
-        }
-        (budget, Some(_)) if budget_pending => Ok(budget),
-        (_, Some((flag, _))) => Err(usage_error(format!(
-            "{flag} requires --prefill-budget decode-aware"
-        ))),
-        (budget, None) => Ok(budget),
-    }
-}
-
-/// The `--prefill-budget tbt` policy from its flags and defaults.
-fn mixed_policy_v1(
-    parsed: &ArgumentsV1,
-) -> Result<runtime_scheduler::MixedPolicy, HostCommandErrorV1> {
-    use runtime_scheduler::{MAXIMUM_MIXED_DECODE_STEPS, MixedPolicy};
-    let defaults = MixedPolicy::default();
-    let target = parsed
-        .decode_tbt_target_ms
-        .unwrap_or(defaults.target_millis() as usize);
-    if !(1..=MAXIMUM_PREFILL_ITL_TARGET_MS_V1).contains(&target) {
+    use runtime_scheduler::{MixedPolicy, PrefillBudget};
+    let target = parsed.decode_tbt_target_ms.unwrap_or(100);
+    if !(1..=MAXIMUM_DECODE_TBT_TARGET_MS_V1).contains(&target) {
         return Err(usage_error(format!(
-            "--decode-tbt-target-ms must be 1 to {MAXIMUM_PREFILL_ITL_TARGET_MS_V1}"
+            "--decode-tbt-target-ms must be 1 to {MAXIMUM_DECODE_TBT_TARGET_MS_V1}"
         )));
     }
-    let floor = parsed
-        .mixed_min_prefill_tokens
-        .unwrap_or(defaults.min_prefill_tokens());
-    if floor == 0 {
-        return Err(usage_error("--mixed-min-prefill-tokens must be positive"));
+    match parsed.prefill_policy.unwrap_or_default() {
+        PrefillPolicyV1::Fixed => {
+            if parsed.decode_tbt_target_ms.is_some()
+                && !(profile_pending && parsed.prefill_policy.is_none())
+            {
+                return Err(usage_error(
+                    "--decode-tbt-target-ms requires --prefill-policy tbt or adaptive",
+                ));
+            }
+            Ok(PrefillBudget::Fixed)
+        }
+        PrefillPolicyV1::Tbt | PrefillPolicyV1::Adaptive => MixedPolicy::new(target as u32, 512, 0)
+            .map(PrefillBudget::Tbt)
+            .map_err(|error| usage_error(error.to_string())),
     }
-    let steps = parsed.mixed_decode_steps.unwrap_or(0);
-    if steps > MAXIMUM_MIXED_DECODE_STEPS as usize {
-        return Err(usage_error(format!(
-            "--mixed-decode-steps must be 0 to {MAXIMUM_MIXED_DECODE_STEPS}"
-        )));
-    }
-    MixedPolicy::new(target as u32, floor, steps as u32)
-        .map_err(|error| usage_error(error.to_string()))
 }
 
 fn count_v1(flag: &str, value: &str) -> Result<usize, HostCommandErrorV1> {
@@ -8120,6 +7894,10 @@ fn usage_error(message: impl Into<String>) -> HostCommandErrorV1 {
 fn run_error(message: impl Into<String>) -> HostCommandErrorV1 {
     HostCommandErrorV1::Run(message.into())
 }
+
+#[cfg(test)]
+#[path = "prefill_policy_tests.rs"]
+mod prefill_policy_tests;
 
 #[cfg(test)]
 mod tests {
@@ -8202,11 +7980,11 @@ mod tests {
         ArgumentsV1, BundleHostCompatibilityV1, BundleSelectionV1, DEFAULT_HOST_ARCHITECTURE_V1,
         DEFAULT_LISTEN_ADDRESS_V1, DEFAULT_SERVED_SEQUENCES_V1, DeveloperServingEnvelopeV1,
         DeviceServicesV1, FixturePlanV1, FixtureRequestV1, FixtureScenarioV1, HostCommandErrorV1,
-        HostCommandV1, KvCacheDtypeV1, PREPARED_QUEUE_DEPTH_V1, PrefillTimingCutsV1,
-        ServingOptionsV1, engine_config_v1, negotiate_prefill_timing_cuts_v1,
-        parse_bundle_command_v1, parse_conformance_host_command_v1, parse_host_command_v1,
-        resolve_developer_serving_plan_v1, resolve_kv_cache_dtype_v1, resolve_topology_v1,
-        same_selection_v1, server_config_v1, serving_backend_config_v1, validate_label_v1,
+        HostCommandV1, KvCacheDtypeV1, PREPARED_QUEUE_DEPTH_V1, PrefillPolicyV1, ServingOptionsV1,
+        engine_config_v1, parse_bundle_command_v1, parse_conformance_host_command_v1,
+        parse_host_command_v1, resolve_developer_serving_plan_v1, resolve_kv_cache_dtype_v1,
+        resolve_topology_v1, same_selection_v1, server_config_v1, serving_backend_config_v1,
+        validate_label_v1,
     };
 
     fn arguments(words: &[&str]) -> Vec<String> {
@@ -8602,41 +8380,9 @@ mod tests {
                 &["--decode-tbt-target-ms", "0"][..],
                 "--decode-tbt-target-ms must be 1 to",
             ),
-            (&["--mixed-min-prefill-tokens", "0"], "must be positive"),
             (
-                &["--prefill-itl-target-ms", "0"],
-                "--prefill-itl-target-ms must be 1 to",
-            ),
-            (
-                &[
-                    "--prefill-itl-target-ms",
-                    "5",
-                    "--prefill-decode-steps",
-                    "2",
-                ],
-                "are exclusive",
-            ),
-            (
-                &["--prefill-budget", "fixed", "--decode-tbt-target-ms", "100"],
-                "requires --prefill-budget tbt",
-            ),
-            (
-                &["--prefill-budget", "tbt", "--prefill-decode-steps", "2"],
-                "requires --prefill-budget decode-aware",
-            ),
-            // No budget serves both: the refusal needs no profile.
-            (
-                &[
-                    "--decode-tbt-target-ms",
-                    "100",
-                    "--prefill-decode-steps",
-                    "2",
-                ],
-                "need different --prefill-budget values",
-            ),
-            (
-                &["--mixed-decode-steps", "1", "--prefill-itl-target-ms", "5"],
-                "need different --prefill-budget values",
+                &["--prefill-policy", "fixed", "--decode-tbt-target-ms", "100"],
+                "requires --prefill-policy tbt or adaptive",
             ),
         ] {
             let mut words = arguments(&["serve", "--model", "checkpoint"]);
@@ -9071,7 +8817,7 @@ mod tests {
                 verify_warmup: true,
                 admission: AdmissionPolicy::Optimistic(OptimisticAdmission::DEFAULT),
                 prefill_budget: runtime_scheduler::PrefillBudget::Fixed,
-                prefill_timing_cuts: PrefillTimingCutsV1::Off,
+                prefill_policy: PrefillPolicyV1::Fixed,
                 prewarm_mapped_views: MappedPrewarmV1::Off,
             }
         );
@@ -9104,203 +8850,6 @@ mod tests {
         ] {
             let refusal = refusal(&words);
             assert!(refusal.contains(expected), "{refusal}");
-        }
-    }
-
-    #[test]
-    fn tbt_flags_parse_and_require_tbt() {
-        use runtime_scheduler::{MixedPolicy, PrefillBudget};
-        let parse = |extra: &[&str]| {
-            let mut words = vec!["serve", "--bundle", "a"];
-            words.extend_from_slice(extra);
-            parse_host_command_v1(&arguments(&words)).map(|command| match command {
-                HostCommandV1::Serve { serving, .. } => serving.prefill_budget,
-                _ => panic!("serve"),
-            })
-        };
-        assert_eq!(
-            parse(&["--prefill-budget", "tbt"]).unwrap(),
-            PrefillBudget::Tbt(MixedPolicy::new(100, 512, 0).unwrap())
-        );
-        assert_eq!(
-            parse(&[
-                "--decode-tbt-target-ms",
-                "75",
-                "--prefill-budget",
-                "tbt",
-                "--mixed-min-prefill-tokens",
-                "256",
-                "--mixed-decode-steps",
-                "2",
-            ])
-            .unwrap(),
-            PrefillBudget::Tbt(MixedPolicy::new(75, 256, 2).unwrap())
-        );
-        for (words, expected) in [
-            (
-                vec!["--decode-tbt-target-ms", "100"],
-                "--decode-tbt-target-ms requires --prefill-budget tbt",
-            ),
-            (
-                vec![
-                    "--prefill-budget",
-                    "decode-aware",
-                    "--mixed-decode-steps",
-                    "1",
-                ],
-                "--mixed-decode-steps requires --prefill-budget tbt",
-            ),
-            (
-                vec!["--prefill-budget", "tbt", "--prefill-itl-target-ms", "100"],
-                "--prefill-itl-target-ms requires --prefill-budget decode-aware",
-            ),
-            (
-                vec!["--prefill-budget", "tbt", "--decode-tbt-target-ms", "0"],
-                "--decode-tbt-target-ms must be 1 to 60000",
-            ),
-            (
-                vec!["--prefill-budget", "tbt", "--mixed-min-prefill-tokens", "0"],
-                "--mixed-min-prefill-tokens must be positive",
-            ),
-            (
-                vec!["--prefill-budget", "tbt", "--mixed-decode-steps", "9"],
-                "--mixed-decode-steps must be 0 to 8",
-            ),
-            (
-                vec!["--prefill-budget", "slo"],
-                "--prefill-budget must be fixed, decode-aware or tbt",
-            ),
-        ] {
-            let mut full = vec!["serve", "--bundle", "a"];
-            full.extend_from_slice(&words);
-            let refusal = refusal(&full);
-            assert!(refusal.contains(expected), "{refusal}");
-        }
-    }
-
-    #[test]
-    fn decode_aware_targets_parse_and_require_decode_aware() {
-        use runtime_scheduler::{PrefillBudget, PrefillTarget};
-        let budget = |extra: &[&str]| {
-            let mut words = vec!["serve", "--bundle", "a"];
-            words.extend_from_slice(extra);
-            match parse_host_command_v1(&arguments(&words)).unwrap() {
-                HostCommandV1::Serve { serving, .. } => serving.prefill_budget,
-                _ => panic!("serve"),
-            }
-        };
-        assert_eq!(budget(&[]), PrefillBudget::Fixed);
-        assert_eq!(
-            budget(&["--prefill-budget", "decode-aware"]),
-            PrefillBudget::DecodeAware(PrefillTarget::ItlMillis(200))
-        );
-        assert_eq!(
-            budget(&[
-                "--prefill-budget",
-                "decode-aware",
-                "--prefill-itl-target-ms",
-                "150"
-            ]),
-            PrefillBudget::DecodeAware(PrefillTarget::ItlMillis(150))
-        );
-        assert_eq!(
-            budget(&[
-                "--prefill-decode-steps",
-                "1",
-                "--prefill-budget",
-                "decode-aware"
-            ]),
-            PrefillBudget::DecodeAware(PrefillTarget::DecodeSteps(1))
-        );
-        for (words, expected) in [
-            (
-                vec!["--prefill-itl-target-ms", "200"],
-                "--prefill-itl-target-ms requires --prefill-budget decode-aware",
-            ),
-            (
-                vec!["--prefill-budget", "fixed", "--prefill-decode-steps", "2"],
-                "--prefill-decode-steps requires --prefill-budget decode-aware",
-            ),
-            (
-                vec![
-                    "--prefill-budget",
-                    "decode-aware",
-                    "--prefill-itl-target-ms",
-                    "200",
-                    "--prefill-decode-steps",
-                    "2",
-                ],
-                "--prefill-itl-target-ms and --prefill-decode-steps are exclusive",
-            ),
-            (
-                vec![
-                    "--prefill-budget",
-                    "decode-aware",
-                    "--prefill-itl-target-ms",
-                    "0",
-                ],
-                "--prefill-itl-target-ms must be 1 to 60000",
-            ),
-            (
-                vec![
-                    "--prefill-budget",
-                    "decode-aware",
-                    "--prefill-itl-target-ms",
-                    "60001",
-                ],
-                "--prefill-itl-target-ms must be 1 to 60000",
-            ),
-            (
-                vec![
-                    "--prefill-budget",
-                    "decode-aware",
-                    "--prefill-decode-steps",
-                    "65",
-                ],
-                "--prefill-decode-steps must be 1 to 64",
-            ),
-            (
-                vec![
-                    "--prefill-budget",
-                    "decode-aware",
-                    "--prefill-decode-steps",
-                    "x",
-                ],
-                "--prefill-decode-steps takes a count",
-            ),
-        ] {
-            let mut all = vec!["serve", "--bundle", "a"];
-            all.extend(words);
-            let refusal = refusal(&all);
-            assert!(refusal.contains(expected), "{refusal}");
-        }
-        for flag in ["--prefill-itl-target-ms", "--prefill-decode-steps"] {
-            assert!(
-                refusal(&["conformance-run", "--bundle", "a", flag, "2"])
-                    .contains(&format!("does not accept {flag}"))
-            );
-        }
-        assert!(
-            super::HOST_COMMAND_USAGE_V1
-                .contains("--prefill-itl-target-ms N | --prefill-decode-steps N")
-        );
-    }
-
-    #[test]
-    fn prefill_timing_cuts_startup_preserves_enabled_marker_and_names_policy() {
-        let message = super::FIXED_PREFILL_TIMING_CUTS_STARTUP_V1;
-        assert!(
-            message.starts_with("prefill timing cuts on (fixed):"),
-            "{message}"
-        );
-        for message in [
-            super::ADAPTIVE_PREFILL_TIMING_CUTS_STARTUP_V1,
-            super::ADAPTIVE_PREFILL_BUDGET_STARTUP_V1,
-        ] {
-            assert!(
-                message.starts_with("prefill timing cuts on (adaptive):"),
-                "{message}"
-            );
         }
     }
 
@@ -9370,248 +8919,6 @@ mod tests {
                 "off",
             ])
             .contains("does not accept --prewarm-mapped-views")
-        );
-    }
-
-    #[test]
-    fn prefill_timing_cuts_values_and_overrides_are_serve_only() {
-        assert_eq!(
-            ServingOptionsV1::default().prefill_timing_cuts,
-            PrefillTimingCutsV1::Off
-        );
-        let args = [
-            "serve",
-            "--bundle",
-            "fixture",
-            "--prefill-timing-cuts",
-            "off",
-        ]
-        .map(String::from);
-        let HostCommandV1::Serve { serving, .. } = parse_host_command_v1(&args).unwrap() else {
-            panic!("serve command");
-        };
-        assert_eq!(serving.prefill_timing_cuts, PrefillTimingCutsV1::Off);
-        for value in ["off", "fixed", "adaptive"] {
-            let args = [
-                "serve",
-                "--bundle",
-                "fixture",
-                "--prefill-budget",
-                "tbt",
-                "--prefill-timing-cuts",
-                value,
-            ]
-            .map(String::from);
-            let HostCommandV1::Serve { serving, .. } = parse_host_command_v1(&args).unwrap() else {
-                panic!("serve command");
-            };
-            assert_eq!(serving.prefill_timing_cuts.name(), value);
-        }
-        assert!(
-            refusal(&[
-                "conformance-run",
-                "--bundle",
-                "fixture",
-                "--prefill-timing-cuts",
-                "off"
-            ])
-            .contains("does not accept --prefill-timing-cuts")
-        );
-        assert!(
-            refusal(&[
-                "serve",
-                "--bundle",
-                "fixture",
-                "--prefill-timing-cuts",
-                "off",
-                "--prefill-timing-cuts",
-                "fixed"
-            ])
-            .contains("more than once")
-        );
-    }
-
-    #[test]
-    fn prefill_timing_cuts_refuses_without_tbt() {
-        for budget in ["fixed", "decode-aware"] {
-            assert!(
-                refusal(&[
-                    "serve",
-                    "--bundle",
-                    "fixture",
-                    "--prefill-budget",
-                    budget,
-                    "--prefill-timing-cuts",
-                    "fixed"
-                ])
-                .contains("--prefill-timing-cuts fixed needs --prefill-budget tbt")
-            );
-            assert!(
-                refusal(&[
-                    "serve",
-                    "--bundle",
-                    "fixture",
-                    "--prefill-budget",
-                    budget,
-                    "--prefill-timing-cuts",
-                    "adaptive"
-                ])
-                .contains("--prefill-timing-cuts adaptive needs --prefill-budget tbt")
-            );
-        }
-        let args = [
-            "serve",
-            "--model",
-            "fixture",
-            "--prefill-timing-cuts",
-            "fixed",
-        ]
-        .map(String::from);
-        assert!(
-            parse_host_command_v1(&args).is_ok(),
-            "model profile supplies the budget later"
-        );
-    }
-
-    #[test]
-    fn prefill_timing_cuts_refuses_unknown_values() {
-        for value in ["", "1", "true", "on", "Adaptive", "auto"] {
-            assert!(
-                refusal(&[
-                    "serve",
-                    "--bundle",
-                    "fixture",
-                    "--prefill-timing-cuts",
-                    value
-                ])
-                .contains("--prefill-timing-cuts must be off, fixed or adaptive")
-            );
-        }
-    }
-
-    #[test]
-    fn prefill_timing_cuts_requires_negotiated_cut_support() {
-        let manifest = manifest_with_rows(64, 1 << 20);
-        let vocabulary = ModelVocabulary::new(128).unwrap();
-        for budget in [
-            runtime_scheduler::PrefillBudget::Fixed,
-            runtime_scheduler::PrefillBudget::Tbt(runtime_scheduler::MixedPolicy::default()),
-        ] {
-            let options = ServingOptionsV1 {
-                prefill_budget: budget,
-                ..ServingOptionsV1::default()
-            };
-            let config = engine_config_v1(&manifest, vocabulary, 1 << 20, options, None).unwrap();
-            for grid in [false, true] {
-                for cuts in [false, true] {
-                    let config = if grid {
-                        config.with_guaranteed_prefill_chunks(2048).unwrap()
-                    } else {
-                        config
-                    };
-                    let config = config.with_prefill_cuts(cuts);
-                    assert_eq!(
-                        negotiate_prefill_timing_cuts_v1(config, PrefillTimingCutsV1::Off).unwrap(),
-                        config
-                    );
-                    let enabled =
-                        negotiate_prefill_timing_cuts_v1(config, PrefillTimingCutsV1::Fixed);
-                    if grid && cuts && matches!(budget, runtime_scheduler::PrefillBudget::Tbt(_)) {
-                        let enabled = enabled.unwrap();
-                        assert!(enabled.prefill_timing_cuts());
-                        assert_eq!(enabled, config.with_prefill_timing_cuts(true));
-                    } else {
-                        assert!(enabled.unwrap_err().contains("--prefill-timing-cuts fixed needs --prefill-budget tbt and a bundle that declares prefill cuts"));
-                    }
-                    let adaptive =
-                        negotiate_prefill_timing_cuts_v1(config, PrefillTimingCutsV1::Adaptive);
-                    let tbt = matches!(budget, runtime_scheduler::PrefillBudget::Tbt(_));
-                    if !tbt {
-                        assert!(
-                            adaptive.unwrap_err().contains(
-                                "--prefill-timing-cuts adaptive needs --prefill-budget tbt"
-                            )
-                        );
-                    } else if !grid {
-                        // Without a grid, the ordinary TBT cap: no timing cut.
-                        let adaptive = adaptive.unwrap();
-                        assert!(adaptive.adaptive_prefill_budget());
-                        assert!(!adaptive.prefill_timing_cuts());
-                        assert_eq!(
-                            super::prefill_timing_cuts_startup_v1(adaptive),
-                            Some(super::ADAPTIVE_PREFILL_BUDGET_STARTUP_V1)
-                        );
-                    } else if cuts {
-                        let adaptive = adaptive.unwrap();
-                        assert!(adaptive.adaptive_prefill_budget());
-                        assert!(adaptive.prefill_timing_cuts());
-                        assert_eq!(
-                            super::prefill_timing_cuts_startup_v1(adaptive),
-                            Some(super::ADAPTIVE_PREFILL_TIMING_CUTS_STARTUP_V1)
-                        );
-                    } else {
-                        assert!(adaptive.unwrap_err().contains(
-                            "--prefill-timing-cuts adaptive needs a bundle that declares prefill cuts"
-                        ));
-                    }
-                    assert_eq!(super::prefill_timing_cuts_startup_v1(config), None);
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn prefill_budget_option_is_explicit_and_serve_only() {
-        for (value, expected) in [
-            ("fixed", runtime_scheduler::PrefillBudget::Fixed),
-            (
-                "decode-aware",
-                runtime_scheduler::PrefillBudget::DecodeAware(
-                    runtime_scheduler::PrefillTarget::default(),
-                ),
-            ),
-        ] {
-            let HostCommandV1::Serve { serving, .. } = parse_host_command_v1(&arguments(&[
-                "serve",
-                "--bundle",
-                "a",
-                "--prefill-budget",
-                value,
-            ]))
-            .unwrap() else {
-                panic!("serve");
-            };
-            assert_eq!(serving.prefill_budget, expected);
-        }
-        assert_eq!(
-            ServingOptionsV1::default().prefill_budget,
-            runtime_scheduler::PrefillBudget::Fixed
-        );
-        assert!(
-            refusal(&["serve", "--bundle", "a", "--prefill-budget", "adaptive"])
-                .contains("--prefill-budget must be fixed, decode-aware or tbt")
-        );
-        assert!(
-            refusal(&[
-                "conformance-run",
-                "--bundle",
-                "a",
-                "--prefill-budget",
-                "fixed"
-            ])
-            .contains("does not accept --prefill-budget")
-        );
-        assert!(
-            parse_host_command_v1(&arguments(&[
-                "serve",
-                "--bundle",
-                "a",
-                "--prefill-budget",
-                "fixed",
-                "--prefill-budget",
-                "decode-aware"
-            ]))
-            .is_err()
         );
     }
 
@@ -12236,7 +11543,7 @@ mod tests {
     const DECLARED_ROWS_V1: u64 = 1024;
 
     /// One manifest whose KV layout declares this page size and this row count.
-    fn manifest_with_rows(page_tokens: u32, declared_rows: u64) -> BundleManifestV1 {
+    pub(super) fn manifest_with_rows(page_tokens: u32, declared_rows: u64) -> BundleManifestV1 {
         manifest_with_component_digest(
             vec![topology("tp1", 1)],
             page_tokens,
@@ -13237,15 +12544,15 @@ mod tests {
             AdmissionPolicy::Reserved
         );
         let options = ServingOptionsV1 {
-            prefill_budget: runtime_scheduler::PrefillBudget::DecodeAware(
-                runtime_scheduler::PrefillTarget::DecodeSteps(3),
+            prefill_budget: runtime_scheduler::PrefillBudget::Tbt(
+                runtime_scheduler::MixedPolicy::new(150, 512, 0).unwrap(),
             ),
             ..ServingOptionsV1::default()
         };
         assert_eq!(
             config(&limited, options).unwrap().prefill_budget(),
-            runtime_scheduler::PrefillBudget::DecodeAware(
-                runtime_scheduler::PrefillTarget::DecodeSteps(3)
+            runtime_scheduler::PrefillBudget::Tbt(
+                runtime_scheduler::MixedPolicy::new(150, 512, 0).unwrap()
             )
         );
         assert_eq!(
@@ -13903,7 +13210,7 @@ mod serve_option_tests {
             assert!(!settings.contains_key(absent), "{absent}");
         }
         assert_eq!(settings["graph-memory-reserve-mib"], "1024");
-        assert_eq!(settings["prefill-budget"], "fixed");
+        assert_eq!(settings["prefill-policy"], "fixed");
         assert_eq!(settings["context-parallel-size"], "1");
     }
 }

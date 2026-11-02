@@ -88,7 +88,7 @@ pub use command::{
     DeveloperServingEnvelopeV1, DeveloperServingPlanV1, DeviceServicesV1, DirectPackageIdentityV1,
     FixtureRequestV1, FixtureRunReceiptV1, FixtureScenarioReportV1, FixtureScenarioV1,
     FrontendVectorFilesV1, HOST_COMMAND_USAGE_V1, HOST_MEMORY_SERVICES_V1, HostCommandErrorV1,
-    HostCommandV1, MAX_FIXTURE_LOGITS_PER_ROW_V1, PrefillTimingCutsV1, ServingOptionsV1,
+    HostCommandV1, MAX_FIXTURE_LOGITS_PER_ROW_V1, PrefillPolicyV1, ServingOptionsV1,
     developer_serving_engine_config_v1, drive_fixture_scenario_v1, parse_bundle_command_v1,
     parse_conformance_host_command_v1, parse_host_command_v1, resolve_developer_serving_plan_v1,
     run_command_line_v1, run_host_command_v1, run_host_command_with_surface_v1,

@@ -107,6 +107,16 @@ count lookups; the vLLM ones count tokens.
 | `chop_process_uptime_seconds` | Seconds on the server's monotonic metrics clock, which starts when the listener opens; it resets when the server restarts |
 | `chop_device_memory_{total,own,kv,reserve}_bytes{rank}` | Each rank's device memory when the serving KV pool was sized: the device's total, what this process's own allocations held before the pool, the pool, and the reserve kept for what is allocated after it ([GPU memory](serving-profiles.md#gpu-memory)) |
 | `chop_device_memory_free_bytes{rank}`, `chop_device_memory_free_low_bytes{rank}` | Each rank's free device memory after the latest CUDA graph capture (or the sizing), and the lowest seen since the sizing. Graphs captured later come out of it |
+| `chop_mapped_view_bytes` | Gauge of live mapped views in whole pages, including partial edge pages, not raw tensor bytes |
+| `chop_mapped_view_resident_bytes` | Gauge of those whole pages resident in the host page cache; absent when residency is hidden |
+| `chop_mapped_view_residency_visible` | Gauge: 1 when every mapped view's residency is visible, 0 when any is hidden |
+| `chop_mapped_view_residency_sample_seconds` | Gauge of the latest successful residency sampling pass's elapsed seconds |
+
+The four mapped-view gauges have no labels. They are absent without mapped
+views or before the first sample. `chop_mapped_view_resident_bytes` is also
+absent while residency is hidden; hidden residency never reports full
+residency. The two byte gauges count whole pages, so their ratio is bounded
+by 1.
 
 `chop_step_gpu_seconds` is absent with the native bundle executor, which
 reports no device time; host wall time is never substituted.
@@ -182,9 +192,67 @@ cache's `weight-plans-v1` directory; `CHOPINFER_WEIGHT_PLAN_CACHE` names
 another absolute private directory, or `0` disables reuse. Tensor payloads
 are still read and validated on every start. Views mapped
 from the checkpoint stay in the page cache, not pinned memory; `mapped_bytes`
-and the `prewarm_*` fields state them, and `host-ram-short` warns when
+and the `prewarm_*` fields describe them. `prewarm_resident_bytes` is omitted
+when residency is hidden. `host-ram-short` warns when
 `MemAvailable` cannot hold the prewarmed views plus a 16 GiB margin
 (`CHOPINFER_PREWARM_MARGIN_BYTES`).
+
+`serve --prewarm-mapped-views off|on|auto` defaults to `off`. `on` and `auto`
+warm mapped views in the background after the `listening` line. They do not
+delay readiness, so early traffic can still meet cold rows. `auto` warms
+only when `MemAvailable` holds the mapped bytes plus the margin, including
+an exact fit; it declines if that value is unreadable. `on` warms anyway,
+logging `mapped prewarm: warning host-ram-short: ...; warming anyway (on)`
+when RAM is short. This option needs no `--checkpoint`; with no mapped
+views, either enabled mode logs `mapped prewarm: no mapped views`.
+
+A job waiting for the background warm must handle all three final outcomes:
+
+- `mapped prewarm: {...}` is the JSON done line, with `mode`, `bytes`,
+  `seconds`, `resident_bytes`, `available_bytes`, `margin_bytes` and `stopped`.
+  `resident_bytes` is null when hidden or stopped. A visible result below
+  95% residency logs at warning level. Check `stopped: false` before treating
+  the warm as complete.
+- `mapped prewarm: warning host-ram-short: ...; not warming (auto)` means
+  the warm was declined. An unreadable RAM value produces
+  `mapped prewarm: warning host-ram-short: MemAvailable is unreadable; not warming (auto)`.
+- `mapped prewarm: failed: ...; serving continues` means the warm failed.
+
+Decline and failure are terminal outcomes, not evidence of warm tables.
+When residency is visible, a job can instead wait for its required ratio
+of `chop_mapped_view_resident_bytes / chop_mapped_view_bytes`. When hidden,
+only the done line can signal completion. Warming does not require visible
+residency. Shutdown stops the background work and waits at most one second
+for the workers before leaving a blocked operation to finish.
+
+Every server that maps views samples residency immediately after readiness
+and then every 60 seconds, whatever the option. The sampler reads no file
+bytes; it uses bounded `mincore` calls. It logs the first sample as
+`mapped residency: ...`, with residency and sample duration. After a visible
+sample reaches 95%, a drop below it logs
+`mapped residency: warning resident-low: ...` once; recovery logs
+`mapped residency: resident-recovered: ...`. The first hidden sample logs
+`mapped residency: warning residency-hidden: ...`. Other sampling errors
+keep the previous sample and log `mapped residency: sampling failed: ...`.
+
+Residency is visible only if the process owns the file on a mount that is
+neither idmapped nor overlay (its filesystem UID equals the file owner,
+and the owner is not the overflow UID), or may write the file on a
+read-write mount. A writer on a read-only mount and root relying only on
+`CAP_FOWNER` are conservatively reported hidden even when the kernel would
+show them. The [documented container](developer-preview.md#checkpoint-and-cache-permissions)
+runs as UID 10001 with a read-only checkpoint it does not own, so residency
+is hidden unless it runs as the checkpoint's owner on a plain mount.
+
+Keep the option `off` for cold-cache measurements. Since the sampler runs
+even with `off`, timing A/Bs should build both arms from a base that includes
+it. On 2026-11-01, DeepSeek V4.1 Flash with four GPUs at 250 W each and
+251 GB of host RAM measured mean GPU gather waits of 0.04, 0.06, 0.08 and
+0.03 ms per step at C1, C8, C16 and C32 with warm tables (0.1-0.3% of a
+step). Evicted tables caused up to 1,150 major faults per visit and
+multi-millisecond gather waits. An external sequential read restored 99%
+residency in about 60-70 seconds. This measures the external read, not the
+background warm introduced here.
 
 On 2026-10-21, the loader changes were compared with the round-8 serving
 baseline using DeepSeek V4.1 Flash, TP4, release binaries, four GPUs capped at
@@ -393,6 +461,11 @@ groups:
       - alert: ChopinferIntakePressure
         expr: chop_intake_used_bytes / chop_intake_budget_bytes > 0.9
         for: 1m
+      - alert: ChopinferMappedViewsEvicted
+        expr: chop_mapped_view_resident_bytes / chop_mapped_view_bytes < 0.95
+        for: 5m
+      - alert: ChopinferMappedResidencyHidden
+        expr: chop_mapped_view_residency_visible == 0
 ```
 
 `ChopinferWorkerFailed` requires an independent, always-running supervisor

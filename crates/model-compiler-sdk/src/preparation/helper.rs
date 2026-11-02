@@ -28,6 +28,14 @@ pub trait Provider: Sync {
     fn deployment_policy(&self) -> Option<&str> {
         None
     }
+    /// The family's `chopinfer-serve-profiles-v2` document, the profiles
+    /// its packages carry before a checkpoint adjusts them.
+    /// `serving-profiles` prints it, so `chopinfer models` lists every
+    /// installed family's profiles without a checkpoint. `None`, the
+    /// default, declares none.
+    fn serving_profiles(&self) -> Option<&str> {
+        None
+    }
     /// Metadata-only routing. Full admission still happens inside
     /// `emit_direct`.
     fn probe(&self, path: &Path, ranks: u32) -> Result<()>;
@@ -249,7 +257,8 @@ pub fn run<F: Provider>(family: &F, arguments: impl IntoIterator<Item = String>)
     }
     if command == "--help" || command == "help" {
         println!(
-            "{} prepare [--direct] --model DIR [--tensor-parallel-size N] [--cache-dir DIR] [--activation-policy auto|checkpoint|bf16] [--modalities auto|all|LIST]\n{} profile --model DIR [--tensor-parallel-size N] [--activation-policy auto|checkpoint|bf16] [--modalities auto|all|LIST]\n{} cache list|prune [--cache-dir DIR] [--identity KEY] [--apply]\n{} describe\n{} deployment-policy\n{} --protocol",
+            "{} prepare [--direct] --model DIR [--tensor-parallel-size N] [--cache-dir DIR] [--activation-policy auto|checkpoint|bf16] [--modalities auto|all|LIST]\n{} profile --model DIR [--tensor-parallel-size N] [--activation-policy auto|checkpoint|bf16] [--modalities auto|all|LIST]\n{} cache list|prune [--cache-dir DIR] [--identity KEY] [--apply]\n{} describe\n{} deployment-policy\n{} serving-profiles\n{} --protocol",
+            family.name(),
             family.name(),
             family.name(),
             family.name(),
@@ -268,6 +277,18 @@ pub fn run<F: Provider>(family: &F, arguments: impl IntoIterator<Item = String>)
         if let Some(policy) = family.deployment_policy() {
             crate::deployment_policy::parse(policy.as_bytes())?;
             std::io::stdout().lock().write_all(policy.as_bytes())?;
+        }
+        return Ok(());
+    }
+    // The serving profiles document as the family embeds it, checked as its
+    // packages' profiles component is; nothing when the family declares none.
+    if command == "serving-profiles" {
+        if args.next().is_some() {
+            return Err("serving-profiles takes no arguments".into());
+        }
+        if let Some(profiles) = family.serving_profiles() {
+            crate::package_draft::serve_profiles(profiles.as_bytes())?;
+            std::io::stdout().lock().write_all(profiles.as_bytes())?;
         }
         return Ok(());
     }

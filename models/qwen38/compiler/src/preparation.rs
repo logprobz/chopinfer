@@ -636,6 +636,9 @@ impl shared::helper::Provider for QwenFamily {
     fn deployment_policy(&self) -> Option<&str> {
         Some(package::DEPLOYMENT_POLICY)
     }
+    fn serving_profiles(&self) -> Option<&str> {
+        Some(PROFILES)
+    }
     fn profiles(&self) -> Vec<String> {
         model_qwen38_contract::geometry::GEOMETRIES
             .iter()

@@ -167,6 +167,46 @@ fn a_helper_reports_only_a_valid_deployment_policy() {
     assert!(prep::helper::run(&Policed(valid), extra).is_err());
 }
 
+/// A family whose serving profiles document is `profiles`.
+struct Profiled(&'static str);
+impl prep::helper::Provider for Profiled {
+    fn name(&self) -> &str {
+        "chopinfer-model-sdk-test"
+    }
+    fn profiles(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn probe(&self, _path: &Path, _ranks: u32) -> Result<()> {
+        Ok(())
+    }
+    fn serving_profiles(&self) -> Option<&str> {
+        Some(self.0)
+    }
+}
+
+/// `serving-profiles` prints a family's profiles document, nothing for a
+/// family without one, and refuses one its packages could not carry.
+#[test]
+fn a_helper_reports_only_a_valid_serving_profiles_document() {
+    let command = || vec!["serving-profiles".to_owned()];
+    prep::helper::run(&Family, command()).unwrap();
+    let valid = r#"{"schema":"chopinfer-serve-profiles-v2","model":"test","served_model_name":"test","profiles":{}}"#;
+    prep::helper::run(&Profiled(valid), command()).unwrap();
+    for invalid in [
+        r#"{"schema":"chopinfer-serve-profiles-v1","profiles":{}}"#,
+        r#"{"schema":"chopinfer-serve-profiles-v2","profiles":[]}"#,
+        "not json",
+    ] {
+        let error = prep::helper::run(&Profiled(invalid), command())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("serving profiles"), "{invalid}: {error}");
+    }
+    let mut extra = command();
+    extra.push("value".into());
+    assert!(prep::helper::run(&Profiled(valid), extra).is_err());
+}
+
 #[test]
 fn materializing_preparation_is_refused() {
     let request = br#"{"version":2,"request":{"command":"prepare","source":{"kind":"directory","path":"m"},"cache_root":"c","tensor_parallel_size":4}}

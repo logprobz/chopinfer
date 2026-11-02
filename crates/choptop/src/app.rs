@@ -14,7 +14,7 @@ use crate::launch::occupancy::Live;
 use crate::launch::placement::bind_probe;
 use crate::launch::process::{self, Identity};
 use crate::launch::switch::{self, Confirm, Target};
-use crate::launch::{Launches, Reservation, Wait, command, indices};
+use crate::launch::{Launches, Reservation, command, indices};
 use crate::loader::{Loader, Outcome, Start};
 use crate::stats::Window;
 use crate::ui::list::{TABLE_TOP, first_row, table_rows};
@@ -606,27 +606,15 @@ impl App {
             Err(why) => return self.refuse_start(&why),
         };
         let why = switch::reason(&confirm);
-        for stopping in &confirm.stops {
-            if let Target::Launch(id) = stopping.target
-                && let Err(error) = self.launches.stop(id, &why, &mut self.registry, now)
-            {
-                self.registry.note(
-                    now,
-                    stopping.label.clone(),
-                    format!("not stopped: {error}"),
-                    Tone::Warning,
-                );
-            }
-        }
         let mut first = None;
-        for mut item in queued {
-            let launches = &self.launches;
-            item.waits.retain(|wait| match wait {
-                Wait::Launch(id) => launches.get(*id).is_some(),
-                Wait::Serve(_) => true,
-            });
+        for item in queued {
             let id = self.launches.queue(item, &mut self.registry, now);
             first.get_or_insert(id);
+        }
+        for stopping in &confirm.stops {
+            if let Target::Launch(id) = stopping.target {
+                let _ = self.launches.stop(id, &why, &mut self.registry, now);
+            }
         }
         for (identity, gpus) in &identities {
             // A process that changed is not signalled; its launches are
@@ -1410,6 +1398,61 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_adopted_launch_stop_cancels_its_replacement_permanently() {
+        let root = scratch("adopted-stop-refused");
+        let mut guard = fake_serve(&root.join("serve"));
+        let binary = root.join("never");
+        write_script(&binary, &format!("#!/bin/sh\n{CLOSE}exit 0\n"));
+        let mut app = launching(&root, &binary);
+        let mut record = crate::launch::records::tests::record("earlier", 'A', &[0, 1]);
+        record.pid = Some(guard.0.id());
+        record.start_ticks = Some(process::start_ticks_of(guard.0.id()).unwrap() + 1);
+        let adopted = app
+            .launches
+            .adopt(record, Phase::Running, &mut app.registry, 0.0);
+        let start = confirm(
+            &[('A', &[0, 1], 8310, vec![Target::Launch(adopted)])],
+            vec![replacing(&app, adopted)],
+        );
+        run(&mut app, start);
+        assert!(guard.0.try_wait().unwrap().is_none());
+        assert!(
+            app.registry
+                .events
+                .iter()
+                .any(|event| event.what.starts_with("not stopped:"))
+        );
+        assert!(
+            app.registry
+                .events
+                .iter()
+                .any(|event| event.what.starts_with("cancelled:")
+                    && event.what.ends_with("was not stopped"))
+        );
+        app.supervise(1.0);
+        assert!(
+            app.launches
+                .launches
+                .iter()
+                .all(|launch| launch.id == adopted)
+        );
+        assert!(
+            !app.registry
+                .events
+                .iter()
+                .any(|event| event.what.starts_with("launched by"))
+        );
+        let saved = Records::load(Some(root.join("state/launches.json"))).0;
+        assert!(saved.records.iter().any(|record| {
+            record.pid.is_none()
+                && record
+                    .ended
+                    .as_deref()
+                    .is_some_and(|ended| ended.contains("was not stopped"))
+        }));
+    }
+
+    #[test]
     fn an_unsafe_log_directory_refuses_a_switch_before_stopping() {
         let root = scratch("unsafe-log-directory");
         let mut guard = fake_serve(&root.join("serve"));
@@ -1490,8 +1533,8 @@ mod tests {
         let second = newest(&app);
         assert_eq!(
             app.launches.get(second).unwrap().waits.len(),
-            1,
-            "the cancelled launch is not waited for"
+            2,
+            "the cancelled launch dependency is already satisfied"
         );
         // The serve process got one SIGTERM, not one per start.
         let signals = app

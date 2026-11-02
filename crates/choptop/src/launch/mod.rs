@@ -460,6 +460,39 @@ impl Launches {
         registry: &mut Registry,
         now: f64,
     ) -> Result<(), String> {
+        let result = self.stop_launch(id, why, registry, now);
+        if let Err(error) = &result {
+            let label = self
+                .get(id)
+                .map_or_else(|| "a launch".to_owned(), Launch::label);
+            registry.note(now, &label, format!("not stopped: {error}"), Tone::Bad);
+            let waiting = self
+                .launches
+                .iter()
+                .filter(|launch| {
+                    launch.phase == Phase::Waiting && launch.waits.contains(&Wait::Launch(id))
+                })
+                .map(|launch| launch.id)
+                .collect::<Vec<_>>();
+            for dependent in waiting {
+                self.cancel(
+                    dependent,
+                    &format!("{label} was not stopped"),
+                    registry,
+                    now,
+                );
+            }
+        }
+        result
+    }
+
+    fn stop_launch(
+        &mut self,
+        id: u64,
+        why: &str,
+        registry: &mut Registry,
+        now: f64,
+    ) -> Result<(), String> {
         let Some(launch) = self.launches.iter_mut().find(|launch| launch.id == id) else {
             return Err("the launch is gone".to_owned());
         };

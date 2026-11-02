@@ -201,7 +201,12 @@ impl Workers {
 /// the reports held before it, keeping their latest events up to what the
 /// event log holds: a long pause holds one scan and a bounded log.
 fn hold(held: &mut Vec<Report>, report: Report) {
-    let Report::Scan { found, events } = report else {
+    let Report::Scan {
+        found,
+        events,
+        started,
+    } = report
+    else {
         held.push(report);
         return;
     };
@@ -216,6 +221,7 @@ fn hold(held: &mut Vec<Report>, report: Report) {
     held.push(Report::Scan {
         found,
         events: kept,
+        started,
     });
 }
 
@@ -257,7 +263,7 @@ fn receive_gpu(app: &mut App, held: &mut Vec<gpu_poll::Report>, report: gpu_poll
 
 fn take_report(registry: &mut Registry, report: Report, now: f64) -> Vec<Followup> {
     match report {
-        Report::Scan { found, events } => {
+        Report::Scan { found, events, .. } => {
             for event in events {
                 registry.note(now, "discovery", event, Tone::Warning);
             }
@@ -622,6 +628,7 @@ mod tests {
             Report::Scan {
                 found: Vec::new(),
                 events: Vec::new(),
+                started: 0.0,
             },
         );
         // The screen holds its frame: no GPUs yet, every report held.
@@ -667,6 +674,7 @@ mod tests {
         let scan = |events: &[&str]| Report::Scan {
             found: Vec::new(),
             events: events.iter().map(|event| (*event).to_owned()).collect(),
+            started: 0.0,
         };
         let mut held = Vec::new();
         hold(&mut held, scan(&["a"]));

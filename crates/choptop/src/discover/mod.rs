@@ -261,10 +261,12 @@ impl Discovery {
 /// What the discovery thread reports.
 #[derive(Debug)]
 pub enum Report {
-    /// A full scan: every instance found, and notes worth an event.
+    /// A full scan: every instance found, notes worth an event, and when
+    /// the scan began, on the clock discovery runs on.
     Scan {
         found: Vec<Found>,
         events: Vec<String>,
+        started: f64,
     },
     /// A loading process now listens.
     Listening {
@@ -308,7 +310,12 @@ pub fn spawn(
                 let mut events = Vec::new();
                 let found = discovery.scan(now, &mut events);
                 schedule.ran_full(origin.elapsed().as_secs_f64());
-                if reports.send(Report::Scan { found, events }).is_err() {
+                let report = Report::Scan {
+                    found,
+                    events,
+                    started: now,
+                };
+                if reports.send(report).is_err() {
                     return;
                 }
             } else if schedule.loading_due(now) {

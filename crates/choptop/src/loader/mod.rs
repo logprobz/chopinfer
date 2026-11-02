@@ -1366,6 +1366,7 @@ pub(crate) mod tests {
         live.scan(&discover::Report::Scan {
             found: vec![serve_process(48211, &["127.0.0.1:8310"], None)],
             events: Vec::new(),
+            started: 0.0,
         });
         let listed = |processes: Vec<Process>| Reading {
             at: 1.0,
@@ -1436,6 +1437,7 @@ pub(crate) mod tests {
         live.scan(&discover::Report::Scan {
             found: Vec::new(),
             events: Vec::new(),
+            started: 0.0,
         });
         live.gpu(&Report::Polled(vec![
             Reading {
@@ -2114,6 +2116,7 @@ pub(crate) mod tests {
                 serve_process(61204, &[], None),
             ],
             events: Vec::new(),
+            started: 0.0,
         });
         let reservations = vec![
             Reservation {

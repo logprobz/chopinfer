@@ -888,6 +888,7 @@ fn loader_reading(stray: bool, failed: Option<u32>, recent_launches: bool) -> Ap
     app.live.scan(&choptop::discover::Report::Scan {
         found,
         events: Vec::new(),
+        started: 0.0,
     });
     app.probe = |_, _| true;
     let checkpoints = Checkpoints::load(

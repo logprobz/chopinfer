@@ -53,6 +53,10 @@ pub struct Live {
     pub unavailable: Option<String>,
     /// Every instance the latest scan found.
     pub found: Vec<Found>,
+    /// When the latest scan began, and when the latest GPU reading was
+    /// taken; a start waits for both to be newer than its request.
+    pub scanned: Option<f64>,
+    pub polled: Option<f64>,
 }
 
 impl Live {
@@ -75,6 +79,11 @@ impl Live {
                 }
             }
             Report::Polled(readings) => {
+                self.polled = readings
+                    .iter()
+                    .map(|reading| reading.at)
+                    .reduce(f64::min)
+                    .or(self.polled);
                 for (listing, reading) in self.listings.iter_mut().zip(readings) {
                     // As the interface reads it: lost until a query answers.
                     if reading.lost {
@@ -96,10 +105,20 @@ impl Live {
         }
     }
 
+    /// Whether a scan began and the GPUs were read at or after `since`;
+    /// GPUs that cannot be read are not waited for.
+    pub fn fresh(&self, since: f64) -> bool {
+        let read = self.unavailable.is_some() || self.polled.is_some_and(|at| at >= since);
+        read && self.scanned.is_some_and(|at| at >= since)
+    }
+
     /// Takes a discovery report.
     pub fn scan(&mut self, report: &discover::Report) {
         match report {
-            discover::Report::Scan { found, .. } => self.found = found.clone(),
+            discover::Report::Scan { found, started, .. } => {
+                self.found = found.clone();
+                self.scanned = Some(*started);
+            }
             discover::Report::Listening {
                 pid,
                 start_ticks,
@@ -712,6 +731,7 @@ pub(crate) mod tests {
         live.scan(&discover::Report::Scan {
             found: vec![serve_process(48211, &["127.0.0.1:8311"], None)],
             events: Vec::new(),
+            started: 0.0,
         });
         let mut in_container = on_gpu(700);
         in_container.owner.container = Some("4f2a".into());
@@ -794,6 +814,7 @@ pub(crate) mod tests {
                 .into_iter()
                 .collect(),
             events: Vec::new(),
+            started: 0.0,
         });
         live.gpu(&polled(1.0, vec![Some(processes)]));
         occupancy(&Inputs {
@@ -871,6 +892,7 @@ pub(crate) mod tests {
         live.scan(&discover::Report::Scan {
             found: vec![serve_process(61204, &[], None)],
             events: Vec::new(),
+            started: 0.0,
         });
         let reservations = [
             reservation("launch A", &[0, 1], 8310, None),
@@ -931,6 +953,7 @@ pub(crate) mod tests {
         live.scan(&discover::Report::Scan {
             found: vec![serve_process(51022, &[], Some(&named))],
             events: Vec::new(),
+            started: 0.0,
         });
         let held = states(&live, &[], 1.0);
         assert_eq!(held[0], Occupancy::Free);
@@ -944,6 +967,7 @@ pub(crate) mod tests {
             live.scan(&discover::Report::Scan {
                 found: vec![serve_process(51022, &[], visible)],
                 events: Vec::new(),
+                started: 0.0,
             });
             for state in states(&live, &[], 1.0) {
                 assert_eq!(
@@ -971,11 +995,40 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn readings_are_fresh_once_a_scan_and_a_gpu_read_follow_the_request() {
+        let mut live = Live::default();
+        assert!(!live.fresh(5.0));
+        live.gpu(&Report::Opened {
+            driver: None,
+            devices: devices(2),
+        });
+        live.gpu(&polled(5.5, vec![Some(vec![]); 2]));
+        live.scan(&discover::Report::Scan {
+            found: Vec::new(),
+            events: Vec::new(),
+            started: 4.9,
+        });
+        // The scan began before the request.
+        assert!(!live.fresh(5.0));
+        live.scan(&discover::Report::Scan {
+            found: Vec::new(),
+            events: Vec::new(),
+            started: 5.1,
+        });
+        assert!(live.fresh(5.0));
+        assert!(!live.fresh(5.6));
+        // Without GPUs there is no read to wait for.
+        live.gpu(&Report::Unavailable("no driver".into()));
+        assert!(live.fresh(5.1));
+    }
+
+    #[test]
     fn a_listener_that_opens_later_updates_the_scan() {
         let mut live = Live::default();
         live.scan(&discover::Report::Scan {
             found: vec![serve_process(9, &[], None)],
             events: Vec::new(),
+            started: 0.0,
         });
         live.scan(&discover::Report::Listening {
             pid: 9,

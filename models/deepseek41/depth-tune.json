@@ -378,9 +378,10 @@
           ]
         },
         "rmsnorm_quantize": {
-          "reason": "The cached norm-quantize serves its measured decode rows; other widths take the fallback (route-allowlist.toml, NORM-cached-range).",
+          "reason": "Cached norms serve their measured decode rows; other decode widths and the query norms in verify row fusions and five-row drafter forwards use the declared fallback (route-allowlist.toml, NORM-cached-range and VERIFY-row-fusions).",
           "phases": [
-            "decode"
+            "decode",
+            "verify"
           ]
         },
         "sinkhorn_finish_norm": {

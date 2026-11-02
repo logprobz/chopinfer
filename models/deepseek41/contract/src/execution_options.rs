@@ -45,6 +45,9 @@ pub const DSPARK_MOE_DIRECT: &str = "dspark_moe_direct";
 /// the drafter table (`hc.draft_admit.verify`), so their stage boundaries
 /// fuse as the measured rows' do.
 pub const DSPARK_HC_DRAFT_ROWS: &str = "dspark_hc_draft_rows";
+/// Candidate: prompt-ending items per step retained in separate anchor state.
+pub const PREFILL_ANCHOR_ITEMS: &str = "prefill_anchor_items";
+pub const MAX_ANCHOR_ITEMS: u32 = 8;
 pub const DEFAULT_PLANS: usize = 16;
 pub const MAX_PLANS: usize = 64;
 /// The served warmup fits within 512 graph handles per rank, leaving room
@@ -57,6 +60,7 @@ pub struct Options {
     pub prefill_plan_cache_verify: bool,
     pub dspark_graph_handles_per_rank: usize,
     pub diagnostic_step_logs: bool,
+    pub prefill_anchor_items: u32,
     pub wide_verify: bool,
     pub wide_draft: bool,
     pub phased_decode_reduce: bool,
@@ -67,7 +71,7 @@ pub struct Options {
     pub dspark_hc_draft_rows: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 13] {
+pub fn declarations() -> [ModelOptionV1; 14] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -104,6 +108,14 @@ pub fn declarations() -> [ModelOptionV1; 13] {
         (
             PHASED_DECODE_REDUCE,
             OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            PREFILL_ANCHOR_ITEMS,
+            OptionDefinitionV1::Integer {
+                default: 0,
+                minimum: 0,
+                maximum: i64::from(MAX_ANCHOR_ITEMS),
+            },
         ),
         (
             PREFILL_PLAN_CACHE_PLANS,
@@ -175,6 +187,7 @@ impl Options {
             diagnostic_step_logs: values[DIAGNOSTIC_STEP_LOGS]
                 .as_bool()
                 .expect("checked boolean"),
+            prefill_anchor_items: count(PREFILL_ANCHOR_ITEMS)? as u32,
             wide_verify,
             wide_draft,
             phased_decode_reduce: flag(PHASED_DECODE_REDUCE),
@@ -225,14 +238,6 @@ mod tests {
     }
 
     #[test]
-    fn removed_prefill_anchor_option_is_rejected() {
-        for value in ["0", "8"] {
-            let options = BTreeMap::from([("prefill_anchor_items".into(), value.into())]);
-            assert!(declaration().resolve(&options).is_err());
-        }
-    }
-
-    #[test]
     fn removed_short_prefill_graph_option_is_rejected() {
         for value in ["0", "16"] {
             let options = BTreeMap::from([("prefill_graph_programs".into(), value.into())]);
@@ -266,6 +271,7 @@ mod tests {
             prefill_plan_cache_verify: false,
             dspark_graph_handles_per_rank: 512,
             diagnostic_step_logs: false,
+            prefill_anchor_items: 0,
             wide_verify: false,
             wide_draft: false,
             phased_decode_reduce: false,
@@ -289,6 +295,7 @@ mod tests {
             (PREFILL_PLAN_CACHE_VERIFY.into(), "true".into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK.into(), "0".into()),
             (DIAGNOSTIC_STEP_LOGS.into(), "true".into()),
+            (PREFILL_ANCHOR_ITEMS.into(), "2".into()),
             (WIDE_VERIFY.into(), "true".into()),
             (WIDE_DRAFT.into(), "true".into()),
             (PHASED_DECODE_REDUCE.into(), "true".into()),
@@ -307,6 +314,7 @@ mod tests {
                 prefill_plan_cache_verify: true,
                 dspark_graph_handles_per_rank: 0,
                 diagnostic_step_logs: true,
+                prefill_anchor_items: 2,
                 wide_verify: true,
                 wide_draft: true,
                 phased_decode_reduce: true,
@@ -331,6 +339,9 @@ mod tests {
             (PREFILL_PLAN_CACHE_PLANS, "1.5"),
             (PREFILL_PLAN_CACHE_VERIFY, "1"),
             (DIAGNOSTIC_STEP_LOGS, "\"true\""),
+            (PREFILL_ANCHOR_ITEMS, "-1"),
+            (PREFILL_ANCHOR_ITEMS, "9"),
+            (PREFILL_ANCHOR_ITEMS, "true"),
             (WIDE_VERIFY, "1"),
             (WIDE_DRAFT, "1"),
             (PHASED_DECODE_REDUCE, "1"),
@@ -355,6 +366,8 @@ mod tests {
             (SHARED_OVERLAP_MAX_ROWS, i64::from(u32::MAX)),
             (PREFILL_PLAN_CACHE_PLANS, 1),
             (PREFILL_PLAN_CACHE_PLANS, 64),
+            (PREFILL_ANCHOR_ITEMS, 0),
+            (PREFILL_ANCHOR_ITEMS, 8),
             (DSPARK_GRAPH_HANDLES_PER_RANK, 0),
             (DSPARK_GRAPH_HANDLES_PER_RANK, i64::MAX),
         ] {

@@ -48,6 +48,16 @@ pub(super) fn create_profile_with_options(
     skip: bool,
     options: &[(&str, serde_json::Value)],
 ) -> BundleInstanceV1 {
+    try_create_profile_with_options(host, chunk, skip, options)
+        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()))
+}
+
+pub(super) fn try_create_profile_with_options(
+    host: &Rc<Host>,
+    chunk: u32,
+    skip: bool,
+    options: &[(&str, serde_json::Value)],
+) -> Result<BundleInstanceV1, BundleAbiError> {
     let mut record = crate::config::tests::record(&host.shape, host.kv, 4, false);
     let at = record
         .windows(MODEL_OPTIONS_TAG_V1.len())
@@ -73,8 +83,9 @@ pub(super) fn create_profile_with_options(
         .unwrap()
         .with_device_results_api(crate::api::BUNDLE_DEEPSEEK41_DEVICE_RESULTS_API_V1)
         .unwrap()
+        .with_prefill_anchors_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_ANCHORS_API_V2)
+        .unwrap()
         .create(services, &record)
-        .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()))
 }
 
 #[test]
@@ -521,8 +532,15 @@ fn packed_items_keep_original_row_origins_and_distinct_logits() {
 #[test]
 fn unsupported_anchor_flags_are_refused_by_every_prefill_profile() {
     use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
-    for (dspark, skip) in [(false, true), (false, false), (true, true)] {
-        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+    for (ranks, dspark, skip) in
+        [Ranks::TP1, Ranks::TP2, Ranks::TP4]
+            .into_iter()
+            .flat_map(|ranks| {
+                [(false, true), (false, false), (true, true)]
+                    .map(|(dspark, skip)| (ranks, dspark, skip))
+            })
+    {
+        let host = FakeHost::new(Shape::new(&FLASH, ranks).unwrap(), KV_LAYOUTS[0]);
         host.drafter.set(dspark);
         if dspark {
             host.speculation.set(Some((5, 32)));
@@ -558,20 +576,30 @@ fn unsupported_anchor_flags_are_refused_by_every_prefill_profile() {
             .unwrap();
         assert_eq!(ordinary.len(), anchored.len());
         envelope[at..at + anchored.len()].copy_from_slice(&anchored);
+        let cuts = runtime_bundle_sdk::prefill::encode_with_cuts(
+            &anchored,
+            &[Boundary {
+                request_id: 7,
+                prompt_tokens: 65,
+                chunk_end: 65,
+                chunk_tokens: 8192,
+            }],
+        )
+        .unwrap();
         let before = host.device.journal.borrow().len();
         let mut sink = Sink::default();
-        for negotiated in [false, true] {
-            let result = if negotiated {
-                instance.execute_prefill(&envelope, &mut sink)
-            } else {
-                instance.execute(&anchored, &mut sink)
+        for entry in ["raw", "grid", "cuts"] {
+            let result = match entry {
+                "grid" => instance.execute_prefill(&envelope, &mut sink),
+                "cuts" => instance.execute_prefill_cuts(&cuts, &mut sink),
+                _ => instance.execute(&anchored, &mut sink),
             };
             assert_eq!(
                 result,
                 Err(runtime_bundle_abi::BundleAbiError::Status(
                     BundleStatusV1::InvalidArgument
                 )),
-                "dspark={dspark} skip={skip} negotiated={negotiated}"
+                "dspark={dspark} skip={skip} entry={entry} ranks={ranks:?}"
             );
         }
         assert!(sink.views.is_empty());

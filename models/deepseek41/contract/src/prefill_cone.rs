@@ -126,6 +126,18 @@ pub fn feature_offset(prefix: u32, rows: u32, window: u32) -> u32 {
     (retained / window * window).saturating_sub(prefix)
 }
 
+/// The first absolute position of the raw feature rows a chunk from
+/// `prefix` to `anchor` retains in a drafter's history: every row while
+/// they fit its `window + MAX_VERIFY_ROWS` rows, else its last window. An
+/// item that keeps `anchor` inside it keeps those rows for the anchor.
+pub fn anchor_feature_start(prefix: u32, anchor: u32, window: u32) -> u32 {
+    if anchor - prefix > window + MAX_VERIFY_ROWS {
+        anchor - window
+    } else {
+        prefix
+    }
+}
+
 impl Plan {
     pub fn new(
         g: &Geometry,
@@ -134,6 +146,26 @@ impl Plan {
         dspark: bool,
         alignment: u32,
     ) -> Result<Self, &'static str> {
+        Self::with_anchors(g, items, &[], logits, dspark, alignment)
+    }
+
+    /// A plan that also keeps complete ring state at each anchored item's
+    /// anchor, an absolute position strictly inside the item: the anchor's
+    /// physical ring cells root the cone like those of the item's end.
+    /// `anchors` is empty or has one entry per item. With DSpark the raw
+    /// feature rows a chunk ending at the anchor retains
+    /// (`anchor_feature_start`) are planned too.
+    pub fn with_anchors(
+        g: &Geometry,
+        items: &[Item],
+        anchors: &[Option<u32>],
+        logits: &[u32],
+        dspark: bool,
+        alignment: u32,
+    ) -> Result<Self, &'static str> {
+        if !anchors.is_empty() && anchors.len() != items.len() {
+            return Err("prefill anchors must name every item");
+        }
         let source = *g
             .shape
             .csa
@@ -172,15 +204,37 @@ impl Plan {
         let ring = window
             .checked_add(RING_HEADROOM as u32)
             .ok_or("prefill ring overflow")?;
-        let captured =
-            Rows::new(items.iter().map(|item| {
-                item.rows.end.saturating_sub(ring).max(item.rows.start)..item.rows.end
-            }));
+        let mut anchored = Vec::new();
+        let mut anchored_features = Vec::new();
+        for (item, anchor) in items.iter().zip(anchors) {
+            let Some(anchor) = *anchor else {
+                continue;
+            };
+            let end = item.prefix + (item.rows.end - item.rows.start);
+            if anchor <= item.prefix || anchor >= end {
+                return Err("a prefill anchor must lie strictly inside its item");
+            }
+            let row = item.rows.start + (anchor - item.prefix);
+            anchored.push(row.saturating_sub(ring).max(item.rows.start)..row);
+            let first = anchor_feature_start(item.prefix, anchor, window) - item.prefix;
+            anchored_features.push(item.rows.start + first..row);
+        }
+        let captured = Rows::new(
+            items
+                .iter()
+                .map(|item| item.rows.end.saturating_sub(ring).max(item.rows.start)..item.rows.end)
+                .chain(anchored),
+        );
         let features = if dspark {
-            Rows::new(items.iter().map(|item| {
-                let count = item.rows.end - item.rows.start;
-                item.rows.start + feature_offset(item.prefix, count, window)..item.rows.end
-            }))
+            Rows::new(
+                items
+                    .iter()
+                    .map(|item| {
+                        let count = item.rows.end - item.rows.start;
+                        item.rows.start + feature_offset(item.prefix, count, window)..item.rows.end
+                    })
+                    .chain(anchored_features),
+            )
         } else {
             Rows::default()
         };
@@ -227,18 +281,40 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn fake(items: &[Item], plan: &Plan, sparse: bool) -> (Vec<u64>, BTreeMap<(u32, u32), u64>) {
+        fake_anchored(items, &[], plan, sparse)
+    }
+
+    /// `fake`, also snapshotting each anchored item's ring at its anchor.
+    fn fake_anchored(
+        items: &[Item],
+        anchors: &[Option<u32>],
+        plan: &Plan,
+        sparse: bool,
+    ) -> (Vec<u64>, BTreeMap<(u32, u32), u64>) {
         let mut hidden: BTreeMap<_, _> = (0..plan.rows)
             .map(|p| (p, u64::from(p + 1) * 1234567))
             .collect();
         let mut snapshots = BTreeMap::new();
+        let ends: Vec<_> = items
+            .iter()
+            .enumerate()
+            .flat_map(|(at, item)| {
+                let anchor = anchors.get(at).copied().flatten();
+                let anchor = anchor.map(|a| (item.rows.start + a - item.prefix, 1000));
+                [(item.rows.end, 0)]
+                    .into_iter()
+                    .chain(anchor)
+                    .map(move |(end, tag)| (item, end, tag))
+            })
+            .collect();
         for layer in &plan.layers {
             let current_keys: BTreeMap<_, _> = (0..plan.rows)
                 .filter(|&p| !sparse || layer.keys.contains(p))
                 .map(|p| (p, hidden[&p].wrapping_mul(33) ^ u64::from(layer.id)))
                 .collect();
-            for item in items {
-                for p in item.rows.end.saturating_sub(136).max(item.rows.start)..item.rows.end {
-                    snapshots.insert((layer.id, p), current_keys[&p]);
+            for &(item, end, tag) in &ends {
+                for p in end.saturating_sub(136).max(item.rows.start)..end {
+                    snapshots.insert((layer.id + tag, p), current_keys[&p]);
                 }
             }
             for range in layer.features.ranges() {
@@ -316,6 +392,162 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// One step that keeps its rounded prompt end as an anchor plans the
+    /// anchor's ring like a chunk end: no planned row reads a skipped one,
+    /// and the anchor's and the end's snapshots and the logits match the
+    /// full schedule. The anchored cone is the union of both closures.
+    #[test]
+    fn anchored_plans_keep_the_anchor_ring_and_never_read_a_skipped_row() {
+        for (items, anchors, logits) in [
+            (
+                vec![Item {
+                    rows: 0..789,
+                    prefix: 0,
+                }],
+                vec![Some(768)],
+                vec![788],
+            ),
+            (
+                vec![Item {
+                    rows: 0..4171,
+                    prefix: 0,
+                }],
+                vec![Some(4160)],
+                vec![4170],
+            ),
+            (
+                vec![Item {
+                    rows: 0..1808,
+                    prefix: 8192,
+                }],
+                vec![Some(9984)],
+                vec![1807],
+            ),
+            (
+                vec![
+                    Item {
+                        rows: 0..70,
+                        prefix: 0,
+                    },
+                    Item {
+                        rows: 70..100,
+                        prefix: 8256,
+                    },
+                    Item {
+                        rows: 100..2148,
+                        prefix: 2048,
+                    },
+                ],
+                vec![Some(64), None, Some(4032)],
+                vec![69, 99, 2147],
+            ),
+        ] {
+            for (alignment, dspark) in [(1, false), (64, false), (1, true), (64, true)] {
+                let plan = Plan::with_anchors(&FLASH, &items, &anchors, &logits, dspark, alignment)
+                    .unwrap();
+                assert_eq!(
+                    fake_anchored(&items, &anchors, &plan, true),
+                    fake_anchored(&items, &anchors, &plan, false)
+                );
+                let plain = Plan::new(&FLASH, &items, &logits, dspark, alignment).unwrap();
+                for (anchored, plain) in plan.layers.iter().zip(&plain.layers) {
+                    assert_eq!(anchored.keys.union(&plain.keys), anchored.keys);
+                    assert_eq!(anchored.outputs.union(&plain.outputs), anchored.outputs);
+                    assert_eq!(anchored.features.union(&plain.features), anchored.features);
+                }
+                assert_eq!(plan.features.union(&plain.features), plan.features);
+                for (item, anchor) in items.iter().zip(&anchors) {
+                    let Some(anchor) = *anchor else { continue };
+                    let first = anchor_feature_start(item.prefix, anchor, 128) - item.prefix;
+                    let row = item.rows.start + anchor - item.prefix;
+                    assert_eq!(
+                        (item.rows.start + first..row).all(|p| plan.features.contains(p)),
+                        dspark
+                    );
+                }
+            }
+        }
+        let item = Item {
+            rows: 0..789,
+            prefix: 0,
+        };
+        let plan = |anchors: &[Option<u32>], dspark| {
+            Plan::with_anchors(
+                &FLASH,
+                std::slice::from_ref(&item),
+                anchors,
+                &[788],
+                dspark,
+                64,
+            )
+        };
+        // The anchored single step plans the same rows as the cut step at
+        // 768 and its 21-row tail together (`prefill_cone.py --cuts 768`).
+        let anchored = plan(&[Some(768)], false).unwrap();
+        assert_eq!(
+            anchored
+                .layers
+                .iter()
+                .map(|l| l.outputs.count())
+                .sum::<u32>(),
+            13412
+        );
+        assert_eq!(plan(&[None], false).unwrap(), plan(&[], false).unwrap());
+        for refused in [
+            vec![Some(0)],
+            vec![Some(789)],
+            vec![Some(800)],
+            vec![None, None],
+        ] {
+            assert!(plan(&refused, false).is_err(), "{refused:?}");
+            assert!(plan(&refused, true).is_err(), "{refused:?}");
+        }
+        // DSpark keeps the anchor's retained raw rows, which the prompt
+        // end's own rows already cover here.
+        let dspark = plan(&[Some(768)], true).unwrap();
+        assert_eq!(dspark.features, plan(&[None], true).unwrap().features);
+        assert_eq!(dspark.features.ranges(), std::slice::from_ref(&(640..789)));
+    }
+
+    /// A chunk ending at an anchor retains every raw row up to the drafter's
+    /// history of 134 rows, else its last window. An item restored just
+    /// before a window block that ends past 134 rows needs rows its own end
+    /// would not pack.
+    #[test]
+    fn anchored_dspark_items_pack_the_rows_a_chunk_ending_at_the_anchor_retains() {
+        for (prefix, anchor, first) in [
+            (0, 64, 0),
+            (0, 128, 0),
+            (0, 768, 640),
+            (8192, 8320, 8192),
+            (765, 896, 765),
+            (762, 896, 762),
+            (761, 896, 768),
+        ] {
+            assert_eq!(anchor_feature_start(prefix, anchor, 128), first);
+        }
+        let item = Item {
+            rows: 0..135,
+            prefix: 765,
+        };
+        let plain = Plan::new(&FLASH, std::slice::from_ref(&item), &[134], true, 64).unwrap();
+        assert_eq!(plain.features.ranges(), std::slice::from_ref(&(3..135)));
+        let anchored = Plan::with_anchors(
+            &FLASH,
+            std::slice::from_ref(&item),
+            &[Some(896)],
+            &[134],
+            true,
+            64,
+        )
+        .unwrap();
+        assert_eq!(anchored.features.ranges(), std::slice::from_ref(&(0..135)));
+        assert_eq!(
+            fake_anchored(std::slice::from_ref(&item), &[Some(896)], &anchored, true),
+            fake_anchored(std::slice::from_ref(&item), &[Some(896)], &anchored, false)
+        );
     }
 
     #[test]

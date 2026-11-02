@@ -90,6 +90,9 @@ pub struct Instance {
     config: Configuration,
     /// Immutable U32 cells indexed by their value, only for the opt-in profile.
     prefill_counts: Vec<runtime_bundle_abi::DeviceBufferSpanV1>,
+    /// Each rank's prompt-end anchor spares; empty unless the instance keeps
+    /// anchors (`execution_options::PREFILL_ANCHOR_ITEMS`).
+    anchor_spares: Vec<execute::anchors::Spares>,
     prefill_boundaries: Vec<runtime_bundle_sdk::prefill::Boundary>,
     skip_prefill: bool,
     ranks: Vec<RankHandles>,
@@ -600,6 +603,25 @@ impl Instance {
             })
             .collect::<Result<Vec<_>, BundleAbiError>>()?;
         memory.take("dspark");
+        if self
+            .state
+            .buffers
+            .iter()
+            .any(|buffer| buffer.spare_bytes() > 0)
+        {
+            let cells = execute::anchors::ring_cells(shape.geometry);
+            for &(_, pool, stream) in &ranks {
+                self.anchor_spares.push(execute::anchors::Spares::allocate(
+                    services,
+                    pool,
+                    stream,
+                    &self.state,
+                    u64::from(cells),
+                    held,
+                )?);
+            }
+            memory.take("anchor_spares");
+        }
         let mut shared = self.ops.shared_bytes();
         if let Some(drafter) = &self.dspark {
             for (entry, bytes) in drafter.shared_bytes() {
@@ -955,10 +977,20 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
     let has_drafter = verify_rows > 0
         && config.kv.storage == model_deepseek41_contract::state::KvStorage::Native
         && shape.geometry.dspark_stages() > 0;
-    let state = model_deepseek41_contract::state::request_state(
+    let anchors = if config.prefill.skip
+        && config.prefill.scheduler_cuts()
+        && shape.geometry.id == model_deepseek41_contract::geometry::FLASH.id
+        && shape.ranks() == 4
+    {
+        config.execution.prefill_anchor_items
+    } else {
+        0
+    };
+    let state = model_deepseek41_contract::state::request_state_with_anchors(
         shape.geometry,
         config.kv.storage,
         has_drafter,
+        anchors,
     );
     if config.create.state.bytes
         != u64::from(items.capacity())
@@ -1046,6 +1078,7 @@ fn create(services: HostServicesV1, bytes: &[u8]) -> Result<Instance, Failed<Ins
         transition_capture_bytes: std::cell::Cell::new(0),
         config,
         prefill_counts: Vec::new(),
+        anchor_spares: Vec::new(),
         prefill_boundaries: Vec::new(),
         skip_prefill: false,
         ranks: Vec::new(),
@@ -1361,6 +1394,23 @@ pub(crate) fn ledger_state(
                 (
                     instance.ledger.holder(slot),
                     instance.ledger.step().is_some(),
+                )
+            })
+        })
+        .expect("a live instance")
+}
+
+/// Each rank's anchor spares and state buffers of the instance `handle`.
+#[cfg(test)]
+pub(crate) fn anchor_spans(
+    handle: runtime_bundle_abi::BundleHandleV1,
+) -> (Vec<execute::anchors::Spares>, Vec<StateSpans>) {
+    INSTANCES
+        .with(|table| {
+            table.borrow_mut().get_mut(handle).map(|instance| {
+                (
+                    instance.anchor_spares.clone(),
+                    instance.buffers.iter().map(|b| b.state.clone()).collect(),
                 )
             })
         })

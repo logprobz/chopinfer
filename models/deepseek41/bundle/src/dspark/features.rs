@@ -45,6 +45,16 @@ impl Layout {
         self.row_bytes
     }
 
+    /// The same rows in a history of `slots` entries: the anchor spares'.
+    pub fn with_slots(self, slots: u32) -> Result<Self> {
+        let config = Config {
+            slots,
+            ..self.config
+        };
+        config.validate()?;
+        Ok(Self { config, ..self })
+    }
+
     pub fn retained_bytes(self) -> Result<u64> {
         self.config
             .history_capacity()
@@ -156,6 +166,29 @@ impl Features {
                 })
             })
             .collect()
+    }
+
+    /// Copy slot `slot`'s whole history entry into entry `entry` of
+    /// `spares`, a history of the same rows (`Layout::with_slots`).
+    pub fn seed_spare(self, slot: u32, spares: Self, entry: u32) -> Result<Copy> {
+        let history = self.layout.config.history_capacity();
+        if slot >= self.layout.config.slots
+            || entry >= spares.layout.config.slots
+            || spares.layout.row_bytes != self.layout.row_bytes
+            || spares.layout.config.history_capacity() != history
+        {
+            return Err("invalid DSpark anchor spare seed");
+        }
+        disjoint(self.retained, spares.retained)?;
+        let rows = u32::try_from(history).map_err(|_| "DSpark history exceeds a copy")?;
+        Ok(Copy {
+            source: self
+                .layout
+                .rows(self.retained, u64::from(slot) * history, rows)?,
+            destination: spares
+                .layout
+                .rows(spares.retained, u64::from(entry) * history, rows)?,
+        })
     }
 
     /// Gather a commit segment without overwriting target staging or the

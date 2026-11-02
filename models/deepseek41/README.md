@@ -236,6 +236,7 @@ them. A non-default value is unqualified.
 | `dspark_markov_staged` | `false` | Candidate: drafter Markov steps of two or more items load each thread's weight chain into registers before the dependency wait and read each position's logits in place, with no row copy ([drafter cost](lab/drafter-cost.md)). Bitwise lab pairs and fixed-batch GPU replays matched. Not adopted: its served single-option A/B on 2026-11-01 gained 2.14% in C16 step time but lost 0.70% in C8 decode request throughput, a resolved regression. |
 | `dspark_moe_direct` | `false` | Candidate: drafter forwards whose block rows the drafter table admits (`moe.direct_drafter.verify`) run the routed experts through the direct path instead of the expert chains ([drafter cost](lab/drafter-cost.md)). Fixed-batch GPU replays at C1 to C12 and C16 matched bitwise. Not adopted: no served A/B was run, since its estimated gain of about 0.15% is below the 1.5% bar. |
 | `phased_decode_reduce` | `false` | Candidate: Flash TP4 decode and verify all-reduces whose round no HC boundary takes launch the phased F32 rounding entries, over comm state of their own, instead of the F32 reduce-scatter, all-gather and round row. They give the same bits, in the lab at 11 row counts from 1 to 192 and in fixed-batch replays ([decode reductions](lab/decode-reductions.md#fixed-batch-replays)); the deferred pairs and prefill are unchanged. Not adopted: served A/Bs on 2026-11-01 gained 0.12% and 0.68% in C1 and C8 step time and were neutral at C16 and C32, below the 1.5% bar. |
+| `prefill_anchor_items` | `0` | Candidate: prompt-ending items per step that retain the last interior 64-token boundary in spare state, from 0 to 8. Flash TP4 upper-skip with scheduler cuts only; continuations and cold items use the same rule. |
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit and each reused plan template again and refuse a differing plan. |
@@ -300,9 +301,13 @@ longer selects the bundle's step or commit records. Existing diagnostic
 capture directories, AR Engram tracing and the shared
 `CHOPINFER_DEVICE_RESULTS` control remain available.
 
-### Removed prompt-end grid-anchor candidate
+### Prompt-end grid-anchor candidate
 
-The prompt-end grid-anchor candidate is removed. A TP4 AR C1 replay on
+The candidate is restored behind `prefill_anchor_items`, default 0. It
+accepts continuations at any start without a minimum row count. CPU
+structural checks do not establish GPU exactness or served acceptance.
+
+The previous prompt-end grid-anchor candidate was removed. A TP4 AR C1 replay on
 2026-10-29 matched all 40 turn pairs bitwise but regressed throughput by
 0.66% and TTFT p95 in both pairs. An off-grid 789-row prefill took
 311-313 ms, while separate 768- and 21-row steps totaled 288-294 ms.
@@ -310,8 +315,8 @@ The tail selected split-tail dense routes instead of exact-row folds.
 The final DSpark C1 gate also regressed TTFT p95 in both pairs: 303.03
 to 324.71 ms and 308.08 to 321.54 ms. The declared gate failed despite
 the cold AR C4 throughput gain.
-A future proposal needs served stateful acceptance across cold and warm
-turns before adding a new grid-anchor ABI or changing the default schedule.
+The restored candidate still needs served stateful acceptance across cold
+and warm turns before changing the default schedule.
 
 ### Removed short-prefill graph candidate
 

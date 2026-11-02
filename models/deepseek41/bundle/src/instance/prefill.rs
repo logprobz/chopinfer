@@ -3,10 +3,40 @@
 use super::Instance;
 use bundle_runtime::entry::Bundle;
 use bundle_runtime::table::with_instance;
-use runtime_bundle_abi::prefill::BundlePrefillPolicyV1;
+use runtime_bundle_abi::prefill::{BundlePrefillAnchorsV2, BundlePrefillPolicyV1};
 use runtime_bundle_abi::{BundleHandleV1, BundleStatusV1, ExecuteResultSinkV1};
 
 runtime_bundle_abi::export_prefill_cuts_api_v1!(PREFILL_CUTS_API, describe_cuts, execute_cuts,);
+
+impl Instance {
+    pub(super) fn prefill_anchor_allowance(&self) -> u32 {
+        let shape = self.config.shape;
+        if self.config.prefill.skip
+            && self.config.prefill.scheduler_cuts()
+            && shape.geometry.id == model_deepseek41_contract::geometry::FLASH.id
+            && shape.ranks() == 4
+        {
+            self.config.execution.prefill_anchor_items
+        } else {
+            0
+        }
+    }
+}
+
+pub(crate) fn describe_anchors(handle: BundleHandleV1) -> BundlePrefillAnchorsV2 {
+    let mut anchors = 0;
+    let status = Instance::instances().with(|table| {
+        with_instance(table, handle, |instance| {
+            anchors = instance.prefill_anchor_allowance();
+            BundleStatusV1::Success
+        })
+    });
+    if status == BundleStatusV1::Success {
+        BundlePrefillAnchorsV2::kept(anchors)
+    } else {
+        BundlePrefillAnchorsV2::failure(status)
+    }
+}
 
 pub(crate) fn describe(handle: BundleHandleV1) -> BundlePrefillPolicyV1 {
     policy(handle, false)

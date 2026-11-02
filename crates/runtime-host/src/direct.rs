@@ -798,8 +798,11 @@ pub struct PrewarmV1 {
     pub bytes: u64,
     /// Bytes warmed before completion or a stop, in whole pages.
     pub warmed_bytes: u64,
+    /// A worker saw the stop flag before reading its next window.
+    pub stopped: bool,
     pub seconds: f64,
-    /// Their resident bytes afterwards, in whole pages, or hidden.
+    /// Their resident bytes afterwards, in whole pages, or unmeasured when
+    /// residency is hidden or the warm was stopped.
     pub resident_bytes: Option<u64>,
     /// `MemAvailable` before warming, when the host reports it.
     pub available_bytes: Option<u64>,
@@ -852,6 +855,18 @@ fn available_memory_v1() -> Option<u64> {
     crate::offload::mem_available_v1(&meminfo).ok()
 }
 
+fn warn_startup_prewarm_room_v1(room: &PrewarmRoomV1) {
+    if let Some(available) = room.available_bytes.filter(|_| room.is_short()) {
+        let bytes = room.bytes;
+        let margin_bytes = room.margin_bytes;
+        runtime_log::warn!(
+            "startup prewarm: warning host-ram-short: {available} bytes available, below the \
+             {bytes} prewarmed bytes plus a {margin_bytes}-byte margin; gathers read evicted \
+             rows from the file"
+        );
+    }
+}
+
 fn prewarm_windows_v1(
     mappings: &[Arc<MappedRowsV1>],
     window_bytes: usize,
@@ -877,10 +892,15 @@ pub(crate) fn prewarm_v1(
     room: &PrewarmRoomV1,
     stop: Option<&AtomicBool>,
 ) -> Result<PrewarmV1, String> {
+    debug_assert_eq!(
+        room.bytes,
+        mappings.iter().map(|rows| rows.len()).sum::<u64>()
+    );
     let started = Instant::now();
     let windows = prewarm_windows_v1(mappings, PREWARM_WINDOW_BYTES);
     let next = AtomicUsize::new(0);
     let warmed_bytes = AtomicU64::new(0);
+    let stopped = AtomicBool::new(false);
     let page = crate::host_rows::page_bytes_v1() as u64;
     let threads = std::thread::available_parallelism()
         .map_or(1, |n| n.get())
@@ -894,6 +914,7 @@ pub(crate) fn prewarm_v1(
                         windows.get(next.fetch_add(1, Ordering::Relaxed))
                     {
                         if stop.is_some_and(|stop| stop.load(Ordering::Acquire)) {
+                            stopped.store(true, Ordering::Relaxed);
                             break;
                         }
                         rows.prewarm_window(start, length)?;
@@ -911,21 +932,25 @@ pub(crate) fn prewarm_v1(
                 .map_err(|e| format!("prewarm mapped views: {e}"))
         })
     })?;
-    let mut resident_bytes = Some(0);
-    for rows in mappings {
-        match rows.resident_pages() {
-            Ok((resident, _)) => {
-                resident_bytes = resident_bytes.map(|bytes| bytes + resident * page);
+    let stopped = stopped.load(Ordering::Relaxed);
+    let mut resident_bytes = (!stopped).then_some(0);
+    if !stopped {
+        for rows in mappings {
+            match rows.resident_pages() {
+                Ok((resident, _)) => {
+                    resident_bytes = resident_bytes.map(|bytes| bytes + resident * page);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                    resident_bytes = None;
+                }
+                Err(error) => return Err(format!("prewarm residency: {error}")),
             }
-            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-                resident_bytes = None;
-            }
-            Err(error) => return Err(format!("prewarm residency: {error}")),
         }
     }
     Ok(PrewarmV1 {
         bytes: room.bytes,
         warmed_bytes: warmed_bytes.load(Ordering::Relaxed),
+        stopped,
         seconds: started.elapsed().as_secs_f64(),
         resident_bytes,
         available_bytes: room.available_bytes,
@@ -1273,15 +1298,7 @@ impl PlannedImageV1 {
             .then(|| {
                 let bytes = prewarmed.iter().map(|rows| rows.len()).sum();
                 let room = PrewarmRoomV1::measure(bytes);
-                if room.is_short() {
-                    let available = room.available_bytes.expect("a short room has MemAvailable");
-                    let margin_bytes = room.margin_bytes;
-                    runtime_log::warn!(
-                        "startup prewarm: warning host-ram-short: {available} bytes available, below the \
-                         {bytes} prewarmed bytes plus a {margin_bytes}-byte margin; gathers read evicted \
-                         rows from the file"
-                    );
-                }
+                warn_startup_prewarm_room_v1(&room);
                 prewarm_v1(&prewarmed, &room, None)
             })
             .transpose()?;
@@ -3296,9 +3313,12 @@ mod tests {
         let stop = AtomicBool::new(true);
         let mappings = [rows];
         let stopped = prewarm_v1(&mappings, &room, Some(&stop)).unwrap();
+        assert!(stopped.stopped);
         assert_eq!(stopped.warmed_bytes, 0);
+        assert_eq!(stopped.resident_bytes, None);
         stop.store(false, Ordering::Release);
         let warmed = prewarm_v1(&mappings, &room, Some(&stop)).unwrap();
+        assert!(!warmed.stopped);
         assert_eq!(warmed.bytes, room.bytes);
         assert_eq!(warmed.warmed_bytes, 3 * page);
         assert_eq!(warmed.resident_bytes, Some(3 * page));
@@ -3319,7 +3339,14 @@ mod tests {
         }
         let file = std::fs::File::open("/etc/passwd").unwrap();
         let metadata = file.metadata().unwrap();
-        assert_eq!(metadata.uid(), 0);
+        if crate::host_rows::filesystem_uid_v1() == Some(metadata.uid()) {
+            eprintln!("skipped non-owned prewarm case: file owner equals process fsuid");
+            return;
+        }
+        if crate::host_rows::file_writable_v1(&file) {
+            eprintln!("skipped non-owned prewarm case: file is writable");
+            return;
+        }
         let rows = crate::host_rows::map_rows_v1(&file, 0, metadata.len()).unwrap();
         let room = PrewarmRoomV1 {
             bytes: rows.len(),
@@ -3327,6 +3354,7 @@ mod tests {
             margin_bytes: 0,
         };
         let warmed = prewarm_v1(&[rows], &room, None).unwrap();
+        assert!(!warmed.stopped);
         let page = crate::host_rows::page_bytes_v1() as u64;
         assert_eq!(warmed.warmed_bytes, metadata.len().div_ceil(page) * page);
         assert_eq!(warmed.resident_bytes, None);

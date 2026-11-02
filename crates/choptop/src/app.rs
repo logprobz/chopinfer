@@ -2564,6 +2564,225 @@ mod tests {
         }
     }
 
+    /// The GPU poller and the discovery thread on a real clock, as the loop
+    /// takes their reports: a GPU reading every second and at once when
+    /// asked for, and scans on discovery's schedule (every 15 s, 5 s after
+    /// the last one when requested, at the next 250 ms tick when forced).
+    /// Each lists the launches' processes alive when it is taken, so one
+    /// taken before a process exits still shows it.
+    struct Pollers {
+        origin: std::time::Instant,
+        schedule: crate::discover::Schedule,
+        polled: f64,
+        tick: f64,
+    }
+
+    impl Pollers {
+        fn new() -> Self {
+            Self {
+                origin: std::time::Instant::now(),
+                schedule: crate::discover::Schedule::new(15.0),
+                polled: f64::NEG_INFINITY,
+                tick: 0.0,
+            }
+        }
+
+        fn now(&self) -> f64 {
+            self.origin.elapsed().as_secs_f64()
+        }
+
+        /// A GPU reading and a scan now, as the loop asks for them.
+        fn ask(&mut self, app: &mut App) {
+            app.asked(self.now());
+            self.polled = f64::NEG_INFINITY;
+            self.schedule.force();
+        }
+
+        /// One turn of the loop, 100 ms long.
+        fn turn(&mut self, app: &mut App) {
+            let now = self.now();
+            let found = app
+                .launches
+                .launches
+                .iter()
+                .filter(|launch| {
+                    launch
+                        .record
+                        .pid
+                        .zip(launch.record.start_ticks)
+                        .is_some_and(|(pid, ticks)| process::alive(pid, ticks))
+                })
+                .map(|launch| found_launch(app, launch.id))
+                .collect::<Vec<_>>();
+            if now - self.polled >= 1.0 {
+                poll(app, now, &found, Vec::new());
+                self.polled = now;
+            }
+            if now >= self.tick {
+                self.tick = now + 0.25;
+                if self.schedule.full_due(now) {
+                    app.live.scan(&crate::discover::Report::Scan {
+                        found,
+                        events: Vec::new(),
+                        started: now,
+                    });
+                    self.schedule.ran_full(now);
+                }
+            }
+            app.tick(self.now());
+            app.supervise(self.now());
+            if app.needs_read() {
+                self.ask(app);
+            }
+            for followup in std::mem::take(&mut app.launches.followups) {
+                if followup == crate::instances::Followup::Request {
+                    self.schedule.request();
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+        /// Turns until `done`, for at most `seconds`.
+        fn until(&mut self, app: &mut App, seconds: f64, mut done: impl FnMut(&App) -> bool) {
+            let deadline = self.now() + seconds;
+            while !done(app) {
+                assert!(self.now() < deadline, "timed out: {:#?}", events(app));
+                self.turn(app);
+            }
+        }
+    }
+
+    #[test]
+    fn a_switch_from_two_launches_to_one_on_all_their_gpus_completes_at_the_loops_pace() {
+        let root = scratch("two-to-one");
+        let binary = root.join("drains");
+        // The TP2 instances drain for 2 s at 8310 and 3 s at 8311 after
+        // SIGTERM; the TP4 instance exits at once.
+        write_script(
+            &binary,
+            &format!(
+                "#!/bin/sh\n{CLOSE}case \"$*\" in\n*\"--tensor-parallel-size 4\"*) drain=0 ;;\n*:8311*) drain=30 ;;\n*) drain=20 ;;\nesac\ntrap 'draining=1' TERM\nn=0\nd=0\nwhile [ $n -lt 600 ]; do sleep 0.1; n=$((n+1)); if [ -n \"$draining\" ]; then d=$((d+1)); if [ $d -ge $drain ]; then exit 0; fi; fi; done\n"
+            ),
+        );
+        let mut app = launching(&root, &binary);
+        app.catalog = crate::loader::tests::catalog();
+        app.catalog.binary = Ok(binary);
+        app.live.scanning = true;
+        let mut pollers = Pollers::new();
+        // Qwen at TP2 on GPUs 0 and 1 at 8310, and on 2 and 3 at 8311.
+        app.dialog = Some(Dialog::Start(Box::new(confirm(
+            &[
+                ('A', &[0, 1], 8310, Vec::new()),
+                ('B', &[2, 3], 8311, Vec::new()),
+            ],
+            Vec::new(),
+        ))));
+        assert_eq!(press(&mut app, KeyCode::Enter), Action::Read);
+        pollers.ask(&mut app);
+        pollers.until(&mut app, 10.0, |app| {
+            app.launches.launches.len() == 2
+                && app
+                    .launches
+                    .launches
+                    .iter()
+                    .all(|launch| launch.phase == Phase::Running)
+        });
+        let qwen = app
+            .launches
+            .launches
+            .iter()
+            .map(|launch| launch.id)
+            .collect::<Vec<_>>();
+        let labels = qwen
+            .iter()
+            .map(|id| app.launches.get(*id).unwrap().label())
+            .collect::<Vec<_>>();
+        // Later, the periodic scan has found them as well.
+        pollers.schedule.force();
+        pollers.until(&mut app, 5.0, |app| app.live.found.len() == 2);
+        // DeepSeek at TP4 on all four GPUs replaces both and reuses 8310.
+        assert_eq!(press(&mut app, KeyCode::Char('l')), Action::Redraw);
+        app.tick(pollers.now());
+        app.loader.picked = (0..4).collect();
+        app.tick(pollers.now());
+        answer(&mut app);
+        app.tick(pollers.now());
+        let start = app.loader.start().unwrap();
+        assert_eq!(
+            (start.model.as_str(), start.profile.as_str()),
+            ("deepseek41", "tp4-dspark")
+        );
+        assert_eq!(start.placement.replaces, qwen);
+        assert_eq!(start.placement.started, qwen);
+        assert_eq!(start.placement.instances[0].port, 8310);
+        assert_eq!(press(&mut app, KeyCode::Char('S')), Action::Read);
+        pollers.ask(&mut app);
+        pollers.until(&mut app, 5.0, |app| {
+            app.catalog
+                .outbox
+                .iter()
+                .any(|request| matches!(request, Request::Check { .. }))
+        });
+        let generation = app
+            .catalog
+            .outbox
+            .iter()
+            .find_map(|request| match request {
+                Request::Check { generation, .. } => Some(*generation),
+                _ => None,
+            })
+            .unwrap();
+        let profile = app.catalog.profile("deepseek41", "tp4-dspark").unwrap();
+        let check = Check {
+            profile: profile.name.clone(),
+            settings: profile.settings.clone(),
+            model_options: Vec::new(),
+            warnings: Vec::new(),
+        };
+        app.catalog_reply(Reply::Check(generation, Ok(check)));
+        pollers.until(&mut app, 5.0, |app| app.dialog.is_some());
+        let Some(Dialog::Start(dialog)) = &app.dialog else {
+            panic!("{:?}", app.dialog)
+        };
+        assert_eq!(
+            dialog
+                .stops
+                .iter()
+                .map(|stop| stop.target.clone())
+                .collect::<Vec<_>>(),
+            qwen.iter().copied().map(Target::Launch).collect::<Vec<_>>()
+        );
+        assert_eq!(press(&mut app, KeyCode::Enter), Action::Read);
+        pollers.ask(&mut app);
+        pollers.until(&mut app, 5.0, |app| app.launches.launches.len() == 3);
+        let deepseek = newest(&app);
+        // Both drain and exit, the readings in between still showing them,
+        // and the replacement starts on the readings after.
+        pollers.until(&mut app, 15.0, |app| {
+            let launch = app.launches.get(deepseek);
+            assert!(launch.is_some(), "{:#?}", events(app));
+            launch.is_some_and(|launch| launch.phase == Phase::Running)
+        });
+        let launched = position(
+            &app,
+            &app.launches.get(deepseek).unwrap().label(),
+            "launched by choptop",
+        );
+        for label in &labels {
+            assert!(position(&app, label, "exited after draining") < launched);
+        }
+        assert!(
+            !events(&app).iter().any(|event| event.contains("cancelled")),
+            "{:#?}",
+            events(&app)
+        );
+        let record = &app.launches.get(deepseek).unwrap().record;
+        assert_eq!(
+            (record.gpus.as_slice(), record.port),
+            (&[0, 1, 2, 3][..], 8310)
+        );
+    }
+
     #[test]
     fn serve_check_must_resolve_what_the_profile_and_the_form_say() {
         let mut app = app(0);

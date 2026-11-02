@@ -34,6 +34,16 @@ model options remain available for explicit diagnostic configurations.
 verify rows and widths 6, 8, 16, 32 and 64. See the
 [model documentation](../models/deepseek41/README.md#served-profiles).
 
+## Reply history measurement
+
+`--reply-history-observer on|off` controls the optional bounded digest
+observer. The optional profile field `reply_history_observer` is a boolean;
+an explicit flag wins, and omission resolves to off. Existing profiles
+retain their defaults. Enabling it collects repeated generated-page and
+exact reply-end eligibility counters without enabling KV reuse. Collection
+has measured host overhead and keeps at most 64 MiB of observer capacity.
+See [metric semantics and passive sampling](operations-observability.md#generated-reply-observations).
+
 ## Speculative token capacity and graph budget
 
 Two serve options size a speculative verify step. Each is also a profile

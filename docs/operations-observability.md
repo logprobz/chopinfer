@@ -86,6 +86,9 @@ count lookups; the vLLM ones count tokens.
 | `chop_mixed_budget_term_seconds{model_name,engine,term}`, `chop_mixed_budget_samples`, `chop_mixed_budget_trained`, `chop_mixed_budget_decode_estimate_seconds{items_le}` | Tbt mode only: the fitted fixed, mixed, per-token and per-attention-pair terms, prefill steps in the fit window, whether the fit sets budgets, and the decode estimate per power-of-two item bucket ([mixed scheduling](serving-profiles.md#prefill-policy)) |
 | `chop_prefix_cache_{queries,hits}_total`, `chop_prefix_cache_{queried,reused}_tokens_total` | Prefix-cache lookups and restored hits, and their prompt and reused tokens |
 | `chop_prefix_cache_recomputed_seen_tokens_total` | Prompt tokens a committed prefill computed although an earlier request's committed prefill had computed the same leading full pages, short of the last prompt token: repeats and shared prefixes no anchor covered ([where anchors are captured](numerics.md#kv-offload-and-prefix-state)) |
+| `chop_prefix_cache_recomputed_generated_tokens_total` | Whole generated pages from earlier completed replies that a later prompt successfully prefills; requires the optional reply-history observer |
+| `chop_reply_history_{enabled,allocated_bytes,entries}` | Collection status, all observer capacities, and completed histories retained; disabled collection is not a zero-match observation |
+| `chop_reply_history_observations_total{outcome}`, `chop_reply_history_rows_total{kind,context}` | Fixed-label reply comparison, coverage, finish and committed-row counts, described below |
 | `chop_prefix_cache_{captures,capture_failures,restore_failures}_total`, `chop_prefix_cache_{anchors,blocks}` | Anchor captures, captures and restores the bundle refused, and the anchors and pages held now |
 | `chop_prefix_cache_evictions_total{class}` | Public anchor evictions by `superseded`, `retained` or `maximal` class; sum all classes for the total |
 | `chop_prefix_cache_public_anchors{class}` | Public anchors currently in each class |
@@ -146,6 +149,213 @@ The total anchor gauge includes private anchors. The cached-block gauge
 counts unique pages held only by anchors; class snapshot counts do not
 partition physical occupancy. Live sequences, restore pins and transfer
 leases can retain pages after an anchor disappears.
+
+### Generated reply observations
+
+`serve --reply-history-observer on` enables bounded digest accounting. The
+optional profile field `reply_history_observer` is a boolean; an explicit
+flag overrides it, and omission resolves to off. Every shipped profile
+keeps its serving defaults. Collection needs no request or step tracing,
+no GPU reservation and no replay. Docker forwards the flag after its image;
+systemd can carry it in the existing `CHOPINFER_SERVE_ARGS` argument list.
+There is no new deployment environment variable.
+
+This is observational: public anchors remain prefill-only. Prefix capture
+boundaries, KV retention, scheduler admission and scheduling rules, sampling
+arithmetic and output semantics are unchanged. Identical inputs and batch
+schedules preserve output bytes. Additional host latency is measured, not
+claimed absent. Neither this metric nor an exact match proves that reply-end
+KV reuse would be correct.
+
+The registry retains at most 256 completed histories. Its total capacity,
+including at most 256 active observations and 256 delivery receipts, temporary prompt material,
+annotations, indices and reserved buffers, is capped at 64 MiB per engine.
+Oldest completed histories leave first, independently of KV eviction. A
+request whose observation cannot fit continues without it. Capacity and
+allocation drops are counted. Completed entries contain salted token/media
+digests, lengths, completion order and numeric region masks. They retain no
+text, token IDs, raw salts, prompt token storage or KV handles. The active
+partial page is discarded at completion. Warmup does not enter live history.
+
+Only accepted tokens after a successful model commit enter the observer.
+Rejected drafts, placeholders, rolled-back steps and cancellations do not
+become histories. Frontend completion selects the delivered prefix when a
+text stop interrupts a speculative run. Histories remain pending until the
+terminal event reaches the frontend channel. Parser, outbox and relay
+failures discard the observation. Channel handoff does not prove remote
+client receipt. Engine-only users finalize on engine completion. Late
+annotations cannot recreate evicted entries.
+
+A consumer compares only histories completed before its successful submit.
+Salt and media identity participate in the same chain as the prefix cache.
+Salt equality alone is not ancestry. Unsalted requests share one scope and
+do not identify unique sessions. The longest matching ancestry supplies the
+request diagnosis; distinct replies to the same exact prompt are ambiguous.
+Duplicate histories and compatible nested turns do not duplicate row counts.
+
+For page size B, prior prompt end P, generated end R, successful cache hit H,
+common prefix end L and current prompt length N, a matching generated-page
+interval is:
+
+```text
+[ceil(max(H,P)/B)*B, floor(min(L,R-1,N-1)/B)*B)
+```
+
+The generated counter counts the union of these intervals as original prompt
+rows commit. A row counts once even after preemption. Refused restores use
+the actual cold fallback. `rounding` rows are the matching generated-row
+union minus the full-page union. The existing recomputed-seen counter and
+the generated counter may overlap and must not be added.
+
+The separate `eligible` interval requires exact identity through R-1 and
+R-1 <= N-1. It counts committed rows in [max(H,P),R-1) without page rounding.
+A complete reply and a difference only in its final emitted token both
+qualify: that final token has no KV. An earlier mismatch gives zero
+reply-end opportunity even if many pages repeat. Across alternatives, one
+deepest valid terminal boundary supplies the eligible interval. A short
+reply can have eligible rows and no eligible full page.
+
+`chop_reply_history_rows_total` uses `candidate`, `eligible`, `repeated`,
+`rounding`, `unobserved`, `ambiguous` and `prefilled` kinds. Candidate rows are
+the union of prior generated ranges whose exact prompt boundary matches,
+whether their replies match or differ. Prefilled counts all successfully
+committed original prompt rows before N-1. Unobserved counts rows without
+that ancestry or whose observation was dropped. Ambiguous counts rows in
+consumers with alternative histories and overlaps the other kinds. Each
+interval is split at context positions 32768, 65536, 131072 and 196608, with
+fixed labels `0_32k`, `32_64k`, `64_128k`, `128_192k` and `192k_plus`.
+
+Observation outcomes distinguish `no_history`, `scope_without_ancestry`,
+`before_reply`, `inside_reply`, `final_token`, `complete_reply` and
+`shorter_consumer`. Whole-reply equality includes the emitted final token.
+`any_page` and `eligible_turn` count consumers with at least one committed
+row in the corresponding interval, once per consumer. Their denominator is
+`submitted`; the whole-reply rate uses `compared`. Finish counts distinguish
+natural stops, length cuts, frontend text stops, cancellation and delivery
+failure; `finish_tool_calls` is a subset of successful finishes.
+
+Mismatch labels describe the prior generated token: `reasoning`, `content`,
+`tool_calls`, `end_token`, `unknown` or `mixed`. Only declared end-token IDs
+are end markers. Ignored EOS is counted separately. Hidden delimiters,
+partial stops, unfinished calls and tokens crossing channels stay unknown
+or mixed. Position buckets are the first quarter, middle half and last
+quarter of the prior reply. None of these labels establishes a renderer
+cause. Annotation coverage counts annotated, unknown and mixed tokens;
+late annotations, evictions, drops and possible retention loss remain
+separate outcomes. All labels are fixed, with no salt hashes, request IDs,
+token values or prompt-derived strings.
+
+### Passive reply-end report
+
+Use [the model-owned report](../models/deepseek41/tools/reply_history_report.py)
+on two metrics snapshots from the same deployed process and profile during
+ordinary continued agentic turns, including tools, returned reasoning and
+natural endings. Each external JSON snapshot contains `deployment`,
+`profile`, `captured_at` (Unix seconds) and `metrics` (the unmodified
+Prometheus response). Record the actual deployment identity and window.
+Prefer boundaries between requests; overlapping request lifetimes can make
+request-level rate denominators incomplete. Keep snapshots, optional request
+traces and report output under `$CHOPINFER_DATA`. No service restart or
+special traffic is required by collection.
+
+```sh
+python3 -B models/deepseek41/tools/reply_history_report.py \
+  --before "$CHOPINFER_DATA/reply-before.json" \
+  --after "$CHOPINFER_DATA/reply-after.json" \
+  --out "$CHOPINFER_DATA/reply-report.json"
+```
+
+The report rejects disabled collection, resets, mismatched deployments,
+missing counters and inconsistent overlapping totals. Optional request
+traces are diagnostic only and incomplete traces are flagged. All inputs
+needed for the estimate are counters. Requests with no history are not
+silently classified as mismatches. Their committed rows bound missing
+candidate work; ambiguity and retention loss widen the interval further.
+
+For comparable DeepSeek `tp4-dspark` agentic traffic, the historical
+2026-11-01 all-reply busy-time bound is U = 79/2025, about 3.90%. The
+potential single reply-end saving is S = U*q, where q is the cost-weighted
+share of candidate reply-prefill rows eligible at the exact R-1 boundary.
+Any-page match rates do not enter this estimate. They describe repeated work
+and the potential of a different design with anchors inside replies.
+
+Supply five positive per-row cost lower/upper bounds with `--cost-low` and
+`--cost-high`, a workload-transfer multiplier interval with `--transfer`,
+and their evidence and assumptions with `--assumptions`. The default raw
+eligible-row fraction is an equal-cost scenario, not a conservative bound.
+The report shows 1:1, 2:1, 4:1 and 10:1 row-cost sensitivity. Near-end tool
+mismatches may correlate with costly replies. Existing kernel-interval
+union evidence can justify narrower costs; host elapsed time cannot supply
+a missing GPU busy/wall ratio. No fresh GPU timing is required.
+
+A fully observed window with zero eligible rows has zero reply-end
+opportunity even without calibration. Other supported upper bounds below
+2% recommend stopping; an interval crossing 2% is inconclusive. A lower
+bound above 2% warrants discussion before reuse work. These are potential
+savings, excluding future capture/restore overhead; current serving saves
+no time from these observations. Future traffic retains sampling
+uncertainty. `--independent-turns` and `--turn-cost-ratio` can state explicit
+independence and bounded per-turn cost assumptions for a conditional 95%
+envelope. Correlated sessions invalidate that assumption.
+
+### Observer CPU cost
+
+The explicit release harness `reply_observer_cpu_cost` measures paired
+observer-enabled and disabled work with identical synthetic tokens and
+schedules. It includes lookup, annotation, counters, reserved allocation,
+eviction, commit and finalization work; the existing prompt chain is common
+setup. It reports thread CPU time and elapsed distributions, per-token and
+per-request totals, C1/C8 cycles and the 32-request decode/verify ceiling.
+Normal contexts are 100-160k with 550-token replies; stress cases include
+262k contexts, 16k replies, many salts and separate/joint entry and byte caps.
+Run it through the shared heavy launcher in an open CPU window:
+
+```sh
+bash tools/dev/heavy.sh cargo test --locked --offline --release \
+  -p runtime-engine --lib reply_observer_cpu_cost -- --ignored --nocapture
+```
+
+Default-on collection requires additional p99 elapsed work, with measurement
+uncertainty, below 140 microseconds in every tested cycle. That budget is
+1% of the historical 14 ms lower end of the 14-25 ms step reference, not a
+new GPU result or a guarantee for every model. Unresolved or exceeded cost
+keeps the declared option default off.
+
+On 2026-11-02 the release CPU harness executed all nine cases with 1,000
+measured paired batches and eight warmup batches each. It restored the
+retained-history fixture before each pair, so matches, misses and near-end
+mismatches remained present throughout measurement. Every consumer lookup,
+commit, annotation, eviction and delivery receipt was inside timing.
+The following are incremental elapsed p99 values and mean CPU/elapsed
+costs per completed request, in microseconds. They are synthetic host
+measurements, not GPU timings or measured serving speedups.
+
+| Case | Lookup p99 | Finish p99 | Coincident cycle p50 | Coincident cycle p99 | Mean elapsed/request | Mean CPU/request |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 100k_c1_ar | 404.7 | 4.3 | 352.8 | 408.2 | 484.1 | 390.1 |
+| 160k_c8_verify | 8175.5 | 34.0 | 8070.3 | 8205.6 | 1134.1 | 1133.3 |
+| 160k_c32_ar | 823.4 | 167.3 | 858.4 | 988.7 | 163.1 | 164.7 |
+| 160k_c32_verify64 | 30901.3 | 161.9 | 30913.4 | 31052.9 | 1096.6 | 1098.1 |
+| 160k_c32_verify192 | 32101.6 | 156.7 | 32146.4 | 32255.8 | 1136.6 | 1137.1 |
+| 160k_c8_salts | 442.2 | 32.7 | 465.5 | 471.8 | 182.7 | 182.2 |
+| long_reply_c1 | 1935.6 | 79.3 | 1969.7 | 2011.3 | 5648.2 | 5649.6 |
+| byte_pressure_c8 | 906.7 | 29.7 | 869.7 | 931.2 | 191.0 | 192.2 |
+| joint_pressure_c8 | 1937.3 | 28.5 | 1822.9 | 1962.3 | 309.7 | 309.3 |
+
+Mean incremental elapsed cost was 0.296-2.067 microseconds per committed
+token for the 550-token cases and 0.345 for the 16,384-token case.
+The normal cases retained 256 entries; byte pressure retained 30 at
+about 63.8 MiB, long replies retained 92 at about 62.9 MiB, and joint
+pressure retained 256 at about 63.8 MiB. All capacity assertions passed.
+
+The scheduler CPU clock updated in roughly 1 ms increments. Its per-cycle
+CPU quantiles therefore do not resolve sub-millisecond costs; the table
+reports aggregate paired CPU differences. Elapsed controls and alternating
+pair order expose variability. Other CPU work was present in the open
+window, so these measurements do not establish idle-host performance.
+Every case exceeded the 140-microsecond elapsed budget. Collection remains
+default off; an explicit on setting is a diagnostic choice. No default-on
+claim depends on noisy or quantized CPU measurements.
 
 ### Prefix eviction candidate
 

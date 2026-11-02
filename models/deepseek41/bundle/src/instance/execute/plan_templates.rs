@@ -26,8 +26,8 @@
 //!
 //! `prefill_plan_cache_verify` lowers every reused template again and
 //! makes every reused Engram plan again, and refuses the step if either
-//! fresh plan differs. It also rebuilds the anchor seeds and ledger list
-//! from the fresh lowering's layout and compares them with the run's.
+//! fresh plan differs. The kept plan stores no request data: anchor slot
+//! seeds and ledger request/boundary pairs are rebuilt for each step.
 
 use super::{PREFILL, Run, skip};
 use crate::instance::Instance;
@@ -108,10 +108,7 @@ impl Templates {
         };
         let refused = self.kept.counts().refused;
         if let Some(plan) = self.kept.reuse(&key, |plan| plan.patch(instance, run))? {
-            if verify
-                && (!plan.same(&skip::Plan::lower(instance, run, &layout)?)?
-                    || run.anchors != layout.step(instance, run)?)
-            {
+            if verify && !plan.same(&skip::Plan::lower(instance, run, &layout)?)? {
                 return Err("a reused prefill plan template differs from a fresh lowering".into());
             }
             return Ok(plan);

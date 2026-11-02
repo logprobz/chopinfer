@@ -196,14 +196,6 @@ impl Layout {
                 .collect(),
         }
     }
-
-    pub(super) fn step(
-        &self,
-        instance: &Instance,
-        run: &Run,
-    ) -> Result<super::anchors::Step, String> {
-        super::anchors::Step::from_anchors(instance, &run.inputs, &self.anchors)
-    }
 }
 
 /// `Layout::structure`.

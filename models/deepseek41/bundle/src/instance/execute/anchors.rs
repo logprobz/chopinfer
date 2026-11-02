@@ -40,7 +40,7 @@ const TAIL: &str = "compressor.tail";
 
 /// Request-dependent anchor work, rebuilt for each run and never kept in
 /// a plan or template. Seeds precede every slot write on each rank stream.
-#[derive(Debug, Default, Eq, PartialEq)]
+#[derive(Debug, Default)]
 pub(super) struct Step {
     pub seeds: Vec<Vec<(Span, Span)>>,
     /// (request, absolute anchor tokens), in spare order for the ledger.
@@ -53,9 +53,9 @@ impl Step {
         Self::from_anchors(instance, inputs, &anchors)
     }
 
-    /// Rebuilds the per-step work from a fresh lowering's anchors, also
-    /// used by template verification to audit the run's rebuilt work.
-    pub(super) fn from_anchors(
+    /// Builds this step's slot seeds and ledger request/boundary pairs.
+    /// The kept plan stores none of this request-dependent data.
+    fn from_anchors(
         instance: &Instance,
         inputs: &PhaseInputs,
         anchors: &[Anchor],

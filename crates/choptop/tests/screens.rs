@@ -946,6 +946,7 @@ fn earlier(model: (&str, &str, &str), letter: char, gpus: &[u32], ago: u64) -> R
         port: 8310 + u16::from(letter as u8 - b'A'),
         edits: Vec::new(),
         custom: Vec::new(),
+        command: String::new(),
         pid: None,
         start_ticks: None,
         log: PathBuf::from("/state/choptop/logs/earlier.log"),

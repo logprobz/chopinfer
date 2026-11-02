@@ -517,6 +517,7 @@ pub fn queued(
                 port: planned.port,
                 edits: edits.clone(),
                 custom: custom.clone(),
+                command: logged.join(" "),
                 pid: None,
                 start_ticks: None,
                 log: logs.map_or_else(|| name.clone().into(), |logs| logs.join(&name)),

@@ -283,6 +283,9 @@ impl Launches {
                 .and_then(Identity::read)
                 .map(|identity| identity.arguments.join(" "))
                 .unwrap_or_default();
+            if record.command.is_empty() {
+                record.command = crate::ui::widgets::sanitize(&arguments);
+            }
             let id = self.adopt(record, Phase::Running, registry, now);
             if let Some(launch) = self.launches.iter_mut().find(|launch| launch.id == id) {
                 launch.shown = crate::ui::widgets::sanitize(&arguments);
@@ -334,7 +337,7 @@ impl Launches {
         let mut launch = Launch {
             id,
             shown: String::new(),
-            logged: String::new(),
+            logged: record.command.clone(),
             binary: PathBuf::new(),
             arguments: Vec::new(),
             environment: Vec::new(),
@@ -356,7 +359,8 @@ impl Launches {
     pub fn queue(&mut self, queued: Queued, registry: &mut Registry, now: f64) -> u64 {
         self.next += 1;
         let id = self.next;
-        let record = queued.record;
+        let mut record = queued.record;
+        record.command = queued.logged.clone();
         registry.add_launch(id, record.letter, &record.served_model_name, now);
         let after = queued
             .waits
@@ -523,7 +527,10 @@ impl Launches {
         registry.note(
             now,
             label,
-            format!("stopping: SIGTERM from choptop {why}"),
+            format!(
+                "stopping: SIGTERM from choptop {why}; it ran {}",
+                launch.logged
+            ),
             Tone::Warning,
         );
         Ok(())
@@ -1199,7 +1206,10 @@ mod tests {
             last_event(&registry),
             (
                 format!("proc {pid}"),
-                "stopping: SIGTERM from choptop as asked with X".to_owned(),
+                format!(
+                    "stopping: SIGTERM from choptop as asked with X; it ran CHOPINFER_LOG_LEVEL=info {} serve",
+                    binary.display()
+                ),
                 Tone::Warning
             )
         );
@@ -1274,6 +1284,43 @@ mod tests {
         assert_eq!(
             again.records[0].ended,
             Some(format!("cancelled: proc {} was not stopped", recorded.pid))
+        );
+    }
+
+    #[test]
+    fn own_and_adopted_stop_events_keep_the_redacted_command() {
+        let root = scratch("stop-command");
+        let binary = root.join("sleeps");
+        write_script(&binary, &format!("#!/bin/sh\n{CLOSE}{UNTIL_TERM}"));
+        let command = "CHOPINFER_API_KEY=**** chopinfer serve --model /models/example";
+        let mut registry = Registry::new(1.0);
+        let mut launches = launches(&root);
+        let mut item = queued(&binary, 'A', 8310, Vec::new());
+        item.environment
+            .push(("CHOPINFER_API_KEY".into(), "placeholder-secret".into()));
+        item.logged = command.into();
+        let id = launches.queue(item, &mut registry, 1.0);
+        launches.supervise(&mut registry, 2.0, &mut |_, _| true);
+        launches
+            .stop(id, "as asked with X", &mut registry, 3.0)
+            .unwrap();
+        assert!(last_event(&registry).1.ends_with(command));
+        let saved = Records::load(Some(root.join("state/launches.json"))).0;
+        assert_eq!(saved.records[0].command, command);
+        let guard = fake_serve(&root.join("adopted"));
+        let mut record = saved.records[0].clone();
+        record.pid = Some(guard.0.id());
+        record.start_ticks = process::start_ticks_of(guard.0.id());
+        let adopted = launches.adopt(record, Phase::Running, &mut registry, 4.0);
+        launches
+            .stop(adopted, "as asked with X", &mut registry, 5.0)
+            .unwrap();
+        assert!(last_event(&registry).1.ends_with(command));
+        assert!(
+            registry
+                .events
+                .iter()
+                .all(|event| !event.what.contains("placeholder-secret"))
         );
     }
 

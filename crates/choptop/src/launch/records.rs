@@ -47,6 +47,8 @@ pub struct Record {
     /// The form's values, without secrets.
     pub edits: Vec<(Key, String)>,
     pub custom: Vec<String>,
+    /// The command saved for events, with secret environment values masked.
+    pub command: String,
     pub pid: Option<u32>,
     pub start_ticks: Option<u64>,
     pub log: PathBuf,
@@ -84,6 +86,7 @@ impl Record {
                 json!({"kind": kind, "name": name, "value": value})
             }).collect::<Vec<_>>(),
             "custom": self.custom,
+            "command": self.command,
             "pid": self.pid,
             "start_ticks": self.start_ticks,
             "log": self.log.display().to_string(),
@@ -161,6 +164,11 @@ impl Record {
                 .ok_or("port is missing")?,
             edits,
             custom: texts("custom")?,
+            command: object
+                .get("command")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
             pid: number("pid").and_then(|pid| u32::try_from(pid).ok()),
             start_ticks: number("start_ticks"),
             log: PathBuf::from(text("log")?),
@@ -414,6 +422,7 @@ pub(crate) mod tests {
             port: 8310,
             edits: vec![(Key::Flag("max-sequences".into()), "48".into())],
             custom: vec!["--kv-offload-prefix off".into()],
+            command: String::new(),
             pid: None,
             start_ticks: None,
             log: PathBuf::from("/state/choptop/logs/a.log"),

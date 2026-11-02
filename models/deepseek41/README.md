@@ -240,6 +240,7 @@ them. A non-default value is unqualified.
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit and each reused plan template again and refuse a differing plan. |
+| `prefill_tail_folds` | `false` | Candidate: Flash TP4 dense prefills run full 128-row TMA tiles and divide the remainder into exact-row folds of at most 64 rows, including shared-expert gate, up and down. Prefills of 65 to 127 rows use two folds; short prefills keep their existing route. GPU exactness and paired timing are pending. |
 | `prefill_upper_skip` | `true` | Use upper-skip prefill; requires nonzero guaranteed chunk ends. |
 | `shared_overlap_max_rows` | `4294967295` | Largest graph bucket that overlaps shared-expert and eligible window-KV work. Positive values only; the default covers every admitted bucket. |
 | `text_config.candidate_topk_blocks` | `2048` | Candidate block pool, checked with index top-k and the partial newest block. |
@@ -300,6 +301,49 @@ diagnostic output only.
 longer selects the bundle's step or commit records. Existing diagnostic
 capture directories, AR Engram tracing and the shared
 `CHOPINFER_DEVICE_RESULTS` control remain available.
+
+### Candidate dense prefill tail folds
+
+`prefill_tail_folds=true` partitions every Flash TP4 dense prefill above
+64 rows into full 128-row TMA tiles followed by at most two registered
+exact-row folds. The remainder runs once up to 64 rows, or as 64 rows
+plus the rest. The option covers attention q/kv/o, the indexer query,
+shared-expert gate/up/down and Engram projections. It retains the current
+1-64-row short-prefill route. Other topologies keep their current routes.
+The candidate uses ordinary TMA for full tiles, including aligned widths;
+compact, matrix and staged-scale prefill choices stay with the option-off
+route. Each tail has separate aligned scratch, sliced activation, scale
+and output spans, and the original status span with its row offset.
+
+CPU tests compare fake-host result metadata and committed request state,
+pin routes and spans, and sweep both served profiles with the option on
+and off. They do not establish GPU arithmetic equality. The candidate is
+not adopted, and no performance claim follows from those checks.
+
+The ignored lab probe compares the current route with the partition at
+85, 127, 789, 831, 853, 1557 and 1599 rows for the Flash TP4 q/kv/o,
+indexer and shared-expert shapes. Before timing it requires bitwise equal
+outputs and statuses. Each device interleaves identical-operand A/A
+controls with A/B visits using gated CUDA events and cold weights. Each
+result reports the A/A spread. It records power limits and clocks and
+refuses a changed power limit. Lab results locate work; adoption still
+requires served acceptance.
+
+Prepare the test executable and stage the locked timing probe before the
+GPU reservation. Keep the staged cubin and receipts outside the tree:
+
+```sh
+source ~/.config/chopinfer/local.env && bash tools/dev/heavy.sh --label ds41tail-probe-build cargo test -p model-deepseek41-lab --test prefill_tail_folds --no-run --locked --offline
+source ~/.config/chopinfer/local.env && bash tools/dev/heavy.sh --label ds41tail-probe-stage cargo run -p kernel-lab --locked --offline -- stage-cubins "${CHOPINFER_DATA:?}/tail-fold-probe"
+```
+
+Queue this command as a pair-lab job (`# gpus 2`), with
+`CHOPINFER_KERNEL_GPUS` naming its two idle GPUs. The inner timeout bounds
+the admitted job to five minutes including termination:
+
+```sh
+source ~/.config/chopinfer/local.env && bash tools/dev/heavy.sh --label ds41tail-probe env CHOPINFER_KERNEL_REQUIRE=1 CHOPINFER_KERNEL_PROBE_CUBIN="${CHOPINFER_DATA:?}/tail-fold-probe/probe_sm120.cubin" timeout --signal=TERM --kill-after=5s 295s cargo test -p model-deepseek41-lab --test prefill_tail_folds --locked --offline prefill_tail_folds_pair -- --ignored --exact --nocapture
+```
 
 ### Prompt-end grid-anchor candidate
 

@@ -341,7 +341,7 @@ fn measured_policy_keeps_known_slow_tails() {
     ] {
         let mut count = 0;
         for (e, _, _) in &shapes {
-            let policy = registration::prefill_tail_policy(e.query);
+            let policy = registration::prefill_tail_policy(e.query, false).unwrap();
             let op = Sm120::new()
                 .with_mxfp8_prefill_split_policy(e.clone(), policy)
                 .mxfp8_prefill_gemm(&e.query, Need::rows(8192))

@@ -984,6 +984,11 @@ impl crate::Kernels {
         })
     }
 
+    /// The row tile of the staged dense prefill route.
+    pub(crate) const fn dense_prefill_tile() -> u32 {
+        kernels_sm120::gemm::mxfp8_prefill::TILE
+    }
+
     /// The largest separately prepared dense decode bucket.
     pub(crate) fn dense_decode_capacity() -> u32 {
         mxfp8_fold::SMALL_CAPACITY
@@ -1242,7 +1247,9 @@ impl crate::Kernels {
         let sm120 = dspark_router::register(sm120, shape.geometry);
         let sm120 = ceil_prefill::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = shared::register(sm120, shape.geometry, shape.ranks())?;
-        let sm120 = mxfp8_fold::register(sm120, shape.geometry, shape.ranks())?;
+        let tail_folds = crate::ops::dense::short_prefill::tail_folds_enabled(shape);
+        let sm120 =
+            mxfp8_fold::register_with_tail_folds(sm120, shape.geometry, shape.ranks(), tail_folds)?;
         let sm120 = mxfp8_fold::register_wide(
             sm120,
             shape.geometry,
@@ -1252,10 +1259,18 @@ impl crate::Kernels {
         let sm120 = mxfp8_fold_stream::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = mxfp8_fold_direct::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = projection_reuse::register(sm120, shape.geometry, shape.ranks())?;
-        let sm120 = prefill_matrix::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = if tail_folds {
+            sm120
+        } else {
+            prefill_matrix::register(sm120, shape.geometry, shape.ranks())?
+        };
         // The TMA matrix prefill has no packed entry; the staged-scale TMA
         // prefill serves its one bucket (Flash TP4, 8192 rows).
-        let sm120 = prefill_tma_scales::register(sm120, shape.geometry, shape.ranks())?;
+        let sm120 = if tail_folds {
+            sm120
+        } else {
+            prefill_tma_scales::register(sm120, shape.geometry, shape.ranks())?
+        };
         let sm120 = indexer_query_parallel::register_parallel(sm120, shape.geometry);
         let sm120 = latent_glue::register(sm120, shape.geometry, shape.ranks())?;
         let sm120 = latent_scheduled::register_query(sm120, shape.geometry, shape.ranks());

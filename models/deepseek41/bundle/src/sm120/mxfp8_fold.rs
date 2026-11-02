@@ -137,6 +137,18 @@ pub fn catalog(g: &Geometry) -> Result<Vec<Entry>, String> {
 }
 
 pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, String> {
+    register_with_tail_folds(backend, g, ranks, false)
+}
+
+/// Candidate prefill partition: full TMA tiles followed by exact-row folds.
+/// The caller partitions rows; this backend never selects a split tail.
+pub fn register_with_tail_folds(
+    backend: Sm120,
+    g: &Geometry,
+    ranks: u32,
+    tail_folds: bool,
+) -> Result<Sm120, String> {
+    let tail_folds = tail_folds && g == &model_deepseek41_contract::geometry::FLASH && ranks == 4;
     let prefill: std::collections::BTreeSet<_> = prefill_entries(g, ranks)?
         .into_iter()
         .map(|entry| entry.symbol)
@@ -145,10 +157,10 @@ pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, Strin
         .into_iter()
         .fold(backend, |backend, entry| {
             let backend = if prefill.contains(&entry.symbol) {
-                backend.with_mxfp8_prefill_split_policy(
-                    entry.clone(),
-                    prefill_tail_policy(entry.query),
-                )
+                match prefill_tail_policy(entry.query, tail_folds) {
+                    Some(policy) => backend.with_mxfp8_prefill_split_policy(entry.clone(), policy),
+                    None => backend.with_mxfp8_prefill(entry.clone()),
+                }
             } else {
                 backend
             };
@@ -157,7 +169,7 @@ pub fn register(backend: Sm120, g: &Geometry, ranks: u32) -> Result<Sm120, Strin
     let mut backend = backend;
     for base in prefill_entries(g, ranks)? {
         for rows in compact::ROWS {
-            if let Some(stages) = compact::stages(g, base.query, rows) {
+            if !tail_folds && let Some(stages) = compact::stages(g, base.query, rows) {
                 let entry =
                     kernels_sm120::gemm::mxfp8_prefill_compact::Entry::new(base.clone(), stages)
                         .map_err(|e| e.to_string())?;
@@ -706,9 +718,13 @@ pub fn prefill_split_cubins(
 /// these bounds are interpolation, not measured crossover points.
 pub fn prefill_tail_policy(
     q: Mxfp8FoldGemmQuery,
-) -> kernels_sm120::gemm::mxfp8_prefill_split::TailPolicy {
+    tail_folds: bool,
+) -> Option<kernels_sm120::gemm::mxfp8_prefill_split::TailPolicy> {
     use kernels_sm120::gemm::mxfp8_prefill_split::TailPolicy;
-    match (q.n, q.k, q.groups) {
+    if tail_folds {
+        return None;
+    }
+    Some(match (q.n, q.k, q.groups) {
         (16384 | 32768, 1280, 1) | (1024, 4096, 8) => TailPolicy {
             max_tail_rows: 16,
             ..TailPolicy::ALL
@@ -722,7 +738,7 @@ pub fn prefill_tail_policy(
             ..TailPolicy::ALL
         },
         _ => TailPolicy::ALL,
-    }
+    })
 }
 
 /// Select an exact-row registration from the 64-row fold catalog. Decode,

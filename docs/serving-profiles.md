@@ -48,16 +48,22 @@ chopinfer serve --model "$CHOPINFER_MIMO_CHECKPOINT" --tensor-parallel-size 4 --
 - `serve ... --check` runs every startup check that needs neither a device
   nor the package's native module, in serving's order: package preparation
   and verification, the drafter, model options, speculation bounds, KV
-  offload host memory, the frontend declaration and tokenizer, the topology
-  at the planned rank count with its context-parallel groups, the media
-  options, the engine's batch, chunk and sequence limits, the declared media
-  recipes, the `--debug-reference-tokens` file, and the
-  `CHOPINFER_NVTX_RANGES` and `CHOPINFER_DEV_SKIP_WARMUP` variables. It
-  prints the profile, the same effective settings and every model option
-  with its value and default. A failure exits nonzero with the message
-  serving would give. A start can still fail on what only it decides: the
-  native module's frontend export and callbacks, device memory and peer
-  access, the KV capacity the devices hold, and the listen address.
+  offload host memory, the declared operations against this host, the
+  frontend declaration and tokenizer, the topology with its context-parallel
+  groups (selected as serving selects it, except that the device driver's
+  devices are only planned), the media options, the engine's batch, chunk
+  and sequence limits, the declared media recipes, the instance
+  configuration (KV and state contracts, served items and context, and
+  whether the package needs `--checkpoint`), what the backend and build fix
+  (host-memory device capacity, the device sampler
+  `--debug-reference-tokens` needs), the `--debug-reference-tokens` file,
+  and the `CHOPINFER_NVTX_RANGES` and `CHOPINFER_DEV_SKIP_WARMUP`
+  variables. It prints the profile, the same effective settings and every
+  model option with its value and default. A failure exits nonzero with the
+  message serving would give. A start can still fail on what only it
+  decides: the native module's frontend export, weight plan and callbacks,
+  the driver's devices, their memory and peer access, the KV capacity they
+  hold, and the listen address.
   `--check` refuses a `--max-context-tokens` past what one sequence of the
   package holds, which no KV capacity can serve.
 

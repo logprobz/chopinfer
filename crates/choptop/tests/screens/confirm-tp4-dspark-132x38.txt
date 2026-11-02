@@ -1,0 +1,38 @@
+ choptop  >  Load model   replacing proc 48211, proc 51022   4 models  4 GPUs                       window 60s  poll 1s  rescan 15s
+
+┌─ Models  installed beside chopinfer ─────┐┌─ Options  49 serve options ──────────────────────────────────────────────────────────┐
+│ Qwen3.8-Flash        qwen38     found    ││   OPTION                    VALUE                        FROM     NOTE               │
+│ MiMo-V2.6-Flash      mimo26     found    ││ ▾ Model                                                                              │
+│▌DeepSeek-V4.1-Flash  deepseek41 found   ●││   checkpoint                $CHOPINFER_DEEPSEEK_CHECKPOI env                         │
+│ GLM-5.3-Flash        glm5next   missing  ││   modalities                -                            default                     │
+│ recent launches ┌─ Start DeepSeek tp4-dspark ──────────────────────────────────────────────────────────────────┐                 │
+│ DeepSeek tp4-dsp│                                                                                              │                 │
+│ Qwen tp2-mtp x2 │ DeepSeek-V4.1-Flash  tp4-dspark  1 instance at TP4                                           │                 │
+└─────────────────│                                                                                              │                 │
+┌─ Profiles  ● wha│ A  GPUs 0,1,2,3    127.0.0.1:8310    log deepseek41-tp4-dspark-a-20261102-153012.log         │                 │
+│ tp4-ar         A│    logs and launch records stay in ~/.local/state/choptop                                    │perimental       │
+│ tp4-dspark   ● D│                                                                                              │                 │
+│                 │ Stops first                                                                                  │                 │
+│ Not qualified: D│   proc 48211  MiMo-V2.6-Flash on GPUs 0,1: SIGTERM, then the GPUs are free once it exits     │                 │
+│ deepseek-ai chec│   proc 51022  Qwen3.8-Flash on GPUs 2,3: SIGTERM, then the GPUs are free once it exits       │                 │
+│ Confidence-alloc│   serve drains admitted requests for up to 30 s (--drain-timeout-ms) before it exits         │                 │
+│ five drafter hea│                                                                                              │                 │
+│ computed target │ Check                                                                                        │                 │
+│ sampling. Only u│   tp4-dspark: Not qualified: DSpark at TP4 on the deepseek-ai checkpoint with native KV.     │                 │
+└─────────────────│     Confidence-allocated batches compute all five drafter heads and score only computed      │B per rank       │
+┌─ Placement  TP4 │     target rows through mapped sampling. Only unallocated uniform depth-three batches of     │                 │
+│ GPU 0 ■ A  proc │     3-8 items compute three heads. On 2026-10-28, compact allocation resolved a 1.91%...     │                 │
+│ GPU 1 ■ A  proc │   GPU 0 also holds pid 2210 (Xorg, 96 MiB), which choptop leaves running                     │                 │
+│ GPU 2 ■ A  proc │   host memory: 132 of 251 GiB available                                                      │                 │
+│ GPU 3 ■ A  proc │   GPU failures such as memory fit or peer access can still happen after the stop             │                 │
+│ A 127.0.0.1:8310│                                                                                              │ models pick     │
+│ stops proc 48211│ Enter start   Esc back to the loader                                                         │es it.           │
+└─────────────────└──────────────────────────────────────────────────────────────────────────────────────────────┘──── 1-22 of 48 ─┘
+┌─ Command  1 process of this user ────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ A  CUDA_VISIBLE_DEVICES=0,1,2,3 chopinfer serve --model /models/deepseek --tensor-parallel-size 4 --listen 127.0.0.1:8310        │
+│                                                                                                                                  │
+│                                                                                                                                  │
+│                                                                                                                                  │
+│ tp4-dspark; 0 set here (white).  Logs go to ~/.local/state/choptop/logs.  Stops proc 48211, proc 51022 first.                    │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ Tab pane   ↑↓ jk move   ←→ change   Enter edit   Space pick GPU   / find   a add   x reset   S start   Esc back   ? help

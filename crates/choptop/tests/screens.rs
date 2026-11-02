@@ -1645,7 +1645,17 @@ fn confirming() -> App {
 
 /// `S` on `app`'s loader at `profile`: the fresh reading, then `serve
 /// --check` resolving the profile with `values`.
-fn checked(mut app: App, profile: &str, values: &[(&str, &str)]) -> App {
+fn checked(app: App, profile: &str, values: &[(&str, &str)]) -> App {
+    checked_reading(app, profile, values, |app| read_gpus(app, false, None))
+}
+
+/// [`checked`] with the fresh reading `read`.
+fn checked_reading(
+    mut app: App,
+    profile: &str,
+    values: &[(&str, &str)],
+    read: fn(&mut App),
+) -> App {
     use choptop::catalog::Check;
     use crossterm::event::KeyCode;
     app.host.apply(
@@ -1658,14 +1668,15 @@ fn checked(mut app: App, profile: &str, values: &[(&str, &str)]) -> App {
     );
     press(&mut app, KeyCode::Char('S'));
     app.asked(NOW);
-    read_gpus(&mut app, false, None);
+    read(&mut app);
     app.supervise(NOW);
     let Some(Request::Check { generation, .. }) = app.catalog.outbox.pop() else {
         panic!("no check: {:?}", app.loader.flash);
     };
+    let model = app.loader.model.clone().unwrap();
     let mut settings = app
         .catalog
-        .profile("qwen38", profile)
+        .profile(&model, profile)
         .unwrap()
         .settings
         .clone();
@@ -1686,6 +1697,117 @@ fn checked(mut app: App, profile: &str, values: &[(&str, &str)]) -> App {
         }),
     ));
     app
+}
+
+/// The GPU processes the loader reads at `NOW` when MiMo's process 48211
+/// holds GPUs 0 and 1, the loading Qwen process 51022 GPUs 2 and 3, and
+/// the desktop's Xorg GPU 0.
+fn read_split_gpus(app: &mut App) {
+    let process = |pid, memory, kind, name: &str| Process {
+        pid,
+        memory: Some(memory),
+        kind,
+        owner: Owner {
+            start_ticks: Some(u64::from(pid)),
+            name: Some(name.to_owned()),
+            ..Owner::default()
+        },
+    };
+    let reading = |index: u32| {
+        let holder = if index < 2 { 48211 } else { 51022 };
+        let mut processes = vec![process(holder, 89_012 * MIB, Kind::Compute, "chopinfer")];
+        if index == 0 {
+            processes.push(process(2210, 96 * MIB, Kind::Graphics, "Xorg"));
+        }
+        Reading {
+            at: NOW,
+            processes: Some(processes),
+            answered: true,
+            ..Reading::default()
+        }
+    };
+    app.live.gpu(&Report::Polled((0..4).map(reading).collect()));
+}
+
+/// The start dialog for DeepSeek's tp4-dspark on GPUs 0-3 with its whole
+/// qualification, stopping MiMo's process 48211 on GPUs 0 and 1 and the
+/// loading Qwen process 51022 on GPUs 2 and 3.
+fn dspark_confirming() -> App {
+    use crossterm::event::KeyCode;
+    let mut app = loader();
+    let process = |pid: u32, listening: &[&str], hint: &str, age: f64| {
+        Found::Process(ServeProcess {
+            pid,
+            start_ticks: u64::from(pid),
+            executable: "chopinfer".to_owned(),
+            arguments: format!("chopinfer serve --model /models/{hint} --tensor-parallel-size 2")
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect(),
+            model_hint: Some(hint.to_owned()),
+            age: Some(age),
+            listening: listening
+                .iter()
+                .map(|address| address.parse().unwrap())
+                .collect(),
+            cuda_visible_devices: None,
+        })
+    };
+    app.live.scan(&choptop::discover::Report::Scan {
+        found: vec![
+            process(48211, &["127.0.0.1:8311"], "MiMo-V2.6-Flash", 11_520.0),
+            process(51022, &[], "Qwen3.8-Flash", 134.0),
+        ],
+        events: Vec::new(),
+        started: 0.0,
+    });
+    read_split_gpus(&mut app);
+    let mut models = Models::parse(&loader_fixture("models.json")).unwrap();
+    let dspark = models
+        .models
+        .iter_mut()
+        .find(|model| model.model == "deepseek41")
+        .unwrap()
+        .profiles
+        .iter_mut()
+        .find(|profile| profile.name == "tp4-dspark")
+        .unwrap();
+    dspark.qualification = loader_fixture("qualification-tp4-dspark.txt")
+        .trim_end()
+        .to_owned();
+    app.catalog_reply(Reply::Models(Ok(models)));
+    for _ in 0..2 {
+        press(&mut app, KeyCode::Down);
+    }
+    app.tick(NOW);
+    answer_loader(&mut app);
+    assert_eq!(app.loader.model.as_deref(), Some("deepseek41"));
+    assert_eq!(app.loader.profile.as_deref(), Some("tp4-dspark"));
+    checked_reading(app, "tp4-dspark", &[], read_split_gpus)
+}
+
+#[test]
+fn a_long_qualification_leaves_room_for_every_stop_and_check() {
+    use choptop::app::Dialog;
+    use crossterm::event::KeyCode;
+    let mut app = dspark_confirming();
+    let Some(Dialog::Start(confirm)) = &app.dialog else {
+        panic!("no start dialog: {:?}", app.loader.flash);
+    };
+    assert_eq!(confirm.stops.len(), 2);
+    app.settle(132, 38);
+    check("confirm-tp4-dspark-132x38", &app, 132, 38);
+    // Too short for every stop and check: the dialog says so, and Enter
+    // does not start.
+    app.settle(132, 20);
+    check("confirm-too-short-132x20", &app, 132, 20);
+    press(&mut app, KeyCode::Enter);
+    assert!(app.dialog.is_some());
+    assert!(app.pending.is_none());
+    app.settle(132, 38);
+    press(&mut app, KeyCode::Enter);
+    assert!(app.dialog.is_none());
+    assert!(app.pending.is_some());
 }
 
 #[test]

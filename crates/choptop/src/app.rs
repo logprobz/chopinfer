@@ -639,6 +639,18 @@ impl App {
         })));
     }
 
+    /// Whether the last frame showed everything `dialog` stops and checks,
+    /// so Enter may confirm it. Before the first frame the height is not
+    /// known.
+    fn shows_all(&self, dialog: &Dialog) -> bool {
+        match dialog {
+            Dialog::Start(confirm) => {
+                self.height == 0 || crate::ui::confirm::start_fits(self, confirm, self.height)
+            }
+            Dialog::Stop(_) => true,
+        }
+    }
+
     /// Enter in a confirm dialog.
     fn confirm(&mut self, dialog: Dialog) -> Action {
         match dialog {
@@ -946,7 +958,7 @@ impl App {
         }
         if let Some(dialog) = self.dialog.take() {
             match event.code {
-                KeyCode::Enter => return self.confirm(dialog),
+                KeyCode::Enter if self.shows_all(&dialog) => return self.confirm(dialog),
                 KeyCode::Esc => {}
                 _ => {
                     self.dialog = Some(dialog);

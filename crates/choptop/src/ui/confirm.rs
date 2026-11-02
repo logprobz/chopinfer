@@ -17,6 +17,9 @@ type Line = Vec<(String, Style)>;
 /// Spaces after the widest entry of an instance row's column.
 const GAP: usize = 4;
 
+/// Most rows the profile's qualification takes in the start dialog.
+const QUALIFICATION_ROWS: usize = 4;
+
 fn cyan() -> Style {
     Style::fg(Color::Cyan).bold()
 }
@@ -48,7 +51,14 @@ fn path_lines(path: &str, width: usize) -> Vec<String> {
 
 pub fn draw(buffer: &mut Buffer, app: &App, dialog: &Dialog) {
     let (width, title, lines) = match dialog {
-        Dialog::Start(confirm) => (START_WIDTH, confirm.title(), start_lines(app, confirm)),
+        Dialog::Start(confirm) => {
+            let lines = start_lines(app, confirm);
+            let rows = lines.rows();
+            let lines = lines
+                .fit(room(buffer.height))
+                .unwrap_or_else(|| too_short(confirm, rows, buffer.height));
+            (START_WIDTH, confirm.title(), lines)
+        }
         Dialog::Stop(stop) => (
             STOP_WIDTH,
             format!("Stop {}", sanitize(&stop.label)),
@@ -58,13 +68,25 @@ pub fn draw(buffer: &mut Buffer, app: &App, dialog: &Dialog) {
     overlay(buffer, width, &title, lines);
 }
 
+/// Whether the start dialog shows everything `confirm` stops and checks
+/// on a terminal `height` rows tall. When it does not, the dialog says so
+/// instead, and Enter does not start.
+pub fn start_fits(app: &App, confirm: &Confirm, height: u16) -> bool {
+    start_lines(app, confirm).rows() <= usize::from(height)
+}
+
+/// The rows a dialog's lines can take on a terminal `height` rows tall.
+fn room(height: u16) -> usize {
+    usize::from(height.saturating_sub(4))
+}
+
 /// Draws `lines` in a box `width` wide, centered, titled `title`. When the
 /// terminal is too short, lines before the last two (a blank and the keys)
 /// are left out from the end. A line too long for the box ends with
 /// `...`, in the style of the piece it is cut in.
 fn overlay(buffer: &mut Buffer, width: u16, title: &str, mut lines: Vec<Line>) {
     let width = width.min(buffer.width.saturating_sub(2));
-    let room = usize::from(buffer.height.saturating_sub(4));
+    let room = room(buffer.height);
     if lines.len() > room && room >= 2 {
         let keep = lines.split_off(lines.len() - 2);
         lines.truncate(room - 2);
@@ -111,31 +133,97 @@ fn overlay(buffer: &mut Buffer, width: u16, title: &str, mut lines: Vec<Line>) {
     }
 }
 
-fn start_lines(app: &App, confirm: &Confirm) -> Vec<Line> {
+/// The start dialog's lines. Every line but the qualification's must
+/// show; the qualification takes the rows the rest leaves, up to
+/// [`QUALIFICATION_ROWS`].
+struct StartLines {
+    /// From the top to the Check heading.
+    head: Vec<Line>,
+    qualification: Vec<Line>,
+    /// The warnings, host memory, the note on GPU failures and the keys.
+    tail: Vec<Line>,
+}
+
+impl StartLines {
+    /// The terminal rows that show every line that must show.
+    fn rows(&self) -> usize {
+        self.head.len() + self.tail.len() + 4
+    }
+
+    /// The lines in `room` rows, the qualification cut to what is left
+    /// and ending with `...` when cut; `None` when the lines that must
+    /// show do not fit.
+    fn fit(self, room: usize) -> Option<Vec<Line>> {
+        let left = room
+            .checked_sub(self.head.len() + self.tail.len())?
+            .min(QUALIFICATION_ROWS);
+        let cut = self.qualification.len() > left;
+        let mut lines = self.head;
+        lines.extend(self.qualification.into_iter().take(left));
+        if cut
+            && left > 0
+            && let Some((text, _)) = lines.last_mut().and_then(|line| line.last_mut())
+        {
+            text.push_str("...");
+        }
+        lines.extend(self.tail);
+        Some(lines)
+    }
+}
+
+/// The start dialog on a terminal too short to show every stop and check:
+/// how many `rows` it needs, and no Enter.
+fn too_short(confirm: &Confirm, rows: usize, height: u16) -> Vec<Line> {
+    vec![
+        Vec::new(),
+        model_line(confirm),
+        Vec::new(),
+        vec![(
+            "   The terminal is too short to show everything this start stops and checks."
+                .to_owned(),
+            Style::fg(Color::Yellow),
+        )],
+        vec![(
+            format!("   Enter starts once it is {rows} rows tall; it is {height}."),
+            Style::PLAIN,
+        )],
+        Vec::new(),
+        vec![
+            (" Esc".to_owned(), cyan()),
+            (" back to the loader".to_owned(), Style::PLAIN),
+        ],
+    ]
+}
+
+/// The served model name, the profile and the instances.
+fn model_line(confirm: &Confirm) -> Line {
+    let count = confirm.start.placement.instances.len();
+    vec![
+        (
+            format!(" {}", sanitize(&confirm.served)),
+            Style::fg(Color::White).bold(),
+        ),
+        (
+            format!("  {}  ", sanitize(&confirm.start.profile)),
+            Style::PLAIN,
+        ),
+        (
+            format!(
+                "{count} instance{} at TP{}",
+                if count == 1 { "" } else { "s" },
+                confirm.tensor_parallel
+            ),
+            Style::fg(Color::Dim),
+        ),
+    ]
+}
+
+fn start_lines(app: &App, confirm: &Confirm) -> StartLines {
     let dim = Style::fg(Color::Dim);
     let yellow = Style::fg(Color::Yellow);
     let inner = usize::from(START_WIDTH - 2);
     let start = &confirm.start;
-    let count = start.placement.instances.len();
-    let mut lines: Vec<Line> = vec![
-        Vec::new(),
-        vec![
-            (
-                format!(" {}", sanitize(&confirm.served)),
-                Style::fg(Color::White).bold(),
-            ),
-            (format!("  {}  ", sanitize(&start.profile)), Style::PLAIN),
-            (
-                format!(
-                    "{count} instance{} at TP{}",
-                    if count == 1 { "" } else { "s" },
-                    confirm.tensor_parallel
-                ),
-                dim,
-            ),
-        ],
-        Vec::new(),
-    ];
+    let mut lines: Vec<Line> = vec![Vec::new(), model_line(confirm), Vec::new()];
     // Each column as wide as its widest entry and the gap, so a TP4 or TP8
     // list stays apart from the address.
     let rows = start
@@ -207,29 +295,35 @@ fn start_lines(app: &App, confirm: &Confirm) -> Vec<Line> {
     lines.push(Vec::new());
     lines.push(vec![(" Check".to_owned(), cyan())]);
     let width = inner - 8;
-    if let Some(qualification) = &confirm.qualification {
-        wrapped(&mut lines, qualification, width, yellow);
+    let mut qualification = Vec::new();
+    if let Some(text) = &confirm.qualification {
+        wrapped(&mut qualification, text, width, yellow);
     }
+    let mut tail = Vec::new();
     for warning in &confirm.warnings {
-        wrapped(&mut lines, warning, width, yellow);
+        wrapped(&mut tail, warning, width, yellow);
     }
     if let Some(memory) = &confirm.memory {
-        wrapped(&mut lines, memory, width, dim);
+        wrapped(&mut tail, memory, width, dim);
     }
     wrapped(
-        &mut lines,
+        &mut tail,
         "GPU failures such as memory fit or peer access can still happen after the stop",
         width,
         dim,
     );
-    lines.push(Vec::new());
-    lines.push(vec![
+    tail.push(Vec::new());
+    tail.push(vec![
         (" Enter".to_owned(), cyan()),
         (" start   ".to_owned(), Style::PLAIN),
         ("Esc".to_owned(), cyan()),
         (" back to the loader".to_owned(), Style::PLAIN),
     ]);
-    lines
+    StartLines {
+        head: lines,
+        qualification,
+        tail,
+    }
 }
 
 fn stop_lines(stop: &StopConfirm) -> Vec<Line> {

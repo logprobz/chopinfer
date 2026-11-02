@@ -14,6 +14,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Read;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -871,12 +872,29 @@ pub fn run(
     environment: &[(String, String)],
     timeout: Duration,
 ) -> Result<String, String> {
+    run_with_grace(
+        binary,
+        arguments,
+        environment,
+        timeout,
+        Duration::from_secs(5),
+    )
+}
+
+fn run_with_grace(
+    binary: &Path,
+    arguments: &[String],
+    environment: &[(String, String)],
+    timeout: Duration,
+    grace: Duration,
+) -> Result<String, String> {
     let mut child = Command::new(binary)
         .args(arguments)
         .envs(environment.iter().map(|(name, value)| (name, value)))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .process_group(0)
         .spawn()
         .map_err(|error| format!("cannot run {}: {error}", binary.display()))?;
     let drain = |pipe: Option<Box<dyn Read + Send>>| {
@@ -905,7 +923,18 @@ pub fn run(
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() >= deadline => {
-                let _ = child.kill();
+                let _ = crate::launch::process::terminate_group(&mut child);
+                let until = Instant::now() + grace;
+                while matches!(child.try_wait(), Ok(None)) {
+                    if Instant::now() >= until {
+                        let _ = rustix::process::kill_process_group(
+                            rustix::process::Pid::from_child(&child),
+                            rustix::process::Signal::KILL,
+                        );
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(20));
+                }
                 let _ = child.wait();
                 // A helper it started may still hold the pipes, so their
                 // readers are left to end on their own.
@@ -1860,10 +1889,69 @@ mod tests {
     }
 
     #[test]
+    fn catalog_timeouts_terminate_groups_then_escalate_and_reap() {
+        use crate::launch::process::tests::{CLOSE, wait_for};
+        for cooperative in [true, false] {
+            let root = scratch(if cooperative {
+                "timeout-term"
+            } else {
+                "timeout-kill"
+            });
+            let script = root.join("chopinfer");
+            let trap = if cooperative {
+                "trap 'echo term > \"$ROOT/term\"; exit 0' TERM"
+            } else {
+                "trap '' TERM"
+            };
+            write_script(
+                &script,
+                &format!(
+                    "#!/bin/sh\n{CLOSE}{trap}\necho $$ > \"$ROOT/parent\"\n/bin/sh -c 'exec sleep 30' &\necho $! > \"$ROOT/descendant\"\nn=0\nwhile [ $n -lt 600 ]; do sleep 0.05; n=$((n+1)); done\n"
+                ),
+            );
+            let started = Instant::now();
+            let result = run_with_grace(
+                &script,
+                &[],
+                &[("ROOT".into(), root.display().to_string())],
+                Duration::from_secs(1),
+                Duration::from_millis(150),
+            );
+            assert!(result.unwrap_err().contains("no answer within"));
+            assert!(started.elapsed() < Duration::from_secs(10));
+            assert_eq!(root.join("term").exists(), cooperative);
+            let pid = fs::read_to_string(root.join("parent"))
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            assert!(
+                crate::launch::process::start_ticks_of(pid).is_none(),
+                "parent was not reaped"
+            );
+            let descendant = fs::read_to_string(root.join("descendant"))
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            wait_for(|| {
+                crate::launch::process::Identity::read(descendant)
+                    .is_none_or(|identity| !identity.running())
+            });
+        }
+    }
+
+    #[test]
     fn a_command_that_hangs_is_ended() {
         let root = scratch("hang");
         let script = root.join("chopinfer");
-        write_script(&script, "#!/bin/sh\nexec sleep 30\n");
+        write_script(
+            &script,
+            &format!(
+                "#!/bin/sh\n{}exec sleep 30\n",
+                crate::launch::process::tests::CLOSE
+            ),
+        );
         let started = Instant::now();
         let error = run(&script, &[], &[], Duration::from_millis(200)).unwrap_err();
         assert!(error.contains("no answer within"), "{error}");

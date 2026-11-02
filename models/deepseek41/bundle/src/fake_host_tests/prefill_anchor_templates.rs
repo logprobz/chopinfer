@@ -85,7 +85,7 @@ fn batch(items: &[(u64, u64, u64, u64)]) -> (Vec<u8>, Vec<u8>) {
 fn anchor_allowance_is_capped_at_served_sequences() {
     for dspark in [false, true] {
         // Three also checks that the cap is the served count, not its bucket.
-        for sequences in [4, 3] {
+        for sequences in [4, 3, 1] {
             let host = host(dspark);
             let mut instance = create(&host, sequences);
             assert_eq!(instance.prefill_anchor_items(), Ok(Some(sequences)));
@@ -140,7 +140,7 @@ fn inside(span: DeviceBufferSpanV1, buffer: DeviceBufferSpanV1) -> bool {
 /// Every rank seeds its own anchor before the tails seed their writable
 /// entries, and before any kernel (including DMA producers) can write its
 /// slot state. Other ranks' uploads and Engram gathers may run earlier.
-fn check_seed_order(instance: &BundleInstanceV1, lines: &[String]) {
+fn check_seed_order(instance: &BundleInstanceV1, lines: &[String], anchors: usize) {
     let (spares, states) = crate::instance::anchor_spans(instance.handle());
     let copies: Vec<_> = lines
         .iter()
@@ -161,13 +161,13 @@ fn check_seed_order(instance: &BundleInstanceV1, lines: &[String]) {
                 .iter()
                 .filter(|(_, views)| inside(views[0], tails))
                 .count(),
-            3
+            3 * anchors
         );
         let own: Vec<_> = copies
             .iter()
             .filter(|(_, views)| inside(views[1], tails))
             .collect();
-        assert_eq!(own.len(), 3);
+        assert_eq!(own.len(), 3 * anchors);
         assert!(seeded.last().unwrap().0 < own[0].0);
         let first_state_launch = lines
             .iter()
@@ -200,7 +200,7 @@ fn tag_target_state(host: &Host, instance: &BundleInstanceV1) {
     }
 }
 
-/// The target part of an interior snapshot: all ring and compressor-tail
+/// The target part of a snapshot: all ring and compressor-tail
 /// bytes on all ranks, without masking any cells. DSpark drafter state
 /// has separate coverage.
 fn target_snapshot(
@@ -208,12 +208,22 @@ fn target_snapshot(
     instance: &mut BundleInstanceV1,
     request: u64,
     tokens: u64,
+    interior: bool,
 ) -> Vec<u8> {
-    let (spares, _) = crate::instance::anchor_spans(instance.handle());
-    let targets: Vec<_> = spares
-        .iter()
-        .flat_map(|s| s.buffers[..2].iter().flatten().copied())
-        .collect();
+    let (spares, states) = crate::instance::anchor_spans(instance.handle());
+    let targets: Vec<_> = if interior {
+        spares
+            .iter()
+            .flat_map(|s| s.buffers[..2].iter().flatten().copied())
+            .collect()
+    } else {
+        states
+            .iter()
+            .flat_map(|state| {
+                ["window.ring", "compressor.tail"].map(|name| state.named(name).unwrap())
+            })
+            .collect()
+    };
     let pages: Vec<_> = (130..130 + instance.describe_prefix_state().unwrap()).collect();
     let before = host.device.journal.borrow().len();
     instance
@@ -235,53 +245,80 @@ fn target_snapshot(
     bytes
 }
 
-fn snapshots(dspark: bool, reuse: bool) -> Vec<Vec<u8>> {
+fn snapshots(dspark: bool, reuse: bool, packed: bool) -> Vec<Vec<u8>> {
     let host = host(dspark);
     let mut instance = create(&host, 4);
     let mut snapshots = Vec::new();
     // Each anchor is 67 packed rows after an odd start, at a different
     // absolute 64-token boundary. Both ring seeds and tail seeds are needed.
-    for (index, (request, slot, prefix, rows)) in
-        [(7, 0, 829, 68), (19, 2, 957, 68), (23, 1, 1021, 68)]
-            .into_iter()
-            .enumerate()
-    {
+    let batches = if packed {
+        // Swap request order and move both slots. Request 7 uses spare 0
+        // in the first step and spare 1 in the reused template's step.
+        vec![
+            vec![(7, 0, 829, 68), (19, 2, 957, 68)],
+            vec![(19, 3, 1085, 68), (7, 1, 1021, 68)],
+        ]
+    } else {
+        vec![
+            vec![(7, 0, 829, 68)],
+            vec![(19, 2, 957, 68)],
+            vec![(23, 1, 1021, 68)],
+        ]
+    };
+    for (index, items) in batches.iter().enumerate() {
         if !reuse && index > 0 {
             instance.destroy().unwrap();
             instance = create(&host, 4);
         }
-        plan_timing::restore_without_snapshot(
-            instance.handle(),
-            request,
-            slot as u32,
-            &(0..prefix as u32).collect::<Vec<_>>(),
-        )
-        .unwrap();
+        for &(request, slot, prefix, _) in items {
+            plan_timing::restore_without_snapshot(
+                instance.handle(),
+                request,
+                slot as u32,
+                &(0..prefix as u32).collect::<Vec<_>>(),
+            )
+            .unwrap();
+        }
         tag_target_state(&host, &instance);
         let before = plan_templates::counts(instance.handle());
         let first = host.device.journal.borrow().len();
         instance
-            .execute_prefill_cuts(
-                &batch(&[(request, slot, prefix, rows)]).1,
-                &mut Sink::default(),
-            )
+            .execute_prefill_cuts(&batch(items).1, &mut Sink::default())
             .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
         let after = plan_templates::counts(instance.handle());
         assert_eq!(after.hits - before.hits, u64::from(reuse && index > 0));
         assert_eq!(after.kept - before.kept, u64::from(!reuse || index == 0));
-        check_seed_order(&instance, &host.device.journal.borrow()[first..]);
-        instance.commit().unwrap();
-        assert_eq!(
-            crate::instance::ledger_state(instance.handle(), slot as u32),
-            (Some((request, prefix + rows)), false)
+        check_seed_order(
+            &instance,
+            &host.device.journal.borrow()[first..],
+            items.len(),
         );
-        snapshots.push(target_snapshot(
-            &host,
-            &mut instance,
-            request,
-            (prefix + rows) / 64 * 64,
-        ));
-        instance.retire_request(request).unwrap();
+        instance.commit().unwrap();
+        let captured = snapshots.len();
+        for &(request, slot, prefix, rows) in items {
+            assert_eq!(
+                crate::instance::ledger_state(instance.handle(), slot as u32),
+                (Some((request, prefix + rows)), false)
+            );
+            // The interior capture reads this request's spare. The later
+            // prompt-end capture must still find its own slot and boundary.
+            for (tokens, interior) in [((prefix + rows) / 64 * 64, true), (prefix + rows, false)] {
+                snapshots.push(target_snapshot(
+                    &host,
+                    &mut instance,
+                    request,
+                    tokens,
+                    interior,
+                ));
+            }
+            instance.retire_request(request).unwrap();
+        }
+        if packed {
+            assert!(
+                snapshots[captured] != snapshots[captured + 2],
+                "the two spares hold distinct slot bytes"
+            );
+        }
     }
     instance.destroy().unwrap();
     assert_eq!(host.acquired.get(), host.released.get());
@@ -294,11 +331,21 @@ fn anchored_templates_rebuild_ownership_boundaries_and_seeds() {
         for dma in [false, true] {
             skip::with_dma(dma, || {
                 assert!(
-                    snapshots(dspark, true) == snapshots(dspark, false),
+                    snapshots(dspark, true, false) == snapshots(dspark, false, false),
                     "dspark={dspark} dma={dma}"
                 );
             });
         }
+    }
+}
+
+#[test]
+fn two_anchor_templates_follow_reordered_requests_and_slots() {
+    for dspark in [false, true] {
+        assert!(
+            snapshots(dspark, true, true) == snapshots(dspark, false, true),
+            "dspark={dspark}"
+        );
     }
 }
 

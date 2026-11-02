@@ -3956,6 +3956,47 @@ fn worker_refusal_v1(error: impl std::fmt::Display) -> HostCommandErrorV1 {
     run_error(format!("the generation worker did not start: {error}"))
 }
 
+/// A load of the selected bundle that failed.
+fn unloaded_v1(error: crate::HostLoadErrorV1) -> String {
+    format!("the selected bundle did not load: {error}")
+}
+
+/// A served instance's creation the selected bundle's host refused.
+fn refused_host_v1(error: crate::HostLoadErrorV1) -> String {
+    format!("the selected bundle refused this host: {error}")
+}
+
+/// Whether a package acquires the host's serving KV pool.
+fn serving_kv_capability_v1(manifest: &BundleManifestV1) -> bool {
+    manifest
+        .resource_requirements()
+        .required_capabilities()
+        .iter()
+        .any(|capability| capability.as_str() == runtime_bundle_abi::SERVING_KV_CAPABILITY_V1)
+}
+
+/// The serving pool policy of an engine configured as `engine_config` over
+/// `vocabulary` rows, before recurrent state reserves its bytes.
+fn serving_kv_policy_v1(
+    manifest: &BundleManifestV1,
+    engine_config: &EngineConfig,
+    vocabulary: usize,
+    serving: &ServingOptionsV1,
+) -> ServingKvPolicyV1 {
+    // A developer plan may include one final emitted token without a model row.
+    let served_context_tokens = engine_config
+        .maximum_sequence_tokens()
+        .min(manifest.kv_layout().maximum_sequence_tokens() as usize);
+    ServingKvPolicyV1 {
+        sampling_vocabulary: Some(vocabulary),
+        maximum_context_tokens: Some(served_context_tokens),
+        state_reserved_bytes: 0,
+        utilization_millionths: serving.gpu_memory_utilization_millionths,
+        graph_memory_reserve_bytes: serving.graph_memory_reserve_bytes,
+        maximum_pages: serving.kv_pages,
+    }
+}
+
 /// Whether a development start skips its warmup (`CHOPINFER_DEV_SKIP_WARMUP`).
 fn development_skip_warmup_v1() -> Result<bool, HostCommandErrorV1> {
     crate::startup::development_skip_warmup(
@@ -3979,24 +4020,64 @@ fn state_slot_pool_v1(
     )
 }
 
-/// What the generation worker refuses as it starts that needs neither the
-/// native module nor a device, in its order and with its messages: the
-/// declared media recipes, the profiling helper `CHOPINFER_NVTX_RANGES`
-/// asks for, the recurrent state slots and the `--debug-reference-tokens`
-/// file.
+/// What the generation worker refuses as it starts, before it opens its
+/// engine, in its order and with its messages: the declared media recipes
+/// and the profiling helper `CHOPINFER_NVTX_RANGES` asks for.
 fn check_worker_start_v1(
-    manifest: &BundleManifestV1,
     declaration: &runtime_frontend::FrontendDescriptorV1,
-    maximum_rows: usize,
-    speculation: Option<SpeculationConfig>,
-    debug_reference_tokens: Option<&Path>,
 ) -> Result<(), HostCommandErrorV1> {
     crate::validate_media_recipes_v1(declaration).map_err(worker_refusal_v1)?;
     crate::profile_ranges::initialize().map_err(worker_refusal_v1)?;
-    if !manifest.recurrent_state_layouts().is_empty() {
-        state_slot_pool_v1(manifest, maximum_rows, speculation).map_err(worker_refusal_v1)?;
-    }
-    if let Some(path) = debug_reference_tokens {
+    Ok(())
+}
+
+/// What a check knows of the engine [`ServedEngineV1::open`] would open.
+struct EngineCheckV1<'a> {
+    package: &'a BundlePackageV1,
+    topology: &'a ServedTopologyV1,
+    serving_kv_policy: ServingKvPolicyV1,
+    kv_dtype: BundleKvDtypeV1,
+    maximum_rows: u64,
+    speculation: Option<SpeculationConfig>,
+    model_options: &'a std::collections::BTreeMap<String, String>,
+    debug_reference_tokens: Option<&'a Path>,
+}
+
+/// What [`ServedEngineV1::open`] refuses that needs neither the native
+/// module nor a device, in its order and with its messages: the model option
+/// defaults the load resolves, the recurrent state slots, the instance
+/// configuration the package and the served settings make, and the
+/// `--debug-reference-tokens` file.
+fn check_engine_open_v1(engine: &EngineCheckV1<'_>) -> Result<(), HostCommandErrorV1> {
+    let manifest = engine.package.manifest();
+    crate::install::check_model_option_defaults_v1(engine.package)
+        .map_err(|error| worker_refusal_v1(unloaded_v1(error)))?;
+    let state_slots = if manifest.recurrent_state_layouts().is_empty() {
+        None
+    } else {
+        Some(
+            state_slot_pool_v1(manifest, engine.maximum_rows as usize, engine.speculation)
+                .map_err(worker_refusal_v1)?,
+        )
+    };
+    let mut serving_policy = engine.serving_kv_policy;
+    serving_policy.state_reserved_bytes = state_slots
+        .as_ref()
+        .map_or(0, |pool| pool.reserved_bytes_per_rank());
+    crate::install::check_served_instance_v1(
+        engine.package,
+        engine.model_options,
+        (&engine.topology.id, engine.topology.device_ordinals.clone()),
+        crate::install::ServedInstanceV1 {
+            serving_kv: serving_kv_capability_v1(manifest).then_some(serving_policy),
+            speculation: speculation_service_v1(engine.speculation),
+            maximum_sequences: Some(u32::try_from(engine.maximum_rows).unwrap_or(u32::MAX)),
+            kv_dtype: Some(engine.kv_dtype),
+            context_parallel_size: engine.topology.context_parallel_size,
+        },
+    )
+    .map_err(|error| worker_refusal_v1(refused_host_v1(error)))?;
+    if let Some(path) = engine.debug_reference_tokens {
         ReferenceTokensV1::from_file(path).map_err(worker_refusal_v1)?;
     }
     Ok(())
@@ -4012,18 +4093,20 @@ pub(crate) struct ServeCheckV1 {
 /// `serve --check` after [`serve_preflight_v1`]: the checks serving makes
 /// once its native module and devices are open that need neither, in its
 /// order and with its messages, then a `chopinfer.serve-check.v1` document.
-/// They read the package's frontend declaration and tokenizer, plan the
-/// topology at its rank count with its context-parallel groups, gather the
-/// serving identity, size the engine from the declaration, and run what the
-/// generation worker and the transport refuse before they touch either.
-/// Only what the native module, a device or the moment of the start decides
-/// is left to it: the frontend export and the module's callbacks, device
-/// memory and peer access, the KV capacity the devices acquire (a context
+/// They resolve the package's declared operations, read its frontend
+/// declaration and tokenizer, plan the topology at its rank count with its
+/// context-parallel groups, gather the serving identity, size the engine from the declaration, and
+/// run what the generation worker, its instance configuration and the
+/// transport refuse before they touch either. Only what the native module, a
+/// device or the moment of the start decides is left to it: the frontend
+/// export, the weight plan and the module's callbacks, device memory and
+/// peer access, the KV capacity the devices acquire (a context
 /// limit past the engine's sequence limit is refused here), and binding the
 /// listener.
 #[allow(clippy::too_many_arguments)]
 fn serve_check_v1(
     preflight: &ServePreflightV1,
+    host: &BundleHostCompatibilityV1,
     (topology, devices): (Option<&str>, Option<&[i32]>),
     serving: &ServingOptionsV1,
     envelope: Option<DeveloperServingEnvelopeV1>,
@@ -4034,6 +4117,7 @@ fn serve_check_v1(
 ) -> Result<String, HostCommandErrorV1> {
     let manifest = preflight.package.manifest();
     crate::deployment::require_frontend_capability_v1(manifest).map_err(unservable_v1)?;
+    crate::install::check_native_module_v1(&preflight.package, host)?;
     let frontend =
         crate::deployment::package_frontend_v1(&preflight.package).map_err(unservable_v1)?;
     let topology = ServedTopologyV1::planned(manifest, topology, devices)?
@@ -4063,26 +4147,34 @@ fn serve_check_v1(
         .server_config
         .maximum_context_tokens()
         .map_or(declared, |maximum| maximum.min(declared));
+    let vocabulary =
+        crate::generation::EngineModelPolicyV1::from_declaration(&frontend.declaration)
+            .vocabulary();
     let engine_config = served_engine_config_v1(
         manifest,
         &frontend.declaration,
-        (
-            crate::generation::EngineModelPolicyV1::from_declaration(&frontend.declaration)
-                .vocabulary(),
-            served_context_tokens,
-        ),
+        (vocabulary, served_context_tokens),
         *serving,
         envelope,
         preflight.speculation,
     )?;
     serving_backend_config_v1(serving)?;
-    check_worker_start_v1(
-        manifest,
-        &frontend.declaration,
-        serving.maximum_sequences,
-        preflight.speculation,
+    check_worker_start_v1(&frontend.declaration)?;
+    check_engine_open_v1(&EngineCheckV1 {
+        package: &preflight.package,
+        topology: &topology,
+        serving_kv_policy: serving_kv_policy_v1(
+            manifest,
+            &engine_config,
+            vocabulary.get(),
+            serving,
+        ),
+        kv_dtype: preflight.kv_cache.dtype,
+        maximum_rows: serving.maximum_sequences as u64,
+        speculation: preflight.speculation,
+        model_options: &preflight.model_options,
         debug_reference_tokens,
-    )?;
+    })?;
     // Serving refuses a requested context past the KV capacity its devices
     // acquire, which never exceeds the engine's sequence limit, so a request
     // past that limit is refused here.
@@ -4208,6 +4300,7 @@ fn serve_v1(
     if let Some(check) = check {
         return serve_check_v1(
             &preflight,
+            host,
             (topology, devices),
             &serving,
             envelope,
@@ -4384,27 +4477,21 @@ fn serve_v1(
         envelope,
         speculation,
     )?;
-    // A developer plan may include one final emitted token without a model row.
-    let served_context_tokens = engine_config
-        .maximum_sequence_tokens()
-        .min(package.manifest().kv_layout().maximum_sequence_tokens() as usize);
     let device_memory = crate::device_memory::DeviceMemoryReportV1::default();
     let engine = ServedEngineV1 {
         selection: selection.clone(),
         host: host.clone(),
         topology: topology.clone(),
         device,
+        serving_kv_policy: serving_kv_policy_v1(
+            package.manifest(),
+            &engine_config,
+            policy.vocabulary().get(),
+            &serving,
+        ),
         config: engine_config,
         vocabulary: policy.vocabulary().get(),
         maximum_rows: serving.maximum_sequences as u64,
-        serving_kv_policy: ServingKvPolicyV1 {
-            sampling_vocabulary: Some(policy.vocabulary().get()),
-            maximum_context_tokens: Some(served_context_tokens),
-            state_reserved_bytes: 0,
-            utilization_millionths: serving.gpu_memory_utilization_millionths,
-            graph_memory_reserve_bytes: serving.graph_memory_reserve_bytes,
-            maximum_pages: serving.kv_pages,
-        },
         kv_dtype: kv_cache.dtype,
         device_results,
         speculation,
@@ -4680,7 +4767,7 @@ impl ServedEngineV1 {
             self.package,
             Some(self.library),
         )
-        .map_err(|error| format!("the selected bundle did not load: {error}"))?;
+        .map_err(unloaded_v1)?;
         let loaded = loaded
             .with_model_options(&self.model_options)
             .map_err(|e| e.to_string())?;
@@ -4725,12 +4812,7 @@ impl ServedEngineV1 {
             prefix_capability && !loaded.manifest().recurrent_state_layouts().is_empty(),
             loaded.library().supports_prefix_state_slot(),
         )?;
-        let serving_kv = loaded
-            .manifest()
-            .resource_requirements()
-            .required_capabilities()
-            .iter()
-            .any(|capability| capability.as_str() == runtime_bundle_abi::SERVING_KV_CAPABILITY_V1);
+        let serving_kv = serving_kv_capability_v1(loaded.manifest());
         let fp8_kv = self.kv_dtype == BundleKvDtypeV1::Fp8E4m3;
         let state_slots = if loaded.manifest().recurrent_state_layouts().is_empty() {
             None
@@ -5450,7 +5532,7 @@ fn open_host_memory_instance_v1(
             topology.context_parallel_size,
             kv.device_results,
         )
-        .map_err(|error| format!("the selected bundle refused this host: {error}"))?;
+        .map_err(refused_host_v1)?;
     Ok((services.clone(), services, instance))
 }
 
@@ -5492,7 +5574,7 @@ fn open_compiled_instance_v1(
             topology.context_parallel_size,
             kv.device_results,
         )
-        .map_err(|error| format!("the selected bundle refused this host: {error}"))?;
+        .map_err(refused_host_v1)?;
     Ok((services.clone(), services, instance))
 }
 
@@ -10280,10 +10362,7 @@ mod tests {
             );
             declaration
         };
-        let manifest = manifest(vec![topology("tp1", 1)], 16);
-        let check = |declaration: &runtime_frontend::FrontendDescriptorV1| {
-            super::check_worker_start_v1(&manifest, declaration, 1, None, None)
-        };
+        let check = super::check_worker_start_v1;
         check(&declared(None)).unwrap();
         check(&declared(Some(true))).unwrap();
         let refused = declared(Some(false));

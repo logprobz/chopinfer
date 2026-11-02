@@ -860,6 +860,43 @@ print(json.dumps(reply), flush=True)
                 ([], {"CHOPINFER_DEV_SKIP_WARMUP": "2"}, "CHOPINFER_DEV_SKIP_WARMUP must be 0 or 1"),
                 (["--debug-reference-tokens", str(empty)], {}, "needs nonempty sequences")):
             agree(bundle, options, variables, reason)
+
+        def edited(name, edit):
+            # A copy of the package whose manifest says what `edit` makes it say.
+            target = self.root / name
+            shutil.copytree(package["bundle"], target)
+            manifest = json.loads((target / "manifest.json").read_text())
+            edit(manifest)
+            (target / "manifest.json").write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":"),
+                                                             ensure_ascii=False))
+            return [self.host, "serve", "--bundle", target, "--checkpoint", checkpoint, "--listen", "127.0.0.1:0"]
+
+        def requiring(*capabilities):
+            def edit(manifest):
+                required = manifest["resource_requirements"]["required_capabilities"]
+                required.extend(capabilities)
+                required.sort()
+            return edit
+
+        # An operation this host cannot resolve for its architecture is refused
+        # before the module is mapped.
+        def elsewhere(manifest):
+            manifest["target"]["architectures"] = sorted(manifest["target"]["architectures"] + ["sm_90"])
+            for implementation in manifest["implementations"]:
+                implementation["detail"]["target_architecture"] = "sm_90"
+        agree(edited("parity-elsewhere", elsewhere), ["--fake-host-services"], {},
+              "this host cannot run the selected bundle's operation")
+        # What the instance's configuration refuses before the module plans or
+        # creates anything: planned images without a checkpoint, and
+        # capabilities without the limits they serve with.
+        agree([self.host, "serve", "--bundle", package["bundle"], "--listen", "127.0.0.1:0", "--fake-host-services"],
+              [], {}, "serve it with --checkpoint DIR")
+        for name, capabilities, reason in (
+                ("parity-per-item-state", ["chop.state-per-item.v1", "chop.served-items.v1"],
+                 "per-item state requires bundle batch limits"),
+                ("parity-served-context", ["chop.served-context.v1"],
+                 "served context requires served items and batch limits")):
+            agree(edited(name, requiring(*capabilities)), ["--fake-host-services"], {}, reason)
         # A context past what one sequence holds is refused without a device;
         # serving names the capacity its devices acquired, which only a start
         # can know, so the messages agree up to that capacity.

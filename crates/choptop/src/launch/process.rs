@@ -41,15 +41,17 @@ pub struct Identity {
 impl Identity {
     /// Reads process `pid`; `None` once it is gone or cannot be read.
     pub fn read(pid: u32) -> Option<Self> {
-        let directory = Path::new(PROC).join(pid.to_string());
+        Self::read_at(Path::new(PROC), pid)
+    }
+
+    fn read_at(proc: &Path, pid: u32) -> Option<Self> {
+        let directory = proc.join(pid.to_string());
         Some(Self {
             pid,
             start_ticks: start_ticks(&directory)?,
             uid: fs::metadata(&directory).ok()?.uid(),
             arguments: read_cmdline(&directory.join("cmdline"))?,
-            container: fs::read_to_string(directory.join("cgroup"))
-                .ok()
-                .and_then(|cgroup| container_id(&cgroup)),
+            container: container_id(&fs::read_to_string(directory.join("cgroup")).ok()?),
         })
     }
 
@@ -57,14 +59,19 @@ impl Identity {
     /// or says why choptop may not stop it: it is gone or another process,
     /// another user's, not `chopinfer serve`, or in a container.
     pub fn record(pid: u32, start_ticks: u64) -> Result<Self, String> {
-        let identity = Self::read(pid).ok_or_else(|| format!("proc {pid} is gone"))?;
+        Self::record_at(Path::new(PROC), pid, start_ticks)
+    }
+
+    fn record_at(proc: &Path, pid: u32, start_ticks: u64) -> Result<Self, String> {
+        let identity = Self::read_at(proc, pid)
+            .ok_or_else(|| format!("proc {pid} is gone or its identity cannot be read"))?;
         if identity.start_ticks != start_ticks {
             return Err(format!("proc {pid} is another process now"));
         }
         if identity.uid != rustix::process::getuid().as_raw() {
             return Err(format!("proc {pid} belongs to another user"));
         }
-        let directory = Path::new(PROC).join(pid.to_string());
+        let directory = proc.join(pid.to_string());
         let chopinfer = executable(&directory).is_some_and(|name| is_chopinfer(&name));
         if !chopinfer || !is_serve(&identity.arguments) {
             return Err(format!("proc {pid} is not chopinfer serve"));
@@ -86,13 +93,17 @@ impl Identity {
     /// Sends SIGTERM through a pidfd once the process read again matches
     /// this record; a process that changed in any way is not signalled.
     pub fn terminate(&self) -> Result<(), String> {
+        self.terminate_at(Path::new(PROC))
+    }
+
+    fn terminate_at(&self, proc: &Path) -> Result<(), String> {
         let pid = i32::try_from(self.pid)
             .ok()
             .and_then(Pid::from_raw)
             .ok_or_else(|| format!("{} is not a process id", self.pid))?;
         let pidfd = pidfd_open(pid, PidfdFlags::empty())
             .map_err(|error| format!("proc {} is gone: {error}", self.pid))?;
-        match Self::read(self.pid) {
+        match Self::read_at(proc, self.pid) {
             Some(now) if now == *self => pidfd_send_signal(&pidfd, Signal::TERM)
                 .map_err(|error| format!("cannot signal proc {}: {error}", self.pid)),
             Some(now) if now.start_ticks != self.start_ticks => Err(format!(
@@ -103,7 +114,10 @@ impl Identity {
                 "proc {} changed since the start was confirmed",
                 self.pid
             )),
-            None => Err(format!("proc {} is gone", self.pid)),
+            None => Err(format!(
+                "proc {} is gone or its identity cannot be read",
+                self.pid
+            )),
         }
     }
 }
@@ -338,6 +352,32 @@ pub(crate) mod tests {
             assert!(started.elapsed() < Duration::from_secs(10), "timed out");
             std::thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    #[test]
+    fn an_unreadable_cgroup_refuses_recording_and_the_pidfd_recheck() {
+        let root = scratch("cgroup-unreadable");
+        let mut guard = fake_serve(&root.join("fake"));
+        let pid = guard.0.id();
+        let proc = root.join("proc");
+        let directory = proc.join(pid.to_string());
+        fs::create_dir_all(&directory).unwrap();
+        let real = Path::new(PROC).join(pid.to_string());
+        for name in ["stat", "cmdline"] {
+            fs::copy(real.join(name), directory.join(name)).unwrap();
+        }
+        std::os::unix::fs::symlink("chopinfer", directory.join("exe")).unwrap();
+        let ticks = start_ticks(&directory).unwrap();
+        assert!(Identity::record_at(&proc, pid, ticks).is_err());
+        fs::write(directory.join("cgroup"), "0::/user.slice\n").unwrap();
+        let recorded = Identity::record_at(&proc, pid, ticks).unwrap();
+        assert_eq!(recorded.container, None);
+        fs::remove_file(directory.join("cgroup")).unwrap();
+        assert!(recorded.terminate_at(&proc).is_err());
+        assert!(guard.0.try_wait().unwrap().is_none());
+        fs::write(directory.join("cgroup"), "0::/user.slice\n").unwrap();
+        recorded.terminate_at(&proc).unwrap();
+        wait_for(|| guard.0.try_wait().unwrap().is_some());
     }
 
     #[test]

@@ -4064,7 +4064,9 @@ impl Scheduler {
 
     /// The prompt-end anchor the request's next chunk can run past: the
     /// next capture point is that anchor, and the chunk limit reaches the
-    /// prefill target.
+    /// prefill target. On a guaranteed grid the request needs the
+    /// instance's grid anchor allowance, the anchor must not be a grid
+    /// boundary, and the chunk may start anywhere.
     fn spannable_anchor(
         record: &RequestRecord,
         chunk_limit: usize,
@@ -4539,20 +4541,24 @@ impl Scheduler {
         let media_budget = rows.media_budget;
         let remaining = Self::prefill_target(record) - record.prefilled_tokens;
         let available = budget.saturating_sub(reserved_budget.saturating_add(held_tokens));
-        // Grid chunks share the timing cap, including a fused prompt tail.
+        // Grid chunks share the timing cap, including a fused prompt tail. A
+        // fused remainder must fit the cap's share, so a chunk that the floor
+        // or progress forces past the cap never fuses.
         let mut timing = rows.timing.as_mut().filter(|_| record.prefill_cuts);
         let cap = timing.as_ref().map(|timing| timing.limit);
         let reason = Self::grid_chunk(record, cap, rows.granule).map(|(_, reason)| reason);
         if let Some(anchor) = Self::spannable_anchor(record, chunk_limit, rows.maximum_scored_rows)
             .filter(|_| {
                 *anchors > 0
-                    && timing.as_ref().is_none_or(|timing| {
-                        remaining <= timing.tokens
-                            && !matches!(reason, Some(PrefillEnd::Floor | PrefillEnd::Progress))
-                            && !(timing.cut && reason == Some(PrefillEnd::Timing))
-                    })
+                    && timing
+                        .as_ref()
+                        .is_none_or(|timing| remaining <= timing.tokens)
             })
         {
+            debug_assert!(!matches!(
+                reason,
+                Some(PrefillEnd::Timing | PrefillEnd::Floor | PrefillEnd::Progress)
+            ));
             let tokens = remaining;
             let scored_rows = Self::logit_rows(record, tokens);
             if scored_rows <= scored_budget.saturating_sub(held_rows)

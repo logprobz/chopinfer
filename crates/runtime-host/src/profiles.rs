@@ -850,7 +850,7 @@ pub(crate) fn direct_command(
 
 /// How `serve --model` serves another of the family's profiles than the one
 /// it picks: explicit options over the pick.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Translation {
     pub arguments: Vec<String>,
     /// Model options the pick sets and the other profile leaves to the
@@ -2722,14 +2722,164 @@ mod translate_tests {
             .map(|name| name.as_str())
     }
 
+    /// Checks `target` over `pick` strictly: a profile drafting as the pick
+    /// does or not at all serves exactly its own configuration, as its own
+    /// options followed only by resets of settings the pick sets and it
+    /// leaves at their defaults, each to its own effective value, and
+    /// inherits exactly the pick's model options it omits. A refusal is
+    /// accepted only for a reason checked here on its own: another drafter
+    /// than the pick's, or a setting the pick sets whose default no flag
+    /// value names, and the reason must name it.
+    fn check_translation(
+        pick: &Profile,
+        target: &Profile,
+        result: Result<Translation, String>,
+        context: &str,
+    ) {
+        let flags_of = |arguments: &[String]| -> std::collections::BTreeSet<String> {
+            options(arguments)
+                .into_iter()
+                .map(|(flag, _)| flag)
+                .collect()
+        };
+        let pick_flags = flags_of(&direct_defaults(pick));
+        let base: Vec<String> = options(&direct_defaults(target))
+            .into_iter()
+            .filter(|(flag, _)| flag != "--devices")
+            .flat_map(|(flag, values)| std::iter::once(flag).chain(values))
+            .collect();
+        let base_flags = flags_of(&base);
+        let mut reference = direct_command(&direct_defaults(target)).unwrap();
+        let effective = crate::command::effective_settings_v1(&reference);
+        let drafter = target.speculation.drafter.as_str();
+        if drafter != "none" && drafter != pick.speculation.drafter {
+            let reason = result.expect_err(context);
+            assert!(
+                reason.contains(&format!("it drafts with {drafter},")),
+                "{context}: {reason}"
+            );
+            match pick.speculation.drafter.as_str() {
+                "none" => assert!(reason.ends_with("has no drafter"), "{context}: {reason}"),
+                other => assert!(
+                    reason.ends_with(&format!("drafts with {other}")),
+                    "{context}: {reason}"
+                ),
+            }
+            return;
+        }
+        let translation = match result {
+            Ok(translation) => translation,
+            Err(reason) => {
+                // Only a setting the pick sets, that the target does not,
+                // and whose default the target's settings cannot name.
+                let flag = reason
+                    .strip_prefix("the pick sets ")
+                    .and_then(|rest| rest.split_whitespace().next())
+                    .unwrap_or_else(|| panic!("{context}: unjustified refusal: {reason}"));
+                assert!(pick_flags.contains(flag), "{context}: {reason}");
+                assert!(!base_flags.contains(flag), "{context}: {reason}");
+                assert!(
+                    !effective.contains_key(flag.trim_start_matches("--")),
+                    "{context}: {flag} has a reset value: {reason}"
+                );
+                return;
+            }
+        };
+        assert!(
+            translation.arguments.starts_with(&base),
+            "{context}: {:?}",
+            translation.arguments
+        );
+        let mut reset = std::collections::BTreeSet::new();
+        for (flag, values) in options(&translation.arguments[base.len()..]) {
+            assert!(reset.insert(flag.clone()), "{context}: {flag} reset twice");
+            assert!(
+                !base_flags.contains(&flag),
+                "{context}: {flag} is the target's own"
+            );
+            assert!(
+                pick_flags.contains(&flag),
+                "{context}: the pick leaves {flag}"
+            );
+            assert_eq!(
+                values,
+                [effective[flag.trim_start_matches("--")].clone()],
+                "{context}: {flag}"
+            );
+        }
+        let expected: Vec<String> = pick
+            .model_options
+            .keys()
+            .filter(|name| !target.model_options.contains_key(*name))
+            .cloned()
+            .collect();
+        assert_eq!(
+            translation.inherited_model_options, expected,
+            "{context}: inherited model options"
+        );
+        let mut served = served(pick, &translation.arguments);
+        for command in [&mut served, &mut reference] {
+            if let crate::HostCommandV1::Serve { model_options, .. } = command {
+                for option in &expected {
+                    model_options.remove(option);
+                }
+            }
+        }
+        assert_eq!(served, reference, "{context}");
+    }
+
+    /// The strict check accepts the translation and refuses each way one
+    /// could go wrong: a reset the pick does not need, a reset to another
+    /// value, an incomplete inherited set, a refusal without its reason, and
+    /// a profile with another drafter that translates.
+    #[test]
+    fn the_strict_check_refuses_every_wrong_translation() {
+        let pick = drafting(serde_json::json!({"model_options": {"a": "1", "b": "2"}}));
+        let target = profile(serde_json::json!({"model_options": {"a": "1"}}));
+        let good = translate(&pick, &target).unwrap();
+        check_translation(&pick, &target, Ok(good.clone()), "good");
+        let refused = |result: Result<Translation, String>, expected: &str| {
+            let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                check_translation(&pick, &target, result, "wrong")
+            }))
+            .expect_err(expected);
+            let message = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+                .unwrap_or_default();
+            assert!(message.contains(expected), "{expected}: {message}");
+        };
+        let mut extra = good.clone();
+        extra.arguments.extend(["--kv-pages".into(), "4".into()]);
+        refused(Ok(extra), "the pick leaves --kv-pages");
+        let mut other = good.clone();
+        let at = other
+            .arguments
+            .iter()
+            .position(|w| w == "--prefill-budget")
+            .unwrap();
+        other.arguments[at + 1] = "decode-aware".into();
+        refused(Ok(other), "--prefill-budget");
+        let mut missing = good.clone();
+        missing.inherited_model_options.clear();
+        refused(Ok(missing), "inherited model options");
+        refused(Err("no reason".into()), "unjustified refusal");
+        let mut layer = drafting(serde_json::json!({}));
+        layer.speculation.drafter = "layer".into();
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            check_translation(&pick, &layer, Ok(good.clone()), "layer")
+        }));
+        assert!(panic.is_err());
+    }
+
     /// For every model's profiles, every rank count and every profile
-    /// `serve --model` can pick there, each other profile at that count
-    /// either serves exactly its own configuration over the pick or is
-    /// unavailable with a reason.
+    /// `serve --model` can pick there, each other profile at that count is
+    /// checked strictly ([`check_translation`]).
     #[test]
     fn every_model_profile_translates_exactly_or_says_why_not() {
         let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../models");
-        let (mut translated, mut unavailable) = (0, 0);
+        let mut checked = 0;
         for entry in std::fs::read_dir(&models).unwrap().flatten() {
             let path = entry.path().join("profiles.json");
             if !path.is_file() {
@@ -2758,39 +2908,12 @@ mod translate_tests {
                             continue;
                         }
                         let context = format!("{}: {name} over {pick_name}", path.display());
-                        match translate(pick, target) {
-                            Ok(translation) => {
-                                let mut served = served(pick, &translation.arguments);
-                                let mut reference =
-                                    direct_command(&direct_defaults(target)).unwrap();
-                                for command in [&mut served, &mut reference] {
-                                    if let crate::HostCommandV1::Serve { model_options, .. } =
-                                        command
-                                    {
-                                        for option in &translation.inherited_model_options {
-                                            model_options.remove(option);
-                                        }
-                                    }
-                                }
-                                assert_eq!(served, reference, "{context}");
-                                for option in &translation.inherited_model_options {
-                                    assert!(pick.model_options.contains_key(option));
-                                    assert!(!target.model_options.contains_key(option));
-                                }
-                                translated += 1;
-                            }
-                            Err(reason) => {
-                                assert!(!reason.is_empty(), "{context}");
-                                unavailable += 1;
-                            }
-                        }
+                        check_translation(pick, target, translate(pick, target), &context);
+                        checked += 1;
                     }
                 }
             }
         }
-        assert!(
-            translated > 0 && unavailable > 0,
-            "{translated} {unavailable}"
-        );
+        assert!(checked > 0);
     }
 }

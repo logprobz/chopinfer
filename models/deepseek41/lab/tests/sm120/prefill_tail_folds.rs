@@ -1,0 +1,405 @@
+//! Pair-lab probe for the Flash TP4 prefill tail-fold candidate.
+//! Run the ignored test on two idle GPUs, with a 295-second process timeout.
+use bundle_deepseek41::sm120::{self, mxfp8_fold as registration};
+use kernel_core::{
+    backend::{Backend, Counts, Launch, Need, View},
+    contract::Argument,
+    mxfp8_gemm::Mxfp8FoldGemmBuffers as Buffers,
+};
+use kernel_harness::{Cubins, LabResult, Session, eviction::EvictionMode};
+use kernels_sm120::{
+    backend::Sm120,
+    gemm::{mxfp8_fold::Entry, mxfp8_prefill as tiled},
+};
+use model_deepseek41_contract::geometry::FLASH;
+use runtime_cuda::{DeviceBuffer, Function, KernelArgument, Stream, TensorMap};
+use serde_json::json;
+use std::{
+    collections::BTreeMap,
+    time::{Duration, Instant},
+};
+
+const ROWS: [u32; 7] = [85, 127, 789, 831, 853, 1557, 1599];
+
+struct Arena<'a> {
+    session: &'a Session,
+    views: Vec<(DeviceBuffer, usize, usize)>,
+}
+impl Arena<'_> {
+    fn bytes(&mut self, data: &[u8]) -> LabResult<View> {
+        let buffer = self.session.allocate(data.len())?;
+        buffer
+            .copy_from_bytes(data, &self.session.stream)
+            .map_err(|e| e.to_string())?;
+        self.views.push((buffer, 0, data.len()));
+        Ok(View {
+            handle: self.views.len() as u64,
+            bytes: data.len() as u64,
+        })
+    }
+    fn filled(&mut self, bytes: u64, value: u8) -> LabResult<View> {
+        self.bytes(&vec![value; bytes as usize])
+    }
+    fn range(&mut self, source: View, offset: u64, bytes: u64) -> LabResult<View> {
+        if offset
+            .checked_add(bytes)
+            .is_none_or(|end| end > source.bytes)
+        {
+            return Err("tail view exceeds its source".into());
+        }
+        let (buffer, base, _) = &self.views[source.handle as usize - 1];
+        self.views
+            .push((buffer.clone(), base + offset as usize, bytes as usize));
+        Ok(View {
+            handle: self.views.len() as u64,
+            bytes,
+        })
+    }
+    fn read(&self, view: View) -> LabResult<Vec<u8>> {
+        let (buffer, offset, bytes) = &self.views[view.handle as usize - 1];
+        Ok(kernel_harness::poison::read(self.session, buffer)?[*offset..offset + bytes].to_vec())
+    }
+}
+
+fn pattern(bytes: u64, salt: u32, scale: bool) -> Vec<u8> {
+    (0..bytes)
+        .map(|i| {
+            let x = (i as u32)
+                .wrapping_mul(747796405)
+                .wrapping_add(salt)
+                .rotate_left(7);
+            if scale {
+                119 + (x % 9) as u8
+            } else {
+                (8 + x % 96) as u8 | ((x >> 8) as u8 & 128)
+            }
+        })
+        .collect()
+}
+
+fn backend(candidate: bool) -> LabResult<Sm120> {
+    let b = registration::register_with_tail_folds(Sm120::new(), &FLASH, 4, candidate)?;
+    let b = sm120::projection_reuse::register(b, &FLASH, 4)?;
+    let b = if candidate {
+        b
+    } else {
+        sm120::prefill_tma_scales::register(
+            sm120::prefill_matrix::register(b, &FLASH, 4)?,
+            &FLASH,
+            4,
+        )?
+    };
+    Ok(b.with_packed_fold_weights())
+}
+
+fn calls(
+    a: &mut Arena<'_>,
+    backend: &Sm120,
+    e: &Entry,
+    rows: u32,
+    b: Buffers<View>,
+    candidate: bool,
+) -> LabResult<Vec<Launch>> {
+    let full = rows / tiled::TILE * tiled::TILE;
+    let pieces = if candidate {
+        vec![
+            (0, full),
+            (full, (rows - full).min(64)),
+            (full + 64, (rows - full).saturating_sub(64)),
+        ]
+    } else {
+        vec![(0, rows)]
+    };
+    let mut result = Vec::new();
+    for (offset, count) in pieces.into_iter().filter(|(_, count)| *count > 0) {
+        let q = e.query;
+        let buffers = Buffers {
+            activations: a.range(
+                b.activations,
+                u64::from(offset) * u64::from(q.activation_row_stride),
+                u64::from(count) * u64::from(q.activation_row_stride),
+            )?,
+            activation_scales: a.range(
+                b.activation_scales,
+                u64::from(offset) * u64::from(q.activation_row_stride) / 32,
+                u64::from(count) * u64::from(q.activation_row_stride) / 32,
+            )?,
+            output: a.range(
+                b.output,
+                u64::from(offset) * u64::from(q.n) * u64::from(q.groups) * 4,
+                u64::from(count) * u64::from(q.n) * u64::from(q.groups) * 4,
+            )?,
+            status_row_offset: b.status_row_offset + u64::from(offset),
+            ..b
+        };
+        let op = if count >= tiled::TILE {
+            backend.mxfp8_prefill_gemm(&q, Need::rows(q.m_capacity))
+        } else {
+            let q = if candidate {
+                registration::routed_query(q, count)
+            } else {
+                q
+            };
+            backend.mxfp8_fold_gemm(&q, Need::rows(q.m_capacity))
+        }
+        .map_err(|e| e.to_string())?;
+        let scratch = if op.info().workspace > 0 {
+            a.filled(op.info().workspace, 0xa5)?
+        } else {
+            View::EMPTY
+        };
+        result.extend(
+            op.launches(&buffers, scratch, Counts::rows(count))
+                .map_err(|e| e.to_string())?,
+        );
+    }
+    Ok(result)
+}
+
+struct Calls {
+    launches: Vec<Launch>,
+    functions: BTreeMap<String, Function>,
+    maps: BTreeMap<(usize, usize), TensorMap>,
+}
+impl Calls {
+    fn new(a: &Arena<'_>, launches: Vec<Launch>) -> LabResult<Self> {
+        let mut modules = BTreeMap::new();
+        let mut functions = BTreeMap::new();
+        let mut maps = BTreeMap::new();
+        for (i, call) in launches.iter().enumerate() {
+            let (name, cubin) = sm120::fold_cubin_for_symbol(&call.symbol)
+                .ok_or_else(|| format!("missing fold cubin: {}", call.symbol))?;
+            if !modules.contains_key(name) {
+                modules.insert(name, a.session.load_cubin(cubin)?);
+            }
+            let f = modules[name]
+                .function(&call.symbol)
+                .map_err(|e| e.to_string())?;
+            if call.plan.dynamic_shared_bytes > 0 {
+                f.set_max_dynamic_shared_memory(call.plan.dynamic_shared_bytes)
+                    .map_err(|e| e.to_string())?;
+            }
+            functions.insert(call.symbol.clone(), f);
+            for (j, arg) in call.arguments.0.iter().enumerate() {
+                if let Argument::TensorMap(spec) = arg {
+                    let (buffer, offset, bytes) = &a.views[spec.base_buffer as usize - 1];
+                    maps.insert(
+                        (i, j),
+                        a.session
+                            .context
+                            .tensor_map(
+                                buffer,
+                                *offset,
+                                *bytes,
+                                kernel_harness::launch::descriptor(spec)?,
+                            )
+                            .map_err(|e| e.to_string())?,
+                    );
+                }
+            }
+        }
+        Ok(Self {
+            launches,
+            functions,
+            maps,
+        })
+    }
+    fn issue(&self, a: &Arena<'_>, stream: &Stream) -> LabResult<()> {
+        for (i, call) in self.launches.iter().enumerate() {
+            let args = call
+                .arguments
+                .0
+                .iter()
+                .enumerate()
+                .map(|(j, arg)| {
+                    Ok(match arg {
+                        Argument::DeviceBuffer(id) => {
+                            let (buffer, offset, byte_len) = &a.views[*id as usize - 1];
+                            KernelArgument::Range {
+                                buffer,
+                                offset: *offset,
+                                byte_len: *byte_len,
+                            }
+                        }
+                        Argument::U32(v) => KernelArgument::U32(*v),
+                        Argument::U64(v) => KernelArgument::U64(*v),
+                        Argument::I32(v) => KernelArgument::I32(*v),
+                        Argument::NullDevicePointer => KernelArgument::NullBuffer,
+                        Argument::TensorMap(_) => KernelArgument::TensorMap(&self.maps[&(i, j)]),
+                        Argument::DevicePointerArray(_) => {
+                            return Err("unexpected pointer array in dense fold".to_string());
+                        }
+                    })
+                })
+                .collect::<LabResult<Vec<_>>>()?;
+            kernel_harness::launch::launch_with(
+                &self.functions[&call.symbol],
+                stream,
+                kernel_harness::launch::config(call.plan)?,
+                &args,
+            )?;
+        }
+        Ok(())
+    }
+}
+
+fn probe() -> LabResult<Cubins> {
+    let path = std::env::var_os("CHOPINFER_KERNEL_PROBE_CUBIN")
+        .ok_or("set CHOPINFER_KERNEL_PROBE_CUBIN to the staged probe_sm120.cubin")?;
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let locks: Vec<serde_json::Value> = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../crates/kernel-lab/kernels.lock"
+    )))
+    .map_err(|e| e.to_string())?;
+    let digest = locks
+        .iter()
+        .find(|r| r["name"] == "probe_sm120")
+        .and_then(|r| r["cubin_sha256"].as_str())
+        .ok_or("missing locked timing probe")?;
+    if kernel_build::digest(&bytes) != digest {
+        return Err("timing probe differs from its lock".into());
+    }
+    Ok(Cubins::new(
+        Box::leak(vec![("probe_sm120", &*Box::leak(bytes.into_boxed_slice()))].into_boxed_slice()),
+        &[],
+    ))
+}
+
+fn gpu_snapshot(session: &Session) -> LabResult<serde_json::Value> {
+    let output = std::process::Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=enforced.power.limit,clocks.sm",
+            "--format=csv,noheader,nounits",
+            "--id",
+            session.metadata["uuid"]
+                .as_str()
+                .ok_or("missing device identity")?,
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err("GPU telemetry query failed".into());
+    }
+    let text = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
+    let values = text
+        .trim()
+        .split(',')
+        .map(|s| s.trim().parse::<f64>().map_err(|e| e.to_string()))
+        .collect::<LabResult<Vec<_>>>()?;
+    if values.len() != 2 || values.iter().any(|v| !v.is_finite() || *v <= 0.0) {
+        return Err("GPU power and clock telemetry is unavailable".into());
+    }
+    Ok(json!({"enforced_power_w":values[0], "sm_mhz":values[1]}))
+}
+
+#[test]
+#[ignore = "pair-lab: two idle GPUs, CUDA events, A/A control, at most five minutes"]
+fn prefill_tail_folds_pair() {
+    assert_eq!(
+        kernel_harness::selected_ordinals()
+            .unwrap()
+            .expect("select two idle GPUs")
+            .len(),
+        2
+    );
+    let start = Instant::now();
+    let backends = [backend(false).unwrap(), backend(true).unwrap()];
+    kernel_harness::gpu_test_multi_with(probe().unwrap(), 2 << 30, |sessions| {
+        let job_start = sessions.iter().map(gpu_snapshot).collect::<LabResult<Vec<_>>>()?;
+        for (session, initial) in sessions.iter().zip(&job_start) {
+            let limit = initial["enforced_power_w"].as_f64().ok_or("missing enforced power limit")?;
+            let snapshot = || -> LabResult<serde_json::Value> {
+                let state = gpu_snapshot(session)?;
+                if state["enforced_power_w"].as_f64() != Some(limit) {
+                    return Err("power limit changed; pair-lab job is void".into());
+                }
+                Ok(state)
+            };
+            let mut results = Vec::new();
+            for e in registration::prefill_entries(&FLASH, 4)? {
+                // Engram's table projection is outside the q/kv/o and shared-expert probe.
+                if e.query.k == 6144 { continue; }
+                let mut arena = Arena { session, views: Vec::new() };
+                let q = e.query;
+                let size = e.bytes(1);
+                let weights = kernel_core::weight_transform::mxfp8_fold::Mxfp8FoldLayout {
+                    groups: q.groups as usize, n: q.n as usize, k: q.k as usize,
+                }.pack(&pattern(size.weights, 731, false)).map_err(|e| e.to_string())?;
+                let weights = arena.bytes(&weights)?;
+                let weight_scales = arena.bytes(&pattern(size.weight_scales, 381, true))?;
+                for rows in ROWS {
+                    let keep = arena.views.len();
+                    let size = e.bytes(rows);
+                    let mut status = vec![0; size.status as usize + 24];
+                    status[..12].fill(0xa5);
+                    status[size.status as usize + 12..].fill(0xa5);
+                    let mut b = Buffers {
+                        activations: arena.bytes(&pattern(size.activations, 173, false))?,
+                        activation_scales: arena.bytes(&pattern(size.activation_scales, 33, true))?,
+                        weights, weight_scales,
+                        output: arena.filled(size.output, 0xff)?,
+                        live_rows: arena.bytes(&rows.to_le_bytes())?,
+                        status: arena.bytes(&status)?,
+                        status_row_offset: 3,
+                    };
+                    let baseline_output = b.output;
+                    let baseline_status = b.status;
+                    let baseline_calls = calls(&mut arena, &backends[0], &e, rows, b, false)?;
+                    b.output = arena.filled(size.output, 0xff)?;
+                    b.status = arena.bytes(&status)?;
+                    let partition_calls = calls(&mut arena, &backends[1], &e, rows, b, true)?;
+                    let plans = [Calls::new(&arena, baseline_calls)?, Calls::new(&arena, partition_calls)?];
+                    for plan in &plans { plan.issue(&arena, &session.stream)?; }
+                    session.stream.synchronize().map_err(|e| e.to_string())?;
+                    let expected = arena.read(baseline_output)?;
+                    if expected.chunks_exact(4).any(|word| !f32::from_le_bytes(word.try_into().unwrap()).is_finite())
+                        || expected.iter().all(|byte| *byte == 0)
+                        || arena.read(baseline_status)? != status
+                        || expected != arena.read(b.output)? || arena.read(baseline_status)? != arena.read(b.status)? {
+                        return Err(format!("bitwise tail mismatch n={} k={} groups={} rows={rows}", q.n, q.k, q.groups));
+                    }
+                    let label = format!("prefill-tail-n{}-k{}-g{}-r{rows}", q.n, q.k, q.groups);
+                    let mut visits = Vec::new();
+                    for visit in 0..3 {
+                        if start.elapsed() >= Duration::from_secs(280) { return Err("pair-lab time budget exhausted; no complete result".into()); }
+                        // Alternate the control/comparison order each visit. Both A/A arms
+                        // issue the very same baseline plan over the very same operands.
+                        let visit_start = snapshot()?;
+                        let mut pairs = Vec::new();
+                        for step in 0..2 {
+                            let control = (visit + step) % 2 == 0;
+                            let timing = kernel_harness::with_timing_label(&format!("{label}-{}", if control { "aa" } else { "ab" }), || {
+                                kernel_harness::time_ab(session, 1, 3, [EvictionMode::Read; 2], |arm, stream| plans[if control { 0 } else { arm }].issue(&arena, stream))
+                            })?;
+                            pairs.push((control, timing));
+                        }
+                        let aa = &pairs.iter().find(|(control, _)| *control).unwrap().1;
+                        let ab = &pairs.iter().find(|(control, _)| !*control).unwrap().1;
+                        let spread = (1.0 - aa.paired_ratio).abs() * 100.0;
+                        let gain = (1.0 - ab.paired_ratio) * 100.0;
+                        println!("device={} {label} visit={visit} baseline_ms={} partition_ms={} gain_pct={gain} aa_spread_pct={spread}", session.ordinal, ab.arms[0].median_ms, ab.arms[1].median_ms);
+                        if spread > 3.0 { println!("{label}: wide A/A spread ({spread}%); rerun on an idle host"); }
+                        let visit_end = snapshot()?;
+                        visits.push(json!({"gpu_start":visit_start,"gpu_end":visit_end,"baseline_ms":ab.arms[0].median_ms,"partition_ms":ab.arms[1].median_ms,"gain_pct":gain,"aa_spread_pct":spread,"gain_exceeds_control":gain > spread}));
+                    }
+                    results.push(json!({"n":q.n,"k":q.k,"groups":q.groups,"rows":rows,"bitwise":true,"visits":visits}));
+                    drop(plans);
+                    arena.views.truncate(keep);
+                }
+            }
+            session.receipt("deepseek41-prefill-tail-folds", BTreeMap::from([("results".into(), json!(results)), ("gpu_start".into(), initial.clone()), ("gpu_end".into(), snapshot()?)]))?;
+        }
+        let job_end = sessions.iter().map(gpu_snapshot).collect::<LabResult<Vec<_>>>()?;
+        for (before, after) in job_start.iter().zip(&job_end) {
+            if before["enforced_power_w"] != after["enforced_power_w"] {
+                return Err("power limit changed across the two-device job; result is void".into());
+            }
+        }
+        sessions[0].receipt("deepseek41-prefill-tail-folds-job", BTreeMap::from([
+            ("gpu_start".into(), json!(job_start)), ("gpu_end".into(), json!(job_end)),
+        ]))?;
+        Ok(())
+    }).unwrap().expect("the two-GPU probe must execute");
+    assert!(start.elapsed() < Duration::from_secs(295));
+}

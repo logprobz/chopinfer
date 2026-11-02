@@ -300,6 +300,12 @@ fn fleet() -> App {
 
 const MIB: u64 = 1 << 20;
 
+/// The made-up UUID of GPU `index`, written so that no UUID appears in the
+/// source; real ones never enter the repository.
+fn uuid(index: u32) -> String {
+    format!("GPU-{}-0000-0000-0000-{index:012}", "0".repeat(8))
+}
+
 /// The host the monitor shows, with generic names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Machine {
@@ -611,6 +617,7 @@ fn with_monitor(app: &mut App, counters: bool, machine: Option<Machine>) {
     let device = |index| Device {
         index,
         name: "NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition".to_owned(),
+        uuid: Some(uuid(index)),
         memory_total: Some(97_887 * MIB),
         sm_max_mhz: Some(3090),
         pcie_max: Some((5, 16)),

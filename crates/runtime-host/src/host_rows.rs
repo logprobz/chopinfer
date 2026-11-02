@@ -16,7 +16,7 @@
 //! it runs (the same rule its loads already state; `chopinfer verify`
 //! checks the payload).
 
-// SAFETY-REVIEWED: this module contains the mmap, madvise and munmap calls.
+// SAFETY-REVIEWED: this module contains mapping, residency and access checks.
 #![allow(unsafe_code)]
 
 pub(crate) mod fetch;
@@ -212,21 +212,77 @@ impl MappedRowsV1 {
     }
 
     /// How many of the mapping's pages are resident now (`mincore`): the
-    /// pages a read would not fault from the file.
+    /// pages a read would not fault from the file. Returns `PermissionDenied`
+    /// when the process neither owns nor may write the retained source file.
     pub fn resident_pages(&self) -> io::Result<(u64, u64)> {
+        self.resident_pages_in_windows_v1(16_384)
+    }
+
+    fn resident_pages_in_windows_v1(&self, window_pages: usize) -> io::Result<(u64, u64)> {
+        use std::os::unix::fs::MetadataExt;
+        let hidden = || {
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "page-cache residency is hidden: the process neither owns nor may write the file",
+            )
+        };
+        let file = self.source.as_ref().ok_or_else(hidden)?;
+        let owner = file.metadata()?.uid();
+        // SAFETY-REVIEWED: geteuid reads the process's effective user ID.
+        let effective_uid = unsafe { libc::geteuid() };
+        #[cfg(target_os = "linux")]
+        let writable = {
+            use std::os::fd::AsRawFd;
+            // SAFETY-REVIEWED: the file keeps its descriptor open and the
+            // empty path is a live C string; this call only checks access.
+            unsafe {
+                libc::syscall(
+                    libc::SYS_faccessat2,
+                    file.as_raw_fd(),
+                    c"".as_ptr(),
+                    libc::W_OK,
+                    libc::AT_EMPTY_PATH | libc::AT_EACCESS,
+                ) == 0
+            }
+        };
+        #[cfg(not(target_os = "linux"))]
+        let writable = false;
+        if !residency_visible_v1(owner, effective_uid, writable) {
+            return Err(hidden());
+        }
         let page = page_bytes_v1();
         let pages = self.mapped_length.div_ceil(page);
-        let mut residency = vec![0_u8; pages];
-        // SAFETY-REVIEWED: the range is the mapping this value owns, and the
-        // vector holds one byte per page of it.
-        if unsafe { libc::mincore(self.base, self.mapped_length, residency.as_mut_ptr().cast()) }
-            != 0
-        {
-            return Err(io::Error::last_os_error());
+        let window_pages = window_pages.max(1);
+        let mut residency = vec![0_u8; window_pages.min(pages)];
+        let mut resident = 0;
+        for start in (0..pages).step_by(window_pages) {
+            let offset = start * page;
+            let length = (self.mapped_length - offset).min(residency.len() * page);
+            // SAFETY-REVIEWED: the page-aligned range is within this mapping,
+            // and the reused buffer holds one byte per page of the window.
+            if unsafe {
+                libc::mincore(
+                    self.base.cast::<u8>().add(offset).cast(),
+                    length,
+                    residency.as_mut_ptr().cast(),
+                )
+            } != 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            resident += residency[..length.div_ceil(page)]
+                .iter()
+                .filter(|page| **page & 1 != 0)
+                .count();
         }
-        let resident = residency.iter().filter(|page| **page & 1 != 0).count();
         Ok((resident as u64, pages as u64))
     }
+}
+
+/// Linux also accepts `CAP_FOWNER`, whose user-namespace rules cannot be
+/// checked here. Omitting it can only mark visible residency as hidden.
+fn residency_visible_v1(file_owner: u32, effective_uid: u32, writable: bool) -> bool {
+    file_owner == effective_uid || writable
 }
 
 impl Drop for MappedRowsV1 {
@@ -363,17 +419,21 @@ pub fn mapped_bytes_v1() -> u64 {
         .sum()
 }
 
-/// Release page-table entries at an explicit measurement boundary. The job
-/// can then evict selected file ranges without discarding locked row copies.
-pub(crate) fn release_page_tables_for_measurement() -> io::Result<u64> {
-    let mappings = REGISTRY
+/// The live mappings whose checkpoint identity was authenticated at load.
+pub(crate) fn authenticated_mappings_v1() -> Vec<Arc<MappedRowsV1>> {
+    REGISTRY
         .lock()
-        .map_err(|_| io::Error::other("mapped row registry is poisoned"))?
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .values()
         .filter_map(Weak::upgrade)
         .filter(|mapping| mapping.key.identity.is_some())
-        .collect::<Vec<_>>();
-    release_page_tables(&mappings)
+        .collect()
+}
+
+/// Release page-table entries at an explicit measurement boundary. The job
+/// can then evict selected file ranges without discarding locked row copies.
+pub(crate) fn release_page_tables_for_measurement() -> io::Result<u64> {
+    release_page_tables(&authenticated_mappings_v1())
 }
 
 fn release_page_tables(mappings: &[Arc<MappedRowsV1>]) -> io::Result<u64> {
@@ -438,6 +498,66 @@ mod tests {
         rows.will_need_rows(256, &[10_000]);
         rows.will_need_rows(0, &[1]);
         assert_eq!(rows.bytes(), &bytes[300..39_300]);
+    }
+
+    #[test]
+    fn residency_visibility_accepts_owners_or_writers() {
+        assert!(residency_visible_v1(42, 42, false));
+        assert!(residency_visible_v1(42, 43, true));
+        assert!(residency_visible_v1(42, 42, true));
+        assert!(!residency_visible_v1(42, 43, false));
+    }
+
+    #[test]
+    fn windowed_residency_matches_a_whole_vector() {
+        let page = page_bytes_v1();
+        let (_temp, file) = file("windowed-residency", &vec![7; 8 * page]);
+        let rows = map_rows_v1(&file, 17, (7 * page) as u64).unwrap();
+        let pages = rows.mapped_length.div_ceil(page);
+        assert_eq!(pages, 8);
+        let mut residency = vec![0_u8; pages];
+        // SAFETY-REVIEWED: the range is this live mapping, and the vector
+        // holds one byte for each of its pages.
+        assert_eq!(
+            unsafe { libc::mincore(rows.base, rows.mapped_length, residency.as_mut_ptr().cast(),) },
+            0
+        );
+        let expected = (
+            residency.iter().filter(|page| **page & 1 != 0).count() as u64,
+            pages as u64,
+        );
+        assert_eq!(rows.resident_pages_in_windows_v1(3).unwrap(), expected);
+        assert_eq!(rows.resident_pages().unwrap(), expected);
+    }
+
+    #[test]
+    fn residency_without_a_retained_descriptor_is_hidden() {
+        let (_temp, file) = file("missing-descriptor", &[7; 100]);
+        let mut rows = Arc::try_unwrap(map_rows_v1(&file, 0, 100).unwrap()).unwrap();
+        rows.source = None;
+        assert_eq!(
+            rows.resident_pages().unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn non_owned_read_only_file_hides_residency() {
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY-REVIEWED: geteuid reads the process's effective user ID.
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("skipped non-owned residency case: effective uid is root");
+            return;
+        }
+        let file = File::open("/etc/passwd").unwrap();
+        let metadata = file.metadata().unwrap();
+        assert_eq!(metadata.uid(), 0);
+        let rows = map_rows_v1(&file, 0, metadata.len()).unwrap();
+        assert_eq!(
+            rows.resident_pages().unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
     }
 
     #[test]

@@ -1343,6 +1343,15 @@ fn command_box(buffer: &mut Buffer, app: &App, area: Area, now: f64) {
     }
     let summary_y = y + height - 2;
     let end = x + width - 2;
+    if let Some(text) = app.pending_text() {
+        buffer.put(
+            x + 2,
+            summary_y,
+            &pad(&format!("{text}; Esc cancels the start"), inner),
+            Style::fg(Color::Yellow),
+        );
+        return;
+    }
     if let Some(flash) = loader
         .flash
         .as_ref()

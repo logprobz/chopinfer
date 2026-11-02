@@ -1,0 +1,38 @@
+ choptop   9 instances: 2 ready  1 unreachable  1 stopping  4 starting  1 exited   sources: proc, docker, --target, launch
+
+┌─ Instances  tok/s over the last 3 polls; ratios and TTFT over 60s ───────────────────────────────────────────────────────────────┐
+│ SOURCE          ADDRESS          MODEL            STATE          DECODE PREFILL RUN/WAIT   KV PREFIX SPEC TTFT50  DECODE 5m      │
+│ target          127.0.0.1:8431   Qwen3.8-Flash    ready             956   5,200     11/2  64%    71%  59%  175ms              ██ │
+│ target          192.0.2.10:8310  -                unreachable         -       -        -    -      -    -      -  retrying       │
+│ proc 48211      127.0.0.1:8311   MiMo-V2.6-Flash  stopping        1,795   5,200     24/2  64%    71%  59%  175ms  draining 3s    │
+│ proc 51022      -                Qwen3.8-Flash    starting            -       -        -    -      -    -      -  up 2m14s       │
+│ docker glm-tp4  127.0.0.1:8600   GLM-5.3-Flash    ready idle          0       0      0/0   2%      -    -      -                 │
+│▌proc 61290      -                Qwen3.8-Flash    exited 1            -       -        -    -      -    -      -  see its log    │
+│ launch A        -                Qwen3.8-Flash    waiting             -       -        -    -      -    -      -  after 48211    │
+│ launch B        -                Qwen3.8-Flash    waiting             -       -        -    -      -    -      -  after 48211    │
+│ proc 61377      -                DeepSeek-V4.1-F  starting            -       -        -    -      -    -      -  up 4s          │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ proc 61290  Qwen3.8-Flash  started by choptop, tp2-mtp, GPUs 4,5  Enter for details ────────────────────────────────────────────┐
+│ The serve process exited with status 1 after 6s, during startup.                                                                 │
+│ X dismisses this row; l opens the loader with this launch's choices.                                                             │
+│ CUDA_VISIBLE_DEVICES=4,5 chopinfer serve --model /models/qwen --tensor-parallel-size 2 --max-sequences 48 --listen 127.0.0.1:832 │
+│                                                                                                                                  │
+│ Log  ~/.local/state/choptop/logs/qwen38-tp2-mtp-a-20261102-152012.log                                                            │
+│   # choptop launch A of qwen38 tp2-mtp, switch 20261102-152012                                                                   │
+│   checkpoint /models/qwen at TP2 with profile tp2-mtp                                                                            │
+│   preparing the package: done in 2.1s                                                                                            │
+│   loading weights: done in 3.4s                                                                                                  │
+│   startup kv pool: sizing for 48 sequences                                                                                       │
+│   error: KV pool does not fit: 48 sequences need 61.2 GiB, 52.0 GiB free per rank                                                │
+│                                                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ Events ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  5m00s ago  GPU 3                     pid 51877 (python3) holds 1.4 GiB beside MiMo-V2.6-Flash                                   │
+│  1m00s ago  GPU 2                     hardware thermal slowdown: SM clock 1,650 of 3,090 MHz, 2C under the limit                 │
+│  1m00s ago  GPU 2                     2C under the temperature limit at 90C                                                      │
+│  9m54s ago  proc 61290                exited 1 during startup: error: KV pool does not fit: 48 sequences need 61.2 GiB, 52.0 GiB │
+│     3s ago  proc 48211                stopping: SIGTERM from choptop to start Qwen3.8-Flash tp2-mtp on GPUs 0,1,2,3; it ran chop │
+│     3s ago  launch A                  queued: tp2-mtp on GPUs 0,1 at 127.0.0.1:8310, after proc 48211 exits                      │
+│     3s ago  launch B                  queued: tp2-mtp on GPUs 2,3 at 127.0.0.1:8311, after proc 48211 exits                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ ↑↓ jk select   Enter details   l load model   X stop   m monitor   w window   r rescan   p pause   ? help   q quit

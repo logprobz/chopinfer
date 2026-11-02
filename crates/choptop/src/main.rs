@@ -12,6 +12,7 @@ use choptop::discover::Discovery;
 use choptop::discover::docker::DockerScanner;
 use choptop::discover::proc::ProcScanner;
 use choptop::instances::Tone;
+use choptop::launch::records;
 use choptop::ui::widgets::sanitize;
 use choptop::{listing, targets, tui};
 
@@ -107,6 +108,8 @@ fn main() -> ExitCode {
             .filter(|(name, _)| name.starts_with("CHOPINFER_"))
             .collect(),
         logs: logs_shown(),
+        state: records::state_directory(env::var_os("XDG_STATE_HOME"), env::var_os("HOME")),
+        read_only: options.read_only,
     };
     match tui::run(setup) {
         Ok(()) => ExitCode::SUCCESS,
@@ -168,6 +171,9 @@ fn discovery(
     }
     if targets {
         sources.push("--target");
+    }
+    if !options.read_only {
+        sources.push("launch");
     }
     (discovery, notes, sources)
 }

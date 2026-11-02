@@ -24,6 +24,7 @@ use crate::gpu::poll::{self as gpu_poll, GpuPoller};
 use crate::gpu::{Gpus, Status};
 use crate::host::poll::{self as host_poll, HostPoller};
 use crate::instances::{EVENT_LIMIT, Followup, Registry, Source, Tone};
+use crate::launch::Launches;
 use crate::launch::occupancy::Live;
 use crate::poll::{Poll, Poller};
 use crate::targets::Target;
@@ -56,6 +57,10 @@ pub struct Setup {
     pub environment: BTreeMap<String, String>,
     /// Where launch logs go, as shown.
     pub logs: String,
+    /// choptop's state directory, for launch logs and records.
+    pub state: Option<PathBuf>,
+    /// `--read-only`: no loader and no stopping.
+    pub read_only: bool,
 }
 
 /// Restores the terminal when dropped, including while a panic unwinds.
@@ -308,6 +313,7 @@ pub fn run(setup: Setup) -> io::Result<()> {
         }
         commands
     });
+    let scanning = commands.is_some();
     let (catalog_replies, catalog_reports) = mpsc::channel();
     let mut workers = Workers {
         pollers: HashMap::new(),
@@ -321,19 +327,35 @@ pub fn run(setup: Setup) -> io::Result<()> {
         catalog: None,
         catalog_replies,
     };
+    // Launches an earlier choptop started that still run keep their rows,
+    // GPUs and port. A read-only choptop has no launches.
+    let (mut launches, message) = if setup.read_only {
+        (Launches::default(), None)
+    } else {
+        Launches::new(setup.state.as_deref(), &setup.logs)
+    };
+    if let Some(message) = message {
+        registry.note(now(), "choptop", message, Tone::Warning);
+    }
+    launches.relink(&mut registry, now());
+    followups.append(&mut launches.followups);
     workers.follow(&mut registry, followups, now());
     let mut app = App::new(registry, setup.interval, setup.rescan, setup.sources);
     app.live = live;
+    app.live.scanning = scanning;
     app.catalog = Catalog::new(setup.chopinfer, setup.checkpoints);
     app.catalog.environment = setup.environment;
     app.logs = setup.logs;
+    app.read_only = setup.read_only;
+    app.reservations = launches.reservations();
+    app.launches = launches;
     // GPM counters are sampled only while the monitor is open.
     let counters = Arc::new(AtomicBool::new(false));
     let (gpu_results, gpu_reports) = mpsc::channel();
     if !setup.gpus {
         app.live.unavailable = Some("--no-gpus".to_owned());
     }
-    let _gpu_poller = setup.gpus.then(|| {
+    let gpu_poller = setup.gpus.then(|| {
         app.gpus = Gpus::new(Status::Opening, setup.gpu_counters, setup.interval);
         GpuPoller::spawn(setup.interval, origin, Arc::clone(&counters), gpu_results)
     });
@@ -366,6 +388,7 @@ pub fn run(setup: Setup) -> io::Result<()> {
             catalog: &catalog_reports,
         },
         (&stop, &counters),
+        gpu_poller.as_ref(),
         color,
         now,
     );
@@ -411,6 +434,7 @@ fn run_loop(
         catalog: catalog_reports,
     }: Inbox<'_>,
     (stop, counters): (&AtomicBool, &AtomicBool),
+    gpu_poller: Option<&GpuPoller>,
     color: bool,
     now: impl Fn() -> f64,
 ) -> io::Result<()> {
@@ -442,21 +466,14 @@ fn run_loop(
                             .note(now(), "choptop", "rescan requested", Tone::Normal);
                         dirty = true;
                     }
-                    Action::Start => {
-                        // The launch continues from here: a fresh GPU read
-                        // and rescan, serve --check, then the confirm dialog.
-                        let count = app
-                            .start
-                            .as_ref()
-                            .map_or(0, |start| start.placement.instances.len());
-                        app.loader.flash(
-                            now(),
-                            format!(
-                                "Checked: {count} process{} ready to start; starting is not built yet",
-                                if count == 1 { "" } else { "es" }
-                            ),
-                            true,
-                        );
+                    Action::Read => {
+                        // A start or stop goes on from a GPU reading and a
+                        // scan begun after this, even while paused.
+                        app.asked(now());
+                        if let Some(poller) = gpu_poller {
+                            poller.poll_now();
+                        }
+                        workers.command(Command::Force);
                         dirty = true;
                     }
                     Action::Redraw => dirty = true,
@@ -480,11 +497,17 @@ fn run_loop(
         for report in host_reports.try_iter() {
             hold_host(&mut held_host, report);
         }
-        // The loader's answers are not held by a pause.
+        // The loader's answers are not held by a pause, nor are launches.
         for reply in catalog_reports.try_iter() {
             app.catalog_reply(reply);
             dirty = true;
         }
+        dirty |= app.supervise(now());
+        let followups = std::mem::take(&mut app.launches.followups);
+        if !followups.is_empty() {
+            workers.follow(&mut app.registry, followups, now());
+        }
+        workers.ask(app);
         counters.store(
             app.view == View::Monitor && app.gpus.counters,
             Ordering::Relaxed,

@@ -1,6 +1,7 @@
 //! Drawing the interface into a [`buffer::Buffer`].
 
 pub mod buffer;
+pub mod confirm;
 pub mod detail;
 pub mod gpus;
 pub mod list;
@@ -39,8 +40,11 @@ pub fn draw(app: &App, width: u16, height: u16, now: f64) -> Buffer {
         View::Monitor => monitor::draw(&mut buffer, app, now),
         View::Loader => loader::draw(&mut buffer, app, now),
     }
+    if let Some(dialog) = &app.dialog {
+        confirm::draw(&mut buffer, app, dialog);
+    }
     if app.help {
-        help(&mut buffer, app.view);
+        help(&mut buffer, app.view, app.read_only);
     }
     buffer
 }
@@ -146,7 +150,13 @@ pub fn footer(buffer: &mut Buffer, keys: &[(&str, &str, u8)]) {
     }
 }
 
-fn help(buffer: &mut Buffer, view: View) {
+/// Help lines `--read-only` leaves out: its keys and source by their
+/// left column, and what it says about them.
+const LAUNCH_KEYS: [&str; 3] = ["  l", "  X", "  launch"];
+const STARTS: &str = "l and X start and stop serve processes of this user, each after a";
+const STOPS: &str = "confirm; containers and servers elsewhere are never stopped.";
+
+fn help(buffer: &mut Buffer, view: View, read_only: bool) {
     const INSTANCES: &[(&str, &str)] = &[
         ("Keys", ""),
         ("  ↑ ↓  j k", "select an instance (list)"),
@@ -156,6 +166,10 @@ fn help(buffer: &mut Buffer, view: View) {
         (
             "  l",
             "load a model: start one, or replace the selected instance",
+        ),
+        (
+            "  X",
+            "stop the selected instance of yours, or dismiss an exited launch",
         ),
         ("  m", "this host: CPU, memory, disks, sensors and GPUs"),
         ("  w", "latency and ratio window: 60s, 5m, since start"),
@@ -176,12 +190,18 @@ fn help(buffer: &mut Buffer, view: View) {
             "  target",
             "--target, --targets-file and CHOPINFER_TOP_TARGETS",
         ),
+        (
+            "  launch",
+            "serve processes choptop started; each log stays after its process exits",
+        ),
         ("", ""),
         (
             "",
             "Reads only /health and /metrics. Rates come from counter deltas",
         ),
         ("", "between polls; a new startup nonce re-baselines them."),
+        ("", STARTS),
+        ("", STOPS),
         ("", ""),
         ("", "Press any key to close."),
     ];
@@ -194,6 +214,7 @@ fn help(buffer: &mut Buffer, view: View) {
             "  l",
             "load a model: start one, or replace the selected GPU's instance",
         ),
+        ("  X", "stop the selected GPU's instance, if it is yours"),
         ("  w", "latency and ratio window: 60s, 5m, since start"),
         ("  r", "rescan for processes and containers now"),
         ("  p", "pause the screen; polls keep their latest result"),
@@ -302,6 +323,12 @@ fn help(buffer: &mut Buffer, view: View) {
         View::Loader => (LOADER, 18),
         View::List | View::Detail => (INSTANCES, 16),
     };
+    let lines = lines
+        .iter()
+        .filter(|(left, right)| {
+            !read_only || !(LAUNCH_KEYS.contains(left) || [STARTS, STOPS].contains(right))
+        })
+        .collect::<Vec<_>>();
     let width = 92.min(buffer.width - 2);
     let height = (lines.len() as u16 + 2).min(buffer.height - 2);
     let x = (buffer.width - width) / 2;

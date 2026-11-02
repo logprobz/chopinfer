@@ -6,11 +6,14 @@ pub const USAGE: &str = "\
 usage: choptop [--target HOST:PORT]... [--targets-file FILE]
                      [--no-discover] [--no-docker] [--interval SECONDS]
                      [--rescan SECONDS] [--api-key KEY] [--no-gpus]
-                     [--no-gpu-counters] [--chopinfer PATH] [--list [--json]]
+                     [--no-gpu-counters] [--chopinfer PATH] [--read-only]
+                     [--list [--json]]
 
 A live view of running chopinfer serve instances and this host: its CPUs,
 memory, disks, sensors and GPUs. It reads only /health and /metrics from
-servers, the host from /proc and /sys, and the GPUs through NVML.
+servers, the host from /proc and /sys, and the GPUs through NVML. Its model
+loader starts serve processes of this user and stops the ones they replace;
+X stops one. It never stops containers or remote servers.
 
   --target HOST:PORT   Watch this server; repeatable. Also http://HOST:PORT,
                        or :PORT for 127.0.0.1. CHOPINFER_TOP_TARGETS adds a
@@ -27,15 +30,20 @@ servers, the host from /proc and /sys, and the GPUs through NVML.
   --no-gpu-counters    Do not sample GPM counters (SM, tensor, DRAM) in the
                        monitor.
   --chopinfer PATH     The chopinfer the model loader asks for models and
-                       serve options (default chopinfer on PATH).
+                       serve options, and launches (default chopinfer on
+                       PATH).
+  --read-only          Start and stop nothing: no model loader, no X.
   --list               Print the instances once and exit; with --json, as a
                        chopinfer.top.list.v1 document.
   -h, --help           Print this help.
   --version            Print the version.
 
 Keys: arrows or j/k select, Enter opens, Esc returns, Tab switches, m shows
-the monitor, l loads a model, w changes the window, r rescans, p pauses,
-? shows help, q quits.
+the monitor, l loads a model, X stops the selected instance, w changes the
+window, r rescans, p pauses, ? shows help, q quits.
+
+Launch logs and records go under $XDG_STATE_HOME/choptop, else
+~/.local/state/choptop.
 ";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -51,6 +59,7 @@ pub struct Options {
     pub gpu_counters: bool,
     /// The chopinfer the loader runs.
     pub chopinfer: Option<PathBuf>,
+    pub read_only: bool,
     pub list: bool,
     pub json: bool,
     pub help: bool,
@@ -70,6 +79,7 @@ impl Default for Options {
             gpus: true,
             gpu_counters: true,
             chopinfer: None,
+            read_only: false,
             list: false,
             json: false,
             help: false,
@@ -121,6 +131,7 @@ pub fn parse(arguments: impl IntoIterator<Item = String>) -> Result<Options, Str
             "--no-gpus" => options.gpus = false,
             "--no-gpu-counters" => options.gpu_counters = false,
             "--chopinfer" => options.chopinfer = Some(PathBuf::from(value("--chopinfer")?)),
+            "--read-only" => options.read_only = true,
             "--list" => options.list = true,
             "--json" => options.json = true,
             "-h" | "--help" => options.help = true,
@@ -147,9 +158,10 @@ mod tests {
         let options = parsed(
             "--target :8311 --target=gpu:8310 --targets-file t.txt --no-discover --no-docker \
              --interval 0.5 --rescan=30 --api-key k --no-gpus --no-gpu-counters \
-             --chopinfer /opt/chopinfer/bin/chopinfer --list --json",
+             --chopinfer /opt/chopinfer/bin/chopinfer --read-only --list --json",
         )
         .unwrap();
+        assert!(options.read_only);
         assert_eq!(options.targets, [":8311", "gpu:8310"]);
         assert_eq!(options.targets_file, Some(PathBuf::from("t.txt")));
         assert!(!options.discover && !options.docker && options.list && options.json);

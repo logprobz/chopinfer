@@ -18,7 +18,7 @@ use choptop::host::{
 };
 use choptop::instances::Registry;
 use choptop::launch::command::Key;
-use choptop::loader::{Choice, Recent};
+use choptop::launch::records::Record;
 use choptop::poll::{Answer, Poll};
 use choptop::prometheus::Histogram;
 use choptop::stats::{Counters, Gauges, Histograms, Snapshot};
@@ -27,6 +27,8 @@ use choptop::ui;
 
 /// Seconds of history the fleet has when the screens are drawn.
 const NOW: f64 = 300.0;
+/// The wall clock then: 2026-11-02 15:30:12 UTC.
+const WALL: u64 = 1_793_633_412;
 
 /// `per_second` observations in each bucket of `bounds` and `+Inf`, for
 /// `seconds`; each observation counts at its bucket's middle, or at the
@@ -903,30 +905,9 @@ fn loader_reading(stray: bool, failed: Option<u32>, recent_launches: bool) -> Ap
         .collect(),
     );
     app.catalog = Catalog::new(Ok("/opt/chopinfer/bin/chopinfer".into()), checkpoints);
-    let recent = |label: &str, when: &str, model: &str, profile: &str, set: usize| Recent {
-        label: label.to_owned(),
-        when: when.to_owned(),
-        choice: Choice {
-            model: model.to_owned(),
-            profile: profile.to_owned(),
-            gpus: (0..4).collect(),
-            edits: (0..set)
-                .map(|_| (Key::Flag("max-sequences".to_owned()), "48".to_owned()))
-                .collect(),
-            custom: Vec::new(),
-        },
-    };
+    app.wall = || WALL;
     if recent_launches {
-        app.loader.recent = vec![
-            recent(
-                "DeepSeek tp4-dspark",
-                "yesterday",
-                "deepseek41",
-                "tp4-dspark",
-                0,
-            ),
-            recent("Qwen tp2-mtp x2", "3d ago", "qwen38", "tp2-mtp", 1),
-        ];
+        app.launches.records.records = recent_records();
     }
     press(&mut app, KeyCode::Char('l'));
     assert_eq!(app.view, View::Loader);
@@ -947,6 +928,48 @@ fn loader_reading(stray: bool, failed: Option<u32>, recent_launches: bool) -> Ap
     app.catalog.outbox.clear();
     app.tick(NOW);
     app
+}
+
+/// One instance of an earlier launch, queued `ago` seconds before
+/// [`WALL`].
+fn earlier(model: (&str, &str, &str), letter: char, gpus: &[u32], ago: u64) -> Record {
+    let (model, served_model_name, profile) = model;
+    Record {
+        switch: choptop::launch::process::stamp(WALL - ago),
+        letter,
+        model: model.to_owned(),
+        served_model_name: served_model_name.to_owned(),
+        profile: profile.to_owned(),
+        gpus: gpus.to_vec(),
+        uuids: gpus.iter().map(|index| uuid(*index)).collect(),
+        host: "127.0.0.1".to_owned(),
+        port: 8310 + u16::from(letter as u8 - b'A'),
+        edits: Vec::new(),
+        custom: Vec::new(),
+        pid: None,
+        start_ticks: None,
+        log: PathBuf::from("/state/choptop/logs/earlier.log"),
+        queued: WALL - ago,
+        exit_status: Some(0),
+        ended: None,
+    }
+}
+
+/// Qwen at TP2 on two pairs of GPUs three days ago, with one value set,
+/// and DeepSeek at TP4 yesterday.
+fn recent_records() -> Vec<Record> {
+    let qwen = ("qwen38", "Qwen3.8-Flash", "tp2-mtp");
+    let mut first = earlier(qwen, 'A', &[0, 1], 3 * 86_400 + 100);
+    first.edits = vec![(Key::Flag("max-sequences".to_owned()), "48".to_owned())];
+    let mut second = earlier(qwen, 'B', &[2, 3], 3 * 86_400 + 100);
+    second.edits = first.edits.clone();
+    let deepseek = earlier(
+        ("deepseek41", "DeepSeek-V4.1-Flash", "tp4-dspark"),
+        'A',
+        &[0, 1, 2, 3],
+        90_000,
+    );
+    vec![first, second, deepseek]
 }
 
 /// Answers the loader's requests as chopinfer would: no package options,
@@ -1589,4 +1612,191 @@ fn a_long_list_scrolls_to_the_selection() {
         .find(|line| line.contains('▌'))
         .unwrap_or_default();
     assert!(selected.contains("127.0.0.1:9029"), "{list}");
+}
+
+/// `S` on Qwen at TP2 on all four GPUs: the fresh reading, then `serve
+/// --check` resolving the profile with the form's value.
+fn confirming() -> App {
+    use choptop::catalog::Check;
+    use crossterm::event::KeyCode;
+    let mut app = qwen_tp2();
+    app.host.apply(
+        HostReport::Polled {
+            reading: Box::new(host_reading(Machine::Workstation, NOW)),
+            chips: Vec::new(),
+        },
+        &mut app.registry,
+        NOW,
+    );
+    press(&mut app, KeyCode::Char('S'));
+    app.asked(NOW);
+    read_gpus(&mut app, false, None);
+    app.supervise(NOW);
+    let Some(Request::Check { generation, .. }) = app.catalog.outbox.pop() else {
+        panic!("no check: {:?}", app.loader.flash);
+    };
+    let profile = app.catalog.profile("qwen38", "tp2-mtp").unwrap();
+    let mut settings = profile.settings.clone();
+    settings.insert("max-sequences".to_owned(), "48".to_owned());
+    app.catalog_reply(Reply::Check(
+        generation,
+        Ok(Check {
+            profile: "tp2-mtp".to_owned(),
+            settings,
+            model_options: Vec::new(),
+            warnings: vec!["--max-sequences 48 is above the profile's evidence (none)".to_owned()],
+        }),
+    ));
+    app
+}
+
+#[test]
+fn the_start_and_stop_dialogs() {
+    use choptop::app::{Dialog, StopConfirm, Stoppable};
+    let app = confirming();
+    assert!(
+        matches!(app.dialog, Some(Dialog::Start(_))),
+        "{:?}",
+        app.loader.flash
+    );
+    check("confirm-132x38", &app, 132, 38);
+    let mut app = fleet();
+    with_gpus(&mut app, false);
+    app.dialog = Some(Dialog::Stop(Box::new(StopConfirm {
+        label: "proc 48211".to_owned(),
+        what: "MiMo-V2.6-Flash at 127.0.0.1:8311 on GPUs 0,1,2,3".to_owned(),
+        gpus: vec![0, 1, 2, 3],
+        target: Stoppable::Process {
+            pid: 48211,
+            start_ticks: 48211,
+        },
+        waiting: false,
+    })));
+    check("stop-132x38", &app, 132, 38);
+}
+
+/// The fleet after a switch from MiMo to Qwen at TP2 twice was confirmed:
+/// MiMo draining, both Qwen instances waiting for it, a launch of an
+/// earlier switch starting, and one before it exited during startup.
+fn launching() -> App {
+    use choptop::launch::process::Identity;
+    use choptop::launch::{Phase, Queued, Wait};
+    let mut app = fleet();
+    with_gpus(&mut app, false);
+    app.sources.push("launch");
+    let mimo = app
+        .registry
+        .instances
+        .iter_mut()
+        .find(|row| row.label() == "proc 48211")
+        .unwrap();
+    mimo.stopping = Some(NOW - 3.0);
+    let recorded = Identity {
+        pid: 48211,
+        start_ticks: 48211,
+        uid: 1000,
+        arguments: vec!["chopinfer".to_owned(), "serve".to_owned()],
+        container: None,
+    };
+    let qwen = ("qwen38", "Qwen3.8-Flash", "tp2-mtp");
+    let mut failed = earlier(qwen, 'A', &[4, 5], 600);
+    (failed.pid, failed.start_ticks, failed.exit_status) = (Some(61290), Some(61290), Some(1));
+    failed.port = 8320;
+    failed.log = PathBuf::from("/state/choptop/logs/qwen38-tp2-mtp-a-20261102-152012.log");
+    let id = app.launches.adopt(
+        failed,
+        Phase::Exited(NOW - 594.0, Some(1)),
+        &mut app.registry,
+        NOW - 600.0,
+    );
+    let launch = app
+        .launches
+        .launches
+        .iter_mut()
+        .find(|seen| seen.id == id)
+        .unwrap();
+    launch.shown = "CUDA_VISIBLE_DEVICES=4,5 chopinfer serve --model /models/qwen --tensor-parallel-size 2 --max-sequences 48 --listen 127.0.0.1:8320".to_owned();
+    launch.tail = vec![
+        "# choptop launch A of qwen38 tp2-mtp, switch 20261102-152012".to_owned(),
+        "checkpoint /models/qwen at TP2 with profile tp2-mtp".to_owned(),
+        "preparing the package: done in 2.1s".to_owned(),
+        "loading weights: done in 3.4s".to_owned(),
+        "startup kv pool: sizing for 48 sequences".to_owned(),
+        "error: KV pool does not fit: 48 sequences need 61.2 GiB, 52.0 GiB free per rank"
+            .to_owned(),
+    ];
+    let row = app.registry.launch_row(id).unwrap().id;
+    app.registry.note(
+        NOW - 594.0,
+        "proc 61290",
+        "exited 1 during startup: error: KV pool does not fit: 48 sequences need 61.2 GiB, 52.0 GiB free per rank",
+        choptop::instances::Tone::Bad,
+    );
+    app.registry.note(
+        NOW - 3.0,
+        "proc 48211",
+        "stopping: SIGTERM from choptop to start Qwen3.8-Flash tp2-mtp on GPUs 0,1,2,3; it ran chopinfer serve --model /models/mimo --tensor-parallel-size 4",
+        choptop::instances::Tone::Warning,
+    );
+    for (letter, gpus) in [('A', [0, 1]), ('B', [2, 3])] {
+        let mut record = earlier(qwen, letter, &gpus, 3);
+        (record.exit_status, record.edits) = (
+            None,
+            vec![(Key::Flag("max-sequences".to_owned()), "48".to_owned())],
+        );
+        app.launches.queue(
+            Queued {
+                record,
+                binary: PathBuf::from("/opt/chopinfer/bin/chopinfer"),
+                arguments: Vec::new(),
+                environment: Vec::new(),
+                logged: String::new(),
+                shown: String::new(),
+                waits: vec![Wait::Serve(recorded.clone())],
+            },
+            &mut app.registry,
+            NOW - 3.0,
+        );
+    }
+    let deepseek = ("deepseek41", "DeepSeek-V4.1-Flash", "tp4-dspark");
+    let mut starting = earlier(deepseek, 'A', &[4, 5, 6, 7], 40);
+    (starting.pid, starting.start_ticks, starting.exit_status) = (Some(61377), Some(61377), None);
+    starting.port = 8320;
+    let id = app
+        .launches
+        .adopt(starting, Phase::Running, &mut app.registry, NOW - 4.0);
+    let launch = app
+        .launches
+        .launches
+        .iter_mut()
+        .find(|seen| seen.id == id)
+        .unwrap();
+    launch.shown = "CUDA_VISIBLE_DEVICES=4,5,6,7 chopinfer serve --model /models/deepseek --tensor-parallel-size 4 --listen 127.0.0.1:8320".to_owned();
+    launch.tail = vec![
+        "# choptop launch A of deepseek41 tp4-dspark".to_owned(),
+        "loading weights: 41 of 163 shards".to_owned(),
+    ];
+    app.selected = Some(row);
+    app
+}
+
+#[test]
+fn launch_rows_wait_start_and_exit_in_the_list() {
+    let mut app = launching();
+    check("list-launches-132x38", &app, 132, 38);
+    // A waiting row's panel says what it waits for.
+    app.selected = app
+        .registry
+        .instances
+        .iter()
+        .find(|row| row.label() == "launch A")
+        .map(|row| row.id);
+    let screen = ui::draw(&app, 132, 38, NOW).text();
+    assert!(
+        screen.contains("launch A  Qwen3.8-Flash  queued by choptop, tp2-mtp, GPUs 0,1"),
+        "{screen}"
+    );
+    assert!(screen.contains(
+        "Waiting for proc 48211 to exit and free GPUs 0,1; then choptop starts this serve process."
+    ));
 }

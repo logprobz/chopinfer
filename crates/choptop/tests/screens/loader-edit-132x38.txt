@@ -1,0 +1,38 @@
+ choptop  >  Load model   replacing proc 48211   4 models  4 GPUs                                   window 60s  poll 1s  rescan 15s
+
+┌─ Models  installed beside chopinfer ─────┐┌─ Options  49 serve options  1 set ───────────────────────────────────────────────────┐
+│ Qwen3.8-Flash        qwen38     found   ●││   OPTION                    VALUE                        FROM     NOTE               │
+│ MiMo-V2.6-Flash      mimo26     found    ││ ▸ Model  6                                                                           │
+│ DeepSeek-V4.1-Flash  deepseek41 found    ││ ▾ Scheduling  1 set                                                                  │
+│ GLM-5.3-Flash        glm5next   missing  ││   max-sequences             48                           set      no evidence        │
+│ recent launches                          ││▌  max-batch-tokens          1638▏                        profile                     │
+│ DeepSeek tp4-dspark           yesterday  ││   prefill-chunk-tokens      2048                         profile                     │
+│ Qwen tp2-mtp x2      1 set       3d ago  ││   queue-depth               -                            default                     │
+└──────────────────────────────────────────┘│   queue-wait-ms             -                            default                     │
+┌─ Profiles  ● what serve --model picks ───┐│   admission                 -                            default                     │
+│ tp4-ar         AR          evidence C64  ││   max-preemptions           -                            default                     │
+│ tp4-mtp      ● MTP 3       evidence C32  ││ ▾ Memory and KV                                                                      │
+│ tp4-ar-dcp2    AR DCP2     experimental  ││   gpu-memory-utilization    1                            profile                     │
+│ tp4-mtp-dcp2   MTP 3 DCP2  experimental  ││   graph-memory-reserve-mib  384                          profile  MiB per rank       │
+│ tp2-ar         AR          experimental  ││   kv-cache-dtype            auto                         profile                     │
+│ tp2-mtp      ● MTP 3       experimental  ││   kv-pages                  -                            default                     │
+│                                          ││   context-parallel-size     -                            default                     │
+│ Experimental: narrower topology smoke    ││   max-context-tokens        -                            default                     │
+│ only, no full concurrency qualificati... ││ ▾ Speculation                                                                        │
+└──────────────────────────────────────────┘│   speculation               adaptive                     profile                     │
+┌─ Placement  TP2  2 instances ────────────┐│   speculative-tokens        3                            profile  0 turns it off     │
+│ GPU 0 ■ A  proc 48211 MiMo-V2.6-F + Xorg ││   draft-cost                per-token                    profile                     │
+│ GPU 1 ■ A  proc 48211 MiMo-V2.6-Flash    ││   speculative-rows          -                            default                     │
+│ GPU 2 ■ B  proc 48211 MiMo-V2.6-Flash    ││   speculation-graph-rows    -                            default                     │
+│ GPU 3 ■ B  proc 48211 MiMo-V2.6-Flash    ││                                                                                      │
+│ A 127.0.0.1:8310   B 127.0.0.1:8311      ││ --max-batch-tokens  the most tokens one step carries                                 │
+│ stops proc 48211 first                   ││                                                                                      │
+└──────────────────────────────────────────┘└───────────────────────────────────────────────────────────────────────── 1-22 of 42 ─┘
+┌─ Command  2 processes of this user ──────────────────────────────────────────────────────────────────────────────────────────────┐
+│ A  CUDA_VISIBLE_DEVICES=0,1 chopinfer serve --model /models/qwen --tensor-parallel-size 2 --max-sequences 48                     │
+│      --listen 127.0.0.1:8310                                                                                                     │
+│ B  CUDA_VISIBLE_DEVICES=2,3 chopinfer serve --model /models/qwen --tensor-parallel-size 2 --max-sequences 48                     │
+│      --listen 127.0.0.1:8311                                                                                                     │
+│ tp2-mtp, serve --model's TP2 pick; 1 set here (white).  Logs go to ~/.local/state/choptop/logs.  Stops proc 48211 first.         │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ Enter keep   Esc cancel   Backspace delete

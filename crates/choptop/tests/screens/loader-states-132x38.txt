@@ -1,0 +1,38 @@
+ choptop  >  Load model   replacing proc 48211   4 models  4 GPUs                                   window 60s  poll 1s  rescan 15s
+
+┌─ Models  installed beside chopinfer ─────┐┌─ Options  find kv▏  Esc clears ──────────────────────────────────────────────────────┐
+│ Qwen3.8-Flash        qwen38     found    ││   OPTION                    VALUE                        FROM     NOTE               │
+│ MiMo-V2.6-Flash      mimo26     found   ●││ ▾ Memory and KV                                                                      │
+│ DeepSeek-V4.1-Flash  deepseek41 found    ││▌  kv-cache-dtype            auto  ◂▸                     profile                     │
+│ GLM-5.3-Flash        glm5next   missing  ││   kv-pages                  -                            default                     │
+│ recent launches  none yet                ││ ▾ Prefix cache and offload                                                           │
+│                                          ││   kv-offload-gib            -                            default                     │
+│                                          ││   kv-offload-min-tokens     -                            default                     │
+└──────────────────────────────────────────┘│                                                                                      │
+┌─ Profiles  ● what serve --model picks ───┐│                                                                                      │
+│ tp4-ar         AR          evidence C64  ││                                                                                      │
+│ tp4-mtp        MTP 3       not here      ││                                                                                      │
+│ tp4-dflash   ● DFLASH 7    evidence C64  ││                                                                                      │
+│ tp2-ar       ● AR          experimental  ││                                                                                      │
+│                                          ││                                                                                      │
+│ tp4-mtp cannot run here: this checkpoint ││                                                                                      │
+│ has dflash/, so serve --model serves     ││                                                                                      │
+│ DFlash                                   ││                                                                                      │
+│                                          ││                                                                                      │
+└──────────────────────────────────────────┘│                                                                                      │
+┌─ Placement  TP4  pick GPUs in groups of ─┐│                                                                                      │
+│ GPU 0 ■    proc 48211 MiMo-V2.6-F + Xorg ││                                                                                      │
+│ GPU 1 □    unknown                       ││                                                                                      │
+│ GPU 2 ■    proc 48211 MiMo-V2.6-Flash    ││                                                                                      │
+│ GPU 3 ■    pid 51877 (python3, 1.4 GiB)  ││                                                                                      │
+│                                          ││ --kv-cache-dtype  the KV cache element type (default auto)                           │
+│ stops proc 48211 first                   ││                                                                                      │
+└──────────────────────────────────────────┘└──────────────────────────────────────────────────────────────────────────────────────┘
+┌─ Command  fix 3 problems before starting ────────────────────────────────────────────────────────────────────────────────────────┐
+│    no instance yet: pick GPUs in groups of 4 for TP4                                                                             │
+│                                                                                                                                  │
+│                                                                                                                                  │
+│                                                                                                                                  │
+│ tp4-mtp; 0 set here (white).  Logs go to ~/.local/state/choptop/logs.  Stops proc 48211 first.                                   │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ type to find   Enter keep the filter   Esc clear

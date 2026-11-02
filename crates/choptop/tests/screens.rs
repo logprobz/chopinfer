@@ -852,10 +852,16 @@ fn read_gpus(app: &mut App, stray: bool, failed: Option<u32>) {
 /// Qwen, MiMo and DeepSeek, and two recent launches. The stray python3 has
 /// left GPU 3 by the time the loader reads it.
 fn loader() -> App {
+    loader_reading(false, None, true)
+}
+
+/// [`loader`] with the GPU processes [`read_gpus`] reads, and recent
+/// launches or none.
+fn loader_reading(stray: bool, failed: Option<u32>, recent_launches: bool) -> App {
     use crossterm::event::KeyCode;
     let mut app = fleet();
     with_gpus(&mut app, false);
-    read_gpus(&mut app, false, None);
+    read_gpus(&mut app, stray, failed);
     // The loading Qwen process has gone; the scan the loader reads is the
     // rest.
     let found = app
@@ -909,16 +915,18 @@ fn loader() -> App {
             custom: Vec::new(),
         },
     };
-    app.loader.recent = vec![
-        recent(
-            "DeepSeek tp4-dspark",
-            "yesterday",
-            "deepseek41",
-            "tp4-dspark",
-            0,
-        ),
-        recent("Qwen tp2-mtp x2", "3d ago", "qwen38", "tp2-mtp", 1),
-    ];
+    if recent_launches {
+        app.loader.recent = vec![
+            recent(
+                "DeepSeek tp4-dspark",
+                "yesterday",
+                "deepseek41",
+                "tp4-dspark",
+                0,
+            ),
+            recent("Qwen tp2-mtp x2", "3d ago", "qwen38", "tp2-mtp", 1),
+        ];
+    }
     press(&mut app, KeyCode::Char('l'));
     assert_eq!(app.view, View::Loader);
     app.catalog_reply(Reply::Options(ServeOptions::parse(&loader_fixture(
@@ -1023,9 +1031,7 @@ fn loader_view() {
 
 #[test]
 fn the_left_panes_keep_their_rows_without_recent_launches() {
-    let mut app = loader();
-    app.loader.recent.clear();
-    app.tick(NOW);
+    let app = loader_reading(false, None, false);
     // As the specification places them at 132x38: Models on rows 2-10,
     // Profiles 11-21 and Placement 22-29.
     let layout = ui::loader::layout(132, 38, &app);
@@ -1071,6 +1077,54 @@ fn a_process_the_switch_stops_is_yellow_on_every_gpu_it_holds() {
             "{line}"
         );
     }
+}
+
+#[test]
+fn loader_states() {
+    use crossterm::event::KeyCode;
+    // No launch yet, GPU 1's process query failed, the stray python3 is on
+    // GPU 3, and MiMo's tp4-mtp cannot run on its checkpoint. Finding kv.
+    let mut app = loader_reading(true, Some(1), false);
+    press(&mut app, KeyCode::Down);
+    // A frame picks MiMo's profile for the GPUs.
+    app.tick(NOW);
+    press(&mut app, KeyCode::Tab);
+    for _ in 0..2 {
+        press(&mut app, KeyCode::Up);
+    }
+    press(&mut app, KeyCode::Char('/'));
+    for key in ['k', 'v'] {
+        press(&mut app, KeyCode::Char(key));
+    }
+    app.tick(NOW);
+    assert_eq!(app.loader.model.as_deref(), Some("mimo26"));
+    assert_eq!(app.loader.profile.as_deref(), Some("tp4-mtp"));
+    assert_eq!(
+        app.loader.picked,
+        std::collections::BTreeSet::from([0, 2, 3])
+    );
+    app.settle(132, 38);
+    check("loader-states-132x38", &app, 132, 38);
+    // Back on Qwen's TP2 instances: the Model group closed, and an edit
+    // under way.
+    let mut app = qwen_tp2();
+    for _ in 0..8 {
+        press(&mut app, KeyCode::Up);
+    }
+    press(&mut app, KeyCode::Left);
+    for _ in 0..3 {
+        press(&mut app, KeyCode::Down);
+    }
+    press(&mut app, KeyCode::Enter);
+    for _ in 0..4 {
+        press(&mut app, KeyCode::Backspace);
+    }
+    for key in ['1', '6', '3', '8'] {
+        press(&mut app, KeyCode::Char(key));
+    }
+    app.tick(NOW);
+    app.settle(132, 38);
+    check("loader-edit-132x38", &app, 132, 38);
 }
 
 #[test]

@@ -8,6 +8,8 @@
 pub mod command;
 pub mod occupancy;
 pub mod placement;
+pub mod process;
+pub mod records;
 
 /// A choptop launch that holds its GPUs and port from the moment it is
 /// queued until it is cancelled or its process exits, including while it

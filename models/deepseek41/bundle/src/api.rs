@@ -39,6 +39,11 @@ runtime_bundle_abi::export_prefill_api_v1!(
     crate::instance::prefill::execute,
 );
 
+runtime_bundle_abi::export_prefill_anchors_api_v2!(
+    BUNDLE_DEEPSEEK41_PREFILL_ANCHORS_API_V2,
+    crate::instance::prefill::describe_anchors,
+);
+
 runtime_bundle_abi::export_bundle_mapped_device_results_v1!(
     BUNDLE_DEEPSEEK41_MAPPED_DEVICE_RESULTS_API_V1,
     entry::execute::<Instance>

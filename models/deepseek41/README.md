@@ -344,11 +344,14 @@ On 2026-11-02, exhaustive CPU fake-host execution of packed-2 rows 2 through
 ranges. For n1024, n1280, n5120 and n8192, respectively, AR needs 619, 268,
 1494 and 334 additional gap rows; DSpark needs 928, 406, 1510 and 350.
 Each projection's admit and packed symbols share the same row sets. The AR
-n1280 allowances combine single/chunk and packed cone rows because the
-seed-20759 full capture samples none of its packed gaps. Its metadata re-audit
-cannot prove unsampled rows; the exhaustive packed execution supplies that
-evidence. DSpark retains feature rows as additional dependency roots, changing
-the backward output cones. The audit compares fallback counts across widths,
+n1024 and n1280 allowances combine single/chunk and packed cone rows for a
+single-mode witness on every full-tier seed. None of the AR n1024 packed gap
+rows is mandatory, so separate packed entries can be stale on some seeds.
+For AR n1280, full-tier packed probes never reach these rows. The DSpark
+n1280 packed entries rely on mandatory probe 1557. Metadata re-audits cannot
+prove unsampled rows; the exhaustive packed execution supplies that evidence.
+DSpark retains feature rows as additional dependency roots, changing the
+backward output cones. The audit compares fallback counts across widths,
 so a fallback launch alone does not establish an allowance gap.
 
 The ignored lab probe compares the current route with the partition at

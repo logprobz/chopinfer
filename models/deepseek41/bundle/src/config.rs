@@ -415,6 +415,7 @@ pub(crate) mod tests {
             (PREFILL_PLAN_CACHE_VERIFY, true.into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK, 32.into()),
             (DIAGNOSTIC_STEP_LOGS, true.into()),
+            (PREFILL_ANCHOR_ITEMS, 2.into()),
             (WIDE_VERIFY, true.into()),
             (WIDE_DRAFT, true.into()),
             (PHASED_DECODE_REDUCE, true.into()),
@@ -434,6 +435,7 @@ pub(crate) mod tests {
                 prefill_plan_cache_verify: true,
                 dspark_graph_handles_per_rank: 32,
                 diagnostic_step_logs: true,
+                prefill_anchor_items: 2,
                 wide_verify: true,
                 wide_draft: true,
                 phased_decode_reduce: true,
@@ -450,6 +452,7 @@ pub(crate) mod tests {
             (PREFILL_PLAN_CACHE_VERIFY, "verify".into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK, (-1).into()),
             (DIAGNOSTIC_STEP_LOGS, 1.into()),
+            (PREFILL_ANCHOR_ITEMS, 9.into()),
             (WIDE_DRAFT, true.into()),
         ] {
             assert_eq!(

@@ -276,11 +276,65 @@ pub fn request_state(g: &Geometry, storage: KvStorage, dspark: bool) -> RequestS
     }
 }
 
+/// `request_state` whose captured buffers each keep `anchors` spare entries
+/// in a separate buffer of their layout: the state up to that many
+/// prompt-ending items of one prefill keep at their rounded prompt end
+/// (`execution_options::PREFILL_ANCHOR_ITEMS`). The working buffers, and so
+/// the host's per-slot state bytes, are unchanged. Zero is `request_state`.
+pub fn request_state_with_anchors(
+    g: &Geometry,
+    storage: KvStorage,
+    dspark: bool,
+    anchors: u32,
+) -> RequestState {
+    let mut state = request_state(g, storage, dspark);
+    if anchors > 0 {
+        for buffer in state
+            .buffers
+            .iter_mut()
+            .filter(|buffer| buffer.capture != Capture::None)
+        {
+            buffer.anchors = Anchors::Spare {
+                per_step: anchors,
+                pooled: false,
+            };
+        }
+    }
+    state
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::geometry::FLASH;
     use bundle_runtime::state::Extent;
+
+    /// Anchor spares add separate buffers only: the working bytes, the
+    /// snapshot and its pages stay those of the plain declaration.
+    #[test]
+    fn anchor_spares_keep_the_working_state_and_the_snapshot() {
+        let extent = Extent {
+            served: 4,
+            bucket: 4,
+            verify_rows: 0,
+        };
+        let plain = request_state(&FLASH, KvStorage::Native, false);
+        assert_eq!(
+            request_state_with_anchors(&FLASH, KvStorage::Native, false, 0),
+            plain
+        );
+        let anchored = request_state_with_anchors(&FLASH, KvStorage::Native, false, 2);
+        assert_eq!(anchored.validate(), Ok(()));
+        assert_eq!(anchored.validate_extent(extent), Ok(()));
+        assert_eq!(anchored.snapshot_bytes(), plain.snapshot_bytes());
+        for (anchored, plain) in anchored.buffers.iter().zip(&plain.buffers) {
+            assert_eq!(anchored.bytes(extent), plain.bytes(extent));
+            assert_eq!(
+                anchored.spare_bytes(),
+                2 * plain.layers * plain.planes.iter().sum::<u64>()
+            );
+        }
+    }
 
     /// The model card's 890 bytes of global KV per token natively, 3,200
     /// in BF16 (plan §2.9, T6).

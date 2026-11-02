@@ -897,6 +897,18 @@ print(json.dumps(reply), flush=True)
                 ("parity-served-context", ["chop.served-context.v1"],
                  "served context requires served items and batch limits")):
             agree(edited(name, requiring(*capabilities)), ["--fake-host-services"], {}, reason)
+        # What the build and the backend decide: host-memory services have one
+        # device per rank and no device sampler, and this build, which links no
+        # device driver, serves a package on host memory of a fixed size.
+        reference = self.root / "parity-reference-tokens.json"
+        reference.write_text('{"sequences": [[1, 2]]}')
+        for invocation in (base, bundle):
+            agree(invocation, ["--devices", "4,5,6,7"], {}, "--devices ordinal 4 for rank 0 is out of range")
+        agree(base, ["--debug-reference-tokens", str(reference)], {}, "which these services lack")
+
+        def large(manifest):
+            manifest["resource_requirements"]["minimum_device_memory_bytes"] = 2 << 30
+        agree(edited("parity-large", large), [], {}, "this chopinfer build links no device driver")
         # A context past what one sequence holds is refused without a device;
         # serving names the capacity its devices acquired, which only a start
         # can know, so the messages agree up to that capacity.

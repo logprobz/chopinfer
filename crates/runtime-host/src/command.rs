@@ -3966,6 +3966,30 @@ fn refused_host_v1(error: crate::HostLoadErrorV1) -> String {
     format!("the selected bundle refused this host: {error}")
 }
 
+/// Why `--debug-reference-tokens` cannot serve on services without a device
+/// sampler.
+const REFERENCE_FORCING_UNAVAILABLE_V1: &str =
+    "--debug-reference-tokens forces tokens in the device sampler, which these services lack";
+
+/// Whether `backend` runs on the device driver's services in this build,
+/// which query the devices to select them and sample on them; every other
+/// backend runs on host-memory services, decided by the build alone.
+const fn driver_services_v1(backend: DeviceServicesV1) -> bool {
+    cfg!(all(target_os = "linux", feature = "linux-cuda-host"))
+        && matches!(backend, DeviceServicesV1::Compiled)
+}
+
+/// Refuses host-memory services where `backend` needs them and this build
+/// has none, as opening the instance does.
+fn host_memory_services_v1(backend: DeviceServicesV1) -> Result<(), String> {
+    #[cfg(not(feature = "fake-host-services"))]
+    if !driver_services_v1(backend) {
+        return Err(NO_HOST_MEMORY_SERVICES_V1.to_owned());
+    }
+    let _ = backend;
+    Ok(())
+}
+
 /// Whether a package acquires the host's serving KV pool.
 fn serving_kv_capability_v1(manifest: &BundleManifestV1) -> bool {
     manifest
@@ -4035,6 +4059,7 @@ fn check_worker_start_v1(
 struct EngineCheckV1<'a> {
     package: &'a BundlePackageV1,
     topology: &'a ServedTopologyV1,
+    backend: DeviceServicesV1,
     serving_kv_policy: ServingKvPolicyV1,
     kv_dtype: BundleKvDtypeV1,
     maximum_rows: u64,
@@ -4045,9 +4070,10 @@ struct EngineCheckV1<'a> {
 
 /// What [`ServedEngineV1::open`] refuses that needs neither the native
 /// module nor a device, in its order and with its messages: the model option
-/// defaults the load resolves, the recurrent state slots, the instance
-/// configuration the package and the served settings make, and the
-/// `--debug-reference-tokens` file.
+/// defaults the load resolves, the recurrent state slots, host-memory
+/// services this build lacks, the instance configuration the package and the
+/// served settings make, the `--debug-reference-tokens` file and the device
+/// sampler forcing needs.
 fn check_engine_open_v1(engine: &EngineCheckV1<'_>) -> Result<(), HostCommandErrorV1> {
     let manifest = engine.package.manifest();
     crate::install::check_model_option_defaults_v1(engine.package)
@@ -4064,6 +4090,7 @@ fn check_engine_open_v1(engine: &EngineCheckV1<'_>) -> Result<(), HostCommandErr
     serving_policy.state_reserved_bytes = state_slots
         .as_ref()
         .map_or(0, |pool| pool.reserved_bytes_per_rank());
+    host_memory_services_v1(engine.backend).map_err(worker_refusal_v1)?;
     crate::install::check_served_instance_v1(
         engine.package,
         engine.model_options,
@@ -4079,6 +4106,9 @@ fn check_engine_open_v1(engine: &EngineCheckV1<'_>) -> Result<(), HostCommandErr
     .map_err(|error| worker_refusal_v1(refused_host_v1(error)))?;
     if let Some(path) = engine.debug_reference_tokens {
         ReferenceTokensV1::from_file(path).map_err(worker_refusal_v1)?;
+        if !driver_services_v1(engine.backend) {
+            return Err(worker_refusal_v1(REFERENCE_FORCING_UNAVAILABLE_V1));
+        }
     }
     Ok(())
 }
@@ -4094,20 +4124,21 @@ pub(crate) struct ServeCheckV1 {
 /// once its native module and devices are open that need neither, in its
 /// order and with its messages, then a `chopinfer.serve-check.v1` document.
 /// They resolve the package's declared operations, read its frontend
-/// declaration and tokenizer, plan the topology at its rank count with its
-/// context-parallel groups, gather the serving identity, size the engine from the declaration, and
+/// declaration and tokenizer, select the topology as serving does with the
+/// selected backend (planned where the device driver selects the devices),
+/// gather the serving identity, size the engine from the declaration, and
 /// run what the generation worker, its instance configuration and the
 /// transport refuse before they touch either. Only what the native module, a
 /// device or the moment of the start decides is left to it: the frontend
-/// export, the weight plan and the module's callbacks, device memory and
-/// peer access, the KV capacity the devices acquire (a context
+/// export, the weight plan and the module's callbacks, the driver's devices,
+/// their memory and peer access, the KV capacity they acquire (a context
 /// limit past the engine's sequence limit is refused here), and binding the
 /// listener.
 #[allow(clippy::too_many_arguments)]
 fn serve_check_v1(
     preflight: &ServePreflightV1,
     host: &BundleHostCompatibilityV1,
-    (topology, devices): (Option<&str>, Option<&[i32]>),
+    (topology, devices, backend): (Option<&str>, Option<&[i32]>, DeviceServicesV1),
     serving: &ServingOptionsV1,
     envelope: Option<DeveloperServingEnvelopeV1>,
     remote_media: &runtime_media::remote::RemoteMediaPolicy,
@@ -4120,7 +4151,7 @@ fn serve_check_v1(
     crate::install::check_native_module_v1(&preflight.package, host)?;
     let frontend =
         crate::deployment::package_frontend_v1(&preflight.package).map_err(unservable_v1)?;
-    let topology = ServedTopologyV1::planned(manifest, topology, devices)?
+    let topology = ServedTopologyV1::checked(manifest, topology, devices, backend)?
         .with_context_parallel(manifest, serving.context_parallel_size)?;
     serving_identity_v1(
         manifest,
@@ -4163,6 +4194,7 @@ fn serve_check_v1(
     check_engine_open_v1(&EngineCheckV1 {
         package: &preflight.package,
         topology: &topology,
+        backend,
         serving_kv_policy: serving_kv_policy_v1(
             manifest,
             &engine_config,
@@ -4301,7 +4333,7 @@ fn serve_v1(
         return serve_check_v1(
             &preflight,
             host,
-            (topology, devices),
+            (topology, devices, device),
             &serving,
             envelope,
             remote_media,
@@ -5041,10 +5073,7 @@ impl ServedEngineV1 {
         let model_executor = if let Some(reference) = &reference {
             let model_executor = model_executor
                 .with_reference_forcing(Rc::clone(reference))
-                .ok_or_else(|| {
-                    "--debug-reference-tokens forces tokens in the device sampler, which these services lack"
-                        .to_owned()
-                })?;
+                .ok_or_else(|| REFERENCE_FORCING_UNAVAILABLE_V1.to_owned())?;
             runtime_log::info_stdout!(
                 "debug: --debug-reference-tokens forces drafts and sampled tokens onto {} reference sequences; outputs are not model samples",
                 reference.sequence_count()
@@ -5625,6 +5654,22 @@ impl ServedTopologyV1 {
 
     fn video_device(&self) -> i32 {
         self.device_ordinals[0]
+    }
+
+    /// The topology serving selects with `backend`, for a check: as serving
+    /// selects it where that queries no device, and planned on the device
+    /// driver's services, whose devices only the start selects.
+    fn checked(
+        manifest: &BundleManifestV1,
+        requested: Option<&str>,
+        devices: Option<&[i32]>,
+        backend: DeviceServicesV1,
+    ) -> Result<Self, HostCommandErrorV1> {
+        if driver_services_v1(backend) {
+            Self::planned(manifest, requested, devices)
+        } else {
+            Self::new(manifest, requested, devices, backend)
+        }
     }
 
     fn new(

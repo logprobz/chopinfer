@@ -2726,10 +2726,13 @@ mod translate_tests {
     /// does or not at all serves exactly its own configuration, as its own
     /// options followed only by resets of settings the pick sets and it
     /// leaves at their defaults, each to its own effective value, and
-    /// inherits exactly the pick's model options it omits. A refusal is
-    /// accepted only for a reason checked here on its own: another drafter
-    /// than the pick's, or a setting the pick sets whose default no flag
-    /// value names, and the reason must name it.
+    /// inherits exactly the pick's model options it omits. Which settings
+    /// need a reset is worked out here: the pick's settings that the target's
+    /// own options leave in force under `serve --model`'s merge
+    /// ([`apply_defaults`]), placement and model options aside, each reset
+    /// in turn while one has a value to reset to. A refusal is accepted only
+    /// for another drafter than the pick's, or for a setting left in force
+    /// that no flag value resets, and the reason must name it.
     fn check_translation(
         pick: &Profile,
         target: &Profile,
@@ -2742,7 +2745,8 @@ mod translate_tests {
                 .map(|(flag, _)| flag)
                 .collect()
         };
-        let pick_flags = flags_of(&direct_defaults(pick));
+        let pick_defaults = direct_defaults(pick);
+        let pick_flags = flags_of(&pick_defaults);
         let base: Vec<String> = options(&direct_defaults(target))
             .into_iter()
             .filter(|(flag, _)| flag != "--devices")
@@ -2767,32 +2771,55 @@ mod translate_tests {
             }
             return;
         }
+        // The pick's settings left in force over the target's options and the
+        // resets so far; the launcher places each instance, and model options
+        // are inherited rather than reset.
+        let placed = |flag: &str| {
+            crate::models::INSTANCE_OPTIONS.contains(&flag) || flag == "--model-option"
+        };
+        let mut explicit = base.clone();
+        let mut resets = std::collections::BTreeMap::new();
+        let unresettable = loop {
+            let given = flags_of(&explicit);
+            let left: Vec<(String, Vec<String>)> =
+                options(&apply_defaults(&pick_defaults, &explicit))
+                    .into_iter()
+                    .filter(|(flag, _)| !placed(flag) && !given.contains(flag))
+                    .collect();
+            let Some((flag, value)) = left.iter().find_map(|(flag, _)| {
+                let value = effective.get(flag.trim_start_matches("--"))?;
+                Some((flag.clone(), value.clone()))
+            }) else {
+                break left;
+            };
+            explicit.extend([flag.clone(), value.clone()]);
+            resets.insert(flag, vec![value]);
+        };
         let translation = match result {
             Ok(translation) => translation,
             Err(reason) => {
-                // Only a setting the pick sets, that the target does not,
-                // and whose default the target's settings cannot name.
-                let flag = reason
-                    .strip_prefix("the pick sets ")
-                    .and_then(|rest| rest.split_whitespace().next())
-                    .unwrap_or_else(|| panic!("{context}: unjustified refusal: {reason}"));
-                assert!(pick_flags.contains(flag), "{context}: {reason}");
-                assert!(!base_flags.contains(flag), "{context}: {reason}");
+                let named = unresettable.iter().find(|(flag, values)| {
+                    reason.starts_with(&format!("the pick sets {flag} {},", values.join(" ")))
+                });
                 assert!(
-                    !effective.contains_key(flag.trim_start_matches("--")),
-                    "{context}: {flag} has a reset value: {reason}"
+                    named.is_some(),
+                    "{context}: unjustified refusal: {reason}; the settings no flag resets are \
+                     {unresettable:?}"
                 );
                 return;
             }
         };
         assert!(
+            unresettable.is_empty(),
+            "{context}: translated, though no flag resets {unresettable:?}"
+        );
+        assert!(
             translation.arguments.starts_with(&base),
             "{context}: {:?}",
             translation.arguments
         );
-        let mut reset = std::collections::BTreeSet::new();
+        let mut reset = std::collections::BTreeMap::new();
         for (flag, values) in options(&translation.arguments[base.len()..]) {
-            assert!(reset.insert(flag.clone()), "{context}: {flag} reset twice");
             assert!(
                 !base_flags.contains(&flag),
                 "{context}: {flag} is the target's own"
@@ -2801,12 +2828,12 @@ mod translate_tests {
                 pick_flags.contains(&flag),
                 "{context}: the pick leaves {flag}"
             );
-            assert_eq!(
-                values,
-                [effective[flag.trim_start_matches("--")].clone()],
-                "{context}: {flag}"
+            assert!(
+                reset.insert(flag.clone(), values).is_none(),
+                "{context}: {flag} reset twice"
             );
         }
+        assert_eq!(reset, resets, "{context}: resets");
         let expected: Vec<String> = pick
             .model_options
             .keys()
@@ -2830,8 +2857,9 @@ mod translate_tests {
 
     /// The strict check accepts the translation and refuses each way one
     /// could go wrong: a reset the pick does not need, a reset to another
-    /// value, an incomplete inherited set, a refusal without its reason, and
-    /// a profile with another drafter that translates.
+    /// value, an incomplete inherited set, a refusal without its reason or
+    /// naming a setting that needs no reset, a translation of a setting no
+    /// flag resets, and a profile with another drafter that translates.
     #[test]
     fn the_strict_check_refuses_every_wrong_translation() {
         let pick = drafting(serde_json::json!({"model_options": {"a": "1", "b": "2"}}));
@@ -2865,6 +2893,39 @@ mod translate_tests {
         missing.inherited_model_options.clear();
         refused(Ok(missing), "inherited model options");
         refused(Err("no reason".into()), "unjustified refusal");
+        // Settings no reset is needed for: the device map the launcher sets,
+        // and the speculation mode `--speculative-tokens 0` clears.
+        let devices = pick
+            .devices
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        for (flag, value) in [
+            ("--devices", devices.as_str()),
+            ("--speculation", "adaptive"),
+        ] {
+            assert!(
+                options(&direct_defaults(&pick)).contains(&(flag.into(), vec![value.into()])),
+                "{flag}"
+            );
+            refused(
+                Err(format!(
+                    "the pick sets {flag} {value}, and no flag value restores the default it \
+                     leaves"
+                )),
+                "unjustified refusal",
+            );
+        }
+        // A setting no flag value resets is a reason.
+        let queued = profile(serde_json::json!({"queue_depth": 8}));
+        let unbounded = profile(serde_json::json!({}));
+        let reason = translate(&queued, &unbounded).unwrap_err();
+        check_translation(&queued, &unbounded, Err(reason), "queue");
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            check_translation(&queued, &unbounded, Ok(good.clone()), "queue")
+        }));
+        assert!(panic.is_err());
         let mut layer = drafting(serde_json::json!({}));
         layer.speculation.drafter = "layer".into();
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

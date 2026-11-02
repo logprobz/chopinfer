@@ -245,7 +245,7 @@ fn pick_size(
 }
 
 /// Flags the caller sets per instance, which `models command` leaves out.
-const INSTANCE_OPTIONS: &[&str] = &["--listen", "--devices"];
+pub(crate) const INSTANCE_OPTIONS: &[&str] = &["--listen", "--devices"];
 
 /// `models command --model DIR --tensor-parallel-size N --profile NAME [--
 /// SERVE-OPTIONS]`: the `serve --model` arguments that serve the family's

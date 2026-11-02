@@ -350,50 +350,25 @@ impl InstalledBundleHostV1 {
                     .clone())
             },
             (topology_id, device_ordinals, kv_dtype),
-            Some(&|checkpoint, ranks| self.planned_images_v1(checkpoint, ranks)),
+            Some(&|checkpoint, ranks, requests| {
+                self.planned_images_v1(checkpoint, ranks, requests)
+            }),
         )
     }
 
     /// Asks the bundle for every rank's weight plan over `checkpoint`, for
-    /// each planned component, and returns the images it plans. A package
-    /// that plans no component is asked once with an empty role, for the
-    /// bundle's primary image. Each request carries the package's bundle
-    /// metadata; it names no host views, because where a view lives is the
-    /// plan's own decision.
+    /// each role `requests` names, and returns the images it plans.
     fn planned_images_v1(
         &self,
         checkpoint: std::sync::Arc<crate::direct::DirectCheckpointV1>,
         ranks: u32,
+        requests: PlanRequestsV1,
     ) -> Result<Vec<std::sync::Arc<crate::direct::PlannedImageV1>>, HostLoadErrorV1> {
-        let manifest = self.manifest();
-        let mut components = Vec::new();
-        for component in manifest.components() {
-            let role = component.role().as_str();
-            if role.as_bytes().starts_with(BUNDLE_METADATA_ROLE_PREFIX_V1) {
-                components.push(runtime_bundle_abi::weight_plan::NamedBytesV1 {
-                    name: role.to_owned(),
-                    bytes: verified_component_by_role_v1(&self.package, role)?,
-                });
-            }
-        }
-        components.sort_by(|left, right| left.name.cmp(&right.name));
-        // Planned identities cover the module that runs bundle-owned
-        // transforms; the package's verified manifest states its digest.
-        let bundle_module = manifest
-            .native_module()
-            .map(|module| sha256_array_v1(module.sha256()))
-            .transpose()
-            .map_err(|message| HostLoadErrorV1::Bundle(BundleError::validation(message)))?
-            .unwrap_or([0; 32]);
-        // A planned component has no other source: the plan must supply it.
-        let mut roles: Vec<String> = manifest
-            .planned_components()
-            .iter()
-            .map(|component| component.role().as_str().to_owned())
-            .collect();
-        if roles.is_empty() {
-            roles.push(String::new());
-        }
+        let PlanRequestsV1 {
+            components,
+            bundle_module,
+            roles,
+        } = requests;
         let mut planned = Vec::new();
         for role in roles {
             if let Some(image) = crate::direct::plan_image_v1(
@@ -627,12 +602,18 @@ pub(crate) fn package_instance_config_v1(
     let selected = crate::direct::selected_checkpoint_v1()
         .map_err(|message| HostLoadErrorV1::Bundle(BundleError::validation(message)))?;
     let direct = selected.is_some();
-    let planned = match (selected, plan) {
-        (Some(checkpoint), Some(plan)) => plan(checkpoint, declared.rank_count())?,
-        // Which images the bundle plans from the checkpoint, and so which
-        // components they replace, only its weight plan decides.
-        (Some(_), None) => return Ok(config),
-        (None, _) => Vec::new(),
+    let planned = match selected {
+        Some(checkpoint) => {
+            let requests = plan_requests_v1(package)?;
+            match plan {
+                Some(plan) => plan(checkpoint, declared.rank_count(), requests)?,
+                // Which images the bundle plans from the checkpoint, and so
+                // which components they replace, only its weight plan
+                // decides.
+                None => return Ok(config),
+            }
+        }
+        None => Vec::new(),
     };
     let planned_roles: Vec<&str> = planned.iter().map(|image| image.image_role()).collect();
     check_planned_components_v1(manifest, direct.then_some(&planned_roles[..]))
@@ -676,12 +657,63 @@ pub(crate) fn package_instance_config_v1(
     Ok(config)
 }
 
-/// Plans the rank images of a selected checkpoint at a rank count.
+/// Plans the rank images of a selected checkpoint at a rank count, as the
+/// requests ask.
 pub(crate) type PlanImagesV1<'a> = dyn Fn(
         std::sync::Arc<crate::direct::DirectCheckpointV1>,
         u32,
+        PlanRequestsV1,
     ) -> Result<Vec<std::sync::Arc<crate::direct::PlannedImageV1>>, HostLoadErrorV1>
     + 'a;
+
+/// What a package asks its weight plan for: each role to plan, with the
+/// package's bundle metadata and the digest of the module that runs its
+/// transforms. A package that plans no component asks once with an empty
+/// role, for the bundle's primary image. A request names no host views,
+/// because where a view lives is the plan's own decision.
+pub(crate) struct PlanRequestsV1 {
+    components: Vec<runtime_bundle_abi::weight_plan::NamedBytesV1>,
+    bundle_module: [u8; 32],
+    roles: Vec<String>,
+}
+
+/// The weight plan requests of `package`, from its verified bytes.
+fn plan_requests_v1(package: &BundlePackageV1) -> Result<PlanRequestsV1, HostLoadErrorV1> {
+    let manifest = package.manifest();
+    let mut components = Vec::new();
+    for component in manifest.components() {
+        let role = component.role().as_str();
+        if role.as_bytes().starts_with(BUNDLE_METADATA_ROLE_PREFIX_V1) {
+            components.push(runtime_bundle_abi::weight_plan::NamedBytesV1 {
+                name: role.to_owned(),
+                bytes: verified_component_by_role_v1(package, role)?,
+            });
+        }
+    }
+    components.sort_by(|left, right| left.name.cmp(&right.name));
+    // Planned identities cover the module that runs bundle-owned
+    // transforms; the package's verified manifest states its digest.
+    let bundle_module = manifest
+        .native_module()
+        .map(|module| sha256_array_v1(module.sha256()))
+        .transpose()
+        .map_err(|message| HostLoadErrorV1::Bundle(BundleError::validation(message)))?
+        .unwrap_or([0; 32]);
+    // A planned component has no other source: the plan must supply it.
+    let mut roles: Vec<String> = manifest
+        .planned_components()
+        .iter()
+        .map(|component| component.role().as_str().to_owned())
+        .collect();
+    if roles.is_empty() {
+        roles.push(String::new());
+    }
+    Ok(PlanRequestsV1 {
+        components,
+        bundle_module,
+        roles,
+    })
+}
 
 /// What a served instance adds to its package's configuration.
 #[derive(Clone, Copy)]

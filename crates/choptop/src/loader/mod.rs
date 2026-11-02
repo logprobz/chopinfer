@@ -723,15 +723,18 @@ impl Loader {
             problems.push("no model is installed beside chopinfer".to_owned());
         }
         if let Some(model) = model {
-            match catalog.checkpoint(&model.model) {
-                Checkpoint::Missing if self.typed_checkpoint.is_none() => problems.push(format!(
+            match (catalog.checkpoint(&model.model), &self.typed_checkpoint) {
+                // A checkpoint typed in replaces the one found before it, so
+                // nothing starts until models pick has named its model.
+                (_, Some(_)) => waits.push("models pick for the checkpoint typed in".to_owned()),
+                (Checkpoint::Missing, None) => problems.push(format!(
                     "no {} checkpoint: set its CHOPINFER_*_CHECKPOINT variable or enter one in the checkpoint row",
                     model.model
                 )),
-                Checkpoint::Missing | Checkpoint::Checking => {
+                (Checkpoint::Checking, None) => {
                     waits.push("models pick for the checkpoint".to_owned());
                 }
-                Checkpoint::Found { .. } => {}
+                (Checkpoint::Found { .. }, None) => {}
             }
         }
         if let (Some(profile), Some(pick)) = (profile, self.pick(catalog)) {
@@ -811,6 +814,10 @@ impl Loader {
 
     /// The switch `S` starts, or why not.
     fn start(&self) -> Result<Start, String> {
+        // The checkpoint row names a directory the plan does not use yet.
+        if self.typed_checkpoint.is_some() {
+            return Err("still checking the checkpoint".to_owned());
+        }
         // The checks and the command line must be the current form's.
         if self.plan.revision != self.revision {
             return Err("still computing the command".to_owned());
@@ -1642,10 +1649,18 @@ pub(crate) mod tests {
                 )),
                 Request::Command {
                     generation,
+                    checkpoint,
+                    tensor_parallel,
                     options,
                     ..
                 } => {
-                    let mut arguments = vec!["serve".to_owned()];
+                    let mut arguments = vec![
+                        "serve".to_owned(),
+                        "--model".to_owned(),
+                        checkpoint.display().to_string(),
+                        "--tensor-parallel-size".to_owned(),
+                        tensor_parallel.to_string(),
+                    ];
                     arguments.extend(options);
                     loader.reply(Reply::Command(generation, Ok(arguments)));
                 }
@@ -1712,6 +1727,74 @@ pub(crate) mod tests {
                 .any(|pair| pair == ["--max-sequences", "16"]),
             "{:?}",
             start.command
+        );
+    }
+
+    #[test]
+    fn a_checkpoint_typed_in_starts_nothing_until_its_command_is_read() {
+        let (mut catalog, live) = (catalog(), live());
+        let mut loader = Loader::open(Some(vec![0, 1, 2, 3]), Vec::new());
+        refresh(&mut loader, &mut catalog, &live);
+        answer(&mut loader, &mut catalog);
+        refresh(&mut loader, &mut catalog, &live);
+        assert_eq!(loader.plan.checkpoint, Some("/models/deepseek".into()));
+        assert!(loader.start().is_ok(), "{:?}", loader.plan);
+        // Another DeepSeek checkpoint typed in, models pick not answered.
+        loader.pane = Pane::Options;
+        loader.option_cursor = loader
+            .rows(&catalog)
+            .iter()
+            .position(|row| *row == Row::Option(Key::Flag("model".into())))
+            .unwrap();
+        press(&mut loader, &mut catalog, KeyCode::Enter);
+        typed(&mut loader, &mut catalog, "/models/new-deepseek");
+        let refused = |loader: &mut Loader, catalog: &mut Catalog| {
+            let outcome = press(loader, catalog, KeyCode::Char('S'));
+            assert_eq!(outcome, Outcome::Handled);
+            loader.flash.clone().unwrap().text
+        };
+        // S at once...
+        assert_eq!(
+            refused(&mut loader, &mut catalog),
+            "Not started: still checking the checkpoint"
+        );
+        // ...and after a refresh, which still plans the checkpoint before.
+        refresh(&mut loader, &mut catalog, &live);
+        assert_eq!(loader.plan.checkpoint, Some("/models/deepseek".into()));
+        assert!(
+            loader
+                .plan
+                .waits
+                .contains(&"models pick for the checkpoint typed in".to_owned()),
+            "{:?}",
+            loader.plan.waits
+        );
+        assert_eq!(
+            refused(&mut loader, &mut catalog),
+            "Not started: still checking the checkpoint"
+        );
+        // Once models pick names DeepSeek, the command line is asked for
+        // the new checkpoint and S waits for that answer.
+        catalog.apply(Reply::Pick(
+            "/models/new-deepseek".into(),
+            Pick::parse(PICK),
+        ));
+        refresh(&mut loader, &mut catalog, &live);
+        assert_eq!(loader.typed_checkpoint, None);
+        assert_eq!(loader.plan.checkpoint, Some("/models/new-deepseek".into()));
+        assert!(
+            refused(&mut loader, &mut catalog).contains("the command line"),
+            "{:?}",
+            loader.flash
+        );
+        answer(&mut loader, &mut catalog);
+        refresh(&mut loader, &mut catalog, &live);
+        let Outcome::Start(start) = press(&mut loader, &mut catalog, KeyCode::Char('S')) else {
+            panic!("a start: {:?}", loader.plan)
+        };
+        assert_eq!(
+            start.command[..3],
+            ["serve", "--model", "/models/new-deepseek"]
         );
     }
 

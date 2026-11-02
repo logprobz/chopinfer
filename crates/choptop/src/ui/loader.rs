@@ -879,9 +879,17 @@ fn pane_help(app: &App, lines: &[(Row, Line)]) -> (String, String, Color) {
                 ),
                 None => String::new(),
             };
+            let follows = if loader.profile_follows() {
+                " Follows the picked GPUs to serve --model's pick until you choose one with ↑↓ or Space."
+            } else {
+                ""
+            };
             (
                 sanitize(&profile.name),
-                sanitize(&format!("{how}Status: {}.", profile.status)),
+                format!(
+                    "{}{follows}",
+                    sanitize(&format!("{how}Status: {}.", profile.status))
+                ),
                 Color::Default,
             )
         }

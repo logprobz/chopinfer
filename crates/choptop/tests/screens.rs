@@ -1043,6 +1043,42 @@ fn qwen_tp2() -> App {
 }
 
 #[test]
+fn the_profiles_pane_says_when_its_profile_follows_the_gpus() {
+    use crossterm::event::KeyCode;
+    let mut app = loader();
+    press(&mut app, KeyCode::Tab);
+    // The help under the options, as one text.
+    let help = |app: &App| {
+        let screen = ui::draw(app, 132, 38, NOW).text();
+        let first = screen
+            .lines()
+            .position(|line| line.contains("tp4-mtp  serve --model picks"))
+            .unwrap();
+        screen
+            .lines()
+            .skip(first)
+            .take(2)
+            .map(|line| {
+                let inner = line.chars().skip(45).take(86).collect::<String>();
+                inner.trim().to_owned()
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    app.settle(132, 38);
+    let following = "tp4-mtp  serve --model picks this profile itself. Status: qualified. Follows the picked GPUs to serve --model's pick until you choose one with ↑↓ or Space.";
+    assert_eq!(help(&app), following);
+    // Space chooses it.
+    press(&mut app, KeyCode::Char(' '));
+    app.tick(NOW);
+    app.settle(132, 38);
+    assert_eq!(
+        help(&app).trim_end(),
+        "tp4-mtp  serve --model picks this profile itself. Status: qualified."
+    );
+}
+
+#[test]
 fn a_long_model_name_stays_apart_from_its_id() {
     let mut app = loader();
     let mut models = Models::parse(&loader_fixture("models.json")).unwrap();

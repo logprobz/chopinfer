@@ -392,6 +392,13 @@ impl Loader {
             .collect()
     }
 
+    /// Whether the profile follows the picked GPUs to what `serve --model`
+    /// picks at their size: until one is chosen in the Profiles pane or a
+    /// recent launch is restored.
+    pub fn profile_follows(&self) -> bool {
+        !self.profile_chosen
+    }
+
     /// The profile `serve --model` picks at the size the picked GPUs allow.
     fn auto_profile(&self, catalog: &Catalog) -> Option<String> {
         let profiles = self.profiles(catalog);
@@ -1062,6 +1069,8 @@ impl Loader {
                 self.pane = Pane::Options;
                 return Outcome::Handled;
             }
+            // Space chooses the profile under the cursor as it is.
+            KeyCode::Char(' ') => index,
             _ => return Outcome::Unhandled,
         };
         if let Some(profile) = profiles.get(next) {
@@ -2232,6 +2241,43 @@ pub(crate) mod tests {
         // An answer still on its way for DeepSeek is dropped.
         loader.reply(Reply::PackageOptions(1, parse_package_options(PACKAGE)));
         assert_eq!(loader.package, None);
+    }
+
+    #[test]
+    fn space_in_profiles_keeps_the_default_as_gpus_are_picked() {
+        for chosen in [true, false] {
+            let (mut catalog, live) = (catalog(), live());
+            let mut loader = Loader::open(None, Vec::new());
+            refresh(&mut loader, &mut catalog, &live);
+            // Qwen with no GPU picked: the default is its TP2 profile.
+            press(&mut loader, &mut catalog, KeyCode::Char('k'));
+            loader.picked.clear();
+            refresh(&mut loader, &mut catalog, &live);
+            assert_eq!(loader.profile.as_deref(), Some("tp2-ar"));
+            assert!(loader.profile_follows());
+            press(&mut loader, &mut catalog, KeyCode::Tab);
+            assert_eq!(loader.pane, Pane::Profiles);
+            if chosen {
+                press(&mut loader, &mut catalog, KeyCode::Char(' '));
+                assert_eq!(loader.profile.as_deref(), Some("tp2-ar"));
+                assert!(!loader.profile_follows());
+            }
+            press(&mut loader, &mut catalog, KeyCode::Tab);
+            assert_eq!(loader.pane, Pane::Placement);
+            for _ in 0..4 {
+                press(&mut loader, &mut catalog, KeyCode::Char(' '));
+                press(&mut loader, &mut catalog, KeyCode::Down);
+            }
+            refresh(&mut loader, &mut catalog, &live);
+            assert_eq!(loader.picked, BTreeSet::from([0, 1, 2, 3]));
+            let (profile, instances) = if chosen {
+                ("tp2-ar", 2)
+            } else {
+                ("tp4-mtp", 1)
+            };
+            assert_eq!(loader.profile.as_deref(), Some(profile), "chosen {chosen}");
+            assert_eq!(loader.plan.placement.instances.len(), instances);
+        }
     }
 
     #[test]

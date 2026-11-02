@@ -295,6 +295,10 @@ fn help(buffer: &mut Buffer, view: View, read_only: bool) {
             "  Space",
             "pick or drop a GPU; instances follow the GPUs picked",
         ),
+        (
+            "",
+            "in Profiles, choose the profile as it is, so it stays as GPUs change",
+        ),
         ("  /", "find an option by name"),
         (
             "  a",

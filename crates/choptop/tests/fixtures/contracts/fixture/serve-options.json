@@ -821,6 +821,12 @@
       "help": "the key clients must send when --api-key is not given (VLLM_API_KEY when it is unset)"
     },
     {
+      "name": "VLLM_API_KEY",
+      "value": "TEXT",
+      "secret": true,
+      "help": "the key clients must send when neither --api-key nor CHOPINFER_API_KEY is given"
+    },
+    {
       "name": "CHOPINFER_LOG_LEVEL",
       "value": "TEXT",
       "secret": false,

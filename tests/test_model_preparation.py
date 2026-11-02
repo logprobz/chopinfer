@@ -686,8 +686,8 @@ print(json.dumps(reply), flush=True)
         self.assertFalse(flags["--bundle"]["model_launch"])
         self.assertFalse(flags["--profile"]["model_launch"])
         self.assertEqual([entry["name"] for entry in document["environment"]],
-                         ["CHOPINFER_API_KEY", "CHOPINFER_LOG_LEVEL", "CHOPINFER_LOG_SUMMARY_SECONDS",
-                          "CHOPINFER_MODEL_OPTIONS"])
+                         ["CHOPINFER_API_KEY", "VLLM_API_KEY", "CHOPINFER_LOG_LEVEL",
+                          "CHOPINFER_LOG_SUMMARY_SECONDS", "CHOPINFER_MODEL_OPTIONS"])
         for entry in document["environment"]:
             self.assertEqual(set(entry), {"name", "value", "secret", "help"})
 

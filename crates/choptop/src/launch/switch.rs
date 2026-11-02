@@ -843,6 +843,52 @@ mod tests {
         assert!(!same(printed, &printed.replace(',', ", "), None));
     }
 
+    /// serve's other key variable is a secret too: a custom row or a form
+    /// value setting it is neither shown, logged nor saved.
+    #[test]
+    fn every_key_serve_reads_stays_out_of_logs_and_saved_launches() {
+        use crate::catalog::Reply;
+        use crate::launch::process::tests::scratch;
+        use crate::launch::records::Records;
+        let root = scratch("vllm-key");
+        let mut catalog = crate::loader::tests::catalog();
+        catalog.apply(Reply::Options(ServeOptions::parse(include_str!(
+            "../../tests/fixtures/contracts/fixture/serve-options.json"
+        ))));
+        let mut confirm = replacing_nine(&[reservation(9, "launch B")]).unwrap();
+        confirm.start.choice.edits = [(
+            Key::Variable("VLLM_API_KEY".into()),
+            "placeholder-form".into(),
+        )]
+        .into();
+        confirm.start.choice.custom =
+            vec!["VLLM_API_KEY=placeholder-row".into(), "KEEP_ME=ok".into()];
+        confirm.start.explicit = command::explicit(
+            &command::Form {
+                edits: &confirm.start.choice.edits,
+                custom: &confirm.start.choice.custom,
+            },
+            catalog.options(),
+            &[],
+            None,
+        );
+        let items = queued(&confirm, &catalog, &[], Some(&root)).unwrap();
+        for item in &items {
+            assert!(!item.logged.contains("placeholder-"), "{}", item.logged);
+            assert!(!item.shown.contains("placeholder-"), "{}", item.shown);
+            assert!(item.logged.contains("KEEP_ME=ok"), "{}", item.logged);
+        }
+        let path = root.join("launches.json");
+        let mut records = Records::load(Some(path.clone())).0;
+        for item in items {
+            records.put(item.record);
+        }
+        records.save().unwrap();
+        let saved = std::fs::read_to_string(path).unwrap();
+        assert!(!saved.contains("placeholder-"), "{saved}");
+        assert!(saved.contains("KEEP_ME=ok"));
+    }
+
     #[test]
     fn values_compare_as_text_unless_their_option_is_a_number() {
         let serve = ServeOptions::parse(include_str!(

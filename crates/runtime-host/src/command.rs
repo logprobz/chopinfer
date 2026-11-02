@@ -2118,6 +2118,12 @@ const SERVE_ENVIRONMENT_V1: &[(&str, &str, bool, &str)] = &[
         "the key clients must send when --api-key is not given (VLLM_API_KEY when it is unset)",
     ),
     (
+        "VLLM_API_KEY",
+        "TEXT",
+        true,
+        "the key clients must send when neither --api-key nor CHOPINFER_API_KEY is given",
+    ),
+    (
         "CHOPINFER_LOG_LEVEL",
         "TEXT",
         false,
@@ -13797,12 +13803,15 @@ mod serve_option_tests {
                 names,
                 [
                     "CHOPINFER_API_KEY",
+                    "VLLM_API_KEY",
                     "CHOPINFER_LOG_LEVEL",
                     "CHOPINFER_LOG_SUMMARY_SECONDS",
                     "CHOPINFER_MODEL_OPTIONS"
                 ]
             );
+            // Both keys serve reads are secrets a launcher must not show.
             assert_eq!(document["environment"][0]["secret"], true);
+            assert_eq!(document["environment"][1]["secret"], true);
         }
         // Only the last word describes; as a value it is not one.
         assert!(

@@ -534,6 +534,8 @@ impl Loader {
         let (Some(checkpoint), Some(tensor_parallel)) =
             (self.plan.checkpoint.clone(), self.plan.tensor_parallel)
         else {
+            self.forget_package();
+            self.forget_command();
             return;
         };
         let package_key = (checkpoint.clone(), tensor_parallel);
@@ -559,13 +561,15 @@ impl Loader {
                     .collect(),
             });
         }
-        let Some(profile) = self.profile.clone() else {
+        let explicit = &self.plan.explicit;
+        let Some(profile) = self
+            .profile
+            .clone()
+            .filter(|_| explicit.blocked.is_empty() && explicit.waiting.is_empty())
+        else {
+            self.forget_command();
             return;
         };
-        let explicit = &self.plan.explicit;
-        if !explicit.blocked.is_empty() || !explicit.waiting.is_empty() {
-            return;
-        }
         let command_key = (checkpoint, tensor_parallel, profile, explicit.arguments());
         if self.command_asked.as_ref() != Some(&command_key) {
             self.command_generation += 1;
@@ -578,6 +582,23 @@ impl Loader {
                 options: command_key.3.clone(),
             });
             self.command_asked = Some(command_key);
+        }
+    }
+
+    /// Drops the package's options once what they were read for changed,
+    /// and any answer still on its way.
+    fn forget_package(&mut self) {
+        if self.package_asked.take().is_some() {
+            self.package_generation += 1;
+            self.package = None;
+        }
+    }
+
+    /// Drops the command line once the form it was asked for changed.
+    fn forget_command(&mut self) {
+        if self.command_asked.take().is_some() {
+            self.command_generation += 1;
+            self.command_answer = None;
         }
     }
 
@@ -700,10 +721,7 @@ impl Loader {
             _ => {}
         }
         waits.extend(self.plan.explicit.waiting.iter().cloned());
-        if self.command_asked.is_some()
-            && self.plan.explicit.blocked.is_empty()
-            && self.plan.explicit.waiting.is_empty()
-        {
+        if self.command_asked.is_some() {
             match &self.command_answer {
                 None => waits.push("the command line from chopinfer models command".to_owned()),
                 Some(Ok(arguments)) => self.plan.command = Some(arguments.clone()),
@@ -1693,6 +1711,49 @@ pub(crate) mod tests {
         );
         // The pending launches' ports stay theirs; 48211's is reused.
         assert_eq!(placement.instances[0].port, 8310);
+    }
+
+    #[test]
+    fn another_model_drops_the_command_line_and_package_options_asked_before() {
+        let (mut catalog, live) = (catalog(), live());
+        let mut loader = Loader::open(Some(vec![0, 1, 2, 3]), Vec::new());
+        refresh(&mut loader, &mut catalog, &live);
+        for request in std::mem::take(&mut catalog.outbox) {
+            match request {
+                Request::PackageOptions { generation, .. } => {
+                    loader.reply(Reply::PackageOptions(
+                        generation,
+                        parse_package_options(PACKAGE),
+                    ));
+                }
+                Request::Command { generation, .. } => {
+                    loader.reply(Reply::Command(generation, Ok(vec!["serve".into()])));
+                }
+                _ => {}
+            }
+        }
+        refresh(&mut loader, &mut catalog, &live);
+        assert!(loader.plan.command.is_some());
+        assert!(
+            loader
+                .rows(&catalog)
+                .contains(&Row::Package("prefill_upper_skip".into()))
+        );
+        // Qwen has no checkpoint: nothing of DeepSeek's stays.
+        loader.pane = Pane::Models;
+        press(&mut loader, &mut catalog, KeyCode::Up);
+        refresh(&mut loader, &mut catalog, &live);
+        assert_eq!(loader.model.as_deref(), Some("qwen38"));
+        assert_eq!(loader.plan.command, None);
+        assert_eq!(loader.package, None);
+        assert!(
+            !loader
+                .rows(&catalog)
+                .contains(&Row::Package("prefill_upper_skip".into()))
+        );
+        // An answer still on its way for DeepSeek is dropped.
+        loader.reply(Reply::PackageOptions(1, parse_package_options(PACKAGE)));
+        assert_eq!(loader.package, None);
     }
 
     #[test]

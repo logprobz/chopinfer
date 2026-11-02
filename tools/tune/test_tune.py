@@ -2175,7 +2175,9 @@ class Tuner(unittest.TestCase):
     def test_model_configs_allow_their_profiles_route_fallbacks(self):
         # Served windows refuse fallback launches outside the config's
         # allowances, so every family and phase the bundle's route allowlist
-        # admits for the profiles the tuner serves must be allowed there.
+        # admits for the profile the tuner serves must be allowed there. The
+        # host serves the rank count's drafter profile, named tp<ranks>-<drafter>
+        # when it has one, or its autoregressive profile for AR configs.
         import fnmatch
         import tomllib
         for path in sorted((HERE.parents[1] / 'models').glob('*/depth-tune.json')):
@@ -2183,20 +2185,28 @@ class Tuner(unittest.TestCase):
             if not allowlist.exists():
                 continue
             model = json.loads(path.read_text())
+            ranks, ar = model['tensor_parallel_size'], model['speculation_mode'] == 'off'
             profiles = json.loads(path.with_name('profiles.json').read_text())['profiles']
-            served = [name for name, profile in profiles.items()
-                      if profile['speculation']['mode'] == model['speculation_mode']]
-            self.assertTrue(served, path)
-            admitted = {(entry['family'], entry['phase']) for entry in tomllib.loads(allowlist.read_text())['allow']
-                        if any(fnmatch.fnmatchcase(name, pattern) for name in served for pattern in entry['profiles'])}
+            matching = {name: profile['speculation']['drafter'] for name, profile in profiles.items()
+                        if profile['tensor_parallel'] == ranks and (profile['speculation']['drafter'] == 'none') == ar}
+            preferred = [name for name, drafter in matching.items()
+                         if name == f"tp{ranks}-{'ar' if drafter == 'none' else drafter}"]
+            served = preferred or list(matching)
+            self.assertEqual(len(served), 1, (path, served))
+            admitted = {(entry['family'], entry['phase'])
+                        for entry in tomllib.loads(allowlist.read_text()).get('allow', [])
+                        if any(fnmatch.fnmatchcase(served[0], pattern) for pattern in entry['profiles'])}
             jobs = model.pop('jobs', {})
             for name, job in [('', {}), *jobs.items()]:
-                allow = {**model, **job}.get('allow_fallbacks', {})
-                for family, phase in sorted(admitted):
-                    # A bare reason admits the family in every phase.
-                    scope = allow.get(family)
-                    phases = () if scope is None else scope['phases'] if isinstance(scope, dict) else tune.STEP_PHASES
-                    self.assertIn(phase, phases, (path, name, family))
+                merged = {**model, **job}
+                config = {'model': merged, 'allow_fallbacks': merged.get('allow_fallbacks', {})}
+                for arm in tune.arms(config):
+                    allow = tune.arm_fallbacks(config, arm)
+                    for family, phase in sorted(admitted):
+                        # A bare reason admits the family in every phase.
+                        scope = allow.get(family)
+                        phases = () if scope is None else scope['phases'] if isinstance(scope, dict) else tune.STEP_PHASES
+                        self.assertIn(phase, phases, (path, name, arm['label'], family))
 
     def test_runs_merge_into_one_schedule(self):
         with tempfile.TemporaryDirectory() as directory:

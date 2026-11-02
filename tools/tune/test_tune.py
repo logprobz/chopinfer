@@ -2155,6 +2155,8 @@ class Tuner(unittest.TestCase):
                 self.assertEqual(set(job.get('kinds', model['kinds'])), {'sampled'}, (path, name))
 
     def test_model_configs_serve_without_timing_cuts_on_a_fixed_budget(self):
+        # A profile's timing cuts survive an explicit non-tbt budget, and
+        # startup refuses cuts without tbt, so such jobs must turn them off.
         for path in sorted((HERE.parents[1] / 'models').glob('*/depth-tune.json')):
             profiles = json.loads(path.with_name('profiles.json').read_text())['profiles']
             if not any(profile.get('prefill_timing_cuts', 'off') != 'off' for profile in profiles.values()):

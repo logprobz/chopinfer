@@ -3612,15 +3612,17 @@ fn open_served_deployment_v1(
     ),
     HostCommandErrorV1,
 > {
-    let refused = |error: crate::deployment::BundleDeploymentErrorV1| {
-        run_error(format!("the selected bundle cannot be served: {error}"))
-    };
-    crate::deployment::require_frontend_capability_v1(package.manifest()).map_err(refused)?;
+    crate::deployment::require_frontend_capability_v1(package.manifest()).map_err(unservable_v1)?;
     let library = crate::install::open_native_module_v1(package, host)?;
-    let export =
-        crate::deployment::frontend_export_v1(package.manifest(), &library).map_err(refused)?;
-    let deployment = deployment_from_package_v1(package, &export, config).map_err(refused)?;
+    let export = crate::deployment::frontend_export_v1(package.manifest(), &library)
+        .map_err(unservable_v1)?;
+    let deployment = deployment_from_package_v1(package, &export, config).map_err(unservable_v1)?;
     Ok((library, export, deployment))
+}
+
+/// The refusal of a package whose frontend this host cannot serve.
+fn unservable_v1(error: crate::deployment::BundleDeploymentErrorV1) -> HostCommandErrorV1 {
+    run_error(format!("the selected bundle cannot be served: {error}"))
 }
 
 /// The frontend the transport serves out of `deployment`, opened over the
@@ -3852,6 +3854,90 @@ fn serve_preflight_v1(
     )))
 }
 
+/// The remote media policy the media flags set, checked again as serving
+/// starts.
+fn validate_remote_media_v1(
+    policy: &runtime_media::remote::RemoteMediaPolicy,
+) -> Result<(), HostCommandErrorV1> {
+    policy
+        .validate()
+        .map_err(|error| usage_error(error.to_string()))
+}
+
+/// `--allowed-local-media-path` as the directory it resolves to.
+fn allowed_local_media_root_v1(path: Option<&Path>) -> Result<Option<PathBuf>, HostCommandErrorV1> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let root = path.canonicalize().map_err(|error| {
+        usage_error(format!(
+            "--allowed-local-media-path cannot be resolved: {error}"
+        ))
+    })?;
+    if !root.is_dir() {
+        return Err(usage_error(
+            "--allowed-local-media-path must name a directory",
+        ));
+    }
+    Ok(Some(root))
+}
+
+/// The engine a package serves, from its manifest and frontend
+/// `declaration`, the declared vocabulary and the context the transport
+/// serves: the plan of a developer envelope, the schedule and pages, media
+/// inputs, position axes and speculation. Nothing here needs the native
+/// module.
+fn served_engine_config_v1(
+    manifest: &BundleManifestV1,
+    declaration: &runtime_frontend::FrontendDescriptorV1,
+    (vocabulary, served_context_tokens): (ModelVocabulary, usize),
+    serving: ServingOptionsV1,
+    envelope: Option<DeveloperServingEnvelopeV1>,
+    speculation: Option<SpeculationConfig>,
+) -> Result<EngineConfig, HostCommandErrorV1> {
+    // An envelope is checked against what this package declares rather than
+    // against what the transport was already configured to admit, because the
+    // declaration is the only thing here that knows the model's own rows.
+    let plan = envelope
+        .map(|envelope| {
+            resolve_developer_serving_plan_v1(
+                manifest,
+                declaration.context.maximum_total_tokens,
+                envelope,
+            )
+        })
+        .transpose()?;
+    let mut engine_config =
+        engine_config_v1(manifest, vocabulary, served_context_tokens, serving, plan)?;
+    if crate::video::media_inputs_required_v1(manifest) {
+        let media = declaration.multimodal.as_ref().ok_or_else(|| {
+            run_error("media capability requires a multimodal frontend declaration")
+        })?;
+        let pages = media.arena.rows / media.arena.page_rows;
+        let mut config = runtime_engine::MediaConfigV1::new(pages as usize, media.arena.page_rows)
+            .map_err(|error| run_error(format!("invalid media arena: {error:?}")))?;
+        for encoder in &media.encoders {
+            config = config
+                .with_encoder(
+                    encoder.maximum_payload_bytes as u64,
+                    encoder.cost_per_row_milli,
+                )
+                .map_err(|error| run_error(format!("invalid media encoder: {error:?}")))?;
+        }
+        engine_config = engine_config.with_media(config);
+    }
+    let position_axes = crate::executor::position_axes_capability_v1(manifest);
+    require_position_axes_capability_v1(declaration.multimodal.as_ref(), position_axes)
+        .map_err(run_error)?;
+    if position_axes {
+        engine_config = engine_config.with_position_axes();
+    }
+    if let Some(speculation) = speculation {
+        engine_config = engine_config.with_speculation(speculation);
+    }
+    Ok(engine_config)
+}
+
 /// What `serve --check` reports besides what the package resolves: the
 /// command's effective settings and the profile's qualified limit.
 pub(crate) struct ServeCheckV1 {
@@ -3859,22 +3945,74 @@ pub(crate) struct ServeCheckV1 {
     qualified_max_sequences: Option<usize>,
 }
 
-/// `serve --check` after [`serve_preflight_v1`]: the topology at its planned
-/// rank count with its context-parallel groups and the package's batch
-/// limits, as serving checks them once its devices are open, then a
-/// `chopinfer.serve-check.v1` document. No device or native module opens.
+/// `serve --check` after [`serve_preflight_v1`]: the checks serving makes
+/// once its native module and devices are open that need neither, in its
+/// order and with its messages, then a `chopinfer.serve-check.v1` document.
+/// They read the package's frontend declaration and tokenizer, plan the
+/// topology at its rank count with its context-parallel groups, and size
+/// the engine from the declaration. Only what the native module, a device
+/// or the moment of the start decides is left to it: the frontend export,
+/// device memory and peer access, the KV capacity the devices acquire (a
+/// context limit past the engine's sequence limit is refused here), and
+/// binding the listener.
+#[allow(clippy::too_many_arguments)]
 fn serve_check_v1(
     preflight: &ServePreflightV1,
-    topology: Option<&str>,
-    devices: Option<&[i32]>,
+    (topology, devices): (Option<&str>, Option<&[i32]>),
     serving: &ServingOptionsV1,
+    envelope: Option<DeveloperServingEnvelopeV1>,
+    remote_media: &runtime_media::remote::RemoteMediaPolicy,
+    allowed_local_media_path: Option<&Path>,
     profile_name: Option<&str>,
     check: ServeCheckV1,
 ) -> Result<String, HostCommandErrorV1> {
     let manifest = preflight.package.manifest();
+    crate::deployment::require_frontend_capability_v1(manifest).map_err(unservable_v1)?;
+    let frontend =
+        crate::deployment::package_frontend_v1(&preflight.package).map_err(unservable_v1)?;
     ServedTopologyV1::planned(manifest, topology, devices)?
         .with_context_parallel(manifest, serving.context_parallel_size)?;
-    check_batch_limits_v1(manifest, serving)?;
+    validate_remote_media_v1(remote_media)?;
+    crate::deployment::check_served_images_v1(
+        &frontend.declaration,
+        serving.maximum_images_per_request,
+    )
+    .map_err(usage_error)?;
+    allowed_local_media_root_v1(allowed_local_media_path)?;
+    // The transport serves the declared context, or less where the server
+    // configuration limits it, as the served frontend does.
+    let declared = frontend.declaration.context.maximum_total_tokens;
+    let served_context_tokens = preflight
+        .server_config
+        .maximum_context_tokens()
+        .map_or(declared, |maximum| maximum.min(declared));
+    let engine_config = served_engine_config_v1(
+        manifest,
+        &frontend.declaration,
+        (
+            crate::generation::EngineModelPolicyV1::from_declaration(&frontend.declaration)
+                .vocabulary(),
+            served_context_tokens,
+        ),
+        *serving,
+        envelope,
+        preflight.speculation,
+    )?;
+    serving_backend_config_v1(serving)?;
+    // Serving refuses a requested context past the KV capacity its devices
+    // acquire, which never exceeds the engine's sequence limit, so a request
+    // past that limit is refused here.
+    let requested = preflight
+        .server_config
+        .maximum_context_tokens()
+        .unwrap_or(served_context_tokens);
+    let maximum = engine_config.maximum_sequence_tokens();
+    if (serving.maximum_context_tokens.is_some() || envelope.is_some()) && requested > maximum {
+        return Err(run_error(format!(
+            "the requested context of {requested} token(s) exceeds the {maximum} token(s) one \
+             sequence of the selected bundle holds, more than any acquired KV capacity"
+        )));
+    }
     let text = |value: &serde_json::Value| match value {
         serde_json::Value::String(text) => text.clone(),
         value => value.to_string(),
@@ -3983,7 +4121,16 @@ fn serve_v1(
         ServePreflightOutcomeV1::Checked(preflight) => preflight,
     };
     if let Some(check) = check {
-        return serve_check_v1(&preflight, topology, devices, &serving, profile_name, check);
+        return serve_check_v1(
+            &preflight,
+            (topology, devices),
+            &serving,
+            envelope,
+            remote_media,
+            allowed_local_media_path,
+            profile_name,
+            check,
+        );
     }
     let ServePreflightV1 {
         cache_lease: _cache_lease,
@@ -4054,9 +4201,7 @@ fn serve_v1(
     crate::services::record_tap_producer_v1(&identity.startup_nonce);
     let mut http_options = http_options;
     http_options.serving_identity = Some(identity);
-    remote_media
-        .validate()
-        .map_err(|error| usage_error(error.to_string()))?;
+    validate_remote_media_v1(remote_media)?;
     let media_enabled = crate::video::media_inputs_required_v1(package.manifest());
     let mut frontend = crate::deployment::configure_served_images_v1(
         served_frontend_v1(&frontend_export, &deployment, media_enabled)?,
@@ -4066,17 +4211,7 @@ fn serve_v1(
     if let Some(images) = frontend.maximum_images_per_request() {
         runtime_log::info!("startup images_per_request: {images}");
     }
-    if let Some(root) = allowed_local_media_path {
-        let root = root.canonicalize().map_err(|error| {
-            usage_error(format!(
-                "--allowed-local-media-path cannot be resolved: {error}"
-            ))
-        })?;
-        if !root.is_dir() {
-            return Err(usage_error(
-                "--allowed-local-media-path must name a directory",
-            ));
-        }
+    if let Some(root) = allowed_local_media_root_v1(allowed_local_media_path)? {
         frontend = frontend.with_allowed_local_media_path(root);
     }
     // A direct package serves the modalities `--modalities` selected, so
@@ -4156,58 +4291,14 @@ fn serve_v1(
                     capability.as_str() == crate::executor::PROMPT_ROWS_CAPABILITY_V1
                 }),
         );
-    // An envelope is checked against what this package declares rather than
-    // against what the transport was already configured to admit, because the
-    // declaration is the only thing here that knows the model's own rows.
-    let plan = envelope
-        .map(|envelope| {
-            resolve_developer_serving_plan_v1(
-                package.manifest(),
-                deployment.declaration().context.maximum_total_tokens,
-                envelope,
-            )
-        })
-        .transpose()?;
-    let mut engine_config = engine_config_v1(
+    let engine_config = served_engine_config_v1(
         package.manifest(),
-        policy.vocabulary(),
-        frontend.maximum_total_tokens(),
+        deployment.declaration(),
+        (policy.vocabulary(), frontend.maximum_total_tokens()),
         serving,
-        plan,
+        envelope,
+        speculation,
     )?;
-    if crate::video::media_inputs_required_v1(package.manifest()) {
-        let media = deployment
-            .declaration()
-            .multimodal
-            .as_ref()
-            .ok_or_else(|| {
-                run_error("media capability requires a multimodal frontend declaration")
-            })?;
-        let pages = media.arena.rows / media.arena.page_rows;
-        let mut config = runtime_engine::MediaConfigV1::new(pages as usize, media.arena.page_rows)
-            .map_err(|error| run_error(format!("invalid media arena: {error:?}")))?;
-        for encoder in &media.encoders {
-            config = config
-                .with_encoder(
-                    encoder.maximum_payload_bytes as u64,
-                    encoder.cost_per_row_milli,
-                )
-                .map_err(|error| run_error(format!("invalid media encoder: {error:?}")))?;
-        }
-        engine_config = engine_config.with_media(config);
-    }
-    let position_axes = crate::executor::position_axes_capability_v1(package.manifest());
-    require_position_axes_capability_v1(
-        deployment.declaration().multimodal.as_ref(),
-        position_axes,
-    )
-    .map_err(run_error)?;
-    if position_axes {
-        engine_config = engine_config.with_position_axes();
-    }
-    if let Some(speculation) = speculation {
-        engine_config = engine_config.with_speculation(speculation);
-    }
     // A developer plan may include one final emitted token without a model row.
     let served_context_tokens = engine_config
         .maximum_sequence_tokens()

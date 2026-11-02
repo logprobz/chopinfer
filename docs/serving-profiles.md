@@ -45,13 +45,18 @@ chopinfer serve --model "$CHOPINFER_MIMO_CHECKPOINT" --tensor-parallel-size 4 --
   or a non-TBT `--prefill-budget` clears the profile's speculation or TBT
   target as it does for `serve --model`. A duplicate or invalid option is
   refused here. `--listen` and `--devices` stay with each instance.
-- `serve ... --check` runs every startup check that needs no device:
-  package preparation and verification, the drafter, model options,
-  speculation bounds, KV offload host memory, the topology at the planned
-  rank count with its context-parallel groups, and batch limits. It prints
-  the profile, the same effective settings and every model option with its
-  value and default, and opens no device or native module. A failure exits
-  nonzero with the message serving would give.
+- `serve ... --check` runs every startup check that needs neither a device
+  nor the package's native module, in serving's order: package preparation
+  and verification, the drafter, model options, speculation bounds, KV
+  offload host memory, the frontend declaration and tokenizer, the topology
+  at the planned rank count with its context-parallel groups, the media
+  options, and the engine's batch, chunk and sequence limits. It prints the
+  profile, the same effective settings and every model option with its
+  value and default. A failure exits nonzero with the message serving would
+  give. A start can still fail on what only it decides: device memory and
+  peer access, the KV capacity the devices hold, and the listen address.
+  `--check` refuses a `--max-context-tokens` past what one sequence of the
+  package holds, which no KV capacity can serve.
 
 `serve --describe-options` prints every serve option with its value shape,
 group and help, and the environment variables serve reads.

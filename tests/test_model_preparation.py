@@ -766,7 +766,7 @@ print(json.dumps(reply), flush=True)
             self.assertNotIn("startup module load:", log)
             self.assertNotIn("startup readiness:", log)
 
-    def test_a_check_refuses_what_serving_refuses_without_a_device(self):
+    def test_a_check_reports_model_options_and_their_defaults(self):
         checkpoint = self.copy_checkpoint("check-options-checkpoint")
         config = json.loads((checkpoint / "config.json").read_text())
         config["scratch_multiplier"] = 1
@@ -782,19 +782,71 @@ print(json.dumps(reply), flush=True)
                                       schema="chopinfer.serve-check.v1")
         self.assertEqual(check["model_options"][0]["value"], "2")
         self.assertEqual(check["settings"]["max-sequences"], "2")
-        # No device opens, so the refusal is the one serving gives after
-        # it opens the devices.
-        for options, reason in ((["--context-parallel-size", "3"], "--context-parallel-size 3"),
-                                (["--model-option", "scratch_multiplier=5"], "allowed range")):
-            result = self.host_run("serve", "--model", checkpoint, "--model-cache-dir", cache,
-                                   "--tensor-parallel-size", "4", *options, "--check")
-            self.assertNotEqual(result.returncode, 0)
-            self.assertEqual(result.stdout, "")
-            self.assertIn(reason, result.stderr)
-            self.assertNotIn("startup module load:", result.stderr)
-            served = self.refusal(checkpoint, "--tensor-parallel-size", "4", *options, cache=cache)
-            message = next(line for line in result.stderr.splitlines() if reason in line)
-            self.assertIn(message.split(": ", 1)[1], served)
+
+    def refusal_message(self, stderr):
+        # The host's refusal is its last report: the program name and the
+        # message, with the usage text a usage error carries.
+        text = "\n" + stderr
+        at = text.rfind("\nchopinfer: ")
+        self.assertGreaterEqual(at, 0, stderr)
+        return text[at + 1:]
+
+    def test_a_check_refuses_what_serving_refuses_with_the_same_message(self):
+        checkpoint = self.copy_checkpoint("parity-checkpoint")
+        config = json.loads((checkpoint / "config.json").read_text())
+        config["scratch_multiplier"] = 1
+        (checkpoint / "config.json").write_text(json.dumps(config))
+        cache = self.root / "parity-cache"
+        directory_file = self.root / "parity-not-a-directory"
+        directory_file.write_text("")
+        # One invocation per check a check runs that the fixture can reach:
+        # the preparation path's, the shared preflight's, and each check made
+        # after the native module opens that needs neither it nor a device.
+        cases = [
+            ([], {"CHOPINFER_DEBUG_REFERENCE_TOKENS": "unused"}, "CHOPINFER_DEBUG_REFERENCE_TOKENS"),
+            (["--max-tokenizer-input-bytes", "0"], {}, "invalid token or batch bound"),
+            (["--queue-depth", "18446744073709551615"], {}, "--queue-depth exceeds"),
+            (["--kv-cache-dtype", "fp8"], {}, "declares no fp8 KV layout"),
+            (["--speculative-tokens", "4"], {}, "exceeds the bundle maximum"),
+            (["--speculative-rows", "2"], {}, "--speculative-rows must exceed"),
+            (["--speculation-graph-rows", "4"], {}, "verify_graph_rows"),
+            (["--model-option", "scratch_multiplier=5"], {}, "allowed range"),
+            (["--context-parallel-size", "3"], {}, "--context-parallel-size 3"),
+            (["--allowed-local-media-path", str(self.root / "parity-missing")], {}, "cannot be resolved"),
+            (["--allowed-local-media-path", str(directory_file)], {}, "must name a directory"),
+            (["--max-batch-tokens", "8", "--prefill-chunk-tokens", "16"], {}, "exceeds the effective batch budget"),
+            ([], {"CHOPINFER_BATCH_REFUSAL_MAX_CONSECUTIVE": "many"}, "CHOPINFER_BATCH_REFUSAL_MAX_CONSECUTIVE"),
+        ]
+        base = [self.host, "serve", "--model", checkpoint, "--model-cache-dir", cache, "--tensor-parallel-size", "4",
+                "--listen", "127.0.0.1:0", "--fake-host-services"]
+        for options, variables, reason in cases:
+            environment = dict(self.environment, **variables)
+            check = subprocess.run([*base, *options, "--check"], env=environment, text=True, capture_output=True,
+                                   timeout=HANG_SECONDS)
+            served = subprocess.run([*base, *options], env=environment, text=True, capture_output=True,
+                                    timeout=HANG_SECONDS)
+            for result in (check, served):
+                self.assertNotEqual(result.returncode, 0, (options, variables, result.stderr))
+                self.assertNotIn('"status":"listening"', result.stdout)
+            self.assertEqual(check.stdout, "")
+            self.assertNotIn("startup module load:", check.stderr)
+            message = self.refusal_message(check.stderr)
+            self.assertIn(reason, message)
+            self.assertEqual(message, self.refusal_message(served.stderr), (options, variables))
+        # A context past what one sequence holds is refused without a device;
+        # serving names the capacity its devices acquired, which only a start
+        # can know, so the messages agree up to that capacity.
+        options = ["--max-context-tokens", "100000000"]
+        check = subprocess.run([*base, *options, "--check"], env=self.environment, text=True, capture_output=True,
+                               timeout=HANG_SECONDS)
+        served = subprocess.run([*base, *options], env=self.environment, text=True, capture_output=True,
+                                timeout=HANG_SECONDS)
+        self.assertNotEqual(check.returncode, 0)
+        self.assertNotEqual(served.returncode, 0)
+        self.assertNotIn("startup module load:", check.stderr)
+        common = "chopinfer: the requested context of 100000000 token(s) exceeds the "
+        self.assertTrue(self.refusal_message(check.stderr).startswith(common), check.stderr)
+        self.assertTrue(self.refusal_message(served.stderr).startswith(common), served.stderr)
 
     def test_discovery_refuses_unsafe_missing_and_ambiguous_providers(self):
         for scenario in ["missing", "ambiguous", "writable", "symlink"]:

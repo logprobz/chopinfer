@@ -175,7 +175,9 @@ struct TokenRangeV1 {
 /// This is the host layer, the same for every model: it checks each token,
 /// keeps the completion bytes, releases them as complete UTF-8 with any
 /// possible client stop withheld, and turns the byte ranges the format parser
-/// reports into text and the tokens that produced it.
+/// reports into text and the tokens that produced it. In chat, the first
+/// ignored end token finishes that parser as a length cut. Later bytes are
+/// plain answer text and never reach the parser; client stops still apply.
 pub struct CompletionDecoderV1 {
     descriptor: Arc<FrontendDescriptorV1>,
     mode: PromptModeV1,
@@ -184,6 +186,8 @@ pub struct CompletionDecoderV1 {
     complete: bool,
     bytes: Vec<u8>,
     stable_end: usize,
+    /// The next plain answer byte after the parser's one ignored-end finish.
+    tail: Option<usize>,
     prompt_context_bytes: usize,
     tokens: Vec<TokenRangeV1>,
     next_ordinal: Option<u64>,
@@ -249,6 +253,7 @@ impl CompletionDecoderV1 {
             complete: false,
             bytes: Vec::new(),
             stable_end: 0,
+            tail: None,
             prompt_context_bytes: 0,
             tokens: Vec::new(),
             next_ordinal: None,
@@ -446,6 +451,8 @@ impl CompletionDecoderV1 {
     /// The engine has already applied minimum-token suppression when sampling.
     /// A stop it emits can therefore terminate a completed grammar early.
     /// Ordinary spellings of ID-backed end markers are not implicit stops.
+    /// In chat, an end token that `ignore_eos` lets through ends format
+    /// parsing; every later byte is plain answer text, unseen by the parser.
     /// See [`Self::push`] for why a decoder takes one push kind.
     pub fn push_engine_token(
         &mut self,
@@ -529,6 +536,8 @@ impl CompletionDecoderV1 {
         let token_stop = (engine_sampled || next_token_count > self.minimum_new_tokens)
             && (self.decoding.stop_token_ids.contains(&token.token_id)
                 || (eos && !self.decoding.ignore_eos));
+        let ignored_end =
+            eos && self.decoding.ignore_eos && !token_stop && !self.raw && self.tail.is_none();
         if (token_stop && !self.decoding.include_stop_str_in_output)
             || (token.special && self.decoding.skip_special_tokens)
         {
@@ -541,6 +550,33 @@ impl CompletionDecoderV1 {
             .ok_or_else(|| resource_v1("incremental completion byte length overflow"))?;
         if end.saturating_sub(self.prompt_context_bytes) > self.limits.max_completion_bytes {
             return Err(resource_v1("incremental completion exceeds the byte limit"));
+        }
+        let mut updates = Vec::new();
+        if ignored_end {
+            let cursor = self.parser()?.cursor();
+            let end = self.stable_end - self.longest_stop_prefix(cursor, self.stable_end);
+            let marks = (!self.descriptor.vocabulary.id_only_markers.is_empty())
+                .then(|| &self.marks[..self.marks.partition_point(|mark| mark.end <= end)]);
+            // Retained bytes belong to the tail. The parser ends here with
+            // nothing held, even when a stop or character is still arriving.
+            let events =
+                self.parser
+                    .as_mut()
+                    .expect("opened format parser")
+                    .push(FormatInputV1 {
+                        completion: &self.bytes[..end],
+                        held: false,
+                        last: true,
+                        stop_floor: None,
+                        marks,
+                    })?;
+            updates.extend(
+                events
+                    .into_iter()
+                    .filter(|event| !matches!(event, FormatEventV1::Finish { .. }))
+                    .map(|event| self.update(event)),
+            );
+            self.tail = Some(end);
         }
         let start = self.bytes.len();
         self.bytes.extend_from_slice(&token.bytes);
@@ -561,10 +597,16 @@ impl CompletionDecoderV1 {
                 .checked_add(1)
                 .ok_or_else(|| resource_v1("generated token ordinal overflow"))?,
         );
-        if token_stop {
-            return self.finish_stop();
+        let next = if token_stop {
+            self.finish_stop()?
+        } else {
+            self.advance(false)?
+        };
+        if updates.is_empty() {
+            return Ok(next);
         }
-        self.advance(false)
+        updates.extend(next);
+        Ok(updates)
     }
 
     /// Flushes a stop confirmed by the engine, including grammar termination
@@ -605,7 +647,10 @@ impl CompletionDecoderV1 {
 
     fn advance(&mut self, final_bytes: bool) -> Result<Vec<CompletionUpdateV1>, String> {
         let valid_end = self.stable_end;
-        let cursor = self.parser()?.cursor();
+        let cursor = match self.tail {
+            Some(cursor) => cursor,
+            None => self.parser()?.cursor(),
+        };
         // Match and withhold stops before any parser can consume their bytes.
         // This also protects reasoning and streamed tool arguments.
         if let Some((position, length)) = self.next_client_stop(cursor, valid_end) {
@@ -624,7 +669,22 @@ impl CompletionDecoderV1 {
         } else {
             valid_end - self.longest_stop_prefix(cursor, valid_end)
         };
-        self.parse(parse_end, final_bytes)
+        if self.tail.is_some() {
+            let mut updates = Vec::new();
+            if cursor < parse_end {
+                updates.push(CompletionUpdateV1::Content(self.text(cursor..parse_end)));
+            }
+            self.tail = Some(parse_end);
+            if final_bytes {
+                updates.push(self.update(FormatEventV1::Finish {
+                    reason: CompletionFinishV1::Length,
+                    completion: None,
+                }));
+            }
+            Ok(updates)
+        } else {
+            self.parse(parse_end, final_bytes)
+        }
     }
 
     /// The format parser, opened from the request's settings on first use.

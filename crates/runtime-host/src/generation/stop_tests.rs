@@ -651,6 +651,77 @@ fn ignored_eos_does_not_become_an_engine_confirmed_stop() {
 }
 
 #[test]
+fn ignored_eos_keeps_reserved_markup_as_answer_text() {
+    let tokenizer = tokenizer();
+    let mut tokens = vec![X, EOS];
+    // The tool opener holds "<t" until ">" makes this a reserved marker.
+    tokens.extend(b"<t>".iter().map(|byte| u32::from(*byte) + 3));
+    tokens.push(X);
+    for speculative in [false, true] {
+        for sampled in [false, true] {
+            let mut engine = engine(tokens.clone(), sampled, speculative);
+            let id = RequestId::new(1);
+            engine
+                .submit(
+                    EngineRequest::new(
+                        id,
+                        vec![X],
+                        tokens.len(),
+                        SamplingParameters::new(0.0).unwrap(),
+                        0,
+                        vec![],
+                        ModelVocabulary::new(259).unwrap(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            let (mut generation, mut receiver) = active(0, &[]);
+            generation.decoder.set_decoding_options(
+                runtime_server::DecodingOptions {
+                    ignore_eos: true,
+                    ..Default::default()
+                },
+                false,
+            );
+            generation.decoder.set_reasoning_open(false);
+            generation.decoder.set_tool_extraction(false);
+            let mut active = BTreeMap::from([(id, generation)]);
+            for _ in 0..tokens.len() {
+                engine.step().unwrap();
+                for event in engine.drain_events() {
+                    assert!(handle_engine_event(
+                        &tokenizer,
+                        &mut engine,
+                        &mut active,
+                        event
+                    ));
+                }
+                if active.is_empty() {
+                    break;
+                }
+            }
+            assert!(active.is_empty());
+            let mut content = String::new();
+            let mut finished = Vec::new();
+            while let Ok(event) = receiver.try_recv() {
+                match event {
+                    GenerationEvent::Content(part) => content.push_str(&part.delta),
+                    GenerationEvent::Finished { reason, usage } => {
+                        finished.push((reason, usage.completion_tokens));
+                    }
+                    GenerationEvent::Failed { refusal, .. } => {
+                        panic!("post-end markup failed: {refusal:?}")
+                    }
+                    _ => {}
+                }
+            }
+            assert_eq!(content, "x<t>x");
+            assert_eq!(finished, vec![(FinishReason::Length, tokens.len() as u64)]);
+        }
+    }
+}
+
+#[test]
 fn a_refused_token_names_the_decoder_reason_ordinal_and_id() {
     let tokenizer = tokenizer();
     // The declaration calls token 4 "<t>", but this tokenizer decodes it

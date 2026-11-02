@@ -56,9 +56,20 @@ from vLLM's.
 
 **Stopping.** `stop` takes at most four strings. `stop_token_ids`,
 `ignore_eos`, `skip_special_tokens`, `include_stop_str_in_output` and
-`min_tokens` behave as in vLLM: `min_tokens` suppresses stop tokens and stop
-strings until the minimum length, and `ignore_eos` disables only model EOS
-termination. Explicit stop IDs still stop generation.
+`min_tokens` control stopping: `min_tokens` suppresses stop tokens and stop
+strings until the minimum length, and `ignore_eos` disables model EOS
+termination. Explicit stop IDs still stop generation. In chat, the first
+model EOS that `ignore_eos` lets through ends format parsing as a length
+cut. Everything after it is plain answer text, with no reasoning, tool calls
+or format refusals. Client stops and special-token visibility still apply.
+This differs from vLLM, whose parsers keep reading post-end output. Raw
+completions are unchanged.
+
+From 2026-11-02, `ignore_eos` replays and generated-history traces (such as
+`tools/qual/agentic_trace.py --trace-history generated`) change behavior:
+sessions no longer abort on post-end markup, and the post-end tail returns
+as content, so it enters the next turn's rendered history. An A/B across
+this change compares different workloads.
 
 **Choices.** `n` may be 1 through 128. Completion prompts may be a list of
 strings or token-ID arrays, with at most 128 choices in total; choice indexes

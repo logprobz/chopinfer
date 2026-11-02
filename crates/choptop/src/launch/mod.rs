@@ -396,6 +396,10 @@ impl Launches {
         match record.pid.zip(record.start_ticks) {
             Some((pid, ticks)) => {
                 registry.launch_process(id, pid, ticks, &record.served_model_name, now);
+                self.followups.push(Followup::Watch {
+                    pid,
+                    start_ticks: ticks,
+                });
             }
             None => {
                 registry.add_launch(id, record.letter, &record.served_model_name, now);
@@ -979,6 +983,11 @@ impl Launches {
             return;
         };
         registry.launch_process(id, pid, ticks, &launch.record.served_model_name, now);
+        self.followups.push(Followup::Watch {
+            pid,
+            start_ticks: ticks,
+        });
+        let launch = &mut self.launches[index];
         let file = launch
             .record
             .log
@@ -1387,6 +1396,13 @@ mod tests {
             .unwrap();
         let grandchild_ticks = process::start_ticks_of(grandchild).unwrap();
         let pid = launches.get(id).unwrap().record.pid.unwrap();
+        // It is watched until it listens, with discovery off too.
+        let start_ticks = launches.get(id).unwrap().record.start_ticks.unwrap();
+        assert!(
+            launches
+                .followups
+                .contains(&Followup::Watch { pid, start_ticks })
+        );
         launches
             .stop(id, "as asked with X", &mut registry, 3.0)
             .unwrap();
@@ -1555,6 +1571,10 @@ mod tests {
         let mut registry = Registry::new(1.0);
         launches.relink(&mut registry, 1.0);
         assert_eq!(launches.launches.len(), 1);
+        assert!(launches.followups.contains(&Followup::Watch {
+            pid: running.pid,
+            start_ticks: running.start_ticks
+        }));
         let reservations = launches.reservations();
         assert_eq!(reservations.len(), 1);
         assert_eq!(

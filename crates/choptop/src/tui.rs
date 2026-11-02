@@ -19,6 +19,7 @@ use crossterm::terminal::{
 
 use crate::app::{Action, App, View};
 use crate::catalog::{self, Catalog, Checkpoints};
+use crate::discover::proc::ProcScanner;
 use crate::discover::{self, Command, Discovery, Report, Schedule};
 use crate::gpu::poll::{self as gpu_poll, GpuPoller};
 use crate::gpu::{Gpus, Status};
@@ -121,6 +122,9 @@ impl Workers {
                 }
                 Followup::Request => self.command(Command::Request),
                 Followup::Invalidate(key) => self.command(Command::Invalidate(key)),
+                Followup::Watch { pid, start_ticks } => {
+                    self.command(Command::Watch { pid, start_ticks });
+                }
             }
         }
         // Rows skipped at the limit are polled once a poller is free.
@@ -304,7 +308,13 @@ pub fn run(setup: Setup) -> io::Result<()> {
     let (reports_sender, reports) = mpsc::channel::<Report>();
     let mut live = Live::default();
     let children = catalog::Children::default();
-    let commands = setup.discovery.map(|mut discovery| {
+    let scanning = setup.discovery.is_some();
+    // With discovery off, choptop's own launches are still watched until
+    // they listen, so they are polled.
+    let discovery = setup.discovery.or_else(|| {
+        (!setup.read_only).then(|| Discovery::launches_only(ProcScanner::new("/proc")))
+    });
+    let commands = discovery.map(|mut discovery| {
         discovery.exclude(&children);
         let (commands, receiver) = mpsc::channel();
         discover::spawn(
@@ -315,13 +325,12 @@ pub fn run(setup: Setup) -> io::Result<()> {
             reports_sender,
         );
         // The startup scan, before the first frame.
-        if let Ok(report) = reports.recv_timeout(FIRST_SCAN) {
+        if scanning && let Ok(report) = reports.recv_timeout(FIRST_SCAN) {
             live.scan(&report);
             followups.extend(take_report(&mut registry, report, now()));
         }
         commands
     });
-    let scanning = commands.is_some();
     let (catalog_replies, catalog_reports) = mpsc::channel();
     let mut workers = Workers {
         pollers: HashMap::new(),
@@ -612,26 +621,36 @@ fn run_loop(
 mod tests {
     use super::*;
 
+    /// Workers with at most `limit` pollers, which send `results`, and
+    /// sending discovery `commands`.
+    fn workers(
+        limit: usize,
+        results: Sender<(u64, Poll)>,
+        commands: Option<Sender<Command>>,
+    ) -> Workers {
+        let (catalog_replies, _) = mpsc::channel();
+        Workers {
+            pollers: HashMap::new(),
+            results,
+            commands,
+            origin: Instant::now(),
+            interval: 1.0,
+            bearer: None,
+            limit,
+            limit_reported: false,
+            catalog: None,
+            catalog_replies,
+            children: catalog::Children::default(),
+        }
+    }
+
     #[test]
     fn rows_skipped_at_the_limit_are_polled_once_a_poller_is_free() {
         let mut registry = Registry::new(1.0);
         let first = registry.add_target(Target::parse("127.0.0.1:9").unwrap(), 0.0);
         let second = registry.add_target(Target::parse("127.0.0.2:9").unwrap(), 0.0);
         let (results, _poll_results) = mpsc::channel();
-        let (catalog_replies, _catalog_reports) = mpsc::channel();
-        let mut workers = Workers {
-            pollers: HashMap::new(),
-            results,
-            commands: None,
-            origin: Instant::now(),
-            interval: 1.0,
-            bearer: None,
-            limit: 1,
-            limit_reported: false,
-            catalog: None,
-            catalog_replies,
-            children: catalog::Children::default(),
-        };
+        let mut workers = workers(1, results, None);
         workers.follow(
             &mut registry,
             vec![Followup::Poll(first), Followup::Poll(second)],
@@ -643,6 +662,43 @@ mod tests {
         registry.instances[0].alias_of = Some(second);
         workers.follow(&mut registry, vec![Followup::Stop(first)], 1.0);
         assert_eq!(workers.pollers.keys().collect::<Vec<_>>(), [&second]);
+    }
+
+    /// A launch is watched by the discovery thread, which runs with
+    /// discovery off too, until it listens; its row then has its address.
+    #[test]
+    fn a_launch_is_watched_until_it_listens() {
+        let mut registry = Registry::new(1.0);
+        registry.launch_process(1, 200, 7, "Qwen3.8-Flash", 0.0);
+        let (commands, received) = mpsc::channel();
+        let (results, _poll_results) = mpsc::channel();
+        let mut workers = workers(4, results, Some(commands));
+        let watch = Followup::Watch {
+            pid: 200,
+            start_ticks: 7,
+        };
+        workers.follow(&mut registry, vec![watch], 0.0);
+        assert!(matches!(
+            received.try_recv(),
+            Ok(Command::Watch {
+                pid: 200,
+                start_ticks: 7
+            })
+        ));
+        let row = registry.launch_row(1).unwrap().id;
+        let report = Report::Listening {
+            pid: 200,
+            start_ticks: 7,
+            addresses: vec!["127.0.0.1:9".parse().unwrap()],
+        };
+        assert_eq!(
+            take_report(&mut registry, report, 1.0),
+            [Followup::Poll(row)]
+        );
+        assert_eq!(
+            registry.launch_row(1).unwrap().address().as_deref(),
+            Some("127.0.0.1:9")
+        );
     }
 
     #[test]

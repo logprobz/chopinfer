@@ -390,6 +390,9 @@ pub enum Followup {
     Request,
     /// Read a container's process list again at the next scan.
     Invalidate(Key),
+    /// Watch choptop's launch, process `pid` started at `start_ticks`,
+    /// until it listens.
+    Watch { pid: u32, start_ticks: u64 },
 }
 
 /// Every row and the event log.

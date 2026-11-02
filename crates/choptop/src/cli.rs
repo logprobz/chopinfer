@@ -19,7 +19,8 @@ X stops one. It never stops containers or remote servers.
                        or :PORT for 127.0.0.1. CHOPINFER_TOP_TARGETS adds a
                        comma-separated list.
   --targets-file FILE  One target per line; # starts a comment.
-  --no-discover        Do not look for serve processes or containers.
+  --no-discover        Do not look for serve processes or containers; the
+                       loader's own launches still show.
   --no-docker          Do not ask Docker for containers running serve.
   --interval SECONDS   Seconds between polls of each instance, 0.5 to 60
                        (default 1).

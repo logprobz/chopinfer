@@ -5,7 +5,8 @@
 //! poller within one poll. So a full scan runs at startup, before the first
 //! frame, and then every `--rescan` seconds; a lost or restarted instance
 //! asks for one sooner, and a process that is still loading has only its
-//! own sockets checked every two seconds.
+//! own sockets checked every two seconds. choptop's own launches are
+//! watched that way from their start, with discovery off too.
 
 pub mod docker;
 pub mod proc;
@@ -192,6 +193,11 @@ pub struct Discovery {
     /// Processes that had no listener at the last look, by pid and start
     /// ticks.
     loading: Vec<(u32, u64)>,
+    /// choptop's own launches that had no listener at the last look.
+    watched: Vec<(u32, u64)>,
+    /// Whether it scans for instances; one that does not only watches
+    /// launches.
+    scans: bool,
 }
 
 impl Discovery {
@@ -200,6 +206,30 @@ impl Discovery {
             processes,
             containers,
             loading: Vec::new(),
+            watched: Vec::new(),
+            scans: true,
+        }
+    }
+
+    /// Finds no instances and only watches choptop's own launches until
+    /// they listen: what runs with discovery off.
+    pub fn launches_only(processes: ProcScanner) -> Self {
+        Self {
+            scans: false,
+            ..Self::new(Some(processes), None)
+        }
+    }
+
+    /// Whether it scans for instances.
+    pub fn scans(&self) -> bool {
+        self.scans
+    }
+
+    /// Checks the sockets of choptop's launch `pid`, started at
+    /// `start_ticks`, with those of loading processes until it listens.
+    pub fn watch(&mut self, pid: u32, start_ticks: u64) {
+        if !self.watched.contains(&(pid, start_ticks)) {
+            self.watched.push((pid, start_ticks));
         }
     }
 
@@ -212,9 +242,12 @@ impl Discovery {
     }
 
     /// Every instance found now, at `now` seconds; notes worth an event go
-    /// to `events`.
+    /// to `events`. One that does not scan finds none.
     pub fn scan(&mut self, now: f64, events: &mut Vec<String>) -> Vec<Found> {
         let mut found = Vec::new();
+        if !self.scans {
+            return found;
+        }
         if let Some(scanner) = &self.processes {
             let processes = scanner.scan();
             self.loading = processes
@@ -230,24 +263,31 @@ impl Discovery {
         found
     }
 
-    /// Loading processes that now listen, with their addresses. A process
-    /// that exited, or whose pid another process took, is dropped here; the
-    /// next full scan removes it.
+    /// Loading processes and watched launches that now listen, with their
+    /// addresses. A process that exited, or whose pid another process took,
+    /// is dropped here; the next full scan removes it.
     pub fn listening(&mut self) -> Vec<(u32, u64, Vec<SocketAddr>)> {
         let Some(scanner) = &self.processes else {
             return Vec::new();
         };
         let mut opened = Vec::new();
-        self.loading.retain(
-            |&(pid, start_ticks)| match scanner.recheck(pid, start_ticks) {
-                Some(addresses) if addresses.is_empty() => true,
-                Some(addresses) => {
-                    opened.push((pid, start_ticks, addresses));
-                    false
-                }
-                None => false,
-            },
-        );
+        for list in [&mut self.loading, &mut self.watched] {
+            list.retain(
+                |&(pid, start_ticks)| match scanner.recheck(pid, start_ticks) {
+                    Some(addresses) if addresses.is_empty() => true,
+                    Some(addresses) => {
+                        if !opened
+                            .iter()
+                            .any(|(seen, ticks, _)| (*seen, *ticks) == (pid, start_ticks))
+                        {
+                            opened.push((pid, start_ticks, addresses));
+                        }
+                        false
+                    }
+                    None => false,
+                },
+            );
+        }
         opened
     }
 
@@ -293,6 +333,8 @@ pub enum Command {
     Force,
     /// Read a container's process list again at the next scan.
     Invalidate(Key),
+    /// Watch choptop's launch until it listens.
+    Watch { pid: u32, start_ticks: u64 },
 }
 
 /// Runs `discovery` on its own thread until `commands` closes, timing its
@@ -310,11 +352,12 @@ pub fn spawn(
                 Ok(Command::Request) => schedule.request(),
                 Ok(Command::Force) => schedule.force(),
                 Ok(Command::Invalidate(key)) => discovery.invalidate(&key),
+                Ok(Command::Watch { pid, start_ticks }) => discovery.watch(pid, start_ticks),
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => return,
             }
             let now = origin.elapsed().as_secs_f64();
-            if schedule.full_due(now) || discovery.reread_due(now) {
+            if discovery.scans && (schedule.full_due(now) || discovery.reread_due(now)) {
                 let mut events = Vec::new();
                 let found = discovery.scan(now, &mut events);
                 schedule.ran_full(origin.elapsed().as_secs_f64());
@@ -399,6 +442,66 @@ mod tests {
             reachable("10.0.0.2:1".parse().unwrap()),
             "10.0.0.2:1".parse().unwrap()
         );
+    }
+
+    /// A launch is watched until it listens, once even when a scan also
+    /// found it loading; with discovery off nothing else is found.
+    #[test]
+    fn launches_are_watched_until_they_listen() {
+        use proc::tests::{FakeProc, NAMESPACE};
+        let fake = FakeProc::new("watch");
+        let serve = ["chopinfer", "serve"];
+        fake.process(400, "/bin/chopinfer", &serve, &[], NAMESPACE);
+        // A serve process that is not a launch.
+        fake.process(401, "/bin/chopinfer", &serve, &[5002], NAMESPACE);
+        let address: SocketAddr = "127.0.0.1:8399".parse().unwrap();
+        let mut scanning = Discovery::new(Some(ProcScanner::new(&fake.root)), None);
+        assert_eq!(scanning.scan(0.0, &mut Vec::new()).len(), 2);
+        scanning.watch(400, 90000);
+        let mut off = Discovery::launches_only(ProcScanner::new(&fake.root));
+        assert!(!off.scans() && off.scan(0.0, &mut Vec::new()).is_empty());
+        off.watch(400, 90000);
+        off.watch(400, 90000);
+        for discovery in [&mut scanning, &mut off] {
+            assert!(discovery.listening().is_empty());
+        }
+        std::os::unix::fs::symlink("socket:[5001]", fake.root.join("400/fd/9")).unwrap();
+        for discovery in [&mut scanning, &mut off] {
+            assert_eq!(discovery.listening(), [(400, 90000, vec![address])]);
+            assert!(discovery.listening().is_empty());
+        }
+        // The thread of one that does not scan reports the launch alone.
+        fake.remove(400);
+        fake.process(400, "/bin/chopinfer", &serve, &[], NAMESPACE);
+        let (commands, receiver) = std::sync::mpsc::channel();
+        let (reports, received) = std::sync::mpsc::channel();
+        let thread = spawn(
+            Discovery::launches_only(ProcScanner::new(&fake.root)),
+            Schedule::new(15.0),
+            Instant::now(),
+            receiver,
+            reports,
+        );
+        commands
+            .send(Command::Watch {
+                pid: 400,
+                start_ticks: 90000,
+            })
+            .unwrap();
+        commands.send(Command::Force).unwrap();
+        assert!(received.recv_timeout(Duration::from_millis(600)).is_err());
+        std::os::unix::fs::symlink("socket:[5001]", fake.root.join("400/fd/9")).unwrap();
+        match received.recv_timeout(Duration::from_secs(5)).unwrap() {
+            Report::Listening {
+                pid: 400,
+                start_ticks: 90000,
+                addresses,
+            } => assert_eq!(addresses, [address]),
+            report => panic!("{report:?}"),
+        }
+        drop(commands);
+        thread.join().unwrap();
+        assert!(received.try_recv().is_err());
     }
 
     #[test]

@@ -284,7 +284,7 @@ fn parse_address(text: &str) -> Option<SocketAddr> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::net::TcpListener;
     use std::os::unix::fs::symlink;
@@ -319,12 +319,12 @@ mod tests {
 
     /// A fake `/proc` with this test's uid, a network namespace, and
     /// processes added with [`FakeProc::process`].
-    struct FakeProc {
-        root: PathBuf,
+    pub(crate) struct FakeProc {
+        pub(crate) root: PathBuf,
     }
 
     impl FakeProc {
-        fn new(label: &str) -> Self {
+        pub(crate) fn new(label: &str) -> Self {
             let root =
                 std::env::temp_dir().join(format!("choptop-proc-{label}-{}", std::process::id()));
             let _ = fs::remove_dir_all(&root);
@@ -337,7 +337,7 @@ mod tests {
 
         /// Adds a process with `arguments`, started at second `started`,
         /// holding `sockets` and seeing `tcp` as its table.
-        fn process(
+        pub(crate) fn process(
             &self,
             pid: u32,
             executable: &str,
@@ -376,7 +376,7 @@ mod tests {
             symlink("/dev/null", directory.join("fd/0")).unwrap();
         }
 
-        fn remove(&self, pid: u32) {
+        pub(crate) fn remove(&self, pid: u32) {
             fs::remove_dir_all(self.root.join(pid.to_string())).unwrap();
         }
     }
@@ -387,7 +387,7 @@ mod tests {
         }
     }
 
-    const NAMESPACE: &str = "net:[4026531840]";
+    pub(crate) const NAMESPACE: &str = "net:[4026531840]";
 
     #[test]
     fn finds_serve_processes_their_sockets_and_hints() {

@@ -3329,14 +3329,8 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    #[allow(unsafe_code)]
     fn prewarm_succeeds_when_non_owned_file_hides_residency() {
         use std::os::unix::fs::MetadataExt;
-        // SAFETY-REVIEWED: geteuid reads the process's effective user ID.
-        if unsafe { libc::geteuid() } == 0 {
-            eprintln!("skipped non-owned prewarm case: effective uid is root");
-            return;
-        }
         let file = std::fs::File::open("/etc/passwd").unwrap();
         let metadata = file.metadata().unwrap();
         if crate::host_rows::filesystem_uid_v1() == Some(metadata.uid()) {

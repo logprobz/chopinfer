@@ -236,6 +236,7 @@ impl MappedRowsV1 {
             filesystem_uid_v1(),
             overflow_uid,
             file_mount_idmapped_v1(file),
+            file_is_overlay_v1(file),
             file_writable_v1(file),
         ) {
             return Err(io::Error::new(
@@ -273,6 +274,8 @@ impl MappedRowsV1 {
 }
 
 /// Trust ownership only when fstat's uid can be compared with the fsuid.
+/// Overlayfs can check a lower inode whose uid and idmapping are hidden
+/// from these descriptor and mountinfo checks, so its owner is untrusted.
 /// These guards can hide visible residency. A non-owner writer on a read-only
 /// mount is hidden on `EROFS`, as is a root process relying only on
 /// `CAP_FOWNER`, whose user-namespace rules are not checked here.
@@ -281,12 +284,14 @@ fn residency_visible_v1(
     filesystem_uid: Option<u32>,
     overflow_uid: u32,
     mount_idmapped: Option<bool>,
+    filesystem_overlay: Option<bool>,
     writable: bool,
 ) -> bool {
     writable
         || (filesystem_uid == Some(file_owner)
             && file_owner != overflow_uid
-            && mount_idmapped == Some(false))
+            && mount_idmapped == Some(false)
+            && filesystem_overlay == Some(false))
 }
 
 pub(crate) fn filesystem_uid_v1() -> Option<u32> {
@@ -338,6 +343,27 @@ fn file_mount_idmapped_v1(file: &File) -> Option<bool> {
             &std::fs::read_to_string("/proc/self/mountinfo").ok()?,
             status.stx_mnt_id,
         )
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = file;
+        None
+    }
+}
+
+fn file_is_overlay_v1(file: &File) -> Option<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        const OVERLAYFS_SUPER_MAGIC: libc::c_long = 0x794c7630;
+        // SAFETY-REVIEWED: fstatfs fills a zeroed plain-data struct for a
+        // descriptor `file` keeps open.
+        let (result, status) = unsafe {
+            let mut status: libc::statfs = std::mem::zeroed();
+            let result = libc::fstatfs(file.as_raw_fd(), &raw mut status);
+            (result, status)
+        };
+        (result == 0).then_some(status.f_type == OVERLAYFS_SUPER_MAGIC)
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -586,29 +612,18 @@ mod tests {
 
     #[test]
     fn residency_visibility_accepts_owners_or_writers() {
-        assert!(residency_visible_v1(
-            42,
-            Some(42),
-            65534,
-            Some(false),
-            false
-        ));
-        assert!(residency_visible_v1(42, Some(43), 65534, Some(false), true));
-        assert!(residency_visible_v1(42, Some(42), 65534, Some(false), true));
-        assert!(!residency_visible_v1(
-            42,
-            Some(43),
-            65534,
-            Some(false),
-            false
-        ));
-        assert!(!residency_visible_v1(
-            42,
-            Some(0),
-            65534,
-            Some(false),
-            false
-        ));
+        for (fsuid, writable, visible) in [
+            (42, false, true),
+            (43, true, true),
+            (42, true, true),
+            (43, false, false),
+            (0, false, false),
+        ] {
+            assert_eq!(
+                residency_visible_v1(42, Some(fsuid), 65534, Some(false), Some(false), writable),
+                visible
+            );
+        }
     }
 
     #[test]
@@ -619,12 +634,14 @@ mod tests {
                 Some(overflow_uid),
                 overflow_uid,
                 Some(false),
+                Some(false),
                 false,
             ));
             assert!(residency_visible_v1(
                 overflow_uid,
                 Some(overflow_uid),
                 overflow_uid,
+                Some(false),
                 Some(false),
                 true,
             ));
@@ -639,8 +656,44 @@ mod tests {
             (Some(43), Some(false)),
             (None, Some(false)),
         ] {
-            assert!(!residency_visible_v1(42, fsuid, 65534, idmapped, false));
-            assert!(residency_visible_v1(42, fsuid, 65534, idmapped, true));
+            assert!(!residency_visible_v1(
+                42,
+                fsuid,
+                65534,
+                idmapped,
+                Some(false),
+                false
+            ));
+            assert!(residency_visible_v1(
+                42,
+                fsuid,
+                65534,
+                idmapped,
+                Some(false),
+                true
+            ));
+        }
+    }
+
+    #[test]
+    fn residency_visibility_refuses_overlay_or_unknown_filesystems() {
+        for overlay in [Some(true), None] {
+            assert!(!residency_visible_v1(
+                42,
+                Some(42),
+                65534,
+                Some(false),
+                overlay,
+                false
+            ));
+            assert!(residency_visible_v1(
+                42,
+                Some(42),
+                65534,
+                Some(false),
+                overlay,
+                true
+            ));
         }
     }
 
@@ -659,10 +712,12 @@ mod tests {
     fn mountinfo_checks_idmapped_in_the_matching_mount_options() {
         let mountinfo = "10 1 8:1 / /plain rw,relatime - ext4 /dev/example rw\n\
                          11 1 8:1 / /mapped rw,idmapped,relatime - ext4 /dev/example rw\n\
-                         12 1 8:1 / /other rw,relatime - ext4 /dev/example rw,idmapped\n";
+                         12 1 8:1 / /other rw,relatime - ext4 /dev/example rw,idmapped\n\
+                         36 35 98:0 /a\\040b /mount/a\\040b rw,noatime,idmapped shared:1 master:2 - ext4 /dev/root rw\n";
         assert_eq!(mount_idmapped_v1(mountinfo, 10), Some(false));
         assert_eq!(mount_idmapped_v1(mountinfo, 11), Some(true));
         assert_eq!(mount_idmapped_v1(mountinfo, 12), Some(false));
+        assert_eq!(mount_idmapped_v1(mountinfo, 36), Some(true));
         assert_eq!(mount_idmapped_v1(mountinfo, 13), None);
         assert_eq!(mount_idmapped_v1("10 1 8:1 / /plain", 10), None);
         assert_eq!(mount_idmapped_v1("", 10), None);
@@ -676,7 +731,9 @@ mod tests {
         crate::page_cache::advise_v1(&file, 0, 0, crate::page_cache::CacheAdviceV1::DontNeed)
             .unwrap();
         let rows = map_rows_v1(&file, 17, (7 * page) as u64).unwrap();
-        for offset in [0, 3 * page, 6 * page] {
+        // Pages 2, 5 and 7 expose a repeated base address and counting the
+        // stale third buffer entry in the final two-page window.
+        for offset in [2 * page, 5 * page, 7 * page - 1] {
             std::hint::black_box(rows.bytes()[offset]);
         }
         let pages = rows.mapped_length.div_ceil(page);
@@ -715,11 +772,6 @@ mod tests {
     #[test]
     fn non_owned_read_only_file_hides_residency() {
         use std::os::unix::fs::MetadataExt;
-        // SAFETY-REVIEWED: geteuid reads the process's effective user ID.
-        if unsafe { libc::geteuid() } == 0 {
-            eprintln!("skipped non-owned residency case: effective uid is root");
-            return;
-        }
         let file = File::open("/etc/passwd").unwrap();
         let metadata = file.metadata().unwrap();
         if filesystem_uid_v1() == Some(metadata.uid()) {

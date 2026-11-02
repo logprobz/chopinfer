@@ -97,12 +97,26 @@ fn every_shipped_reference_verifies_against_its_pin() {
 
 #[test]
 fn a_reference_with_other_bytes_or_elsewhere_is_refused() {
-    // A declaration may pin no reference yet, so take the first that pins one.
-    let loaded = shipped()
+    // A declaration may pin no reference yet, and one kept outside the
+    // repository is read only where its variable is set, so take the first
+    // whose reference and declared workload are here.
+    let (loaded, mut pin) = shipped()
         .into_iter()
-        .find(|loaded| !loaded.declaration.references.is_empty())
-        .expect("no shipped declaration pins a reference");
-    let mut pin = loaded.declaration.references[0].clone();
+        .find_map(|loaded| {
+            let environment = |name: &str| loaded.environment(name);
+            let here = |input: &Input| {
+                references::declared_path(input, &loaded.root, &environment)
+                    .is_some_and(|path| path.is_file())
+            };
+            let pin = loaded
+                .declaration
+                .references
+                .iter()
+                .find(|pin| here(&pin.path) && pin.workload.as_ref().is_none_or(here))?
+                .clone();
+            Some((loaded, pin))
+        })
+        .expect("no shipped reference is here");
     let source =
         references::declared_path(&pin.path, &loaded.root, &references::process_environment)
             .unwrap();

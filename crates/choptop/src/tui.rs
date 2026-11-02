@@ -22,6 +22,7 @@ use crate::gpu::poll::{self as gpu_poll, GpuPoller};
 use crate::gpu::{Gpus, Status};
 use crate::host::poll::{self as host_poll, HostPoller};
 use crate::instances::{EVENT_LIMIT, Followup, Registry, Source, Tone};
+use crate::launch::occupancy::Live;
 use crate::poll::{Poll, Poller};
 use crate::targets::Target;
 use crate::ui::{self, buffer::Buffer, buffer::flush};
@@ -210,6 +211,20 @@ fn hold_host(held: &mut Vec<host_poll::Report>, report: host_poll::Report) {
     held.push(report);
 }
 
+/// Takes a discovery report: the loader's readings at once, the screen's
+/// held while paused.
+fn receive_scan(app: &mut App, held: &mut Vec<Report>, report: Report) {
+    app.live.scan(&report);
+    hold(held, report);
+}
+
+/// Takes a GPU report: the loader's readings at once, the screen's held
+/// while paused.
+fn receive_gpu(app: &mut App, held: &mut Vec<gpu_poll::Report>, report: gpu_poll::Report) {
+    app.live.gpu(&report);
+    hold_gpu(held, report);
+}
+
 fn take_report(registry: &mut Registry, report: Report, now: f64) -> Vec<Followup> {
     match report {
         Report::Scan { found, events } => {
@@ -240,6 +255,7 @@ pub fn run(setup: Setup) -> io::Result<()> {
     }
     let (results, poll_results) = mpsc::channel();
     let (reports_sender, reports) = mpsc::channel::<Report>();
+    let mut live = Live::default();
     let commands = setup.discovery.map(|discovery| {
         let (commands, receiver) = mpsc::channel();
         discover::spawn(
@@ -251,6 +267,7 @@ pub fn run(setup: Setup) -> io::Result<()> {
         );
         // The startup scan, before the first frame.
         if let Ok(report) = reports.recv_timeout(FIRST_SCAN) {
+            live.scan(&report);
             followups.extend(take_report(&mut registry, report, now()));
         }
         commands
@@ -267,6 +284,7 @@ pub fn run(setup: Setup) -> io::Result<()> {
     };
     workers.follow(&mut registry, followups, now());
     let mut app = App::new(registry, setup.interval, setup.rescan, setup.sources);
+    app.live = live;
     // GPM counters are sampled only while the monitor is open.
     let counters = Arc::new(AtomicBool::new(false));
     let (gpu_results, gpu_reports) = mpsc::channel();
@@ -387,11 +405,11 @@ fn run_loop(
             }
         }
         for report in reports.try_iter() {
-            hold(&mut held_reports, report);
+            receive_scan(app, &mut held_reports, report);
         }
         held_polls.extend(poll_results.try_iter());
         for report in gpu_reports.try_iter() {
-            hold_gpu(&mut held_gpus, report);
+            receive_gpu(app, &mut held_gpus, report);
         }
         for report in host_reports.try_iter() {
             hold_host(&mut held_host, report);
@@ -493,6 +511,61 @@ mod tests {
         hold_gpu(&mut held, polled(1.0));
         hold_gpu(&mut held, polled(2.0));
         assert_eq!(held, [opened, polled(2.0)]);
+    }
+
+    #[test]
+    fn a_paused_screen_still_updates_the_loaders_readings() {
+        use crate::gpu::{Device, Reading};
+        use crate::launch::occupancy::{Inputs, Occupancy, occupancy};
+        let mut app = App::new(Registry::new(1.0), 1.0, 15.0, vec!["proc"]);
+        app.paused = true;
+        let (mut held_gpus, mut held_reports) = (Vec::new(), Vec::new());
+        let device = Device {
+            uuid: Some(format!(
+                "GPU-{}-0000-0000-0000-{}",
+                "0".repeat(8),
+                "0".repeat(12)
+            )),
+            ..Device::default()
+        };
+        receive_gpu(
+            &mut app,
+            &mut held_gpus,
+            gpu_poll::Report::Opened {
+                driver: None,
+                devices: vec![device],
+            },
+        );
+        receive_gpu(
+            &mut app,
+            &mut held_gpus,
+            gpu_poll::Report::Polled(vec![Reading {
+                at: 5.0,
+                processes: Some(Vec::new()),
+                answered: true,
+                ..Reading::default()
+            }]),
+        );
+        receive_scan(
+            &mut app,
+            &mut held_reports,
+            Report::Scan {
+                found: Vec::new(),
+                events: Vec::new(),
+            },
+        );
+        // The screen holds its frame: no GPUs yet, every report held.
+        assert!(app.gpus.devices.is_empty());
+        assert_eq!((held_gpus.len(), held_reports.len()), (2, 1));
+        // The loader reads the latest.
+        let gpus = occupancy(&Inputs {
+            live: &app.live,
+            instances: &app.registry.instances,
+            reservations: &app.reservations,
+            interval: app.interval,
+            now: 5.5,
+        });
+        assert_eq!(gpus[0].occupancy, Occupancy::Free);
     }
 
     #[test]

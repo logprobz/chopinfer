@@ -6,6 +6,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use crate::gpu::Gpus;
 use crate::host::Host;
 use crate::instances::{Instance, Registry};
+use crate::launch::Reservation;
+use crate::launch::occupancy::Live;
 use crate::stats::Window;
 use crate::ui::list::{TABLE_TOP, first_row, table_rows};
 use crate::ui::monitor;
@@ -55,6 +57,11 @@ pub struct App {
     pub gpu: usize,
     /// The first GPU row shown.
     pub gpu_scroll: usize,
+    /// The latest GPU readings and scan, which the loader reads even while
+    /// the screen is paused.
+    pub live: Live,
+    /// choptop's launches that are queued or starting.
+    pub reservations: Vec<Reservation>,
     /// The views Esc returns through, the latest last.
     trail: Vec<View>,
     /// The terminal height at the last [`App::settle`], which clicks are
@@ -85,6 +92,8 @@ impl App {
             gpus: Gpus::off(),
             gpu: 0,
             gpu_scroll: 0,
+            live: Live::default(),
+            reservations: Vec::new(),
             trail: Vec::new(),
             height: 0,
             gpu_table: None,

@@ -18,6 +18,9 @@ The wrapper's `# keeper use keeper-spec.json SHA256` header asks runner6 for
 a weight keeper started with the first arm's serve options, from which every
 arm's server borrows its weights. Repeat --install-name to seal multiple
 builds (default: head); each arm's optional install selects one by name.
+Multiple builds are supported in ab and exact modes. Exact compares every
+arm's greedy and sampled batches with the first arm's reference at the same
+concurrency; ab retains its sampled-only ABBA measurements.
 Multiple builds require matching proven rank content/layouts and non-speculation
 options. Each build needs its own CPU content proof, supplied with
 --content-proof NAME=FILE or logs/weight-content-NAME.json in ROUND_DIR.
@@ -400,6 +403,7 @@ def main():
             'queue_timeout_seconds')
     config = {'name': name, 'model': model, 'workload': workload['name'], **{k: model[k] for k in keys}}
     import tune
+    tune.required_allocated_concurrencies(config)
     selection = {'config': config, 'install': install}
     if len(names) > 1:
         selection.update(installs=installs, default_install=names[0])

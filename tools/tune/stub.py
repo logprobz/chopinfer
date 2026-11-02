@@ -13,6 +13,9 @@ counters by position. TUNE_STUB_PERTURB names a label whose greedy output
 differs at token 50; TUNE_STUB_PREEMPT one whose metrics report a preemption;
 TUNE_STUB_IGNORE_DEPTHS one that drafts past its depth. TUNE_STUB_PERTURB_INSTALL
 selects an install whose output bits differ, including sampled A/B requests.
+TUNE_STUB_TOKEN_INSTALL changes a token ID instead; TUNE_STUB_LOADED_INSTALL
+reports normally loaded weights for one install. TUNE_STUB_IGNORE_FULL_ALLOCATION
+omits allocation at one concurrency, while smaller cohorts may still allocate.
 """
 import argparse
 import hashlib
@@ -51,6 +54,7 @@ def stub(args):
             args.kv_pages += 1
     perturb = (os.environ.get('TUNE_STUB_PERTURB') == label
                or os.environ.get('TUNE_STUB_PERTURB_INSTALL') == args.install_name)
+    perturb_token = os.environ.get('TUNE_STUB_TOKEN_INSTALL') == args.install_name
     provenance = {'install': args.install_name, 'revision': args.revision, 'synthetic': True,
                   'model_controls': {key: value for key, value in os.environ.items() if key.startswith('CHOPINFER_')}}
     proof_path = argument_value(args.serve, '--weight-keeper-identity', None)
@@ -70,7 +74,7 @@ def stub(args):
     confidence = argument_value(args.serve, '--speculation-confidence', 'off') != 'off'
     floor = confidence_floor(args.serve) or 0
     widths = [int(x) for x in argument_value(args.serve, '--speculation-widths', '6,8,16,32').split(',')]
-    lent = '--weight-keeper' in args.serve
+    lent = '--weight-keeper' in args.serve and os.environ.get('TUNE_STUB_LOADED_INSTALL') != args.install_name
     state = {'batch': 0, 'clock_ns': time.time_ns(), 'drafted': {}, 'accepted': {}, 'verify_items': 0, 'live': 0}
     control = os.environ.get('CHOPINFER_MAPPED_ROW_CONTROL')
     if control:
@@ -102,7 +106,7 @@ def stub(args):
         logprob = -((value % 1000) / 997.0)
         if perturb and index == 50:
             logprob = struct.unpack('>d', (struct.unpack('>Q', struct.pack('>d', logprob))[0] ^ 1).to_bytes(8, 'big'))[0]
-        return value % 129280, logprob
+        return (value + int(perturb_token and index == 50)) % 129280, logprob
 
     def step(keys, positions, prefill=0):
         """One step over `keys` (streams) at `positions`; returns each
@@ -118,8 +122,22 @@ def stub(args):
         reserved = items * (1 + per_item)
         allocated = (confidence and not ignore_confidence and not prefill and items < rows < reserved
                      and confidence_chooses(floor, items, rows, per_item))
-        drafts = [0 if prefill else (rows - items) // items + (i < (rows - items) % items) for i in range(items)]
-        verify_items = items if allocated else sum(k > 0 for k in drafts)
+        undrafted = 0
+        # Acceptance can narrow a full-capacity plan. Exercise that geometry
+        # with one undrafted item and the remaining items sharing its width.
+        if confidence and not ignore_confidence and not prefill and not allocated and items > 2:
+            narrower = [w for w in widths if items < w < rows
+                        and confidence_chooses(floor, items - 1, w - 1, per_item)]
+            if narrower:
+                rows, undrafted = max(narrower), 1
+                reserved -= per_item
+                allocated = rows < reserved
+        if str(items) == os.environ.get('TUNE_STUB_IGNORE_FULL_ALLOCATION'):
+            allocated = False
+        count = items - undrafted
+        drafts = [0] * undrafted + [0 if prefill else (rows - items) // count + (i < (rows - items) % count)
+                                   for i in range(count)]
+        verify_items = count if allocated else sum(k > 0 for k in drafts)
         emitted = []
         with lock:
             state['batch'] += 1
@@ -145,7 +163,7 @@ def stub(args):
                 'prefill_items': items if prefill else 0, 'decode_rows': 0 if prefill else items - verify_items,
                 'verify_items': verify_items, 'verify_rows': sum(drafts) + verify_items,
                 'drafted_tokens': sum(drafts),
-                **({'reserved_rows': reserved} if allocated else {}),
+                **({'reserved_rows': reserved - (items - verify_items)} if allocated else {}),
                 'accepted_tokens': sum(emitted) - items,
                 'verify_emitted_tokens': sum(n for n, k in zip(emitted, drafts) if k or allocated),
                 'execution_us': micros, 'completed_unix_ns': state['clock_ns'],

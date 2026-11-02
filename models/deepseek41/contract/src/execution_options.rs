@@ -116,7 +116,7 @@ pub fn declarations() -> [ModelOptionV1; 15] {
         (
             PREFILL_ANCHOR_ITEMS,
             OptionDefinitionV1::Integer {
-                default: 0,
+                default: i64::from(MAX_ANCHOR_ITEMS),
                 minimum: 0,
                 maximum: i64::from(MAX_ANCHOR_ITEMS),
             },
@@ -281,7 +281,7 @@ mod tests {
             prefill_tail_folds: false,
             dspark_graph_handles_per_rank: 512,
             diagnostic_step_logs: false,
-            prefill_anchor_items: 0,
+            prefill_anchor_items: MAX_ANCHOR_ITEMS,
             wide_verify: false,
             wide_draft: false,
             phased_decode_reduce: false,

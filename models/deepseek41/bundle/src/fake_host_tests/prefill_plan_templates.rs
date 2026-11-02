@@ -595,8 +595,8 @@ fn lifecycle(dspark: bool, verify: bool) -> (Vec<String>, Counts) {
 
 /// The long-context lifecycle issues, with templates and with each reused
 /// template lowered again, the journal pinned from fresh lowerings before
-/// templates were kept by default. The pins stand for that comparison, so
-/// they are digests compared here, not journals a capture dumps.
+/// templates were kept by default. Both verification modes are captured by
+/// the journal proof, with identical bodies sharing the same pin.
 #[test]
 fn long_context_templates_issue_the_fresh_lowerings_journal() {
     let mut mismatches = Vec::new();
@@ -604,12 +604,12 @@ fn long_context_templates_issue_the_fresh_lowerings_journal() {
         let (name, expected) = if dspark {
             (
                 "flash-tp4-dspark-long-context-templates",
-                (192910, 0x9d8aa84421c28b98),
+                (192958, 0x79d77d6ee383ebab),
             )
         } else {
             (
                 "flash-tp4-ar-long-context-templates",
-                (164705, 0xfb12b2a6af5ce6e0),
+                (164741, 0x27b8e2307434c1fd),
             )
         };
         for verify in [false, true] {
@@ -631,12 +631,12 @@ fn long_context_templates_issue_the_fresh_lowerings_journal() {
                 },
                 "dspark={dspark} verify={verify}"
             );
-            let observed = bundle_runtime::fake_host::journal_digest(&journal);
-            if observed != expected {
-                mismatches.push(format!(
-                    "{name} verify={verify}: ({}, {:#018x})",
-                    observed.0, observed.1
-                ));
+            if let Err(error) = bundle_runtime::fake_host::check_journal(
+                &journal,
+                expected,
+                &format!("{name}-{verify}.journal"),
+            ) {
+                mismatches.push(format!("{name} verify={verify}: {error}"));
             }
         }
     }
@@ -645,8 +645,8 @@ fn long_context_templates_issue_the_fresh_lowerings_journal() {
 
 /// A launch failure inside a reused template poisons the instance exactly
 /// as it does in a full lowering: the journal is the one pinned from a
-/// fresh lowering before templates were kept by default (a digest, as in
-/// `long_context_templates_issue_the_fresh_lowerings_journal`).
+/// fresh lowering before templates were kept by default, also covered by
+/// the sealed journal proof.
 #[test]
 fn a_failed_launch_of_a_reused_template_poisons_the_instance() {
     let mut mismatches = Vec::new();
@@ -688,14 +688,17 @@ fn a_failed_launch_of_a_reused_template_poisons_the_instance() {
         let (name, expected) = if dspark {
             (
                 "flash-tp4-dspark-failed-template",
-                (33293, 0x66f0da55bc326a9f),
+                (33325, 0x9ad7a4f758f942e6),
             )
         } else {
-            ("flash-tp4-ar-failed-template", (31864, 0xe005e62b7bf8f901))
+            ("flash-tp4-ar-failed-template", (31888, 0x332486104ca433a5))
         };
-        let observed = bundle_runtime::fake_host::journal_digest(&host.device.journal.borrow());
-        if observed != expected {
-            mismatches.push(format!("{name}: ({}, {:#018x})", observed.0, observed.1));
+        if let Err(error) = bundle_runtime::fake_host::check_journal(
+            &host.device.journal.borrow(),
+            expected,
+            &format!("{name}.journal"),
+        ) {
+            mismatches.push(format!("{name}: {error}"));
         }
     }
     assert!(mismatches.is_empty(), "{mismatches:#?}");

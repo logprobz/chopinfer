@@ -321,12 +321,12 @@ fn shared_prefix_endpoint_captures_restores_and_returns_to_the_grid() {
         let (name, expected) = if dspark {
             (
                 "flash-tp4-dspark-shared-anchor.journal",
-                (71878, 0xc987852dd2e788cc),
+                (71926, 0xa1ebf5e3963e9586),
             )
         } else {
             (
                 "flash-tp4-ar-shared-anchor.journal",
-                (68956, 0x90a6e235cbb80c43),
+                (68992, 0x479e3f096080caae),
             )
         };
         if let Err(error) =
@@ -526,11 +526,10 @@ fn packed_items_keep_original_row_origins_and_distinct_logits() {
     assert_eq!(host.acquired.get(), host.released.get());
 }
 
-/// DeepSeek declares no manifest anchors. Unsupported V3 anchor flags are
-/// refused by both the raw execution guard and the negotiated envelope,
-/// for upper-skip AR, full-schedule AR and DSpark, without publishing work.
+/// Anchor flags require TP4 upper-skip cuts. Other topologies and execution
+/// entries refuse them before publishing work, for both AR and DSpark.
 #[test]
-fn unsupported_anchor_flags_are_refused_by_every_prefill_profile() {
+fn anchor_flags_require_a_supported_instance_and_cuts_entry() {
     use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVersionV1};
     for (ranks, dspark, skip) in
         [Ranks::TP1, Ranks::TP2, Ranks::TP4]
@@ -588,7 +587,11 @@ fn unsupported_anchor_flags_are_refused_by_every_prefill_profile() {
         .unwrap();
         let before = host.device.journal.borrow().len();
         let mut sink = Sink::default();
+        let supported = ranks == Ranks::TP4 && skip;
         for entry in ["raw", "grid", "cuts"] {
+            if entry == "cuts" && supported {
+                continue;
+            }
             let result = match entry {
                 "grid" => instance.execute_prefill(&envelope, &mut sink),
                 "cuts" => instance.execute_prefill_cuts(&cuts, &mut sink),
@@ -608,6 +611,12 @@ fn unsupported_anchor_flags_are_refused_by_every_prefill_profile() {
             crate::instance::ledger_state(instance.handle(), 0),
             (None, false)
         );
+        if supported {
+            instance.execute_prefill_cuts(&cuts, &mut sink).unwrap();
+            assert_eq!(sink.views.iter().map(|v| v.raw().row_count).sum::<u32>(), 1);
+            instance.commit().unwrap();
+            instance.retire_request(7).unwrap();
+        }
         instance.destroy().unwrap();
         assert_eq!(host.acquired.get(), host.released.get());
     }

@@ -1,0 +1,3654 @@
+{
+  "schema": "chopinfer.journal-proof.layout.v1",
+  "description": "Enable the eight-item Flash TP4 prompt-end anchor allowance, capped at served sequences. Only the upper-skip fixtures add separate zeroed anchor buffers and their teardown releases. Every existing allocation, module, launch, operand, transfer, snapshot and device operation is retained under the ordered handle map.",
+  "handles": {
+    "fake_host_tests::prefill_plan_templates::a_failed_launch_of_a_reused_template_poisons_the_instance#tests/fake_host_tests.prefill_plan_templates.a_failed_launch_of_a_reused_template_poisons_the_instance/device-1.jsonl": {
+      "added": [
+        {
+          "name": "anchor.window-ring.rank-0",
+          "kind": "allocation",
+          "at": 1626,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              11489280,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-0",
+          "kind": "allocation",
+          "at": 1630,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              393216,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-0",
+          "kind": "allocation",
+          "at": 1634,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              544,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-1",
+          "kind": "allocation",
+          "at": 1638,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              11489280,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-1",
+          "kind": "allocation",
+          "at": 1642,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              393216,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-1",
+          "kind": "allocation",
+          "at": 1646,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              544,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-2",
+          "kind": "allocation",
+          "at": 1650,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              11489280,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-2",
+          "kind": "allocation",
+          "at": 1654,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              393216,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-2",
+          "kind": "allocation",
+          "at": 1658,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              544,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-3",
+          "kind": "allocation",
+          "at": 1662,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              11489280,
+              256,
+              4294967301
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-3",
+          "kind": "allocation",
+          "at": 1666,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              393216,
+              256,
+              4294967301
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-3",
+          "kind": "allocation",
+          "at": 1670,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              544,
+              256,
+              4294967301
+            ]
+          ]
+        }
+      ]
+    },
+    "fake_host_tests::prefill_plan_templates::a_failed_launch_of_a_reused_template_poisons_the_instance#tests/fake_host_tests.prefill_plan_templates.a_failed_launch_of_a_reused_template_poisons_the_instance/device-2.jsonl": {
+      "added": [
+        {
+          "name": "anchor.window-ring.rank-0",
+          "kind": "allocation",
+          "at": 2358,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              11489280,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-0",
+          "kind": "allocation",
+          "at": 2362,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              393216,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.raw-features.rank-0",
+          "kind": "allocation",
+          "at": 2366,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 16465920 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              16465920,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-0",
+          "kind": "allocation",
+          "at": 2370,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              544,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-1",
+          "kind": "allocation",
+          "at": 2374,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              11489280,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-1",
+          "kind": "allocation",
+          "at": 2378,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              393216,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.raw-features.rank-1",
+          "kind": "allocation",
+          "at": 2382,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 16465920 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              16465920,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-1",
+          "kind": "allocation",
+          "at": 2386,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              544,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-2",
+          "kind": "allocation",
+          "at": 2390,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              11489280,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-2",
+          "kind": "allocation",
+          "at": 2394,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              393216,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.raw-features.rank-2",
+          "kind": "allocation",
+          "at": 2398,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 16465920 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              16465920,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-2",
+          "kind": "allocation",
+          "at": 2402,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              544,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-3",
+          "kind": "allocation",
+          "at": 2406,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              11489280,
+              256,
+              4294967301
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-3",
+          "kind": "allocation",
+          "at": 2410,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              393216,
+              256,
+              4294967301
+            ]
+          ]
+        },
+        {
+          "name": "anchor.raw-features.rank-3",
+          "kind": "allocation",
+          "at": 2414,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 16465920 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              16465920,
+              256,
+              4294967301
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-3",
+          "kind": "allocation",
+          "at": 2418,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              544,
+              256,
+              4294967301
+            ]
+          ]
+        }
+      ]
+    },
+    "fake_host_tests::prefill_plan_templates::long_context_templates_issue_the_fresh_lowerings_journal#tests/fake_host_tests.prefill_plan_templates.long_context_templates_issue_the_fresh_lowerings_journal/device-1.jsonl": {
+      "added": [
+        {
+          "name": "anchor.window-ring.rank-0",
+          "kind": "allocation",
+          "at": 1626,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              11489280,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-0",
+          "kind": "allocation",
+          "at": 1630,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              393216,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-0",
+          "kind": "allocation",
+          "at": 1634,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              544,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-1",
+          "kind": "allocation",
+          "at": 1638,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              11489280,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-1",
+          "kind": "allocation",
+          "at": 1642,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              393216,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-1",
+          "kind": "allocation",
+          "at": 1646,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              544,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-2",
+          "kind": "allocation",
+          "at": 1650,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              11489280,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-2",
+          "kind": "allocation",
+          "at": 1654,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              393216,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-2",
+          "kind": "allocation",
+          "at": 1658,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              544,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-3",
+          "kind": "allocation",
+          "at": 1662,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              11489280,
+              256,
+              4294967301
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-3",
+          "kind": "allocation",
+          "at": 1666,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              393216,
+              256,
+              4294967301
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-3",
+          "kind": "allocation",
+          "at": 1670,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              544,
+              256,
+              4294967301
+            ]
+          ]
+        }
+      ]
+    },
+    "fake_host_tests::prefill_plan_templates::long_context_templates_issue_the_fresh_lowerings_journal#tests/fake_host_tests.prefill_plan_templates.long_context_templates_issue_the_fresh_lowerings_journal/device-2.jsonl": {
+      "added": [
+        {
+          "name": "anchor.window-ring.rank-0",
+          "kind": "allocation",
+          "at": 1626,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              11489280,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-0",
+          "kind": "allocation",
+          "at": 1630,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              393216,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-0",
+          "kind": "allocation",
+          "at": 1634,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              544,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-1",
+          "kind": "allocation",
+          "at": 1638,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              11489280,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-1",
+          "kind": "allocation",
+          "at": 1642,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              393216,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-1",
+          "kind": "allocation",
+          "at": 1646,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              544,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-2",
+          "kind": "allocation",
+          "at": 1650,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              11489280,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-2",
+          "kind": "allocation",
+          "at": 1654,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              393216,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-2",
+          "kind": "allocation",
+          "at": 1658,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              544,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-3",
+          "kind": "allocation",
+          "at": 1662,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              11489280,
+              256,
+              4294967301
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-3",
+          "kind": "allocation",
+          "at": 1666,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              393216,
+              256,
+              4294967301
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-3",
+          "kind": "allocation",
+          "at": 1670,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              544,
+              256,
+              4294967301
+            ]
+          ]
+        }
+      ]
+    },
+    "fake_host_tests::prefill_plan_templates::long_context_templates_issue_the_fresh_lowerings_journal#tests/fake_host_tests.prefill_plan_templates.long_context_templates_issue_the_fresh_lowerings_journal/device-3.jsonl": {
+      "added": [
+        {
+          "name": "anchor.window-ring.rank-0",
+          "kind": "allocation",
+          "at": 2358,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              11489280,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-0",
+          "kind": "allocation",
+          "at": 2362,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              393216,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.raw-features.rank-0",
+          "kind": "allocation",
+          "at": 2366,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 16465920 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              16465920,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-0",
+          "kind": "allocation",
+          "at": 2370,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              544,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-1",
+          "kind": "allocation",
+          "at": 2374,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              11489280,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-1",
+          "kind": "allocation",
+          "at": 2378,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              393216,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.raw-features.rank-1",
+          "kind": "allocation",
+          "at": 2382,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 16465920 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              16465920,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-1",
+          "kind": "allocation",
+          "at": 2386,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              544,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-2",
+          "kind": "allocation",
+          "at": 2390,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              11489280,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-2",
+          "kind": "allocation",
+          "at": 2394,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              393216,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.raw-features.rank-2",
+          "kind": "allocation",
+          "at": 2398,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 16465920 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              16465920,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-2",
+          "kind": "allocation",
+          "at": 2402,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              544,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-3",
+          "kind": "allocation",
+          "at": 2406,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              11489280,
+              256,
+              4294967301
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-3",
+          "kind": "allocation",
+          "at": 2410,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              393216,
+              256,
+              4294967301
+            ]
+          ]
+        },
+        {
+          "name": "anchor.raw-features.rank-3",
+          "kind": "allocation",
+          "at": 2414,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 16465920 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              16465920,
+              256,
+              4294967301
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-3",
+          "kind": "allocation",
+          "at": 2418,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              544,
+              256,
+              4294967301
+            ]
+          ]
+        }
+      ]
+    },
+    "fake_host_tests::prefill_plan_templates::long_context_templates_issue_the_fresh_lowerings_journal#tests/fake_host_tests.prefill_plan_templates.long_context_templates_issue_the_fresh_lowerings_journal/device-4.jsonl": {
+      "added": [
+        {
+          "name": "anchor.window-ring.rank-0",
+          "kind": "allocation",
+          "at": 2358,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              11489280,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-0",
+          "kind": "allocation",
+          "at": 2362,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              393216,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.raw-features.rank-0",
+          "kind": "allocation",
+          "at": 2366,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 16465920 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              16465920,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-0",
+          "kind": "allocation",
+          "at": 2370,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              544,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-1",
+          "kind": "allocation",
+          "at": 2374,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              11489280,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-1",
+          "kind": "allocation",
+          "at": 2378,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              393216,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.raw-features.rank-1",
+          "kind": "allocation",
+          "at": 2382,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 16465920 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              16465920,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-1",
+          "kind": "allocation",
+          "at": 2386,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              544,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-2",
+          "kind": "allocation",
+          "at": 2390,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              11489280,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-2",
+          "kind": "allocation",
+          "at": 2394,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              393216,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.raw-features.rank-2",
+          "kind": "allocation",
+          "at": 2398,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 16465920 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              16465920,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-2",
+          "kind": "allocation",
+          "at": 2402,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              544,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-3",
+          "kind": "allocation",
+          "at": 2406,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              11489280,
+              256,
+              4294967301
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-3",
+          "kind": "allocation",
+          "at": 2410,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              393216,
+              256,
+              4294967301
+            ]
+          ]
+        },
+        {
+          "name": "anchor.raw-features.rank-3",
+          "kind": "allocation",
+          "at": 2414,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 16465920 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              16465920,
+              256,
+              4294967301
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-3",
+          "kind": "allocation",
+          "at": 2418,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              544,
+              256,
+              4294967301
+            ]
+          ]
+        }
+      ]
+    },
+    "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-1.jsonl": {
+      "added": [
+        {
+          "name": "anchor.window-ring.rank-0",
+          "kind": "allocation",
+          "at": 1626,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              11489280,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-0",
+          "kind": "allocation",
+          "at": 1630,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              393216,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-0",
+          "kind": "allocation",
+          "at": 1634,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              544,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-1",
+          "kind": "allocation",
+          "at": 1638,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              11489280,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-1",
+          "kind": "allocation",
+          "at": 1642,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              393216,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-1",
+          "kind": "allocation",
+          "at": 1646,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              544,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-2",
+          "kind": "allocation",
+          "at": 1650,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              11489280,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-2",
+          "kind": "allocation",
+          "at": 1654,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              393216,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-2",
+          "kind": "allocation",
+          "at": 1658,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              544,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-3",
+          "kind": "allocation",
+          "at": 1662,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              11489280,
+              256,
+              4294967301
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-3",
+          "kind": "allocation",
+          "at": 1666,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              393216,
+              256,
+              4294967301
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-3",
+          "kind": "allocation",
+          "at": 1670,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              544,
+              256,
+              4294967301
+            ]
+          ]
+        }
+      ]
+    },
+    "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-2.jsonl": {
+      "added": [
+        {
+          "name": "anchor.window-ring.rank-0",
+          "kind": "allocation",
+          "at": 2358,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              11489280,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-0",
+          "kind": "allocation",
+          "at": 2362,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              393216,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.raw-features.rank-0",
+          "kind": "allocation",
+          "at": 2366,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 16465920 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              16465920,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-0",
+          "kind": "allocation",
+          "at": 2370,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              0,
+              544,
+              256,
+              4294967298
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-1",
+          "kind": "allocation",
+          "at": 2374,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              11489280,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-1",
+          "kind": "allocation",
+          "at": 2378,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              393216,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.raw-features.rank-1",
+          "kind": "allocation",
+          "at": 2382,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 16465920 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              16465920,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-1",
+          "kind": "allocation",
+          "at": 2386,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              1,
+              544,
+              256,
+              4294967299
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-2",
+          "kind": "allocation",
+          "at": 2390,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              11489280,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-2",
+          "kind": "allocation",
+          "at": 2394,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              393216,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.raw-features.rank-2",
+          "kind": "allocation",
+          "at": 2398,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 16465920 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              16465920,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-2",
+          "kind": "allocation",
+          "at": 2402,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              2,
+              544,
+              256,
+              4294967300
+            ]
+          ]
+        },
+        {
+          "name": "anchor.window-ring.rank-3",
+          "kind": "allocation",
+          "at": 2406,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 11489280 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              11489280,
+              256,
+              4294967301
+            ]
+          ]
+        },
+        {
+          "name": "anchor.compressor-tail.rank-3",
+          "kind": "allocation",
+          "at": 2410,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 393216 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              393216,
+              256,
+              4294967301
+            ]
+          ]
+        },
+        {
+          "name": "anchor.raw-features.rank-3",
+          "kind": "allocation",
+          "at": 2414,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 16465920 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              16465920,
+              256,
+              4294967301
+            ]
+          ]
+        },
+        {
+          "name": "anchor.row-sequence-zeros.rank-3",
+          "kind": "allocation",
+          "at": 2418,
+          "records": [
+            [
+              "id",
+              "@id"
+            ],
+            [
+              "note",
+              "allocate 544 256"
+            ],
+            [
+              "allocation",
+              "@raw",
+              3,
+              544,
+              256,
+              4294967301
+            ]
+          ]
+        }
+      ]
+    }
+  },
+  "operations": {
+    "fake_host_tests::prefill_plan_templates::a_failed_launch_of_a_reused_template_poisons_the_instance#tests/fake_host_tests.prefill_plan_templates.a_failed_launch_of_a_reused_template_poisons_the_instance/device-1.jsonl": [
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967839 }, offset: 0, length: 11489280 }",
+          "lines": [
+            609
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967840 }, offset: 0, length: 393216 }",
+          "lines": [
+            611
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967841 }, offset: 0, length: 544 }",
+          "lines": [
+            613
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967842 }, offset: 0, length: 11489280 }",
+          "lines": [
+            615
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967843 }, offset: 0, length: 393216 }",
+          "lines": [
+            617
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967844 }, offset: 0, length: 544 }",
+          "lines": [
+            619
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967845 }, offset: 0, length: 11489280 }",
+          "lines": [
+            621
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967846 }, offset: 0, length: 393216 }",
+          "lines": [
+            623
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967847 }, offset: 0, length: 544 }",
+          "lines": [
+            625
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967848 }, offset: 0, length: 11489280 }",
+          "lines": [
+            627
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967849 }, offset: 0, length: 393216 }",
+          "lines": [
+            629
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967850 }, offset: 0, length: 544 }",
+          "lines": [
+            631
+          ]
+        }
+      }
+    ],
+    "fake_host_tests::prefill_plan_templates::a_failed_launch_of_a_reused_template_poisons_the_instance#tests/fake_host_tests.prefill_plan_templates.a_failed_launch_of_a_reused_template_poisons_the_instance/device-2.jsonl": [
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968061 }, offset: 0, length: 11489280 }",
+          "lines": [
+            897
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968062 }, offset: 0, length: 393216 }",
+          "lines": [
+            899
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968063 }, offset: 0, length: 16465920 }",
+          "lines": [
+            901
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968064 }, offset: 0, length: 544 }",
+          "lines": [
+            903
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968065 }, offset: 0, length: 11489280 }",
+          "lines": [
+            905
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968066 }, offset: 0, length: 393216 }",
+          "lines": [
+            907
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968067 }, offset: 0, length: 16465920 }",
+          "lines": [
+            909
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968068 }, offset: 0, length: 544 }",
+          "lines": [
+            911
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968069 }, offset: 0, length: 11489280 }",
+          "lines": [
+            913
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968070 }, offset: 0, length: 393216 }",
+          "lines": [
+            915
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968071 }, offset: 0, length: 16465920 }",
+          "lines": [
+            917
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968072 }, offset: 0, length: 544 }",
+          "lines": [
+            919
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968073 }, offset: 0, length: 11489280 }",
+          "lines": [
+            921
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968074 }, offset: 0, length: 393216 }",
+          "lines": [
+            923
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968075 }, offset: 0, length: 16465920 }",
+          "lines": [
+            925
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968076 }, offset: 0, length: 544 }",
+          "lines": [
+            927
+          ]
+        }
+      }
+    ],
+    "fake_host_tests::prefill_plan_templates::long_context_templates_issue_the_fresh_lowerings_journal#tests/fake_host_tests.prefill_plan_templates.long_context_templates_issue_the_fresh_lowerings_journal/device-1.jsonl": [
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967839 }, offset: 0, length: 11489280 }",
+          "lines": [
+            609
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967840 }, offset: 0, length: 393216 }",
+          "lines": [
+            611
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967841 }, offset: 0, length: 544 }",
+          "lines": [
+            613
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967842 }, offset: 0, length: 11489280 }",
+          "lines": [
+            615
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967843 }, offset: 0, length: 393216 }",
+          "lines": [
+            617
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967844 }, offset: 0, length: 544 }",
+          "lines": [
+            619
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967845 }, offset: 0, length: 11489280 }",
+          "lines": [
+            621
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967846 }, offset: 0, length: 393216 }",
+          "lines": [
+            623
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967847 }, offset: 0, length: 544 }",
+          "lines": [
+            625
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967848 }, offset: 0, length: 11489280 }",
+          "lines": [
+            627
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967849 }, offset: 0, length: 393216 }",
+          "lines": [
+            629
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967850 }, offset: 0, length: 544 }",
+          "lines": [
+            631
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "release",
+          "lines": [
+            164730,
+            164731,
+            164732,
+            164733,
+            164734,
+            164735,
+            164736,
+            164737,
+            164738,
+            164739,
+            164740,
+            164741
+          ]
+        }
+      }
+    ],
+    "fake_host_tests::prefill_plan_templates::long_context_templates_issue_the_fresh_lowerings_journal#tests/fake_host_tests.prefill_plan_templates.long_context_templates_issue_the_fresh_lowerings_journal/device-2.jsonl": [
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967839 }, offset: 0, length: 11489280 }",
+          "lines": [
+            609
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967840 }, offset: 0, length: 393216 }",
+          "lines": [
+            611
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967841 }, offset: 0, length: 544 }",
+          "lines": [
+            613
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967842 }, offset: 0, length: 11489280 }",
+          "lines": [
+            615
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967843 }, offset: 0, length: 393216 }",
+          "lines": [
+            617
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967844 }, offset: 0, length: 544 }",
+          "lines": [
+            619
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967845 }, offset: 0, length: 11489280 }",
+          "lines": [
+            621
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967846 }, offset: 0, length: 393216 }",
+          "lines": [
+            623
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967847 }, offset: 0, length: 544 }",
+          "lines": [
+            625
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967848 }, offset: 0, length: 11489280 }",
+          "lines": [
+            627
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967849 }, offset: 0, length: 393216 }",
+          "lines": [
+            629
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967850 }, offset: 0, length: 544 }",
+          "lines": [
+            631
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "release",
+          "lines": [
+            164730,
+            164731,
+            164732,
+            164733,
+            164734,
+            164735,
+            164736,
+            164737,
+            164738,
+            164739,
+            164740,
+            164741
+          ]
+        }
+      }
+    ],
+    "fake_host_tests::prefill_plan_templates::long_context_templates_issue_the_fresh_lowerings_journal#tests/fake_host_tests.prefill_plan_templates.long_context_templates_issue_the_fresh_lowerings_journal/device-3.jsonl": [
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968061 }, offset: 0, length: 11489280 }",
+          "lines": [
+            897
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968062 }, offset: 0, length: 393216 }",
+          "lines": [
+            899
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968063 }, offset: 0, length: 16465920 }",
+          "lines": [
+            901
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968064 }, offset: 0, length: 544 }",
+          "lines": [
+            903
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968065 }, offset: 0, length: 11489280 }",
+          "lines": [
+            905
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968066 }, offset: 0, length: 393216 }",
+          "lines": [
+            907
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968067 }, offset: 0, length: 16465920 }",
+          "lines": [
+            909
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968068 }, offset: 0, length: 544 }",
+          "lines": [
+            911
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968069 }, offset: 0, length: 11489280 }",
+          "lines": [
+            913
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968070 }, offset: 0, length: 393216 }",
+          "lines": [
+            915
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968071 }, offset: 0, length: 16465920 }",
+          "lines": [
+            917
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968072 }, offset: 0, length: 544 }",
+          "lines": [
+            919
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968073 }, offset: 0, length: 11489280 }",
+          "lines": [
+            921
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968074 }, offset: 0, length: 393216 }",
+          "lines": [
+            923
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968075 }, offset: 0, length: 16465920 }",
+          "lines": [
+            925
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968076 }, offset: 0, length: 544 }",
+          "lines": [
+            927
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "release",
+          "lines": [
+            192943,
+            192944,
+            192945,
+            192946,
+            192947,
+            192948,
+            192949,
+            192950,
+            192951,
+            192952,
+            192953,
+            192954,
+            192955,
+            192956,
+            192957,
+            192958
+          ]
+        }
+      }
+    ],
+    "fake_host_tests::prefill_plan_templates::long_context_templates_issue_the_fresh_lowerings_journal#tests/fake_host_tests.prefill_plan_templates.long_context_templates_issue_the_fresh_lowerings_journal/device-4.jsonl": [
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968061 }, offset: 0, length: 11489280 }",
+          "lines": [
+            897
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968062 }, offset: 0, length: 393216 }",
+          "lines": [
+            899
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968063 }, offset: 0, length: 16465920 }",
+          "lines": [
+            901
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968064 }, offset: 0, length: 544 }",
+          "lines": [
+            903
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968065 }, offset: 0, length: 11489280 }",
+          "lines": [
+            905
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968066 }, offset: 0, length: 393216 }",
+          "lines": [
+            907
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968067 }, offset: 0, length: 16465920 }",
+          "lines": [
+            909
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968068 }, offset: 0, length: 544 }",
+          "lines": [
+            911
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968069 }, offset: 0, length: 11489280 }",
+          "lines": [
+            913
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968070 }, offset: 0, length: 393216 }",
+          "lines": [
+            915
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968071 }, offset: 0, length: 16465920 }",
+          "lines": [
+            917
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968072 }, offset: 0, length: 544 }",
+          "lines": [
+            919
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968073 }, offset: 0, length: 11489280 }",
+          "lines": [
+            921
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968074 }, offset: 0, length: 393216 }",
+          "lines": [
+            923
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968075 }, offset: 0, length: 16465920 }",
+          "lines": [
+            925
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968076 }, offset: 0, length: 544 }",
+          "lines": [
+            927
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "release",
+          "lines": [
+            192943,
+            192944,
+            192945,
+            192946,
+            192947,
+            192948,
+            192949,
+            192950,
+            192951,
+            192952,
+            192953,
+            192954,
+            192955,
+            192956,
+            192957,
+            192958
+          ]
+        }
+      }
+    ],
+    "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-1.jsonl": [
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967839 }, offset: 0, length: 11489280 }",
+          "lines": [
+            609
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967840 }, offset: 0, length: 393216 }",
+          "lines": [
+            611
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967841 }, offset: 0, length: 544 }",
+          "lines": [
+            613
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967842 }, offset: 0, length: 11489280 }",
+          "lines": [
+            615
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967843 }, offset: 0, length: 393216 }",
+          "lines": [
+            617
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967844 }, offset: 0, length: 544 }",
+          "lines": [
+            619
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967845 }, offset: 0, length: 11489280 }",
+          "lines": [
+            621
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967846 }, offset: 0, length: 393216 }",
+          "lines": [
+            623
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967847 }, offset: 0, length: 544 }",
+          "lines": [
+            625
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967848 }, offset: 0, length: 11489280 }",
+          "lines": [
+            627
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967849 }, offset: 0, length: 393216 }",
+          "lines": [
+            629
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294967850 }, offset: 0, length: 544 }",
+          "lines": [
+            631
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "release",
+          "lines": [
+            68981,
+            68982,
+            68983,
+            68984,
+            68985,
+            68986,
+            68987,
+            68988,
+            68989,
+            68990,
+            68991,
+            68992
+          ]
+        }
+      }
+    ],
+    "fake_host_tests::prefill_skip::shared_prefix_endpoint_captures_restores_and_returns_to_the_grid#tests/fake_host_tests.prefill_skip.shared_prefix_endpoint_captures_restores_and_returns_to_the_grid/device-2.jsonl": [
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968061 }, offset: 0, length: 11489280 }",
+          "lines": [
+            897
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968062 }, offset: 0, length: 393216 }",
+          "lines": [
+            899
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968063 }, offset: 0, length: 16465920 }",
+          "lines": [
+            901
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 2 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968064 }, offset: 0, length: 544 }",
+          "lines": [
+            903
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968065 }, offset: 0, length: 11489280 }",
+          "lines": [
+            905
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968066 }, offset: 0, length: 393216 }",
+          "lines": [
+            907
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968067 }, offset: 0, length: 16465920 }",
+          "lines": [
+            909
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 3 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968068 }, offset: 0, length: 544 }",
+          "lines": [
+            911
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968069 }, offset: 0, length: 11489280 }",
+          "lines": [
+            913
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968070 }, offset: 0, length: 393216 }",
+          "lines": [
+            915
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968071 }, offset: 0, length: 16465920 }",
+          "lines": [
+            917
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 4 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968072 }, offset: 0, length: 544 }",
+          "lines": [
+            919
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968073 }, offset: 0, length: 11489280 }",
+          "lines": [
+            921
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968074 }, offset: 0, length: 393216 }",
+          "lines": [
+            923
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968075 }, offset: 0, length: 16465920 }",
+          "lines": [
+            925
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "zero 5 DeviceBufferSpanV1 { buffer: BundleDeviceBufferHandleV1 { raw: 4294968076 }, offset: 0, length: 544 }",
+          "lines": [
+            927
+          ]
+        }
+      },
+      {
+        "add": {
+          "text": "release",
+          "lines": [
+            71911,
+            71912,
+            71913,
+            71914,
+            71915,
+            71916,
+            71917,
+            71918,
+            71919,
+            71920,
+            71921,
+            71922,
+            71923,
+            71924,
+            71925,
+            71926
+          ]
+        }
+      }
+    ]
+  }
+}

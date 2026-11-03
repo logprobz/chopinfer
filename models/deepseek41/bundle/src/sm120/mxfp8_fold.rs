@@ -726,7 +726,7 @@ pub fn prefill_tail_policy(
 }
 
 /// The selected baseline's remainder, shared by serving and the lab probe.
-/// Registrations stay identical with the candidate enabled. Inspect the actual
+/// Registrations stay identical with the partition. Inspect the actual
 /// selected symbol so measured matrix, compact and staged-scale routes survive.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PrefillTailPartition {

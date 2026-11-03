@@ -1,0 +1,241 @@
+diff --git a/models/deepseek41/bundle/src/fake_host_tests.rs b/models/deepseek41/bundle/src/fake_host_tests.rs
+index 639a5bbae48702ebd347d361e7fc6fc8379c7830..16e894dbc66d8aae8a59bdff529bbfdbb1f0a7bc 100644
+--- a/models/deepseek41/bundle/src/fake_host_tests.rs
++++ b/models/deepseek41/bundle/src/fake_host_tests.rs
+@@ -1471,12 +1471,12 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
+         KvStorage::Native,
+         // One dedicated data arena and table per rank, reserved before KV.
+         // The full journal audit retains every other operation exactly.
+-        (73033, 0x49b4f15dfce59cb6),
++        (73033, 0x64274f7cca87a1b2),
+     ),
+     (
+         "deepseek41-flash-tp4",
+         KvStorage::Bf16,
+-        (74641, 0xe66f573b8aa3cd88),
++        (74641, 0x46215613ca4b5afc),
+     ),
+ ];
+ 
+diff --git a/models/deepseek41/bundle/src/fake_host_tests/dspark/allocation/journals.rs b/models/deepseek41/bundle/src/fake_host_tests/dspark/allocation/journals.rs
+index a4ae5a819c144779bc703f1de90a06bbc35e3bb6..6bb4cf158ea0c991a59a91769f5844589d587b9f 100644
+--- a/models/deepseek41/bundle/src/fake_host_tests/dspark/allocation/journals.rs
++++ b/models/deepseek41/bundle/src/fake_host_tests/dspark/allocation/journals.rs
+@@ -88,11 +88,11 @@ fn allocated_lifetimes_journal() {
+     let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+     let mut mismatches = Vec::new();
+     for (items, width, depth, suffix, options, expected) in [
+-        (4, 16, 5, "", &[][..], (69574, 0xd37a4e29202ac8a8)),
+-        (8, 32, 5, "", &[], (107170, 0xa98fe6bc1bfb65d5)),
+-        (4, 12, 3, "-d3", &[], (69742, 0x3c336fee5f5600a2)),
+-        (16, 65, 5, "-odd", &[], (190678, 0x70ba91e3a42d5c08)),
+-        (32, 192, 5, "-maximum", &[], (343412, 0x7efd840546172d89)),
++        (4, 16, 5, "", &[][..], (69574, 0x5cc852654bc839a4)),
++        (8, 32, 5, "", &[], (107170, 0x6bd8f27b184f4d31)),
++        (4, 12, 3, "-d3", &[], (69742, 0xefd8b489edb05cf6)),
++        (16, 65, 5, "-odd", &[], (190678, 0x6de527035dd07014)),
++        (32, 192, 5, "-maximum", &[], (343412, 0x5ef40580b57b62a5)),
+         (
+             16,
+             65,
+@@ -115,7 +115,7 @@ fn allocated_lifetimes_journal() {
+             5,
+             "-phased",
+             &[PHASED_DECODE_REDUCE],
+-            (69598, 0xc8752f46263cfa2b),
++            (69598, 0x1662cbf087a15c4b),
+         ),
+         (
+             16,
+@@ -123,7 +123,7 @@ fn allocated_lifetimes_journal() {
+             5,
+             "-odd-phased",
+             &[PHASED_DECODE_REDUCE],
+-            (189438, 0xfb58bd608b6286b5),
++            (189438, 0xc8c8eb876c104255),
+         ),
+         (
+             16,
+@@ -147,7 +147,7 @@ fn allocated_lifetimes_journal() {
+             5,
+             "-markov-staged",
+             &drafter[..1],
+-            (107162, 0x0f0aeb6d9405e347),
++            (107162, 0x8a9c780475cf9b83),
+         ),
+         (
+             8,
+@@ -155,7 +155,7 @@ fn allocated_lifetimes_journal() {
+             5,
+             "-hc-fusion",
+             &drafter[1..2],
+-            (107098, 0x659ab3f884ad5869),
++            (107098, 0x89e37aae0ec026ad),
+         ),
+         (
+             8,
+@@ -163,7 +163,7 @@ fn allocated_lifetimes_journal() {
+             5,
+             "-confidence-staged",
+             &drafter[2..3],
+-            (107182, 0x34310f7c4a15f711),
++            (107182, 0x0e3227c0ba1f5e3d),
+         ),
+         (
+             8,
+@@ -171,7 +171,7 @@ fn allocated_lifetimes_journal() {
+             5,
+             "-moe-direct",
+             &drafter[3..4],
+-            (107110, 0xa68f3210516efecf),
++            (107110, 0x7928bd58b3e4298b),
+         ),
+         (
+             4,
+@@ -179,9 +179,9 @@ fn allocated_lifetimes_journal() {
+             5,
+             "-hc-draft-rows",
+             &[DSPARK_HC_FUSION, DSPARK_HC_DRAFT_ROWS],
+-            (69502, 0x9f2563818dafab26),
++            (69502, 0x360c9c0d72ad46ca),
+         ),
+-        (4, 16, 5, "-drafter", &drafter, (69446, 0x44e803d1f531f151)),
++        (4, 16, 5, "-drafter", &drafter, (69446, 0x407c08dcc191b0dd)),
+     ] {
+         let (host, mut instance) = if options.is_empty() {
+             create_with_limits(shape, 32, 192)
+diff --git a/models/deepseek41/bundle/src/fake_host_tests/dspark/catch_up.rs b/models/deepseek41/bundle/src/fake_host_tests/dspark/catch_up.rs
+index 5b3c00fcbb09bfce1be801b369109cc6616d4fbe..19b025fd586ec0b449f033bc9f9d1fd86271f27c 100644
+--- a/models/deepseek41/bundle/src/fake_host_tests/dspark/catch_up.rs
++++ b/models/deepseek41/bundle/src/fake_host_tests/dspark/catch_up.rs
+@@ -184,7 +184,7 @@ fn prefix_capture_catch_up_quantizes_small_writes_with_the_row_fusions() {
+     assert_eq!((launches(SERIAL), launches(PARALLEL)), (0, 12));
+     let name = "flash-tp4-dspark-prefix-capture.journal";
+     if let Err(error) =
+-        bundle_runtime::fake_host::check_journal(&lines, (40260, 0x50925e96692458ab), name)
++        bundle_runtime::fake_host::check_journal(&lines, (40260, 0x867652ee3ec197b9), name)
+     {
+         panic!("{name}: {error}");
+     }
+diff --git a/models/deepseek41/bundle/src/fake_host_tests/media.rs b/models/deepseek41/bundle/src/fake_host_tests/media.rs
+index 80fb29ec3447a55f15c7fa8c20771d03b5d69b4e..cc469524cc71577bdf14b948dc2d5e83b096f785 100644
+--- a/models/deepseek41/bundle/src/fake_host_tests/media.rs
++++ b/models/deepseek41/bundle/src/fake_host_tests/media.rs
+@@ -478,7 +478,7 @@ fn journal_from(host: &Backend<MediaHost>, from: usize) -> Vec<String> {
+ /// memory. The TP2 history and resource inventory remain byte-identical.
+ const MEDIA_JOURNALS: [(Ranks, (usize, u64)); 2] = [
+     (Ranks::TP2, (19487, 0xfd3d33b42935248f)),
+-    (Ranks::TP4, (47445, 0x0b8da13c5df5b4f7)),
++    (Ranks::TP4, (47445, 0xa315670d5341d923)),
+ ];
+ 
+ /// The image prefill's lifecycle at two and four ranks over the native
+diff --git a/models/deepseek41/bundle/src/fake_host_tests/phased_decode_reduce.rs b/models/deepseek41/bundle/src/fake_host_tests/phased_decode_reduce.rs
+index 1b51af311c6757a5dbef824fe9259518839001c0..1ea94d94600c314022eee8433ca5c42daedfe4fc 100644
+--- a/models/deepseek41/bundle/src/fake_host_tests/phased_decode_reduce.rs
++++ b/models/deepseek41/bundle/src/fake_host_tests/phased_decode_reduce.rs
+@@ -209,8 +209,8 @@ fn phased_decode_resets_only_its_protocol_before_an_execute() {
+ fn phased_decode_lifetimes_journal() {
+     let mut mismatches = Vec::new();
+     for (kv, expected) in [
+-        (KV_LAYOUTS[0], (73057, 0x2415501aadfca6d1)),
+-        (KV_LAYOUTS[1], (74645, 0x6feb8878a80d7933)),
++        (KV_LAYOUTS[0], (73057, 0x9b36b5aa683fb9a9)),
++        (KV_LAYOUTS[1], (74645, 0xfe3678da2a93e6f7)),
+     ] {
+         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), kv);
+         host.device.residency.set(Some(report()));
+diff --git a/models/deepseek41/bundle/src/fake_host_tests/prefill_plan_templates.rs b/models/deepseek41/bundle/src/fake_host_tests/prefill_plan_templates.rs
+index a39f9efb71a16e86caf2908cb14e288841257313..723a40a97c008fd3ceed4aa9b1a46ac965e456df 100644
+--- a/models/deepseek41/bundle/src/fake_host_tests/prefill_plan_templates.rs
++++ b/models/deepseek41/bundle/src/fake_host_tests/prefill_plan_templates.rs
+@@ -596,12 +596,12 @@ fn long_context_templates_issue_the_fresh_lowerings_journal() {
+         let (name, expected) = if dspark {
+             (
+                 "flash-tp4-dspark-long-context-templates",
+-                (192958, 0x79d77d6ee383ebab),
++                (192958, 0x7012e4bb039d0abd),
+             )
+         } else {
+             (
+                 "flash-tp4-ar-long-context-templates",
+-                (164741, 0x27b8e2307434c1fd),
++                (164741, 0xa87a2a121fcc30d9),
+             )
+         };
+         for verify in [false, true] {
+@@ -680,10 +680,10 @@ fn a_failed_launch_of_a_reused_template_poisons_the_instance() {
+         let (name, expected) = if dspark {
+             (
+                 "flash-tp4-dspark-failed-template",
+-                (33325, 0x9ad7a4f758f942e6),
++                (33325, 0x5ea78b9959b4266c),
+             )
+         } else {
+-            ("flash-tp4-ar-failed-template", (31888, 0x332486104ca433a5))
++            ("flash-tp4-ar-failed-template", (31888, 0x29ce187dba75bb6d))
+         };
+         if let Err(error) = bundle_runtime::fake_host::check_journal(
+             &host.device.journal.borrow(),
+diff --git a/models/deepseek41/bundle/src/fake_host_tests/prefill_skip.rs b/models/deepseek41/bundle/src/fake_host_tests/prefill_skip.rs
+index 1e1481b604789fa38390d800a046ded86ee33b6a..a03aee32a2954a078013e713f02b362ce7479bc9 100644
+--- a/models/deepseek41/bundle/src/fake_host_tests/prefill_skip.rs
++++ b/models/deepseek41/bundle/src/fake_host_tests/prefill_skip.rs
+@@ -321,12 +321,12 @@ fn shared_prefix_endpoint_captures_restores_and_returns_to_the_grid() {
+         let (name, expected) = if dspark {
+             (
+                 "flash-tp4-dspark-shared-anchor.journal",
+-                (71926, 0xa1ebf5e3963e9586),
++                (71926, 0xb4db5b4a27b09a88),
+             )
+         } else {
+             (
+                 "flash-tp4-ar-shared-anchor.journal",
+-                (68992, 0x479e3f096080caae),
++                (68992, 0xb5f89c9fcb4ad422),
+             )
+         };
+         if let Err(error) =
+diff --git a/models/deepseek41/bundle/src/ops/dense_short.rs b/models/deepseek41/bundle/src/ops/dense_short.rs
+index 646027fea9df115cd5d672f171e1dc562ba36879..97ad254ff37369fa3c0b5edd1d53d9f6d6540d73 100644
+--- a/models/deepseek41/bundle/src/ops/dense_short.rs
++++ b/models/deepseek41/bundle/src/ops/dense_short.rs
+@@ -17,19 +17,13 @@ pub fn enabled(shape: &Shape) -> bool {
+ /// Prefill relocates only shared-expert projections. Window KV uses the main
+ /// workspace here; its shared relocation applies only to decode and verify.
+ pub(super) fn workspace(ops: &super::DenseOps, shared: bool) -> u64 {
+-    ops.tail_queries
++    if !ops.short_prefill {
++        return 0;
++    }
++    ops.decode
+         .iter()
+-        .filter(|(id, _)| !shared || id.starts_with("moe.shared-"))
+-        .map(|(id, _)| {
+-            let largest = ops
+-                .decode
+-                .iter()
+-                .filter(|(of, _, _)| of == id)
+-                .map(|(_, _, op)| op.info().workspace.div_ceil(256) * 256)
+-                .max()
+-                .unwrap_or(0);
+-            2 * largest
+-        })
++        .filter(|(id, _, _)| !shared || id.starts_with("moe.shared-"))
++        .map(|(_, _, op)| 2 * (op.info().workspace.div_ceil(256) * 256))
+         .max()
+         .unwrap_or(0)
+ }
+@@ -426,11 +420,7 @@ mod tests {
+             old_asks, new_asks,
+             "the knob must preserve registrations and asks"
+         );
+-        assert_eq!(
+-            old.tail_workspace(),
+-            0,
+-            "option-off workspace stays unchanged"
+-        );
++        assert_eq!(old.tail_workspace(), new.tail_workspace());
+         let span = |id, bytes| {
+             DeviceBufferSpanV1::new(BundleDeviceBufferHandleV1::from_parts(id, 1), 256, bytes)
+         };

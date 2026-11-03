@@ -1,5 +1,7 @@
-//! Compare the split route retained by other topologies with the adopted
-//! Flash TP4 dense prefill tail partition.
+//! Compare the unpartitioned route retained by other topologies with the
+//! adopted Flash TP4 dense prefill tail partition. The unpartitioned route
+//! uses the generic fold at 85 and 127 rows, then a split tail or padded TMA
+//! above 128 rows.
 //! Run the ignored test on two idle GPUs, with a 295-second process timeout.
 use bundle_deepseek41::sm120::{self, mxfp8_fold as registration};
 use kernel_core::{
@@ -102,7 +104,8 @@ fn backend() -> LabResult<Sm120> {
 // Need's exactness requirements filter entries. These prefill and exact-row
 // registrations provide the serving invariance requirements, so the relaxed
 // lab Need selects the same entries. DenseOps' pins compare the served asks
-// and each tail's route against the option-off exact-row project.
+// and each tail's route against the unpartitioned project: the generic fold
+// at 85 and 127 rows, then a split tail or padded TMA above 128 rows.
 // The served lowering and this probe both inspect the selected baseline symbol
 // with prefill_tail_partition before retaining its full launches. Thus neither
 // reselects the full part at a rounded width, which could choose another kernel.
@@ -112,7 +115,7 @@ fn calls(
     e: &Entry,
     rows: u32,
     b: Buffers<View>,
-    candidate: bool,
+    partition_tail: bool,
 ) -> LabResult<Vec<Launch>> {
     let q = e.query;
     let op = if rows >= tiled::TILE {
@@ -124,7 +127,7 @@ fn calls(
     let mut result = op
         .launches(&b, View::EMPTY, Counts::rows(rows))
         .map_err(|e| e.to_string())?;
-    let partition = candidate
+    let partition = partition_tail
         .then(|| {
             registration::prefill_tail_partition(
                 rows,

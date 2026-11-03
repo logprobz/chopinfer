@@ -91,7 +91,7 @@ pub struct Instance {
     /// Immutable U32 cells indexed by their value, only for the opt-in profile.
     prefill_counts: Vec<runtime_bundle_abi::DeviceBufferSpanV1>,
     /// Each rank's prompt-end anchor spares; empty unless the instance keeps
-    /// anchors (`execution_options::MAX_ANCHOR_ITEMS`).
+    /// anchors (`prefill::anchor_allowance`).
     anchor_spares: Vec<execute::anchors::Spares>,
     prefill_boundaries: Vec<runtime_bundle_sdk::prefill::Boundary>,
     skip_prefill: bool,

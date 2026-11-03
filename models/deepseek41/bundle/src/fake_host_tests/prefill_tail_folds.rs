@@ -12,7 +12,7 @@ fn tail_folds_preserve_prefill_outputs_and_committed_state() {
         if dspark {
             host.speculation.set(Some((5, 32)));
         }
-        let mut instance = prefill_skip::create_profile_with_options(&host, 8192, true, &[]);
+        let mut instance = prefill_skip::create_profile(&host, 8192, true);
         let mut first_outputs = None;
         for rows in [85, 127, 129, 191, 789, 831, 853, 1557, 1599] {
             let request = encode(

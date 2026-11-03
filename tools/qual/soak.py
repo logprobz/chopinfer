@@ -29,6 +29,10 @@ parse and satisfy the schema, and a length stop is counted as truncated. The
 receipt keeps the first KEEP_STRUCTURED truncated or invalid outputs
 (`structured_kept`: request body, response text, finish reason, completion
 tokens and the server's response id) and their total.
+
+Each memory sample also records the serving tree's RssAnon, RssFile and
+RssShmem and, when /metrics serves them, the host's mapped-view gauges. The
+memory rule judges device memory and VmRSS only.
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -300,8 +304,14 @@ def device_memory(root_pid):
 
 
 def host_memory(root_pid):
-    """Resident memory of the serving process and its current children, in MiB."""
-    total = 0
+    """Resident memory of the serving process and its current children, in
+    MiB: VmRSS (`host_rss_mib`), which the memory rule judges, and its
+    anonymous, file-backed and shared-memory parts (RssAnon, RssFile,
+    RssShmem), which are recorded only. A part some process does not report
+    is None."""
+    fields = {"VmRSS": "host_rss_mib", "RssAnon": "host_rss_anon_mib", "RssFile": "host_rss_file_mib",
+              "RssShmem": "host_rss_shmem_mib"}
+    totals = dict.fromkeys(fields.values(), 0)
     for pid in process_tree(root_pid):
         try:
             status = Path(f"/proc/{pid}/status").read_text()
@@ -309,16 +319,30 @@ def host_memory(root_pid):
             if pid == root_pid:
                 raise RuntimeError("serving process exited during memory sampling") from None
             continue
-        match = re.search(r"^VmRSS:\s+(\d+) kB$", status, re.MULTILINE)
-        if match is None:
-            raise RuntimeError(f"no resident memory sample for serving process {pid}")
-        total += int(match[1])
-    return total / 1024
+        for field, key in fields.items():
+            match = re.search(rf"^{field}:\s+(\d+) kB$", status, re.MULTILINE)
+            if match is None and field == "VmRSS":
+                raise RuntimeError(f"no resident memory sample for serving process {pid}")
+            totals[key] = None if match is None or totals[key] is None else totals[key] + int(match[1])
+    return {key: None if total is None else total / 1024 for key, total in totals.items()}
 
 
-def memory_sample(root_pid, started):
+def mapped_views(client):
+    """The host's mapped-view gauges when its /metrics serves them: the bytes
+    its mapped views cover and, while residency is visible, the bytes of them
+    resident. Recorded only: a failed scrape records its error, not a soak
+    error."""
+    try:
+        text = metrics_text(client)
+    except OSError as error:
+        return {"mapped_view_error": str(error)}
+    return {name: value for name in ("mapped_view_bytes", "mapped_view_resident_bytes")
+            if (value := metric(text, "chop_" + name)) is not None}
+
+
+def memory_sample(root_pid, started, client):
     return {"at": time.time(), "elapsed_seconds": time.monotonic() - started,
-            "mib": device_memory(root_pid), "host_rss_mib": host_memory(root_pid)}
+            "mib": device_memory(root_pid), **host_memory(root_pid), **mapped_views(client)}
 
 
 def main():
@@ -462,7 +486,7 @@ def main():
         load.append(host_load_sample())
         if not args.mechanics_only and not args.remote_only:
             try:
-                memory.append(memory_sample(root_pid, started))
+                memory.append(memory_sample(root_pid, started, client))
             except Exception as error:
                 errors.append({"memory": str(error)})
 

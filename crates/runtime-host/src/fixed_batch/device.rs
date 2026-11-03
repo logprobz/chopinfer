@@ -197,32 +197,34 @@ impl Config {
         Ok(())
     }
 
-    fn serve_arguments(&self) -> Vec<String> {
-        let mut arguments = vec![
-            "serve".into(),
-            "--bundle".into(),
-            self.bundle.to_string_lossy().into_owned(),
-            "--checkpoint".into(),
-            self.checkpoint.to_string_lossy().into_owned(),
-        ];
-        for (flag, path) in [
-            ("--weight-keeper", self.weight_keeper.as_ref()),
-            (
-                "--weight-keeper-identity",
-                self.weight_keeper_identity.as_ref(),
-            ),
-        ] {
-            if let Some(path) = path {
-                arguments.extend([flag.into(), path.to_string_lossy().into_owned()]);
-            }
-        }
-        if let Some(policy) = &self.weight_keeper_policy {
-            arguments.extend(["--weight-keeper-policy".into(), policy.clone()]);
-        }
+    fn serve_command(&self) -> Result<crate::HostCommandV1> {
+        use crate::command::serve_config::EnvironmentV1;
+        use crate::command::serve_options::{ServingInputsV1, validate_model_option_v1};
+        let environment = EnvironmentV1::process()?;
+        let path = |value: &std::path::Path| PathBuf::from(value.to_string_lossy().into_owned());
+        let inputs = ServingInputsV1 {
+            bundle: Some(self.bundle.to_string_lossy().into_owned()),
+            direct_checkpoint: Some(path(&self.checkpoint)),
+            weight_keeper: self.weight_keeper.as_deref().map(path),
+            weight_keeper_identity: self.weight_keeper_identity.as_deref().map(path),
+            weight_keeper_policy: self
+                .weight_keeper_policy
+                .as_deref()
+                .map(crate::weight_keeper::KeeperPolicyV1::parse)
+                .transpose()
+                .map_err(crate::command::usage_error)?,
+            model_options: self.model_options.clone(),
+            ..Default::default()
+        };
         for (name, value) in &self.model_options {
-            arguments.extend(["--model-option".into(), format!("{name}={value}")]);
+            validate_model_option_v1(name, value)?;
         }
-        arguments
+        let resolved = crate::profiles::Resolution::plain(inputs);
+        Ok(crate::command::serve_config::resolve_inputs(
+            &resolved,
+            &environment,
+            Vec::new(),
+        )?)
     }
 }
 
@@ -399,7 +401,7 @@ mod configuration_tests {
             weight_keeper_identity,
             direct_checkpoint,
             ..
-        } = crate::parse_host_command_v1(&config.serve_arguments()).unwrap()
+        } = config.serve_command().unwrap()
         else {
             panic!("expected the serving parser");
         };
@@ -414,7 +416,7 @@ mod configuration_tests {
         assert_eq!(direct_checkpoint, Some("checkpoint".into()));
         value["weight_keeper_policy"] = "unknown".into();
         let bad: Config = serde_json::from_value(value).unwrap();
-        assert!(crate::parse_host_command_v1(&bad.serve_arguments()).is_err());
+        assert!(bad.serve_command().is_err());
     }
 }
 
@@ -692,14 +694,13 @@ pub(super) fn replay(configuration: &std::path::Path) -> Result<()> {
     {
         return Err("unsupported trace concurrency".into());
     }
-    let arguments = config.serve_arguments();
     let crate::HostCommandV1::Serve {
         selection: crate::preparation::ServeSelection::Bundle(selection),
         host,
         weight_keeper,
         weight_keeper_identity,
         ..
-    } = crate::parse_host_command_v1(&arguments)?
+    } = config.serve_command()?
     else {
         unreachable!()
     };

@@ -25,8 +25,7 @@ impl EnvironmentV1 {
                 let (name, value) = assignment.split_once('=').ok_or_else(|| {
                     usage_error("CHOPINFER_MODEL_OPTIONS requires name=value,...")
                 })?;
-                if !runtime_bundle::model_options::valid_name(name)
-                    || value.len() > 1024
+                if validate_model_option_v1(name, value).is_err()
                     || model_options.contains_key(name)
                 {
                     return Err(usage_error(
@@ -326,22 +325,16 @@ pub(super) fn parse_serve_command_v1(
     // Live serving gives environment model options explicit precedence over
     // profile defaults. Standalone profile callers apply environment below them.
     let resolved = crate::profiles::resolve_inputs(environment.model_defaults(explicit))?;
-    resolve_inputs(
-        resolved.inputs.clone(),
-        &resolved,
-        &environment,
-        compatibility,
-    )
+    resolve_inputs(&resolved, &environment, compatibility)
 }
 
 pub(crate) fn resolve_inputs(
-    inputs: ServingInputsV1,
     resolved: &crate::profiles::Resolution,
     environment: &EnvironmentV1,
     compatibility: Vec<String>,
 ) -> Result<HostCommandV1, HostCommandErrorV1> {
     let parsed = ArgumentsV1 {
-        serving: environment.model_defaults(inputs),
+        serving: environment.model_defaults(resolved.inputs.clone()),
         ..Default::default()
     };
     let defaults = ServingOptionsV1::default();

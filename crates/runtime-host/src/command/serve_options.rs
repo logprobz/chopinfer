@@ -1034,9 +1034,7 @@ impl ArgumentsV1 {
                     let (name, value) = value
                         .split_once('=')
                         .ok_or_else(|| usage_error("--model-option requires NAME=VALUE"))?;
-                    if !runtime_bundle::model_options::valid_name(name) || value.len() > 1024 {
-                        return Err(usage_error("invalid model option name or value"));
-                    }
+                    validate_model_option_v1(name, value)?;
                     if parsed
                         .model_options
                         .insert(name.into(), value.into())
@@ -1768,4 +1766,12 @@ pub(crate) fn speculation_mode_v1(value: &str) -> Result<SpeculationMode, HostCo
             ));
         }
     })
+}
+
+/// Lexical checks shared by CLI, profile, environment and replay adapters.
+pub(crate) fn validate_model_option_v1(name: &str, value: &str) -> Result<(), HostCommandErrorV1> {
+    if !runtime_bundle::model_options::valid_name(name) || value.len() > 1024 {
+        return Err(usage_error("invalid model option name or value"));
+    }
+    Ok(())
 }

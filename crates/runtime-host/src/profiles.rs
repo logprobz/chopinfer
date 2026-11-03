@@ -291,11 +291,7 @@ impl Profile {
             ..Default::default()
         };
         for (name, value) in &inputs.model_options {
-            if !runtime_bundle::model_options::valid_name(name) || value.len() > 1024 {
-                return Err(crate::command::usage_error(
-                    "invalid model option name or value",
-                ));
-            }
+            serve_options::validate_model_option_v1(name, value)?;
         }
         if let Some(name) = served_model_name {
             inputs.bundle = Some(self.bundle_id.clone());
@@ -604,12 +600,7 @@ impl Resolution {
 
     pub(crate) fn command(&self) -> Result<crate::HostCommandV1, HostCommandErrorV1> {
         let environment = EnvironmentV1::process()?;
-        crate::command::serve_config::resolve_inputs(
-            self.inputs.clone(),
-            self,
-            &environment,
-            Vec::new(),
-        )
+        crate::command::serve_config::resolve_inputs(self, &environment, Vec::new())
     }
 }
 

@@ -339,154 +339,36 @@ impl InstalledBundleHostV1 {
         device_ordinals: Vec<i32>,
         kv_dtype: Option<runtime_bundle::BundleKvDtypeV1>,
     ) -> Result<HostInstanceConfigV1, HostLoadErrorV1> {
-        let manifest = self.manifest();
-        let kv_layout = served_kv_layout_v1(manifest, kv_dtype)?;
-        let topology = HostTopologyV1::new(device_ordinals)
-            .map_err(|error| BundleError::validation(error.to_string()))?;
-        let declared = manifest
-            .target()
-            .topologies()
-            .iter()
-            .find(|declared| declared.id().as_str() == topology_id)
-            .ok_or_else(|| HostLoadErrorV1::UnknownTopology(topology_id.to_owned()))?;
-        if declared.rank_count() != topology.rank_count() {
-            return Err(HostLoadErrorV1::Bundle(BundleError::validation(format!(
-                "topology '{topology_id}' declares {} ranks, the host offered {}",
-                declared.rank_count(),
-                topology.rank_count()
-            ))));
-        }
-        let page_layout = manifest
-            .declared_page_layout_for(kv_layout, declared.id())
-            .map_err(HostLoadErrorV1::Bundle)?;
-        // The scored row limit the host's scheduler applies, so the bundle
-        // refuses at create a limit it cannot execute.
-        let mut batch_limits = runtime_bundle_abi::BundleRawBatchLimitsV1::unreported();
-        batch_limits.maximum_scored_rows = manifest.batch_limits().map_or(
-            runtime_bundle::DEFAULT_MAXIMUM_SCORED_ROWS,
-            runtime_bundle::BundleBatchLimitsV1::maximum_scored_rows,
-        );
-        let mut config = HostInstanceConfigV1::new(topology)
-            .with_batch_limits(batch_limits)
-            .with_arena_source(crate::weight_keeper::selected_arena_source_v1());
-        if manifest.model_options().is_some() {
-            self.with_model_options_defaults()?;
-            config = config.with_model_options(
-                self.model_options
+        package_instance_config_v1(
+            &self.package,
+            &|| {
+                self.with_model_options_defaults()?;
+                Ok(self
+                    .model_options
                     .get()
                     .expect("model options configured")
-                    .clone(),
-            );
-        }
-        // A package whose bundle reads the served count serves its maximum
-        // unless the caller names fewer sequences.
-        let served = served_sequences_v1(
-            manifest.resource_requirements().required_capabilities(),
-            manifest.batch_limits(),
-            None,
-        )?;
-        if let Some(sequences) = served {
-            config = config.with_maximum_sequences(sequences);
-        }
-        config = config
-            .with_kv_contract(DeclaredKvContractV1::new(
-                kv_layout.id().as_str().as_bytes().to_vec(),
-                page_layout,
-            ))
-            .with_state_contract(state_contract_for_v1(manifest, kv_layout, served)?);
-        // A selected checkpoint: the bundle's weight plans produce the rank
-        // images and the components they declare, which replace any package
-        // component of the same role.
-        let selected = crate::direct::selected_checkpoint_v1()
-            .map_err(|message| HostLoadErrorV1::Bundle(BundleError::validation(message)))?;
-        let direct = selected.is_some();
-        let planned = match selected {
-            Some(checkpoint) => self.planned_images_v1(checkpoint, declared.rank_count())?,
-            None => Vec::new(),
-        };
-        let planned_roles: Vec<&str> = planned.iter().map(|image| image.image_role()).collect();
-        check_planned_components_v1(manifest, direct.then_some(&planned_roles[..]))
-            .map_err(|message| HostLoadErrorV1::Bundle(BundleError::validation(message)))?;
-        let replaced = |role: &[u8]| {
-            planned.iter().any(|image| {
-                image.image_role().as_bytes() == role
-                    || image.components().iter().any(|c| c.name.as_bytes() == role)
-            })
-        };
-        for component in manifest.components() {
-            let role = component.role().as_str().as_bytes().to_vec();
-            if replaced(&role) {
-                continue;
-            }
-            let file = self
-                .package
-                .open_component_file(component)
-                .map_err(|error| HostLoadErrorV1::ComponentRead {
-                    path: component.path().as_str().to_owned(),
-                    message: error.to_string(),
-                })?;
-            config = if role.starts_with(AUTHENTICATED_COMPONENT_ROLE_PREFIX_V1) {
-                config.with_authenticated_component_file(role, file)
-            } else if role.starts_with(BUNDLE_METADATA_ROLE_PREFIX_V1) {
-                config.with_bundle_metadata_file(role, file)
-            } else {
-                config.with_component(role, file.bytes().to_vec())
-            }
-            .map_err(|error| BundleError::validation(error.to_string()))?;
-        }
-        for image in planned {
-            config = config
-                .with_planned_compiled_image(image)
-                .map_err(|error| BundleError::validation(error.to_string()))?;
-        }
-        if let Some(content) = crate::weight_keeper::content::selected() {
-            config = config
-                .with_weight_content(content)
-                .map_err(BundleError::validation)?;
-        }
-        Ok(config)
+                    .clone())
+            },
+            (topology_id, device_ordinals, kv_dtype),
+            Some(&|checkpoint, ranks, requests| {
+                self.planned_images_v1(checkpoint, ranks, requests)
+            }),
+        )
     }
 
     /// Asks the bundle for every rank's weight plan over `checkpoint`, for
-    /// each planned component, and returns the images it plans. A package
-    /// that plans no component is asked once with an empty role, for the
-    /// bundle's primary image. Each request carries the package's bundle
-    /// metadata; it names no host views, because where a view lives is the
-    /// plan's own decision.
+    /// each role `requests` names, and returns the images it plans.
     fn planned_images_v1(
         &self,
         checkpoint: std::sync::Arc<crate::direct::DirectCheckpointV1>,
         ranks: u32,
+        requests: PlanRequestsV1,
     ) -> Result<Vec<std::sync::Arc<crate::direct::PlannedImageV1>>, HostLoadErrorV1> {
-        let manifest = self.manifest();
-        let mut components = Vec::new();
-        for component in manifest.components() {
-            let role = component.role().as_str();
-            if role.as_bytes().starts_with(BUNDLE_METADATA_ROLE_PREFIX_V1) {
-                components.push(runtime_bundle_abi::weight_plan::NamedBytesV1 {
-                    name: role.to_owned(),
-                    bytes: verified_component_by_role_v1(&self.package, role)?,
-                });
-            }
-        }
-        components.sort_by(|left, right| left.name.cmp(&right.name));
-        // Planned identities cover the module that runs bundle-owned
-        // transforms; the package's verified manifest states its digest.
-        let bundle_module = manifest
-            .native_module()
-            .map(|module| sha256_array_v1(module.sha256()))
-            .transpose()
-            .map_err(|message| HostLoadErrorV1::Bundle(BundleError::validation(message)))?
-            .unwrap_or([0; 32]);
-        // A planned component has no other source: the plan must supply it.
-        let mut roles: Vec<String> = manifest
-            .planned_components()
-            .iter()
-            .map(|component| component.role().as_str().to_owned())
-            .collect();
-        if roles.is_empty() {
-            roles.push(String::new());
-        }
+        let PlanRequestsV1 {
+            components,
+            bundle_module,
+            roles,
+        } = requests;
         let mut planned = Vec::new();
         for role in roles {
             if let Some(image) = crate::direct::plan_image_v1(
@@ -622,66 +504,17 @@ impl InstalledBundleHostV1 {
         context_parallel_size: usize,
         device_results: bool,
     ) -> Result<(Rc<HostServicesV1Backend<D>>, LoadedBundleInstanceV1), HostLoadErrorV1> {
-        let mut config =
-            self.instance_config_with_kv_dtype(topology_id, device_ordinals, kv_dtype)?;
-        config = config
-            .with_speculation(speculation)
-            .with_context_parallel_size(context_parallel_size);
-        if maximum_sequences.is_some()
-            && let Some(sequences) = served_sequences_v1(
-                self.manifest()
-                    .resource_requirements()
-                    .required_capabilities(),
-                self.manifest().batch_limits(),
+        let config = served_instance_config_v1(
+            self.manifest(),
+            self.instance_config_with_kv_dtype(topology_id, device_ordinals, kv_dtype)?,
+            ServedInstanceV1 {
+                serving_kv,
+                speculation,
                 maximum_sequences,
-            )?
-        {
-            let kv_layout = served_kv_layout_v1(self.manifest(), kv_dtype)?;
-            config = config
-                .with_maximum_sequences(sequences)
-                .with_state_contract(state_contract_for_v1(
-                    self.manifest(),
-                    kv_layout,
-                    Some(sequences),
-                )?);
-        }
-        if let Some(policy) = serving_kv {
-            config = config.with_serving_kv(policy);
-        }
-        if self
-            .manifest()
-            .resource_requirements()
-            .required_capabilities()
-            .iter()
-            .any(|id| id.as_str() == runtime_bundle_abi::SERVED_CONTEXT_CAPABILITY_V1)
-        {
-            if served_sequences_v1(
-                self.manifest()
-                    .resource_requirements()
-                    .required_capabilities(),
-                self.manifest().batch_limits(),
-                maximum_sequences,
-            )?
-            .is_none()
-            {
-                return Err(HostLoadErrorV1::Bundle(BundleError::validation(
-                    "served context requires served items and batch limits",
-                )));
-            }
-            let declared = self.manifest().kv_layout().maximum_sequence_tokens();
-            let tokens = serving_kv
-                .and_then(|policy| policy.maximum_context_tokens)
-                .map_or(declared, |tokens| tokens as u64);
-            if tokens == 0 || tokens > declared {
-                return Err(HostLoadErrorV1::Bundle(BundleError::validation(
-                    "invalid served context",
-                )));
-            }
-            config = config.with_maximum_context_tokens(tokens);
-        }
-        if let Some(nonce) = crate::services::tap_producer_v1() {
-            config = config.with_tap_producer(nonce.to_owned());
-        }
+                kv_dtype,
+                context_parallel_size,
+            },
+        )?;
         let configuration = config.encode_v1(topology_id.as_bytes());
         let backend = Rc::new(HostServicesV1Backend::new(device, config));
         let table = HostServicesTableV1::new(Rc::clone(&backend));
@@ -693,6 +526,295 @@ impl InstalledBundleHostV1 {
         };
         Ok((backend, instance))
     }
+}
+
+/// The host service configuration an instance of `package` is created
+/// with, from its manifest, the served `topology_id` over `device_ordinals`
+/// and KV layout `kv_dtype`, with `model_options` when the manifest declares
+/// options. `plan` plans the rank images from a selected checkpoint; without
+/// it, as for `serve --check`, the configuration stops where the plan's
+/// images would decide the rest.
+pub(crate) fn package_instance_config_v1(
+    package: &BundlePackageV1,
+    model_options: &dyn Fn() -> Result<
+        std::collections::BTreeMap<String, serde_json::Value>,
+        HostLoadErrorV1,
+    >,
+    (topology_id, device_ordinals, kv_dtype): (
+        &str,
+        Vec<i32>,
+        Option<runtime_bundle::BundleKvDtypeV1>,
+    ),
+    plan: Option<&PlanImagesV1<'_>>,
+) -> Result<HostInstanceConfigV1, HostLoadErrorV1> {
+    let manifest = package.manifest();
+    let kv_layout = served_kv_layout_v1(manifest, kv_dtype)?;
+    let topology = HostTopologyV1::new(device_ordinals)
+        .map_err(|error| BundleError::validation(error.to_string()))?;
+    let declared = manifest
+        .target()
+        .topologies()
+        .iter()
+        .find(|declared| declared.id().as_str() == topology_id)
+        .ok_or_else(|| HostLoadErrorV1::UnknownTopology(topology_id.to_owned()))?;
+    if declared.rank_count() != topology.rank_count() {
+        return Err(HostLoadErrorV1::Bundle(BundleError::validation(format!(
+            "topology '{topology_id}' declares {} ranks, the host offered {}",
+            declared.rank_count(),
+            topology.rank_count()
+        ))));
+    }
+    let page_layout = manifest
+        .declared_page_layout_for(kv_layout, declared.id())
+        .map_err(HostLoadErrorV1::Bundle)?;
+    // The scored row limit the host's scheduler applies, so the bundle
+    // refuses at create a limit it cannot execute.
+    let mut batch_limits = runtime_bundle_abi::BundleRawBatchLimitsV1::unreported();
+    batch_limits.maximum_scored_rows = manifest.batch_limits().map_or(
+        runtime_bundle::DEFAULT_MAXIMUM_SCORED_ROWS,
+        runtime_bundle::BundleBatchLimitsV1::maximum_scored_rows,
+    );
+    let mut config = HostInstanceConfigV1::new(topology)
+        .with_batch_limits(batch_limits)
+        .with_arena_source(crate::weight_keeper::selected_arena_source_v1());
+    if manifest.model_options().is_some() {
+        config = config.with_model_options(model_options()?);
+    }
+    // A package whose bundle reads the served count serves its maximum
+    // unless the caller names fewer sequences.
+    let served = served_sequences_v1(
+        manifest.resource_requirements().required_capabilities(),
+        manifest.batch_limits(),
+        None,
+    )?;
+    if let Some(sequences) = served {
+        config = config.with_maximum_sequences(sequences);
+    }
+    config = config
+        .with_kv_contract(DeclaredKvContractV1::new(
+            kv_layout.id().as_str().as_bytes().to_vec(),
+            page_layout,
+        ))
+        .with_state_contract(state_contract_for_v1(manifest, kv_layout, served)?);
+    // A selected checkpoint: the bundle's weight plans produce the rank
+    // images and the components they declare, which replace any package
+    // component of the same role.
+    let selected = crate::direct::selected_checkpoint_v1()
+        .map_err(|message| HostLoadErrorV1::Bundle(BundleError::validation(message)))?;
+    let direct = selected.is_some();
+    let planned = match selected {
+        Some(checkpoint) => {
+            let requests = plan_requests_v1(package)?;
+            match plan {
+                Some(plan) => plan(checkpoint, declared.rank_count(), requests)?,
+                // Which images the bundle plans from the checkpoint, and so
+                // which components they replace, only its weight plan
+                // decides.
+                None => return Ok(config),
+            }
+        }
+        None => Vec::new(),
+    };
+    let planned_roles: Vec<&str> = planned.iter().map(|image| image.image_role()).collect();
+    check_planned_components_v1(manifest, direct.then_some(&planned_roles[..]))
+        .map_err(|message| HostLoadErrorV1::Bundle(BundleError::validation(message)))?;
+    let replaced = |role: &[u8]| {
+        planned.iter().any(|image| {
+            image.image_role().as_bytes() == role
+                || image.components().iter().any(|c| c.name.as_bytes() == role)
+        })
+    };
+    for component in manifest.components() {
+        let role = component.role().as_str().as_bytes().to_vec();
+        if replaced(&role) {
+            continue;
+        }
+        let file = package.open_component_file(component).map_err(|error| {
+            HostLoadErrorV1::ComponentRead {
+                path: component.path().as_str().to_owned(),
+                message: error.to_string(),
+            }
+        })?;
+        config = if role.starts_with(AUTHENTICATED_COMPONENT_ROLE_PREFIX_V1) {
+            config.with_authenticated_component_file(role, file)
+        } else if role.starts_with(BUNDLE_METADATA_ROLE_PREFIX_V1) {
+            config.with_bundle_metadata_file(role, file)
+        } else {
+            config.with_component(role, file.bytes().to_vec())
+        }
+        .map_err(|error| BundleError::validation(error.to_string()))?;
+    }
+    for image in planned {
+        config = config
+            .with_planned_compiled_image(image)
+            .map_err(|error| BundleError::validation(error.to_string()))?;
+    }
+    if let Some(content) = crate::weight_keeper::content::selected() {
+        config = config
+            .with_weight_content(content)
+            .map_err(BundleError::validation)?;
+    }
+    Ok(config)
+}
+
+/// Plans the rank images of a selected checkpoint at a rank count, as the
+/// requests ask.
+pub(crate) type PlanImagesV1<'a> = dyn Fn(
+        std::sync::Arc<crate::direct::DirectCheckpointV1>,
+        u32,
+        PlanRequestsV1,
+    ) -> Result<Vec<std::sync::Arc<crate::direct::PlannedImageV1>>, HostLoadErrorV1>
+    + 'a;
+
+/// What a package asks its weight plan for: each role to plan, with the
+/// package's bundle metadata and the digest of the module that runs its
+/// transforms. A package that plans no component asks once with an empty
+/// role, for the bundle's primary image. A request names no host views,
+/// because where a view lives is the plan's own decision.
+pub(crate) struct PlanRequestsV1 {
+    components: Vec<runtime_bundle_abi::weight_plan::NamedBytesV1>,
+    bundle_module: [u8; 32],
+    roles: Vec<String>,
+}
+
+/// The weight plan requests of `package`, from its verified bytes.
+fn plan_requests_v1(package: &BundlePackageV1) -> Result<PlanRequestsV1, HostLoadErrorV1> {
+    let manifest = package.manifest();
+    let mut components = Vec::new();
+    for component in manifest.components() {
+        let role = component.role().as_str();
+        if role.as_bytes().starts_with(BUNDLE_METADATA_ROLE_PREFIX_V1) {
+            components.push(runtime_bundle_abi::weight_plan::NamedBytesV1 {
+                name: role.to_owned(),
+                bytes: verified_component_by_role_v1(package, role)?,
+            });
+        }
+    }
+    components.sort_by(|left, right| left.name.cmp(&right.name));
+    // Planned identities cover the module that runs bundle-owned
+    // transforms; the package's verified manifest states its digest.
+    let bundle_module = manifest
+        .native_module()
+        .map(|module| sha256_array_v1(module.sha256()))
+        .transpose()
+        .map_err(|message| HostLoadErrorV1::Bundle(BundleError::validation(message)))?
+        .unwrap_or([0; 32]);
+    // A planned component has no other source: the plan must supply it.
+    let mut roles: Vec<String> = manifest
+        .planned_components()
+        .iter()
+        .map(|component| component.role().as_str().to_owned())
+        .collect();
+    if roles.is_empty() {
+        roles.push(String::new());
+    }
+    Ok(PlanRequestsV1 {
+        components,
+        bundle_module,
+        roles,
+    })
+}
+
+/// What a served instance adds to its package's configuration.
+#[derive(Clone, Copy)]
+pub(crate) struct ServedInstanceV1 {
+    pub serving_kv: Option<crate::services::ServingKvPolicyV1>,
+    pub speculation: runtime_bundle_abi::BundleRawSpeculationV1,
+    pub maximum_sequences: Option<u32>,
+    pub kv_dtype: Option<runtime_bundle::BundleKvDtypeV1>,
+    pub context_parallel_size: usize,
+}
+
+/// `config` of a package with `manifest` as `served` asks it to serve:
+/// speculation, context-parallel groups, the live sequences and their state,
+/// the serving pool policy and the served context.
+pub(crate) fn served_instance_config_v1(
+    manifest: &BundleManifestV1,
+    config: HostInstanceConfigV1,
+    served: ServedInstanceV1,
+) -> Result<HostInstanceConfigV1, HostLoadErrorV1> {
+    let ServedInstanceV1 {
+        serving_kv,
+        speculation,
+        maximum_sequences,
+        kv_dtype,
+        context_parallel_size,
+    } = served;
+    let mut config = config
+        .with_speculation(speculation)
+        .with_context_parallel_size(context_parallel_size);
+    if maximum_sequences.is_some()
+        && let Some(sequences) = served_sequences_v1(
+            manifest.resource_requirements().required_capabilities(),
+            manifest.batch_limits(),
+            maximum_sequences,
+        )?
+    {
+        let kv_layout = served_kv_layout_v1(manifest, kv_dtype)?;
+        config = config
+            .with_maximum_sequences(sequences)
+            .with_state_contract(state_contract_for_v1(manifest, kv_layout, Some(sequences))?);
+    }
+    if let Some(policy) = serving_kv {
+        config = config.with_serving_kv(policy);
+    }
+    if manifest
+        .resource_requirements()
+        .required_capabilities()
+        .iter()
+        .any(|id| id.as_str() == runtime_bundle_abi::SERVED_CONTEXT_CAPABILITY_V1)
+    {
+        if served_sequences_v1(
+            manifest.resource_requirements().required_capabilities(),
+            manifest.batch_limits(),
+            maximum_sequences,
+        )?
+        .is_none()
+        {
+            return Err(HostLoadErrorV1::Bundle(BundleError::validation(
+                "served context requires served items and batch limits",
+            )));
+        }
+        let declared = manifest.kv_layout().maximum_sequence_tokens();
+        let tokens = serving_kv
+            .and_then(|policy| policy.maximum_context_tokens)
+            .map_or(declared, |tokens| tokens as u64);
+        if tokens == 0 || tokens > declared {
+            return Err(HostLoadErrorV1::Bundle(BundleError::validation(
+                "invalid served context",
+            )));
+        }
+        config = config.with_maximum_context_tokens(tokens);
+    }
+    if let Some(nonce) = crate::services::tap_producer_v1() {
+        config = config.with_tap_producer(nonce.to_owned());
+    }
+    Ok(config)
+}
+
+/// What [`InstalledBundleHostV1::create_served_instance_with_results`]
+/// refuses of `package` before its native module plans or creates anything,
+/// with `overrides` as the served model options: the configuration of
+/// [`package_instance_config_v1`] without a weight plan, served as `served`
+/// asks.
+pub(crate) fn check_served_instance_v1(
+    package: &BundlePackageV1,
+    overrides: &std::collections::BTreeMap<String, String>,
+    (topology_id, device_ordinals): (&str, Vec<i32>),
+    served: ServedInstanceV1,
+) -> Result<(), HostLoadErrorV1> {
+    let config = package_instance_config_v1(
+        package,
+        &|| {
+            package
+                .manifest()
+                .resolve_model_options(overrides)
+                .map_err(HostLoadErrorV1::Bundle)
+        },
+        (topology_id, device_ordinals, served.kv_dtype),
+        None,
+    )?;
+    served_instance_config_v1(package.manifest(), config, served).map(drop)
 }
 
 /// Checks that what a package plans from a checkpoint has a source.
@@ -1004,15 +1126,24 @@ fn open_package_v1(
         Some(library) => library,
         None => open_native_module_v1(&package, host)?,
     };
-    let _defaults = package
-        .manifest()
-        .resolve_model_options(&std::collections::BTreeMap::new())
-        .map_err(HostLoadErrorV1::Bundle)?;
+    check_model_option_defaults_v1(&package)?;
     Ok(InstalledBundleHostV1 {
         package,
         library,
         model_options: std::cell::OnceCell::new(),
     })
+}
+
+/// Refuses a package whose model options do not resolve to their declared
+/// defaults, as loading it does.
+pub(crate) fn check_model_option_defaults_v1(
+    package: &BundlePackageV1,
+) -> Result<(), HostLoadErrorV1> {
+    package
+        .manifest()
+        .resolve_model_options(&std::collections::BTreeMap::new())
+        .map(drop)
+        .map_err(HostLoadErrorV1::Bundle)
 }
 
 /// Opens a verified package's native module.
@@ -1024,6 +1155,24 @@ pub(crate) fn open_native_module_v1(
     package: &BundlePackageV1,
     host: &BundleHostCompatibilityV1,
 ) -> Result<BundleLibraryV1, HostLoadErrorV1> {
+    let module = check_native_module_v1(package, host)?;
+    let started = std::time::Instant::now();
+    let library = BundleLibraryV1::open_verified_image(module.bytes(), module.display())?;
+    runtime_log::info!(
+        "startup module load: {:.3}s",
+        started.elapsed().as_secs_f64()
+    );
+    drop(module);
+    Ok(library)
+}
+
+/// What [`open_native_module_v1`] refuses before it maps the module: a
+/// declared operation this host cannot resolve for its architecture, or a
+/// package without a module. Returns the module's authenticated bytes.
+pub(crate) fn check_native_module_v1(
+    package: &BundlePackageV1,
+    host: &BundleHostCompatibilityV1,
+) -> Result<runtime_bundle::VerifiedNativeModuleV1, HostLoadErrorV1> {
     // Every declared operation is resolved next, while the bundle is still
     // only data. A bundle whose work this host cannot perform is refused here
     // rather than after its native code is mapped and running. Resolution is
@@ -1040,17 +1189,9 @@ pub(crate) fn open_native_module_v1(
     // rather than the package path. It stages its own immutable copy, so
     // neither replacing the install-root entry nor rewriting the same inode
     // afterwards changes what this process loads.
-    let module = package
+    package
         .open_native_module()?
-        .ok_or(HostLoadErrorV1::NoNativeModule)?;
-    let started = std::time::Instant::now();
-    let library = BundleLibraryV1::open_verified_image(module.bytes(), module.display())?;
-    runtime_log::info!(
-        "startup module load: {:.3}s",
-        started.elapsed().as_secs_f64()
-    );
-    drop(module);
-    Ok(library)
+        .ok_or(HostLoadErrorV1::NoNativeModule)
 }
 
 /// Resolves every operation the manifest's graph buckets reference, for one

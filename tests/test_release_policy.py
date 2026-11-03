@@ -166,10 +166,10 @@ class ReleasePolicy(unittest.TestCase):
             binaries = root / 'target/release'
             binaries.mkdir(parents=True)
             revision = 'a' * 40
-            for name in ('chopinfer', 'chopinfer-host', 'chopinfer-top', 'mimo26-package', 'qwen38-package',
+            for name in ('chopinfer', 'chopinfer-host', 'choptop', 'mimo26-package', 'qwen38-package',
                          'chopinfer-model-mimo26', 'chopinfer-model-qwen38'):
-                # chopinfer-top reports its version without the revision.
-                version = '0.1.0-alpha.1' + ('' if name == 'chopinfer-top' else f' ({revision})')
+                # choptop reports its version without the revision.
+                version = '0.1.0-alpha.1' + ('' if name == 'choptop' else f' ({revision})')
                 (binaries / name).write_text(
                     '#!/bin/sh\ncase "$*" in\n'
                     f'  --version) echo "{name} {version}" ;;\n'
@@ -228,7 +228,7 @@ class ReleasePolicy(unittest.TestCase):
                 for name in eval_files:
                     self.assertEqual(archive.extractfile(prefix + name).read(), b'synthetic eval input\n')
                 expected = {
-                    'bin/chopinfer', 'bin/chopinfer-host', 'bin/chopinfer-top', 'bin/mimo26-package', 'bin/qwen38-package',
+                    'bin/chopinfer', 'bin/chopinfer-host', 'bin/choptop', 'bin/mimo26-package', 'bin/qwen38-package',
                     'bin/chopinfer-model-qwen38', 'bin/chopinfer-model-mimo26',
                     'lib/libbundle_mimo26.so', 'lib/libbundle_qwen38.so',
                     'models/mimo26/kernels.lock',
@@ -259,7 +259,7 @@ class ReleasePolicy(unittest.TestCase):
 
             self.assertEqual([json.loads(line) for line in (root / 'build-argv').read_text().splitlines()], [
                 ['build', '--release', '--locked', '--offline', '-p', 'runtime-host', '--no-default-features', '--features', 'linux-cuda-host', '--bin', 'chopinfer', '--bin', 'chopinfer-host'],
-                ['build', '--release', '--locked', '--offline', '-p', 'chopinfer-top', '--bin', 'chopinfer-top'],
+                ['build', '--release', '--locked', '--offline', '-p', 'choptop', '--bin', 'choptop'],
                 ['build', '--release', '--locked', '--offline', '-p', 'model-mimo26', '-p', 'model-qwen38', '--bin', 'mimo26-package', '--bin', 'qwen38-package', '--bin', 'chopinfer-model-qwen38', '--bin', 'chopinfer-model-mimo26'],
                 ['build', '--release', '--locked', '--offline', '-p', 'bundle-mimo26', '-p', 'bundle-qwen38'],
             ])
@@ -281,7 +281,7 @@ class ReleasePolicy(unittest.TestCase):
         self.assertEqual(rows, (
             ('binary', 'chopinfer', 'bin/chopinfer', '755'),
             ('binary', 'chopinfer-host', 'bin/chopinfer-host', '755'),
-            ('binary', 'chopinfer-top', 'bin/chopinfer-top', '755'),
+            ('binary', 'choptop', 'bin/choptop', '755'),
             ('binary', 'mimo26-package', 'bin/mimo26-package', '755'),
             ('binary', 'qwen38-package', 'bin/qwen38-package', '755'),
             ('binary', 'chopinfer-model-qwen38', 'bin/chopinfer-model-qwen38', '755'),
@@ -302,7 +302,7 @@ class ReleasePolicy(unittest.TestCase):
         records = inventory.release_plan(models)
         rows = plan.stage(records, ROOT)
         self.assertEqual(len(rows), len(set(rows)))
-        expected = {('binary', name, 'bin/' + name, '755') for name in ('chopinfer', 'chopinfer-host', 'chopinfer-top')}
+        expected = {('binary', name, 'bin/' + name, '755') for name in ('chopinfer', 'chopinfer-host', 'choptop')}
         for model in released:
             expected.update(('binary', name, 'bin/' + name, '755') for name in model.release.bins)
             expected.update(('binary', f'lib{name}.so', f'lib/lib{name}.so', '755') for name in model.release.cdylibs)
@@ -351,7 +351,7 @@ class ReleasePolicy(unittest.TestCase):
             self.assertEqual(plan.stage(records, root), (
                 ('binary', 'chopinfer', 'bin/chopinfer', '755'),
                 ('binary', 'chopinfer-host', 'bin/chopinfer-host', '755'),
-                ('binary', 'chopinfer-top', 'bin/chopinfer-top', '755'),
+                ('binary', 'choptop', 'bin/choptop', '755'),
                 ('binary', 'assemble-third', 'bin/assemble-third', '755'),
                 ('binary', 'chopinfer-model-custom', 'bin/chopinfer-model-custom', '755'),
                 ('binary', 'libnative_custom.so', 'lib/libnative_custom.so', '755'),

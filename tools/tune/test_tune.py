@@ -2154,6 +2154,58 @@ class Tuner(unittest.TestCase):
                     continue
                 self.assertEqual(set(job.get('kinds', model['kinds'])), {'sampled'}, (path, name))
 
+    def test_model_configs_use_current_prefill_policies(self):
+        for path in sorted((HERE.parents[1] / 'models').glob('*/depth-tune.json')):
+            model = json.loads(path.read_text())
+            jobs = model.pop('jobs', {})
+            for name, job in [('', {}), *jobs.items()]:
+                config = {'model': {**model, **job}}
+                for arm in tune.arms(config):
+                    arguments = [*config['model'].get('serve_arguments', []), *tune.arm_arguments(config, arm)]
+                    policy = tune.argument_value(arguments, '--prefill-policy')
+                    if policy is not None:
+                        self.assertIn(policy, ('fixed', 'tbt', 'adaptive'), (path, name, arm['label']))
+                    for retired in ('--prefill-budget', '--prefill-timing-cuts', '--mixed-min-prefill-tokens', '--mixed-decode-steps'):
+                        self.assertNotIn(retired, arguments)
+                    if policy == 'fixed':
+                        self.assertIsNone(tune.argument_value(arguments, '--decode-tbt-target-ms'))
+
+    def test_model_configs_allow_their_profiles_route_fallbacks(self):
+        # Served windows refuse fallback launches outside the config's
+        # allowances, so every family and phase the bundle's route allowlist
+        # admits for the profile the tuner serves must be allowed there. The
+        # host serves the rank count's drafter profile, named tp<ranks>-<drafter>
+        # when it has one, or its autoregressive profile for AR configs.
+        import fnmatch
+        import tomllib
+        for path in sorted((HERE.parents[1] / 'models').glob('*/depth-tune.json')):
+            allowlist = path.with_name('bundle') / 'route-allowlist.toml'
+            if not allowlist.exists():
+                continue
+            model = json.loads(path.read_text())
+            ranks, ar = model['tensor_parallel_size'], model['speculation_mode'] == 'off'
+            profiles = json.loads(path.with_name('profiles.json').read_text())['profiles']
+            matching = {name: profile['speculation']['drafter'] for name, profile in profiles.items()
+                        if profile['tensor_parallel'] == ranks and (profile['speculation']['drafter'] == 'none') == ar}
+            preferred = [name for name, drafter in matching.items()
+                         if name == f"tp{ranks}-{'ar' if drafter == 'none' else drafter}"]
+            served = preferred or list(matching)
+            self.assertEqual(len(served), 1, (path, served))
+            admitted = {(entry['family'], entry['phase'])
+                        for entry in tomllib.loads(allowlist.read_text()).get('allow', [])
+                        if any(fnmatch.fnmatchcase(served[0], pattern) for pattern in entry['profiles'])}
+            jobs = model.pop('jobs', {})
+            for name, job in [('', {}), *jobs.items()]:
+                merged = {**model, **job}
+                config = {'model': merged, 'allow_fallbacks': merged.get('allow_fallbacks', {})}
+                for arm in tune.arms(config):
+                    allow = tune.arm_fallbacks(config, arm)
+                    for family, phase in sorted(admitted):
+                        # A bare reason admits the family in every phase.
+                        scope = allow.get(family)
+                        phases = () if scope is None else scope['phases'] if isinstance(scope, dict) else tune.STEP_PHASES
+                        self.assertIn(phase, phases, (path, name, arm['label'], family))
+
     def test_runs_merge_into_one_schedule(self):
         with tempfile.TemporaryDirectory() as directory:
             low, high = Path(directory) / 'low', Path(directory) / 'high'

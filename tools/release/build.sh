@@ -53,7 +53,7 @@ if [[ -z $stage_from ]]; then
     nice -n 19 cargo build --release --locked --offline -p runtime-host --no-default-features \
         --features linux-cuda-host --bin chopinfer --bin chopinfer-host
     # A separate package without the CUDA host features; it links no serving code.
-    nice -n 19 cargo build --release --locked --offline -p chopinfer-top --bin chopinfer-top
+    nice -n 19 cargo build --release --locked --offline -p choptop --bin choptop
     python3 -B tools/release/plan.py --metadata "$stage/metadata.json" --view build-bins > "$stage/bin-args"
     mapfile -t bin_args < "$stage/bin-args"
     if ((${#bin_args[@]})); then
@@ -97,7 +97,7 @@ printf 'version=%s\nrevision=%s\nrust=%s\ncuda=13.2\nnvcc=13.2.86\n' \
 for binary in chopinfer chopinfer-host; do
     [[ $(LD_LIBRARY_PATH="$stub${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$package/bin/$binary" --version) == "$binary $version ($CHOPINFER_BUILD_REVISION)" ]]
 done
-[[ $("$package/bin/chopinfer-top" --version) == "chopinfer-top $version" ]]
+[[ $("$package/bin/choptop" --version) == "choptop $version" ]]
 (cd "$package" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS && sha256sum --check SHA256SUMS)
 tar -C "$stage" -czf "$out/$name.tar.gz" "$name"
 (cd "$out" && sha256sum "$name.tar.gz" > SHA256SUMS && sha256sum --check SHA256SUMS)

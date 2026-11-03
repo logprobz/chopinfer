@@ -1,0 +1,460 @@
+{
+ "schema": "chopinfer.models.v1",
+ "models": [
+  {
+   "model": "qwen38",
+   "helper": "chopinfer-model-qwen38",
+   "served_model_name": "Qwen3.8-Flash",
+   "profiles": [
+    {
+     "name": "tp4-ar",
+     "status": "qualified",
+     "tensor_parallel": 4,
+     "drafter": "none",
+     "speculative_tokens": 0,
+     "max_sequences": 32,
+     "qualified_max_sequences": 64,
+     "qualification": "Qwen checkpoint-index C64 rerun, 2026-10-04: paired and absolute teacher, three B64-versus-C32 decode repeats, full prefix equality, preemption bit identity, full GSM8K, bounded soak and performance passed with BF16 KV and text,image.",
+     "settings": {
+      "max-sequences": "32",
+      "max-batch-tokens": "8192",
+      "prefill-chunk-tokens": "2048",
+      "gpu-memory-utilization": "1",
+      "graph-memory-reserve-mib": "320",
+      "kv-cache-dtype": "auto",
+      "speculation": "fixed",
+      "speculative-tokens": "0",
+      "draft-cost": "per-token",
+      "prefix-cache": "on",
+      "prefill-policy": "fixed"
+     },
+     "model_options": {}
+    },
+    {
+     "name": "tp4-mtp",
+     "status": "qualified",
+     "tensor_parallel": 4,
+     "drafter": "mtp",
+     "speculative_tokens": 3,
+     "max_sequences": 32,
+     "qualified_max_sequences": 32,
+     "qualification": "Historical TP4 C1-C32 serving evidence; not full production qualification or qualification of later implementation identities. Speculation has workload-specific throughput regressions.",
+     "settings": {
+      "max-sequences": "32",
+      "max-batch-tokens": "8192",
+      "prefill-chunk-tokens": "2048",
+      "gpu-memory-utilization": "1",
+      "graph-memory-reserve-mib": "384",
+      "kv-cache-dtype": "auto",
+      "speculation": "adaptive",
+      "speculative-tokens": "3",
+      "draft-cost": "per-token",
+      "prefix-cache": "on",
+      "prefill-policy": "fixed"
+     },
+     "model_options": {}
+    },
+    {
+     "name": "tp4-ar-dcp2",
+     "status": "experimental",
+     "tensor_parallel": 4,
+     "drafter": "none",
+     "speculative_tokens": 0,
+     "max_sequences": 32,
+     "qualified_max_sequences": null,
+     "qualification": "Experimental: tp4-ar at context-parallel size 2 (autoregressive: each sequence's K, V and QSA block keys split across the two ranks of a KV head's replica set), 43,496 pages per rank, 5,567,488 tokens.",
+     "settings": {
+      "max-sequences": "32",
+      "max-batch-tokens": "8192",
+      "prefill-chunk-tokens": "2048",
+      "gpu-memory-utilization": "1",
+      "graph-memory-reserve-mib": "320",
+      "kv-cache-dtype": "auto",
+      "speculation": "fixed",
+      "speculative-tokens": "0",
+      "draft-cost": "per-token",
+      "prefix-cache": "on",
+      "context-parallel-size": "2",
+      "prefill-policy": "fixed"
+     },
+     "model_options": {}
+    },
+    {
+     "name": "tp4-mtp-dcp2",
+     "status": "experimental",
+     "tensor_parallel": 4,
+     "drafter": "mtp",
+     "speculative_tokens": 3,
+     "max_sequences": 32,
+     "qualified_max_sequences": null,
+     "qualification": "Experimental: tp4-mtp at context-parallel size 2 (MTP with three draft tokens: each sequence's K, V and QSA block keys split across the two ranks of a KV head's replica set), 39,759 pages per rank, 5,089,152 tokens.",
+     "settings": {
+      "max-sequences": "32",
+      "max-batch-tokens": "8192",
+      "prefill-chunk-tokens": "2048",
+      "gpu-memory-utilization": "1",
+      "graph-memory-reserve-mib": "384",
+      "kv-cache-dtype": "auto",
+      "speculation": "adaptive",
+      "speculative-tokens": "3",
+      "draft-cost": "per-token",
+      "prefix-cache": "on",
+      "context-parallel-size": "2",
+      "prefill-policy": "fixed"
+     },
+     "model_options": {}
+    },
+    {
+     "name": "tp2-ar",
+     "status": "experimental",
+     "tensor_parallel": 2,
+     "drafter": "none",
+     "speculative_tokens": 0,
+     "max_sequences": 32,
+     "qualified_max_sequences": null,
+     "qualification": "Experimental: narrower topology smoke only, no full concurrency qualification. Requires host n-gram placement and about 52 GB pinned host RAM.",
+     "settings": {
+      "max-sequences": "32",
+      "max-batch-tokens": "8192",
+      "prefill-chunk-tokens": "2048",
+      "gpu-memory-utilization": "1",
+      "graph-memory-reserve-mib": "320",
+      "kv-cache-dtype": "auto",
+      "speculation": "fixed",
+      "speculative-tokens": "0",
+      "draft-cost": "per-token",
+      "prefix-cache": "on",
+      "prefill-policy": "fixed"
+     },
+     "model_options": {}
+    },
+    {
+     "name": "tp2-mtp",
+     "status": "experimental",
+     "tensor_parallel": 2,
+     "drafter": "mtp",
+     "speculative_tokens": 3,
+     "max_sequences": 32,
+     "qualified_max_sequences": null,
+     "qualification": "Experimental: narrower topology smoke only, no full concurrency qualification. Requires host n-gram placement and about 52 GB pinned host RAM.",
+     "settings": {
+      "max-sequences": "32",
+      "max-batch-tokens": "8192",
+      "prefill-chunk-tokens": "2048",
+      "gpu-memory-utilization": "1",
+      "graph-memory-reserve-mib": "384",
+      "kv-cache-dtype": "auto",
+      "speculation": "adaptive",
+      "speculative-tokens": "3",
+      "draft-cost": "per-token",
+      "prefix-cache": "on",
+      "prefill-policy": "fixed"
+     },
+     "model_options": {}
+    }
+   ]
+  },
+  {
+   "model": "mimo26",
+   "helper": "chopinfer-model-mimo26",
+   "served_model_name": "MiMo-V2.6-Flash",
+   "profiles": [
+    {
+     "name": "tp4-ar",
+     "status": "qualified",
+     "tensor_parallel": 4,
+     "drafter": "none",
+     "speculative_tokens": 0,
+     "max_sequences": 32,
+     "qualified_max_sequences": 64,
+     "qualification": "2026-10-04: TP4 C64 paired and absolute teacher, decode/reference buckets, prefix equality, preemption bit identity, full GSM8K and bounded soak passed with BF16 KV and text,image. Serving evidence through C64, not full production qualification.",
+     "settings": {
+      "max-sequences": "32",
+      "max-batch-tokens": "8192",
+      "prefill-chunk-tokens": "2048",
+      "gpu-memory-utilization": "1",
+      "graph-memory-reserve-mib": "320",
+      "kv-cache-dtype": "auto",
+      "speculation": "fixed",
+      "speculative-tokens": "0",
+      "draft-cost": "per-token",
+      "prefix-cache": "on",
+      "prefill-policy": "fixed"
+     },
+     "model_options": {}
+    },
+    {
+     "name": "tp4-mtp",
+     "status": "experimental",
+     "tensor_parallel": 4,
+     "drafter": "mtp",
+     "speculative_tokens": 3,
+     "max_sequences": 32,
+     "qualified_max_sequences": null,
+     "qualification": "MOPD alpha: GPU qualification pending. Historical RL evidence only: TP4 C1-C32 serving evidence; not full production qualification. Speculation has workload-specific throughput regressions.",
+     "settings": {
+      "max-sequences": "32",
+      "max-batch-tokens": "8192",
+      "prefill-chunk-tokens": "2048",
+      "gpu-memory-utilization": "1",
+      "graph-memory-reserve-mib": "832",
+      "kv-cache-dtype": "auto",
+      "speculation": "adaptive",
+      "speculative-tokens": "3",
+      "draft-cost": "per-token",
+      "prefix-cache": "on",
+      "decode-tbt-target-ms": "150",
+      "prefill-policy": "tbt"
+     },
+     "model_options": {}
+    },
+    {
+     "name": "tp4-dflash",
+     "status": "qualified",
+     "tensor_parallel": 4,
+     "drafter": "dflash",
+     "speculative_tokens": 7,
+     "max_sequences": 32,
+     "qualified_max_sequences": 64,
+     "qualification": "Qualified through 64 sequences with its speculative accuracy gate waived by a maintainer decision (2026-10-06).",
+     "settings": {
+      "max-sequences": "32",
+      "max-batch-tokens": "8192",
+      "prefill-chunk-tokens": "2048",
+      "gpu-memory-utilization": "1",
+      "graph-memory-reserve-mib": "384",
+      "kv-cache-dtype": "auto",
+      "speculation": "adaptive",
+      "speculative-tokens": "7",
+      "draft-cost": "per-block",
+      "prefix-cache": "on",
+      "decode-tbt-target-ms": "150",
+      "prefill-policy": "tbt"
+     },
+     "model_options": {}
+    },
+    {
+     "name": "tp2-ar",
+     "status": "experimental",
+     "tensor_parallel": 2,
+     "drafter": "none",
+     "speculative_tokens": 0,
+     "max_sequences": 32,
+     "qualified_max_sequences": null,
+     "qualification": "MOPD alpha: GPU qualification pending. Historical RL evidence only: Experimental: narrower topology smoke only, no full concurrency qualification. GSM8K at C8: 194/200; 8K and 128K needles passed.",
+     "settings": {
+      "max-sequences": "32",
+      "max-batch-tokens": "8192",
+      "prefill-chunk-tokens": "2048",
+      "gpu-memory-utilization": "1",
+      "graph-memory-reserve-mib": "320",
+      "kv-cache-dtype": "auto",
+      "speculation": "fixed",
+      "speculative-tokens": "0",
+      "draft-cost": "per-token",
+      "prefix-cache": "on",
+      "prefill-policy": "fixed"
+     },
+     "model_options": {}
+    }
+   ]
+  },
+  {
+   "model": "deepseek41",
+   "helper": "chopinfer-model-deepseek41",
+   "served_model_name": "DeepSeek-V4.1-Flash",
+   "profiles": [
+    {
+     "name": "tp4-ar",
+     "status": "experimental",
+     "tensor_parallel": 4,
+     "drafter": "none",
+     "speculative_tokens": 0,
+     "max_sequences": 32,
+     "qualified_max_sequences": null,
+     "qualification": "Not qualified: the M1 bring-up profile, autoregressive at TP4 on the deepseek-ai checkpoint with the native KV layout, which kv_cache_dtype auto serves.",
+     "settings": {
+      "max-sequences": "32",
+      "max-batch-tokens": "8192",
+      "prefill-chunk-tokens": "8192",
+      "gpu-memory-utilization": "1",
+      "graph-memory-reserve-mib": "320",
+      "kv-cache-dtype": "auto",
+      "speculation": "fixed",
+      "speculative-tokens": "0",
+      "draft-cost": "per-token",
+      "prefix-cache": "on",
+      "prefill-policy": "fixed"
+     },
+     "model_options": {
+      "prefill_chunk_tokens": "8192",
+      "prefill_upper_skip": "true"
+     }
+    },
+    {
+     "name": "tp4-dspark",
+     "status": "experimental",
+     "tensor_parallel": 4,
+     "drafter": "dspark",
+     "speculative_tokens": 5,
+     "max_sequences": 32,
+     "qualified_max_sequences": null,
+     "qualification": "Not qualified: DSpark at TP4 on the deepseek-ai checkpoint with native KV. Confidence-allocated batches compute all five drafter heads and score only computed target rows through mapped sampling.",
+     "settings": {
+      "max-sequences": "32",
+      "max-batch-tokens": "8192",
+      "prefill-chunk-tokens": "8192",
+      "gpu-memory-utilization": "1",
+      "graph-memory-reserve-mib": "640",
+      "kv-cache-dtype": "auto",
+      "speculation": "balanced",
+      "speculative-tokens": "5",
+      "draft-cost": "per-block",
+      "prefix-cache": "on",
+      "speculative-rows": "64",
+      "speculation-graph-rows": "64",
+      "speculation-depths": "1:5,8:3,16:3,32:0",
+      "speculation-widths": "6,8,16,32,64",
+      "decode-tbt-target-ms": "750",
+      "prefill-policy": "adaptive"
+     },
+     "model_options": {
+      "prefill_chunk_tokens": "8192",
+      "prefill_upper_skip": "true",
+      "dspark_draft_chunk_items": "12"
+     }
+    }
+   ]
+  },
+  {
+   "model": "glm5next",
+   "helper": "chopinfer-model-glm5next",
+   "served_model_name": "GLM-5.3-Flash",
+   "profiles": [
+    {
+     "name": "tp4-mtp",
+     "status": "qualified",
+     "tensor_parallel": 4,
+     "drafter": "mtp",
+     "speculative_tokens": 3,
+     "max_sequences": 32,
+     "qualified_max_sequences": 32,
+     "qualification": "Qualified through 32 sequences, the default: MTP with three draft tokens on the zai-org FP8 checkpoint, at TP4, FP8 KV and DCP 1, with images.",
+     "settings": {
+      "max-sequences": "32",
+      "max-batch-tokens": "8192",
+      "prefill-chunk-tokens": "2048",
+      "gpu-memory-utilization": "1",
+      "graph-memory-reserve-mib": "832",
+      "kv-cache-dtype": "auto",
+      "speculation": "adaptive",
+      "speculative-tokens": "3",
+      "draft-cost": "per-token",
+      "prefix-cache": "on",
+      "prefill-policy": "fixed"
+     },
+     "model_options": {}
+    },
+    {
+     "name": "tp4-mtp-k5",
+     "status": "experimental",
+     "tensor_parallel": 4,
+     "drafter": "mtp",
+     "speculative_tokens": 5,
+     "max_sequences": 32,
+     "qualified_max_sequences": null,
+     "qualification": "Experimental, never the default: tp4-mtp at five draft tokens on the zai-org FP8 checkpoint, served on the text package (--modalities text). KDA checkpoints share the total verify-row budget, so five and three drafts use the same checkpoint pool at 32 slots.",
+     "settings": {
+      "max-sequences": "32",
+      "max-batch-tokens": "8192",
+      "prefill-chunk-tokens": "2048",
+      "gpu-memory-utilization": "1",
+      "graph-memory-reserve-mib": "832",
+      "kv-cache-dtype": "auto",
+      "speculation": "adaptive",
+      "speculative-tokens": "5",
+      "draft-cost": "per-token",
+      "prefix-cache": "on",
+      "prefill-policy": "fixed"
+     },
+     "model_options": {}
+    },
+    {
+     "name": "tp4-ar",
+     "status": "qualified",
+     "tensor_parallel": 4,
+     "drafter": "none",
+     "speculative_tokens": 0,
+     "max_sequences": 32,
+     "qualified_max_sequences": 32,
+     "qualification": "Qualified through 32 sequences: autoregressive on the zai-org FP8 checkpoint.",
+     "settings": {
+      "max-sequences": "32",
+      "max-batch-tokens": "8192",
+      "prefill-chunk-tokens": "2048",
+      "gpu-memory-utilization": "1",
+      "graph-memory-reserve-mib": "704",
+      "kv-cache-dtype": "auto",
+      "speculation": "fixed",
+      "speculative-tokens": "0",
+      "draft-cost": "per-token",
+      "prefix-cache": "on",
+      "prefill-policy": "fixed"
+     },
+     "model_options": {}
+    },
+    {
+     "name": "tp4-mtp-dcp2",
+     "status": "qualified",
+     "tensor_parallel": 4,
+     "drafter": "mtp",
+     "speculative_tokens": 3,
+     "max_sequences": 32,
+     "qualified_max_sequences": 32,
+     "qualification": "Qualified through 32 sequences: tp4-mtp at context-parallel size 2 (the latent attention's KV split across two ranks).",
+     "settings": {
+      "max-sequences": "32",
+      "max-batch-tokens": "8192",
+      "prefill-chunk-tokens": "2048",
+      "gpu-memory-utilization": "1",
+      "graph-memory-reserve-mib": "832",
+      "kv-cache-dtype": "auto",
+      "speculation": "adaptive",
+      "speculative-tokens": "3",
+      "draft-cost": "per-token",
+      "prefix-cache": "on",
+      "context-parallel-size": "2",
+      "prefill-policy": "fixed"
+     },
+     "model_options": {}
+    },
+    {
+     "name": "tp4-mtp-dcp4",
+     "status": "qualified",
+     "tensor_parallel": 4,
+     "drafter": "mtp",
+     "speculative_tokens": 3,
+     "max_sequences": 32,
+     "qualified_max_sequences": 32,
+     "qualification": "Qualified through 32 sequences: tp4-mtp at context-parallel size 4 (the latent attention's KV split across four ranks).",
+     "settings": {
+      "max-sequences": "32",
+      "max-batch-tokens": "8192",
+      "prefill-chunk-tokens": "2048",
+      "gpu-memory-utilization": "1",
+      "graph-memory-reserve-mib": "832",
+      "kv-cache-dtype": "auto",
+      "speculation": "adaptive",
+      "speculative-tokens": "3",
+      "draft-cost": "per-token",
+      "prefix-cache": "on",
+      "context-parallel-size": "4",
+      "prefill-policy": "fixed"
+     },
+     "model_options": {}
+    }
+   ]
+  }
+ ],
+ "errors": []
+}

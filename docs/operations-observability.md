@@ -77,15 +77,17 @@ count lookups; the vLLM ones count tokens.
 | `chop_step_execution_seconds{model_name,engine,phase}` | Histogram of engine wall time from execute through model commit per committed step; `phase` is `decode`, `mixed` or `prefill` by whether the batch had prefill items and decode or verify items |
 | `chop_step_rows_total{model_name,engine,decode_rows,verify_rows,row_capacity}` | Exact count of committed decode/verify steps with this target-row geometry; excludes any prefill-bearing step. Capacity is `unknown` when the executor cannot report it |
 | `chop_step_rows_dropped_total{model_name,engine}` | Observations of new geometries beyond the 4096-bin process limit; existing bins continue counting |
+| `chop_prefill_policy_info{model_name,engine,policy}` | Gauge 1 for the canonical negotiated policy, before any step; omitted for unsupported library-only combinations |
 | `chop_step_prefill_tokens{model_name,engine}` | Histogram of prompt tokens per prefill-bearing step |
-| `chop_prefill_budget_selected_tokens{model_name,engine}` | Decode-aware and tbt modes only: histogram of the prefill cap selected for each step beside decoding requests, whether or not prefill used it; prefill-only steps select none |
-| `chop_prefill_budget_decode_estimate_seconds{model_name,engine,rows_le}`, `..._samples` | Decode-aware mode only: the decode step estimate per power-of-two row bucket and its sample count; two samples qualify it |
-| `chop_prefill_budget_prefill_token_seconds{model_name,engine,tokens_le}` | Decode-aware mode only: estimated prefill time per token per power-of-two step-token bucket |
-| `chop_mixed_step_predicted_seconds{model_name,engine}`, `chop_mixed_step_actual_over_predicted{model_name,engine}` | Tbt mode only: histograms of each mixed step's predicted time, for the batch as packed, and of its execution time over that prediction |
-| `chop_prefill_timing_cut_steps_total{model_name,engine}`, `chop_prefill_timing_cut_chunks_total{model_name,engine,end}`, `chop_prefill_timing_cut_forced_steps_total`, `chop_prefill_timing_cut_over_target_steps_total` | Timing cuts only (`--prefill-timing-cuts fixed`, or `adaptive` on a grid bundle): steps whose grid chunks were sized against the tbt cap while requests decoded, those chunks by where they ended (`grid`, `capture`, `prompt`, `timing`, `floor` or `progress`), steps where a chunk exceeded the cap only to progress (neither the cap nor the floor reached a granule multiple within the step's room), and steps whose predicted time exceeded the target |
-| `chop_mixed_budget_term_seconds{model_name,engine,term}`, `chop_mixed_budget_samples`, `chop_mixed_budget_trained`, `chop_mixed_budget_decode_estimate_seconds{items_le}` | Tbt mode only: the fitted fixed, mixed, per-token and per-attention-pair terms, prefill steps in the fit window, whether the fit sets budgets, and the decode estimate per power-of-two item bucket ([mixed scheduling](serving-profiles.md#prefill-policy)) |
+| `chop_prefill_budget_selected_tokens{model_name,engine}` | `tbt` and `adaptive` only: histogram of the prefill cap selected for each step beside decoding requests, whether or not prefill used it; prefill-only steps select none |
+| `chop_mixed_step_predicted_seconds{model_name,engine}`, `chop_mixed_step_actual_over_predicted{model_name,engine}` | `tbt` and `adaptive` only: histograms of each mixed step's predicted time, for the batch as packed, and of its execution time over that prediction |
+| `chop_prefill_timing_cut_steps_total{model_name,engine}`, `chop_prefill_timing_cut_chunks_total{model_name,engine,end}`, `chop_prefill_timing_cut_forced_steps_total`, `chop_prefill_timing_cut_over_target_steps_total` | Timing cuts only (`--prefill-policy adaptive` on a grid bundle): steps whose grid chunks were sized against the tbt cap while requests decoded, those chunks by where they ended (`grid`, `capture`, `prompt`, `timing`, `floor` or `progress`), steps where a chunk exceeded the cap only to progress (neither the cap nor the floor reached a granule multiple within the step's room), and steps whose predicted time exceeded the target |
+| `chop_mixed_budget_term_seconds{model_name,engine,term}`, `chop_mixed_budget_samples`, `chop_mixed_budget_trained`, `chop_mixed_budget_decode_estimate_seconds{items_le}` | `tbt` and `adaptive` only: the fitted fixed, mixed, per-token and per-attention-pair terms, prefill steps in the fit window, whether the fit sets budgets, and the decode estimate per power-of-two item bucket ([mixed scheduling](serving-profiles.md#prefill-policy)) |
 | `chop_prefix_cache_{queries,hits}_total`, `chop_prefix_cache_{queried,reused}_tokens_total` | Prefix-cache lookups and restored hits, and their prompt and reused tokens |
 | `chop_prefix_cache_recomputed_seen_tokens_total` | Prompt tokens a committed prefill computed although an earlier request's committed prefill had computed the same leading full pages, short of the last prompt token: repeats and shared prefixes no anchor covered ([where anchors are captured](numerics.md#kv-offload-and-prefix-state)) |
+| `chop_prefix_cache_recomputed_generated_tokens_total` | Whole generated pages from earlier completed replies that a later prompt successfully prefills; requires the optional reply-history observer |
+| `chop_reply_history_{enabled,allocated_bytes,entries}` | Collection status, all observer capacities, and completed histories retained; disabled collection is not a zero-match observation |
+| `chop_reply_history_observations_total{outcome}`, `chop_reply_history_rows_total{kind,context}` | Fixed-label reply comparison, coverage, finish and committed-row counts, described below |
 | `chop_prefix_cache_{captures,capture_failures,restore_failures}_total`, `chop_prefix_cache_{anchors,blocks}` | Anchor captures, captures and restores the bundle refused, and the anchors and pages held now |
 | `chop_prefix_cache_evictions_total{class}` | Public anchor evictions by `superseded`, `retained` or `maximal` class; sum all classes for the total |
 | `chop_prefix_cache_public_anchors{class}` | Public anchors currently in each class |
@@ -107,6 +109,16 @@ count lookups; the vLLM ones count tokens.
 | `chop_process_uptime_seconds` | Seconds on the server's monotonic metrics clock, which starts when the listener opens; it resets when the server restarts |
 | `chop_device_memory_{total,own,kv,reserve}_bytes{rank}` | Each rank's device memory when the serving KV pool was sized: the device's total, what this process's own allocations held before the pool, the pool, and the reserve kept for what is allocated after it ([GPU memory](serving-profiles.md#gpu-memory)) |
 | `chop_device_memory_free_bytes{rank}`, `chop_device_memory_free_low_bytes{rank}` | Each rank's free device memory after the latest CUDA graph capture (or the sizing), and the lowest seen since the sizing. Graphs captured later come out of it |
+| `chop_mapped_view_bytes` | Gauge of live mapped views in whole pages, including partial edge pages, not raw tensor bytes |
+| `chop_mapped_view_resident_bytes` | Gauge of those whole pages resident in the host page cache; absent when residency is hidden |
+| `chop_mapped_view_residency_visible` | Gauge: 1 when every mapped view's residency is visible, 0 when any is hidden |
+| `chop_mapped_view_residency_sample_seconds` | Gauge of the latest successful residency sampling pass's elapsed seconds |
+
+The four mapped-view gauges have no labels. They are absent without mapped
+views or before the first sample. `chop_mapped_view_resident_bytes` is also
+absent while residency is hidden; hidden residency never reports full
+residency. The two byte gauges count whole pages, so their ratio is bounded
+by 1.
 
 `chop_step_gpu_seconds` is absent with the native bundle executor, which
 reports no device time; host wall time is never substituted.
@@ -136,6 +148,213 @@ The total anchor gauge includes private anchors. The cached-block gauge
 counts unique pages held only by anchors; class snapshot counts do not
 partition physical occupancy. Live sequences, restore pins and transfer
 leases can retain pages after an anchor disappears.
+
+### Generated reply observations
+
+`serve --reply-history-observer on` enables bounded digest accounting. The
+optional profile field `reply_history_observer` is a boolean; an explicit
+flag overrides it, and omission resolves to off. Every shipped profile
+keeps its serving defaults. Collection needs no request or step tracing,
+no GPU reservation and no replay. Docker forwards the flag after its image;
+systemd can carry it in the existing `CHOPINFER_SERVE_ARGS` argument list.
+There is no new deployment environment variable.
+
+This is observational: public anchors remain prefill-only. Prefix capture
+boundaries, KV retention, scheduler admission and scheduling rules, sampling
+arithmetic and output semantics are unchanged. Identical inputs and batch
+schedules preserve output bytes. Additional host latency is measured, not
+claimed absent. Neither this metric nor an exact match proves that reply-end
+KV reuse would be correct.
+
+The registry retains at most 256 completed histories. Its total capacity,
+including at most 256 active observations and 256 delivery receipts, temporary prompt material,
+annotations, indices and reserved buffers, is capped at 64 MiB per engine.
+Oldest completed histories leave first, independently of KV eviction. A
+request whose observation cannot fit continues without it. Capacity and
+allocation drops are counted. Completed entries contain salted token/media
+digests, lengths, completion order and numeric region masks. They retain no
+text, token IDs, raw salts, prompt token storage or KV handles. The active
+partial page is discarded at completion. Warmup does not enter live history.
+
+Only accepted tokens after a successful model commit enter the observer.
+Rejected drafts, placeholders, rolled-back steps and cancellations do not
+become histories. Frontend completion selects the delivered prefix when a
+text stop interrupts a speculative run. Histories remain pending until the
+terminal event reaches the frontend channel. Parser, outbox and relay
+failures discard the observation. Channel handoff does not prove remote
+client receipt. Engine-only users finalize on engine completion. Late
+annotations cannot recreate evicted entries.
+
+A consumer compares only histories completed before its successful submit.
+Salt and media identity participate in the same chain as the prefix cache.
+Salt equality alone is not ancestry. Unsalted requests share one scope and
+do not identify unique sessions. The longest matching ancestry supplies the
+request diagnosis; distinct replies to the same exact prompt are ambiguous.
+Duplicate histories and compatible nested turns do not duplicate row counts.
+
+For page size B, prior prompt end P, generated end R, successful cache hit H,
+common prefix end L and current prompt length N, a matching generated-page
+interval is:
+
+```text
+[ceil(max(H,P)/B)*B, floor(min(L,R-1,N-1)/B)*B)
+```
+
+The generated counter counts the union of these intervals as original prompt
+rows commit. A row counts once even after preemption. Refused restores use
+the actual cold fallback. `rounding` rows are the matching generated-row
+union minus the full-page union. The existing recomputed-seen counter and
+the generated counter may overlap and must not be added.
+
+The separate `eligible` interval requires exact identity through R-1 and
+R-1 <= N-1. It counts committed rows in [max(H,P),R-1) without page rounding.
+A complete reply and a difference only in its final emitted token both
+qualify: that final token has no KV. An earlier mismatch gives zero
+reply-end opportunity even if many pages repeat. Across alternatives, one
+deepest valid terminal boundary supplies the eligible interval. A short
+reply can have eligible rows and no eligible full page.
+
+`chop_reply_history_rows_total` uses `candidate`, `eligible`, `repeated`,
+`rounding`, `unobserved`, `ambiguous` and `prefilled` kinds. Candidate rows are
+the union of prior generated ranges whose exact prompt boundary matches,
+whether their replies match or differ. Prefilled counts all successfully
+committed original prompt rows before N-1. Unobserved counts rows without
+that ancestry or whose observation was dropped. Ambiguous counts rows in
+consumers with alternative histories and overlaps the other kinds. Each
+interval is split at context positions 32768, 65536, 131072 and 196608, with
+fixed labels `0_32k`, `32_64k`, `64_128k`, `128_192k` and `192k_plus`.
+
+Observation outcomes distinguish `no_history`, `scope_without_ancestry`,
+`before_reply`, `inside_reply`, `final_token`, `complete_reply` and
+`shorter_consumer`. Whole-reply equality includes the emitted final token.
+`any_page` and `eligible_turn` count consumers with at least one committed
+row in the corresponding interval, once per consumer. Their denominator is
+`submitted`; the whole-reply rate uses `compared`. Finish counts distinguish
+natural stops, length cuts, frontend text stops, cancellation and delivery
+failure; `finish_tool_calls` is a subset of successful finishes.
+
+Mismatch labels describe the prior generated token: `reasoning`, `content`,
+`tool_calls`, `end_token`, `unknown` or `mixed`. Only declared end-token IDs
+are end markers. Ignored EOS is counted separately. Hidden delimiters,
+partial stops, unfinished calls and tokens crossing channels stay unknown
+or mixed. Position buckets are the first quarter, middle half and last
+quarter of the prior reply. None of these labels establishes a renderer
+cause. Annotation coverage counts annotated, unknown and mixed tokens;
+late annotations, evictions, drops and possible retention loss remain
+separate outcomes. All labels are fixed, with no salt hashes, request IDs,
+token values or prompt-derived strings.
+
+### Passive reply-end report
+
+Use [the model-owned report](../models/deepseek41/tools/reply_history_report.py)
+on two metrics snapshots from the same deployed process and profile during
+ordinary continued agentic turns, including tools, returned reasoning and
+natural endings. Each external JSON snapshot contains `deployment`,
+`profile`, `captured_at` (Unix seconds) and `metrics` (the unmodified
+Prometheus response). Record the actual deployment identity and window.
+Prefer boundaries between requests; overlapping request lifetimes can make
+request-level rate denominators incomplete. Keep snapshots, optional request
+traces and report output under `$CHOPINFER_DATA`. No service restart or
+special traffic is required by collection.
+
+```sh
+python3 -B models/deepseek41/tools/reply_history_report.py \
+  --before "$CHOPINFER_DATA/reply-before.json" \
+  --after "$CHOPINFER_DATA/reply-after.json" \
+  --out "$CHOPINFER_DATA/reply-report.json"
+```
+
+The report rejects disabled collection, resets, mismatched deployments,
+missing counters and inconsistent overlapping totals. Optional request
+traces are diagnostic only and incomplete traces are flagged. All inputs
+needed for the estimate are counters. Requests with no history are not
+silently classified as mismatches. Their committed rows bound missing
+candidate work; ambiguity and retention loss widen the interval further.
+
+For comparable DeepSeek `tp4-dspark` agentic traffic, the historical
+2026-11-01 all-reply busy-time bound is U = 79/2025, about 3.90%. The
+potential single reply-end saving is S = U*q, where q is the cost-weighted
+share of candidate reply-prefill rows eligible at the exact R-1 boundary.
+Any-page match rates do not enter this estimate. They describe repeated work
+and the potential of a different design with anchors inside replies.
+
+Supply five positive per-row cost lower/upper bounds with `--cost-low` and
+`--cost-high`, a workload-transfer multiplier interval with `--transfer`,
+and their evidence and assumptions with `--assumptions`. The default raw
+eligible-row fraction is an equal-cost scenario, not a conservative bound.
+The report shows 1:1, 2:1, 4:1 and 10:1 row-cost sensitivity. Near-end tool
+mismatches may correlate with costly replies. Existing kernel-interval
+union evidence can justify narrower costs; host elapsed time cannot supply
+a missing GPU busy/wall ratio. No fresh GPU timing is required.
+
+A fully observed window with zero eligible rows has zero reply-end
+opportunity even without calibration. Other supported upper bounds below
+2% recommend stopping; an interval crossing 2% is inconclusive. A lower
+bound above 2% warrants discussion before reuse work. These are potential
+savings, excluding future capture/restore overhead; current serving saves
+no time from these observations. Future traffic retains sampling
+uncertainty. `--independent-turns` and `--turn-cost-ratio` can state explicit
+independence and bounded per-turn cost assumptions for a conditional 95%
+envelope. Correlated sessions invalidate that assumption.
+
+### Observer CPU cost
+
+The explicit release harness `reply_observer_cpu_cost` measures paired
+observer-enabled and disabled work with identical synthetic tokens and
+schedules. It includes lookup, annotation, counters, reserved allocation,
+eviction, commit and finalization work; the existing prompt chain is common
+setup. It reports thread CPU time and elapsed distributions, per-token and
+per-request totals, C1/C8 cycles and the 32-request decode/verify ceiling.
+Normal contexts are 100-160k with 550-token replies; stress cases include
+262k contexts, 16k replies, many salts and separate/joint entry and byte caps.
+Run it through the shared heavy launcher in an open CPU window:
+
+```sh
+bash tools/dev/heavy.sh cargo test --locked --offline --release \
+  -p runtime-engine --lib reply_observer_cpu_cost -- --ignored --nocapture
+```
+
+Default-on collection requires additional p99 elapsed work, with measurement
+uncertainty, below 140 microseconds in every tested cycle. That budget is
+1% of the historical 14 ms lower end of the 14-25 ms step reference, not a
+new GPU result or a guarantee for every model. Unresolved or exceeded cost
+keeps the declared option default off.
+
+On 2026-11-02 the release CPU harness executed all nine cases with 1,000
+measured paired batches and eight warmup batches each. It restored the
+retained-history fixture before each pair, so matches, misses and near-end
+mismatches remained present throughout measurement. Every consumer lookup,
+commit, annotation, eviction and delivery receipt was inside timing.
+The following are incremental elapsed p99 values and mean CPU/elapsed
+costs per completed request, in microseconds. They are synthetic host
+measurements, not GPU timings or measured serving speedups.
+
+| Case | Lookup p99 | Finish p99 | Coincident cycle p50 | Coincident cycle p99 | Mean elapsed/request | Mean CPU/request |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 100k_c1_ar | 404.7 | 4.3 | 352.8 | 408.2 | 484.1 | 390.1 |
+| 160k_c8_verify | 8175.5 | 34.0 | 8070.3 | 8205.6 | 1134.1 | 1133.3 |
+| 160k_c32_ar | 823.4 | 167.3 | 858.4 | 988.7 | 163.1 | 164.7 |
+| 160k_c32_verify64 | 30901.3 | 161.9 | 30913.4 | 31052.9 | 1096.6 | 1098.1 |
+| 160k_c32_verify192 | 32101.6 | 156.7 | 32146.4 | 32255.8 | 1136.6 | 1137.1 |
+| 160k_c8_salts | 442.2 | 32.7 | 465.5 | 471.8 | 182.7 | 182.2 |
+| long_reply_c1 | 1935.6 | 79.3 | 1969.7 | 2011.3 | 5648.2 | 5649.6 |
+| byte_pressure_c8 | 906.7 | 29.7 | 869.7 | 931.2 | 191.0 | 192.2 |
+| joint_pressure_c8 | 1937.3 | 28.5 | 1822.9 | 1962.3 | 309.7 | 309.3 |
+
+Mean incremental elapsed cost was 0.296-2.067 microseconds per committed
+token for the 550-token cases and 0.345 for the 16,384-token case.
+The normal cases retained 256 entries; byte pressure retained 30 at
+about 63.8 MiB, long replies retained 92 at about 62.9 MiB, and joint
+pressure retained 256 at about 63.8 MiB. All capacity assertions passed.
+
+The scheduler CPU clock updated in roughly 1 ms increments. Its per-cycle
+CPU quantiles therefore do not resolve sub-millisecond costs; the table
+reports aggregate paired CPU differences. Elapsed controls and alternating
+pair order expose variability. Other CPU work was present in the open
+window, so these measurements do not establish idle-host performance.
+Every case exceeded the 140-microsecond elapsed budget. Collection remains
+default off; an explicit on setting is a diagnostic choice. No default-on
+claim depends on noisy or quantized CPU measurements.
 
 ### Prefix eviction candidate
 
@@ -182,9 +401,73 @@ cache's `weight-plans-v1` directory; `CHOPINFER_WEIGHT_PLAN_CACHE` names
 another absolute private directory, or `0` disables reuse. Tensor payloads
 are still read and validated on every start. Views mapped
 from the checkpoint stay in the page cache, not pinned memory; `mapped_bytes`
-and the `prewarm_*` fields state them, and `host-ram-short` warns when
+and the `prewarm_*` fields describe them. `prewarm_resident_bytes` is omitted
+when residency is hidden. `host-ram-short` warns when
 `MemAvailable` cannot hold the prewarmed views plus a 16 GiB margin
 (`CHOPINFER_PREWARM_MARGIN_BYTES`).
+
+`serve --prewarm-mapped-views off|on|auto` defaults to `off`. `on` and `auto`
+warm mapped views in the background after the `listening` line. They do not
+delay readiness, so early traffic can still meet cold rows. `auto` warms
+only when `MemAvailable` holds the mapped bytes plus the margin, including
+an exact fit; it declines if that value is unreadable. `on` warms anyway,
+logging `mapped prewarm: warning host-ram-short: ...; warming anyway (on)`
+when RAM is short. This option needs no `--checkpoint`.
+
+A job waiting for the background warm should wait for the first
+`mapped prewarm:` line other than the `warming anyway (on)` warning, then
+handle its ending:
+
+- `mapped prewarm: {...}` is the JSON done line, with `mode`, `bytes`,
+  `seconds`, `resident_bytes`, `available_bytes`, `margin_bytes` and `stopped`.
+  `resident_bytes` is null when hidden or stopped. A visible result below
+  95% residency logs at warning level. Check `stopped: false` before treating
+  the warm as complete.
+- `mapped prewarm: warning host-ram-short: ...; not warming (auto)` means
+  the warm was declined. An unreadable RAM value produces
+  `mapped prewarm: warning host-ram-short: MemAvailable is unreadable; not warming (auto)`.
+- `mapped prewarm: failed: ...; serving continues` means the warm failed.
+- `mapped prewarm: could not start worker: ...; serving continues` means
+  the background thread could not start, so no warm ran.
+- `mapped prewarm: no mapped views` means an enabled mode found nothing
+  to warm.
+
+Decline, failure and worker spawn failure do not establish warm tables.
+When residency is visible, a job can instead wait for its required ratio
+of `chop_mapped_view_resident_bytes / chop_mapped_view_bytes`. When hidden,
+only the done line can signal completion. Warming does not require visible
+residency. Shutdown stops the background work and waits at most one second
+for the workers before leaving a blocked operation to finish.
+
+Every server that maps views samples residency immediately after readiness
+and then every 60 seconds, whatever the option. The sampler reads no file
+bytes; it uses bounded `mincore` calls. It logs the first sample as
+`mapped residency: ...`, with residency and sample duration. After a visible
+sample reaches 95%, a drop below it logs
+`mapped residency: warning resident-low: ...` once; recovery logs
+`mapped residency: resident-recovered: ...`. The first hidden sample logs
+`mapped residency: warning residency-hidden: ...`. Other sampling errors
+keep the previous sample and log `mapped residency: sampling failed: ...`.
+
+Residency is visible only if the process owns the file on a mount that is
+neither idmapped nor overlay (its filesystem UID equals the file owner,
+and the owner is not the overflow UID), or may write the file on a
+read-write mount. A writer on a read-only mount and root relying only on
+`CAP_FOWNER` are conservatively reported hidden even when the kernel would
+show them. The [documented container](developer-preview.md#checkpoint-and-cache-permissions)
+runs as UID 10001 with a read-only checkpoint it does not own, so residency
+is hidden. Running it as the checkpoint's owner with `--user` makes residency
+visible on the documented read-only bind mount; keep that mount read-only.
+
+Keep the option `off` for cold-cache measurements. Since the sampler runs
+even with `off`, timing A/Bs should build both arms from a base that includes
+it. On 2026-11-01, DeepSeek V4.1 Flash with four GPUs at 250 W each and
+251 GB of host RAM measured mean GPU gather waits of 0.04, 0.06, 0.08 and
+0.03 ms per step at C1, C8, C16 and C32 with warm tables (0.1-0.3% of a
+step). Evicted tables caused up to 1,150 major faults per visit and
+multi-millisecond gather waits. An external sequential read restored 99%
+residency in about 60-70 seconds. The in-process background warm has not
+been timed at this size.
 
 On 2026-10-21, the loader changes were compared with the round-8 serving
 baseline using DeepSeek V4.1 Flash, TP4, release binaries, four GPUs capped at
@@ -345,9 +628,9 @@ supervisor stop timeout above the drain budget, as in the 45-second examples.
 A fatal engine/rank error exits nonzero without native teardown; restart a
 fresh process and remove unready endpoints from load balancing.
 
-## Watch running instances with chopinfer-top
+## Watch running instances with choptop
 
-`chopinfer-top --help` describes discovery, explicit URLs and display options.
+`choptop --help` describes discovery, explicit URLs and display options.
 It reads health and metrics; unavailable queries must not be interpreted as
 zero usage. Its GPU discovery is local and does not establish that a device
 is idle. Use the served identity to match an instance to its configuration.
@@ -359,6 +642,53 @@ and sensors are the host's, while filesystems are the container's mounts and
 network I/O is the container's namespace, shown as not visible when it has no
 physical interface. CPU package power needs read access to RAPL, which is
 usually root only.
+
+### Start and stop serve processes from choptop
+
+The model loader (`l`) starts `chopinfer serve` processes of this user and
+stops the ones they replace; `X` stops the selected instance. `--read-only`
+turns both off. choptop never stops a container or a server on another host:
+either blocks a placement, and `X` refuses it with the reason. It uses the
+Docker API only to read.
+
+Each start passes three checks, any of which refuses it with the reason:
+
+1. `S` takes a fresh GPU process reading and a discovery scan, even while the
+   screen is paused. A picked GPU that became unknown or is newly held blocks
+   the start.
+2. `chopinfer serve ARGS --check` runs with the launch's environment. A
+   refusal shows serve's message. The settings and model options it resolves
+   must equal the selected profile's, as `chopinfer models --json` gives
+   them, with the form's values applied. Only keys both sides govern are
+   compared, and each difference is named.
+3. The confirm dialog lists the instances with their ports and logs, what
+   stops first, the profile's qualification, warnings (evidence limits,
+   unqualified model options, other processes on the picked GPUs) and host
+   memory. A failure that needs a GPU, such as memory fit or peer access, can
+   still happen after the stop.
+
+On Enter, choptop records each serve process it stops: pid, start time, uid,
+command line (which must be `chopinfer serve`) and that its cgroup names no
+container. It sends one SIGTERM through a pidfd, and only while the process
+still matches that record; a process that changed is left alone, and the
+launches waiting for it are cancelled. The stopping event keeps the stopped
+server's command line. Each launch waits until the owners of its GPUs and the
+holder of its port have exited, checks the port once more, and starts, or
+reports the port in use. A new start cancels a launch that is still waiting
+and stops a starting one through its process group first. serve drains for
+up to `--drain-timeout-ms` before it exits.
+
+A launch runs in a process group of its own with stdin closed and its output
+in a new log under `$XDG_STATE_HOME/choptop/logs`, else
+`~/.local/state/choptop/logs`, readable by this user only. It keeps running
+after choptop exits. `launches.json` beside the logs keeps up to 20
+launches, evicting completed history first: their choices, GPU UUIDs, port,
+pid, start time, log and exit status. Active records are always kept; if
+they alone exceed 20, choptop reports that it is keeping them all.
+It feeds the loader's recent launches and lets a restarted choptop
+take up the launches still running. A launch that exits during startup stays
+listed as `exited N` with the end of its log until `X` dismisses it; `l` on
+it reopens the loader with its choices.
 
 ## Example alerts
 
@@ -393,7 +723,15 @@ groups:
       - alert: ChopinferIntakePressure
         expr: chop_intake_used_bytes / chop_intake_budget_bytes > 0.9
         for: 1m
+      - alert: ChopinferMappedViewsEvicted
+        expr: chop_mapped_view_resident_bytes / chop_mapped_view_bytes < 0.95
+        for: 5m
+      - alert: ChopinferMappedResidencyHidden
+        expr: chop_mapped_view_residency_visible == 0
 ```
+
+Drop `ChopinferMappedResidencyHidden` where hidden residency is expected,
+such as a container that does not own the checkpoint.
 
 `ChopinferWorkerFailed` requires an independent, always-running supervisor
 collector. The `chopinfer_supervisor_*` series above are site collector
@@ -609,11 +947,13 @@ Step and request logs are not replay inputs; they omit token contents.
   (nanoseconds since the Unix epoch). Lines reach stderr through the queue,
   so align steps with client timings by this field, not by when a line is
   read.
-- `prefill_cap`, `predicted_us`, `decode_estimate_us`, `trained`: the
-  [mixed scheduling](serving-profiles.md#prefill-policy) cap and estimates; null under the
-  fixed budget or before an estimate exists.
+- `prefill_cap`, `predicted_us`: the
+  [mixed scheduling](serving-profiles.md#prefill-policy) cap and TBT prediction;
+  null under the fixed budget or before an estimate exists.
+- `decode_estimate_us` is always null and `trained` is always false. These
+  retired decode-aware slots retain their names and types in `chopinfer.step.v1`.
 - `timing_cuts`: present only when grid chunks were sized against the tbt
-  cap (`--prefill-timing-cuts fixed`, or `adaptive` on a grid bundle): the
+  cap (`--prefill-policy adaptive` on a grid bundle): the
   cap, the progress floor (limited to the room beside the decodes), the
   target, whether a chunk
   exceeded the cap only to progress because neither the cap nor the floor
@@ -694,17 +1034,26 @@ activity fall inside the window before reading timings.
 
 ### Timing-cut serving option
 
-`--prefill-timing-cuts off|fixed|adaptive` resolves from the profile field
-`prefill_timing_cuts`, with an explicit flag taking precedence. Every profile
-keeps `off` except DeepSeek's `tp4-dspark`, which selects `adaptive`. `profiles show` reports the resolved value; the `resolved serve`
-startup settings line includes `prefill_timing_cuts: Off|Fixed|Adaptive`. Retain this
-line with replay receipts, together with the TBT target and
-`--mixed-min-prefill-tokens` progress floor. `fixed` requires the TBT budget and
-negotiated bundle cut support. `adaptive` requires the TBT
-budget, and cut support only on a bundle with a prefill grid. A mixed step's
-`prefill_cap` in the step record is the cap it chose, or null when it chose
-no cap. The timing-cut counters and step records
-above show whether the policy actually cut eligible mixed steps.
+`--prefill-policy fixed|tbt|adaptive` resolves from `prefill_policy` with an
+explicit flag taking precedence. `profiles show` and `serve --check` report
+that identity. Retain the resolved settings and negotiated startup marker
+`prefill policy: fixed|tbt|adaptive` with replay receipts, together with the
+TBT target. Serving uses a 512-token floor and zero extra decode-only steps.
+Adaptive needs cut support only on a bundle with a prefill grid. Its grid
+and no-grid startup markers remain `prefill timing cuts on (adaptive): ...`.
+
+Use `chop_prefill_policy_info` for remote identity. TBT model metrics and
+selected-cap histograms are shared by `tbt` and `adaptive` and cannot tell
+them apart. Current qualification rejects missing, conflicting or retired
+identity. Historical receipt readers retain old budget evidence without
+claiming it identifies a current policy. The three decode-aware estimator
+gauges have been removed; step, selected-cap, timing-cut and TBT model
+metrics retain their names and meanings.
+
+A mixed step's `prefill_cap` is its chosen cap, or null when uncapped. The
+cut counters and step records show whether eligible mixed steps actually
+cut chunks. The measurements below describe the retired fixed timing-cut
+arm, not the current fixed token-budget policy.
 
 On 2026-10-28, DeepSeek TP4 DSpark C8 replay (eight sessions, three turns,
 32K/64K contexts, session-specific cache salts, temperature 1, 150 ms TBT
@@ -714,6 +1063,6 @@ TTFT p95 rose from 1.764 to 3.061 s (+73.6%) and from 1.911 to 3.046 s
 (+59.4%). Energy per output token rose from 3.353 to 3.764 J (+12.3%) and
 from 3.440 to 3.746 J (+8.9%). Output tok/s fell 4.0% and 3.0%, averaging
 3.5%. These are changes in the measured quantities within each pair.
-`fixed` remains off by default. See the
+The fixed timing-cut arm is now retired. See the
 [fixed timing-cut tradeoff](serving-profiles.md#fixed-timing-cut-tradeoff)
 for the measurement envelope and policy choice.

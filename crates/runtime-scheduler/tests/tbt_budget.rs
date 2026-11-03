@@ -800,10 +800,7 @@ fn only_the_timing_cut_switch_with_declared_cuts_sizes_grid_chunks() {
 /// decoders keep decoding. A granule of one takes the cap.
 #[test]
 fn a_prefill_cap_below_the_granule_still_prefills_beside_decodes() {
-    let policies = [
-        tbt(100, 0),
-        PrefillBudget::DecodeAware(runtime_scheduler::PrefillTarget::default()),
-    ];
+    let policies = [tbt(100, 0)];
     for policy in policies {
         for granule in [64, 1] {
             // Caps of 33, of 1, and of zero, which falls back to a chunk.

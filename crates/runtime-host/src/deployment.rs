@@ -188,19 +188,11 @@ pub fn deployment_from_package_v1(
     frontend: &FrontendExportV1,
     config: ServerConfig,
 ) -> Result<BundleDeploymentV1, BundleDeploymentErrorV1> {
-    require_frontend_capability_v1(package.manifest())?;
-    let component = |role: &str| {
-        verified_component_by_role_v1(package, role).map_err(BundleDeploymentErrorV1::Component)
-    };
-    let frontend_component: Arc<[u8]> = component(FRONTEND_COMPONENT_ROLE_V1)?.into();
-    let declaration = FrontendDescriptorV1::from_component_bytes(&frontend_component)
-        .map_err(BundleDeploymentErrorV1::Declaration)?;
-    let tokenizer = tokenizer_from_components_v1(
-        &declaration,
-        &component(TOKENIZER_DEFINITION_ROLE_V1)?,
-        &component(TOKENIZER_CONFIGURATION_ROLE_V1)?,
-    )
-    .map_err(BundleDeploymentErrorV1::Tokenizer)?;
+    let PackageFrontendV1 {
+        component: frontend_component,
+        declaration,
+        tokenizer,
+    } = package_frontend_v1(package)?;
     // A completion without a rendered chat parses through the package's
     // frontend, as the transport's frontend parses a chat. Both open the
     // export over the package's own component bytes.
@@ -215,6 +207,40 @@ pub fn deployment_from_package_v1(
         frontend_component,
         tokenizer,
         policy,
+    })
+}
+
+/// What a deployment reads out of a package before its native module serves
+/// the frontend: the authenticated frontend component, its declaration and
+/// the tokenizer the declaration pins.
+pub(crate) struct PackageFrontendV1 {
+    pub component: Arc<[u8]>,
+    pub declaration: FrontendDescriptorV1,
+    pub tokenizer: Tokenizer,
+}
+
+/// The part of [`deployment_from_package_v1`] that runs no native code, in
+/// its order, so `serve --check` refuses what it would refuse.
+pub(crate) fn package_frontend_v1(
+    package: &BundlePackageV1,
+) -> Result<PackageFrontendV1, BundleDeploymentErrorV1> {
+    require_frontend_capability_v1(package.manifest())?;
+    let component = |role: &str| {
+        verified_component_by_role_v1(package, role).map_err(BundleDeploymentErrorV1::Component)
+    };
+    let frontend_component: Arc<[u8]> = component(FRONTEND_COMPONENT_ROLE_V1)?.into();
+    let declaration = FrontendDescriptorV1::from_component_bytes(&frontend_component)
+        .map_err(BundleDeploymentErrorV1::Declaration)?;
+    let tokenizer = tokenizer_from_components_v1(
+        &declaration,
+        &component(TOKENIZER_DEFINITION_ROLE_V1)?,
+        &component(TOKENIZER_CONFIGURATION_ROLE_V1)?,
+    )
+    .map_err(BundleDeploymentErrorV1::Tokenizer)?;
+    Ok(PackageFrontendV1 {
+        component: frontend_component,
+        declaration,
+        tokenizer,
     })
 }
 
@@ -274,19 +300,28 @@ pub fn configure_served_images_v1(
     frontend: BundleFrontendV1,
     maximum: Option<usize>,
 ) -> Result<BundleFrontendV1, String> {
-    let Some(maximum) = maximum else {
-        return Ok(frontend);
-    };
-    let declares_images = frontend
-        .descriptor()
+    check_served_images_v1(frontend.descriptor(), maximum)?;
+    Ok(match maximum {
+        Some(maximum) => frontend.with_maximum_images(maximum),
+        None => frontend,
+    })
+}
+
+/// Refuses a `--max-images-per-request` the declaration cannot serve: one
+/// for a package that accepts no images.
+pub(crate) fn check_served_images_v1(
+    declaration: &FrontendDescriptorV1,
+    maximum: Option<usize>,
+) -> Result<(), String> {
+    let declares_images = declaration
         .multimodal
         .iter()
         .flat_map(|multimodal| &multimodal.modalities)
         .any(|modality| modality.kind == runtime_frontend::FrontendMediaKindV1::Image);
-    if !declares_images {
+    if maximum.is_some() && !declares_images {
         return Err("--max-images-per-request needs a package that accepts images".to_owned());
     }
-    Ok(frontend.with_maximum_images(maximum))
+    Ok(())
 }
 
 /// Body bytes allowed for each image a media request may carry: base64 of a

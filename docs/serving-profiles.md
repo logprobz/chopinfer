@@ -16,6 +16,69 @@ chopinfer serve --bundle "$PACKAGE" --checkpoint "$CHECKPOINT" --profile tp4-ar
 chopinfer profiles list models/qwen38/profiles.json
 ```
 
+Four commands describe these choices as JSON, for a launcher such as
+`choptop` to build `serve --model` commands from:
+
+```sh
+chopinfer models --json
+chopinfer models pick --model "$CHOPINFER_MIMO_CHECKPOINT" --json
+chopinfer models command --model "$CHOPINFER_MIMO_CHECKPOINT" \
+  --tensor-parallel-size 4 --profile tp4-ar -- --max-sequences 64
+chopinfer serve --model "$CHOPINFER_MIMO_CHECKPOINT" --tensor-parallel-size 4 --check
+```
+
+- `models --json` lists each installed model's profiles with their status,
+  rank count, drafter, sequence limits, qualification text and the
+  effective settings `serve --model` resolves from each, keyed by flag name
+  without `--`.
+- `models pick` names, for each rank count the model's profiles serve, the
+  profile `serve --model` picks for that checkpoint or the helper's refusal.
+  It finds the model's helper as `serve --model` does at the default four
+  ranks, or else at another rank count an installed model's profiles serve;
+  a count at which every helper refused the checkpoint keeps that refusal.
+  Each other profile at that count is either explicit options over the pick,
+  which resolve to exactly that profile's settings, or unavailable with the
+  reason: it drafts with another drafter than the package carries, or it
+  leaves a setting the pick sets at a default no flag value names. Model
+  options only the pick sets are listed as inherited; a launcher resets them
+  to the package defaults.
+- `models command` prints the `serve --model` arguments that serve a profile
+  with the given options. An option replaces the profile's flag of the same
+  name, `--model-option` the same option name, and `--speculative-tokens 0`
+  or `--prefill-policy fixed` clears the profile's speculation or TBT
+  target as it does for `serve --model`. A duplicate or invalid option is
+  refused here. `--listen` and `--devices` stay with each instance.
+- `serve ... --check` runs every startup check that needs neither a device
+  nor the package's native module, in serving's order: package preparation
+  and verification, the drafter, model options, speculation bounds, KV
+  offload host memory, the declared operations against this host, the
+  frontend declaration and tokenizer, the topology with its context-parallel
+  groups (selected as serving selects it, except that the device driver's
+  devices are only planned), the media options, the engine's batch, chunk
+  and sequence limits, the declared media recipes, what prefix caching
+  needs of the package (copy-on-write batch records, and request state for a
+  state-slot restore), the instance configuration (KV and state contracts,
+  served items and context, and whether the package needs `--checkpoint`),
+  what the backend and build fix
+  (host-memory device capacity, the device sampler
+  `--debug-reference-tokens` needs), the `--debug-reference-tokens` file,
+  and the `CHOPINFER_NVTX_RANGES` and `CHOPINFER_DEV_SKIP_WARMUP`
+  variables. It prints the profile, the same effective settings and every
+  model option with its value and default. A failure exits nonzero with the
+  message serving would give. A start can still fail on what only it
+  decides: the native module's frontend export, weight plan and callbacks,
+  the driver's devices, their memory and peer access, the KV capacity they
+  hold, and the listen address.
+  `--check` refuses a `--max-context-tokens` past what one sequence of the
+  package holds, which no KV capacity can serve.
+
+`serve --describe-options` prints every serve option with its value shape,
+group and help, and the environment variables serve reads. A value shape is
+`N` (a whole number), `F` (a number), `TEXT`, `TEXT...` (one or more words
+before the next flag), `DIR`, `FILE`, `JSON`, `JSON|off` (JSON or the word
+`off`) or `none` (a flag without a value); a choice is `TEXT` with its
+`choices`.
+
 An explicit option overrides a profile default. `--speculative-tokens 0`
 disables speculation but retains that profile's sequence cap. A profile
 cannot grant qualification to an override. `max_sequences` is the serving
@@ -39,6 +102,16 @@ diagnostic configurations.
 `tp4-dspark` uses the stored floor-one confidence calibration, with 64
 verify rows and widths 6, 8, 16, 32 and 64. See the
 [model documentation](../models/deepseek41/README.md#served-profiles).
+
+## Reply history measurement
+
+`--reply-history-observer on|off` controls the optional bounded digest
+observer. The optional profile field `reply_history_observer` is a boolean;
+an explicit flag wins, and omission resolves to off. Existing profiles
+retain their defaults. Enabling it collects repeated generated-page and
+exact reply-end eligibility counters without enabling KV reuse. Collection
+has measured host overhead and keeps at most 64 MiB of observer capacity.
+See [metric semantics and passive sampling](operations-observability.md#generated-reply-observations).
 
 ## Speculative token capacity and graph budget
 
@@ -372,39 +445,45 @@ rule was adopted. Profile evidence for FP8 alone does not establish BF16 KV.
 
 ## Prefill policy
 
-Profiles declare fixed or time-between-token prefill budgets; explicit
-options override them. Mixed prefill/decode scheduling is opt-in and requires
-the package's declared support. Compare it with the same model, workload,
-concurrency and precision. Neither a scheduling flag nor spare capacity
-establishes accuracy or performance qualification.
+`--prefill-policy fixed|tbt|adaptive` selects how prefill shares a step
+with decoding requests. The profile field is `prefill_policy`; omission
+means `fixed`. Explicit flags override the profile.
 
-`--prefill-timing-cuts off|fixed|adaptive` (`prefill_timing_cuts` in a
-profile) defaults to `off`. Every Qwen, MiMo and GLM profile and DeepSeek's
-`tp4-ar` keep `off`; DeepSeek's `tp4-dspark` selects `adaptive` with
-`--prefill-budget tbt` at a 750 ms `--decode-tbt-target-ms`
-([adoption](#adaptive-timing-cut-adoption)). An explicit flag overrides
-the profile. `profiles show` reports the
-resolved value and the `resolved serve` startup settings record the resolved
-enum (`Off`, `Fixed` or `Adaptive`).
+| Policy | Mixed-step sizing | Timing cuts |
+| --- | --- | --- |
+| `fixed` | Configured token and chunk limits | Off |
+| `tbt` | Existing time-between-token step model | Off |
+| `adaptive` | TBT cap sized from prefill demand | On with a grid and negotiated cuts; off without a grid |
 
-With `off`, a declared prefill grid keeps whole chunks under every budget.
-With `fixed`, `--prefill-budget tbt` and a bundle that negotiates prefill cuts
-are required; startup refuses incompatible settings and unknown values.
-A grid chunk that runs while requests decode ends at the last prefill
-granule multiple the TBT cap reaches, so the decoders share the step. When
-that multiple leaves fewer tokens than the `--mixed-min-prefill-tokens`
-progress floor, the chunk ends at the first multiple at or past the floor
-if it fits beside the decoders. Timing cuts capture no prefix anchor;
-scored and media requests keep their chunks.
+`--decode-tbt-target-ms` applies to `tbt` and `adaptive`, defaults to 100 ms,
+and accepts 1 through 60,000 ms. Serving fixes the progress floor at 512
+prefill tokens and extra decode-only steps at zero. Switching between
+`tbt` and `adaptive` retains an inherited target. An explicit `fixed`
+clears an inherited target; specifying a target explicitly with `fixed`
+is an error, as is a profile declaring both.
 
-`adaptive` needs `--prefill-budget tbt` and takes `--decode-tbt-target-ms`
+MiMo's `tp4-mtp` and `tp4-dflash` use `tbt` at 150 ms. DeepSeek's
+`tp4-dspark` uses `adaptive` at 750 ms. Every other shipped profile uses
+`fixed`. `profiles show`, the launch catalog and `serve --check` report the
+canonical policy. Startup prints `prefill policy: fixed|tbt|adaptive` after
+bundle capability negotiation.
+
+A grid bundle without negotiated prefill cuts refuses `adaptive`. Without
+a grid, adaptive sizes the ordinary TBT cap and needs no cut capability.
+For eligible grid chunks beside decoders, a cut ends at the last prefill
+granule multiple the cap reaches, or the first multiple at or above the
+512-token floor if that fits. Timing cuts capture no prefix anchor;
+scored and media requests keep their chunks. Neither policy selection nor
+spare capacity establishes accuracy or performance qualification.
+
+`adaptive` takes `--decode-tbt-target-ms`
 as a decode cadence target: a decoding request's gap is the step it
 shares, so each step beside decoding
 requests takes the largest legal cap (the progress floor, each 128-token
 multiple up to what the waiting requests' next chunks can take, or no cap)
 whose predicted time stays within a bound that depends on the prefill
 backlog. A backlog that uncut chunks are predicted to clear in more than
-4 s is sustained, and its steps are sized as `fixed` sizes them: the
+4 s is sustained, and its steps are sized to keep the
 predicted step within the target. A shorter, transient backlog lasts a few
 steps, so its steps may run past the target: the predicted step with a
 margin within four thirds of the target (1 s at 750 ms). The margin is the
@@ -429,17 +508,46 @@ prompt queued for 30 s of step time goes first on every second step that
 takes prefill (owed decode-only steps do not count). A transient backlog
 keeps the served order. Without decoders the step is not capped,
 and until the step model trains the cap is the progress floor. Its useful
-targets are about 500 ms to 1 s; the 100 ms default cuts nearly as hard as
-`fixed`. It applies to every model: a bundle with a prefill grid needs
-negotiated cuts, as with `fixed`, and ends grid chunks at the chosen cap
+targets in the measured adoption were about 500 ms to 1 s. It applies to
+every model: a bundle with a prefill grid needs negotiated cuts and ends
+grid chunks at the chosen cap
 (startup prints `prefill timing cuts on (adaptive): grid chunks ...`); a
 bundle without a grid takes the cap as its ordinary tbt prefill budget and
 takes no timing cut (`prefill timing cuts on (adaptive): the TBT cap ...`).
 A grid bundle without cuts refuses `adaptive`.
 
+### Migrating retired controls
+
+Remove retired flags and profile fields before the next deployment. They
+fail at startup with guidance naming `--prefill-policy` or `prefill_policy`;
+there are no aliases, including `strict` or `target`.
+
+| Old budget / timing cuts | New policy |
+| --- | --- |
+| `fixed` / `off` | `fixed` |
+| `tbt` / `off` | `tbt` |
+| `tbt` / `adaptive` | `adaptive` |
+| `decode-aware` / `off` | No exact replacement |
+| `tbt` / `fixed` | No exact replacement |
+
+Replace `--prefill-budget` and `--prefill-timing-cuts` (profile fields
+`prefill_budget` and `prefill_timing_cuts`) together. Remove
+`--prefill-itl-target-ms`, `--prefill-decode-steps`,
+`--mixed-min-prefill-tokens` and `--mixed-decode-steps`. A deployment that
+used a nondefault floor or extra decode steps has no identical public
+configuration. Lower-level scheduler library controls remain for tests.
+
+Decode-aware and fixed timing cuts were retired to reduce setup choices.
+This is not a performance claim: fixed timing cuts had lower sixteen-session
+collapse share, while adaptive improved short-append TTFT in the history
+below. The historical `fixed` timing-cut arm is distinct from today's
+`fixed` token-budget policy.
+
 ### Adaptive timing-cut adoption
 
-DeepSeek's `tp4-dspark` serves `adaptive` by default after a stateful
+The following measurements use the historical timing-cut arm names
+`off`, `fixed` (now retired) and `adaptive`. DeepSeek's `tp4-dspark` serves
+`adaptive` by default after a stateful
 replay A/B on 2026-10-30 against `off` and `fixed`. Every arm ran TP4
 DSpark on the deepseek-ai checkpoint with native KV, prefix caching,
 `--prefill-budget tbt` at a 750 ms target, the 512-token progress floor,
@@ -498,9 +606,21 @@ metric reads server wall-clock time. The A/B measured the adaptive change
 on an earlier integration base. Later integration changes, including
 prefix-cache segment reclamation, drafter planning and sparse-attention
 updates, were not part of the measured build. `off` and `fixed` remain
-serving options: `fixed` keeps the lowest collapse share in the
-sixteen-session cell, and `off` the highest output rate in all three
+historical comparison arms: `fixed` had the lowest collapse share in the
+sixteen-session cell, and `off` had the highest output rate in all three
 cells.
+
+These cells ran with the four GPUs limited to 275, 250, 250 and 250 W. On
+2026-11-02, at the 300 W default limit on main 0c620f1a66, a replay of the
+same cells was set up to compare the 750 ms target with 1000 ms, both
+adaptive. Before any timing, the two targets produced bit-identical output
+tokens and logprobs on a cold burst and at one stream, and the
+prefix-cache exactness suite and determinism screens passed at each
+target. No job in that gate took a timing cut, so it did not move a chunk
+boundary. The replay was stopped before any cell produced a valid
+comparison, so it has no verdict, and `adaptive` against `off` was not
+rerun at 300 W. `tp4-dspark` keeps `adaptive` cuts at 750 ms on the
+evidence above; neither setting has been re-measured at 300 W.
 
 ### Fixed timing-cut tradeoff
 
@@ -516,8 +636,9 @@ fell 4.0% and 3.0%, averaging 3.5% across the two pairs.
 
 These percentages compare the measured quantities within each pair. The
 250 ms stall threshold was declared before measurement. Stalls between
-100 and 250 ms became more frequent. Select `fixed` when smoother concurrent
-streaming matters more than first-token latency, throughput and energy.
+100 and 250 ms became more frequent. The now-retired fixed timing-cut
+policy traded smoother concurrent streaming for first-token latency,
+throughput and energy.
 This evidence covers that cell and configuration; it does not support a
 default change in any profile. The `tp4-dspark` default comes from the
 [adaptive adoption](#adaptive-timing-cut-adoption) A/B.

@@ -313,6 +313,9 @@ impl Provider for Glm5NextFamily {
     fn deployment_policy(&self) -> Option<&str> {
         Some(crate::package::DEPLOYMENT_POLICY)
     }
+    fn serving_profiles(&self) -> Option<&str> {
+        Some(PROFILES)
+    }
     /// The profiles the emission serves: each that asserts no layout, or
     /// an admitted one.
     fn profiles(&self) -> Vec<String> {

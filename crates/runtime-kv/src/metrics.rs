@@ -14,6 +14,7 @@ pub enum KvCachePrecision {
 
 #[derive(Debug)]
 struct KvMetricsInner {
+    reply_history: crate::reply_metrics::ReplyHistoryMetrics,
     precision: KvCachePrecision,
     tokens: AtomicU64,
     capacity_tokens: AtomicU64,
@@ -52,6 +53,7 @@ pub struct KvMetrics {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct KvMetricsSnapshot {
+    pub reply_history: crate::ReplyHistorySnapshot,
     /// The precision this pool was constructed for.
     ///
     /// The FP8 names below are published only when this says FP8, because a
@@ -105,6 +107,7 @@ impl KvMetrics {
     pub fn new(precision: KvCachePrecision) -> Self {
         Self {
             inner: Arc::new(KvMetricsInner {
+                reply_history: Default::default(),
                 precision,
                 tokens: AtomicU64::new(0),
                 capacity_tokens: AtomicU64::new(0),
@@ -136,6 +139,20 @@ impl KvMetrics {
                 cow_tokens: AtomicU64::new(0),
             }),
         }
+    }
+
+    /// Adds a fixed-label reply-history observation, independently of tracing.
+    pub fn reply_history_count(&self, counter: crate::ReplyHistoryCounter, count: usize) {
+        self.inner.reply_history.count(counter, count);
+    }
+
+    /// Splits committed row intervals at the fixed context-position boundaries.
+    pub fn reply_history_rows(&self, kind: crate::ReplyHistoryRows, start: usize, end: usize) {
+        self.inner.reply_history.rows(kind, start, end);
+    }
+
+    pub fn reply_history_gauges(&self, enabled: bool, bytes: usize, entries: usize) {
+        self.inner.reply_history.gauges(enabled, bytes, entries);
     }
 
     /// Records the block occupancy one pool reports about itself.
@@ -311,6 +328,7 @@ impl KvMetrics {
         let capacity_tokens = self.inner.capacity_tokens.load(Ordering::Relaxed);
         let fp8 = self.inner.precision == KvCachePrecision::Fp8;
         KvMetricsSnapshot {
+            reply_history: self.inner.reply_history.snapshot(),
             precision: self.inner.precision,
             tokens,
             capacity_tokens,
@@ -385,6 +403,7 @@ impl KvMetrics {
     pub(crate) fn detached_clone(&self) -> Self {
         let snapshot = self.snapshot();
         let metrics = Self::new(self.inner.precision);
+        metrics.inner.reply_history.restore(snapshot.reply_history);
         for (i, value) in snapshot.prefix_evictions_by_class.iter().enumerate() {
             metrics.inner.prefix_evictions_by_class[i].store(*value, Ordering::Relaxed);
         }
@@ -510,6 +529,7 @@ impl KvMetricsSnapshot {
     #[must_use]
     pub fn prometheus(&self) -> String {
         let mut output = String::new();
+        self.reply_history.prometheus(&mut output);
         metric(&mut output, "chop_kv_tokens", "gauge", self.tokens);
         metric(
             &mut output,

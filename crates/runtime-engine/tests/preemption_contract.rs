@@ -2235,3 +2235,45 @@ fn randomized_engine_interleavings_preserve_streams() {
         );
     }
 }
+
+#[test]
+fn reply_observation_preserves_preempted_streams_and_counts_original_rows_once() {
+    use runtime_kv::ReplyHistoryRows as Rows;
+    let mut outputs = Vec::new();
+    for observed in [false, true] {
+        let config = EngineConfig::new(
+            SchedulerConfig::new(6, 64, 24, 4, 1).unwrap(),
+            KvGeometry::new(BLOCK, 512).unwrap(),
+            vocabulary(),
+            96,
+            64,
+        )
+        .unwrap()
+        .with_admission(forced(5, 2))
+        .with_reply_history_observer(observed)
+        .with_speculation(
+            SpeculationConfig::new(3, 16, SpeculationMode::Fixed, DraftSource::Host).unwrap(),
+        );
+        let mut engine = Engine::new(
+            config,
+            Model {
+                sampled: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        outputs.push(run(&mut engine, &requests()).unwrap());
+        assert!(preemptions(&engine) > 0);
+        if observed {
+            let rows: u64 = engine.kv_metrics().snapshot().reply_history.rows
+                [Rows::Prefilled as usize]
+                .iter()
+                .sum();
+            assert_eq!(
+                rows, 65,
+                "original prompts count once, excluding their last tokens"
+            );
+        }
+    }
+    assert_eq!(outputs[0], outputs[1]);
+}

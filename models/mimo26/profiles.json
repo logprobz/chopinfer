@@ -27,7 +27,7 @@
       "prefix_cache": true,
       "max_batch_tokens": 8192,
       "prefill_chunk_tokens": 2048,
-      "prefill_timing_cuts": "off",
+      "prefill_policy": "fixed",
       "queue_depth": null,
       "gpu_memory_utilization": 1.0,
       "graph_memory_reserve_mib": 320,
@@ -62,7 +62,7 @@
       "prefix_cache": true,
       "max_batch_tokens": 8192,
       "prefill_chunk_tokens": 2048,
-      "prefill_timing_cuts": "off",
+      "prefill_policy": "tbt",
       "queue_depth": null,
       "gpu_memory_utilization": 1.0,
       "graph_memory_reserve_mib": 832,
@@ -72,7 +72,6 @@
         "docs/serving-profiles.md#mimo-evidence",
         "docs/serving-profiles.md#selecting-a-profile"
       ],
-      "prefill_budget": "tbt",
       "decode_tbt_target_ms": 150
     },
     "tp4-dflash": {
@@ -99,7 +98,7 @@
       "prefix_cache": true,
       "max_batch_tokens": 8192,
       "prefill_chunk_tokens": 2048,
-      "prefill_timing_cuts": "off",
+      "prefill_policy": "tbt",
       "queue_depth": null,
       "gpu_memory_utilization": 1.0,
       "graph_memory_reserve_mib": 384,
@@ -111,7 +110,6 @@
         "docs/serving-profiles.md#selecting-a-profile",
         "docs/serving-profiles.md#mimo-evidence"
       ],
-      "prefill_budget": "tbt",
       "decode_tbt_target_ms": 150
     },
     "tp2-ar": {
@@ -136,7 +134,7 @@
       "prefix_cache": true,
       "max_batch_tokens": 8192,
       "prefill_chunk_tokens": 2048,
-      "prefill_timing_cuts": "off",
+      "prefill_policy": "fixed",
       "queue_depth": null,
       "gpu_memory_utilization": 1.0,
       "graph_memory_reserve_mib": 320,

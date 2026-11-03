@@ -496,7 +496,7 @@ def check_bundle():
         'runtime-model-api',
         'runtime-sampling', 'runtime-scheduler',
         'runtime-server', 'runtime-tokenizer',
-        'runtime-weights', 'xtask', 'chopinfer-top',
+        'runtime-weights', 'xtask', 'choptop',
     }
     FIXTURES = {'bundle-recurrent-fixture', 'bundle-tp4-fixture'}
     # Direct-loading CPU checks and benchmarks (tools/load-proto).
@@ -509,7 +509,7 @@ def check_bundle():
         'bundle-recurrent-fixture': {('build-recurrent-fixture', 'bin'), ('bundle_recurrent_fixture', 'cdylib')},
         'bundle-tp4-fixture': {('build-tp4-fixture', 'bin'), ('bundle_tp4_fixture', 'cdylib')},
         'runtime-host': {('chopinfer', 'bin'), ('chopinfer-host', 'bin')},
-        'chopinfer-top': {('chopinfer-top', 'bin')},
+        'choptop': {('choptop', 'bin')},
     }
 
     metadata = json.loads(subprocess.check_output([
@@ -577,7 +577,7 @@ def check_bundle():
             forbidden_runtime = reached & {'runtime-cuda', 'runtime-engine', 'runtime-host', 'runtime-server'}
             if forbidden_runtime:
                 raise SystemExit(f'{name} links forbidden runtime crates: {sorted(forbidden_runtime)}')
-        if name == 'chopinfer-top':
+        if name == 'choptop':
             # The dashboard is an HTTP client of serve: no workspace crate, so
             # its terminal dependencies never reach a serving binary.
             linked = (reached - {name}) & set(workspace)

@@ -1,0 +1,110 @@
+{
+  "schema": "chopinfer.models.v1",
+  "models": [
+    {
+      "model": "fixture",
+      "helper": "chopinfer-model-fixture",
+      "served_model_name": "fixture",
+      "profiles": [
+        {
+          "name": "tp4-ar",
+          "status": "experimental",
+          "tensor_parallel": 4,
+          "drafter": "none",
+          "speculative_tokens": 0,
+          "max_sequences": 1,
+          "qualified_max_sequences": null,
+          "qualification": "CPU fixture only",
+          "settings": {
+            "admission": "optimistic",
+            "admission-watermark": "0.01",
+            "context-parallel-size": "1",
+            "gpu-memory-utilization": "1",
+            "graph-memory-reserve-mib": "1024",
+            "kv-cache-dtype": "auto",
+            "kv-offload-gib": "0",
+            "max-batch-tokens": "128",
+            "max-preemptions": "3",
+            "max-sequences": "1",
+            "prefill-chunk-tokens": "128",
+            "prefix-cache": "off",
+            "queue-depth": "8",
+            "queue-wait-ms": "0",
+            "reply-history-observer": "off",
+            "speculative-tokens": "0",
+            "prefill-policy": "fixed"
+          },
+          "model_options": {}
+        },
+        {
+          "name": "tp4-dflash",
+          "status": "experimental",
+          "tensor_parallel": 4,
+          "drafter": "dflash",
+          "speculative_tokens": 3,
+          "max_sequences": 1,
+          "qualified_max_sequences": null,
+          "qualification": "CPU fixture only",
+          "settings": {
+            "admission": "optimistic",
+            "admission-watermark": "0.01",
+            "context-parallel-size": "1",
+            "decode-tbt-target-ms": "150",
+            "draft-cost": "per-block",
+            "gpu-memory-utilization": "1",
+            "graph-memory-reserve-mib": "1024",
+            "kv-cache-dtype": "auto",
+            "kv-offload-gib": "0",
+            "max-batch-tokens": "128",
+            "max-preemptions": "3",
+            "max-sequences": "1",
+            "prefill-chunk-tokens": "128",
+            "prefix-cache": "off",
+            "queue-depth": "8",
+            "queue-wait-ms": "0",
+            "reply-history-observer": "off",
+            "speculation": "adaptive",
+            "speculative-tokens": "3",
+            "verify-warmup": "on",
+            "prefill-policy": "tbt"
+          },
+          "model_options": {}
+        },
+        {
+          "name": "tp4-mtp",
+          "status": "experimental",
+          "tensor_parallel": 4,
+          "drafter": "mtp",
+          "speculative_tokens": 3,
+          "max_sequences": 1,
+          "qualified_max_sequences": null,
+          "qualification": "CPU fixture only",
+          "settings": {
+            "admission": "optimistic",
+            "admission-watermark": "0.01",
+            "context-parallel-size": "1",
+            "draft-cost": "per-token",
+            "gpu-memory-utilization": "1",
+            "graph-memory-reserve-mib": "1024",
+            "kv-cache-dtype": "auto",
+            "kv-offload-gib": "0",
+            "max-batch-tokens": "128",
+            "max-preemptions": "3",
+            "max-sequences": "1",
+            "prefill-chunk-tokens": "128",
+            "prefix-cache": "off",
+            "queue-depth": "8",
+            "queue-wait-ms": "0",
+            "reply-history-observer": "off",
+            "speculation": "adaptive",
+            "speculative-tokens": "3",
+            "verify-warmup": "on",
+            "prefill-policy": "fixed"
+          },
+          "model_options": {}
+        }
+      ]
+    }
+  ],
+  "errors": []
+}

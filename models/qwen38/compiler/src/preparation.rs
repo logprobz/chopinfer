@@ -636,6 +636,9 @@ impl shared::helper::Provider for QwenFamily {
     fn deployment_policy(&self) -> Option<&str> {
         Some(package::DEPLOYMENT_POLICY)
     }
+    fn serving_profiles(&self) -> Option<&str> {
+        Some(PROFILES)
+    }
     fn profiles(&self) -> Vec<String> {
         model_qwen38_contract::geometry::GEOMETRIES
             .iter()
@@ -771,11 +774,9 @@ mod tests {
         pub max_batch_tokens: usize,
         pub prefill_chunk_tokens: usize,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub prefill_budget: Option<String>,
+        pub prefill_policy: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub decode_tbt_target_ms: Option<u32>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub prefill_timing_cuts: Option<String>,
         pub queue_depth: Option<usize>,
         pub gpu_memory_utilization: f64,
         #[serde(default, skip_serializing_if = "Option::is_none")]

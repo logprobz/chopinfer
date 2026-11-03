@@ -248,8 +248,8 @@ pub(crate) struct CompatibilityMetrics {
     step_execution: [Histogram; 3],
     step_prefill_tokens: Histogram,
     prefill_cap: Histogram,
-    /// The decode-aware estimator after the latest step that trained it.
-    pub(crate) step_estimates: Option<runtime_scheduler::StepTimeEstimates>,
+    /// Canonical serving identity, absent for library-only combinations.
+    pub(crate) prefill_policy: Option<&'static str>,
     /// The TBT budget's predicted time of each mixed step, and the ratio of
     /// its execution time to that prediction.
     mixed_predicted: Histogram,
@@ -297,7 +297,7 @@ impl Default for CompatibilityMetrics {
             step_execution: std::array::from_fn(|_| Histogram::new(STEP)),
             step_prefill_tokens: Histogram::new(STEP_PREFILL_TOKENS),
             prefill_cap: Histogram::new(PREFILL_CAP),
-            step_estimates: None,
+            prefill_policy: None,
             mixed_predicted: Histogram::new(STEP),
             mixed_ratio: Histogram::new(PREDICTION_RATIO),
             mixed_estimates: None,
@@ -339,7 +339,7 @@ impl CompatibilityMetrics {
     }
 
     /// Records one committed step: its execution time, its prefill tokens and
-    /// the decode-aware cap selected for it, if any.
+    /// the TBT cap selected for it, if any.
     pub(crate) fn step(
         &mut self,
         prefill_tokens: usize,
@@ -498,44 +498,11 @@ impl CompatibilityMetrics {
         }
         self.render_mixed_budget(output, labels);
         self.render_timing_cuts(output, labels);
-        let Some(estimates) = &self.step_estimates else {
-            return;
-        };
-        writeln!(
-            output,
-            "# TYPE chop_prefill_budget_decode_estimate_seconds gauge"
-        )
-        .unwrap();
-        for (rows, micros, _) in estimates.decode() {
+        if let Some(policy) = self.prefill_policy {
+            writeln!(output, "# TYPE chop_prefill_policy_info gauge").unwrap();
             writeln!(
                 output,
-                "chop_prefill_budget_decode_estimate_seconds{{{labels},rows_le=\"{rows}\"}} {}",
-                micros as f64 / 1_000_000.0
-            )
-            .unwrap();
-        }
-        writeln!(
-            output,
-            "# TYPE chop_prefill_budget_decode_estimate_samples gauge"
-        )
-        .unwrap();
-        for (rows, _, samples) in estimates.decode() {
-            writeln!(
-                output,
-                "chop_prefill_budget_decode_estimate_samples{{{labels},rows_le=\"{rows}\"}} {samples}"
-            )
-            .unwrap();
-        }
-        writeln!(
-            output,
-            "# TYPE chop_prefill_budget_prefill_token_seconds gauge"
-        )
-        .unwrap();
-        for (tokens, nanos) in estimates.prefill() {
-            writeln!(
-                output,
-                "chop_prefill_budget_prefill_token_seconds{{{labels},tokens_le=\"{tokens}\"}} {}",
-                nanos as f64 / 1_000_000_000.0
+                "chop_prefill_policy_info{{{labels},policy=\"{policy}\"}} 1"
             )
             .unwrap();
         }
@@ -880,15 +847,10 @@ pub(crate) struct StepTrace {
     /// the engine thread: diagnostics reach stderr through a queue, so the
     /// time a line is read can be later than the step.
     pub(crate) completed_unix_ns: Option<u64>,
-    /// What the decode-aware estimates, or the TBT model for a mixed step,
-    /// assumed before this step trained them.
+    /// What the TBT model predicted before this step trained it.
     pub(crate) predicted_micros: Option<u64>,
-    pub(crate) decode_estimate_micros: Option<u64>,
     /// The step's grid chunks sized against a timing cap, if any.
     pub(crate) timing_cuts: Option<runtime_scheduler::TimingCuts>,
-    /// Whether the step trained the decode-aware estimator; verify and media
-    /// steps do not. The TBT model also learns from verify steps.
-    pub(crate) trained: bool,
     /// Where the engine thread spent the step's host time.
     pub(crate) host: HostTiming,
     /// The selected width policy's inputs and branch before cost training.
@@ -948,8 +910,9 @@ impl StepTrace {
             "execution_us": self.execution_micros,
             "completed_unix_ns": self.completed_unix_ns,
             "predicted_us": self.predicted_micros,
-            "decode_estimate_us": self.decode_estimate_micros,
-            "trained": self.trained,
+            // Retired decode-aware slots retain their original keys and types.
+            "decode_estimate_us": null,
+            "trained": false,
             "host": self.host.record(),
             "speculation": self.speculation.as_ref().map(|trace| trace.record()),
         })
@@ -1237,9 +1200,7 @@ mod tests {
             execution_micros: 175_300,
             completed_unix_ns: Some(1_792_224_301_138_000_123),
             predicted_micros: Some(175_328),
-            decode_estimate_micros: Some(16_400),
             timing_cuts: None,
-            trained: true,
             host: HostTiming {
                 outside: Some(40),
                 schedule: 12,
@@ -1270,7 +1231,8 @@ mod tests {
         assert_eq!(parsed["execution_us"], 175_300);
         assert_eq!(parsed["completed_unix_ns"], 1_792_224_301_138_000_123_u64);
         assert_eq!(parsed["predicted_us"], 175_328);
-        assert_eq!(parsed["decode_estimate_us"], 16_400);
+        assert_eq!(parsed["decode_estimate_us"], serde_json::Value::Null);
+        assert_eq!(parsed["trained"], false);
         assert_eq!(parsed["host"]["boundary_us"], 150);
         assert_eq!(parsed["host"]["device_wait_us"], 174_700);
         let upload_parts: u64 = [
@@ -1314,7 +1276,6 @@ mod tests {
         let fixed = StepTrace {
             prefill_cap: None,
             predicted_micros: None,
-            decode_estimate_micros: None,
             ..trace
         }
         .record();
@@ -1386,9 +1347,7 @@ mod tests {
             execution_micros: 160_000,
             completed_unix_ns: None,
             predicted_micros: Some(151_000),
-            decode_estimate_micros: None,
             timing_cuts: Some(cuts.clone()),
-            trained: true,
             host: HostTiming::default(),
         };
         let record = trace.record();

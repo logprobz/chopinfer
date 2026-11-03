@@ -1,0 +1,50 @@
+{
+  "schema": "chopinfer.models-pick.v1",
+  "model": "fixture",
+  "refusal": null,
+  "sizes": [
+    {
+      "tensor_parallel": 4,
+      "pick": "tp4-mtp",
+      "refusal": null,
+      "profiles": [
+        {
+          "name": "tp4-ar",
+          "available": true,
+          "arguments": [
+            "--max-sequences",
+            "1",
+            "--max-batch-tokens",
+            "128",
+            "--prefill-chunk-tokens",
+            "128",
+            "--gpu-memory-utilization",
+            "1",
+            "--kv-cache-dtype",
+            "auto",
+            "--prefix-cache",
+            "off",
+            "--speculative-tokens",
+            "0",
+            "--draft-cost",
+            "per-token",
+            "--queue-depth",
+            "8"
+          ],
+          "inherited_model_options": []
+        },
+        {
+          "name": "tp4-dflash",
+          "available": false,
+          "reason": "it drafts with dflash, but the package serve --model prepares for this checkpoint drafts with mtp"
+        },
+        {
+          "name": "tp4-mtp",
+          "available": true,
+          "arguments": [],
+          "inherited_model_options": []
+        }
+      ]
+    }
+  ]
+}

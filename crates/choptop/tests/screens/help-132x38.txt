@@ -1,0 +1,38 @@
+ choptop   5 instances: 3 ready  1 unreachable  1 starting   sources: proc, docker, --target        window 60s  poll 1s  rescan 15s
+
+┌─ Instances  tok/s over the last 3 polls; ratios and TTFT over 60s ───────────────────────────────────────────────────────────────┐
+│ SOURCE          ADDRESS          MODEL            STATE          DECODE PREFILL RUN/WAIT   KV PREFIX SPEC TTFT50  DECODE 5m      │
+│ target          127.0.0.1:8431   Qwen3.8-Flash    ready             956   5,200     11/2  64%    71%  59%  175ms              ██ │
+│ target          19┌─ Help ───────────────────────────────────────────────────────────────────────────────────┐ -  retrying       │
+│▌proc 48211      12│ Keys                                                                                     │ms  ██████████████ │
+│ proc 51022      - │   ↑ ↓  j k      select an instance (list)                                                │ -  up 2m14s       │
+│ docker glm-tp4  12│   Enter         open its details                                                         │ -                 │
+└───────────────────│   Esc  h        back to the list                                                         │───────────────────┘
+┌─ proc 48211  MiMo-│   ← →  Tab      previous or next instance (details)                                      │───────────────────┐
+│ DECODE   now  1,79│   l             load a model: start one, or replace the selected instance                │tok/s              │
+│                   │   X             stop the selected instance of yours, or dismiss an exited launch         │      50,000 tok/s │
+│ ▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃│   m             this host: CPU, memory, disks, sensors and GPUs                          │                   │
+│ ██████████████████│   w             latency and ratio window: 60s, 5m, since start                           │   ▂          ▂    │
+│ ██████████████████│   r             rescan for processes and containers now                                  │   █          █    │
+│ ██████████████████│   p             pause the screen; polls keep their latest result                         │   █          █    │
+│ ██████████████████│   q  Ctrl-C     quit                                                                     │   █          █    │
+│ ██████████████████│                                                                                          │▅▅▅█▅▅▅▅▅▅▅▅▅▅█▅▅▅ │
+│ -1m03s ▔▔▔▔▔▔▔▔▔▔▔│ Sources                                                                                  │▔▔▔▔▔▔▔▔▔▔▔▔▔▔ now │
+│ sequences   ━━━━━━│   proc          chopinfer serve processes of this user in this network namespace         │────────  64% used │
+│ waiting     2     │   docker        running containers whose process list shows chopinfer serve              │of lookups hit     │
+│ latency     TTFT p│   target        --target, --targets-file and CHOPINFER_TOP_TARGETS                       │ts accepted        │
+└───────────────────│   launch        serve processes choptop started; each log stays after its process exits  │───────────────────┘
+┌─ Events ──────────│                                                                                          │───────────────────┐
+│  5m00s ago  proc 4│ Reads only /health and /metrics. Rates come from counter deltas                          │                   │
+│  5m00s ago  proc 5│ between polls; a new startup nonce re-baselines them.                                    │                   │
+│  5m00s ago  docker│ l and X start and stop serve processes of this user, each after a                        │                   │
+│  4m59s ago  target│ confirm; containers and servers elsewhere are never stopped.                             │                   │
+│  5m00s ago  proc 4│                                                                                          │                   │
+│  5m00s ago  target│ Press any key to close.                                                                  │                   │
+│  5m00s ago  docker└──────────────────────────────────────────────────────────────────────────────────────────┘                   │
+│    30s ago  target 127.0.0.1:8431     restarted: new startup nonce; counters re-baselined                                        │
+│                                                                                                                                  │
+│                                                                                                                                  │
+│                                                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ ↑↓ jk select   Enter details   l load model   X stop   m monitor   w window   r rescan   p pause   ? help   q quit

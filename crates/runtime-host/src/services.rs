@@ -1556,7 +1556,9 @@ impl DirectLoadTimingV1 {
             if let Some(prewarm) = image.prewarm() {
                 line["prewarm_bytes"] = prewarm.bytes.into();
                 line["prewarm_seconds"] = prewarm.seconds.into();
-                line["prewarm_resident_bytes"] = prewarm.resident_bytes.into();
+                if let Some(resident_bytes) = prewarm.resident_bytes {
+                    line["prewarm_resident_bytes"] = resident_bytes.into();
+                }
             }
             runtime_log::info!("startup direct_load: {line}");
         }

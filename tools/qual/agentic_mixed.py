@@ -1206,7 +1206,7 @@ def parser():
     p.add_argument('--arm', default='', help='comparison arm, e.g. tbt or fixed; excluded from profile digest')
     p.add_argument('--stall-threshold-ms', type=float, default=100)
     p.add_argument('--burst-window-ms', type=float, default=2)
-    p.add_argument('--fake-prefill-budget', choices=('fixed', 'tbt'), default='fixed',
+    p.add_argument('--fake-prefill-policy', choices=('fixed', 'tbt', 'adaptive'), default='fixed',
                    help='independent fake-server mode for validation, not inferred from --arm')
     return p
 
@@ -1440,7 +1440,7 @@ def main(argv=None):
     decode_groups = load_corpus()[1]
     # The corpus is identified by its digest and commit, never its local path.
     profile = {k: v for k, v in vars(args).items()
-               if k not in ('url', 'model', 'label', 'arm', 'dry_run', 'fake_prefill_budget', 'frontend', 'model_root',
+               if k not in ('url', 'model', 'label', 'arm', 'dry_run', 'fake_prefill_policy', 'frontend', 'model_root',
                             'corpus', 'workload', 'trace', 'trace_history')}
     profile['levels'] = levels
     profile.update(max_request_bytes=MAX_REQUEST, max_response_bytes=MAX_RESPONSE,
@@ -1475,7 +1475,7 @@ def main(argv=None):
 
     if args.dry_run:
         from agentic_fake import fake_server
-        context = fake_server(groups['coding'], mode=args.fake_prefill_budget)
+        context = fake_server(groups['coding'], mode=args.fake_prefill_policy)
     else:
         context = nullcontext(args.url)
     try:

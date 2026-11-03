@@ -765,7 +765,7 @@ mod tests {
             "checkpoint"
         );
         // Every flag and variable but the hidden ones, and the package's.
-        assert_eq!(context.option_count(), 9 + 2 + 4);
+        assert_eq!(context.option_count(), 10 + 2 + 4);
     }
 
     #[test]

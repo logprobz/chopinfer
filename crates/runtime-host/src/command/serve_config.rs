@@ -185,39 +185,40 @@ impl ServingInputsV1 {
         Ok(restored)
     }
 
+    /// The typed override decision, also usable before a profile default's
+    /// lexical conversion. Profile declaration checks remain independent.
+    pub(crate) fn replaces(&self, flag: &str) -> bool {
+        if self.contains(flag) {
+            return true;
+        }
+        let disabled = self.speculative_tokens == Some(0);
+        match flag {
+            "--speculation" | "--speculative-rows" | "--speculation-graph-rows" => disabled,
+            "--speculation-costs" => {
+                disabled
+                    || self
+                        .speculation_mode
+                        .is_some_and(|mode| !matches!(mode, SpeculationMode::Table(_)))
+            }
+            "--speculation-depths" | "--speculation-widths" | "--speculation-confidence" => {
+                disabled
+                    || self
+                        .speculation_mode
+                        .is_some_and(|mode| !matches!(mode, SpeculationMode::Balanced(_)))
+            }
+            "--decode-tbt-target-ms" => self.prefill_policy == Some(PrefillPolicyV1::Fixed),
+            _ => false,
+        }
+    }
+
     /// Inherited settings that explicit inputs do not replace or disable.
     pub(crate) fn inherited(&self, explicit: &Self) -> Self {
         let mut inherited = self.clone();
-        let disabled = explicit.speculative_tokens == Some(0);
-        if disabled {
-            inherited.speculation_mode = None;
-            inherited.speculative_rows = None;
-            inherited.speculation_graph_rows = None;
-        }
-        if disabled
-            || explicit
-                .speculation_mode
-                .is_some_and(|mode| !matches!(mode, SpeculationMode::Table(_)))
-        {
-            inherited.speculation_costs = None;
-        }
-        if disabled
-            || explicit
-                .speculation_mode
-                .is_some_and(|mode| !matches!(mode, SpeculationMode::Balanced(_)))
-        {
-            inherited.speculation_depths = None;
-            inherited.speculation_widths = None;
-            inherited.speculation_confidence = None;
-        }
-        if explicit.prefill_policy == Some(PrefillPolicyV1::Fixed) {
-            inherited.decode_tbt_target_ms = None;
-        }
         let empty = Self::default();
         for option in SERVE_OPTIONS_V1 {
             if option.flag != "--model-option"
                 && let Some(access) = option.input
-                && (access.present)(explicit)
+                && explicit.replaces(option.flag)
             {
                 (access.copy)(&mut inherited, &empty);
             }

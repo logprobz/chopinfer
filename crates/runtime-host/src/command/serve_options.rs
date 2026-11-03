@@ -1016,11 +1016,7 @@ impl ArgumentsV1 {
             }
             match flag.as_str() {
                 "--served-model-name" => {
-                    if value.starts_with("--") {
-                        return Err(usage_error(
-                            "--served-model-name requires at least one name",
-                        ));
-                    }
+                    validate_served_name_start_v1(value)?;
                     parsed.http_options.served_model_names.push(value.clone());
                     while remaining.peek().is_some_and(|name| !name.starts_with("--")) {
                         parsed
@@ -1772,6 +1768,15 @@ pub(crate) fn speculation_mode_v1(value: &str) -> Result<SpeculationMode, HostCo
 pub(crate) fn validate_model_option_v1(name: &str, value: &str) -> Result<(), HostCommandErrorV1> {
     if !runtime_bundle::model_options::valid_name(name) || value.len() > 1024 {
         return Err(usage_error("invalid model option name or value"));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_served_name_start_v1(value: &str) -> Result<(), HostCommandErrorV1> {
+    if value.starts_with("--") {
+        return Err(usage_error(
+            "--served-model-name requires at least one name",
+        ));
     }
     Ok(())
 }

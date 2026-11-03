@@ -244,18 +244,16 @@ impl Profile {
         &self,
         served_model_name: Option<&str>,
     ) -> Result<ServingInputsV1, HostCommandErrorV1> {
+        self.inputs_under(served_model_name, &ServingInputsV1::default())
+    }
+
+    fn inputs_under(
+        &self,
+        served_model_name: Option<&str>,
+        explicit: &ServingInputsV1,
+    ) -> Result<ServingInputsV1, HostCommandErrorV1> {
         let mut inputs = ServingInputsV1 {
-            order: vec![
-                "--devices",
-                "--max-sequences",
-                "--max-batch-tokens",
-                "--prefill-chunk-tokens",
-                "--gpu-memory-utilization",
-                "--kv-cache-dtype",
-                "--prefix-cache",
-                "--speculative-tokens",
-                "--draft-cost",
-            ],
+            order: self.option_order(),
             devices: Some(
                 self.devices
                     .iter()
@@ -267,33 +265,60 @@ impl Profile {
             maximum_sequences: Some(self.max_sequences),
             maximum_batch_tokens: Some(self.max_batch_tokens),
             prefill_chunk_tokens: Some(self.prefill_chunk_tokens),
-            gpu_memory_utilization_millionths: Some(serve_options::gpu_memory_utilization_v1(
-                self.gpu_memory_utilization,
-            )?),
-            kv_cache_dtype: Some(
-                crate::KvCacheDtypeV1::parse(&self.kv_cache_dtype).ok_or_else(|| {
-                    crate::command::usage_error("--kv-cache-dtype must be auto, bf16, fp8 or mixed")
-                })?,
-            ),
+            gpu_memory_utilization_millionths: if explicit.replaces("--gpu-memory-utilization") {
+                None
+            } else {
+                Some(serve_options::gpu_memory_utilization_v1(
+                    self.gpu_memory_utilization,
+                )?)
+            },
+            kv_cache_dtype: if explicit.replaces("--kv-cache-dtype") {
+                None
+            } else {
+                Some(
+                    crate::KvCacheDtypeV1::parse(&self.kv_cache_dtype).ok_or_else(|| {
+                        crate::command::usage_error(
+                            "--kv-cache-dtype must be auto, bf16, fp8 or mixed",
+                        )
+                    })?,
+                )
+            },
             prefix_cache: Some(self.prefix_cache),
             speculative_tokens: Some(self.speculation.tokens),
             draft_cost_model: Some(serve_options::draft_cost_v1(&self.speculation.draft_cost)?),
             reply_history_observer: self.reply_history_observer,
             queue_depth: self.queue_depth,
             context_parallel_size: self.context_parallel_size,
-            graph_memory_reserve_mib: self
-                .graph_memory_reserve_mib
-                .map(|mib| serve_options::graph_memory_reserve_mib_v1(Some(mib)))
-                .transpose()?,
+            graph_memory_reserve_mib: if explicit.replaces("--graph-memory-reserve-mib") {
+                None
+            } else {
+                self.graph_memory_reserve_mib
+                    .map(|mib| serve_options::graph_memory_reserve_mib_v1(Some(mib)))
+                    .transpose()?
+            },
             prefill_policy: self.prefill_policy,
             decode_tbt_target_ms: self.decode_tbt_target_ms.map(|target| target as usize),
-            model_options: self.model_option_texts(),
             ..Default::default()
         };
-        for (name, value) in &inputs.model_options {
-            serve_options::validate_model_option_v1(name, value)?;
+        for (name, value) in self.model_option_texts() {
+            // Preserve the assignment boundary of the profile's external
+            // spelling without serializing and reparsing a serve command.
+            let (name, value) = match name.split_once('=') {
+                Some((name, prefix)) => (name.to_owned(), format!("{prefix}={value}")),
+                None => (name, value),
+            };
+            if explicit.model_options.contains_key(&name) {
+                continue;
+            }
+            serve_options::validate_model_option_v1(&name, &value)?;
+            if inputs.model_options.insert(name.clone(), value).is_some() {
+                return Err(crate::command::usage_error(format!(
+                    "model option '{name}' given more than once"
+                )));
+            }
         }
         if let Some(name) = served_model_name {
+            serve_options::validate_served_name_start_v1(name)?;
             inputs.bundle = Some(self.bundle_id.clone());
             inputs.topology = Some(self.topology.clone());
             inputs.http_options.served_model_names.push(name.to_owned());
@@ -347,27 +372,75 @@ impl Profile {
                 })
                 .transpose()?;
         }
-        for flag in [
-            "--reply-history-observer",
-            "--queue-depth",
-            "--context-parallel-size",
-            "--graph-memory-reserve-mib",
-            "--prefill-policy",
-            "--decode-tbt-target-ms",
-            "--model-option",
-            "--speculation",
-            "--speculation-costs",
-            "--speculation-depths",
-            "--speculation-widths",
-            "--speculative-rows",
-            "--speculation-graph-rows",
-            "--speculation-confidence",
+        Ok(inputs)
+    }
+
+    /// Profile declaration order, retained even when a generic value will be
+    /// replaced before decoding. Declaration-specific checks still run first.
+    fn option_order(&self) -> Vec<&'static str> {
+        let mut order = vec![
+            "--devices",
+            "--max-sequences",
+            "--max-batch-tokens",
+            "--prefill-chunk-tokens",
+            "--gpu-memory-utilization",
+            "--kv-cache-dtype",
+            "--prefix-cache",
+            "--speculative-tokens",
+            "--draft-cost",
+        ];
+        let active = self.speculation.tokens > 0;
+        for (flag, given) in [
+            (
+                "--reply-history-observer",
+                self.reply_history_observer.is_some(),
+            ),
+            ("--queue-depth", self.queue_depth.is_some()),
+            (
+                "--context-parallel-size",
+                self.context_parallel_size.is_some(),
+            ),
+            (
+                "--graph-memory-reserve-mib",
+                self.graph_memory_reserve_mib.is_some(),
+            ),
+            ("--prefill-policy", self.prefill_policy.is_some()),
+            (
+                "--decode-tbt-target-ms",
+                self.decode_tbt_target_ms.is_some(),
+            ),
+            ("--model-option", !self.model_options.is_empty()),
+            ("--speculation", active),
+            (
+                "--speculation-costs",
+                active && self.speculation.costs.is_some(),
+            ),
+            (
+                "--speculation-depths",
+                active && self.speculation.depths.is_some(),
+            ),
+            (
+                "--speculation-widths",
+                active && self.speculation.widths.is_some(),
+            ),
+            (
+                "--speculative-rows",
+                active && self.speculation.rows.is_some(),
+            ),
+            (
+                "--speculation-graph-rows",
+                active && self.speculation.graph_rows.is_some(),
+            ),
+            (
+                "--speculation-confidence",
+                active && self.speculation.confidence.is_some(),
+            ),
         ] {
-            if inputs.contains(flag) {
-                inputs.order.push(flag);
+            if given {
+                order.push(flag);
             }
         }
-        Ok(inputs)
+        order
     }
 
     fn validate(&self) -> Result<(), HostCommandErrorV1> {
@@ -907,7 +980,7 @@ pub(crate) fn direct_inputs(
             profile.name, entry.tensor_parallel
         )));
     }
-    let mut inputs = entry.inputs(None)?.overlay(explicit);
+    let mut inputs = entry.inputs_under(None, explicit)?.overlay(explicit);
     inputs.bundle = Some(
         bundle
             .to_str()
@@ -1002,9 +1075,7 @@ pub(crate) fn translate_inputs(
     words: Vec<String>,
 ) -> Result<Translation, String> {
     let reference = standalone(target.clone()).map_err(|e| format!("it is refused: {e}"))?;
-    let defaults = pick
-        .inputs(None)
-        .map_err(|e| format!("it is refused: {e}"))?;
+    let order = pick.option_order();
     let mut arguments: Vec<String> = options(&words)
         .into_iter()
         .filter(|(flag, _)| flag != "--devices")
@@ -1014,12 +1085,9 @@ pub(crate) fn translate_inputs(
     explicit.devices = None;
     let mut resets = Vec::new();
     loop {
-        let inherited = defaults.inherited(&explicit);
-        let flag = inherited
-            .order
-            .iter()
-            .copied()
-            .find(|flag| *flag != "--devices" && *flag != "--model-option");
+        let flag = order.iter().copied().find(|flag| {
+            *flag != "--devices" && *flag != "--model-option" && !explicit.replaces(flag)
+        });
         let Some(flag) = flag else {
             break;
         };
@@ -1027,7 +1095,7 @@ pub(crate) fn translate_inputs(
             .restore(flag, &reference)
             .map_err(|e| format!("its options over the pick are refused: {e}"))?
         {
-            let values = options(&profile_arguments(pick, &defaults))
+            let values = options(&pick.arguments(""))
                 .into_iter()
                 .find(|(option, _)| option == flag)
                 .map(|(_, values)| values.join(" "))
@@ -1044,6 +1112,9 @@ pub(crate) fn translate_inputs(
         .filter(|name| !target.model_options.contains_key(*name))
         .cloned()
         .collect();
+    let defaults = pick
+        .inputs_under(None, &explicit)
+        .map_err(|e| format!("its options over the pick are refused: {e}"))?;
     let mut served = standalone(defaults.overlay(&explicit))
         .map_err(|e| format!("its options over the pick are refused: {e}"))?;
     let mut reference = reference;
@@ -1250,6 +1321,91 @@ mod tests {
 
     /// Explicit speculation options over a direct profile resolve with the
     /// profile's tokens, and are refused where the profile has none.
+    #[test]
+    fn profile_adapter_allows_replacing_invalid_generic_direct_defaults() {
+        for (field, value, words) in [
+            (
+                "graph_memory_reserve_mib",
+                serde_json::json!(0),
+                vec!["--graph-memory-reserve-mib", "1024"],
+            ),
+            (
+                "gpu_memory_utilization",
+                serde_json::json!(0),
+                vec!["--gpu-memory-utilization", "1"],
+            ),
+            (
+                "kv_cache_dtype",
+                serde_json::json!("invalid"),
+                vec!["--kv-cache-dtype", "auto"],
+            ),
+            (
+                "model_options",
+                serde_json::json!({"budget": "x".repeat(1025)}),
+                vec!["--model-option", "budget=4"],
+            ),
+        ] {
+            let mut entry = fixture()["profiles"]["test"].clone();
+            entry[field] = value;
+            let profile = runtime_bundle::preparation::DirectProfile {
+                name: "test".into(),
+                profile: entry,
+            };
+            let explicit = words.into_iter().map(String::from).collect::<Vec<_>>();
+            let resolution =
+                direct_resolution(&profile, 2, &explicit, Path::new("/direct-package"))
+                    .unwrap_or_else(|error| panic!("{field}: {error}"));
+            assert!(resolution.command().is_ok(), "{field}");
+            assert!(
+                direct_resolution(&profile, 2, &[], Path::new("/direct-package"))
+                    .and_then(|resolution| resolution.command())
+                    .is_err(),
+                "{field}"
+            );
+        }
+    }
+
+    #[test]
+    fn profile_assignment_names_keep_the_first_equals_boundary() {
+        let mut entry = fixture()["profiles"]["test"].clone();
+        entry["model_options"] = serde_json::json!({"budget=small": 1});
+        let mut profile = runtime_bundle::preparation::DirectProfile {
+            name: "test".into(),
+            profile: entry,
+        };
+        let resolved = direct_resolution(&profile, 2, &[], Path::new("/direct-package")).unwrap();
+        let crate::HostCommandV1::Serve { model_options, .. } = resolved.command().unwrap() else {
+            panic!("serve")
+        };
+        assert_eq!(model_options["budget"], "small=1");
+        profile.profile["model_options"]["budget"] = 2.into();
+        assert!(
+            direct_resolution(&profile, 2, &[], Path::new("/direct-package"))
+                .and_then(|resolved| resolved.command())
+                .is_err()
+        );
+        let explicit = ["--model-option", "budget=4"].map(String::from);
+        let resolved =
+            direct_resolution(&profile, 2, &explicit, Path::new("/direct-package")).unwrap();
+        let crate::HostCommandV1::Serve { model_options, .. } = resolved.command().unwrap() else {
+            panic!("serve")
+        };
+        assert_eq!(model_options["budget"], "4");
+    }
+
+    #[test]
+    fn profile_adapter_rejects_flag_looking_served_names() {
+        let mut value = fixture();
+        value["served_model_name"] = "--alias".into();
+        let error = Profiles::parse(&serde_json::to_vec(&value).unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("--served-model-name requires at least one name"),
+            "{error}"
+        );
+    }
+
     #[test]
     fn model_option_precedence_preserves_source_roles() {
         // Isolate the process environment from parallel Rust tests.
@@ -2835,6 +2991,23 @@ mod translate_tests {
     /// An autoregressive profile over a drafting pick with a TBT budget
     /// resets the budget, which drops the pick's TBT target, and serves
     /// exactly its own configuration.
+    #[test]
+    fn profile_adapter_translates_replaced_invalid_pick_defaults() {
+        let pick = profile(serde_json::json!({
+            "graph_memory_reserve_mib": 0, "gpu_memory_utilization": 0,
+            "kv_cache_dtype": "invalid", "model_options": {"budget": "x".repeat(1025)},
+        }));
+        let mut target = profile(serde_json::json!({"model_options": {"budget": 4}}));
+        target.graph_memory_reserve_mib = None;
+        let translated = translate(&pick, &target).unwrap();
+        assert!(
+            translated
+                .arguments
+                .windows(2)
+                .any(|pair| pair == ["--graph-memory-reserve-mib", "1024"])
+        );
+    }
+
     #[test]
     fn translation_keeps_profile_explicit_and_reset_argument_order() {
         let pick = drafting(serde_json::json!({

@@ -554,6 +554,13 @@ mod tests {
 
     #[test]
     fn compiler_descriptor_observes_flags_and_profile_in_process() {
+        let home = std::env::var_os("CHOPINFER_CUDA_HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| "/usr/local/cuda".into());
+        if std::env::consts::OS != "linux" || !home.join("bin/nvcc").is_file() {
+            eprintln!("SKIP: the compiler descriptor requires Linux and nvcc");
+            return;
+        }
         let real = Toolchain::detect().unwrap();
         let root =
             std::env::temp_dir().join(format!("kernel-compiler-descriptor-{}", std::process::id()));

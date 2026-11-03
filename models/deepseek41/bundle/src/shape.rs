@@ -66,7 +66,7 @@ impl Shape {
             runtime: geometry.runtime_defaults(),
             verify_rows: DECODE_BATCH,
             wide_verify: false,
-            prefill_tail_folds: false,
+            prefill_tail_folds: true,
             wide_draft: false,
             phased_decode_reduce: false,
             dspark_hc_draft_rows: false,

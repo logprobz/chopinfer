@@ -165,7 +165,7 @@ mod tests {
                     let new = ops
                         .project(d.id, Phase::Prefill { rows }, &views, span(99, 1 << 30))
                         .unwrap();
-                    if ranks == Ranks::TP4 && rows <= MAX_ROWS {
+                    if ranks == Ranks::TP4 {
                         assert!(new.len() >= 2);
                         assert!(
                             new.iter()
@@ -184,7 +184,7 @@ mod tests {
     #[test]
     fn tail_folds_preserve_aligned_and_tabled_prefill_routes() {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-        let baseline = crate::Kernels::new(&shape).unwrap();
+        let baseline = crate::Kernels::new(&shape.with_prefill_tail_folds(false)).unwrap();
         let candidate = crate::Kernels::new(&shape.with_prefill_tail_folds(true)).unwrap();
         use kernel_core::backend::{Counts, Need, View};
         use kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers;
@@ -228,7 +228,7 @@ mod tests {
         use kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers;
         for ranks in [Ranks::TP1, Ranks::TP2] {
             let shape = Shape::new(&FLASH, ranks).unwrap();
-            let old = crate::Kernels::new(&shape).unwrap();
+            let old = crate::Kernels::new(&shape.with_prefill_tail_folds(false)).unwrap();
             let new = crate::Kernels::new(&shape.with_prefill_tail_folds(true)).unwrap();
             assert!(!tail_folds_enabled(&shape.with_prefill_tail_folds(true)));
             for d in projections(&shape) {
@@ -419,7 +419,7 @@ mod tests {
             let shared_workspace = ops.shared_workspace();
             (ops.dense.unwrap(), ops.asked, workspace, shared_workspace)
         };
-        let (old, old_asks, old_workspace, _) = prepare(&shape);
+        let (old, old_asks, old_workspace, _) = prepare(&shape.with_prefill_tail_folds(false));
         let (new, new_asks, workspace, shared_workspace) =
             prepare(&shape.with_prefill_tail_folds(true));
         assert_eq!(

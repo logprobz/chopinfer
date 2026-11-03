@@ -209,8 +209,8 @@ fn phased_decode_resets_only_its_protocol_before_an_execute() {
 fn phased_decode_lifetimes_journal() {
     let mut mismatches = Vec::new();
     for (kv, expected) in [
-        (KV_LAYOUTS[0], (73057, 0x2415501aadfca6d1)),
-        (KV_LAYOUTS[1], (74645, 0x6feb8878a80d7933)),
+        (KV_LAYOUTS[0], (77337, 0xc569ccf643653b17)),
+        (KV_LAYOUTS[1], (78925, 0xf3c08f5b709c91c3)),
     ] {
         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), kv);
         host.device.residency.set(Some(report()));

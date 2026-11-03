@@ -1365,6 +1365,43 @@ mod tests {
                             .iter()
                             .all(|call| call.launch.symbol.contains(&expected))
                     );
+                } else if phase.prefill()
+                    && shape.ranks() == 4
+                    && !phase.rows().is_multiple_of(128)
+                    && crate::sm120::prefill_matrix::choice(q, phase.rows()).is_none()
+                    && crate::sm120::mxfp8_fold::compact::stages(&FLASH, q, phase.rows()).is_none()
+                    && !crate::sm120::prefill_tma_scales::choice(&FLASH, 4, q, phase.rows())
+                {
+                    let full = phase.rows() / 128 * 128;
+                    let mut at = if full == 0 { 0 } else { 2 };
+                    if full > 0 {
+                        assert!(calls[0].launch.symbol.ends_with("_admit_v1"));
+                        assert_eq!(calls[1].launch.plan.grid[0], q.n.div_ceil(128));
+                        assert_eq!(calls[1].launch.plan.grid[1], full / 128);
+                        let split =
+                            crate::sm120::mxfp8_fold::prefill_tail_policy(q).splits(phase.rows());
+                        let symbol = crate::sm120::test_symbols::row_major_fold_symbol(
+                            &calls[1].launch.symbol,
+                        )
+                        .unwrap();
+                        assert!(symbol.ends_with(if split {
+                            "_split_full_v1"
+                        } else {
+                            "_prefill_tma_v1"
+                        }));
+                    }
+                    let mut remaining = phase.rows() - full;
+                    while remaining > 0 {
+                        let rows = remaining.min(64);
+                        let start = at;
+                        while at < calls.len() && calls[at].launch.rows == rows {
+                            assert!(!calls[at].launch.symbol.contains("mxfp8_fold_m8192"));
+                            at += 1;
+                        }
+                        assert!(at > start);
+                        remaining -= rows;
+                    }
+                    assert_eq!(at, calls.len());
                 } else if phase.prefill() && phase.rows() >= 128 {
                     let matrix = (shape.ranks() == 4)
                         .then(|| crate::sm120::prefill_matrix::choice(q, phase.rows()))

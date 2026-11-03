@@ -1471,12 +1471,12 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
         KvStorage::Native,
         // One dedicated data arena and table per rank, reserved before KV.
         // The full journal audit retains every other operation exactly.
-        (73033, 0x49b4f15dfce59cb6),
+        (77313, 0x2c8deaefe83293b0),
     ),
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (74641, 0xe66f573b8aa3cd88),
+        (78921, 0xb156b671839fde0e),
     ),
 ];
 

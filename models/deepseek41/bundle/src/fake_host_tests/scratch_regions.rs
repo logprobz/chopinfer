@@ -9,7 +9,8 @@
 //! that `OUTPUTS` lists writes every byte of its span that a later touch
 //! reads, as its entry's output, and a `SPLIT_OUTPUTS` pair of launches
 //! does so together when the second follows the first on its stream with
-//! no other touch of the span between them. Any other kernel argument may
+//! no other touch of the span between them. Exact-row folds may complete a
+//! full TMA launch's suffix in contiguous pieces on that same stream. Any other kernel argument may
 //! read and write. A grouping is refused when a member reads bytes that
 //! another member wrote; when one launch binds two members, which its
 //! threads then use at once; when two members touch the region without a
@@ -217,6 +218,11 @@ enum Access {
     Modify,
     /// The first launch of a `SPLIT_OUTPUTS` pair.
     Begin,
+    /// Full TMA tiles leave a contiguous suffix, starting this many bytes
+    /// into the output, for exact-row folds on the same stream.
+    BeginTail(u64),
+    /// A recognized final exact-row writer, with a validated output extent.
+    Fold,
     /// The second launch of a `SPLIT_OUTPUTS` pair, which writes the whole
     /// span with the first only when it follows that on its stream and
     /// nothing touched the span between them.
@@ -286,8 +292,13 @@ enum Op {
     },
 }
 
-/// The stream, symbol and each argument's spans of a launch line.
-fn launch_arguments(line: &str) -> Option<(u32, String, Vec<Vec<Span>>)> {
+struct LaunchArgument {
+    spans: Vec<Span>,
+    scalar: Option<u64>,
+}
+
+/// The stream, symbol, spans and scalar arguments of a launch line.
+fn launch_arguments(line: &str) -> Option<(u32, String, Vec<LaunchArgument>)> {
     let rest = line.strip_prefix("launch ")?;
     let (stream, rest) = rest.split_once(' ')?;
     let (symbol, rest) = rest.split_once(' ')?;
@@ -331,9 +342,81 @@ fn launch_arguments(line: &str) -> Option<(u32, String, Vec<Vec<Span>>)> {
         symbol.to_owned(),
         arguments
             .into_iter()
-            .map(super::shared_overlap::journal_spans)
+            .map(|argument| LaunchArgument {
+                spans: super::shared_overlap::journal_spans(argument),
+                scalar: argument
+                    .trim()
+                    .strip_prefix("ScalarU32(")
+                    .or_else(|| argument.trim().strip_prefix("ScalarU64("))
+                    .and_then(|value| value.strip_suffix(')'))
+                    .and_then(|value| value.parse().ok()),
+            })
             .collect(),
     ))
+}
+
+/// F32 projection output bytes per row, from its explicit N and group
+/// dimensions. Capacity and tile dimensions are not runtime row counts.
+fn output_row_bytes(symbol: &str) -> Option<u64> {
+    let dimension = |prefix| {
+        symbol
+            .split('_')
+            .find_map(|part| part.strip_prefix(prefix)?.parse::<u64>().ok())
+    };
+    dimension('n')?.checked_mul(dimension('g')?)?.checked_mul(4)
+}
+
+fn launch_access(
+    symbol: &str,
+    index: usize,
+    span: Span,
+    arguments: &[LaunchArgument],
+    text: &str,
+) -> Access {
+    let access = access(symbol, index);
+    let symbol = crate::sm120::test_symbols::row_major_fold_symbol(symbol).unwrap_or(symbol);
+    let scalar = |index: usize| arguments.get(index).and_then(|arg| arg.scalar);
+    let bytes = output_row_bytes(symbol);
+    let full = matches(
+        "chop_deepseek41_mxfp8_fold_m*_f32_v2_prefill_tma_v1_split_full_v1",
+        symbol,
+    );
+    let padded = matches(
+        "chop_deepseek41_mxfp8_fold_m*_f32_v2_prefill_tma_v1",
+        symbol,
+    );
+    if index == 6
+        && (full || padded)
+        && let (Some(rows), Some(bytes)) = (scalar(10), bytes)
+    {
+        let grid = text
+            .split_once("grid_y: ")
+            .and_then(|(_, rest)| rest.split(',').next())
+            .and_then(|value| value.parse::<u64>().ok());
+        if rows >= 128
+            && rows % 128 != 0
+            && Some(span.2) == rows.checked_mul(bytes)
+            && grid == Some(rows / 128)
+        {
+            return Access::BeginTail(rows / 128 * 128 * bytes);
+        }
+        if Some(span.2) != rows.checked_mul(bytes) || padded && grid != Some(rows.div_ceil(128)) {
+            return Access::Modify;
+        }
+    }
+    if access == Access::Write && symbol.starts_with("chop_deepseek41_dense_decode_") {
+        let rows = scalar(if index == 1 { 6 } else { 10 });
+        return match (rows, bytes) {
+            (Some(rows @ 1..=64), Some(bytes)) if Some(span.2) == rows.checked_mul(bytes) => {
+                Access::Fold
+            }
+            (Some(rows @ 65..), Some(bytes)) if Some(span.2) == rows.checked_mul(bytes) => {
+                Access::Write
+            }
+            _ => Access::Modify,
+        };
+    }
+    access
 }
 
 /// The operation of journal line `line`, or none for a line that neither
@@ -359,9 +442,12 @@ fn parse(line: usize, text: &str) -> Option<Op> {
             let touches = arguments
                 .iter()
                 .enumerate()
-                .flat_map(|(index, spans)| {
-                    let access = access(&symbol, index);
-                    spans.iter().map(move |&span| (span, access))
+                .flat_map(|(index, argument)| {
+                    argument
+                        .spans
+                        .iter()
+                        .map(|&span| (span, launch_access(&symbol, index, span, &arguments, text)))
+                        .collect::<Vec<_>>()
                 })
                 .collect();
             Op::Touch {
@@ -434,7 +520,8 @@ fn join(into: &mut Clock, from: &Clock) {
 struct RegionState {
     owners: Vec<(u64, u64, usize)>,
     latest: BTreeMap<(usize, u32), u64>,
-    splits: Vec<(u64, u64, usize, u32)>,
+    // Full guarded range, member, stream, and next folded suffix byte.
+    splits: Vec<(u64, u64, usize, u32, Option<u64>)>,
 }
 
 /// A region member's buffer on one rank.
@@ -692,10 +779,17 @@ impl<'a> Check<'a> {
             }
         }
         state.latest.insert((member.member, stream), now[&stream]);
-        let split = (lo, hi, member.member, stream);
-        let finishes = access == Access::Finish && state.splits.contains(&split);
-        for &(a, b, writer, _) in &state.splits {
-            if a < hi && lo < b && !finishes {
+        let finishes = state.splits.iter().position(|&(a, b, writer, on, next)| {
+            writer == member.member
+                && on == stream
+                && match access {
+                    Access::Finish => a == lo && b == hi,
+                    Access::Fold => next == Some(lo) && hi <= b,
+                    _ => false,
+                }
+        });
+        for (index, &(a, b, writer, _, _)) in state.splits.iter().enumerate() {
+            if a < hi && lo < b && finishes != Some(index) {
                 refusals.push(format!(
                     "{name} touches bytes of a split write of {} before its second launch in region {}",
                     region.members[writer], region.name
@@ -703,15 +797,25 @@ impl<'a> Check<'a> {
             }
         }
         let access = match access {
-            Access::Begin => {
-                state.splits.push(split);
+            Access::Begin | Access::BeginTail(_) => {
+                let next = match access {
+                    Access::BeginTail(bytes) => Some(lo + bytes),
+                    _ => None,
+                };
+                state.splits.push((lo, hi, member.member, stream, next));
                 Access::Write
             }
-            Access::Finish if finishes => {
-                state.splits.retain(|&pending| pending != split);
+            Access::Finish | Access::Fold if finishes.is_some() => {
+                let index = finishes.unwrap();
+                if access == Access::Finish || hi == state.splits[index].1 {
+                    state.splits.remove(index);
+                } else {
+                    state.splits[index].4 = Some(hi);
+                }
                 Access::Write
             }
             Access::Finish => Access::Modify,
+            Access::Fold => Access::Write,
             access => access,
         };
         if access != Access::Write {
@@ -764,7 +868,7 @@ fn check(regions: &[Region], scratch: &Scratch, journal: &[String]) -> BTreeMap<
             state
                 .splits
                 .iter()
-                .map(move |&(_, _, member, _)| (region, member))
+                .map(move |&(_, _, member, _, _)| (region, member))
         })
         .collect();
     for (region, member) in unfinished {
@@ -1064,6 +1168,146 @@ fn split_outputs_write_their_span_only_as_a_pair() {
     );
 }
 
+/// A nonzero-origin alias pair, with the old member initialized before the
+/// complete result is written by full tiles and contiguous exact-row folds.
+fn folded_case(rows: u64, padded: bool, merge: bool) -> (Scratch, Vec<String>) {
+    let origin = 256;
+    let bytes = rows * 32; // N4, G2, F32.
+    let scratch = vec![vec![
+        (
+            "a".into(),
+            DeviceBufferSpanV1::new(BundleDeviceBufferHandleV1::from_raw(101), origin, bytes),
+        ),
+        (
+            "b".into(),
+            DeviceBufferSpanV1::new(BundleDeviceBufferHandleV1::from_raw(102), origin, bytes),
+        ),
+    ]];
+    let mut lines = vec![format!("zero 1 {}", span("a", origin, bytes))];
+    let mut offset = rows / 128 * 128;
+    if offset > 0 {
+        let part = if padded { "" } else { "_split_full_v1" };
+        lines.push(format!(
+            "launch 1 chop_deepseek41_mxfp8_fold_m8192_n4_k128_g2_f32_v2_prefill_tma_v1{part}_packed_v1 LaunchConfigV1 {{ grid_y: {}, flags: 0 }} [{}DeviceBuffer({}), ScalarU32(0), ScalarU32(0), ScalarU64(0), ScalarU32({rows})]",
+            rows / 128, "ScalarU32(0), ".repeat(6), span("b", origin, bytes)
+        ));
+    }
+    while offset < rows {
+        let count = (rows - offset).min(64);
+        let output = span("b", origin + offset * 32, count * 32);
+        let (tile, arguments) = if merge {
+            (
+                "n16r1s2w0f1",
+                format!(
+                    "ScalarU32(0), DeviceBuffer({output}), ScalarU32(0), ScalarU32(0), ScalarU32(0), ScalarU64({offset}), ScalarU32({count})"
+                ),
+            )
+        } else {
+            (
+                "n32r1s3w1f0",
+                format!(
+                    "{}DeviceBuffer({output}), ScalarU32(0), ScalarU32(0), ScalarU32(0), ScalarU32({count}), ScalarU32(8)",
+                    "ScalarU32(0), ".repeat(6)
+                ),
+            )
+        };
+        lines.push(format!("launch 1 chop_deepseek41_dense_decode_n4_k128_g2_single_e4m3_ue8m0_k32x4_f32_f32_{tile}_v1_packed_v1 LaunchConfigV1 {{ flags: 0 }} [{arguments}]"));
+        offset += count;
+    }
+    lines.push(format!("download 1 {}", span("b", origin, bytes)));
+    (scratch, lines)
+}
+
+#[test]
+fn folded_outputs_complete_only_the_contiguous_suffix() {
+    for rows in [65, 127, 192, 255] {
+        for padded in [false, true] {
+            for merge in [false, true] {
+                let (scratch, lines) = folded_case(rows, padded, merge);
+                assert!(
+                    check(PAIR, &scratch, &lines).is_empty(),
+                    "{rows} {padded} {merge}"
+                );
+                let first = if rows >= 128 { 2 } else { 1 };
+                for missing in first..lines.len() - 1 {
+                    let mut bad = lines.clone();
+                    bad.remove(missing);
+                    assert!(
+                        !check(PAIR, &scratch, &bad).is_empty(),
+                        "missing piece {rows} {missing}"
+                    );
+                }
+                let mut shifted = lines.clone();
+                shifted[first] = shifted[first].replace(
+                    &span("b", 256 + rows / 128 * 128 * 32, 64 * 32),
+                    &span("b", 256 + rows / 128 * 128 * 32 + 32, 64 * 32),
+                );
+                assert!(
+                    !check(PAIR, &scratch, &shifted).is_empty(),
+                    "shifted piece {rows}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn folded_outputs_keep_pending_alias_and_stream_hazards() {
+    for padded in [false, true] {
+        let (scratch, lines) = folded_case(255, padded, false);
+        let output = span("b", 256 + 128 * 32, 64 * 32);
+        let mut mutations = Vec::new();
+        for replacement in [
+            span("b", 256 + 128 * 32, 63 * 32),
+            span("b", 256 + 128 * 32, 65 * 32),
+            span("a", 256 + 128 * 32, 64 * 32),
+        ] {
+            let mut bad = lines.clone();
+            bad[2] = bad[2].replace(&output, &replacement);
+            mutations.push(bad);
+        }
+        let mut bad = lines.clone();
+        bad.swap(2, 3);
+        mutations.push(bad);
+        let mut bad = lines.clone();
+        bad.insert(3, bad[2].clone());
+        mutations.push(bad);
+        let mut bad = lines.clone();
+        bad[2] = bad[2].replacen("ScalarU32(64)", "ScalarU32(63)", 1);
+        mutations.push(bad);
+        let mut bad = lines.clone();
+        bad[2] = bad[2].replacen("launch 1 ", "launch 2 ", 1);
+        bad.insert(2, "record 1 9".into());
+        bad.insert(3, "wait 2 9".into());
+        mutations.push(bad);
+        for touch in [
+            format!("download 1 {}", span("b", 256, 255 * 32)),
+            format!("zero 1 {}", span("a", 256, 255 * 32)),
+        ] {
+            let mut bad = lines.clone();
+            bad.insert(3, touch);
+            mutations.push(bad);
+        }
+        for suffix in ["_admit_v1", "_partials_v1", "_omit_first_v1"] {
+            let mut bad = lines.clone();
+            bad[2] = bad[2].replace("_v1_packed_v1 ", &format!("_v1{suffix} "));
+            mutations.push(bad);
+        }
+        let mut bad = lines.clone();
+        bad[2] = bad[2].replace("chop_deepseek41_dense_decode_", "unknown_");
+        mutations.push(bad);
+        let mut bad = lines.clone();
+        bad[1] = bad[1].replace("grid_y: 1,", "grid_y: 0,");
+        mutations.push(bad);
+        for (index, bad) in mutations.iter().enumerate() {
+            assert!(
+                !check(PAIR, &scratch, bad).is_empty(),
+                "mutation {index}, padded={padded}"
+            );
+        }
+    }
+}
+
 #[test]
 fn output_patterns_match_whole_symbols() {
     let matrix = "chop_deepseek41_mxfp8_fold_m*_f32_v2_matrix_m#_n128_s#_v1";
@@ -1171,7 +1415,7 @@ fn captured_graphs_run_at_each_replay_with_their_fork_and_join() {
 #[test]
 fn launch_arguments_keep_their_positions() {
     let line = format!(
-        "launch 3 test_kernel LaunchConfigV1 {{ flags: 1, cluster: [1, 1, 1] }} [DeviceBuffer({}), ScalarU32(5), DevicePointerArray([Some({}), None]), TensorMap(TensorMapV1 {{ buffer: {}, rank: 2, global_dims: [1, 2] }})]",
+        "launch 3 test_kernel LaunchConfigV1 {{ flags: 1, cluster: [1, 1, 1] }} [DeviceBuffer({}), ScalarU32(5), DevicePointerArray([Some({}), None]), TensorMap(TensorMapV1 {{ buffer: {}, rank: 2, global_dims: [1, 2] }}), ScalarU64(9)]",
         span("a", 0, 64),
         span("b", 8, 16),
         span("a", 32, 32)
@@ -1179,13 +1423,24 @@ fn launch_arguments_keep_their_positions() {
     let (stream, symbol, arguments) = launch_arguments(&line).unwrap();
     assert_eq!((stream, symbol.as_str()), (3, "test_kernel"));
     assert_eq!(
-        arguments,
+        arguments
+            .iter()
+            .map(|argument| argument.spans.clone())
+            .collect::<Vec<_>>(),
         [
             vec![(101, 0, 64)],
             vec![],
             vec![(102, 8, 16)],
-            vec![(101, 32, 32)]
+            vec![(101, 32, 32)],
+            vec![],
         ]
+    );
+    assert_eq!(
+        arguments
+            .iter()
+            .map(|argument| argument.scalar)
+            .collect::<Vec<_>>(),
+        [None, Some(5), None, None, Some(9)]
     );
 }
 

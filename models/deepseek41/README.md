@@ -239,7 +239,7 @@ them. A non-default value is unqualified.
 | `prefill_chunk_tokens` | `8192` | Guaranteed chunk ends: 0, 2048 or 8192 tokens. |
 | `prefill_plan_cache_plans` | `16` | Kept short-prompt plans, from 1 to 64; evict the least recently used plan when full. |
 | `prefill_plan_cache_verify` | `false` | Lower each cache hit and each reused plan template again and refuse a differing plan. |
-| `prefill_tail_folds` | `false` | Candidate: Flash TP4 dense prefills run full 128-row TMA tiles and divide the remainder into exact-row folds of at most 64 rows, including shared-expert gate, up and down. Prefills of 65 to 127 rows use two folds; short prefills keep their existing route. GPU exactness and paired timing are pending. |
+| `prefill_tail_folds` | `true` | Candidate: Flash TP4 dense prefills run full 128-row TMA tiles and divide the remainder into exact-row folds of at most 64 rows, including shared-expert gate, up and down. Prefills of 65 to 127 rows use two folds; short prefills keep their existing route. GPU exactness and paired timing are pending. |
 | `prefill_upper_skip` | `true` | Use upper-skip prefill; requires nonzero guaranteed chunk ends. |
 | `shared_overlap_max_rows` | `4294967295` | Largest graph bucket that overlaps shared-expert and eligible window-KV work. Positive values only; the default covers every admitted bucket. |
 | `text_config.candidate_topk_blocks` | `2048` | Candidate block pool, checked with index top-k and the partial newest block. |

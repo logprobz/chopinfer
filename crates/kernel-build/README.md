@@ -95,6 +95,10 @@ both Rust and Python readers. Cargo tracks this same compiler file and
 environment inventory, including unset supported variables. Changes to
 `PATH` or `LD_LIBRARY_PATH` rerun the build script and may rebuild dependent
 bundle crates. Untrackable configurations force build-script reevaluation.
+Cargo watches existing compiler search candidates as files. It does not
+recursively watch search directories, which can contain Cargo's own generated
+outputs. The driver and report readers check the full directory inventory
+whenever they run, including newly added search candidates.
 
 [`tools/nvcc_cache/nvcc_cache.py`](../../tools/nvcc_cache/nvcc_cache.py) is a
 content-addressed cache behind that hook, shared by worktrees and fresh

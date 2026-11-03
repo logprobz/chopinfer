@@ -286,8 +286,6 @@ fn cargo_rebuilds_after_a_compiler_profile_change() {
 use std::{env, fs::OpenOptions, io::Write, process::Command};
 fn main() {
     let output = Command::new(env::var("COMPILER_FIXTURE_BINARY").unwrap())
-        .env("PATH", format!("{}:/usr/bin:/bin", env::var("COMPILER_FIXTURE_TOOL_BIN").unwrap()))
-        .env("LD_LIBRARY_PATH", "")
         .args(["cache_job", "--exact", "--nocapture", "--test-threads=1"])
         .output().unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
@@ -295,6 +293,7 @@ fn main() {
         if let Some(index) = line.find("cargo:rerun-") { println!("{}", &line[index..]); }
     }
     writeln!(OpenOptions::new().create(true).append(true).open("build-count").unwrap(), "build").unwrap();
+    std::fs::write(std::path::Path::new(&env::var_os("OUT_DIR").unwrap()).join("generated"), "generated").unwrap();
 }
 "#).unwrap();
     let job = format!(
@@ -310,7 +309,6 @@ fn main() {
             .args(["build", "--offline", "--quiet"])
             .env("CARGO_TARGET_DIR", scenario.dir.join("cargo-target"))
             .env("COMPILER_FIXTURE_BINARY", env::current_exe().unwrap())
-            .env("COMPILER_FIXTURE_TOOL_BIN", real.join("bin"))
             .env(JOB, &job)
             .envs(scenario.env.iter().map(|(name, value)| (name, value)))
             .output()
@@ -336,6 +334,11 @@ fn main() {
         run(),
         2,
         "Cargo must track nvcc.profile without a source edit"
+    );
+    assert_eq!(
+        run(),
+        2,
+        "Cargo must become fresh again after the compiler change"
     );
     assert_eq!(scenario.build("output", false, false).unwrap(), cold);
 }

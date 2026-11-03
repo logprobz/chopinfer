@@ -166,8 +166,16 @@ impl CompilerFreshness {
                 println!("cargo:rerun-if-changed={}", input.lookup.display());
             }
         }
-        for directory in self.search_directories.keys() {
-            println!("cargo:rerun-if-changed={}", directory.display());
+        // Cargo scans watched directories recursively. Its library search path
+        // includes the profile directory and therefore this script's own output.
+        // Watch existing candidates as files; each driver invocation and report
+        // validation still checks the complete search inventory.
+        for (directory, entries) in &self.search_directories {
+            for entry in entries.iter().flatten() {
+                if let Some((name, _)) = entry.rsplit_once(':') {
+                    println!("cargo:rerun-if-changed={}", directory.join(name).display());
+                }
+            }
         }
     }
 }

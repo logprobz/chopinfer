@@ -143,7 +143,9 @@ speculative arm that does not draft or a control that does, two arms with
 one startup nonce, and a pair of which only one arm is bound. A record that
 claims a binding must name a checkpoint identity, startup nonce, served
 name, tensor parallel size, KV dtype and speculation mode and tokens, or the
-comparison refuses it. The
+comparison refuses it. The mode may be any the host serves (`off`, `fixed`,
+`balanced`, `adaptive` or `table`), and it is `off` exactly when its tokens
+are 0. The
 identity covers file names, lengths and headers, not tensor bytes;
 `chopinfer verify --model` checks those.
 

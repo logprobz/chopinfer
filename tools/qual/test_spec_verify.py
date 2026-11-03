@@ -163,7 +163,8 @@ class CoverageTests(unittest.TestCase):
                 kind.score(forged)
 
 
-def bound(record, identity="a" * 64, model="served", tokens=0, tensor_parallel_size=2, kv="bf16", package=None):
+def bound(record, identity="a" * 64, model="served", tokens=0, tensor_parallel_size=2, kv="bf16", package=None,
+          mode=None):
     """`record` as a bound arm: its server's pinned checkpoint and serving profile."""
     record = copy.deepcopy(record)
     nonce = "1" * 32 if record["arm"] == "chopinfer-spec" else "0" * 32
@@ -172,7 +173,7 @@ def bound(record, identity="a" * 64, model="served", tokens=0, tensor_parallel_s
         checkpoint["package_identity"] = package
     record["server"] = {"model": model, "checkpoint": checkpoint}
     record["serving"] = {"tensor_parallel_size": tensor_parallel_size, "kv_cache_dtype": kv,
-                         "speculation": {"mode": "adaptive" if tokens else "off", "tokens": tokens,
+                         "speculation": {"mode": mode or ("adaptive" if tokens else "off"), "tokens": tokens,
                                          "drafter": "mtp" if tokens else None}}
     return record
 
@@ -219,6 +220,16 @@ class IdentityTests(unittest.TestCase):
                 (bound(self.spec, tokens=3, package="short"), bound(self.ar), "malformed package identity")):
             with self.subTest(message), self.assertRaisesRegex(ValueError, message):
                 spec_verify.compare_records(spec, ar)
+
+    def test_every_host_speculation_mode_binds(self):
+        # The host serves off, fixed, balanced, adaptive and table
+        # (runtime-host command.rs); the bounds compare emitted tokens at
+        # identical histories, whatever the depth policy.
+        for mode in ("fixed", "balanced", "adaptive", "table"):
+            with self.subTest(mode):
+                result = spec_verify.compare_records(bound(self.spec, tokens=5, mode=mode), bound(self.ar))
+                self.assertEqual(result["bound"]["serving"]["spec"]["speculation"], {
+                    "mode": mode, "tokens": 5, "drafter": "mtp"})
 
     def test_mismatched_arms_are_refused(self):
         for spec, ar, message in (
@@ -268,6 +279,10 @@ class IdentityTests(unittest.TestCase):
                 ((without(spec, "serving", "kv_cache_dtype"), without(ar, "serving", "kv_cache_dtype")),
                  "no KV cache dtype"),
                 ((changed(spec, {"mode": "off", "tokens": 3}, "serving", "speculation"), ar),
+                 "no consistent speculation"),
+                ((changed(spec, {"mode": "balanced", "tokens": 0}, "serving", "speculation"), ar),
+                 "no consistent speculation"),
+                ((changed(spec, {"mode": "eager", "tokens": 5}, "serving", "speculation"), ar),
                  "no consistent speculation"),
                 ((spec, without(ar, "serving", "speculation")), "no consistent speculation"),
                 ((spec, changed(ar, "1" * 32, "server", "checkpoint", "startup_nonce")), "one server process")):

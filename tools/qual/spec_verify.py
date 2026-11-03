@@ -148,7 +148,11 @@ def bound_server(record):
     # a mixed-plane layout such as a model's native trained KV formats.
     if kv not in ("bf16", "fp8", "mixed"):
         raise ValueError(f"a bound record names no KV cache dtype: {kv!r}")
-    if not (isinstance(speculation, dict) and speculation.get("mode") in ("off", "fixed", "adaptive")
+    # The host's speculation modes (runtime-host command.rs). The bounds
+    # compare emitted tokens with AR at identical histories, so the depth
+    # policy does not enter them.
+    if not (isinstance(speculation, dict)
+            and speculation.get("mode") in ("off", "fixed", "balanced", "adaptive", "table")
             and type(speculation.get("tokens")) is int and speculation["tokens"] >= 0
             and (speculation["mode"] == "off") == (speculation["tokens"] == 0)):
         raise ValueError(f"a bound record names no consistent speculation: {speculation!r}")

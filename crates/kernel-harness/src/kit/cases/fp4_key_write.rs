@@ -824,6 +824,10 @@ mod tests {
     use kernels_sm120::gated_pooling::key_write::Entry;
 
     fn prepared_case(query: Query) -> OpCase<'static> {
+        prepared_status_case(query, StatusCase::Normal)
+    }
+
+    fn prepared_status_case(query: Query, variant: StatusCase) -> OpCase<'static> {
         let entry = match query {
             Query::Index(q) => Entry::index(&q, "chop_fp4_test_v1").unwrap(),
             Query::IndexBf16(q) => {
@@ -853,7 +857,7 @@ mod tests {
                     .unwrap(),
             ),
         };
-        case(query, Box::new(prepared)).unwrap()
+        status_case(query, Box::new(prepared), variant).unwrap()
     }
 
     #[test]
@@ -1046,5 +1050,301 @@ mod tests {
             checked += 1;
         }
         assert_eq!(checked, 6);
+    }
+
+    /// One layout's exact oracle result: row status, codes or BF16 values,
+    /// and native scales (empty for BF16).
+    #[derive(Clone)]
+    struct Stored {
+        status: Vec<u8>,
+        codes: Vec<u8>,
+        scales: Vec<u8>,
+    }
+
+    fn stored(query: Query, images: &Images, live: u32) -> LabResult<Stored> {
+        let outputs = oracle(query, images, live)?;
+        let bits = |name: &str| match outputs.iter().find(|(n, _)| n == name) {
+            Some((_, Expected::Bits(bytes))) => Ok(bytes.clone()),
+            Some(_) => Err(format!("{name} is not exact")),
+            None if name == "scales" && !query.packed() => Ok(Vec::new()),
+            None => Err(format!("no {name} output")),
+        };
+        Ok(Stored {
+            status: bits("status")?,
+            codes: bits("codes")?,
+            scales: bits("scales")?,
+        })
+    }
+
+    /// The CPU form of `compare_storage_on_device`: every BF16 value the
+    /// comparison layout's oracle writes widens to the native oracle's code
+    /// times scale, bit for bit, and row status agrees. Compressed rows
+    /// decode as latent attention reads them. Returns the values compared.
+    fn bf16_holds_native(
+        query: Query,
+        images: (&Images, &Images),
+        live: u32,
+        native: &Stored,
+        bf16: &Stored,
+    ) -> LabResult<usize> {
+        use kernel_core::codec::{SmallFloat, decode_ue8m0_f64};
+        use kernel_core::latent_attention::LatentKvFormat;
+        use kernel_core::latent_attention_oracle::decode_native_page;
+        if native.status != bf16.status {
+            return Err("row status differs between layouts".into());
+        }
+        let width = query.width() as usize;
+        let scale_slots = slots(query, images.0, live, true)?;
+        let targets = slots(bf16_storage(query), images.1, live, false)?;
+        let mut compared = 0;
+        for (row, source) in slots(query, images.0, live, false)? {
+            let find = |slots: &[(usize, std::ops::Range<usize>)]| {
+                slots
+                    .iter()
+                    .find(|(r, _)| *r == row)
+                    .map(|(_, range)| range.clone())
+                    .ok_or(format!("row {row} is written in one layout only"))
+            };
+            let (scale, target) = (find(&scale_slots)?, find(&targets)?);
+            let decoded = match query {
+                Query::Compressed(_) => decode_native_page(
+                    LatentKvFormat::Fp4E2M1E4M3Block16,
+                    width,
+                    1,
+                    &[&native.codes[source], &native.scales[scale]].concat(),
+                    0,
+                )
+                .map_err(|e| format!("row {row}: {}", e.0))?,
+                Query::Index(_) | Query::IndexBf16(_) => (0..width)
+                    .map(|c| {
+                        let code = (native.codes[source.start + c / 2] >> (4 * (c % 2))) & 15;
+                        SmallFloat::E2M1.decode_f64(code)
+                            * decode_ue8m0_f64(native.scales[scale.start + c / 32])
+                    })
+                    .collect(),
+            };
+            for (channel, value) in decoded.into_iter().enumerate() {
+                let at = target.start + 2 * channel;
+                let bits = u16::from_le_bytes([bf16.codes[at], bf16.codes[at + 1]]);
+                if f64::from(bf16_to_f32(bits)).to_bits() != value.to_bits() {
+                    return Err(format!(
+                        "row {row} channel {channel}: BF16 {bits:#06x}, native {value:e}"
+                    ));
+                }
+                compared += 1;
+            }
+        }
+        Ok(compared)
+    }
+
+    /// Both layouts' cases must share every input image.
+    fn assert_same_inputs(query: Query, native: &Images, bf16: &Images) {
+        let mut names = vec![
+            "key",
+            "status",
+            "cos_sin",
+            "positions",
+            "row_batch",
+            "tables.tables",
+        ];
+        if matches!(query, Query::Index(_)) {
+            names.push("norm_weight");
+        }
+        for name in names {
+            assert_eq!(
+                native.bytes(name).unwrap(),
+                bf16.bytes(name).unwrap(),
+                "{query:?} {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn cpu_write_oracles_store_the_native_decode_in_bf16_for_every_status_case() {
+        let mut compared = 0;
+        for query in comparison_queries() {
+            for variant in std::iter::once(StatusCase::Normal).chain(STATUS_CASES) {
+                if status_family_for(variant, [query]).is_empty() {
+                    continue;
+                }
+                let native = prepared_status_case(query, variant).images();
+                let bf16 = prepared_status_case(bf16_storage(query), variant).images();
+                assert_same_inputs(query, &native, &bf16);
+                for live in [1, 3, CAPACITY] {
+                    let left = stored(query, &native, live).unwrap();
+                    let right = stored(bf16_storage(query), &bf16, live).unwrap();
+                    compared += bf16_holds_native(query, (&native, &bf16), live, &left, &right)
+                        .unwrap_or_else(|e| panic!("{variant:?} {query:?} live {live}: {e}"));
+                }
+            }
+        }
+        assert!(compared > 0);
+    }
+
+    type Blocks = Vec<(Vec<f32>, u8)>;
+
+    /// The blocks of `kernel-core/tests/logical_kv_values.rs`, sixteen
+    /// values each, with the E4M3 scale byte each takes outside the rotated
+    /// tail. Grids hold every E2M1 code at scales from the floor (0x01)
+    /// through every subnormal and the smallest normal to the largest finite
+    /// scale (0x7e). Rounded blocks hold signed zeros, inputs below and one
+    /// BF16 step above the floor, scale and code ties, saturation, the
+    /// largest BF16 input and an F32 input that rounds to BF16 before amax.
+    fn compressed_edge_blocks() -> (Blocks, Blocks) {
+        use kernel_core::codec::SmallFloat;
+        let spread =
+            |seed: usize, i: usize| ((seed * 7919 + i * 104_729) % 2001) as f32 / 1000.0 - 1.0;
+        let block = |seed: usize, amax: f32, scale: f32| {
+            (0..16)
+                .map(|i| {
+                    if i == 0 {
+                        amax
+                    } else {
+                        spread(seed, i) * scale
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        let grids = [
+            0x01_u8, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x10, 0x20, 0x30, 0x37, 0x38,
+            0x40, 0x48, 0x50, 0x60, 0x70, 0x77, 0x7c, 0x7d, 0x7e,
+        ]
+        .map(|scale| {
+            let block = (0..16)
+                .map(|code| {
+                    (SmallFloat::E2M1.decode_f64(code) * SmallFloat::E4M3.decode_f64(scale)) as f32
+                })
+                .collect();
+            (block, scale)
+        })
+        .to_vec();
+        let floor = 6.0 * 2_f32.powi(-9);
+        let rounded = vec![
+            (
+                (0..16)
+                    .map(|i| if i % 2 == 0 { 0.0 } else { -0.0 })
+                    .collect(),
+                0x01,
+            ),
+            (
+                (0..16)
+                    .map(|i| (i as f32 - 7.5) * 2_f32.powi(-13))
+                    .collect(),
+                0x01,
+            ),
+            (
+                block(
+                    1,
+                    f32::from_bits(floor.to_bits() + 0x1_0000),
+                    2_f32.powi(-8),
+                ),
+                0x01,
+            ),
+            // 7 / 6 rounds to the scale 1.125.
+            (block(2, 7.0, 6.5), 0x39),
+            // Code ties at scale 1 round to even.
+            (
+                vec![
+                    6.0, 1.25, -1.25, 2.5, -2.5, 5.0, -5.0, 0.25, -0.25, 0.75, -0.75, 1.75, -1.75,
+                    3.5, -3.5, 0.5,
+                ],
+                0x38,
+            ),
+            (block(3, 3000.0, 2900.0), 0x7e),
+            (block(4, bf16_to_f32(0x7f7f), 1e38), 0x7e),
+            // BF16 rounding makes 7.125 an E4M3 scale tie, which rounds to 1.25.
+            (block(5, 7.125 - 2_f32.powi(-20), 6.5), 0x3a),
+            (block(6, 5.25, 5.0), 0x36),
+        ];
+        (grids, rounded)
+    }
+
+    #[test]
+    fn compressed_write_oracle_stores_the_native_decode_in_bf16_at_edge_scales() {
+        use kernel_core::precision::quantizer::{INVALID_E4M3_SCALE, SCALE_OVERFLOW};
+        let (grids, rounded) = compressed_edge_blocks();
+        // 28 blocks before the 64-channel rotated tail; each row's tail is a
+        // moderate grid that RoPE cannot overflow.
+        let rows = [
+            [&rounded[..], &grids[..19], &grids[19..]].concat(),
+            [&grids[4..], &rounded[..], &grids[..4]].concat(),
+        ];
+        let mut key = Vec::new();
+        for row in [0, 1, 0, 0, 0, 1] {
+            key.extend(rows[row].iter().flat_map(|(block, _)| block.clone()));
+        }
+        key[2 * 512 + 5] = f32::NAN;
+        // F32 above the largest BF16 rounds to infinity.
+        key[4 * 512] = f32::MAX;
+        let prior = [0_u32, 0, 0, 0, 0, SCALE_OVERFLOW];
+        let status_bytes = prior
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect::<Vec<_>>();
+        let mut checked = 0;
+        for query in comparison_queries() {
+            if !matches!(query, Query::Compressed(_)) {
+                continue;
+            }
+            let inputs = |query: Query| {
+                prepared_case(query)
+                    .images()
+                    .with("key", f32_bytes(&key))
+                    .with("status", status_bytes.clone())
+            };
+            let (native_images, bf16_images) = (inputs(query), inputs(bf16_storage(query)));
+            assert_same_inputs(query, &native_images, &bf16_images);
+            let native = stored(query, &native_images, CAPACITY).unwrap();
+            let bf16 = stored(bf16_storage(query), &bf16_images, CAPACITY).unwrap();
+            let words = native
+                .status
+                .chunks_exact(4)
+                .map(|v| u32::from_le_bytes(v.try_into().unwrap()))
+                .collect::<Vec<_>>();
+            // Row 3 is a hole, so its status stays untouched.
+            assert_eq!(
+                words,
+                [0, 0, NONFINITE_INPUT, 0, NONFINITE_INPUT, SCALE_OVERFLOW]
+            );
+            let codes = slots(query, &native_images, CAPACITY, false).unwrap();
+            let scales = slots(query, &native_images, CAPACITY, true).unwrap();
+            assert_eq!(
+                scales.iter().map(|(row, _)| *row).collect::<Vec<_>>(),
+                [0, 1, 2, 4, 5]
+            );
+            for (row, range) in &scales {
+                let written = &native.scales[range.clone()];
+                if let Some(blocks) = rows.get(*row) {
+                    let expected = blocks[..28].iter().map(|(_, s)| *s).collect::<Vec<_>>();
+                    assert_eq!(&written[..28], expected, "{query:?} row {row}");
+                } else {
+                    // Flagged rows write zero codes and the invalid scale 1.
+                    assert!(written.iter().all(|&s| s == INVALID_E4M3_SCALE));
+                    let (_, codes) = &codes[codes.iter().position(|(r, _)| r == row).unwrap()];
+                    assert!(native.codes[codes.clone()].iter().all(|&c| c == 0));
+                }
+            }
+            let images = (&native_images, &bf16_images);
+            assert_eq!(
+                bf16_holds_native(query, images, CAPACITY, &native, &bf16).unwrap(),
+                5 * 512
+            );
+            // One corrupted stored byte in either layout fails the comparison.
+            let target = slots(bf16_storage(query), &bf16_images, CAPACITY, false).unwrap()[0]
+                .1
+                .start;
+            let mut bad = bf16.clone();
+            bad.codes[target + 2 * 40 + 1] ^= 1;
+            assert!(bf16_holds_native(query, images, CAPACITY, &native, &bad).is_err());
+            let mut bad = native.clone();
+            bad.codes[codes[1].1.start + 3] ^= 0x10;
+            assert!(bf16_holds_native(query, images, CAPACITY, &bad, &bf16).is_err());
+            // Scale 0x01 to 0x03 keeps a valid scale but changes every value.
+            let mut bad = native.clone();
+            bad.scales[scales[0].1.start + 2] ^= 2;
+            assert!(bf16_holds_native(query, images, CAPACITY, &bad, &bf16).is_err());
+            checked += 1;
+        }
+        assert_eq!(checked, 2);
     }
 }

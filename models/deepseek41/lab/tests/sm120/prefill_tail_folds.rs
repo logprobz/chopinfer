@@ -115,7 +115,7 @@ fn calls(
     e: &Entry,
     rows: u32,
     b: Buffers<View>,
-    candidate: bool,
+    partition_tail: bool,
 ) -> LabResult<Vec<Launch>> {
     let q = e.query;
     let op = if rows >= tiled::TILE {
@@ -127,7 +127,7 @@ fn calls(
     let mut result = op
         .launches(&b, View::EMPTY, Counts::rows(rows))
         .map_err(|e| e.to_string())?;
-    let partition = candidate
+    let partition = partition_tail
         .then(|| {
             registration::prefill_tail_partition(
                 rows,

@@ -11,9 +11,10 @@ not needed, and no branch or tag is created.
 | Template exposure | `641eccbacc3f41273f1bd1c1594262ea963048fc` | [template checks](prompt-end-anchors-fixtures-stage.patch) | `b6739a33bb7b0e9740a82c3fb3ba891a19195a60` |
 | Workspace reservation | `b8b736b056f9d0997a91997a4943d574553678b0` | [workspace control](prefill-tail-folds-workspace-stage.patch) | `4b6852cef85a2855089a0b2755ac90e787b9d12b` |
 
-Template exposure replaces the four direct digest checks with named
-`check_journal` calls, retaining all original expected pins. The two
-long-context verification modes expose six bodies from four pins.
+Template exposure replaces two direct digest call sites with named
+`check_journal` calls, retaining all original expected pins. It exposes four
+long-context bodies from two pins, plus two failed-template bodies from
+two pins.
 Workspace reservation grows the Flash TP4 scratch bounds while retaining
 the previous dense routes. Its pins include the attention arguments that
 pass a whole workspace. The patch contains the final sealed control,

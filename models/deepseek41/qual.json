@@ -493,6 +493,36 @@
           "op": "eq",
           "value": true,
           "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "summary",
+            "overall",
+            "validity_rate"
+          ],
+          "op": "ge",
+          "value": 1.0,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "summary",
+            "overall",
+            "refused"
+          ],
+          "op": "eq",
+          "value": 0,
+          "source": "tools/qual/README.md#release-gates"
+        },
+        {
+          "path": [
+            "summary",
+            "overall",
+            "truncated"
+          ],
+          "op": "eq",
+          "value": 0,
+          "source": "tools/qual/README.md#release-gates"
         }
       ]
     },

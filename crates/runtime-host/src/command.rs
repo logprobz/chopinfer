@@ -16,7 +16,9 @@
 //! discovers bounded installed preparation helpers, then selects one canonical
 //! package. There is no hot reload or checkpoint-code execution.
 
+pub(crate) mod serve_config;
 pub(crate) mod serve_options;
+use serve_config::*;
 use serve_options::*;
 
 use crate::preparation::{LocalModel, ServeSelection};
@@ -1081,7 +1083,7 @@ fn terminal_flag_v1(arguments: &[String], flags: &[&str]) -> bool {
         if flags.contains(&word.as_str()) {
             return words.peek().is_none();
         }
-        if !word.starts_with('-') || VALUELESS_FLAGS_V1.contains(&word.as_str()) {
+        if !word.starts_with('-') || is_valueless_v1(word) {
             continue;
         }
         words.next();
@@ -1418,76 +1420,6 @@ fn parse_kernel_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCo
     })
 }
 
-fn resolve_api_key_v1(
-    cli: Option<runtime_server::ApiKey>,
-    chopinfer: Option<String>,
-    vllm: Option<String>,
-) -> Option<runtime_server::ApiKey> {
-    cli.or_else(|| {
-        chopinfer
-            .filter(|value| !value.is_empty())
-            .or_else(|| vllm.filter(|value| !value.is_empty()))
-            .map(|value| runtime_server::ApiKey::new(&value))
-    })
-}
-
-/// `CHOPINFER_LOG_LEVEL`, the level a serve without `--log-level` uses;
-/// `info` when it is unset.
-fn environment_log_level_v1() -> Result<runtime_log::Level, HostCommandErrorV1> {
-    log_level_from_v1(std::env::var("CHOPINFER_LOG_LEVEL").ok().as_deref())
-}
-
-fn log_level_from_v1(value: Option<&str>) -> Result<runtime_log::Level, HostCommandErrorV1> {
-    value.map_or(Ok(runtime_log::Level::Info), |value| {
-        runtime_log::Level::parse(value)
-            .ok_or_else(|| usage_error("CHOPINFER_LOG_LEVEL must be error, warn, info or debug"))
-    })
-}
-
-/// `CHOPINFER_LOG_SUMMARY_SECONDS`: how often serve writes its summary line,
-/// from a second to a day, or `None` for the server's default.
-fn summary_interval_from_v1(
-    value: Option<&str>,
-) -> Result<Option<std::time::Duration>, HostCommandErrorV1> {
-    value
-        .map(|value| {
-            value
-                .parse::<u64>()
-                .ok()
-                .filter(|seconds| (1..=86_400).contains(seconds))
-                .map(std::time::Duration::from_secs)
-                .ok_or_else(|| {
-                    usage_error(
-                        "CHOPINFER_LOG_SUMMARY_SECONDS must be a whole number of seconds from 1 to 86400",
-                    )
-                })
-        })
-        .transpose()
-}
-
-fn model_options_environment_v1(value: Option<&str>) -> Result<Vec<String>, HostCommandErrorV1> {
-    let Some(value) = value else {
-        return Ok(Vec::new());
-    };
-    let mut names = std::collections::BTreeSet::new();
-    let mut args = Vec::new();
-    for assignment in value.split(',') {
-        let (name, value) = assignment
-            .split_once('=')
-            .ok_or_else(|| usage_error("CHOPINFER_MODEL_OPTIONS requires name=value,..."))?;
-        if !runtime_bundle::model_options::valid_name(name)
-            || value.len() > 1024
-            || !names.insert(name)
-        {
-            return Err(usage_error(
-                "CHOPINFER_MODEL_OPTIONS contains an invalid or repeated option",
-            ));
-        }
-        args.extend(["--model-option".into(), assignment.into()]);
-    }
-    Ok(args)
-}
-
 /// The effective serving settings of a parsed serve command: each setting
 /// keyed by the serve flag that sets it, without `--`, and valued as that
 /// flag's value. `models --json` reports a profile's and `serve --check` a
@@ -1655,369 +1587,6 @@ pub(crate) fn effective_settings_v1(
     );
     set("verify-warmup", on_off(serving.verify_warmup));
     settings
-}
-
-fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCommandErrorV1> {
-    let env_defaults =
-        model_options_environment_v1(std::env::var("CHOPINFER_MODEL_OPTIONS").ok().as_deref())?;
-    let arguments = crate::profiles::apply_defaults(&env_defaults, arguments);
-    let resolved = crate::profiles::resolve(&arguments)?;
-    let parsed = ArgumentsV1::parse(&resolved.arguments)?;
-    let accepted: Vec<&'static str> = SERVE_OPTIONS_V1.iter().map(|option| option.flag).collect();
-    parsed.reject_unsupported("serve", &accepted)?;
-    let direct_checkpoint = match &parsed.direct_checkpoint {
-        Some(_) if parsed.model.is_some() => {
-            return Err(usage_error(
-                "--model loads its own checkpoint; --checkpoint names the checkpoint of a --bundle",
-            ));
-        }
-        Some(path) if path.as_os_str().is_empty() => {
-            return Err(usage_error("--checkpoint needs a directory"));
-        }
-        checkpoint => checkpoint.clone(),
-    };
-    let load_threads = match parsed.load_threads {
-        Some(_) if direct_checkpoint.is_none() && parsed.model.is_none() => {
-            return Err(usage_error(
-                "--load-threads requires --model or --checkpoint",
-            ));
-        }
-        Some(threads) => Some(
-            u16::try_from(threads)
-                .ok()
-                .and_then(std::num::NonZeroU16::new)
-                .ok_or_else(|| usage_error("--load-threads takes a count from 1 to 65535"))?,
-        ),
-        None => None,
-    };
-    // A keeper lends rank images a checkpoint's plans produce, so only a
-    // direct load can borrow them.
-    let weight_keeper = match (&parsed.weight_keeper, parsed.weight_keeper_policy) {
-        (None, None) => None,
-        (None, Some(_)) => {
-            return Err(usage_error(
-                "--weight-keeper-policy requires --weight-keeper",
-            ));
-        }
-        (Some(_), _) if direct_checkpoint.is_none() && parsed.model.is_none() => {
-            return Err(usage_error(
-                "--weight-keeper requires --model or --checkpoint",
-            ));
-        }
-        (Some(directory), policy) => Some((
-            directory.clone(),
-            policy.unwrap_or(crate::weight_keeper::KeeperPolicyV1::Prefer),
-        )),
-    };
-    let listen = match &parsed.listen {
-        Some(listen) => listen.clone(),
-        None => DEFAULT_LISTEN_ADDRESS_V1.to_owned(),
-    };
-    let listen = listen.parse::<SocketAddr>().map_err(|error| {
-        usage_error(format!(
-            "--listen takes an address and port, got '{listen}': {error}"
-        ))
-    })?;
-    let maximum_sequences = parsed
-        .maximum_sequences
-        .unwrap_or(DEFAULT_SERVED_SEQUENCES_V1);
-    if maximum_sequences == 0 {
-        return Err(usage_error("--max-sequences must admit at least one"));
-    }
-    if parsed.kv_pages == Some(0) {
-        return Err(usage_error("--kv-pages must allow at least one page"));
-    }
-    let budget_bytes = parsed
-        .kv_offload_gib
-        .unwrap_or(0)
-        .checked_mul(1024 * 1024 * 1024)
-        .ok_or_else(|| usage_error("--kv-offload-gib overflows bytes"))?;
-    if budget_bytes != 0 && parsed.optimistic_admission == Some(false) {
-        return Err(usage_error(
-            "--kv-offload-gib requires --admission optimistic",
-        ));
-    }
-    if parsed.kv_offload_prefix == Some(true) {
-        return Err(usage_error(
-            "--kv-offload-prefix on requires the deferred host prefix cache",
-        ));
-    }
-    let kv_offload = crate::offload::KvOffloadOptionsV1 {
-        budget_bytes,
-        minimum_tokens: parsed.kv_offload_min_tokens.unwrap_or(64),
-        bytes_per_second: parsed.kv_offload_rate,
-    };
-    if parsed.debug_swap_every.is_some()
-        && (budget_bytes == 0 || parsed.optimistic_admission == Some(false))
-    {
-        return Err(usage_error(
-            "--debug-swap-every requires positive --kv-offload-gib and --admission optimistic",
-        ));
-    }
-    if parsed.debug_swap_every == Some(0) {
-        return Err(usage_error("--debug-swap-every must be positive"));
-    }
-    if parsed.debug_swap_every.is_some() && parsed.debug_preempt_every.is_some() {
-        return Err(usage_error(
-            "choose --debug-swap-every or --debug-preempt-every",
-        ));
-    }
-    let admission = match parsed.optimistic_admission {
-        Some(true) | None => {
-            let defaults = OptimisticAdmission::DEFAULT;
-            let optimistic = OptimisticAdmission::new(
-                parsed
-                    .admission_watermark_millionths
-                    .unwrap_or(defaults.watermark_millionths()),
-                parsed
-                    .maximum_preemptions
-                    .unwrap_or(defaults.maximum_preemptions()),
-            )
-            .map_err(|error| usage_error(error.to_string()))?;
-            let optimistic = match parsed.debug_swap_every.or(parsed.debug_preempt_every) {
-                Some(every) => optimistic
-                    .with_forced_preemption(every)
-                    .map_err(|_| usage_error("--debug-preempt-every must be positive"))?,
-                None => optimistic,
-            };
-            AdmissionPolicy::Optimistic(optimistic)
-        }
-        Some(false) => {
-            for (flag, given) in [
-                (
-                    "--admission-watermark",
-                    parsed.admission_watermark_millionths.is_some(),
-                ),
-                ("--max-preemptions", parsed.maximum_preemptions.is_some()),
-                (
-                    "--debug-preempt-every",
-                    parsed.debug_preempt_every.is_some(),
-                ),
-            ] {
-                if given {
-                    return Err(usage_error(format!(
-                        "{flag} requires --admission optimistic"
-                    )));
-                }
-            }
-            AdmissionPolicy::Reserved
-        }
-    };
-    // `serve --model` gets its speculation and scheduling defaults from the
-    // family's serving profile only after its package is selected, and then
-    // parses the whole serve again with them. Only checks that depend on
-    // those defaults (speculation needs tokens, a TBT target needs the TBT
-    // budget) wait for that parse; every explicit value is checked here.
-    let profile_pending = parsed.model.is_some();
-    let prefill_budget = prefill_budget_v1(&parsed, profile_pending)?;
-    let prefill_policy = parsed.prefill_policy.unwrap_or_default();
-    if !profile_pending
-        && parsed.speculation_mode.is_some()
-        && parsed.speculative_tokens.unwrap_or(0) == 0
-    {
-        return Err(usage_error(
-            "--speculation requires positive --speculative-tokens",
-        ));
-    }
-    if matches!(parsed.speculation_mode, Some(SpeculationMode::Table(_)))
-        != parsed.speculation_costs.is_some()
-    {
-        return Err(usage_error(
-            "--speculation table requires --speculation-costs, which only it uses",
-        ));
-    }
-    if parsed.speculation_depths.is_some()
-        && !matches!(parsed.speculation_mode, Some(SpeculationMode::Balanced(_)))
-    {
-        return Err(usage_error(
-            "--speculation-depths requires --speculation balanced, which only it uses",
-        ));
-    }
-    if parsed.speculation_widths.is_some()
-        && !matches!(parsed.speculation_mode, Some(SpeculationMode::Balanced(_)))
-    {
-        return Err(usage_error(
-            "--speculation-widths requires --speculation balanced, which only it uses",
-        ));
-    }
-    let verify_confidence = parsed.speculation_confidence.clone().flatten();
-    if let Some(confidence) = &verify_confidence {
-        // With a pending profile, the profile may give the tokens and the
-        // balanced mode; an explicit other mode is refused at once.
-        let tokens = parsed.speculative_tokens.unwrap_or(0);
-        let balanced = matches!(parsed.speculation_mode, Some(SpeculationMode::Balanced(_)));
-        let pending = profile_pending && (parsed.speculation_mode.is_none() || balanced);
-        if !pending && (tokens == 0 || !balanced) {
-            return Err(usage_error(
-                "--speculation-confidence requires --speculation balanced and speculative \
-                 tokens, which only it uses",
-            ));
-        }
-        if confidence.positions() < tokens {
-            return Err(usage_error(format!(
-                "--speculation-confidence calibrates {} draft positions, fewer than the {tokens} \
-                 speculative tokens",
-                confidence.positions()
-            )));
-        }
-    }
-    let mut http_options = parsed.http_options.clone();
-    http_options.api_key = resolve_api_key_v1(
-        http_options.api_key,
-        std::env::var("CHOPINFER_API_KEY").ok(),
-        std::env::var("VLLM_API_KEY").ok(),
-    );
-    http_options.summary_interval = summary_interval_from_v1(
-        std::env::var("CHOPINFER_LOG_SUMMARY_SECONDS")
-            .ok()
-            .as_deref(),
-    )?;
-    http_options.validate().map_err(usage_error)?;
-    if !profile_pending
-        && parsed.speculative_rows.is_some()
-        && parsed.speculative_tokens.unwrap_or(0) == 0
-    {
-        return Err(usage_error(
-            "--speculative-rows requires positive --speculative-tokens",
-        ));
-    }
-    if !profile_pending
-        && parsed.speculation_graph_rows.is_some()
-        && parsed.speculative_tokens.unwrap_or(0) == 0
-    {
-        return Err(usage_error(
-            "--speculation-graph-rows requires positive --speculative-tokens",
-        ));
-    }
-    let mut model_options = parsed.model_options.clone();
-    if let Some(rows) = parsed.speculation_graph_rows
-        && model_options
-            .insert(
-                runtime_bundle_abi::VERIFY_GRAPH_ROWS_OPTION_V1.into(),
-                rows.to_string(),
-            )
-            .is_some()
-    {
-        return Err(usage_error(format!(
-            "--speculation-graph-rows sets the model option '{}'; give one of them",
-            runtime_bundle_abi::VERIFY_GRAPH_ROWS_OPTION_V1
-        )));
-    }
-    if parsed.model.is_none() && parsed.activation_policy.is_some() {
-        return Err(usage_error(
-            "--activation-policy applies to --model; an explicit package serves the precision \
-             it was emitted with",
-        ));
-    }
-    if parsed.model.is_none() && parsed.modalities.is_some() {
-        return Err(usage_error(
-            "--modalities applies to --model; an explicit package serves the modalities it was \
-             emitted with",
-        ));
-    }
-    Ok(HostCommandV1::Serve {
-        model_options,
-        list_model_options: parsed.list_model_options,
-        check: parsed.check,
-        profile_name: resolved.profile,
-        profile_drafter: resolved.drafter,
-        qualified_max_sequences: resolved.qualified_max_sequences,
-        direct_package: None,
-        http_options: Box::new(http_options),
-        log_level: match parsed.log_level {
-            Some(level) => level,
-            None => environment_log_level_v1()?,
-        },
-        devices: parsed
-            .devices
-            .clone()
-            .map(|ordinals| Box::new(crate::DeviceSelectionV1(ordinals))),
-        host: Box::new(parsed.host_compatibility()?),
-        topology: parsed.topology.clone(),
-        device: parsed.device_services(),
-        listen,
-        serving: Box::new(ServingOptionsV1 {
-            maximum_context_tokens: parsed.maximum_context_tokens,
-            maximum_sequences,
-            maximum_connections: parsed
-                .maximum_connections
-                .unwrap_or(runtime_server::DEFAULT_MAX_CONNECTIONS),
-            maximum_batch_tokens: parsed.maximum_batch_tokens,
-            prefill_chunk_tokens: parsed.prefill_chunk_tokens,
-            queue_depth: parsed.queue_depth,
-            queue_wait_ms: parsed.queue_wait_ms.unwrap_or(DEFAULT_QUEUE_WAIT_MS_V1),
-            drain_timeout_ms: parsed.drain_timeout_ms.unwrap_or(30_000),
-            maximum_request_body_bytes: parsed.maximum_request_body_bytes,
-            maximum_request_string_bytes: parsed.maximum_request_string_bytes,
-            responses_store_bytes: parsed.responses_store_bytes.unwrap_or(0),
-            maximum_tokenizer_input_bytes: parsed.maximum_tokenizer_input_bytes,
-            maximum_images_per_request: match parsed.maximum_images_per_request {
-                Some(count) if count == 0 || count > usize::from(u16::MAX) => {
-                    return Err(usage_error(
-                        "--max-images-per-request takes a count from 1 to 65535",
-                    ));
-                }
-                count => count,
-            },
-            gpu_memory_utilization_millionths: parsed
-                .gpu_memory_utilization_millionths
-                .unwrap_or(1_000_000),
-            graph_memory_reserve_bytes: parsed
-                .graph_memory_reserve_mib
-                .map_or(DEFAULT_GRAPH_MEMORY_RESERVE_BYTES_V1, |mib| mib << 20),
-            kv_pages: parsed.kv_pages.map(|pages| pages as u64),
-            context_parallel_size: match parsed.context_parallel_size {
-                Some(0) => return Err(usage_error("--context-parallel-size must be at least 1")),
-                size => size.unwrap_or(1),
-            },
-            kv_cache_dtype: parsed.kv_cache_dtype.unwrap_or_default(),
-            prefix_cache: parsed.prefix_cache.unwrap_or(true),
-            reply_history_observer: parsed.reply_history_observer.unwrap_or(false),
-            debug_swap: parsed.debug_swap_every.is_some(),
-            kv_offload,
-            verify_warmup: parsed.verify_warmup.unwrap_or(true),
-            admission,
-            prefill_budget,
-            prefill_policy,
-            prewarm_mapped_views: parsed.prewarm_mapped_views.unwrap_or_default(),
-        }),
-        speculative_tokens: parsed.speculative_tokens.unwrap_or(0),
-        speculative_rows: parsed
-            .speculative_rows
-            .map(|rows| {
-                u16::try_from(rows)
-                    .map_err(|_| usage_error("--speculative-rows must be at most 65535"))
-            })
-            .transpose()?,
-        speculation_mode: match (
-            parsed.speculation_mode,
-            parsed.speculation_costs,
-            parsed.speculation_depths,
-        ) {
-            (Some(SpeculationMode::Table(_)), Some(costs), _) => SpeculationMode::Table(costs),
-            (Some(SpeculationMode::Balanced(_)), _, Some(depths)) => {
-                SpeculationMode::Balanced(depths)
-            }
-            (mode, _, _) => mode.unwrap_or(SpeculationMode::Adaptive),
-        },
-        draft_cost_model: parsed.draft_cost_model.unwrap_or_default(),
-        verify_widths: parsed.speculation_widths.unwrap_or_default(),
-        verify_confidence: verify_confidence.map(Box::new),
-        allowed_local_media_path: parsed.allowed_local_media_path.clone(),
-        remote_media: Box::new(parsed.remote_media.clone()),
-        debug_reference_tokens: parsed.debug_reference_tokens.clone(),
-        direct_checkpoint,
-        load_threads,
-        weight_keeper,
-        weight_keeper_identity: parsed.weight_keeper_identity.clone(),
-        selection: match parsed.serve_selection()? {
-            ServeSelection::Model(model) => ServeSelection::Model(Box::new(LocalModel {
-                serve_arguments: crate::profiles::serving_options(&resolved.arguments),
-                ..*model
-            })),
-            bundle => bundle,
-        },
-    })
 }
 
 fn parse_conformance_run_command_v1(
@@ -2428,14 +1997,15 @@ fn run_host_command_from_v1(
                     }
                     // The options are judged against the family's profile
                     // before any package work, as they are after it.
+                    let overrides = ServingInputsV1::decode(&model.serve_arguments)?;
                     let check = |profile: &runtime_bundle::preparation::DirectProfile| {
-                        let resolution = crate::profiles::direct_arguments(
+                        let resolution = crate::profiles::direct_inputs(
                             profile,
                             model.tensor_parallel_size,
-                            &model.serve_arguments,
+                            &overrides,
                             Path::new("/direct-package"),
                         )?;
-                        parse_serve_command_v1(&resolution.arguments[1..])?;
+                        resolution.command()?;
                         Ok(())
                     };
                     let (package, lease) = crate::preparation::prepare_direct(model, &check)
@@ -2445,16 +2015,13 @@ fn run_host_command_from_v1(
                         let verified = crate::install::verify_selected_bundle_v1(&selected, host)?;
                         // The profile's options under the explicit ones, as
                         // a start serves them, against the package's limits.
-                        let resolution = crate::profiles::direct_arguments(
+                        let resolution = crate::profiles::direct_inputs(
                             &package.profile,
                             model.tensor_parallel_size,
-                            &model.serve_arguments,
+                            &overrides,
                             &package.bundle,
                         )?;
-                        check_speculation_bounds_v1(
-                            verified.manifest(),
-                            &parse_serve_command_v1(&resolution.arguments[1..])?,
-                        )?;
+                        check_speculation_bounds_v1(verified.manifest(), &resolution.command()?)?;
                         verified.manifest().resolve_model_options(model_options)?;
                         return serde_json::to_string_pretty(&verified.manifest().model_options())
                             .map_err(|e| run_error(e.to_string()));
@@ -2494,17 +2061,17 @@ fn run_host_command_from_v1(
                     // uses for this checkpoint and rank count) as defaults
                     // under the explicit options. The selected checkpoint
                     // makes its load direct.
-                    let resolution = crate::profiles::direct_arguments(
+                    let resolution = crate::profiles::direct_inputs(
                         &package.profile,
                         model.tensor_parallel_size,
-                        &model.serve_arguments,
+                        &overrides,
                         &package.bundle,
                     )?;
                     runtime_log::info!(
                         "startup direct_profile: {} (explicit options override it)",
                         package.profile.name
                     );
-                    let mut command = parse_serve_command_v1(&resolution.arguments[1..])?;
+                    let mut command = resolution.command()?;
                     if let HostCommandV1::Serve {
                         profile_name,
                         profile_drafter,
@@ -6185,9 +5752,6 @@ fn declared_topologies_v1(topologies: &[BundleTopologyV1]) -> String {
         .join(", ")
 }
 
-/// The largest decode TBT target, one minute.
-const MAXIMUM_DECODE_TBT_TARGET_MS_V1: usize = 60_000;
-
 /// Bounds the instance's grid anchor allowance by the bundle's sequence limit.
 /// An absent export leaves the grid allowance unset; manifest anchors are separate.
 fn grid_anchor_items_v1(
@@ -6203,36 +5767,6 @@ fn grid_anchor_items_v1(
             .map(Some)
             .map_err(|_| "prefill anchor items do not fit this host".to_owned()),
         None => Ok(None),
-    }
-}
-
-/// Resolve the public policy into the scheduler's existing budget. A direct
-/// model profile can supply an omitted policy after package selection.
-fn prefill_budget_v1(
-    parsed: &ArgumentsV1,
-    profile_pending: bool,
-) -> Result<runtime_scheduler::PrefillBudget, HostCommandErrorV1> {
-    use runtime_scheduler::{MixedPolicy, PrefillBudget};
-    let target = parsed.decode_tbt_target_ms.unwrap_or(100);
-    if !(1..=MAXIMUM_DECODE_TBT_TARGET_MS_V1).contains(&target) {
-        return Err(usage_error(format!(
-            "--decode-tbt-target-ms must be 1 to {MAXIMUM_DECODE_TBT_TARGET_MS_V1}"
-        )));
-    }
-    match parsed.prefill_policy.unwrap_or_default() {
-        PrefillPolicyV1::Fixed => {
-            if parsed.decode_tbt_target_ms.is_some()
-                && !(profile_pending && parsed.prefill_policy.is_none())
-            {
-                return Err(usage_error(
-                    "--decode-tbt-target-ms requires --prefill-policy tbt or adaptive",
-                ));
-            }
-            Ok(PrefillBudget::Fixed)
-        }
-        PrefillPolicyV1::Tbt | PrefillPolicyV1::Adaptive => MixedPolicy::new(target as u32, 512, 0)
-            .map(PrefillBudget::Tbt)
-            .map_err(|error| usage_error(error.to_string())),
     }
 }
 
@@ -6263,7 +5797,7 @@ fn validate_label_v1(label: &str) -> Result<(), HostCommandErrorV1> {
     Ok(())
 }
 
-fn usage_error(message: impl Into<String>) -> HostCommandErrorV1 {
+pub(crate) fn usage_error(message: impl Into<String>) -> HostCommandErrorV1 {
     HostCommandErrorV1::Usage(format!("{}\n{HOST_COMMAND_USAGE_V1}", message.into()))
 }
 
@@ -8420,7 +7954,7 @@ mod tests {
 
     #[test]
     fn shared_valueless_flags_are_parsed_without_consuming_values() {
-        for flag in super::VALUELESS_FLAGS_V1 {
+        for flag in super::valueless_flags_v1() {
             assert!(
                 super::ArgumentsV1::parse(&[flag.to_string()]).is_ok(),
                 "{flag}"
@@ -11361,13 +10895,17 @@ mod model_option_tests {
     use super::*;
     #[test]
     fn environment_options_validate_and_explicit_names_take_precedence() {
+        let environment = |value: &str| {
+            EnvironmentV1::read(|name| {
+                (name == "CHOPINFER_MODEL_OPTIONS").then(|| value.to_owned())
+            })
+        };
         for value in ["", "budget", "budget=8,budget=4", "bad name=1"] {
-            assert!(model_options_environment_v1(Some(value)).is_err());
+            assert!(environment(value).is_err());
         }
-        let defaults = model_options_environment_v1(Some("budget=8,mode=fast")).unwrap();
+        let defaults = environment("budget=8,mode=fast").unwrap();
         let explicit = ["--model-option", "budget=4"].map(String::from);
-        let merged = crate::profiles::apply_defaults(&defaults, &explicit);
-        let parsed = ArgumentsV1::parse(&merged).unwrap();
+        let parsed = defaults.model_defaults(ServingInputsV1::decode(&explicit).unwrap());
         assert_eq!(
             parsed.model_options.get("budget").map(String::as_str),
             Some("4")
@@ -11483,18 +11021,14 @@ mod serve_option_tests {
             "    pub(super) fn parse(arguments: &[String]) -> Result<Self, HostCommandErrorV1> {",
             "fn present_flags",
         );
-        flags.extend(VALUELESS_FLAGS_V1.iter().map(|flag| (*flag).to_owned()));
+        flags.extend(valueless_flags_v1().map(str::to_owned));
         flags
     }
 
     /// The flags a serve invocation consumes before the shared parser:
     /// those profile resolution reads, and the words that end a command.
     fn preparsed_flags() -> std::collections::BTreeSet<String> {
-        let mut flags = flag_literals(
-            include_str!("profiles.rs"),
-            "pub(crate) fn resolve(arguments: &[String])",
-            "\n}\n",
-        );
+        let mut flags = std::collections::BTreeSet::new();
         // Each call that ends a command at one of its words.
         let source = include_str!("command.rs");
         let call = ["terminal_flag_v1(arguments, &", "["].concat();
@@ -11520,7 +11054,7 @@ mod serve_option_tests {
             let terminal = option.flag == "--describe-options";
             assert_eq!(
                 option.value == ServeValueV1::Flag && !terminal,
-                VALUELESS_FLAGS_V1.contains(&option.flag),
+                is_valueless_v1(option.flag),
                 "{}",
                 option.flag
             );
@@ -11542,13 +11076,10 @@ mod serve_option_tests {
         let parsed = parsed_flags();
         let preparsed = preparsed_flags();
         assert!(parsed.len() > SERVE_OPTIONS_V1.len(), "{parsed:?}");
-        for flag in [
-            "--profile",
-            "--bundle",
-            "--describe-options",
-            "--help",
-            "-h",
-        ] {
+        for flag in ["--profile", "--bundle"] {
+            assert!(parsed.contains(flag), "{flag}: {parsed:?}");
+        }
+        for flag in ["--describe-options", "--help", "-h"] {
             assert!(preparsed.contains(flag), "{flag}: {preparsed:?}");
         }
         for option in SERVE_OPTIONS_V1 {
@@ -11571,7 +11102,7 @@ mod serve_option_tests {
             .filter(|flag| !seen.contains(flag.as_str()) && !preparsed.contains(*flag))
         {
             let mut invocation = words(&["serve", "--bundle", "/package", flag]);
-            let value = if VALUELESS_FLAGS_V1.contains(&flag.as_str()) {
+            let value = if is_valueless_v1(flag) {
                 ServeValueV1::Flag
             } else {
                 ServeValueV1::Text

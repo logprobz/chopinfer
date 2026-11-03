@@ -1,6 +1,8 @@
 //! Model-neutral, versioned serving presets. Artifact declarations remain authoritative.
 use crate::command::HostCommandErrorV1;
+use crate::command::serve_config::EnvironmentV1;
 use crate::command::serve_options::options;
+use crate::command::serve_options::{self, ServingInputsV1};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path};
 
@@ -223,10 +225,7 @@ impl Profiles {
                 return Err(error("invalid profile name"));
             }
             profile.validate()?;
-            // Reuse the serve parser, including all numeric and option constraints.
-            let mut args = vec!["serve".into()];
-            args.extend(profile.arguments(&file.served_model_name));
-            crate::parse_host_command_v1(&args)?;
+            Resolution::plain(profile.inputs(Some(&file.served_model_name))?).command()?;
         }
         Ok(file)
     }
@@ -239,6 +238,142 @@ impl Profiles {
 }
 
 impl Profile {
+    /// Decode schema values directly. The original token count gates inherited
+    /// speculation companions before explicit values are merged.
+    pub(crate) fn inputs(
+        &self,
+        served_model_name: Option<&str>,
+    ) -> Result<ServingInputsV1, HostCommandErrorV1> {
+        let mut inputs = ServingInputsV1 {
+            order: vec![
+                "--devices",
+                "--max-sequences",
+                "--max-batch-tokens",
+                "--prefill-chunk-tokens",
+                "--gpu-memory-utilization",
+                "--kv-cache-dtype",
+                "--prefix-cache",
+                "--speculative-tokens",
+                "--draft-cost",
+            ],
+            devices: Some(
+                self.devices
+                    .iter()
+                    .map(|&device| {
+                        i32::try_from(device).map_err(|_| error("invalid profile device ordinal"))
+                    })
+                    .collect::<Result<_, _>>()?,
+            ),
+            maximum_sequences: Some(self.max_sequences),
+            maximum_batch_tokens: Some(self.max_batch_tokens),
+            prefill_chunk_tokens: Some(self.prefill_chunk_tokens),
+            gpu_memory_utilization_millionths: Some(serve_options::gpu_memory_utilization_v1(
+                self.gpu_memory_utilization,
+            )?),
+            kv_cache_dtype: Some(
+                crate::KvCacheDtypeV1::parse(&self.kv_cache_dtype).ok_or_else(|| {
+                    crate::command::usage_error("--kv-cache-dtype must be auto, bf16, fp8 or mixed")
+                })?,
+            ),
+            prefix_cache: Some(self.prefix_cache),
+            speculative_tokens: Some(self.speculation.tokens),
+            draft_cost_model: Some(serve_options::draft_cost_v1(&self.speculation.draft_cost)?),
+            reply_history_observer: self.reply_history_observer,
+            queue_depth: self.queue_depth,
+            context_parallel_size: self.context_parallel_size,
+            graph_memory_reserve_mib: self
+                .graph_memory_reserve_mib
+                .map(|mib| serve_options::graph_memory_reserve_mib_v1(Some(mib)))
+                .transpose()?,
+            prefill_policy: self.prefill_policy,
+            decode_tbt_target_ms: self.decode_tbt_target_ms.map(|target| target as usize),
+            model_options: self.model_option_texts(),
+            ..Default::default()
+        };
+        for (name, value) in &inputs.model_options {
+            if !runtime_bundle::model_options::valid_name(name) || value.len() > 1024 {
+                return Err(crate::command::usage_error(
+                    "invalid model option name or value",
+                ));
+            }
+        }
+        if let Some(name) = served_model_name {
+            inputs.bundle = Some(self.bundle_id.clone());
+            inputs.topology = Some(self.topology.clone());
+            inputs.http_options.served_model_names.push(name.to_owned());
+            inputs.http_flags.push("--served-model-name".into());
+        }
+        if self.speculation.tokens > 0 {
+            inputs.speculation_mode =
+                Some(serve_options::speculation_mode_v1(&self.speculation.mode)?);
+            inputs.speculation_costs = self
+                .speculation
+                .costs
+                .as_deref()
+                .map(|text| {
+                    runtime_engine::StepCosts::parse(text).map_err(|e| {
+                        crate::command::usage_error(format!("invalid --speculation-costs: {e:?}"))
+                    })
+                })
+                .transpose()?;
+            inputs.speculation_depths = self
+                .speculation
+                .depths
+                .as_deref()
+                .map(|text| {
+                    runtime_engine::DraftDepths::parse(text).map_err(|e| {
+                        crate::command::usage_error(format!("invalid --speculation-depths: {e:?}"))
+                    })
+                })
+                .transpose()?;
+            inputs.speculation_widths = self
+                .speculation
+                .widths
+                .as_deref()
+                .map(|text| {
+                    runtime_engine::VerifyWidths::parse(text).map_err(|e| {
+                        crate::command::usage_error(format!("invalid --speculation-widths: {e:?}"))
+                    })
+                })
+                .transpose()?;
+            inputs.speculative_rows = self.speculation.rows;
+            inputs.speculation_graph_rows = self.speculation.graph_rows;
+            inputs.speculation_confidence = self
+                .speculation
+                .confidence
+                .as_ref()
+                .map(|calibration| {
+                    calibration.check().map(Some).map_err(|e| {
+                        crate::command::usage_error(format!(
+                            "invalid --speculation-confidence: {e}"
+                        ))
+                    })
+                })
+                .transpose()?;
+        }
+        for flag in [
+            "--reply-history-observer",
+            "--queue-depth",
+            "--context-parallel-size",
+            "--graph-memory-reserve-mib",
+            "--prefill-policy",
+            "--decode-tbt-target-ms",
+            "--model-option",
+            "--speculation",
+            "--speculation-costs",
+            "--speculation-depths",
+            "--speculation-widths",
+            "--speculative-rows",
+            "--speculation-graph-rows",
+            "--speculation-confidence",
+        ] {
+            if inputs.contains(flag) {
+                inputs.order.push(flag);
+            }
+        }
+        Ok(inputs)
+    }
+
     fn validate(&self) -> Result<(), HostCommandErrorV1> {
         if self
             .model_options
@@ -450,130 +585,54 @@ impl Profile {
 }
 
 pub(crate) struct Resolution {
-    pub arguments: Vec<String>,
+    pub inputs: ServingInputsV1,
     /// The name of the serving profile applied, if any.
     pub profile: Option<String>,
     pub drafter: Option<String>,
     pub qualified_max_sequences: Option<usize>,
 }
 
-/// `defaults` (a profile's options) under `explicit` options: an explicit
-/// flag replaces the default, `--speculative-tokens 0` also drops the
-/// default speculation mode, an explicit mode other than `table` or zero
-/// speculative tokens the default speculation costs, an explicit mode other
-/// than `balanced` or zero speculative tokens the default depth schedule,
-/// verify widths and confidence, zero speculative tokens the default
-/// speculative and graph
-/// rows, a fixed `--prefill-policy` the default TBT target. Duplicate
-/// explicit flags are kept for the serve parser to refuse.
-pub(crate) fn apply_defaults(defaults: &[String], explicit: &[String]) -> Vec<String> {
-    let explicit = options(explicit);
-    let flags: std::collections::BTreeSet<&str> =
-        explicit.iter().map(|(flag, _)| flag.as_str()).collect();
-    let disable_speculation = explicit.iter().any(|(flag, values)| {
-        flag == "--speculative-tokens"
-            && values.first().and_then(|v| v.parse::<usize>().ok()) == Some(0)
-    });
-    let replace_costs = disable_speculation
-        || explicit.iter().any(|(flag, values)| {
-            flag == "--speculation" && values.first().is_some_and(|v| v != "table")
-        });
-    let replace_balanced = disable_speculation
-        || explicit.iter().any(|(flag, values)| {
-            flag == "--speculation" && values.first().is_some_and(|v| v != "balanced")
-        });
-    let disable_tbt = explicit.iter().any(|(flag, values)| {
-        flag == "--prefill-policy" && values.first().is_some_and(|v| v == "fixed")
-    });
-    let mut resolved = Vec::new();
-    for (flag, values) in options(defaults) {
-        let option_replaced = flag == "--model-option"
-            && values
-                .first()
-                .and_then(|value| value.split_once('='))
-                .is_some_and(|(name, _)| {
-                    explicit.iter().any(|(flag, values)| {
-                        flag == "--model-option"
-                            && values
-                                .first()
-                                .and_then(|value| value.split_once('='))
-                                .is_some_and(|(explicit_name, _)| explicit_name == name)
-                    })
-                });
-        if (flag != "--model-option" && flags.contains(flag.as_str()))
-            || option_replaced
-            || (disable_speculation && flag == "--speculation")
-            || (replace_costs && flag == "--speculation-costs")
-            || (replace_balanced
-                && (flag == "--speculation-depths"
-                    || flag == "--speculation-widths"
-                    || flag == "--speculation-confidence"))
-            || (disable_speculation
-                && (flag == "--speculative-rows" || flag == "--speculation-graph-rows"))
-            || (disable_tbt && flag == "--decode-tbt-target-ms")
-        {
-            continue;
-        }
-        resolved.push(flag);
-        resolved.extend(values);
-    }
-    for (flag, values) in explicit {
-        resolved.push(flag);
-        resolved.extend(values);
-    }
-    resolved
-}
-
-pub(crate) fn resolve(arguments: &[String]) -> Result<Resolution, HostCommandErrorV1> {
-    let mut reference = None;
-    let mut explicit = Vec::new();
-    // An option's value is never read as `--profile`, even an API key or a
-    // path that looks like one.
-    for (flag, values) in options(arguments) {
-        if let Some(message) = crate::command::serve_options::retired_flag_message_v1(&flag) {
-            return Err(error(message));
-        }
-        if flag == "--profile" {
-            if reference.is_some() {
-                return Err(error("--profile given more than once"));
-            }
-            reference = Some(
-                values
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| error("--profile requires FILE#NAME"))?,
-            );
-        } else {
-            explicit.push(flag);
-            explicit.extend(values);
-        }
-    }
-    let Some(reference) = reference else {
-        return Ok(Resolution {
-            arguments: arguments.to_vec(),
+impl Resolution {
+    pub(crate) fn plain(inputs: ServingInputsV1) -> Self {
+        Self {
+            inputs,
             profile: None,
             drafter: None,
             qualified_max_sequences: None,
-        });
+        }
+    }
+
+    pub(crate) fn command(&self) -> Result<crate::HostCommandV1, HostCommandErrorV1> {
+        let environment = EnvironmentV1::process()?;
+        crate::command::serve_config::resolve_inputs(
+            self.inputs.clone(),
+            self,
+            &environment,
+            Vec::new(),
+        )
+    }
+}
+
+pub(crate) fn resolve_inputs(
+    mut explicit: ServingInputsV1,
+) -> Result<Resolution, HostCommandErrorV1> {
+    let Some(reference) = explicit.profile.take() else {
+        return Ok(Resolution::plain(explicit));
     };
     // A profile serves an explicit package, as `serve --model` serves the
     // package it prepared: its options are defaults under the explicit ones.
-    let bundle = options(&explicit)
-        .into_iter()
-        .find(|(flag, _)| flag == "--bundle")
-        .and_then(|(_, values)| values.into_iter().next())
-        .ok_or_else(|| {
-            error(
-                "--profile applies to an explicit package: add --bundle DIR --checkpoint DIR, \
-                 or serve --model DIR, which applies the family's profile itself",
-            )
-        })?;
-    let package = PackageFacts::read(Path::new(&bundle))?;
+    let bundle = explicit.bundle.as_deref().ok_or_else(|| {
+        error(
+            "--profile applies to an explicit package: add --bundle DIR --checkpoint DIR, \
+               or serve --model DIR, which applies the family's profile itself",
+        )
+    })?;
+    let package = PackageFacts::read(Path::new(bundle))?;
     // A bare name is one of the package's own profiles; `FILE#NAME` names
     // another file explicitly.
     let (file, name) = match reference.rsplit_once('#') {
         Some((path, name)) => (Profiles::read(Path::new(path))?, name.to_owned()),
-        None => (package.profiles(Path::new(&bundle))?, reference.clone()),
+        None => (package.profiles(Path::new(bundle))?, reference.clone()),
     };
     let profile = file.get(&name)?;
     // The package declares the profile's topology at the profile's rank
@@ -633,14 +692,10 @@ pub(crate) fn resolve(arguments: &[String]) -> Result<Resolution, HostCommandErr
     // The profile's topology is a default like its other options, so a
     // device list for another rank count is refused rather than serving
     // another topology; an explicit `--topology` replaces it.
-    let mut defaults: Vec<String> = options(&profile.arguments(""))
-        .into_iter()
-        .filter(|(flag, _)| !SELECTION_OPTIONS.contains(&flag.as_str()))
-        .flat_map(|(flag, values)| std::iter::once(flag).chain(values))
-        .collect();
-    defaults.extend(["--topology".to_owned(), profile.topology.clone()]);
+    let mut defaults = profile.inputs(None)?;
+    defaults.topology = Some(profile.topology.clone());
     Ok(Resolution {
-        arguments: apply_defaults(&defaults, &explicit),
+        inputs: defaults.overlay(&explicit),
         profile: Some(name),
         drafter: Some(profile.speculation.drafter.clone()),
         qualified_max_sequences: profile.qualified_max_sequences,
@@ -781,7 +836,7 @@ impl PackageFacts {
 /// or applies itself before the package serves: load threads and the weight
 /// keeper are selected for the process, and the package's own parse has no
 /// checkpoint flag for a keeper to lend to.
-const MODEL_OPTIONS: &[&str] = &[
+pub(crate) const MODEL_OPTIONS: &[&str] = &[
     "--model",
     "--model-cache-dir",
     "--tensor-parallel-size",
@@ -813,11 +868,6 @@ pub(crate) fn preparation_options(arguments: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// Options a direct package's serving profile does not set: the package and
-/// topology are the model's selection, and the served name is the
-/// package's. The profile's device map stays a default.
-const SELECTION_OPTIONS: &[&str] = &["--bundle", "--topology", "--served-model-name"];
-
 /// The serving profile a family helper named, checked as a profile file's
 /// entries are.
 pub(crate) fn direct_entry(
@@ -829,22 +879,34 @@ pub(crate) fn direct_entry(
     Ok(entry)
 }
 
-/// The options a profile supplies a direct package as defaults: all but
-/// the selection options.
-pub(crate) fn direct_defaults(profile: &Profile) -> Vec<String> {
-    options(&profile.arguments(""))
+/// Emit only defaults the typed merge retained, in the profile's public order.
+pub(crate) fn profile_arguments(profile: &Profile, retained: &ServingInputsV1) -> Vec<String> {
+    retain_arguments(&profile.arguments(""), retained)
+}
+
+fn retain_arguments(words: &[String], retained: &ServingInputsV1) -> Vec<String> {
+    options(words)
         .into_iter()
-        .filter(|(flag, _)| !SELECTION_OPTIONS.contains(&flag.as_str()))
+        .filter(|(flag, values)| {
+            if flag == "--model-option" {
+                values
+                    .first()
+                    .and_then(|value| value.split_once('='))
+                    .is_some_and(|(name, _)| retained.model_options.contains_key(name))
+            } else {
+                retained.contains(flag)
+            }
+        })
         .flat_map(|(flag, values)| std::iter::once(flag).chain(values))
         .collect()
 }
 
 /// `serve` arguments for a direct package at `bundle`: the family's serving
 /// profile as defaults under the invocation's `explicit` serve options.
-pub(crate) fn direct_arguments(
+pub(crate) fn direct_inputs(
     profile: &runtime_bundle::preparation::DirectProfile,
     ranks: u32,
-    explicit: &[String],
+    explicit: &ServingInputsV1,
     bundle: &Path,
 ) -> Result<Resolution, HostCommandErrorV1> {
     let entry = direct_entry(profile)?;
@@ -854,39 +916,45 @@ pub(crate) fn direct_arguments(
             profile.name, entry.tensor_parallel
         )));
     }
-    let defaults = direct_defaults(&entry);
-    let mut arguments = vec!["serve".to_owned()];
-    arguments.extend(apply_defaults(&defaults, explicit));
-    arguments.extend([
-        "--bundle".to_owned(),
+    let mut inputs = entry.inputs(None)?.overlay(explicit);
+    inputs.bundle = Some(
         bundle
             .to_str()
             .ok_or_else(|| error("the direct package path is not UTF-8"))?
             .to_owned(),
-    ]);
+    );
     Ok(Resolution {
-        arguments,
+        inputs,
         profile: Some(profile.name.clone()),
         drafter: Some(entry.speculation.drafter.clone()),
         qualified_max_sequences: entry.qualified_max_sequences,
     })
 }
 
+/// Resolve standalone serving settings, with environment below explicit values.
+pub(crate) fn standalone(
+    mut inputs: ServingInputsV1,
+) -> Result<crate::HostCommandV1, HostCommandErrorV1> {
+    if inputs.bundle.is_none() {
+        inputs.bundle = Some("/direct-package".into());
+    }
+    Resolution::plain(inputs).command()
+}
+
 /// The serve command a direct package serves with `arguments`, which hold no
 /// model selection or preparation options.
+#[cfg(test)]
 pub(crate) fn direct_command(
     arguments: &[String],
 ) -> Result<crate::HostCommandV1, HostCommandErrorV1> {
-    let mut words = vec!["serve".to_owned()];
-    words.extend_from_slice(arguments);
-    words.extend(["--bundle".to_owned(), "/direct-package".to_owned()]);
-    crate::parse_host_command_v1(&words)
+    standalone(ServingInputsV1::decode(arguments)?)
 }
 
 /// How `serve --model` serves another of the family's profiles than the one
 /// it picks: explicit options over the pick.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Translation {
+    pub inputs: ServingInputsV1,
     pub arguments: Vec<String>,
     /// Model options the pick sets and the other profile leaves to the
     /// package; the arguments keep the pick's, and a launcher resets them to
@@ -899,7 +967,11 @@ pub(crate) struct Translation {
 /// the pick does or not at all, since the package carries the pick's drafter.
 pub(crate) fn translate(pick: &Profile, target: &Profile) -> Result<Translation, String> {
     translatable(pick, target)?;
-    translate_options(pick, &direct_defaults(target))
+    let inputs = target
+        .inputs(None)
+        .map_err(|e| format!("it is refused: {e}"))?;
+    let arguments = profile_arguments(target, &inputs);
+    translate_inputs(pick, &inputs, arguments)
 }
 
 /// Why `target` cannot serve over `pick` whatever its options, if it
@@ -933,51 +1005,55 @@ pub(crate) fn translatable(pick: &Profile, target: &Profile) -> Result<(), Strin
 /// default no flag value names makes the translation fail. The result is
 /// accepted only when it serves `target`'s exact configuration, model
 /// options the pick sets and `target` omits aside.
-pub(crate) fn translate_options(pick: &Profile, target: &[String]) -> Result<Translation, String> {
-    let reference = direct_command(target).map_err(|e| format!("it is refused: {e}"))?;
-    let resets = crate::command::effective_settings_v1(&reference);
-    let defaults = direct_defaults(pick);
-    let mut arguments: Vec<String> = options(target)
+pub(crate) fn translate_inputs(
+    pick: &Profile,
+    target: &ServingInputsV1,
+    words: Vec<String>,
+) -> Result<Translation, String> {
+    let reference = standalone(target.clone()).map_err(|e| format!("it is refused: {e}"))?;
+    let defaults = pick
+        .inputs(None)
+        .map_err(|e| format!("it is refused: {e}"))?;
+    let mut arguments: Vec<String> = options(&words)
         .into_iter()
         .filter(|(flag, _)| flag != "--devices")
         .flat_map(|(flag, values)| std::iter::once(flag).chain(values))
         .collect();
+    let mut explicit = target.clone();
+    explicit.devices = None;
+    let mut resets = Vec::new();
     loop {
-        let explicit: std::collections::BTreeSet<String> = options(&arguments)
-            .into_iter()
-            .map(|(flag, _)| flag)
-            .collect();
-        let inherited = options(&apply_defaults(&defaults, &arguments))
-            .into_iter()
-            .find(|(flag, _)| {
-                flag != "--devices" && flag != "--model-option" && !explicit.contains(flag)
-            });
-        let Some((flag, values)) = inherited else {
+        let inherited = defaults.inherited(&explicit);
+        let flag = inherited
+            .order
+            .iter()
+            .copied()
+            .find(|flag| *flag != "--devices" && *flag != "--model-option");
+        let Some(flag) = flag else {
             break;
         };
-        let Some(reset) = resets.get(flag.trim_start_matches("--")) else {
+        if !explicit
+            .restore(flag, &reference)
+            .map_err(|e| format!("its options over the pick are refused: {e}"))?
+        {
+            let values = options(&profile_arguments(pick, &defaults))
+                .into_iter()
+                .find(|(option, _)| option == flag)
+                .map(|(_, values)| values.join(" "))
+                .unwrap_or_default();
             return Err(format!(
-                "the pick sets {flag} {}, and no flag value restores the default it leaves",
-                values.join(" ")
+                "the pick sets {flag} {values}, and no flag value restores the default it leaves"
             ));
-        };
-        arguments.extend([flag, reset.clone()]);
+        }
+        resets.push(flag);
     }
-    let named: std::collections::BTreeSet<String> = options(&arguments)
-        .into_iter()
-        .filter(|(flag, _)| flag == "--model-option")
-        .filter_map(|(_, values)| {
-            let value = values.into_iter().next()?;
-            Some(value.split_once('=')?.0.to_owned())
-        })
-        .collect();
     let inherited_model_options: Vec<String> = pick
         .model_options
         .keys()
-        .filter(|name| !named.contains(*name))
+        .filter(|name| !target.model_options.contains_key(*name))
         .cloned()
         .collect();
-    let mut served = direct_command(&apply_defaults(&defaults, &arguments))
+    let mut served = standalone(defaults.overlay(&explicit))
         .map_err(|e| format!("its options over the pick are refused: {e}"))?;
     let mut reference = reference;
     for command in [&mut served, &mut reference] {
@@ -1005,7 +1081,16 @@ pub(crate) fn translate_options(pick: &Profile, target: &[String]) -> Result<Tra
             None => "over the pick it would serve other options than its own".to_owned(),
         });
     }
+    // Effective text is an output projection, never resolver input.
+    let values = crate::command::effective_settings_v1(&reference);
+    for flag in resets {
+        arguments.extend([
+            flag.to_owned(),
+            values[flag.trim_start_matches("--")].clone(),
+        ]);
+    }
     Ok(Translation {
+        inputs: explicit,
         arguments,
         inherited_model_options,
     })
@@ -1036,11 +1121,10 @@ pub(crate) fn inspect(arguments: &[String]) -> Result<String, HostCommandErrorV1
         [verb, path, name] if verb == "show" => {
             let file = Profiles::read(Path::new(path))?;
             let profile = file.get(name)?;
-            let mut args = vec!["serve".into()];
-            args.extend(profile.arguments(&file.served_model_name));
-            let crate::HostCommandV1::Serve { serving, .. } = crate::parse_host_command_v1(&args)?
+            let crate::HostCommandV1::Serve { serving, .. } =
+                Resolution::plain(profile.inputs(Some(&file.served_model_name))?).command()?
             else {
-                unreachable!("profile arguments name serve");
+                unreachable!("profile resolves to serve");
             };
             let mut shown = serde_json::to_value(profile).map_err(|e| error(e.to_string()))?;
             let target = match serving.prefill_budget {
@@ -1059,8 +1143,42 @@ pub(crate) fn inspect(arguments: &[String]) -> Result<String, HostCommandErrorV1
 }
 
 #[cfg(test)]
+pub(crate) fn direct_defaults(profile: &Profile) -> Vec<String> {
+    profile_arguments(profile, &profile.inputs(None).unwrap())
+}
+
+#[cfg(test)]
+pub(crate) fn apply_defaults(defaults: &[String], explicit: &[String]) -> Vec<String> {
+    let defaults_input = ServingInputsV1::decode(defaults).unwrap();
+    let explicit_input = ServingInputsV1::decode(explicit).unwrap();
+    let mut words = retain_arguments(defaults, &defaults_input.inherited(&explicit_input));
+    words.extend_from_slice(explicit);
+    words
+}
+
+#[cfg(test)]
+fn translate_options(pick: &Profile, target: &[String]) -> Result<Translation, String> {
+    let inputs = ServingInputsV1::decode(target).map_err(|e| format!("it is refused: {e}"))?;
+    translate_inputs(pick, &inputs, target.to_vec())
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    fn resolve(words: &[String]) -> Result<Resolution, HostCommandErrorV1> {
+        resolve_inputs(ServingInputsV1::decode(words)?)
+    }
+
+    fn direct_resolution(
+        profile: &runtime_bundle::preparation::DirectProfile,
+        ranks: u32,
+        words: &[String],
+        bundle: &Path,
+    ) -> Result<Resolution, HostCommandErrorV1> {
+        direct_inputs(profile, ranks, &ServingInputsV1::decode(words)?, bundle)
+    }
+
     fn fixture() -> serde_json::Value {
         serde_json::json!({
             "schema":"chopinfer-serve-profiles-v2", "model":"fixture", "served_model_name":"fixture",
@@ -1186,15 +1304,14 @@ mod tests {
             else {
                 panic!("model")
             };
-            let resolved = direct_arguments(
+            let resolved = direct_resolution(
                 &profile,
                 2,
                 &model.serve_arguments,
                 Path::new("/direct-package"),
             )
             .unwrap();
-            let crate::HostCommandV1::Serve { model_options, .. } =
-                crate::parse_host_command_v1(&resolved.arguments).unwrap()
+            let crate::HostCommandV1::Serve { model_options, .. } = resolved.command().unwrap()
             else {
                 panic!("serve")
             };
@@ -1230,7 +1347,7 @@ mod tests {
                 profile: file["profiles"]["test"].clone(),
             };
             let explicit = ["--speculative-tokens", "3"].map(String::from);
-            let direct = direct_arguments(&direct, 2, &explicit, &package).unwrap();
+            let direct = direct_resolution(&direct, 2, &explicit, &package).unwrap();
             let packaged = [
                 "serve".into(),
                 "--bundle".into(),
@@ -1240,14 +1357,17 @@ mod tests {
                 "--speculative-tokens".into(),
                 "3".into(),
             ];
-            for words in [&direct.arguments[..], &packaged[..]] {
+            for command in [
+                direct.command().unwrap(),
+                crate::parse_host_command_v1(&packaged).unwrap(),
+            ] {
                 let crate::HostCommandV1::Serve {
                     speculative_tokens,
                     speculation_mode,
                     draft_cost_model,
                     verify_widths,
                     ..
-                } = crate::parse_host_command_v1(words).unwrap()
+                } = command
                 else {
                     panic!("serve")
                 };
@@ -1270,8 +1390,8 @@ mod tests {
             };
             let explicit: Vec<String> = explicit.iter().map(|w| (*w).into()).collect();
             let resolved =
-                direct_arguments(&profile, 2, &explicit, Path::new("/cache/p-x")).unwrap();
-            crate::parse_host_command_v1(&resolved.arguments)
+                direct_resolution(&profile, 2, &explicit, Path::new("/cache/p-x")).unwrap();
+            resolved.command()
         };
         let crate::HostCommandV1::Serve {
             speculative_tokens,
@@ -1311,8 +1431,8 @@ mod tests {
         let mode = |explicit: &[&str]| {
             let explicit: Vec<String> = explicit.iter().map(|w| (*w).into()).collect();
             let resolved =
-                direct_arguments(&profile, 2, &explicit, Path::new("/cache/p-x")).unwrap();
-            match crate::parse_host_command_v1(&resolved.arguments).unwrap() {
+                direct_resolution(&profile, 2, &explicit, Path::new("/cache/p-x")).unwrap();
+            match resolved.command().unwrap() {
                 crate::HostCommandV1::Serve {
                     speculative_tokens,
                     speculation_mode,
@@ -1365,7 +1485,7 @@ mod tests {
                 name: "test".into(),
                 profile: bad,
             };
-            let Err(refusal) = direct_arguments(&profile, 2, &[], Path::new("/cache/p-x")) else {
+            let Err(refusal) = direct_resolution(&profile, 2, &[], Path::new("/cache/p-x")) else {
                 panic!("{mode} {costs:?} accepted");
             };
             let refusal = refusal.to_string();
@@ -1389,8 +1509,8 @@ mod tests {
         let mode = |explicit: &[&str]| {
             let explicit: Vec<String> = explicit.iter().map(|w| (*w).into()).collect();
             let resolved =
-                direct_arguments(&profile, 2, &explicit, Path::new("/cache/p-x")).unwrap();
-            match crate::parse_host_command_v1(&resolved.arguments).unwrap() {
+                direct_resolution(&profile, 2, &explicit, Path::new("/cache/p-x")).unwrap();
+            match resolved.command().unwrap() {
                 crate::HostCommandV1::Serve {
                     speculation_mode, ..
                 } => speculation_mode,
@@ -1417,7 +1537,7 @@ mod tests {
                 name: "test".into(),
                 profile: bad,
             };
-            let Err(refusal) = direct_arguments(&profile, 2, &[], Path::new("/cache/p-x")) else {
+            let Err(refusal) = direct_resolution(&profile, 2, &[], Path::new("/cache/p-x")) else {
                 panic!("{mode} {depths} accepted");
             };
             let refusal = refusal.to_string();
@@ -1443,8 +1563,8 @@ mod tests {
         let resolve = |explicit: &[&str]| {
             let explicit: Vec<String> = explicit.iter().map(|w| (*w).into()).collect();
             let resolved =
-                direct_arguments(&profile, 2, &explicit, Path::new("/cache/p-x")).unwrap();
-            match crate::parse_host_command_v1(&resolved.arguments).unwrap() {
+                direct_resolution(&profile, 2, &explicit, Path::new("/cache/p-x")).unwrap();
+            match resolved.command().unwrap() {
                 crate::HostCommandV1::Serve {
                     speculation_mode,
                     verify_widths,
@@ -1468,7 +1588,7 @@ mod tests {
                 name: "test".into(),
                 profile: bad,
             };
-            let Err(refusal) = direct_arguments(&profile, 2, &[], Path::new("/cache/p-x")) else {
+            let Err(refusal) = direct_resolution(&profile, 2, &[], Path::new("/cache/p-x")) else {
                 panic!("{mode} {widths} accepted");
             };
             let refusal = refusal.to_string();
@@ -1501,8 +1621,8 @@ mod tests {
         let resolve = |explicit: &[&str]| {
             let explicit: Vec<String> = explicit.iter().map(|w| (*w).into()).collect();
             let resolved =
-                direct_arguments(&profile, 2, &explicit, Path::new("/cache/p-x")).unwrap();
-            match crate::parse_host_command_v1(&resolved.arguments).unwrap() {
+                direct_resolution(&profile, 2, &explicit, Path::new("/cache/p-x")).unwrap();
+            match resolved.command().unwrap() {
                 crate::HostCommandV1::Serve {
                     verify_confidence, ..
                 } => verify_confidence.map(|confidence| *confidence),
@@ -1539,7 +1659,7 @@ mod tests {
                 name: "test".into(),
                 profile: bad,
             };
-            let Err(refusal) = direct_arguments(&profile, 2, &[], Path::new("/cache/p-x")) else {
+            let Err(refusal) = direct_resolution(&profile, 2, &[], Path::new("/cache/p-x")) else {
                 panic!("{mode} {confidence} accepted");
             };
             assert!(
@@ -1568,8 +1688,8 @@ mod tests {
         let resolve = |explicit: &[&str]| {
             let explicit: Vec<String> = explicit.iter().map(|w| (*w).into()).collect();
             let resolved =
-                direct_arguments(&profile, 2, &explicit, Path::new("/cache/p-x")).unwrap();
-            match crate::parse_host_command_v1(&resolved.arguments).unwrap() {
+                direct_resolution(&profile, 2, &explicit, Path::new("/cache/p-x")).unwrap();
+            match resolved.command().unwrap() {
                 crate::HostCommandV1::Serve {
                     speculative_rows,
                     model_options,
@@ -1596,7 +1716,7 @@ mod tests {
                 name: "test".into(),
                 profile: bad,
             };
-            let Err(refusal) = direct_arguments(&profile, 2, &[], Path::new("/cache/p-x")) else {
+            let Err(refusal) = direct_resolution(&profile, 2, &[], Path::new("/cache/p-x")) else {
                 panic!("{field} {value} accepted");
             };
             assert!(
@@ -1624,10 +1744,10 @@ mod tests {
                 runtime_engine::SpeculationMode::Fixed,
             ),
         ] {
-            let resolved = direct_arguments(&profile, 2, &args, Path::new("/cache/p-x")).unwrap();
+            let resolved = direct_resolution(&profile, 2, &args, Path::new("/cache/p-x")).unwrap();
             let crate::HostCommandV1::Serve {
                 speculation_mode, ..
-            } = crate::parse_host_command_v1(&resolved.arguments).unwrap()
+            } = resolved.command().unwrap()
             else {
                 panic!("serve");
             };
@@ -1642,39 +1762,34 @@ mod tests {
             name: "test".into(),
             profile: entry.clone(),
         };
-        let words = |explicit: &[&str]| {
-            let explicit: Vec<String> = explicit.iter().map(|w| (*w).into()).collect();
-            direct_arguments(&profile, 2, &explicit, Path::new("/cache/p-x"))
+        let inputs = |explicit: &[&str]| {
+            let explicit: Vec<String> = explicit.iter().map(|word| (*word).into()).collect();
+            direct_resolution(&profile, 2, &explicit, Path::new("/cache/p-x"))
                 .unwrap()
-                .arguments
+                .inputs
         };
-        let resolved = words(&["--max-sequences", "4", "--served-model-name", "a", "b"]);
-        // The profile's speculation, limits and device map, not its bundle,
-        // topology or served name; the package is the direct one.
-        for absent in ["--topology", "fixture.v1", "fixture"] {
-            assert!(!resolved.iter().any(|w| w == absent), "{resolved:?}");
-        }
-        let joined = resolved.join(" ");
-        assert!(joined.starts_with("serve "), "{joined}");
-        assert!(joined.contains("--speculative-tokens 3"), "{joined}");
-        assert!(joined.contains("--speculation adaptive"), "{joined}");
-        assert!(joined.contains("--max-sequences 4"), "{joined}");
-        assert!(joined.contains("--devices 0,1"), "{joined}");
-        assert!(!joined.contains("--max-sequences 8"), "{joined}");
-        assert!(joined.contains("--served-model-name a b"), "{joined}");
-        assert!(joined.ends_with("--bundle /cache/p-x"), "{joined}");
-        assert!(crate::parse_host_command_v1(&resolved).is_ok());
-        // Zero speculative tokens also drops the profile's speculation mode.
-        let off = words(&["--speculative-tokens", "0"]).join(" ");
-        assert!(!off.contains("--speculation "), "{off}");
-        assert!(!off.contains("--speculative-tokens 3"), "{off}");
-        let resolution = direct_arguments(&profile, 2, &[], Path::new("/cache/p-x")).unwrap();
+        let resolved = inputs(&["--max-sequences", "4", "--served-model-name", "a", "b"]);
+        assert_eq!(resolved.bundle.as_deref(), Some("/cache/p-x"));
+        assert!(resolved.topology.is_none());
+        assert_eq!(resolved.devices, Some(vec![0, 1]));
+        assert_eq!(resolved.maximum_sequences, Some(4));
+        assert_eq!(resolved.speculative_tokens, Some(3));
+        assert_eq!(
+            resolved.speculation_mode,
+            Some(runtime_engine::SpeculationMode::Adaptive)
+        );
+        assert_eq!(resolved.http_options.served_model_names, ["a", "b"]);
+        assert!(standalone(resolved).is_ok());
+        let off = inputs(&["--speculative-tokens", "0"]);
+        assert_eq!(off.speculative_tokens, Some(0));
+        assert!(off.speculation_mode.is_none());
+        let resolution = direct_resolution(&profile, 2, &[], Path::new("/cache/p-x")).unwrap();
         assert_eq!(resolution.drafter.as_deref(), Some("test"));
         assert_eq!(resolution.profile.as_deref(), Some("test"));
-        assert!(direct_arguments(&profile, 4, &[], Path::new("/p")).is_err());
+        assert!(direct_resolution(&profile, 4, &[], Path::new("/p")).is_err());
         let mut invalid = profile.clone();
         invalid.profile["unknown"] = true.into();
-        assert!(direct_arguments(&invalid, 2, &[], Path::new("/p")).is_err());
+        assert!(direct_resolution(&invalid, 2, &[], Path::new("/p")).is_err());
         assert_eq!(
             serving_options(&[
                 "--model".into(),
@@ -2065,12 +2180,7 @@ mod tests {
                 .chain(explicit)
                 .map(|word| (*word).to_owned())
                 .collect();
-            let arguments = resolve(&words).unwrap().arguments;
-            let at = arguments
-                .iter()
-                .position(|word| word == "--topology")
-                .unwrap();
-            arguments[at + 1].clone()
+            resolve(&words).unwrap().inputs.topology.unwrap()
         };
         assert_eq!(topology(&[]), "fixture-tp2");
         assert_eq!(topology(&["--devices", "0,1,2,3"]), "fixture-tp2");
@@ -2138,7 +2248,7 @@ mod tests {
             |reference: &str| ["--bundle", bundle, "--profile", reference].map(String::from);
         let carried = resolve(&words("test")).unwrap();
         let named = resolve(&words(&explicit)).unwrap();
-        assert_eq!(carried.arguments, named.arguments);
+        assert_eq!(carried.inputs, named.inputs);
         assert_eq!(carried.profile.as_deref(), Some("test"));
         assert_eq!(carried.drafter.as_deref(), Some("test"));
         let refusal = resolve(&words("other")).err().unwrap().to_string();
@@ -2214,12 +2324,7 @@ mod tests {
                 };
                 let carried = resolve(&words(name)).unwrap();
                 let named = resolve(&words(&explicit)).unwrap();
-                assert_eq!(
-                    carried.arguments,
-                    named.arguments,
-                    "{}#{name}",
-                    path.display()
-                );
+                assert_eq!(carried.inputs, named.inputs, "{}#{name}", path.display());
                 assert_eq!(carried.profile, named.profile);
                 assert_eq!(carried.drafter, named.drafter);
                 assert_eq!(
@@ -2308,8 +2413,10 @@ mod tests {
             br#"{"id":"fixture.v1","target":{"topologies":[{"id":"fixture-tp2","rank_count":2,"context_parallel_sizes":[2]}]}}"#,
         )
         .unwrap();
-        let resolved = resolve(&words).unwrap().arguments.join(" ");
-        assert!(resolved.contains("--context-parallel-size 2"), "{resolved}");
+        assert_eq!(
+            resolve(&words).unwrap().inputs.context_parallel_size,
+            Some(2)
+        );
         std::fs::remove_file(path).unwrap();
         std::fs::remove_dir_all(&package).unwrap();
     }
@@ -2355,11 +2462,9 @@ mod tests {
         manifest("a");
         let resolved = resolve(&words(&["--model-option", "budget=5"]))
             .unwrap()
-            .arguments
-            .join(" ");
-        assert!(resolved.contains("--model-option layout=a"), "{resolved}");
-        assert!(resolved.contains("--model-option budget=5"), "{resolved}");
-        assert!(!resolved.contains("budget=1"), "{resolved}");
+            .inputs;
+        assert_eq!(resolved.model_options["layout"], "a");
+        assert_eq!(resolved.model_options["budget"], "5");
         // A package without a declaration accepts no profile option.
         std::fs::write(
             package.join("manifest.json"),
@@ -2603,7 +2708,10 @@ mod tests {
         };
         assert_eq!(serving.maximum_sequences, 8);
         let words = ["--bundle", "fixture", "--api-key", "--profile"].map(String::from);
-        assert_eq!(resolve(&words).unwrap().arguments, words);
+        assert_eq!(
+            resolve(&words).unwrap().inputs,
+            ServingInputsV1::decode(&words).unwrap()
+        );
         let args = [
             "serve",
             "--bundle",
@@ -2625,10 +2733,10 @@ mod tests {
         };
         assert_eq!(http_options.served_model_names, ["a", "b"]);
         assert_eq!(profile_name.as_deref(), Some("test"));
-        for flag in crate::command::serve_options::VALUELESS_FLAGS_V1 {
-            let words = [*flag, "--bundle", bundle, "--profile", &reference].map(String::from);
+        for flag in crate::command::serve_options::valueless_flags_v1() {
+            let words = [flag, "--bundle", bundle, "--profile", &reference].map(String::from);
             let resolved = resolve(&words).unwrap();
-            assert!(resolved.arguments.contains(&flag.to_string()));
+            assert!(resolved.inputs.contains(flag));
             assert_eq!(resolved.drafter.as_deref(), Some("test"));
             assert_eq!(resolved.profile.as_deref(), Some("test"));
         }

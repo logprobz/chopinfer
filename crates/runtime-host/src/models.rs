@@ -75,7 +75,7 @@ fn catalog_entry(helper: &InstalledHelper) -> Result<Value, String> {
 /// A profile as `models --json` lists it: its settings are what `serve
 /// --model` resolves from it without explicit options.
 pub(crate) fn profile_entry(name: &str, profile: &Profile) -> Result<Value, String> {
-    let command = crate::profiles::direct_command(&crate::profiles::direct_defaults(profile))
+    let command = crate::profiles::standalone(profile.inputs(None).map_err(|e| e.to_string())?)
         .map_err(|e| format!("profile {name}: {e}"))?;
     Ok(json!({
         "name": name,
@@ -359,7 +359,9 @@ fn command_arguments(
         "--tensor-parallel-size".to_owned(),
         ranks.to_string(),
     ];
+    let mut launch;
     if profile == picked.name {
+        launch = crate::command::serve_options::ServingInputsV1::decode(explicit)?;
         words.extend_from_slice(explicit);
     } else {
         let entry = crate::profiles::direct_entry(picked)?;
@@ -375,25 +377,47 @@ fn command_arguments(
             .map_err(|reason| failure(format!("profile {profile} is unavailable: {reason}")))?;
         // Preparation options stay with `serve --model`; the others are
         // serve options over the profile.
-        let served = crate::profiles::apply_defaults(
-            &crate::profiles::direct_defaults(target),
-            &crate::profiles::serving_options(explicit),
-        );
-        let translation = crate::profiles::translate_options(&entry, &served)
+        let explicit_words = crate::profiles::serving_options(explicit);
+        let overrides = crate::command::serve_options::ServingInputsV1::decode(&explicit_words)?;
+        let defaults = target.inputs(None)?;
+        let served = defaults.overlay(&overrides);
+        let mut arguments =
+            crate::profiles::profile_arguments(target, &defaults.inherited(&overrides));
+        arguments.extend(explicit_words);
+        let translation = crate::profiles::translate_inputs(&entry, &served, arguments)
             .map_err(|reason| failure(format!("profile {profile} is unavailable: {reason}")))?;
-        words.extend(crate::profiles::preparation_options(explicit));
+        let preparation = crate::profiles::preparation_options(explicit);
+        launch = crate::command::serve_options::ServingInputsV1::decode(&preparation)?
+            .overlay(&translation.inputs);
+        words.extend(preparation);
         words.extend(translation.arguments);
     }
-    // The checks `serve --model` makes before it prepares anything: its own
-    // parse, then the parse of its package's serve with the profile.
-    crate::parse_host_command_v1(&words)?;
-    let resolution = crate::profiles::direct_arguments(
+    for (flag, duplicate) in [
+        ("--model", launch.model.is_some()),
+        (
+            "--tensor-parallel-size",
+            launch.tensor_parallel_size.is_some(),
+        ),
+    ] {
+        if duplicate {
+            return Err(crate::command::usage_error(format!(
+                "{flag} is given more than once"
+            )));
+        }
+    }
+    launch.model = Some(model.into());
+    launch.tensor_parallel_size = Some(ranks as usize);
+    // Validate the initial direct selection and then the complete profile,
+    // keeping the standalone profile's environment precedence.
+    let environment = crate::command::serve_config::EnvironmentV1::process()?;
+    crate::profiles::resolve_inputs(environment.model_defaults(launch.clone()))?.command()?;
+    crate::profiles::direct_inputs(
         picked,
         ranks,
-        &crate::profiles::serving_options(&words[1..]),
+        &launch.without_preparation(),
         Path::new("/direct-package"),
-    )?;
-    crate::parse_host_command_v1(&resolution.arguments)?;
+    )?
+    .command()?;
     Ok(words)
 }
 
@@ -587,15 +611,18 @@ mod tests {
         }
         let words = command("tp4-block", "tp4-block", &["--speculative-tokens", "0"]).unwrap();
         assert_eq!(words[5..], ["--speculative-tokens", "0"]);
-        let resolution = crate::profiles::direct_arguments(
+        let resolution = crate::profiles::direct_inputs(
             &picked("tp4-block"),
             4,
-            &crate::profiles::serving_options(&words[1..]),
+            &crate::command::serve_options::ServingInputsV1::decode(
+                &crate::profiles::serving_options(&words[1..]),
+            )
+            .unwrap(),
             Path::new("/direct-package"),
         )
         .unwrap();
         for absent in ["--speculation-depths", "--speculation-widths"] {
-            assert_eq!(count(&resolution.arguments, absent), 0, "{absent}");
+            assert!(!resolution.inputs.contains(absent), "{absent}");
         }
         // Without the option the other balanced profile keeps its own.
         let words = command("tp4-block", "tp4-block-wide", &[]).unwrap();

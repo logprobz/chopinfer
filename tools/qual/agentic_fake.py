@@ -134,8 +134,8 @@ def fake_server(files, mode='fixed', clock=None, reads=None):
                 with lock:
                     n = state['requests']
                     prefill, steps, reused, queried = cache.prefill_tokens, cache.prefill_steps, cache.reused, cache.queried
-                raw = (f'chop_prefill_budget_mode{{mode="{mode}"}} 1\n'
-                       f'chop_prefill_budget_selected_tokens_count {n if mode == "tbt" else 0}\n'
+                raw = (f'chop_prefill_policy_info{{model_name="fake-agentic",engine="0",policy="{mode}"}} 1\n'
+                       f'chop_prefill_budget_selected_tokens_count {n if mode in ("tbt", "adaptive") else 0}\n'
                        f'vllm:inter_token_latency_seconds_count {n * 2}\n'
                        f'vllm:inter_token_latency_seconds_sum {n * .006}\n'
                        f'vllm:inter_token_latency_seconds_bucket{{le="0.1"}} {n * 2}\n'

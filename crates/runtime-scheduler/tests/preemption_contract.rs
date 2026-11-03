@@ -630,12 +630,12 @@ fn the_watermark_is_kept_while_a_sequence_is_live_and_waived_when_none_is() {
 }
 
 #[test]
-fn decode_aware_pressure_finishes_fifo_work_with_exact_accounting() {
+fn tbt_pressure_finishes_fifo_work_with_exact_accounting() {
     let config = SchedulerConfig::new(8, 64, 8192, 2048, 1)
         .unwrap()
         .with_admission(optimistic(10_000, 3))
-        .with_prefill_budget(runtime_scheduler::PrefillBudget::DecodeAware(
-            runtime_scheduler::PrefillTarget::DecodeSteps(1),
+        .with_prefill_budget(runtime_scheduler::PrefillBudget::Tbt(
+            runtime_scheduler::MixedPolicy::default(),
         ));
     let mut scheduler = Scheduler::new(config, KvGeometry::new(BLOCK, 256).unwrap()).unwrap();
     let work: BTreeMap<_, _> = (1..=16).map(|id| (id, work(64, 256, 256))).collect();

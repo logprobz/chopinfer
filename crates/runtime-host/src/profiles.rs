@@ -32,12 +32,54 @@ pub(crate) struct Profile {
     pub qualification: String,
     pub kv_cache_dtype: String,
     pub prefix_cache: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_history_observer: Option<bool>,
     pub max_batch_tokens: usize,
     pub prefill_chunk_tokens: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prefill_budget: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prefill_timing_cuts: Option<String>,
+    pub prefill_policy: Option<crate::PrefillPolicyV1>,
+    #[serde(
+        rename = "prefill_budget",
+        default,
+        deserialize_with = "retired_prefill_field",
+        skip_serializing
+    )]
+    _retired_prefill_budget: (),
+    #[serde(
+        rename = "prefill_timing_cuts",
+        default,
+        deserialize_with = "retired_prefill_field",
+        skip_serializing
+    )]
+    _retired_prefill_timing_cuts: (),
+    #[serde(
+        rename = "prefill_itl_target_ms",
+        default,
+        deserialize_with = "retired_prefill_field",
+        skip_serializing
+    )]
+    _retired_prefill_itl_target_ms: (),
+    #[serde(
+        rename = "prefill_decode_steps",
+        default,
+        deserialize_with = "retired_prefill_field",
+        skip_serializing
+    )]
+    _retired_prefill_decode_steps: (),
+    #[serde(
+        rename = "mixed_min_prefill_tokens",
+        default,
+        deserialize_with = "retired_prefill_field",
+        skip_serializing
+    )]
+    _retired_mixed_min_prefill_tokens: (),
+    #[serde(
+        rename = "mixed_decode_steps",
+        default,
+        deserialize_with = "retired_prefill_field",
+        skip_serializing
+    )]
+    _retired_mixed_decode_steps: (),
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decode_tbt_target_ms: Option<u32>,
     pub queue_depth: Option<usize>,
@@ -52,6 +94,16 @@ pub(crate) struct Profile {
     pub graph_memory_reserve_mib: Option<u64>,
     pub status: Status,
     pub evidence: Vec<String>,
+}
+
+/// Deserialize a retired key before any value, including null, can hide it.
+fn retired_prefill_field<'de, D>(_: D) -> Result<(), D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Err(serde::de::Error::custom(
+        "retired prefill field: use prefill_policy (fixed, tbt or adaptive); remove retired fields before deploying",
+    ))
 }
 
 fn deserialize_model_options<'de, D>(
@@ -139,7 +191,7 @@ impl Profiles {
         Self::parse(&bytes)
     }
 
-    fn parse(bytes: &[u8]) -> Result<Self, HostCommandErrorV1> {
+    pub fn parse(bytes: &[u8]) -> Result<Self, HostCommandErrorV1> {
         let value: serde_json::Value =
             serde_json::from_slice(bytes).map_err(|e| error(format!("profile JSON: {e}")))?;
         if value["schema"] == "chopinfer-serve-profiles-v1" {
@@ -297,7 +349,7 @@ impl Profile {
 
     /// The profile's model options as `--model-option` values: a string as
     /// itself, any other value as its JSON text.
-    fn model_option_texts(&self) -> BTreeMap<String, String> {
+    pub(crate) fn model_option_texts(&self) -> BTreeMap<String, String> {
         self.model_options
             .iter()
             .map(|(name, value)| {
@@ -344,6 +396,12 @@ impl Profile {
         ] {
             args.extend([flag.into(), value]);
         }
+        if let Some(enabled) = self.reply_history_observer {
+            args.extend([
+                "--reply-history-observer".into(),
+                if enabled { "on" } else { "off" }.into(),
+            ]);
+        }
         if let Some(depth) = self.queue_depth {
             args.extend(["--queue-depth".into(), depth.to_string()]);
         }
@@ -353,11 +411,8 @@ impl Profile {
         if let Some(mib) = self.graph_memory_reserve_mib {
             args.extend(["--graph-memory-reserve-mib".into(), mib.to_string()]);
         }
-        if let Some(budget) = &self.prefill_budget {
-            args.extend(["--prefill-budget".into(), budget.clone()]);
-        }
-        if let Some(cuts) = &self.prefill_timing_cuts {
-            args.extend(["--prefill-timing-cuts".into(), cuts.clone()]);
+        if let Some(policy) = self.prefill_policy {
+            args.extend(["--prefill-policy".into(), policy.name().into()]);
         }
         if let Some(target) = self.decode_tbt_target_ms {
             args.extend(["--decode-tbt-target-ms".into(), target.to_string()]);
@@ -432,7 +487,7 @@ fn options(arguments: &[String]) -> Vec<(String, Vec<String>)> {
 /// than `balanced` or zero speculative tokens the default depth schedule,
 /// verify widths and confidence, zero speculative tokens the default
 /// speculative and graph
-/// rows, a non-TBT `--prefill-budget` the default TBT target. Duplicate
+/// rows, a fixed `--prefill-policy` the default TBT target. Duplicate
 /// explicit flags are kept for the serve parser to refuse.
 pub(crate) fn apply_defaults(defaults: &[String], explicit: &[String]) -> Vec<String> {
     let explicit = options(explicit);
@@ -451,7 +506,7 @@ pub(crate) fn apply_defaults(defaults: &[String], explicit: &[String]) -> Vec<St
             flag == "--speculation" && values.first().is_some_and(|v| v != "balanced")
         });
     let disable_tbt = explicit.iter().any(|(flag, values)| {
-        flag == "--prefill-budget" && values.first().is_some_and(|v| v != "tbt")
+        flag == "--prefill-policy" && values.first().is_some_and(|v| v == "fixed")
     });
     let mut resolved = Vec::new();
     for (flag, values) in options(defaults) {
@@ -498,6 +553,9 @@ pub(crate) fn resolve(arguments: &[String]) -> Result<Resolution, HostCommandErr
     // An option's value is never read as `--profile`, even an API key or a
     // path that looks like one.
     for (flag, values) in options(arguments) {
+        if let Some(message) = crate::command::retired_flag_message_v1(&flag) {
+            return Err(error(message));
+        }
         if flag == "--profile" {
             if reference.is_some() {
                 return Err(error("--profile given more than once"));
@@ -768,10 +826,41 @@ pub(crate) fn serving_options(arguments: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// The model selection and preparation options of `arguments`, which
+/// `serve --model` applies itself: what [`serving_options`] leaves out.
+pub(crate) fn preparation_options(arguments: &[String]) -> Vec<String> {
+    options(arguments)
+        .into_iter()
+        .filter(|(flag, _)| MODEL_OPTIONS.contains(&flag.as_str()))
+        .flat_map(|(flag, values)| std::iter::once(flag).chain(values))
+        .collect()
+}
+
 /// Options a direct package's serving profile does not set: the package and
 /// topology are the model's selection, and the served name is the
 /// package's. The profile's device map stays a default.
 const SELECTION_OPTIONS: &[&str] = &["--bundle", "--topology", "--served-model-name"];
+
+/// The serving profile a family helper named, checked as a profile file's
+/// entries are.
+pub(crate) fn direct_entry(
+    profile: &runtime_bundle::preparation::DirectProfile,
+) -> Result<Profile, HostCommandErrorV1> {
+    let entry: Profile = serde_json::from_value(profile.profile.clone())
+        .map_err(|e| error(format!("serving profile {}: {e}", profile.name)))?;
+    entry.validate()?;
+    Ok(entry)
+}
+
+/// The options a profile supplies a direct package as defaults: all but
+/// the selection options.
+pub(crate) fn direct_defaults(profile: &Profile) -> Vec<String> {
+    options(&profile.arguments(""))
+        .into_iter()
+        .filter(|(flag, _)| !SELECTION_OPTIONS.contains(&flag.as_str()))
+        .flat_map(|(flag, values)| std::iter::once(flag).chain(values))
+        .collect()
+}
 
 /// `serve` arguments for a direct package at `bundle`: the family's serving
 /// profile as defaults under the invocation's `explicit` serve options.
@@ -781,20 +870,14 @@ pub(crate) fn direct_arguments(
     explicit: &[String],
     bundle: &Path,
 ) -> Result<Resolution, HostCommandErrorV1> {
-    let entry: Profile = serde_json::from_value(profile.profile.clone())
-        .map_err(|e| error(format!("serving profile {}: {e}", profile.name)))?;
-    entry.validate()?;
+    let entry = direct_entry(profile)?;
     if entry.tensor_parallel != ranks as usize {
         return Err(error(format!(
             "serving profile {} serves {} ranks, not {ranks}",
             profile.name, entry.tensor_parallel
         )));
     }
-    let defaults: Vec<String> = options(&entry.arguments(""))
-        .into_iter()
-        .filter(|(flag, _)| !SELECTION_OPTIONS.contains(&flag.as_str()))
-        .flat_map(|(flag, values)| std::iter::once(flag).chain(values))
-        .collect();
+    let defaults = direct_defaults(&entry);
     let mut arguments = vec!["serve".to_owned()];
     arguments.extend(apply_defaults(&defaults, explicit));
     arguments.extend([
@@ -809,6 +892,145 @@ pub(crate) fn direct_arguments(
         profile: Some(profile.name.clone()),
         drafter: Some(entry.speculation.drafter.clone()),
         qualified_max_sequences: entry.qualified_max_sequences,
+    })
+}
+
+/// The serve command a direct package serves with `arguments`, which hold no
+/// model selection or preparation options.
+pub(crate) fn direct_command(
+    arguments: &[String],
+) -> Result<crate::HostCommandV1, HostCommandErrorV1> {
+    let mut words = vec!["serve".to_owned()];
+    words.extend_from_slice(arguments);
+    words.extend(["--bundle".to_owned(), "/direct-package".to_owned()]);
+    crate::parse_host_command_v1(&words)
+}
+
+/// How `serve --model` serves another of the family's profiles than the one
+/// it picks: explicit options over the pick.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Translation {
+    pub arguments: Vec<String>,
+    /// Model options the pick sets and the other profile leaves to the
+    /// package; the arguments keep the pick's, and a launcher resets them to
+    /// the package defaults.
+    pub inherited_model_options: Vec<String>,
+}
+
+/// The explicit `serve --model` options that serve `target` where the family
+/// picks `pick` at the same rank count, or why none do. A target drafts as
+/// the pick does or not at all, since the package carries the pick's drafter.
+pub(crate) fn translate(pick: &Profile, target: &Profile) -> Result<Translation, String> {
+    translatable(pick, target)?;
+    translate_options(pick, &direct_defaults(target))
+}
+
+/// Why `target` cannot serve over `pick` whatever its options, if it
+/// cannot: it serves another rank count, or another drafter than the
+/// package carries.
+pub(crate) fn translatable(pick: &Profile, target: &Profile) -> Result<(), String> {
+    if pick.tensor_parallel != target.tensor_parallel {
+        return Err(format!(
+            "it serves {} ranks and the pick {}",
+            target.tensor_parallel, pick.tensor_parallel
+        ));
+    }
+    let drafter = target.speculation.drafter.as_str();
+    if drafter != "none" && drafter != pick.speculation.drafter {
+        return Err(format!(
+            "it drafts with {drafter}, but the package serve --model prepares for this checkpoint {}",
+            match pick.speculation.drafter.as_str() {
+                "none" => "has no drafter".to_owned(),
+                other => format!("drafts with {other}"),
+            }
+        ));
+    }
+    Ok(())
+}
+
+/// The explicit `serve --model` options over `pick` that serve exactly what
+/// `target`, direct serve options without model selection, serves:
+/// `target` without its device map, which the launcher sets, and with an
+/// explicit value for each setting the pick sets and `target` leaves at its
+/// default. That value is `target`'s own effective one; a setting whose
+/// default no flag value names makes the translation fail. The result is
+/// accepted only when it serves `target`'s exact configuration, model
+/// options the pick sets and `target` omits aside.
+pub(crate) fn translate_options(pick: &Profile, target: &[String]) -> Result<Translation, String> {
+    let reference = direct_command(target).map_err(|e| format!("it is refused: {e}"))?;
+    let resets = crate::command::effective_settings_v1(&reference);
+    let defaults = direct_defaults(pick);
+    let mut arguments: Vec<String> = options(target)
+        .into_iter()
+        .filter(|(flag, _)| flag != "--devices")
+        .flat_map(|(flag, values)| std::iter::once(flag).chain(values))
+        .collect();
+    loop {
+        let explicit: std::collections::BTreeSet<String> = options(&arguments)
+            .into_iter()
+            .map(|(flag, _)| flag)
+            .collect();
+        let inherited = options(&apply_defaults(&defaults, &arguments))
+            .into_iter()
+            .find(|(flag, _)| {
+                flag != "--devices" && flag != "--model-option" && !explicit.contains(flag)
+            });
+        let Some((flag, values)) = inherited else {
+            break;
+        };
+        let Some(reset) = resets.get(flag.trim_start_matches("--")) else {
+            return Err(format!(
+                "the pick sets {flag} {}, and no flag value restores the default it leaves",
+                values.join(" ")
+            ));
+        };
+        arguments.extend([flag, reset.clone()]);
+    }
+    let named: std::collections::BTreeSet<String> = options(&arguments)
+        .into_iter()
+        .filter(|(flag, _)| flag == "--model-option")
+        .filter_map(|(_, values)| {
+            let value = values.into_iter().next()?;
+            Some(value.split_once('=')?.0.to_owned())
+        })
+        .collect();
+    let inherited_model_options: Vec<String> = pick
+        .model_options
+        .keys()
+        .filter(|name| !named.contains(*name))
+        .cloned()
+        .collect();
+    let mut served = direct_command(&apply_defaults(&defaults, &arguments))
+        .map_err(|e| format!("its options over the pick are refused: {e}"))?;
+    let mut reference = reference;
+    for command in [&mut served, &mut reference] {
+        if let crate::HostCommandV1::Serve { model_options, .. } = command {
+            for name in &inherited_model_options {
+                model_options.remove(name);
+            }
+        }
+    }
+    if served != reference {
+        let (ours, theirs) = (
+            crate::command::effective_settings_v1(&served),
+            crate::command::effective_settings_v1(&reference),
+        );
+        let setting = ours
+            .keys()
+            .chain(theirs.keys())
+            .find(|key| ours.get(*key) != theirs.get(*key));
+        return Err(match setting {
+            Some(key) => format!(
+                "over the pick it would serve --{key} {}, not {}",
+                ours.get(key).map_or("unset", String::as_str),
+                theirs.get(key).map_or("unset", String::as_str)
+            ),
+            None => "over the pick it would serve other options than its own".to_owned(),
+        });
+    }
+    Ok(Translation {
+        arguments,
+        inherited_model_options,
     })
 }
 
@@ -844,15 +1066,12 @@ pub(crate) fn inspect(arguments: &[String]) -> Result<String, HostCommandErrorV1
                 unreachable!("profile arguments name serve");
             };
             let mut shown = serde_json::to_value(profile).map_err(|e| error(e.to_string()))?;
-            let (budget, target) = match serving.prefill_budget {
-                runtime_scheduler::PrefillBudget::Fixed => ("fixed", None),
-                runtime_scheduler::PrefillBudget::DecodeAware(_) => ("decode-aware", None),
-                runtime_scheduler::PrefillBudget::Tbt(policy) => {
-                    ("tbt", Some(policy.target_millis()))
-                }
+            let target = match serving.prefill_budget {
+                runtime_scheduler::PrefillBudget::Tbt(policy) => Some(policy.target_millis()),
+                _ => None,
             };
-            shown["prefill_budget"] = budget.into();
-            shown["prefill_timing_cuts"] = serving.prefill_timing_cuts.name().into();
+            shown["reply_history_observer"] = serving.reply_history_observer.into();
+            shown["prefill_policy"] = serving.prefill_policy.name().into();
             if let Some(target) = target {
                 shown["decode_tbt_target_ms"] = target.into();
             }
@@ -1376,14 +1595,14 @@ mod tests {
 
     #[test]
     fn scheduling_fields_validate_through_the_serve_parser() {
-        use runtime_scheduler::{MixedPolicy, PrefillBudget, PrefillTarget};
+        use runtime_scheduler::{MixedPolicy, PrefillBudget};
         for (policy, target, expected) in [
             (None, None, PrefillBudget::Fixed),
             (Some("fixed"), None, PrefillBudget::Fixed),
             (
-                Some("decode-aware"),
+                Some("adaptive"),
                 None,
-                PrefillBudget::DecodeAware(PrefillTarget::default()),
+                PrefillBudget::Tbt(MixedPolicy::default()),
             ),
             (
                 Some("tbt"),
@@ -1408,7 +1627,7 @@ mod tests {
         ] {
             let mut value = fixture();
             if let Some(policy) = policy {
-                value["profiles"]["test"]["prefill_budget"] = policy.into();
+                value["profiles"]["test"]["prefill_policy"] = policy.into();
             }
             if let Some(target) = target {
                 value["profiles"]["test"]["decode_tbt_target_ms"] = target.into();
@@ -1427,16 +1646,16 @@ mod tests {
             );
         }
         for fields in [
-            serde_json::json!({"prefill_budget":"unknown"}),
-            serde_json::json!({"prefill_budget":false}),
+            serde_json::json!({"prefill_policy":"unknown"}),
+            serde_json::json!({"prefill_policy":false}),
             serde_json::json!({"decode_tbt_target_ms":150}),
-            serde_json::json!({"prefill_budget":"fixed","decode_tbt_target_ms":150}),
-            serde_json::json!({"prefill_budget":"decode-aware","decode_tbt_target_ms":150}),
-            serde_json::json!({"prefill_budget":"tbt","decode_tbt_target_ms":0}),
-            serde_json::json!({"prefill_budget":"tbt","decode_tbt_target_ms":60001}),
-            serde_json::json!({"prefill_budget":"tbt","decode_tbt_target_ms":-1}),
-            serde_json::json!({"prefill_budget":"tbt","decode_tbt_target_ms":1.5}),
-            serde_json::json!({"prefill_budget":"tbt","decode_tbt_target_ms":"150"}),
+            serde_json::json!({"prefill_policy":"fixed","decode_tbt_target_ms":150}),
+            serde_json::json!({"prefill_policy":"retired","decode_tbt_target_ms":150}),
+            serde_json::json!({"prefill_policy":"tbt","decode_tbt_target_ms":0}),
+            serde_json::json!({"prefill_policy":"tbt","decode_tbt_target_ms":60001}),
+            serde_json::json!({"prefill_policy":"tbt","decode_tbt_target_ms":-1}),
+            serde_json::json!({"prefill_policy":"tbt","decode_tbt_target_ms":1.5}),
+            serde_json::json!({"prefill_policy":"tbt","decode_tbt_target_ms":"150"}),
         ] {
             let mut value = fixture();
             value["profiles"]["test"]
@@ -1452,9 +1671,9 @@ mod tests {
 
     #[test]
     fn scheduling_profile_is_inspectable_and_cli_overrides_in_either_order() {
-        use runtime_scheduler::{MixedPolicy, PrefillBudget, PrefillTarget};
+        use runtime_scheduler::{MixedPolicy, PrefillBudget};
         let mut value = fixture();
-        value["profiles"]["test"]["prefill_budget"] = "tbt".into();
+        value["profiles"]["test"]["prefill_policy"] = "tbt".into();
         value["profiles"]["test"]["decode_tbt_target_ms"] = 150.into();
         let path =
             std::env::temp_dir().join(format!("scheduling-profile-{}.json", std::process::id()));
@@ -1484,32 +1703,32 @@ mod tests {
                     PrefillBudget::Tbt(MixedPolicy::new(150, 512, 0).unwrap()),
                 ),
                 (
-                    vec!["--prefill-budget", "tbt"],
+                    vec!["--prefill-policy", "tbt"],
                     PrefillBudget::Tbt(MixedPolicy::new(150, 512, 0).unwrap()),
                 ),
                 (
                     vec!["--decode-tbt-target-ms", "75"],
                     PrefillBudget::Tbt(MixedPolicy::new(75, 512, 0).unwrap()),
                 ),
-                (vec!["--prefill-budget", "fixed"], PrefillBudget::Fixed),
+                (vec!["--prefill-policy", "fixed"], PrefillBudget::Fixed),
                 (
-                    vec!["--prefill-budget", "decode-aware"],
-                    PrefillBudget::DecodeAware(PrefillTarget::default()),
+                    vec!["--prefill-policy", "adaptive"],
+                    PrefillBudget::Tbt(MixedPolicy::new(150, 512, 0).unwrap()),
                 ),
             ] {
                 assert_eq!(budget(parse(&extra, profile_first).unwrap()), expected);
             }
             for extra in [
-                vec!["--prefill-budget", "fixed", "--decode-tbt-target-ms", "75"],
+                vec!["--prefill-policy", "fixed", "--decode-tbt-target-ms", "75"],
                 vec![
-                    "--prefill-budget",
+                    "--prefill-policy",
                     "decode-aware",
                     "--decode-tbt-target-ms",
                     "75",
                 ],
                 vec!["--decode-tbt-target-ms", "0"],
                 vec!["--decode-tbt-target-ms", "60001"],
-                vec!["--prefill-budget", "fixed", "--prefill-budget", "tbt"],
+                vec!["--prefill-policy", "fixed", "--prefill-policy", "tbt"],
                 vec![
                     "--decode-tbt-target-ms",
                     "75",
@@ -1526,7 +1745,7 @@ mod tests {
             panic!("profile inspection");
         };
         let mut expected = value["profiles"]["test"].clone();
-        expected["prefill_timing_cuts"] = "off".into();
+        expected["reply_history_observer"] = false.into();
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&text).unwrap(),
             expected
@@ -1538,7 +1757,7 @@ mod tests {
         assert_eq!(
             budget(
                 parse(
-                    &["--prefill-budget", "tbt", "--decode-tbt-target-ms", "150"],
+                    &["--prefill-policy", "tbt", "--decode-tbt-target-ms", "150"],
                     false
                 )
                 .unwrap()
@@ -1550,16 +1769,54 @@ mod tests {
     }
 
     #[test]
-    fn prefill_timing_cuts_profile_resolution_and_flag_override() {
-        for value in ["off", "fixed", "adaptive"] {
+    fn reply_history_profile_defaults_and_explicit_overrides() {
+        for value in [None, Some(false), Some(true)] {
             let mut data = fixture();
-            data["profiles"]["test"]["prefill_budget"] = "tbt".into();
-            data["profiles"]["test"]["prefill_timing_cuts"] = value.into();
+            if let Some(value) = value {
+                data["profiles"]["test"]["reply_history_observer"] = value.into();
+            }
             let file = Profiles::parse(&serde_json::to_vec(&data).unwrap()).unwrap();
             let defaults = file.get("test").unwrap().arguments(&file.served_model_name);
-            for override_value in [None, Some("off"), Some("fixed"), Some("adaptive")] {
+            for explicit in [None, Some(false), Some(true)] {
+                let flags = explicit
+                    .map(|v| {
+                        vec![
+                            "--reply-history-observer".into(),
+                            if v { "on" } else { "off" }.into(),
+                        ]
+                    })
+                    .unwrap_or_default();
+                let mut args = vec!["serve".into()];
+                args.extend(apply_defaults(&defaults, &flags));
+                let crate::HostCommandV1::Serve { serving, .. } =
+                    crate::parse_host_command_v1(&args).unwrap()
+                else {
+                    panic!("serve");
+                };
+                assert_eq!(
+                    serving.reply_history_observer,
+                    explicit.or(value).unwrap_or(false)
+                );
+            }
+        }
+        let mut data = fixture();
+        data["profiles"]["test"]["reply_history_observer"] = "on".into();
+        assert!(Profiles::parse(&serde_json::to_vec(&data).unwrap()).is_err());
+    }
+
+    #[test]
+    fn prefill_policy_profile_resolution_and_flag_override() {
+        for value in ["fixed", "tbt", "adaptive"] {
+            let mut data = fixture();
+            data["profiles"]["test"]["prefill_policy"] = value.into();
+            if value != "fixed" {
+                data["profiles"]["test"]["decode_tbt_target_ms"] = 150.into();
+            }
+            let file = Profiles::parse(&serde_json::to_vec(&data).unwrap()).unwrap();
+            let defaults = file.get("test").unwrap().arguments(&file.served_model_name);
+            for override_value in [None, Some("fixed"), Some("tbt"), Some("adaptive")] {
                 let explicit = override_value
-                    .map(|v| vec!["--prefill-timing-cuts".into(), v.into()])
+                    .map(|v| vec!["--prefill-policy".into(), v.into()])
                     .unwrap_or_default();
                 let mut args = vec!["serve".into()];
                 args.extend(apply_defaults(&defaults, &explicit));
@@ -1569,73 +1826,45 @@ mod tests {
                     panic!("serve command");
                 };
                 assert_eq!(
-                    serving.prefill_timing_cuts.name(),
+                    serving.prefill_policy.name(),
                     override_value.unwrap_or(value)
                 );
+                if let runtime_scheduler::PrefillBudget::Tbt(policy) = serving.prefill_budget {
+                    assert_eq!(
+                        policy.target_millis(),
+                        if value == "fixed" { 100 } else { 150 }
+                    );
+                    assert_eq!(policy.min_prefill_tokens(), 512);
+                    assert_eq!(policy.decode_steps(), 0);
+                } else {
+                    assert_eq!(
+                        serving.prefill_budget,
+                        runtime_scheduler::PrefillBudget::Fixed
+                    );
+                    assert_eq!(serving.prefill_policy, crate::PrefillPolicyV1::Fixed);
+                }
             }
         }
     }
 
     #[test]
-    fn prefill_timing_cuts_profile_refuses_invalid_values_and_budgets() {
-        for (fields, expected) in [
-            (
-                serde_json::json!({"prefill_timing_cuts": "fixed"}),
-                "--prefill-timing-cuts fixed needs --prefill-budget tbt",
-            ),
-            (
-                serde_json::json!({"prefill_timing_cuts": "fixed", "prefill_budget": "fixed"}),
-                "--prefill-timing-cuts fixed needs --prefill-budget tbt",
-            ),
-            (
-                serde_json::json!({"prefill_timing_cuts": "fixed", "prefill_budget": "decode-aware"}),
-                "--prefill-timing-cuts fixed needs --prefill-budget tbt",
-            ),
-            (
-                serde_json::json!({"prefill_timing_cuts": "auto", "prefill_budget": "tbt"}),
-                "--prefill-timing-cuts must be off, fixed or adaptive",
-            ),
-            (
-                serde_json::json!({"prefill_timing_cuts": true, "prefill_budget": "tbt"}),
-                "invalid type: boolean `true`, expected a string",
-            ),
-        ] {
-            let mut data = fixture();
-            data["profiles"]["test"]
-                .as_object_mut()
-                .unwrap()
-                .extend(fields.as_object().unwrap().clone());
-            let refusal = Profiles::parse(&serde_json::to_vec(&data).unwrap())
-                .unwrap_err()
-                .to_string();
-            assert!(refusal.contains(expected), "{fields}: {refusal}");
-            assert!(!refusal.contains("unknown field"), "{fields}: {refusal}");
-        }
-        let mut data = fixture();
-        data["profiles"]["test"]["prefill_timing_cuts"] = "fixed".into();
-        data["profiles"]["test"]["prefill_budget"] = "tbt".into();
-        Profiles::parse(&serde_json::to_vec(&data).unwrap()).unwrap();
-    }
-
-    #[test]
-    fn prefill_timing_cuts_file_profile_override_and_inspection() {
+    fn prefill_policy_file_profile_override_and_inspection() {
         let path =
             std::env::temp_dir().join(format!("timing-cuts-profile-{}.json", std::process::id()));
         let bundle = package("timing-cuts");
         let mut data = fixture();
-        data["profiles"]["test"]["prefill_budget"] = "tbt".into();
-        for default in ["off", "fixed", "adaptive"] {
-            data["profiles"]["test"]["prefill_timing_cuts"] = default.into();
+        for default in ["fixed", "tbt", "adaptive"] {
+            data["profiles"]["test"]["prefill_policy"] = default.into();
             std::fs::write(&path, serde_json::to_vec(&data).unwrap()).unwrap();
             for profile_first in [false, true] {
-                for explicit in ["off", "fixed", "adaptive"] {
+                for explicit in ["fixed", "tbt", "adaptive"] {
                     let mut args = vec![
                         "serve".into(),
                         "--bundle".into(),
                         bundle.display().to_string(),
                     ];
                     let profile = vec!["--profile".into(), format!("{}#test", path.display())];
-                    let flags = vec!["--prefill-timing-cuts".into(), explicit.into()];
+                    let flags = vec!["--prefill-policy".into(), explicit.into()];
                     if profile_first {
                         args.extend(profile);
                         args.extend(flags);
@@ -1648,11 +1877,11 @@ mod tests {
                     else {
                         panic!("serve command");
                     };
-                    assert_eq!(serving.prefill_timing_cuts.name(), explicit);
-                    assert!(format!("{serving:?}").contains(&format!(
-                        "prefill_timing_cuts: {:?}",
-                        serving.prefill_timing_cuts
-                    )));
+                    assert_eq!(serving.prefill_policy.name(), explicit);
+                    assert!(
+                        format!("{serving:?}")
+                            .contains(&format!("prefill_policy: {:?}", serving.prefill_policy))
+                    );
                 }
             }
             let args = ["profiles", "show", path.to_str().unwrap(), "test"].map(String::from);
@@ -1662,7 +1891,7 @@ mod tests {
                 panic!("profile inspection");
             };
             let shown: serde_json::Value = serde_json::from_str(&text).unwrap();
-            assert_eq!(shown["prefill_timing_cuts"], default);
+            assert_eq!(shown["prefill_policy"], default);
         }
         std::fs::remove_file(path).unwrap();
         std::fs::remove_dir_all(bundle).unwrap();
@@ -1674,19 +1903,19 @@ mod tests {
             std::env::temp_dir().join(format!("inspect-profile-{}.json", std::process::id()));
         for (fields, policy, target) in [
             (serde_json::json!({}), "fixed", None),
-            (serde_json::json!({"prefill_budget":"fixed"}), "fixed", None),
+            (serde_json::json!({"prefill_policy":"fixed"}), "fixed", None),
             (
-                serde_json::json!({"prefill_budget":"decode-aware"}),
-                "decode-aware",
-                None,
+                serde_json::json!({"prefill_policy":"adaptive"}),
+                "adaptive",
+                Some(100),
             ),
             (
-                serde_json::json!({"prefill_budget":"tbt"}),
+                serde_json::json!({"prefill_policy":"tbt"}),
                 "tbt",
                 Some(100),
             ),
             (
-                serde_json::json!({"prefill_budget":"tbt","decode_tbt_target_ms":150}),
+                serde_json::json!({"prefill_policy":"tbt","decode_tbt_target_ms":150}),
                 "tbt",
                 Some(150),
             ),
@@ -1704,8 +1933,8 @@ mod tests {
                 panic!("profile inspection");
             };
             let mut expected = value["profiles"]["test"].clone();
-            expected["prefill_budget"] = policy.into();
-            expected["prefill_timing_cuts"] = "off".into();
+            expected["reply_history_observer"] = false.into();
+            expected["prefill_policy"] = policy.into();
             if let Some(target) = target {
                 expected["decode_tbt_target_ms"] = target.into();
             }
@@ -2352,5 +2581,465 @@ mod model_options_tests {
             apply_defaults(&defaults, &explicit),
             ["--model-option", "b=2", "--model-option", "a=3"]
         );
+    }
+}
+
+#[cfg(test)]
+mod translate_tests {
+    use super::*;
+
+    /// A profile at four ranks: autoregressive, with `changes` applied.
+    fn profile(changes: serde_json::Value) -> Profile {
+        let mut entry = serde_json::json!({
+            "bundle_id": "fixture.v1", "topology": "fixture-tp4", "tensor_parallel": 4,
+            "devices_required": 4, "devices": [0, 1, 2, 3],
+            "speculation": {"mode": "fixed", "tokens": 0, "draft_cost": "per-token",
+                            "drafter": "none"},
+            "max_sequences": 32, "qualified_max_sequences": null,
+            "qualification": "CPU fixture only", "kv_cache_dtype": "auto",
+            "prefix_cache": true, "max_batch_tokens": 8192, "prefill_chunk_tokens": 2048,
+            "queue_depth": null, "gpu_memory_utilization": 1.0,
+            "graph_memory_reserve_mib": 320, "status": "experimental",
+            "evidence": ["fixture"],
+        });
+        for (field, value) in changes.as_object().unwrap() {
+            entry[field] = value.clone();
+        }
+        let profile: Profile = serde_json::from_value(entry).unwrap();
+        profile.validate().unwrap();
+        profile
+    }
+
+    /// A drafting profile with a TBT prefill budget.
+    fn drafting(changes: serde_json::Value) -> Profile {
+        let mut base = serde_json::json!({
+            "speculation": {"mode": "adaptive", "tokens": 7, "draft_cost": "per-block",
+                            "drafter": "block"},
+            "prefill_policy": "tbt", "decode_tbt_target_ms": 150,
+            "graph_memory_reserve_mib": 384,
+        });
+        for (field, value) in changes.as_object().unwrap() {
+            base[field] = value.clone();
+        }
+        profile(base)
+    }
+
+    /// The serve command `pick` serves under `arguments`, as `serve --model`
+    /// resolves it, beside the one `target` serves on its own.
+    fn served(pick: &Profile, arguments: &[String]) -> crate::HostCommandV1 {
+        direct_command(&apply_defaults(&direct_defaults(pick), arguments)).unwrap()
+    }
+
+    fn flags(arguments: &[String]) -> Vec<String> {
+        options(arguments)
+            .into_iter()
+            .map(|(flag, _)| flag)
+            .collect()
+    }
+
+    /// An autoregressive profile over a drafting pick with a TBT budget
+    /// resets the budget, which drops the pick's TBT target, and serves
+    /// exactly its own configuration.
+    #[test]
+    fn an_autoregressive_profile_resets_the_picks_tbt_budget() {
+        let pick = drafting(serde_json::json!({}));
+        let target = profile(serde_json::json!({}));
+        let translation = translate(&pick, &target).unwrap();
+        let joined = translation.arguments.join(" ");
+        assert!(joined.contains("--prefill-policy fixed"), "{joined}");
+        assert!(joined.contains("--speculative-tokens 0"), "{joined}");
+        assert!(!flags(&translation.arguments).contains(&"--devices".to_owned()));
+        assert!(translation.inherited_model_options.is_empty());
+        let reference = direct_command(&direct_defaults(&target)).unwrap();
+        assert_eq!(served(&pick, &translation.arguments), reference);
+        assert_eq!(
+            crate::command::effective_settings_v1(&reference)["prefill-policy"],
+            "fixed"
+        );
+    }
+
+    /// A balanced pick with model options and adaptive cuts: the target's
+    /// configuration is served without the TBT target, and the model option
+    /// only the pick sets is inherited, for a launcher to reset.
+    #[test]
+    fn an_option_only_the_pick_sets_is_inherited() {
+        let pick = drafting(serde_json::json!({
+            "speculation": {"mode": "balanced", "tokens": 5, "draft_cost": "per-block",
+                            "drafter": "block", "depths": "1:5,8:3,16:0", "widths": "6,8,16,32",
+                            "rows": 64, "graph_rows": 64},
+            "decode_tbt_target_ms": 750, "prefill_policy": "adaptive",
+            "model_options": {"chunk": "8192", "skip": "true", "draft_items": "12"},
+        }));
+        let target = profile(serde_json::json!({
+            "prefill_policy": "fixed",
+            "model_options": {"chunk": "8192", "skip": "true"},
+        }));
+        let translation = translate(&pick, &target).unwrap();
+        assert_eq!(translation.inherited_model_options, ["draft_items"]);
+        let merged = apply_defaults(&direct_defaults(&pick), &translation.arguments);
+        for absent in [
+            "--decode-tbt-target-ms",
+            "--speculation-depths",
+            "--speculation-widths",
+            "--speculative-rows",
+            "--speculation-graph-rows",
+        ] {
+            assert!(!flags(&merged).contains(&absent.to_owned()), "{merged:?}");
+        }
+        let crate::HostCommandV1::Serve {
+            serving,
+            model_options,
+            ..
+        } = served(&pick, &translation.arguments)
+        else {
+            panic!("serve");
+        };
+        assert_eq!(
+            serving.prefill_budget,
+            runtime_scheduler::PrefillBudget::Fixed
+        );
+        assert_eq!(serving.prefill_policy.name(), "fixed");
+        assert_eq!(model_options["draft_items"], "12");
+        assert_eq!(model_options["chunk"], "8192");
+    }
+
+    /// The package carries the pick's drafter: a profile drafting with
+    /// another cannot serve over it, and one sharing it or none can.
+    #[test]
+    fn a_profile_with_another_drafter_is_unavailable() {
+        let pick = drafting(serde_json::json!({}));
+        let other = drafting(serde_json::json!({
+            "speculation": {"mode": "adaptive", "tokens": 3, "draft_cost": "per-token",
+                            "drafter": "layer"},
+        }));
+        let reason = translate(&pick, &other).unwrap_err();
+        assert!(
+            reason.contains("drafts with layer") && reason.contains("drafts with block"),
+            "{reason}"
+        );
+        let autoregressive = profile(serde_json::json!({}));
+        let reason = translate(&autoregressive, &pick).unwrap_err();
+        assert!(reason.contains("has no drafter"), "{reason}");
+        let wider = drafting(serde_json::json!({"max_sequences": 16}));
+        assert!(translate(&pick, &wider).is_ok());
+    }
+
+    /// A setting the pick sets whose default no flag value names (here an
+    /// unbounded queue) makes the profile unavailable, naming it; one with a
+    /// value is reset to the target's own.
+    #[test]
+    fn settings_reset_to_the_targets_value_or_refuse() {
+        let pick = profile(serde_json::json!({"queue_depth": 8}));
+        let target = profile(serde_json::json!({}));
+        let reason = translate(&pick, &target).unwrap_err();
+        assert!(reason.contains("--queue-depth 8"), "{reason}");
+        let pick = drafting(serde_json::json!({
+            "speculation": {"mode": "balanced", "tokens": 5, "draft_cost": "per-block",
+                            "drafter": "block", "confidence": {
+                                "contract": "fixture.drafter-confidence.v1", "floor": 1,
+                                "greedy": [[1, 0], [1, 0], [1, 0], [1, 0], [1, 0]],
+                                "sampled": [[1, 0], [1, 0], [1, 0], [1, 0], [1, 0]]}},
+            "context_parallel_size": 2,
+        }));
+        let mut target = drafting(serde_json::json!({
+            "speculation": {"mode": "balanced", "tokens": 5, "draft_cost": "per-block",
+                            "drafter": "block"},
+        }));
+        target.graph_memory_reserve_mib = None;
+        let translation = translate(&pick, &target).unwrap();
+        let joined = translation.arguments.join(" ");
+        for reset in [
+            "--speculation-confidence off",
+            "--context-parallel-size 1",
+            "--graph-memory-reserve-mib 1024",
+        ] {
+            assert!(joined.contains(reset), "{reset}: {joined}");
+        }
+        assert_eq!(
+            served(&pick, &translation.arguments),
+            direct_command(&direct_defaults(&target)).unwrap()
+        );
+    }
+
+    /// The profile `serve --model` picks at `ranks` among `file`'s for a
+    /// checkpoint whose first plannable drafter is `drafter`: the family
+    /// helpers' rule (`tp<ranks>-<drafter>`, else the only such entry).
+    fn candidate<'a>(file: &'a Profiles, ranks: usize, drafter: &str) -> Option<&'a str> {
+        let matching: Vec<&String> = file
+            .profiles
+            .iter()
+            .filter(|(_, profile)| {
+                profile.tensor_parallel == ranks && profile.speculation.drafter == drafter
+            })
+            .map(|(name, _)| name)
+            .collect();
+        let preferred = format!(
+            "tp{ranks}-{}",
+            if drafter == "none" { "ar" } else { drafter }
+        );
+        matching
+            .iter()
+            .find(|name| ***name == preferred)
+            .or(match matching.as_slice() {
+                [only] => Some(only),
+                _ => None,
+            })
+            .map(|name| name.as_str())
+    }
+
+    /// Checks `target` over `pick` strictly: a profile drafting as the pick
+    /// does or not at all serves exactly its own configuration, as its own
+    /// options followed only by resets of settings the pick sets and it
+    /// leaves at their defaults, each to its own effective value, and
+    /// inherits exactly the pick's model options it omits. Which settings
+    /// need a reset is worked out here: the pick's settings that the target's
+    /// own options leave in force under `serve --model`'s merge
+    /// ([`apply_defaults`]), placement and model options aside, each reset
+    /// in turn while one has a value to reset to. A refusal is accepted only
+    /// for another drafter than the pick's, or for a setting left in force
+    /// that no flag value resets, and the reason must name it.
+    fn check_translation(
+        pick: &Profile,
+        target: &Profile,
+        result: Result<Translation, String>,
+        context: &str,
+    ) {
+        let flags_of = |arguments: &[String]| -> std::collections::BTreeSet<String> {
+            options(arguments)
+                .into_iter()
+                .map(|(flag, _)| flag)
+                .collect()
+        };
+        let pick_defaults = direct_defaults(pick);
+        let pick_flags = flags_of(&pick_defaults);
+        let base: Vec<String> = options(&direct_defaults(target))
+            .into_iter()
+            .filter(|(flag, _)| flag != "--devices")
+            .flat_map(|(flag, values)| std::iter::once(flag).chain(values))
+            .collect();
+        let base_flags = flags_of(&base);
+        let mut reference = direct_command(&direct_defaults(target)).unwrap();
+        let effective = crate::command::effective_settings_v1(&reference);
+        let drafter = target.speculation.drafter.as_str();
+        if drafter != "none" && drafter != pick.speculation.drafter {
+            let reason = result.expect_err(context);
+            assert!(
+                reason.contains(&format!("it drafts with {drafter},")),
+                "{context}: {reason}"
+            );
+            match pick.speculation.drafter.as_str() {
+                "none" => assert!(reason.ends_with("has no drafter"), "{context}: {reason}"),
+                other => assert!(
+                    reason.ends_with(&format!("drafts with {other}")),
+                    "{context}: {reason}"
+                ),
+            }
+            return;
+        }
+        // The pick's settings left in force over the target's options and the
+        // resets so far; the launcher places each instance, and model options
+        // are inherited rather than reset.
+        let placed = |flag: &str| {
+            crate::models::INSTANCE_OPTIONS.contains(&flag) || flag == "--model-option"
+        };
+        let mut explicit = base.clone();
+        let mut resets = std::collections::BTreeMap::new();
+        let unresettable = loop {
+            let given = flags_of(&explicit);
+            let left: Vec<(String, Vec<String>)> =
+                options(&apply_defaults(&pick_defaults, &explicit))
+                    .into_iter()
+                    .filter(|(flag, _)| !placed(flag) && !given.contains(flag))
+                    .collect();
+            let Some((flag, value)) = left.iter().find_map(|(flag, _)| {
+                let value = effective.get(flag.trim_start_matches("--"))?;
+                Some((flag.clone(), value.clone()))
+            }) else {
+                break left;
+            };
+            explicit.extend([flag.clone(), value.clone()]);
+            resets.insert(flag, vec![value]);
+        };
+        let translation = match result {
+            Ok(translation) => translation,
+            Err(reason) => {
+                let named = unresettable.iter().find(|(flag, values)| {
+                    reason.starts_with(&format!("the pick sets {flag} {},", values.join(" ")))
+                });
+                assert!(
+                    named.is_some(),
+                    "{context}: unjustified refusal: {reason}; the settings no flag resets are \
+                     {unresettable:?}"
+                );
+                return;
+            }
+        };
+        assert!(
+            unresettable.is_empty(),
+            "{context}: translated, though no flag resets {unresettable:?}"
+        );
+        assert!(
+            translation.arguments.starts_with(&base),
+            "{context}: {:?}",
+            translation.arguments
+        );
+        let mut reset = std::collections::BTreeMap::new();
+        for (flag, values) in options(&translation.arguments[base.len()..]) {
+            assert!(
+                !base_flags.contains(&flag),
+                "{context}: {flag} is the target's own"
+            );
+            assert!(
+                pick_flags.contains(&flag),
+                "{context}: the pick leaves {flag}"
+            );
+            assert!(
+                reset.insert(flag.clone(), values).is_none(),
+                "{context}: {flag} reset twice"
+            );
+        }
+        assert_eq!(reset, resets, "{context}: resets");
+        let expected: Vec<String> = pick
+            .model_options
+            .keys()
+            .filter(|name| !target.model_options.contains_key(*name))
+            .cloned()
+            .collect();
+        assert_eq!(
+            translation.inherited_model_options, expected,
+            "{context}: inherited model options"
+        );
+        let mut served = served(pick, &translation.arguments);
+        for command in [&mut served, &mut reference] {
+            if let crate::HostCommandV1::Serve { model_options, .. } = command {
+                for option in &expected {
+                    model_options.remove(option);
+                }
+            }
+        }
+        assert_eq!(served, reference, "{context}");
+    }
+
+    /// The strict check accepts the translation and refuses each way one
+    /// could go wrong: a reset the pick does not need, a reset to another
+    /// value, an incomplete inherited set, a refusal without its reason or
+    /// naming a setting that needs no reset, a translation of a setting no
+    /// flag resets, and a profile with another drafter that translates.
+    #[test]
+    fn the_strict_check_refuses_every_wrong_translation() {
+        let pick = drafting(serde_json::json!({"model_options": {"a": "1", "b": "2"}}));
+        let target = profile(serde_json::json!({"model_options": {"a": "1"}}));
+        let good = translate(&pick, &target).unwrap();
+        check_translation(&pick, &target, Ok(good.clone()), "good");
+        let refused = |result: Result<Translation, String>, expected: &str| {
+            let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                check_translation(&pick, &target, result, "wrong")
+            }))
+            .expect_err(expected);
+            let message = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+                .unwrap_or_default();
+            assert!(message.contains(expected), "{expected}: {message}");
+        };
+        let mut extra = good.clone();
+        extra.arguments.extend(["--kv-pages".into(), "4".into()]);
+        refused(Ok(extra), "the pick leaves --kv-pages");
+        let mut other = good.clone();
+        let at = other
+            .arguments
+            .iter()
+            .position(|w| w == "--prefill-policy")
+            .unwrap();
+        other.arguments[at + 1] = "decode-aware".into();
+        refused(Ok(other), "--prefill-policy");
+        let mut missing = good.clone();
+        missing.inherited_model_options.clear();
+        refused(Ok(missing), "inherited model options");
+        refused(Err("no reason".into()), "unjustified refusal");
+        // Settings no reset is needed for: the device map the launcher sets,
+        // and the speculation mode `--speculative-tokens 0` clears.
+        let devices = pick
+            .devices
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        for (flag, value) in [
+            ("--devices", devices.as_str()),
+            ("--speculation", "adaptive"),
+        ] {
+            assert!(
+                options(&direct_defaults(&pick)).contains(&(flag.into(), vec![value.into()])),
+                "{flag}"
+            );
+            refused(
+                Err(format!(
+                    "the pick sets {flag} {value}, and no flag value restores the default it \
+                     leaves"
+                )),
+                "unjustified refusal",
+            );
+        }
+        // A setting no flag value resets is a reason.
+        let queued = profile(serde_json::json!({"queue_depth": 8}));
+        let unbounded = profile(serde_json::json!({}));
+        let reason = translate(&queued, &unbounded).unwrap_err();
+        check_translation(&queued, &unbounded, Err(reason), "queue");
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            check_translation(&queued, &unbounded, Ok(good.clone()), "queue")
+        }));
+        assert!(panic.is_err());
+        let mut layer = drafting(serde_json::json!({}));
+        layer.speculation.drafter = "layer".into();
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            check_translation(&pick, &layer, Ok(good.clone()), "layer")
+        }));
+        assert!(panic.is_err());
+    }
+
+    /// For every model's profiles, every rank count and every profile
+    /// `serve --model` can pick there, each other profile at that count is
+    /// checked strictly ([`check_translation`]).
+    #[test]
+    fn every_model_profile_translates_exactly_or_says_why_not() {
+        let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../models");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&models).unwrap().flatten() {
+            let path = entry.path().join("profiles.json");
+            if !path.is_file() {
+                continue;
+            }
+            let file = Profiles::read(&path).unwrap();
+            let sizes: std::collections::BTreeSet<usize> = file
+                .profiles
+                .values()
+                .map(|profile| profile.tensor_parallel)
+                .collect();
+            for ranks in sizes {
+                let drafters: std::collections::BTreeSet<&str> = file
+                    .profiles
+                    .values()
+                    .filter(|profile| profile.tensor_parallel == ranks)
+                    .map(|profile| profile.speculation.drafter.as_str())
+                    .collect();
+                for pick_name in drafters
+                    .into_iter()
+                    .filter_map(|drafter| candidate(&file, ranks, drafter))
+                {
+                    let pick = file.get(pick_name).unwrap();
+                    for (name, target) in &file.profiles {
+                        if target.tensor_parallel != ranks || name == pick_name {
+                            continue;
+                        }
+                        let context = format!("{}: {name} over {pick_name}", path.display());
+                        check_translation(pick, target, translate(pick, target), &context);
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert!(checked > 0);
     }
 }

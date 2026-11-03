@@ -1,0 +1,19 @@
+{
+  "schema": "chopinfer.serve-options.v1",
+  "options": [
+    {"flag": "--model", "value": "DIR", "choices": null, "group": "model", "help": "a hugging face snapshot directory to prepare and serve", "model_launch": true, "repeatable": false},
+    {"flag": "--modalities", "value": "TEXT", "choices": ["auto", "all", "text", "text,image"], "group": "model", "help": "the inputs to serve (default auto)", "model_launch": true, "repeatable": false},
+    {"flag": "--bundle", "value": "DIR", "choices": null, "group": "model", "help": "a prepared package to serve", "model_launch": false, "repeatable": false},
+    {"flag": "--max-sequences", "value": "N", "choices": null, "group": "scheduling", "help": "the most sequences served at once (default 8)", "model_launch": true, "repeatable": false},
+    {"flag": "--gpu-memory-utilization", "value": "F", "choices": null, "group": "memory", "help": "the share of each GPU's memory to use (default 0.9)", "model_launch": true, "repeatable": false},
+    {"flag": "--prefix-cache", "value": "TEXT", "choices": ["on", "off"], "group": "cache", "help": "reuse the KV of shared prompt prefixes (default on)", "model_launch": true, "repeatable": false},
+    {"flag": "--allow-credentials", "value": "none", "choices": null, "group": "server", "help": "allow credentials in CORS requests", "model_launch": true, "repeatable": false},
+    {"flag": "--allowed-origins", "value": "JSON", "choices": null, "group": "server", "help": "CORS origins as a JSON list", "model_launch": true, "repeatable": false},
+    {"flag": "--allowed-local-media-path", "value": "DIR", "choices": null, "group": "media", "help": "a directory file:// media may be read from", "model_launch": true, "repeatable": true},
+    {"flag": "--debug-preempt-every", "value": "N", "choices": null, "group": "debug", "help": "preempt every Nth step, for tests", "model_launch": true, "repeatable": false}
+  ],
+  "environment": [
+    {"name": "CHOPINFER_API_KEY", "value": "TEXT", "secret": true, "help": "the bearer token clients must send"},
+    {"name": "CHOPINFER_LOG_SUMMARY_SECONDS", "value": "N", "secret": false, "help": "seconds between summary log lines (default 60)"}
+  ]
+}

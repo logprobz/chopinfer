@@ -398,6 +398,15 @@ pub(super) fn stalling_engine(tokens: Vec<u32>, stall: Stall) -> Engine<Scripted
 }
 
 fn engine(tokens: Vec<u32>, sampled: bool, speculative: bool) -> Engine<ScriptedModel> {
+    observed_engine(tokens, sampled, speculative, false)
+}
+
+pub(super) fn observed_engine(
+    tokens: Vec<u32>,
+    sampled: bool,
+    speculative: bool,
+    observed: bool,
+) -> Engine<ScriptedModel> {
     let config = EngineConfig::new(
         SchedulerConfig::new(1, 32, 32, 4, 1).unwrap(),
         KvGeometry::new(4, 64).unwrap(),
@@ -414,7 +423,7 @@ fn engine(tokens: Vec<u32>, sampled: bool, speculative: bool) -> Engine<Scripted
         config
     };
     Engine::new(
-        config,
+        config.with_reply_history_observer(observed),
         ScriptedModel {
             tokens,
             sampled,
@@ -798,11 +807,17 @@ fn a_refused_token_names_the_decoder_reason_ordinal_and_id() {
 }
 
 fn client_stop_metrics(maximum: usize) {
+    for observed in [false, true] {
+        client_stop_observer_metrics(maximum, observed);
+    }
+}
+
+fn client_stop_observer_metrics(maximum: usize, observed: bool) {
     let tokenizer = tokenizer();
     for streamed in [false, true] {
         for sampled in [false, true] {
             let tokens = vec![X, b'E' as u32 + 3, b'N' as u32 + 3, b'D' as u32 + 3, X];
-            let mut engine = engine(tokens, sampled, true);
+            let mut engine = observed_engine(tokens, sampled, true, observed);
             let id = RequestId::new(1);
             engine
                 .submit(
@@ -861,6 +876,16 @@ fn client_stop_metrics(maximum: usize) {
             let metrics = engine.metrics().prometheus_compatibility("fixture");
             for (reason, count) in [("stop", 1), ("length", 0), ("abort", 0)] {
                 assert!(metrics.contains(&format!("vllm:request_success_total{{model_name=\"fixture\",engine=\"0\",finished_reason=\"{reason}\"}} {count}\n")), "{metrics}");
+            }
+            if observed {
+                let snapshot = engine.kv_metrics().snapshot().reply_history;
+                assert_eq!(snapshot.entries, 1);
+                assert_eq!(
+                    snapshot.counters[runtime_kv::ReplyHistoryCounter::Annotated as usize]
+                        + snapshot.counters[runtime_kv::ReplyHistoryCounter::Unknown as usize]
+                        + snapshot.counters[runtime_kv::ReplyHistoryCounter::Mixed as usize],
+                    4
+                );
             }
             assert_eq!(engine.metrics().snapshot().cancellations, 0);
             assert_eq!(engine.metrics().snapshot().requests_completed, 1);
@@ -1296,6 +1321,8 @@ fn idle_worker_prefills_grouped_prompts_and_finishes_a_slow_copy_without_new_com
             let (events, event_receiver) = tokio::sync::mpsc::channel(128);
             let (response, admission) = oneshot::channel();
             submissions.push(WorkerSubmission {
+                observe_delivery: false,
+                skip_reply_history: false,
                 id: RequestId::new(index + 2),
                 request: Box::new(choice),
                 constraint: None,

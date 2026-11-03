@@ -297,13 +297,165 @@ pub(crate) fn checkpoint_model(path: &Path) -> Result<String> {
 }
 
 fn checkpoint_model_with_executable(path: &Path, executable: &Path) -> Result<String> {
+    Ok(
+        checkpoint_helper_with_executable(path, DEFAULT_TENSOR_PARALLEL_SIZE, executable)?
+            .model()?
+            .to_owned(),
+    )
+}
+
+/// One installed family helper, for the catalog commands (`chopinfer
+/// models`).
+pub(crate) struct InstalledHelper {
+    provider: Provider,
+}
+
+/// The installed family helpers beside this executable.
+pub(crate) fn installed_helpers() -> Result<Vec<InstalledHelper>> {
+    installed_helpers_with_executable(&std::env::current_exe()?)
+}
+
+pub(crate) fn installed_helpers_with_executable(executable: &Path) -> Result<Vec<InstalledHelper>> {
+    Ok(installed_providers(executable)?
+        .into_iter()
+        .map(|provider| InstalledHelper { provider })
+        .collect())
+}
+
+/// The installed helper `serve --model` selects for the checkpoint directory
+/// `path` at `ranks`.
+pub(crate) fn checkpoint_helper(path: &Path, ranks: u32) -> Result<InstalledHelper> {
+    checkpoint_helper_with_executable(path, ranks, &std::env::current_exe()?)
+}
+
+pub(crate) fn checkpoint_helper_with_executable(
+    path: &Path,
+    ranks: u32,
+    executable: &Path,
+) -> Result<InstalledHelper> {
     let path = checkpoint_directory(path)?;
-    let (provider, _) = accepting_provider(&path, DEFAULT_TENSOR_PARALLEL_SIZE, executable)?;
-    let name = provider.path.file_name().and_then(|name| name.to_str());
-    Ok(name
-        .and_then(|name| name.strip_prefix(HELPER_PREFIX))
-        .ok_or("installed helper has no model name")?
-        .to_owned())
+    let (provider, _) = accepting_provider(&path, ranks, executable)?;
+    Ok(InstalledHelper { provider })
+}
+
+/// The most bytes a helper's `serving-profiles` may print.
+const SERVING_PROFILES_MAX_BYTES: u64 = runtime_bundle::deployment::DEPLOYMENT_COMPONENT_MAX_BYTES;
+
+impl InstalledHelper {
+    /// Its file name, `chopinfer-model-<m>`.
+    pub(crate) fn name(&self) -> String {
+        self.provider.path.file_name().map_or_else(
+            || self.provider.path.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        )
+    }
+
+    /// The model `<m>` its name carries.
+    pub(crate) fn model(&self) -> Result<&str> {
+        self.provider
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_prefix(HELPER_PREFIX))
+            .ok_or_else(|| "installed helper has no model name".into())
+    }
+
+    /// What its `serving-profiles` command prints: the family's serving
+    /// profiles document, or nothing when it declares none. A helper that
+    /// fails, outgrows the bound or takes more than 10 seconds is refused.
+    pub(crate) fn serving_profiles(&self) -> Result<Vec<u8>> {
+        use std::io::Read;
+        let provider = &self.provider;
+        provider.source.verify()?;
+        let mut child = Command::new(&provider.path)
+            .arg("serving-profiles")
+            .current_dir(
+                provider
+                    .path
+                    .parent()
+                    .ok_or("helper has no install directory")?,
+            )
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let stdout = child.stdout.take().ok_or("helper stdout unavailable")?;
+        let mut stderr = child.stderr.take().ok_or("helper stderr unavailable")?;
+        let (sender, reply) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let read = stdout
+                .take(SERVING_PROFILES_MAX_BYTES + 1)
+                .read_to_end(&mut bytes);
+            let _ = sender.send(read.map(|_| bytes));
+        });
+        // Stderr drains beside stdout, so a helper that writes much to it
+        // cannot block before it finishes its document.
+        let (said, message) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut text = Vec::new();
+            let _ = (&mut stderr).take(4096).read_to_end(&mut text);
+            let _ = std::io::copy(&mut stderr, &mut std::io::sink());
+            let _ = said.send(String::from_utf8_lossy(&text).into_owned());
+        });
+        let timeout = std::time::Duration::from_secs(10);
+        let deadline = std::time::Instant::now() + timeout;
+        let received = reply.recv_timeout(timeout);
+        let status = loop {
+            if let Some(status) = child.try_wait()? {
+                break Some(status);
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        let late = || "installed helper did not print its serving profiles within 10 seconds";
+        let (bytes, status) = (received.map_err(|_| late())??, status.ok_or_else(late)?);
+        let message = message
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap_or_default();
+        provider.source.verify()?;
+        if bytes.len() as u64 > SERVING_PROFILES_MAX_BYTES {
+            return Err("installed helper's serving profiles exceed their bound".into());
+        }
+        if !status.success() {
+            let message = message.trim();
+            return Err(if message.is_empty() {
+                format!("serving-profiles failed with {status}")
+            } else {
+                format!("serving-profiles failed: {message}")
+            }
+            .into());
+        }
+        Ok(bytes)
+    }
+
+    /// The serving profile the helper names for the checkpoint directory
+    /// `path` at `ranks`, the one `serve --model` serves it with, or the
+    /// helper's refusal. Nothing is prepared and no cache is read.
+    pub(crate) fn profile(&self, path: &Path, ranks: u32) -> Result<DirectProfile> {
+        let request = PrepareDirectRequest {
+            path: checkpoint_directory(path)?,
+            cache_root: PathBuf::new(),
+            tensor_parallel_size: ranks,
+            activation_policy: None,
+            modalities: Default::default(),
+        };
+        match Exchange::start(
+            &self.provider,
+            DIRECT_VERSION,
+            Request::DirectProfile(request),
+        )?
+        .receive(false)?
+        {
+            Response::DirectProfileSelected(profile) => Ok(profile),
+            Response::Error { message, .. } => Err(message.into()),
+            _ => Err("installed helper returned no serving profile".into()),
+        }
+    }
 }
 
 fn prepare_direct_with_executable(
@@ -443,6 +595,63 @@ mod tests {
         )
         .unwrap();
         root
+    }
+
+    /// A helper that also prints serving profiles and names a profile per
+    /// rank count (refusing two ranks), or one that fails `serving-profiles`
+    /// and refuses every checkpoint.
+    fn catalog_helper(path: &Path, profiles: &str, fails: bool) {
+        let script = format!(
+            "#!/bin/sh\nif [ \"$1\" = serving-profiles ]; then\n{}\nfi\n\
+             read -r request\ncase \"$request\" in\n\
+             *'\"describe\"'*) echo '{{\"result\":\"description\",\"version\":2,\
+             \"provider\":\"chopinfer-model-alpha\",\"profiles\":[],\
+             \"capabilities\":[\"prepare-direct\",\"direct-profile\"]}}' ;;\n\
+             *'\"probe\"'*) echo '{{\"result\":\"probe\",\"compatible\":{},\
+             \"reason\":\"compatible\"}}' ;;\n\
+             *'\"tensor_parallel_size\":2'*) echo '{{\"result\":\"error\",\
+             \"message\":\"two ranks need a drafter\",\"measurements\":{{\
+             \"total_seconds\":0,\"stages\":{{}},\"decisions\":[]}}}}' ;;\n\
+             *'\"direct-profile\"'*) echo '{{\"result\":\"direct-profile-selected\",\
+             \"name\":\"tp4-ar\",\"profile\":{{\"tensor_parallel\":4}}}}' ;;\nesac\n",
+            if fails {
+                "echo 'profiles are missing' >&2; exit 3".to_owned()
+            } else {
+                format!("printf '%s' '{profiles}'; exit 0")
+            },
+            !fails
+        );
+        fs::write(path, script).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// The catalog commands read a helper's serving profiles and the profile
+    /// it names for a checkpoint at each rank count, or its refusal; a helper
+    /// whose `serving-profiles` fails is refused with what it said.
+    #[test]
+    fn installed_helpers_print_their_profiles_and_name_the_pick() {
+        let root = install("catalog", &[("alpha", true), ("beta", false)]);
+        let bin = root.join("bin");
+        let document = r#"{"schema":"chopinfer-serve-profiles-v2","profiles":{}}"#;
+        catalog_helper(&bin.join(format!("{HELPER_PREFIX}alpha")), document, false);
+        catalog_helper(&bin.join(format!("{HELPER_PREFIX}beta")), document, true);
+        let executable = bin.join("chopinfer");
+        let helpers = installed_helpers_with_executable(&executable).unwrap();
+        let names: Vec<String> = helpers.iter().map(InstalledHelper::name).collect();
+        assert_eq!(names, ["chopinfer-model-alpha", "chopinfer-model-beta"]);
+        assert_eq!(helpers[0].model().unwrap(), "alpha");
+        assert_eq!(helpers[0].serving_profiles().unwrap(), document.as_bytes());
+        let error = helpers[1].serving_profiles().unwrap_err().to_string();
+        assert!(error.contains("profiles are missing"), "{error}");
+        let checkpoint = root.join("checkpoint");
+        let helper = checkpoint_helper_with_executable(&checkpoint, 4, &executable).unwrap();
+        assert_eq!(helper.name(), "chopinfer-model-alpha");
+        let profile = helper.profile(&checkpoint, 4).unwrap();
+        assert_eq!(profile.name, "tp4-ar");
+        assert_eq!(profile.profile["tensor_parallel"], 4);
+        let refusal = helper.profile(&checkpoint, 2).unwrap_err().to_string();
+        assert_eq!(refusal, "two ranks need a drafter");
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn model_of(root: &Path) -> Result<String> {

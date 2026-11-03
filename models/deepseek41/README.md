@@ -66,11 +66,14 @@ for graphs; DSpark reserves 640 MiB. Package capacity and CPU checks do not
 establish release qualification.
 
 The scheduler admits 64-token aligned shared-prefix anchors in addition to
-the chunk grid and prompt ends. For an unaligned prompt, it cuts at
-`prompt_tokens / 64 * 64` and executes the remaining 1 to 63 tokens in a
-separate prefill step. Each endpoint produces complete target state and,
-for DSpark, the 134-row raw feature history, including six preserved older
-rows. An anchor costs 53 pages (2.88 MiB) per rank for AR or 125 pages
+the chunk grid and prompt ends. An unaligned prompt publishes an anchor at
+`prompt_tokens / 64 * 64`. On these profiles the step that reaches it
+continues to the prompt end and captures the anchor inside the step, for up
+to eight requests per step. A chunk through the prompt end that does not fit
+the step's budget stops at the anchor, and the remainder runs as a separate
+prefill step. Each endpoint produces complete target
+state and, for DSpark, the 134-row raw feature history, including six
+preserved older rows. An anchor costs 53 pages (2.88 MiB) per rank for AR or 125 pages
 (6.79 MiB) for DSpark. See [prefill dependencies](prefill-dependencies.md).
 
 On 2026-10-27, TP4 shared-document and multi-turn comparisons measured a
@@ -86,7 +89,7 @@ DSpark (966 to 996 ms). The separate full-prefill and 2048-token profiles
 were removed after this comparison. `prefill_upper_skip` and
 `prefill_chunk_tokens` remain declared options for diagnostic configurations.
 
-`tp4-dspark` serves `--prefill-budget tbt` at a 750 ms decode cadence
+`tp4-dspark` serves `--prefill-policy adaptive` at a 750 ms decode cadence
 target with adaptive timing cuts; `tp4-ar` keeps the fixed budget and whole
 grid chunks. In the 2026-10-30 stateful replay A/B, adaptive resolved
 gains against `off` in collapse share and gaps over 1 s in a C16
@@ -105,6 +108,36 @@ media, taps and hosts without the needed service. Every host gather has an
 `engram_gather` route tag; remaining fallbacks are recorded in the bundle's
 route allowlist. See [Engram gathers](lab/prefill-engram.md) and
 [prefill communication](prefill-communication.md).
+
+The Engram codes and scales are about 203 GB of checkpoint tables, mapped
+from the file and read through the host page cache. The weight plan keeps
+`prewarm: false`. On 2026-11-01, four GPUs
+at 250 W each with 251 GB of host RAM measured mean GPU gather waits of
+0.04, 0.06, 0.08 and 0.03 ms per step at C1, C8, C16 and C32 with warm
+tables (0.1-0.3% of a step). Evicted tables caused up to 1,150 major faults
+per visit and multi-millisecond gather waits. An external sequential read
+restored 99% residency in about 60-70 seconds; the in-process background
+warm has not been timed at this size.
+
+`serve --prewarm-mapped-views off|on|auto` defaults to `off`. `auto` warms
+the tables in the background after readiness if `MemAvailable` can hold
+the mapped bytes plus the 16 GiB margin.
+
+A live server job can drop its external sequential read of the tables
+before `serve` and pass `--prewarm-mapped-views auto`. If traffic must not
+meet cold rows, wait for the first `mapped prewarm:` line other than the
+`warming anyway (on)` warning. The JSON done line with `stopped: false`
+signals completion; auto decline (short or unreadable RAM), warm failure
+and worker spawn failure do not. When residency is visible, the required
+gauge ratio can also establish warm tables; when hidden, use the done line.
+
+The sampler runs whatever the option and publishes
+`chop_mapped_view_bytes`, `chop_mapped_view_resident_bytes`,
+`chop_mapped_view_residency_visible` and
+`chop_mapped_view_residency_sample_seconds`.
+See [mapped-view monitoring](../../docs/operations-observability.md#weight-loading-counters)
+for the full visibility rule, endings and warnings, and
+[example alerts](../../docs/operations-observability.md#example-alerts).
 
 ## Kernel selection and storage
 
@@ -246,8 +279,8 @@ them. A non-default value is unqualified.
 | `text_config.indexer_mma` | `true` | Use the guarded native Flash index scorer where eligible. |
 | `text_config.indexer_prefill_tile` | `true` | Enable the qualified Flash tiled indexer routes. |
 | `verify_graph_rows` | `64` | Widest graphed verify step; wider admitted steps run eagerly. |
-| `wide_draft` | `false` | Candidate, requires `wide_verify`: a Flash TP4 drafter step of more than twelve drafting items runs them in the fewest forwards the widest wide verify bucket holds (25 items at 128 verify rows, 32 at 192), on the wide dense folds and the head's exact F32 row tiles, instead of chunks of at most twelve. Fixed-batch GPU replays matched the default bitwise. Kept off with `wide_verify` (see its row). |
-| `wide_verify` | `false` | Candidate: Flash TP4 eager verify steps of 65 to 192 rows prepare their row-local stages and HC boundaries at the wide verify buckets (128 rows and the verify rows) and launch the decode entries a 64-row step uses, fold their dense projections through wide folds at those buckets, run their routed experts through the wide direct MoE queues, and run the vocabulary head, router and compressor in their measured exact F32 row tiles. Fixed-batch GPU replays and kernel-lab MoE pairs matched the default bitwise. Kept off on this host: served depth sweeps on 2026-11-01, at a 250 W limit per GPU, chose no step above 64 rows (see the served acceptance paragraph below). |
+| `wide_draft` | `false` | Candidate, requires `wide_verify`: a Flash TP4 drafter step of more than twelve drafting items runs them in the fewest forwards the widest wide verify bucket holds (25 items at 128 verify rows, 32 at 192), on the wide dense folds and the head's exact F32 row tiles, instead of chunks of at most twelve. Fixed-batch GPU replays matched the default bitwise. Kept off with `wide_verify` at both measured power limits (see its row). |
+| `wide_verify` | `false` | Candidate: Flash TP4 eager verify steps of 65 to 192 rows prepare their row-local stages and HC boundaries at the wide verify buckets (128 rows and the verify rows) and launch the decode entries a 64-row step uses, fold their dense projections through wide folds at those buckets, run their routed experts through the wide direct MoE queues, and run the vocabulary head, router and compressor in their measured exact F32 row tiles. Fixed-batch GPU replays and kernel-lab MoE pairs matched the default bitwise. Kept off on this host: served depth sweeps on 2026-11-01, at a 250 W limit per GPU, and on 2026-11-02, at the 300 W default limit, chose no step above 64 rows (see the served acceptance paragraphs below). |
 
 TP4 native-KV single-item DMA prefill overlaps both prepared Engram gathers
 by default at 512-8192 rows. The model joins each layer before its decoder;
@@ -300,11 +333,11 @@ longer selects the bundle's step or commit records. Existing diagnostic
 capture directories, AR Engram tracing and the shared
 `CHOPINFER_DEVICE_RESULTS` control remain available.
 
-### Candidate dense prefill tail folds
+### Dense prefill tail folds
 
-`prefill_tail_folds=true` changes only remainder work in Flash TP4 dense
-prefill. It keeps every option-off registration and every compact, matrix
-and staged-scale choice, including tabled widths with a 64-row remainder.
+Flash TP4 dense prefill folds only remainder work. It keeps every earlier
+registration and every compact, matrix and staged-scale choice, including
+tabled widths with a 64-row remainder.
 The existing 1-64-row route and aligned widths also stay unchanged. At
 65-127 rows it replaces the generic fold with 64 rows plus the rest. Above
 128 rows it replaces a split tail or the partial tile of an ordinary TMA
@@ -317,25 +350,27 @@ full part at its rounded width. For example, an 8191-row q-b projection has
 a 127-row remainder, beyond that shape's split limit of 112, so it keeps the
 ordinary TMA kernel for the first 8064 rows and folds 64 plus 63. The
 `max_tail_rows=16` shapes use padded TMA above 16, but belong to other
-topologies and remain unchanged by this TP4 option.
+topologies and remain unchanged.
 
-The option covers attention q/kv/o, the indexer query, shared-expert
+The folds cover attention q/kv/o, the indexer query, shared-expert
 gate/up/down and `engram.kv`. Every tail has separate aligned scratch and
 sliced activation, scale and output spans. Status retains its original span
 and uses the piece's row offset. The partition relies on eager prefill
 planning at its live row count; it does not support padded or graph prefill.
-The option defaults to false and can coexist with `prefill_anchor_items`,
-which defaults to 0.
+The folds were adopted on 2026-11-02 after bitwise exactness, a served
+step-time A/B and stateful replay acceptance; see
+[prefill dependencies](prefill-dependencies.md). No option selects the
+earlier split-tail routes on Flash TP4.
 
 CPU tests compare fake-host result metadata and committed request state,
-pin routes and spans, and sweep both served profiles with the option on
-and off. Each tail piece must match option-off lowering at the same row
-count. Direct-step allowances cover every selected remainder independently
-of inherited cone gaps. Internal output-cone tails have candidate allowances;
-preserved full launches newly exposed by changed fallback totals have explicit
-accounting exceptions. These CPU checks do not establish GPU arithmetic
-equality. The candidate is not adopted, and no performance claim follows
-from them.
+pin routes and spans, and sweep both served profiles. Each tail piece must
+match the unpartitioned lowering at the same row count. Direct-step
+allowances cover every selected remainder independently of inherited cone
+gaps. Internal output-cone tails have their own allowances; preserved full
+launches newly exposed by changed fallback totals have explicit accounting
+exceptions. These CPU checks do not establish GPU arithmetic equality; the
+lab probe below and the served checks in
+[prefill dependencies](prefill-dependencies.md) do.
 
 On 2026-11-02, exhaustive CPU fake-host execution of packed-2 rows 2 through
 8192 and packed-32 rows 32 through 8192 corrected the simulated packed-cone
@@ -352,7 +387,8 @@ DSpark retains feature rows as additional dependency roots, changing the
 backward output cones. The audit compares fallback counts across widths,
 so a fallback launch alone does not establish an allowance gap.
 
-The ignored lab probe compares the current route with the partition at
+The ignored lab probe compares the unpartitioned route (the generic fold at
+85 and 127 rows, split tail or padded TMA above 128) with the partition at
 85, 127, 789, 831, 853, 1557 and 1599 rows for the Flash TP4 q/kv/o,
 indexer, shared-expert and Engram shapes. Before timing it requires bitwise
 equal outputs and statuses on clean inputs and with a poisoned scale in the
@@ -363,8 +399,8 @@ symbol partition helper. Its source records why other served registrations
 cannot affect these queries. Each device interleaves identical-operand A/A
 controls with A/B visits using gated CUDA events and cold weights. Each
 result reports the A/A spread. It records power limits and clocks and
-refuses a changed power limit. Lab results locate work; adoption still
-requires served acceptance.
+refuses a changed power limit. Lab results locate work; adoption also
+required served acceptance.
 
 Prepare the test executable and stage the locked timing probe before the
 GPU reservation. Keep the staged cubin and receipts outside the tree:
@@ -382,22 +418,18 @@ the admitted job to five minutes including termination:
 source ~/.config/chopinfer/local.env && bash tools/dev/heavy.sh --label ds41tail-probe env CHOPINFER_KERNEL_REQUIRE=1 CHOPINFER_KERNEL_PROBE_CUBIN="${CHOPINFER_DATA:?}/tail-fold-probe/probe_sm120.cubin" timeout --signal=TERM --kill-after=5s 295s cargo test -p model-deepseek41-lab --test prefill_tail_folds --locked --offline prefill_tail_folds_pair -- --ignored --exact --nocapture
 ```
 
-### Prompt-end grid-anchor candidate
+### Prompt-end grid anchors
 
-The candidate is restored behind `prefill_anchor_items`, default 0. It
-accepts continuations at any start without a minimum row count. CPU
-structural checks do not establish GPU exactness or served acceptance.
-
-The previous prompt-end grid-anchor candidate was removed. A TP4 AR C1 replay on
-2026-10-29 matched all 40 turn pairs bitwise but regressed throughput by
-0.66% and TTFT p95 in both pairs. An off-grid 789-row prefill took
-311-313 ms, while separate 768- and 21-row steps totaled 288-294 ms.
-The tail selected split-tail dense routes instead of exact-row folds.
-The final DSpark C1 gate also regressed TTFT p95 in both pairs: 303.03
-to 324.71 ms and 308.08 to 321.54 ms. The declared gate failed despite
-the cold AR C4 throughput gain.
-The restored candidate still needs served stateful acceptance across cold
-and warm turns before changing the default schedule.
+Flash TP4 with upper skip and scheduler cuts declares in-step prompt-end
+anchors through `chop_bundle_prefill_anchors_api_v2`, up to eight per step
+and at most the served sequence count. Continuations may start anywhere,
+with no minimum row count. Other topologies and configurations without upper
+skip declare none and keep the separate tail step. An earlier candidate
+failed its 2026-10-29 gate because fused unaligned steps took split-tail
+dense routes; with the tail folds the fused schedule was adopted on
+2026-11-02. The measured tail cost, exactness results and acceptance
+verdicts, including the accepted `tp4-ar` C8 stall-time tradeoff, are in
+[prefill dependencies](prefill-dependencies.md).
 
 ### Removed short-prefill graph candidate
 
@@ -729,6 +761,30 @@ times its request tok/s; the 160- and 192-row steps (110.1 and 124.4 ms)
 fell below plain decode. Without the option the same 80- to 192-row steps
 took 191.9 to 286.7 ms, 2.3 to 2.9 times the wide route. The software power
 cap held the SM clocks in 76 to 97% of samples in every arm.
+
+The GPUs now enforce their default 300 W limit. On 2026-11-02 the decode
+bench and the depth sweeps ran again at 300 W on main 0c620f1a66. The 250
+W bench used 5e864484fe and the 250 W sweeps cd1eab92ef, so the comparison
+across limits is indicative only; each choice below compares runs of one
+build at 300 W. The default profile's decode bench (medians of three
+trials of 2048 output tokens) gave 281, 976, 1,140 and 1,269 tok/s at one,
+eight, 16 and 32 streams, against 282, 894, 1,030 and 1,151 at 250 W: flat
+at one stream and 9.1 to 10.8% higher from eight. Depth sweeps at the
+profile's 64 verify rows (same workload and pool as above) chose depth 3
+at C8 (1.198 times plain decode's request tok/s), depth 3 at C16 (1.172)
+and depth 0 at C32 (depth 1 gave 0.978), the profile's 8:3, 16:3 and 32:0.
+With `wide_verify` and `wide_draft` at 192 verify and graph rows, the 80-
+and 96-row steps at C16 gave 1.033 and 1.006 times plain decode's request
+tok/s and the 96- to 192-row steps at C32 0.863 to 0.927 (on the same
+request basis the 250 W sweeps gave 1.023 and 0.986 at C16 and 0.897 to
+0.975 at C32). The best wide depth at C32, one draft at 64 rows, gave
+1.002, under the 1.5% selection margin. In the sweeps each GPU's mean SM
+clock per arm was 2,120 to 2,260 MHz, with the power cap active in 0 to
+87% of its samples, against 1,870 to 2,220 MHz and 76 to 96% in the 250 W
+sweeps. No setting cleared the margin over the current entry, so the depth
+table, rows, graph rows and widths stay and both options stay off. Every
+sweep window matched its reference bitwise, with no major faults,
+preemptions or prefix-cache evictions.
 
 The drafter cost candidates merged into this branch with every existing
 journal identical ([merge note](journal-changes/wide-verify-merge-drafter.md)).

@@ -168,7 +168,7 @@ PENDING = {
 # by blob so that any other content is still checked. A later commit replaced
 # each one; the entry only lets the history that carries it reach origin.
 REVIEWED_BLOBS = {
-    # chopinfer-top's mountinfo parser tests: synthetic mount points.
+    # choptop's mountinfo parser tests: synthetic mount points.
     '4fb9fdd7557c0629683d7d3f9aaf6817b789de6b',
 }
 DENYLIST_FILES = [Path(os.environ.get('CHOPINFER_LEAK_DENYLIST') or

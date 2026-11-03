@@ -1002,7 +1002,8 @@ fn a_failed_model_finalization_publishes_nothing_and_blocks_execution() {
             fail_finalize: true,
             ..RetirementExecutor::default()
         };
-        let mut engine = Engine::new(config(3, 16, 3), executor).unwrap();
+        let mut engine =
+            Engine::new(config(3, 16, 3).with_reply_history_observer(true), executor).unwrap();
         engine.submit(request(1, &[1], 1, &[])).unwrap();
         engine.submit(request(2, &[2], 4, &[])).unwrap();
         if rollback {
@@ -1018,6 +1019,12 @@ fn a_failed_model_finalization_publishes_nothing_and_blocks_execution() {
                     reason: FinishReason::Length | FinishReason::Stop
                 }
         )));
+        assert_eq!(engine.kv_metrics().snapshot().reply_history.entries, 0);
+        assert_eq!(
+            engine.kv_metrics().snapshot().reply_history.rows
+                [runtime_kv::ReplyHistoryRows::Prefilled as usize],
+            [0; 5]
+        );
         assert_eq!(engine.step(), Err(EngineError::ModelStateFailed));
         assert!(
             engine
@@ -1213,7 +1220,7 @@ fn repeated_batch_refusals_trip_the_guard_and_block_further_execution() {
 #[test]
 fn sampling_failure_fails_only_the_failing_in_place_requests() {
     let mut engine = Engine::new(
-        config(3, 16, 3),
+        config(3, 16, 3).with_reply_history_observer(true),
         RetirementExecutor {
             in_place: true,
             ..RetirementExecutor::default()
@@ -1286,5 +1293,14 @@ fn sampling_failure_fails_only_the_failing_in_place_requests() {
     assert_eq!(retirement_trace(&engine).last().unwrap(), "retire 2");
     assert!(!retirement_trace(&engine).contains(&"rollback".to_owned()));
     assert_eq!(engine.kv_stats().used_blocks(), 0);
+    let history = engine.kv_metrics().snapshot().reply_history;
+    assert_eq!(
+        history.entries, 1,
+        "only the healthy request becomes a history"
+    );
+    assert_eq!(
+        history.counters[runtime_kv::ReplyHistoryCounter::Fingerprints as usize],
+        3
+    );
     engine.audit().unwrap();
 }

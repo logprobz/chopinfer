@@ -765,14 +765,14 @@ fn scored_row_budget_is_restored_after_rollback_and_charged_for_media_overrun() 
 }
 
 #[test]
-fn scored_rows_respect_the_decode_aware_prefill_budget() {
+fn scored_rows_respect_the_tbt_prefill_budget() {
     let mut scheduler = Scheduler::new(
         SchedulerConfig::new(3, 8, 8192, 2048, 1)
             .unwrap()
             .with_maximum_scored_rows(17)
             .unwrap()
-            .with_prefill_budget(runtime_scheduler::PrefillBudget::DecodeAware(
-                runtime_scheduler::PrefillTarget::DecodeSteps(1),
+            .with_prefill_budget(runtime_scheduler::PrefillBudget::Tbt(
+                runtime_scheduler::MixedPolicy::default(),
             )),
         KvGeometry::new(4, 4096).unwrap(),
     )

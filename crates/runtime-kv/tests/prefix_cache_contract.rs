@@ -1386,3 +1386,36 @@ fn media_only_divergence_splits_at_the_span_start() {
         model.check(&pool);
     }
 }
+
+#[test]
+fn incremental_digest_tail_matches_full_chain_with_partial_media_and_salts() {
+    use runtime_kv::PrefixMediaSpanV1;
+    for length in [3, 4, 5, 8] {
+        for salt in [None, Some(b"scope".as_slice())] {
+            let prompt = (1..=length).collect::<Vec<u32>>();
+            let media = vec![PrefixMediaSpanV1 {
+                identity: [7; 32],
+                start: 1,
+                rows: 2,
+                media_row: 0,
+            }];
+            let chain = PrefixChainV1::salted(4, Arc::from(prompt.as_slice()), media.clone(), salt)
+                .unwrap();
+            let mut tail = chain.continuation().unwrap();
+            assert_eq!(tail.allocated_bytes(), chain.continuation_bytes());
+            assert_eq!(Some(tail.key()), chain.key_at(prompt.len()));
+            let mut all = prompt;
+            for token in 20..35 {
+                let page = tail.push(token);
+                all.push(token);
+                let full = PrefixChainV1::salted(4, Arc::from(all.as_slice()), media.clone(), salt)
+                    .unwrap();
+                assert_eq!(Some(tail.key()), full.key_at(all.len()));
+                assert_eq!(
+                    page,
+                    (all.len() % 4 == 0).then(|| full.chain(all.len() / 4).unwrap())
+                );
+            }
+        }
+    }
+}

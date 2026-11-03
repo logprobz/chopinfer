@@ -124,6 +124,88 @@ fn config() -> EngineConfig {
     .unwrap()
 }
 
+#[test]
+fn canonical_prefill_identity_exists_before_steps_and_survives_warmup() {
+    use runtime_scheduler::{MixedPolicy, PrefillBudget};
+    for budget in [
+        PrefillBudget::Fixed,
+        PrefillBudget::Tbt(MixedPolicy::default()),
+        PrefillBudget::Tbt(MixedPolicy::new(150, 256, 2).unwrap()),
+    ] {
+        for grid in [false, true] {
+            for adaptive in [false, true] {
+                for cuts in [false, true] {
+                    let geometry = KvGeometry::new(4, 8).unwrap();
+                    let scheduler = SchedulerConfig::new(1, 2, 8, 8, 1)
+                        .unwrap()
+                        .with_prefill_budget(budget);
+                    let cfg = EngineConfig::new(
+                        scheduler,
+                        geometry,
+                        ModelVocabulary::new(8).unwrap(),
+                        geometry.token_capacity(),
+                        2,
+                    )
+                    .unwrap();
+                    let cfg = if grid {
+                        cfg.with_guaranteed_prefill_chunks(8).unwrap()
+                    } else {
+                        cfg
+                    };
+                    let cfg = cfg
+                        .with_prefill_cuts(true)
+                        .with_adaptive_prefill_budget(adaptive)
+                        .with_prefill_timing_cuts(cuts);
+                    let expected = match budget {
+                        PrefillBudget::Fixed => Some("fixed"),
+                        PrefillBudget::Tbt(policy) if policy.min_prefill_tokens() == 512 => {
+                            match (adaptive, grid && cuts, grid) {
+                                (false, false, _) => Some("tbt"),
+                                (true, false, false) | (true, true, true) => Some("adaptive"),
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    };
+                    assert_eq!(cfg.prefill_policy_name(), expected);
+                    let metrics = EngineMetrics::default();
+                    let mut engine = Engine::new_with_observability(
+                        cfg,
+                        ObservedExecutor,
+                        Arc::new(TestClock::default()),
+                        metrics.clone(),
+                    )
+                    .unwrap();
+                    let before = metrics.prometheus_compatibility("fixture");
+                    let identities: Vec<_> = before
+                        .lines()
+                        .filter(|line| line.starts_with("chop_prefill_policy_info{"))
+                        .collect();
+                    assert_eq!(identities.len(), usize::from(expected.is_some()));
+                    if let Some(policy) = expected {
+                        assert_eq!(
+                            identities[0],
+                            format!(
+                                "chop_prefill_policy_info{{model_name=\"fixture\",engine=\"0\",policy=\"{policy}\"}} 1"
+                            )
+                        );
+                    }
+                    for retired in [
+                        "chop_prefill_budget_decode_estimate_seconds",
+                        "chop_prefill_budget_decode_estimate_samples",
+                        "chop_prefill_budget_prefill_token_seconds",
+                    ] {
+                        assert!(!before.contains(retired));
+                    }
+                    engine.begin_startup_warmup().unwrap();
+                    engine.finish_startup_warmup().unwrap();
+                    assert_eq!(metrics.prometheus_compatibility("fixture"), before);
+                }
+            }
+        }
+    }
+}
+
 /// Two sequences over one budget, so a batch may carry both phases at once.
 fn mixing_config() -> EngineConfig {
     let geometry = KvGeometry::new(4, 8).unwrap();
@@ -714,14 +796,11 @@ fn timed_steps(policy: runtime_scheduler::PrefillBudget) -> (Vec<usize>, EngineM
 }
 
 #[test]
-fn successful_execution_times_feed_the_decode_aware_budget() {
-    use runtime_scheduler::{PrefillBudget, PrefillTarget};
-    let (prefills, metrics) =
-        timed_steps(PrefillBudget::DecodeAware(PrefillTarget::DecodeSteps(1)));
+fn successful_execution_times_preserve_shared_phase_histograms() {
+    let (prefills, metrics) = timed_steps(runtime_scheduler::PrefillBudget::Fixed);
     assert_eq!(prefills, vec![2048, 0, 0, 4096]);
 
-    // The policy is visible: execution time per step phase, prefill tokens
-    // per step, the cap selected beside decode rows, and the estimates.
+    // Execution time and token accounting remain independent of the policy.
     let text = metrics.prometheus_compatibility("fixture");
     let labels = "model_name=\"fixture\",engine=\"0\"";
     for line in [
@@ -735,28 +814,13 @@ fn successful_execution_times_feed_the_decode_aware_budget() {
         format!("chop_step_execution_seconds_bucket{{{labels},phase=\"mixed\",le=\"0.01\"}} 1"),
         format!("chop_step_prefill_tokens_count{{{labels}}} 2"),
         format!("chop_step_prefill_tokens_sum{{{labels}}} 6144"),
-        // Cold 512 twice, then 4096 once the decode estimate qualifies.
-        format!("chop_prefill_budget_selected_tokens_bucket{{{labels},le=\"512.0\"}} 2"),
-        format!("chop_prefill_budget_selected_tokens_bucket{{{labels},le=\"3584.0\"}} 2"),
-        format!("chop_prefill_budget_selected_tokens_bucket{{{labels},le=\"4096.0\"}} 3"),
-        format!("chop_prefill_budget_selected_tokens_sum{{{labels}}} 5120"),
-        format!("chop_prefill_budget_decode_estimate_seconds{{{labels},rows_le=\"1\"}} 0.004096"),
-        format!("chop_prefill_budget_decode_estimate_samples{{{labels},rows_le=\"1\"}} 2"),
-        format!(
-            "chop_prefill_budget_prefill_token_seconds{{{labels},tokens_le=\"2048\"}} 0.000001"
-        ),
-        format!(
-            "chop_prefill_budget_prefill_token_seconds{{{labels},tokens_le=\"4096\"}} 0.000001"
-        ),
     ] {
         assert!(text.contains(&format!("{line}\n")), "{line}\n{text}");
     }
-    for name in [
-        "chop_step_execution_seconds",
-        "chop_prefill_budget_decode_estimate_seconds",
-    ] {
-        assert_eq!(text.matches(&format!("# TYPE {name} ")).count(), 1);
-    }
+    assert_eq!(
+        text.matches("# TYPE chop_step_execution_seconds ").count(),
+        1
+    );
 }
 
 #[test]
@@ -843,6 +907,7 @@ fn tbt_budget_publishes_its_model_and_predicted_against_actual_mixed_steps() {
             .and_then(|value| value.parse().ok())
             .unwrap_or_else(|| panic!("{name}\n{text}"))
     };
+    assert!(value("chop_prefill_budget_selected_tokens_count") > 0.0);
     assert_eq!(value("chop_mixed_budget_trained"), 1.0);
     assert!(value("chop_mixed_budget_samples") >= 8.0);
     assert!(value("chop_mixed_step_predicted_seconds_count") > 10.0);

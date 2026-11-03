@@ -261,7 +261,7 @@ class FakeIntegrationTests(unittest.TestCase):
                     fake_time(FakeClock()), redirect_stdout(io.StringIO()):
                 for arm in ['tbt', 'fixed']:
                     self.assertEqual(main(['--dry-run', '--levels', '1', '--seconds', '.5', '--warmup-waves', '0', '--min-samples', '2',
-                                           '--no-decode', '--arm', arm, '--fake-prefill-budget', arm, '--label', 'comparison']), 0)
+                                           '--no-decode', '--arm', arm, '--fake-prefill-policy', arm, '--label', 'comparison']), 0)
                     summary = (Path(name) / (arm + '-sweep.md')).read_text()
                     self.assertIn('Server step evidence', summary)
                     # Every percentile in the summary carries its sample count.
@@ -446,7 +446,7 @@ class ReplicaTests(unittest.TestCase):
                     fake_time(FakeClock()), redirect_stdout(io.StringIO()):
                 for arm, mode in arms:
                     self.assertEqual(main(['--dry-run', '--levels', '1,2', '--seconds', '.4', '--warmup-waves', '0',
-                                           '--min-samples', '2', '--no-decode', '--arm', arm, '--fake-prefill-budget', mode,
+                                           '--min-samples', '2', '--no-decode', '--arm', arm, '--fake-prefill-policy', mode,
                                            '--label', 'replicas', *flags]), 0)
         for receipt in receipts.values():
             receipt.update(schema='chopinfer-qualification/v1', check='agentic-mixed', mechanics_only=True)
@@ -475,6 +475,14 @@ class ReplicaTests(unittest.TestCase):
         self.assertIn('Timing: informational (no host load recorded).', summary)
         idle = common.host_load_windows([[counters_at(0, 10), counters_at(1, 10)]])
         self.assertIn('Timing: evidence.', markdown(sweep, idle))
+
+    def test_fake_policy_identity_covers_all_current_policies(self):
+        sweeps = self.sweeps('--replicas', '1', arms=tuple((p, p) for p in ('fixed', 'tbt', 'adaptive')))
+        for policy, sweep in sweeps.items():
+            for level in sweep['levels']:
+                self.assertEqual(level['prefill_budget']['identity'], 'prefill-policy')
+                self.assertEqual(level['prefill_budget']['mode'], policy)
+                self.assertTrue(level['arm_verification']['passed'])
 
     def test_comparison_pairs_replicas_and_reports_their_spread(self):
         from agentic_compare import compare

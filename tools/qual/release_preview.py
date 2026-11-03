@@ -87,7 +87,7 @@ DRAIN_CLEANUP_SECONDS = 10
 STOP_KILL_SECONDS = 10
 # The serve flags that take no value (runtime-host VALUELESS_FLAGS_V1).
 VALUELESS_SERVE_FLAGS = ('--enable-request-id-headers', '--allow-credentials', '--fake-host-services',
-                         '--list-model-options')
+                         '--list-model-options', '--check')
 WRAPPER_KILL_SECONDS = 5
 STAGE_TIMEOUTS = {'record': 3600, 'prefix': 10800, 'gsm8k': 1800, 'gsm8k_branches': 300, 'greedy': 900,
                   'needle': 1800, 'queue': 300, 'prefix_slice': 3600, 'references': 300}

@@ -29,6 +29,9 @@
 //! - `CHOPINFER_KERNEL_GPUS`: the ranks' GPUs, comma-separated ordinals;
 //!   without it the test plans and maps the tables for four ranks and stops.
 //!
+//! The job user must own the checkpoint or be able to write it. Otherwise
+//! page-cache residency is hidden and the real-checkpoint run fails.
+//!
 //! The measurement needs the CUDA backend (`--release --features
 //! linux-cuda-host`). The same sequence runs on the host-memory device over a
 //! small synthetic checkpoint in every build.

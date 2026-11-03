@@ -1,0 +1,33 @@
+{
+  "schema": "chopinfer.models-pick.v1",
+  "model": "deepseek41",
+  "refusal": null,
+  "sizes": [
+    {
+      "tensor_parallel": 4,
+      "pick": "tp4-dspark",
+      "refusal": null,
+      "profiles": [
+        {"name": "tp4-dspark", "available": true, "arguments": [], "inherited_model_options": []},
+        {"name": "tp4-ar", "available": true, "arguments": ["--speculative-tokens", "0", "--prefill-policy", "fixed"], "inherited_model_options": ["dspark_draft_chunk_items"]},
+        {"name": "tp4-mtp", "available": false, "reason": "it drafts with mtp, but the package serve --model prepares for this checkpoint drafts with dspark"}
+      ]
+    },
+    {
+      "tensor_parallel": 2,
+      "pick": null,
+      "refusal": "the checkpoint does not fit two GPUs",
+      "profiles": [
+        {"name": "tp2-ar", "available": false, "reason": "the checkpoint does not fit two GPUs"}
+      ]
+    },
+    {
+      "tensor_parallel": 8,
+      "pick": "tp8-dspark-wide",
+      "refusal": null,
+      "profiles": [
+        {"name": "tp8-dspark-wide", "available": true, "arguments": [], "inherited_model_options": []}
+      ]
+    }
+  ]
+}

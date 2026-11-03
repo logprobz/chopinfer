@@ -347,7 +347,7 @@ package's `batch_limits` bound them further: startup refuses
 `--max-sequences` above `maximum_sequences` or `--max-batch-tokens` above
 `maximum_prefill_tokens`, and `--prefill-chunk-tokens` must be a multiple of
 `prefill_granule` (64 for Qwen3.8). Decode items run first and a prefill chunk
-fills the rest of the step. `--prefill-budget fixed|tbt|decode-aware` caps
+fills the rest of the step. `--prefill-policy fixed|tbt|adaptive` caps
 prefill beside decoding requests; see [mixed scheduling](serving-profiles.md#prefill-policy).
 
 ### Batched prompts

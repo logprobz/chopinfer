@@ -1,0 +1,96 @@
+"""Historical budget evidence for archived receipts, not current policy verification.
+
+A historical TBT label may include timing cuts. It does not identify today's
+`tbt` versus `adaptive` policy.
+"""
+from agentic_metrics import parse_metrics
+
+MODES = ('fixed', 'tbt', 'decode-aware')
+# Series only one policy renders (runtime-engine compatibility.rs): the TBT
+# model's gauges and mixed-step histograms, and the decode-aware estimator's
+# gauges. The selected-budget histogram comes from both, so it names neither.
+POLICY_METRICS = {'tbt': ('chop_mixed_budget_', 'chop_mixed_step_'),
+                  'decode-aware': ('chop_prefill_budget_decode_estimate_', 'chop_prefill_budget_prefill_token_')}
+
+
+def normalize_mode(value):
+    return value if value in MODES else None
+
+
+def historical_mode_evidence(before, after, model, startup_before=None, startup_after=None):
+    snapshots = []
+    claims = []
+    errors = []
+    for point, snapshot in [('before', before), ('after', after)]:
+        try:
+            rows = parse_metrics(snapshot['text']) if not snapshot.get('error') else {}
+        except (ValueError, TypeError):
+            rows = {}
+        rows = {key: value for key, value in rows.items()
+                if dict(key[1]).get('model_name', dict(key[1]).get('model', model)) == model}
+        snapshots.append(rows)
+        for (name, labels), value in rows.items():
+            labels = dict(labels)
+            if value <= 0:
+                continue
+            if 'prefill_budget' in name or name.endswith('scheduler_info'):
+                mode = next((normalize_mode(labels[k]) for k in ('mode', 'prefill_budget_mode', 'prefill_budget')
+                             if k in labels and normalize_mode(labels[k])), None)
+                if mode:
+                    claims.append(dict(mode=mode, source='metrics mode label', point=point, metric=name))
+        for mode, prefixes in POLICY_METRICS.items():
+            found = sorted({name for name, _ in rows if name.startswith(prefixes)})
+            if found:
+                claims.append(dict(mode=mode, source='policy-specific metrics', point=point, metric=found[0]))
+    old, new = snapshots
+    # This histogram is intentionally absent before its first observation in
+    # compatibility.rs:285. Only this known lazy counter treats absence as zero.
+    selected = 0
+    prefixes = ('chop_', 'vllm:')
+    selected_prefix = next((prefix for prefix in prefixes
+                            if any(key[0] == prefix + 'prefill_budget_selected_tokens_count' for key in new)), None)
+    for key, value in new.items():
+        if selected_prefix and key[0] == selected_prefix + 'prefill_budget_selected_tokens_count':
+            change = value - old.get(key, 0)
+            if change < 0:
+                errors.append('selected-budget counter reset')
+            selected += max(0, change)
+    for point, startup in [('before', startup_before), ('after', startup_after)]:
+        if startup and startup.get('mode'):
+            claims.append(dict(mode=startup['mode'], source='verified listener startup args', point=point))
+    if startup_before and startup_after and startup_before.get('pid') and startup_after.get('pid'):
+        if any(startup_before.get(k) != startup_after.get(k) for k in ('pid', 'start_ticks', 'argv_sha256')):
+            errors.append('listener process identity changed')
+    modes = {claim['mode'] for claim in claims}
+    if len(modes) > 1:
+        errors.append('conflicting mode evidence')
+    if selected and modes == {'fixed'}:
+        errors.append('selected-budget observations under the fixed budget')
+    return dict(mode=next(iter(modes)) if len(modes) == 1 and not errors else None,
+                claims=claims, selected_budget_observations=selected, errors=errors,
+                unavailable='mode not established' if not modes else None,
+                startup_before=startup_before, startup_after=startup_after)
+
+
+def historical_arm_mode(arm):
+    """The prefill-budget mode an arm label claims: a mode in MODES, alone
+    or before a `-` suffix naming the arm's other server settings
+    (`fixed-mbt4096`, `tbt-150ms`), else None."""
+    return next((mode for mode in sorted(MODES, key=len, reverse=True)
+                 if arm == mode or arm.startswith(mode + '-')), None)
+
+
+def verify_historical_arm(arm, evidence):
+    mode = historical_arm_mode(arm)
+    if mode is None:
+        return dict(passed=True, reason='unlabeled scheduling arm; mode not gated')
+    reason = None
+    if evidence['errors']:
+        reason = '; '.join(evidence['errors'])
+    elif evidence['mode'] != mode:
+        reason = f"arm {arm} disagrees with observed mode {evidence['mode'] or 'unknown'}"
+    warnings = []
+    if mode == 'tbt' and evidence['mode'] == 'tbt' and not evidence['selected_budget_observations']:
+        warnings.append('verified tbt mode but no selected-budget observations in the measured window')
+    return dict(passed=reason is None, reason=reason, warnings=warnings,
+                policy_exercised=bool(evidence['selected_budget_observations']))

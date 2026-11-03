@@ -1,0 +1,83 @@
+{
+ "schema": "chopinfer.models-pick.v1",
+ "model": "qwen38",
+ "refusal": null,
+ "sizes": [
+  {
+   "tensor_parallel": 4,
+   "pick": "tp4-mtp",
+   "refusal": null,
+   "profiles": [
+    {
+     "name": "tp4-ar",
+     "available": true,
+     "arguments": [
+      "--speculation",
+      "fixed",
+      "--speculative-tokens",
+      "0",
+      "--graph-memory-reserve-mib",
+      "320"
+     ],
+     "inherited_model_options": []
+    },
+    {
+     "name": "tp4-mtp",
+     "available": true,
+     "arguments": [],
+     "inherited_model_options": []
+    },
+    {
+     "name": "tp4-ar-dcp2",
+     "available": true,
+     "arguments": [
+      "--speculation",
+      "fixed",
+      "--speculative-tokens",
+      "0",
+      "--graph-memory-reserve-mib",
+      "320",
+      "--context-parallel-size",
+      "2"
+     ],
+     "inherited_model_options": []
+    },
+    {
+     "name": "tp4-mtp-dcp2",
+     "available": true,
+     "arguments": [
+      "--context-parallel-size",
+      "2"
+     ],
+     "inherited_model_options": []
+    }
+   ]
+  },
+  {
+   "tensor_parallel": 2,
+   "pick": "tp2-mtp",
+   "refusal": null,
+   "profiles": [
+    {
+     "name": "tp2-ar",
+     "available": true,
+     "arguments": [
+      "--speculation",
+      "fixed",
+      "--speculative-tokens",
+      "0",
+      "--graph-memory-reserve-mib",
+      "320"
+     ],
+     "inherited_model_options": []
+    },
+    {
+     "name": "tp2-mtp",
+     "available": true,
+     "arguments": [],
+     "inherited_model_options": []
+    }
+   ]
+  }
+ ]
+}

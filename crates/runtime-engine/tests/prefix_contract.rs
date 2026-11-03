@@ -996,3 +996,94 @@ fn aligned_prompt_cuts_preserve_every_prompt_logprob_row() {
         assert_eq!(results[0], results[1]);
     }
 }
+
+#[test]
+fn reply_observation_preserves_events_batches_and_public_anchors_for_ar_and_speculation() {
+    use runtime_kv::{ReplyHistoryCounter as Count, ReplyHistoryRows as Rows};
+    for speculative in [false, true] {
+        for refused in [false, true] {
+            let mut results = Vec::new();
+            for enabled in [false, true] {
+                let mut cfg = config(true)
+                    .with_guaranteed_prefill_chunks(8)
+                    .unwrap()
+                    .with_reply_history_observer(enabled);
+                if speculative {
+                    cfg = cfg.with_speculation(
+                        runtime_engine::SpeculationConfig::new(
+                            3,
+                            16,
+                            runtime_engine::SpeculationMode::Fixed,
+                            runtime_engine::DraftSource::Bundle,
+                        )
+                        .unwrap(),
+                    );
+                }
+                let mut engine = Engine::new(cfg, FoldingExecutor::default()).unwrap();
+                let prompt = words(4, 1);
+                engine.submit(request(1, &prompt, 9)).unwrap();
+                engine.run_until_idle(64).unwrap();
+                let first = engine.drain_events();
+                assert_eq!(engine.executor().captures, [(RequestId::new(1), 4)]);
+                let mut next = prompt;
+                next.extend(first.iter().filter_map(|event| match event.kind() {
+                    EngineEventKind::Token { token_id, .. } => Some(*token_id),
+                    _ => None,
+                }));
+                engine.executor_mut().refuse_restore = refused;
+                engine.submit(request(2, &next, 3)).unwrap();
+                engine.run_until_idle(64).unwrap();
+                let second = engine.drain_events();
+                let metrics = engine.kv_metrics().snapshot().reply_history;
+                assert_eq!(metrics.enabled, enabled);
+                if enabled {
+                    assert_eq!(metrics.counters[Count::EligibleTurn as usize], 1);
+                    assert_eq!(metrics.rows[Rows::Eligible as usize].iter().sum::<u64>(), 8);
+                    assert_eq!(metrics.rows[Rows::Repeated as usize].iter().sum::<u64>(), 8);
+                } else {
+                    assert_eq!(metrics.allocated_bytes, 0);
+                    assert_eq!(metrics.counters[Count::Fingerprints as usize], 0);
+                    assert_eq!(metrics.counters[Count::Probes as usize], 0);
+                }
+                results.push((
+                    first,
+                    second,
+                    engine.executor().captures.clone(),
+                    engine.executor().restores.clone(),
+                    engine.executor().executions,
+                    engine.executor().input_tokens,
+                ));
+            }
+            assert_eq!(
+                results[0], results[1],
+                "speculative={speculative}, refused={refused}"
+            );
+        }
+    }
+}
+
+#[test]
+fn reply_observation_is_independent_of_cache_and_isolates_startup() {
+    use runtime_kv::ReplyHistoryCounter as Count;
+    let mut engine = Engine::new(
+        config(false).with_reply_history_observer(true),
+        FoldingExecutor::default(),
+    )
+    .unwrap();
+    engine.begin_startup_warmup().unwrap();
+    run(&mut engine, 1, &words(4, 1), 3);
+    engine.finish_startup_warmup().unwrap();
+    assert_eq!(
+        engine.kv_metrics().snapshot().reply_history.counters[Count::Submitted as usize],
+        0
+    );
+    let prompt = words(4, 1);
+    let (reply, _) = run(&mut engine, 2, &prompt, 3);
+    let mut next = prompt;
+    next.extend(reply);
+    run(&mut engine, 3, &next, 2);
+    assert_eq!(
+        engine.kv_metrics().snapshot().reply_history.counters[Count::EligibleTurn as usize],
+        1
+    );
+}

@@ -1,0 +1,37 @@
+{
+ "schema": "chopinfer.models-pick.v1",
+ "model": "deepseek41",
+ "refusal": null,
+ "sizes": [
+  {
+   "tensor_parallel": 4,
+   "pick": "tp4-dspark",
+   "refusal": null,
+   "profiles": [
+    {
+     "name": "tp4-ar",
+     "available": true,
+     "arguments": [
+      "--speculation",
+      "fixed",
+      "--speculative-tokens",
+      "0",
+      "--prefill-policy",
+      "fixed",
+      "--graph-memory-reserve-mib",
+      "320"
+     ],
+     "inherited_model_options": [
+      "dspark_draft_chunk_items"
+     ]
+    },
+    {
+     "name": "tp4-dspark",
+     "available": true,
+     "arguments": [],
+     "inherited_model_options": []
+    }
+   ]
+  }
+ ]
+}

@@ -93,6 +93,10 @@ impl Provider for MimoFamily {
         Some(package::DEPLOYMENT_POLICY)
     }
 
+    fn serving_profiles(&self) -> Option<&str> {
+        Some(PROFILES)
+    }
+
     fn profiles(&self) -> Vec<String> {
         Tp::SUPPORTED
             .map(|tp| format!("direct-text-ar-tp{}", tp.ranks()))

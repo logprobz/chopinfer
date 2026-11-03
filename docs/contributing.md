@@ -420,7 +420,7 @@ as A/A only when both visits used identical seeds and prompts.
 
 Step-time acceptance asserts zero cached prompt tokens, so it cannot see a
 change that acts through serving state across steps and turns: prefix-cache
-eviction order, cache points captured on cancel or stop, decode-aware
+eviction order, cache points captured on cancel or stop, adaptive
 prefill chunk cuts, or CUDA graphs for short prefill continuations. Judge
 such scheduler and prefix-cache changes on stateful multi-turn traffic.
 

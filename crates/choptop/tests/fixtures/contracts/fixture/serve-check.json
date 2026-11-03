@@ -1,0 +1,37 @@
+{
+  "schema": "chopinfer.serve-check.v1",
+  "profile": "tp4-mtp",
+  "settings": {
+    "admission": "optimistic",
+    "admission-watermark": "0.01",
+    "context-parallel-size": "1",
+    "draft-cost": "per-token",
+    "gpu-memory-utilization": "1",
+    "graph-memory-reserve-mib": "1024",
+    "kv-cache-dtype": "auto",
+    "kv-offload-gib": "0",
+    "max-batch-tokens": "128",
+    "max-preemptions": "3",
+    "max-sequences": "1",
+    "prefill-chunk-tokens": "128",
+    "prefix-cache": "off",
+    "queue-depth": "8",
+    "queue-wait-ms": "0",
+    "reply-history-observer": "off",
+    "speculation": "adaptive",
+    "speculative-tokens": "3",
+    "verify-warmup": "on",
+    "prefill-policy": "fixed"
+  },
+  "model_options": [
+    {
+      "name": "scratch_multiplier",
+      "value": "1",
+      "default": "1",
+      "default_is_qualified": false
+    }
+  ],
+  "warnings": [
+    "model options scratch_multiplier are not qualified defaults"
+  ]
+}

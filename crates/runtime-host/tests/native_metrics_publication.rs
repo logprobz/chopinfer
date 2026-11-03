@@ -848,6 +848,7 @@ async fn a_served_request_moves_engine_counters_and_settles_idle() {
     );
 
     // No producer observes these, so none of them is published as a zero.
+    assert!(!after.contains("chop_mapped_view_"));
     assert_eq!(value(&after, "chop_execution_observations_total"), 0.0);
     for absent in [
         "chop_kv_evictions_total",

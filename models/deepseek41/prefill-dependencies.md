@@ -17,34 +17,95 @@ chunk is split again. Profiles with no guaranteed grid do not enable it. The
 scheduler retains the absolute grid after an extra cut, so a cut at 4032 is
 followed by 8192 unless another selected anchor or the prompt end comes
 first. This mechanism does not enable timing-budget cuts. TBT-selected
-timing cuts are a separate serving option
-(`--prefill-timing-cuts fixed|adaptive` with `--prefill-budget tbt`),
-described below. `tp4-dspark` selects `adaptive` by default and `tp4-ar`
-keeps `off`.
+timing cuts are enabled by `--prefill-policy adaptive`, described below.
+`tp4-dspark` selects `adaptive` by default and `tp4-ar` keeps `fixed`.
 
-On default `tp4-ar` and `tp4-dspark`, every eligible prompt with a complete
-64-token block and a trailing 1-63 tokens is cut at `prompt / 64 * 64`,
-then executes those last tokens as a separate prefill step. This applies to
-all such cold traffic, including unrelated prompts with no shared prefix.
-It adds a step and snapshot when the rounded end is not already a grid
-boundary. Prompts shorter than 64 tokens have no interior aligned cut; a hit
-at the rounded end only needs the tail step. Cold TTFT
-therefore includes the extra cone, tail step and snapshot for unaligned
-prompts, as well as any cost of shared-prefix cuts.
+Every eligible prompt with a complete 64-token block and a trailing 1-63
+tokens publishes an anchor at `prompt / 64 * 64`, including unrelated cold
+prompts with no shared prefix. Flash TP4 with upper skip and scheduler cuts,
+which both default profiles select, declares in-step prompt-end anchors
+through `chop_bundle_prefill_anchors_api_v2`: up to eight per step, and
+never more than the served sequence count. The chunk that reaches such an
+anchor continues to the prompt end, and the bundle captures the anchor's
+complete state inside that step. The whole chunk through the prompt end must
+fit the request's chunk limit and the step's token budget and, with timing
+cuts, its timing share. A grid boundary is never fused, and a replay that
+also captures the original prompt end keeps that capture. Other topologies,
+configurations without upper skip (including those without cuts) and chunks
+that do not fit run the last tokens as a separate prefill step. Prompts
+shorter than 64 tokens have no interior aligned cut; a hit at the rounded
+end only needs the remainder.
 
-The in-step prompt-end anchor candidate is removed. It could save a tail
-step on cold packed prompts, but C1 stateful replay exposed a dense-route
-cost. A fused 789-row step selected split-tail projections and took
-311-313 ms; separate 768- and 21-row steps totaled 288-294 ms. The TP4 AR
-replay on 2026-10-29 matched 40 turn pairs bitwise but regressed output
-throughput by 0.66% and TTFT p95 in both pairs. Ordinary cuts remain, with
-no per-instance grid-anchor ABI, spare buffers or changed manifest-anchor
-behavior in other models.
+Fusing first exposed a dense route cost. An unaligned width selected a
+generic fold at 65-127 rows and, above 128 rows, a split full-tile route and
+split tail or a padded TMA grid. An earlier in-step
+anchor candidate failed its gate on 2026-10-29 for this reason: a fused
+789-row step took 311-313 ms against 288-294 ms for separate 768- and 21-row
+steps, and DSpark C1 TTFT p95 regressed in both pairs (303.03 to 324.71 ms
+and 308.08 to 321.54 ms). On 2026-11-02 (main 0c620f1a66, tp4-dspark, 300 W
+per GPU, quiet host), a C8 replay of 8 sessions of 40 turns at about
+130K-token contexts measured 238 separate tail steps with a 98.0 ms median,
+83.7 ms above matched prefill-free steps and 17.7% of TTFT. At C1 the median
+was 73.4 ms, 16.4% of TTFT. Fusing a 21-row tail into a 768-row step took
+250.7 ms against 190.7 + 36.7 ms split: the 21 rows added 60.0 ms to the
+step. In an nsys profile, dense projections took 92.0 ms at 789 rows against
+33.9 ms at 768; other kernel families changed by under 3 ms.
 
-The final TP4 gate on 2026-10-29 measured a 12.71% AR C4 throughput gain,
-but DSpark C1 replay regressed TTFT p95 in both pairs: 303.03 to 324.71 ms
-and 308.08 to 321.54 ms. The declared rule forbade a resolved p95 regression
-in either decision cell, so the candidate failed despite its cold gain.
+Dense prefill tail folds remove that loss on Flash TP4. They keep each full
+part's launch and replace only the remainder with exact-row folds; the
+[README](README.md#dense-prefill-tail-folds) describes the routes. On
+2026-11-02 the lab pair probe matched outputs and statuses bit for bit,
+including a poisoned scale in the last tail row, and cut the summed shape
+medians on one device from 6.40 to 2.74 ms at 789 rows and from 9.33 to
+4.80 ms at 1599 rows. The served step-time A/B (`tools/tune` `mode: ab`,
+tp4-dspark, C1, fixed budget, prefix cache off, one lead visit) accepted the
+folds with no energy veto. Median complete prefill step time fell 46% at 85
+and 127 rows, 25-26% at 789 and 853, 23% at 1599 and 20% at 2069 rows. It
+fell 3.6% and 6.0% at the aligned 768- and 1536-row controls.
+
+Exactness was checked on 2026-11-02 against main c0691d7d90 in both
+profiles. A served A/B of 74 requests matched token IDs, text, top-5 logprob
+bits, finish reasons and cached tokens across the base, the branch with both
+options off, anchors alone, and anchors with folds. The requests covered
+cold unaligned prompts of 85 to 100003 tokens with aligned controls, seeded
+sampling, continuations, restores of prompt-end and interior anchors, packed
+C8 cold and continuation requests, and mixed steps with streaming decoders.
+Anchored arms ran 29-32 fewer prefill steps. `tools/qual/prefix_exact.py`
+passed at every position at C8 for `tp4-dspark` with speculation and with
+`--speculative-tokens 0`, and the correctness runner's determinism screen
+passed. `tools/qual/determinism.py` matched base and candidate on `tp4-ar`,
+and fixed-batch decode and verify replays at C1, C16 and C32 matched full
+logits. A diagnostic build compared split, anchored and anchored-with-folds
+state after each request. Every published snapshot, retirement capture, KV
+page, drafter ring, cursor and proposal matched outside documented unread
+cells.
+
+Stateful replay acceptance ran on 2026-11-02 at TP4 with native KV,
+temperature 1 and 300 W per GPU. Arm A was main c0691d7d90, arm B anchors
+with folds; A1, B1, B2 and A2 were fresh keeper-borrowed processes. C1 ran
+four sessions of five turns at 32768 KV pages per rank. The `tp4-dspark` C1
+prototype-policy cell reproduces the earlier prototype's server policy: a
+fixed budget with timing cuts off and five fixed draft tokens. C8
+replayed 8 sessions of 40 turns with generated history at 316000 (DSpark)
+and 342000 (AR) pages per rank.
+
+| Cell | TTFT p50, A1/B1/B2/A2 ms | TTFT p95, A1/B1/B2/A2 ms | Output tokens/s, pairs | Verdict |
+| --- | --- | --- | --- | --- |
+| `tp4-dspark` C1, prototype policy | 173.8/134.7/134.3/169.5 | 232.5/200.6/198.0/226.6 | +7.9%, +5.9% | gains, no regression |
+| `tp4-dspark` C1, profile defaults | 172.0/134.2/135.2/168.4 | 230.5/199.6/200.7/226.9 | +7.2%, +6.3% | gains, no regression |
+| `tp4-ar` C1 | 153.4/128.1/126.3/155.3 | 221.8/194.3/190.3/222.1 | +3.7%, +4.3% | gains, no regression |
+| `tp4-dspark` C8 | 660.8/512.5/520.8/691.6 | 1224.9/1003.1/984.6/1436.8 | +1.5%, +1.8% | gains, no regression |
+| `tp4-ar` C8 | 1182.4/832.2/768.8/1174.5 | 1958.7/1623.2/1497.9/1868.1 | +1.1%, +1.3% | gains, stall-time regression |
+
+Every matched turn agreed bit for bit: 40 per C1 cell and 640 per C8 cell.
+J/token fell 1.1-5.0% in every pair. `tp4-ar` C8 resolved a regression in
+stall time per 1000 decode gaps (1146/1232/1202/1061 ms). The candidate had
+about as many stalls (564 and 579 against 614 and 578), but each lasted
+41-55 ms longer on average (376 and 357 ms against 321 and 316 ms). The cause
+was not measured; AR's fixed budget has no step-time cap to bound a fused
+step. That tradeoff was accepted on 2026-11-02, and the fused schedule became
+the default for both TP4 profiles, because `tp4-dspark` is the priority
+profile. No option restores the split schedule with upper skip.
 
 A shorter grid hit does not suppress a longer observed shared-prefix cut,
 even when the request resumes within its final chunk. The next request can
@@ -121,10 +182,11 @@ measurement; the full-prefill arm did not. Response-end anchors are no longer
 published, so the matched-hit TTFT gain over full prefill may be overstated.
 No corrected measurement is available.
 
-On ten matched cold, unaligned requests per profile, rounded-end cuts added
-one endpoint, one tail step and one snapshot each. Mean cold TTFT changed
-from 940.86 to 980.61 ms for AR and 966.41 to 995.67 ms for DSpark: 39.75 and
-29.26 ms per added endpoint, respectively. This combines cone, tail-step
+Before in-step prompt-end anchors, on ten matched cold, unaligned requests
+per profile, rounded-end cuts added one endpoint, one tail step and one
+snapshot each. Mean cold TTFT changed from 940.86 to 980.61 ms for AR and
+966.41 to 995.67 ms for DSpark: 39.75 and 29.26 ms per added endpoint,
+respectively. This combines cone, tail-step
 and snapshot cost. No aligned cold control was measured. The idle anchor
 survived unrelated traffic for 7-8 seconds; long-idle and memory-pressure
 survival remain unmeasured. The route sweep uses the grid-only entry and
@@ -392,7 +454,7 @@ bitwise equality.
 
 An online implementation also has to specify what it knows about future
 chunks. The current scheduler can switch between expanded, configured and
-decode-aware chunks as traffic changes, and optimistic admission can
+adaptive chunks as traffic changes, and optimistic admission can
 preempt a request before its planned captures. Boundary counts alone do
 not promise a future chunk history. A safe alternative keeps the complete
 persistent state exact at every actual chunk end. Treating every chunk end

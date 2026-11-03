@@ -322,6 +322,8 @@ fn run(scenario: &Scenario, overlap: bool) -> Run {
         streams.push(events);
         admissions.push(admitted);
         let command = WorkerCommand::Submit(vec![WorkerSubmission {
+            observe_delivery: false,
+            skip_reply_history: false,
             id,
             request: Box::new(request),
             constraint: planned.grammar.map(grammar),
@@ -797,5 +799,74 @@ fn deferred_backpressure_can_refuse_what_immediate_delivery_fits() {
         } else {
             assert_eq!(accepted, [true, true, true]);
         }
+    }
+}
+
+#[test]
+fn reply_history_waits_for_the_real_terminal_relay_handoff() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    for succeeds in [false, true] {
+        let mut engine =
+            super::stop_tests::observed_engine(vec![byte(b'x'); 2], false, false, true);
+        let id = RequestId::new(1);
+        engine
+            .submit(
+                EngineRequest::new(
+                    id,
+                    vec![byte(b'x')],
+                    2,
+                    runtime_sampling::SamplingParameters::new(0.0).unwrap(),
+                    0,
+                    vec![],
+                    ModelVocabulary::new(259).unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        engine.defer_completion_metrics(id);
+        engine.require_reply_history_delivery(id);
+        engine.run_until_idle(8).unwrap();
+        engine.finish_reply_history_delivery(id, EngineFinishReason::Length, 2);
+        assert_eq!(engine.kv_metrics().snapshot().reply_history.entries, 0);
+        runtime.block_on(async {
+            let (client, reader) = tokio::sync::mpsc::channel(2);
+            let mut reader = Some(reader);
+            let (worker, forward) = tokio::sync::mpsc::channel(2);
+            let cancellation = CancellationSignal::new();
+            let outbox = Outbox::new(EventSender::new(worker), cancellation.clone(), true);
+            let receipt = engine
+                .reply_history_observer()
+                .unwrap()
+                .delivery(id)
+                .unwrap();
+            let relay = tokio::spawn(forward_events_observed(
+                forward,
+                EventSender::new(client),
+                cancellation,
+                Some(receipt),
+            ));
+            outbox.try_emit(finish()).unwrap();
+            if !succeeds {
+                drop(reader.take());
+            }
+            crate::overlap::run_pending();
+            drop(outbox);
+            if let Some(reader) = &mut reader {
+                assert_eq!(reader.recv().await, Some(finish()));
+            }
+            tokio::time::timeout(Duration::from_secs(2), relay)
+                .await
+                .unwrap()
+                .unwrap();
+        });
+        let observed = engine.kv_metrics().snapshot().reply_history;
+        assert_eq!(observed.entries, u64::from(succeeds));
+        assert_eq!(
+            observed.counters[runtime_kv::ReplyHistoryCounter::DeliveryFailed as usize],
+            u64::from(!succeeds)
+        );
     }
 }

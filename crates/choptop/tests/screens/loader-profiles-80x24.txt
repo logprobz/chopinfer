@@ -1,0 +1,24 @@
+ choptop  >  Load model   replacing proc 48211   4 models  4 GPUs
+
+┌─ Profiles  ● what serve --model picks ───────────────────────────────────────┐
+│ tp4-ar         AR          evidence C64                                      │
+│▌tp4-mtp      ● MTP 3       evidence C32                                      │
+│ tp4-ar-dcp2    AR DCP2     experimental                                      │
+│ tp4-mtp-dcp2   MTP 3 DCP2  experimental                                      │
+│ tp2-ar         AR          experimental                                      │
+│ tp2-mtp      ● MTP 3       experimental                                      │
+│                                                                              │
+│ Historical TP4 C1-C32 serving evidence; not full production qualification or │
+│ qualification of later implementation identities. Speculation has            │
+│ workload-specific throughput regressions.                                    │
+│ Follows the picked GPUs to serve --model's pick until you choose one with ↑↓ │
+│ or Space.                                                                    │
+└─ Tab: Placement ─────────────────────────────────────────────────────────────┘
+┌─ Command  1 process of this user ────────────────────────────────────────────┐
+│ A  CUDA_VISIBLE_DEVICES=0,1,2,3 chopinfer serve --model /models/qwen         │
+│      --tensor-parallel-size 4 --listen 127.0.0.1:8310                        │
+│                                                                              │
+│                                                                              │
+│ tp4-mtp; 0 set here (white).  Stops proc 48211 first.  Waiting for the packa │
+└──────────────────────────────────────────────────────────────────────────────┘
+ Tab pane   ↑↓ jk move   ←→ change   Enter edit   / find   S start   Esc back

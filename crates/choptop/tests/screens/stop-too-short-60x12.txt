@@ -1,0 +1,12 @@
+ choptop   5 instances: 3 ready  1 unreachable  1 starting
+
+┌┌─ Stop proc 48211 ──────────────────────────────────────┐┐
+││                                                        │
+││   The terminal is too short to show everything about   │
+└│     this stop.                                         │┘
+┌│   Enter stops it once it is 13 rows tall; it is 12.    │┐
+││                                                        ││
+││ Esc keep it running                                    ││
+│└────────────────────────────────────────────────────────┘│
+└──────────────────────────────────────────────────────────┘
+ ↑↓ jk select   Enter details   l load model   m monitor   ?

@@ -710,23 +710,11 @@ fn capture_structured(capture: &mut Capture<'_>) -> Result<Value, KindError> {
     let settings = Settings::of(capture.check)?;
     let constants = Constants::of(capture.check)?;
     let reasons = !capture::thinking_can_be_disabled(capture)?;
-    let control = |enabled| {
-        thinking_control(capture, enabled).map(|(key, value)| Map::from_iter([(key.into(), value)]))
-    };
-    let thinking = control(true)?;
-    // `common.answer_control`: thinking disabled where the frontend admits
-    // it, otherwise no switch, but the empty template options object a
-    // template-keyword request has always sent.
-    let answer = if !reasons {
-        control(false)?
-    } else if thinking.contains_key("chat_template_kwargs") {
-        Map::from_iter([("chat_template_kwargs".into(), json!({}))])
-    } else {
-        Map::new()
-    };
+    let (key, value) = thinking_control(capture, true)?;
+    let thinking = Map::from_iter([(key.to_owned(), value)]);
     let catalog = cases(
         &constants,
-        &[answer, thinking],
+        &[capture::answer_control(capture)?, thinking],
         settings.reasoning_max_tokens,
         reasons,
     );

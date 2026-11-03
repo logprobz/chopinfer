@@ -102,26 +102,34 @@ pub fn thinking_kwargs(capture: &Capture<'_>, enabled: bool) -> Result<Value, Ki
     Ok(json!({keyword: enabled}))
 }
 
+/// Whether the frontend declares the thinking-object switch rather than
+/// template keywords, the default (`common.thinking_switch`).
+fn thinking_object(capture: &Capture<'_>) -> Result<bool, KindError> {
+    let (path, frontend) = input_json(capture, "frontend")?;
+    match frontend["reasoning"].get("switch") {
+        None => Ok(false),
+        Some(Value::String(switch)) if switch == "template-keywords" => Ok(false),
+        Some(Value::String(switch)) if switch == "thinking-object" => Ok(true),
+        _ => Err(KindError::Insufficient(format!(
+            "{}: the frontend has an unsupported thinking switch",
+            path.display()
+        ))),
+    }
+}
+
 /// The request member that explicitly enables or disables thinking. The
 /// default frontend switch keeps the existing template-keyword request.
 pub fn thinking_control(
     capture: &Capture<'_>,
     enabled: bool,
 ) -> Result<(&'static str, Value), KindError> {
-    let (path, frontend) = input_json(capture, "frontend")?;
-    match frontend["reasoning"].get("switch") {
-        None => Ok(("chat_template_kwargs", thinking_kwargs(capture, enabled)?)),
-        Some(Value::String(switch)) if switch == "template-keywords" => {
-            Ok(("chat_template_kwargs", thinking_kwargs(capture, enabled)?))
-        }
-        Some(Value::String(switch)) if switch == "thinking-object" => Ok((
+    if thinking_object(capture)? {
+        Ok((
             "thinking",
             json!({"type": if enabled { "enabled" } else { "disabled" }}),
-        )),
-        _ => Err(KindError::Insufficient(format!(
-            "{}: the frontend has an unsupported thinking switch",
-            path.display()
-        ))),
+        ))
+    } else {
+        Ok(("chat_template_kwargs", thinking_kwargs(capture, enabled)?))
     }
 }
 
@@ -151,15 +159,20 @@ pub fn thinking_can_be_disabled(capture: &Capture<'_>) -> Result<bool, KindError
     Ok(frontend["reasoning"]["allow_disabled"] != Value::Bool(false))
 }
 
-/// The switches of a request that wants an answer rather than reasoning
-/// (`common.answer_kwargs`): thinking disabled, or none where the frontend
-/// refuses that.
-pub fn answer_kwargs(capture: &Capture<'_>) -> Result<Value, KindError> {
-    if thinking_can_be_disabled(capture)? {
-        thinking_kwargs(capture, false)
+/// The request members of a request that wants an answer rather than
+/// reasoning (`common.answer_control`): thinking disabled where the
+/// frontend admits it, otherwise no switch, but the empty template options
+/// object a template-keyword request has always carried.
+pub fn answer_control(capture: &Capture<'_>) -> Result<Map<String, Value>, KindError> {
+    let object = thinking_object(capture)?;
+    Ok(if thinking_can_be_disabled(capture)? {
+        let (key, value) = thinking_control(capture, false)?;
+        Map::from_iter([(key.to_owned(), value)])
+    } else if object {
+        Map::new()
     } else {
-        Ok(json!({}))
-    }
+        Map::from_iter([("chat_template_kwargs".to_owned(), json!({}))])
+    })
 }
 
 /// The time left before the check's deadline, or an environment error.

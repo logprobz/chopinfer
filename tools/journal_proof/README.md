@@ -634,7 +634,7 @@ A declaration written after its change landed names the revision that holds
 it with `--declaration-revision`. Every committed declaration must parse
 (`test_layout.py`); a committed spec, such as one that declares added
 journals, must read as a spec.
-A stage may commit its control patch next to its note; no tooling reads it.
+A model's journal-changes directory may also hold a patch that reproduces a capture-only control, beside the note that applies it; no journal-proof tool reads these patches.
 
 ### Mutation harness
 

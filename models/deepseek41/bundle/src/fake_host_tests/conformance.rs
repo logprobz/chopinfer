@@ -18,7 +18,6 @@ use runtime_bundle_sdk::{BatchAppendV1, BatchItemV1, BatchRequestV1, BatchWireVe
 mod allocated;
 mod anchored;
 mod drafter;
-mod tail_folds;
 mod templated;
 mod wide;
 
@@ -417,7 +416,9 @@ impl conformance::Startup for Served {
             ];
         }
         envelope.chunk_offsets = vec![8192, 16384, 32768, 40960];
-        envelope.probes = vec![446, 789, 1803, 3658, 4542, 7754];
+        envelope.probes = vec![
+            65, 85, 127, 129, 191, 446, 789, 831, 853, 1557, 1599, 1803, 3658, 4542, 7754,
+        ];
         if serving.profile == "tp4-dspark" {
             envelope.probes.extend([191, 192, 193, 255, 256, 257, 258]);
             envelope.probes.sort_unstable();

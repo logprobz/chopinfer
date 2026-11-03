@@ -1,4 +1,5 @@
-//! Pair-lab probe for the Flash TP4 prefill tail-fold candidate.
+//! Compare the split route retained by other topologies with the adopted
+//! Flash TP4 dense prefill tail partition.
 //! Run the ignored test on two idle GPUs, with a 295-second process timeout.
 use bundle_deepseek41::sm120::{self, mxfp8_fold as registration};
 use kernel_core::{

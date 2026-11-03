@@ -413,7 +413,6 @@ pub(crate) mod tests {
             (SHARED_OVERLAP_MAX_ROWS, 8.into()),
             (PREFILL_PLAN_CACHE_PLANS, 2.into()),
             (PREFILL_PLAN_CACHE_VERIFY, true.into()),
-            (PREFILL_TAIL_FOLDS, false.into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK, 32.into()),
             (DIAGNOSTIC_STEP_LOGS, true.into()),
             (WIDE_VERIFY, true.into()),
@@ -433,7 +432,6 @@ pub(crate) mod tests {
                 shared_overlap_max_rows: 8,
                 prefill_plan_cache_plans: 2,
                 prefill_plan_cache_verify: true,
-                prefill_tail_folds: false,
                 dspark_graph_handles_per_rank: 32,
                 diagnostic_step_logs: true,
                 wide_verify: true,
@@ -450,7 +448,6 @@ pub(crate) mod tests {
             (SHARED_OVERLAP_MAX_ROWS, 0.into()),
             (PREFILL_PLAN_CACHE_PLANS, 65.into()),
             (PREFILL_PLAN_CACHE_VERIFY, "verify".into()),
-            (PREFILL_TAIL_FOLDS, 1.into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK, (-1).into()),
             (DIAGNOSTIC_STEP_LOGS, 1.into()),
             (WIDE_DRAFT, true.into()),
@@ -468,6 +465,19 @@ pub(crate) mod tests {
         let base = record(&shape, KV_LAYOUTS[0], 1, false);
         for value in [0, 8] {
             let payload = with_option(base.clone(), "prefill_anchor_items", value.into());
+            assert_eq!(
+                decode(&payload, |_| {}).unwrap_err(),
+                BundleStatusV1::InvalidArgument
+            );
+        }
+    }
+
+    #[test]
+    fn removed_prefill_tail_folds_option_is_rejected() {
+        let shape = crate::shape::topologies()[0];
+        let base = record(&shape, KV_LAYOUTS[0], 1, false);
+        for value in [false, true] {
+            let payload = with_option(base.clone(), "prefill_tail_folds", value.into());
             assert_eq!(
                 decode(&payload, |_| {}).unwrap_err(),
                 BundleStatusV1::InvalidArgument

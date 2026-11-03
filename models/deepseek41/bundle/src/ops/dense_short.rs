@@ -4,10 +4,6 @@ use model_deepseek41_contract::geometry::FLASH;
 
 pub const MAX_ROWS: u32 = 64;
 
-pub fn tail_folds_enabled(shape: &Shape) -> bool {
-    shape.prefill_tail_folds && enabled(shape)
-}
-
 pub fn enabled(shape: &Shape) -> bool {
     shape.geometry == &FLASH && shape.ranks() == 4
 }
@@ -182,66 +178,19 @@ mod tests {
         assert!(enabled(&shape));
     }
     #[test]
-    fn tail_folds_preserve_aligned_and_tabled_prefill_routes() {
-        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
-        let baseline = crate::Kernels::new(&shape.with_prefill_tail_folds(false)).unwrap();
-        let candidate = crate::Kernels::new(&shape.with_prefill_tail_folds(true)).unwrap();
-        use kernel_core::backend::{Counts, Need, View};
-        use kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers;
-        for dense in projections(&shape) {
-            let q = dense.query;
-            let old = baseline
-                .backend
-                .mxfp8_prefill_gemm(&q, Need::rows(q.m_capacity))
-                .unwrap();
-            let new = candidate
-                .backend
-                .mxfp8_prefill_gemm(&q, Need::rows(q.m_capacity))
-                .unwrap();
-            let v = |handle| View {
-                handle,
-                bytes: 1 << 34,
-            };
-            let b = Mxfp8FoldGemmBuffers {
-                activations: v(1),
-                activation_scales: v(2),
-                weights: v(3),
-                weight_scales: v(4),
-                output: v(5),
-                live_rows: v(6),
-                status: v(7),
-                status_row_offset: 0,
-            };
-            for rows in [128, 192, 448, 512, 960, 1472, 2048, 2496, 4096, 8192] {
-                assert_eq!(
-                    new.launches(&b, View::EMPTY, Counts::rows(rows)).unwrap(),
-                    old.launches(&b, View::EMPTY, Counts::rows(rows)).unwrap(),
-                    "{} rows={rows}",
-                    dense.id,
-                );
-            }
-        }
-    }
-    #[test]
     fn tail_folds_keep_other_topologies_and_tail_policy_bounds() {
         use kernel_core::backend::{Counts, Need, View};
         use kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers;
         for ranks in [Ranks::TP1, Ranks::TP2] {
             let shape = Shape::new(&FLASH, ranks).unwrap();
-            let old = crate::Kernels::new(&shape.with_prefill_tail_folds(false)).unwrap();
-            let new = crate::Kernels::new(&shape.with_prefill_tail_folds(true)).unwrap();
-            assert!(!tail_folds_enabled(&shape.with_prefill_tail_folds(true)));
+            let kernels = crate::Kernels::new(&shape).unwrap();
+            assert!(!enabled(&shape));
             for d in projections(&shape) {
                 let q = d.query;
-                let old = old
+                let op = kernels
                     .backend
                     .mxfp8_prefill_gemm(&q, Need::rows(q.m_capacity))
                     .unwrap();
-                let new = new
-                    .backend
-                    .mxfp8_prefill_gemm(&q, Need::rows(q.m_capacity))
-                    .unwrap();
-                assert_eq!(old.info(), new.info());
                 let v = |handle| View {
                     handle,
                     bytes: 1 << 34,
@@ -257,11 +206,7 @@ mod tests {
                     status_row_offset: 3,
                 };
                 for rows in [129, 144, 145, 255, 1023, 1025, 1151] {
-                    let baseline = old.launches(&b, View::EMPTY, Counts::rows(rows)).unwrap();
-                    assert_eq!(
-                        baseline,
-                        new.launches(&b, View::EMPTY, Counts::rows(rows)).unwrap()
-                    );
+                    let baseline = op.launches(&b, View::EMPTY, Counts::rows(rows)).unwrap();
                     let policy = crate::sm120::mxfp8_fold::prefill_tail_policy(q);
                     let split = policy.splits(rows);
                     assert_eq!(baseline.len(), if split { 3 } else { 2 });
@@ -304,9 +249,7 @@ mod tests {
                 .filter(|entry| entry["task"] == "PREFILL-tail-folds-direct")
                 .collect();
         assert!(!allow.is_empty());
-        let shape = Shape::new(&FLASH, Ranks::TP4)
-            .unwrap()
-            .with_prefill_tail_folds(true);
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
         let kernels = crate::Kernels::new(&shape).unwrap();
         let ops = DenseOps::prepare(kernels.backend.as_ref(), &shape, &Asks::default()).unwrap();
         let span = |id, bytes| {
@@ -344,14 +287,12 @@ mod tests {
                                 && a["symbol"] == call.launch.symbol
                                 && a["phase"] == "prefill"
                                 && a["family"] == tag.family
-                                && ["tail-folds-tp4-ar", "tail-folds-tp4-dspark"].iter().all(
-                                    |profile| {
-                                        a["profiles"]
-                                            .as_array()
-                                            .unwrap()
-                                            .contains(&(*profile).into())
-                                    },
-                                )
+                                && ["tp4-ar", "tp4-dspark*"].iter().all(|profile| {
+                                    a["profiles"]
+                                        .as_array()
+                                        .unwrap()
+                                        .contains(&(*profile).into())
+                                })
                                 && a["rows"].as_array().unwrap().iter().any(|range| {
                                     range[0].as_u64().unwrap() <= u64::from(rows)
                                         && u64::from(rows) <= range[1].as_u64().unwrap()
@@ -417,20 +358,9 @@ mod tests {
             assert!(ops.missing.is_empty(), "{:?}", ops.missing);
             let workspace = ops.workspace();
             let shared_workspace = ops.shared_workspace();
-            (ops.dense.unwrap(), ops.asked, workspace, shared_workspace)
+            (ops.dense.unwrap(), workspace, shared_workspace)
         };
-        let (old, old_asks, old_workspace, _) = prepare(&shape.with_prefill_tail_folds(false));
-        let (new, new_asks, workspace, shared_workspace) =
-            prepare(&shape.with_prefill_tail_folds(true));
-        assert_eq!(
-            old_asks, new_asks,
-            "the knob must preserve registrations and asks"
-        );
-        assert_eq!(
-            old.tail_workspace(),
-            0,
-            "option-off workspace stays unchanged"
-        );
+        let (new, workspace, shared_workspace) = prepare(&shape);
         let span = |id, bytes| {
             DeviceBufferSpanV1::new(BundleDeviceBufferHandleV1::from_parts(id, 1), 256, bytes)
         };
@@ -481,14 +411,35 @@ mod tests {
                     live_rows: span(6, 4),
                     status: span(7, u64::from(rows) * 4),
                 };
-                let baseline = old
-                    .project(
-                        d.id,
-                        Phase::Prefill { rows },
-                        &views,
-                        span(99, old_workspace),
-                    )
-                    .unwrap();
+                // Bind the shared catalog route directly, before the TP4 partition.
+                // Other topologies still use these full and split-tail routes.
+                let baseline = if rows <= MAX_ROWS {
+                    new.project(d.id, Phase::Prefill { rows }, &views, span(99, workspace))
+                        .unwrap()
+                } else {
+                    use crate::ops::Bind;
+                    use kernel_core::backend::Counts;
+                    use kernel_core::mxfp8_gemm::Mxfp8FoldGemmBuffers;
+                    let catalog = if rows >= TILE {
+                        &new.prefill_gemms
+                    } else {
+                        &new.gemms
+                    };
+                    let op = &catalog.iter().find(|(id, _)| *id == d.id).unwrap().1;
+                    let mut bind = Bind::default();
+                    let buffers = Mxfp8FoldGemmBuffers {
+                        activations: bind.view(views.activations),
+                        activation_scales: bind.view(views.activation_scales),
+                        weights: bind.view(views.weights),
+                        weight_scales: bind.view(views.weight_scales),
+                        output: bind.view(views.output),
+                        live_rows: bind.view(views.live_rows),
+                        status: bind.view(views.status),
+                        status_row_offset: 0,
+                    };
+                    bind.launch_within(op, &buffers, span(99, workspace), Counts::rows(rows))
+                        .unwrap()
+                };
                 let calls = new
                     .project(d.id, Phase::Prefill { rows }, &views, span(99, workspace))
                     .unwrap();
@@ -547,7 +498,7 @@ mod tests {
                         workspace - scratch_offset,
                     )
                     .unwrap();
-                    let mut expected = old
+                    let mut expected = new
                         .project(
                             d.id,
                             Phase::Prefill { rows: count },
@@ -555,7 +506,7 @@ mod tests {
                             scratch_view,
                         )
                         .unwrap();
-                    // Option-off project uses local status row zero. Translate
+                    // A standalone short prefill uses status row zero. Translate
                     // only that coordinate; every symbol, plan, other argument,
                     // route and buffer binding must equal the exact-row route.
                     for call in &mut expected {

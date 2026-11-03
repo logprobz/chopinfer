@@ -24,8 +24,6 @@ pub struct Shape {
     /// Whether verify steps above the 64-row decode route run the wide
     /// verify buckets (the `wide_verify` candidate option).
     pub wide_verify: bool,
-    /// Candidate: partition Flash TP4 dense prefill tails into exact-row folds.
-    pub prefill_tail_folds: bool,
     /// Whether drafter steps of more than twelve drafting items run them in
     /// the fewest forwards the widest wide verify bucket holds, on the wide
     /// verify buckets (the `wide_draft` candidate option).
@@ -66,7 +64,6 @@ impl Shape {
             runtime: geometry.runtime_defaults(),
             verify_rows: DECODE_BATCH,
             wide_verify: false,
-            prefill_tail_folds: true,
             wide_draft: false,
             phased_decode_reduce: false,
             dspark_hc_draft_rows: false,
@@ -81,12 +78,6 @@ impl Shape {
     /// limit, raised to the widest decode bucket.
     pub fn with_verify_rows(mut self, rows: u32) -> Shape {
         self.verify_rows = rows.max(DECODE_BATCH);
-        self
-    }
-
-    /// Enable the Flash TP4 dense prefill tail partition candidate.
-    pub fn with_prefill_tail_folds(mut self, enabled: bool) -> Shape {
-        self.prefill_tail_folds = enabled;
         self
     }
 

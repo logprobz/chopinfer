@@ -428,7 +428,7 @@ impl DenseOps {
         Ok(DenseOps {
             dual: super::dense_dual::Op::prepare(shape, asks)?,
             short_prefill,
-            tail_queries: if short_prefill::tail_folds_enabled(shape) {
+            tail_queries: if short_prefill {
                 projections(shape)
                     .into_iter()
                     .map(|d| (d.id, d.query))

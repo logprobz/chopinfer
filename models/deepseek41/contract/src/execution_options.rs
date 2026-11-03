@@ -7,9 +7,6 @@ use std::collections::BTreeMap;
 
 pub const SHARED_OVERLAP_MAX_ROWS: &str = "shared_overlap_max_rows";
 pub const PREFILL_PLAN_CACHE_PLANS: &str = "prefill_plan_cache_plans";
-/// Candidate: Flash TP4 prefill remainders use the registered exact-row
-/// folds in pieces of at most 64 rows after full 128-row TMA tiles.
-pub const PREFILL_TAIL_FOLDS: &str = "prefill_tail_folds";
 pub const PREFILL_PLAN_CACHE_VERIFY: &str = "prefill_plan_cache_verify";
 pub const DSPARK_GRAPH_HANDLES_PER_RANK: &str = "dspark_graph_handles_per_rank";
 pub const DIAGNOSTIC_STEP_LOGS: &str = "diagnostic_step_logs";
@@ -60,7 +57,6 @@ pub struct Options {
     pub shared_overlap_max_rows: u32,
     pub prefill_plan_cache_plans: usize,
     pub prefill_plan_cache_verify: bool,
-    pub prefill_tail_folds: bool,
     pub dspark_graph_handles_per_rank: usize,
     pub diagnostic_step_logs: bool,
     pub wide_verify: bool,
@@ -73,7 +69,7 @@ pub struct Options {
     pub dspark_hc_draft_rows: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 14] {
+pub fn declarations() -> [ModelOptionV1; 13] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -122,10 +118,6 @@ pub fn declarations() -> [ModelOptionV1; 14] {
         (
             PREFILL_PLAN_CACHE_VERIFY,
             OptionDefinitionV1::Boolean { default: false },
-        ),
-        (
-            PREFILL_TAIL_FOLDS,
-            OptionDefinitionV1::Boolean { default: true },
         ),
         (
             SHARED_OVERLAP_MAX_ROWS,
@@ -185,7 +177,6 @@ impl Options {
             diagnostic_step_logs: values[DIAGNOSTIC_STEP_LOGS]
                 .as_bool()
                 .expect("checked boolean"),
-            prefill_tail_folds: flag(PREFILL_TAIL_FOLDS),
             wide_verify,
             wide_draft,
             phased_decode_reduce: flag(PHASED_DECODE_REDUCE),
@@ -217,6 +208,24 @@ mod tests {
             assert!(declaration().resolve(&options).is_err());
             let values = BTreeMap::from([(
                 "prefill_anchor_items".into(),
+                serde_json::from_str(value).unwrap(),
+            )]);
+            let geometry = &crate::geometry::FLASH;
+            assert!(
+                geometry
+                    .resolve_model_options(geometry.runtime_defaults(), &values)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn removed_prefill_tail_folds_option_is_rejected() {
+        for value in ["false", "true"] {
+            let options = BTreeMap::from([("prefill_tail_folds".into(), value.into())]);
+            assert!(declaration().resolve(&options).is_err());
+            let values = BTreeMap::from([(
+                "prefill_tail_folds".into(),
                 serde_json::from_str(value).unwrap(),
             )]);
             let geometry = &crate::geometry::FLASH;
@@ -285,7 +294,6 @@ mod tests {
             shared_overlap_max_rows: u32::MAX,
             prefill_plan_cache_plans: 16,
             prefill_plan_cache_verify: false,
-            prefill_tail_folds: true,
             dspark_graph_handles_per_rank: 512,
             diagnostic_step_logs: false,
             wide_verify: false,
@@ -309,7 +317,6 @@ mod tests {
             (SHARED_OVERLAP_MAX_ROWS.into(), "8".into()),
             (PREFILL_PLAN_CACHE_PLANS.into(), "2".into()),
             (PREFILL_PLAN_CACHE_VERIFY.into(), "true".into()),
-            (PREFILL_TAIL_FOLDS.into(), "false".into()),
             (DSPARK_GRAPH_HANDLES_PER_RANK.into(), "0".into()),
             (DIAGNOSTIC_STEP_LOGS.into(), "true".into()),
             (WIDE_VERIFY.into(), "true".into()),
@@ -328,7 +335,6 @@ mod tests {
                 shared_overlap_max_rows: 8,
                 prefill_plan_cache_plans: 2,
                 prefill_plan_cache_verify: true,
-                prefill_tail_folds: false,
                 dspark_graph_handles_per_rank: 0,
                 diagnostic_step_logs: true,
                 wide_verify: true,
@@ -354,7 +360,6 @@ mod tests {
             (PREFILL_PLAN_CACHE_PLANS, "65"),
             (PREFILL_PLAN_CACHE_PLANS, "1.5"),
             (PREFILL_PLAN_CACHE_VERIFY, "1"),
-            (PREFILL_TAIL_FOLDS, "1"),
             (DIAGNOSTIC_STEP_LOGS, "\"true\""),
             (WIDE_VERIFY, "1"),
             (WIDE_DRAFT, "1"),

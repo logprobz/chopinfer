@@ -57,7 +57,7 @@ def load(run, allow_void=False):
                 record['prefill_steps'] = [{key: step.get(key, 0) for key in fields}
                                            for step in steps if step.get('prefill_items')]
             del steps
-            rows.append({**record, 'label': directory.parent.name})
+            rows.append({**record, 'label': directory.parent.name, '_file': path.stem})
     return config, rows
 
 
@@ -137,16 +137,21 @@ def measure(rows):
 def select(config, cells):
     """The chosen depth and its evidence per concurrency."""
     kinds, rule = config['kinds'], config['selection']
+    from depth_evidence import positive
+    if not kinds or not all(positive(weight) for weight in kinds.values()):
+        raise ValueError('workload weights must be finite and positive')
     out = {}
     for c in config['model']['concurrencies']:
         depths = sorted({d for (cc, _, d) in cells if cc == c})
         if 0 not in depths:
-            continue
+            raise ValueError(f'C{c}: missing depth-zero baseline')
         rows = {}
         for d in depths:
-            present = [k for k in kinds if (c, k, d) in cells and (c, k, 0) in cells]
-            if not present:
-                continue
+            present = list(kinds)
+            if any((c, k, d) not in cells or (c, k, 0) not in cells for k in present):
+                raise ValueError(f'C{c} depth {d}: missing configured workload kind')
+            if any(not positive(cells[(c, k, e)]['request_median']) for k in present for e in (0, d)):
+                raise ValueError('request rates must be finite and positive')
             weight = sum(kinds[k] for k in present)
             score = math.exp(sum(kinds[k] * math.log(cells[(c, k, d)]['request_median'] /
                                                    cells[(c, k, 0)]['request_median']) for k in present) / weight)
@@ -159,7 +164,7 @@ def select(config, cells):
                        'request_spread': max(cells[(c, k, d)]['request_spread'] for k in present)}
         stable = [d for d, v in rows.items() if v['stable']]
         if not stable:
-            out[str(c)] = {'depth': 0, 'reason': 'no stable depth', 'depths': rows}
+            out[str(c)] = {'depth': 0, 'reason': 'baseline fallback: no stable depth, no measured win', 'depths': rows}
             continue
         best = max(stable, key=lambda d: rows[d]['score'])
         margin = max(rule['margin'], rows[best]['request_spread'])
@@ -179,20 +184,49 @@ def schedule(selection):
     return ','.join(entries)
 
 
-def evaluate(run):
+def evaluate(run, diagnostic=False):
+    import depth_evidence
     run = Path(run)
-    config, rows = load(run)
+    # Invalidate the old recommendation even if a malformed input cannot be read.
+    (run / 'tune.json').write_text(json.dumps({'adoptable': False, 'depths': None, 'selection': {},
+                                             'reasons': ['report validation did not complete']}) + '\n')
+    (run / 'tune.md').write_text('# Non-adoptable depth capture\n\nReport validation did not complete.\n')
+    config, rows = load(run, allow_void=True)
+    path = run / 'summary.json'
+    summary = json.loads(path.read_text()) if path.exists() else {}
+    reasons, installs = [], {}
+    try:
+        depth_evidence.validate(config, rows, summary)
+        installs = arm_installs(run, rows)
+    except (KeyError, TypeError, ValueError) as error:
+        reasons.append(str(error))
     groups = {}
     for r in rows:
-        groups.setdefault((r['concurrency'], r['kind'], r['depth']), []).append(r)
-    cells = {key: measure(value) for key, value in groups.items()}
-    selection = select(config, cells)
-    out = {'depths': schedule(selection), 'selection': selection,
-           'arm_installs': arm_installs(run, rows),
+        if all(k in r for k in ('concurrency', 'kind', 'depth')):
+            groups.setdefault((r['concurrency'], r['kind'], r['depth']), []).append(r)
+    cells = {}
+    for key, value in groups.items():
+        try:
+            if any(not depth_evidence.positive(r.get('request_tokens_per_second'))
+                   or not depth_evidence.positive(r.get('full', {}).get('tokens_per_second')) for r in value):
+                raise ValueError('invalid rate')
+            cells[key] = measure(value)
+        except (KeyError, TypeError, ValueError, ZeroDivisionError):
+            reasons.append(f'invalid measurements for {key}')
+    selection = select(config, cells) if not reasons else {}
+    out = {'adoptable': not reasons, 'reasons': reasons,
+           'depths': schedule(selection) if not reasons else None, 'selection': selection,
+           'arm_installs': installs,
            'cells': {f'c{c}/{k}/d{d}': v for (c, k, d), v in sorted(cells.items())}}
     (run / 'tune.json').write_text(json.dumps(out, indent=2, sort_keys=True) + '\n')
-    (run / 'tune.md').write_text('\n'.join(install_lines(out['arm_installs']))
-                               + markdown(config, cells, selection, out['depths']))
+    text = (markdown(config, cells, selection, out['depths']) if not reasons else
+            '# Non-adoptable depth capture\n\n' + '\n'.join(f'- {reason}' for reason in reasons)
+            + '\n\n| Cell | Measurements | Request tok/s |\n|---|---:|---:|\n'
+            + '\n'.join(f"| {key} | {cell['measurements']} | {cell['request_median']} |"
+                        for key, cell in out['cells'].items()) + '\n')
+    (run / 'tune.md').write_text('\n'.join(install_lines(installs)) + text)
+    if reasons and not diagnostic:
+        raise ValueError('non-adoptable depth capture: ' + '; '.join(reasons))
     return out
 
 
@@ -845,5 +879,7 @@ if __name__ == '__main__':
         print(json.dumps(ab(sys.argv[2])))
     elif sys.argv[1:2] == ['--costs']:
         print(json.dumps({'costs': costs(sys.argv[2])['summary']}))
+    elif sys.argv[1:2] == ['--diagnostic']:
+        print(json.dumps({'reports': [evaluate(run, diagnostic=True) for run in sys.argv[2:]]}))
     else:
         print(json.dumps({'depths': merged(sys.argv[1:])}))

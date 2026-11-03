@@ -124,6 +124,43 @@ def priming_fixture(c):
             'last_completed': 1, 'window_started': 2}
 
 
+def depth_fixture(run, rates=None, **model):
+    """Complete bounded depth evidence for report validation, never GPU evidence."""
+    from collections import Counter
+    from copy import deepcopy
+    config = deepcopy({**CONFIG, 'tokens': {'default': 256},
+                       'model': {**MODEL, 'concurrencies': [8], 'depths': [0, 1], **model}})
+    run.mkdir(parents=True, exist_ok=True)
+    (run / 'config.json').write_text(json.dumps(config))
+    summary = {'status': 'passed', 'dry_run': False, 'mode': 'sweep', 'errors': [],
+               'greedy_differences': [], 'sampled_differences': [], 'processes': {}, 'exact': Counter(),
+               'order': tune.order(config)}
+    for visit in tune.visits(config):
+        depth = visit['depth']
+        process = summary['processes'][visit['label']] = {
+            'depth': depth, 'windows': {}, 'metrics': {'preemptions': 0, 'prefix_cache_evictions': 0}}
+        for repeat, windows in visit['passes']:
+            for kind, c in windows:
+                rate = rates(c, kind, depth, repeat) if rates else 100 + 50 * depth
+                groups = model.get('groups', {}).get(str(c), 1)
+                record = {'name': f'{kind}-c{c}', 'arm': visit['arm'], 'visit': visit['visit'],
+                          'kind': kind, 'concurrency': c, 'depth': depth, 'repeat': repeat,
+                          'tokens': 256, 'groups': groups, 'request_seconds': groups * c * 256 / rate,
+                          'request_tokens_per_second': rate,
+                          'full': {'steps': 10, 'tokens': c * 10, 'seconds': c * 10 / rate,
+                                   'tokens_per_second': rate, 'histogram': {f'i{c}-r{c * (depth + 1)}': 10}},
+                          'energy': {'synthetic': False}}
+                name = f'{kind}-c{c}-r{repeat}'
+                path = run / visit['label'] / 'windows' / f'{name}.json'
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(record))
+                process['windows'][name] = {key: record[key] for key in ('request_tokens_per_second', 'full')}
+                summary['exact'][record['name']] += 1
+    summary['windows'] = {'planned': tune.planned_windows(config), 'executed': sum(summary['exact'].values())}
+    (run / 'summary.json').write_text(json.dumps(summary))
+    return config, summary
+
+
 def warmup_fixture(config):
     return {'completed': True, 'windows': [{'concurrency': c, 'repeat': repeat,
         'seed_set': tune.seed_set(config, repeat, c), 'cached_prompt_tokens': 0,
@@ -164,6 +201,125 @@ def ab_fixture(root, **overrides):
 
 
 class Tuner(unittest.TestCase):
+    def test_depth_evidence_refuses_incomplete_or_invalid_captures(self):
+        import shutil
+        mutations = {
+            'missing-kind': lambda p, s, c, r: p.unlink(),
+            'missing-baseline': lambda p, s, c, r: shutil.rmtree(p.parents[2] / 'd0'),
+            'missing-repeat': lambda p, s, c, r: [x.unlink() for x in p.parents[2].glob('*/windows/*-r1.json')],
+            'missing-process': lambda p, s, c, r: s['processes'].pop('d0'),
+            'duplicate': lambda p, s, c, r: p.with_name('duplicate.json').write_text(json.dumps(r)),
+            'unexpected': lambda p, s, c, r: r.update(concurrency=4),
+            'wrong-arm': lambda p, s, c, r: r.update(arm='d0'),
+            'wrong-depth': lambda p, s, c, r: r.update(depth=0),
+            'wrong-visit': lambda p, s, c, r: r.update(visit=42),
+            'wrong-name': lambda p, s, c, r: r.update(name='greedy-c8'),
+            'wrong-summary-rate': lambda p, s, c, r: r.update(request_tokens_per_second=200),
+            'zero-rate': lambda p, s, c, r: r.update(request_tokens_per_second=0),
+            'nan-rate': lambda p, s, c, r: r.update(request_tokens_per_second=float('nan')),
+            'infinite-rate': lambda p, s, c, r: r['full'].update(tokens_per_second=float('inf')),
+            'negative-weight': lambda p, s, c, r: c['kinds'].update(sampled=-1),
+            'nan-weight': lambda p, s, c, r: c['kinds'].update(sampled=float('nan')),
+            'empty-shapes': lambda p, s, c, r: r['full'].update(histogram={}),
+            'wrong-shape-count': lambda p, s, c, r: r['full'].update(steps=9),
+            'wrong-planned': lambda p, s, c, r: s['windows'].update(planned=1),
+            'wrong-executed': lambda p, s, c, r: s['windows'].update(executed=1),
+            'wrong-exact': lambda p, s, c, r: s['exact'].__setitem__('sampled-c8', 0),
+            'greedy-difference': lambda p, s, c, r: s.update(greedy_differences=['changed']),
+            'sampled-difference': lambda p, s, c, r: s.update(sampled_differences=['changed']),
+            'error': lambda p, s, c, r: s.update(errors=['failed']),
+            'eviction': lambda p, s, c, r: s['processes']['d0']['metrics'].update(prefix_cache_evictions=1),
+            'synthetic': lambda p, s, c, r: r['energy'].update(synthetic=True),
+            'dry-run': lambda p, s, c, r: s.update(dry_run=True),
+            'missing-concurrency': lambda p, s, c, r: c['model'].update(concurrencies=[8, 16]),
+            'same-depth-treatments': lambda p, s, c, r: c['model'].update(
+                arms=[{'label': 'd0', 'depth': 0}, {'label': 'd1', 'depth': 1}, {'label': 'other', 'depth': 1}]),
+        }
+        mutations.update({f'status-{status}': lambda p, s, c, r, status=status: s.update(status=status)
+                          for status in ('running', 'failed', 'void', None)})
+        for label, mutate in mutations.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                run = Path(directory)
+                config, summary = depth_fixture(run)
+                self.assertEqual(report.evaluate(run)['depths'], '8:1')
+                path = run / 'd1/windows/sampled-c8-r1.json'
+                row = json.loads(path.read_text())
+                mutate(path, summary, config, row)
+                if path.exists():
+                    path.write_text(json.dumps(row))
+                (run / 'summary.json').write_text(json.dumps(summary))
+                (run / 'config.json').write_text(json.dumps(config))
+                with self.assertRaisesRegex(ValueError, 'non-adoptable'):
+                    report.evaluate(run)
+                diagnostic = report.evaluate(run, diagnostic=True)
+                self.assertFalse(diagnostic['adoptable'])
+                self.assertIsNone(diagnostic['depths'])
+                self.assertEqual(diagnostic['selection'], {})
+                self.assertNotIn('Schedule:', (run / 'tune.md').read_text())
+                self.assertEqual(json.loads((run / 'tune.json').read_text())['selection'], {})
+
+    def test_depth_baseline_only_and_unstable_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            depth_fixture(run, concurrencies=[32])
+            self.assertEqual(report.evaluate(run)['depths'], '32:0')
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            depth_fixture(run, lambda c, k, d, p: 100 * (1 + .1 * p))
+            out = report.evaluate(run)
+            self.assertEqual(out['depths'], '8:0')
+            self.assertIn('no measured win', out['selection']['8']['reason'])
+
+    def test_depth_report_requires_summary_and_explicit_diagnostics(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            depth_fixture(run)
+            (run / 'summary.json').unlink()
+            argv = [sys.executable, '-B', '-I', str(HERE / 'report.py')]
+            result = subprocess.run([*argv, str(run)], cwd=run, text=True, capture_output=True, timeout=30)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn('8:1', result.stdout)
+            result = subprocess.run([*argv, '--diagnostic', str(run)], cwd=run,
+                                    text=True, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(json.loads(result.stdout)['reports'][0]['adoptable'])
+
+    def test_sweep_stub_keeps_mechanics_separate_from_recommendations(self):
+        import os
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root, names=('head',))
+            model.update(mode='sweep', kinds={'greedy': .5, 'sampled': .5}, depths=[0, 1], keeper=False)
+            model.pop('arms')
+            model.pop('pairs')
+            staged = root / 'stage'
+            result = stage_fixture(root, model, names=('head',))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            env = {k: v for k, v in os.environ.items() if not k.startswith('TUNE_')}
+            for label, overrides in [('valid', {}), ('partial', {'TUNE_STUB_PREEMPT': 'd1'}),
+                                     ('different', {'TUNE_STUB_PERTURB': 'd0'})]:
+                result = subprocess.run([sys.executable, '-B', str(staged / 'harness/tune.py'), '--dry-run',
+                    '--output', str(root / label), '--payload-sha', stage.digest(staged / 'runtime-seal.json')],
+                    env={**env, **overrides}, text=True, capture_output=True, timeout=90)
+                self.assertEqual(result.returncode, 0 if label == 'valid' else 1, result.stdout + result.stderr)
+                summary = json.loads((root / label / 'summary.json').read_text())
+                self.assertEqual(summary['status'], 'passed' if label == 'valid' else 'failed')
+                self.assertNotIn('depths', summary)
+                self.assertFalse(summary['depth_report']['adoptable'])
+                self.assertIsNone(json.loads((root / label / 'tune.json').read_text())['depths'])
+
+    def test_depth_report_rejects_missing_sampled_treatment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run = Path(directory)
+            depth_fixture(run, lambda c, k, d, p: 100 if d == 0 else 200 if k == 'greedy' else 10)
+            self.assertEqual(report.evaluate(run)['depths'], '8:0')
+            for path in run.glob('d1/windows/sampled-*.json'):
+                path.unlink()
+            with self.assertRaisesRegex(ValueError, 'non-adoptable'):
+                report.evaluate(run)
+
     def test_isolated_report_cli_from_an_external_directory(self):
         import os
         import subprocess
@@ -172,14 +328,8 @@ class Tuner(unittest.TestCase):
             runs = []
             for c in (1, 8):
                 run = root / f'c{c}'
-                run.mkdir()
                 runs.append(run)
-                config = {**CONFIG, 'model': {**MODEL, 'concurrencies': [c], 'depths': [0, 1]}}
-                (run / 'config.json').write_text(json.dumps(config))
-                for depth in (0, 1):
-                    for kind in config['kinds']:
-                        window(run, f'd{depth}p1', kind, c, depth, 100 + 50 * depth,
-                               {f'i{c}-r{c * (depth + 1)}': 10})
+                depth_fixture(run, concurrencies=[c])
             env = {key: value for key, value in os.environ.items() if key != 'PYTHONPATH'}
             for selected in (runs[:1], runs):
                 result = subprocess.run([sys.executable, '-B', '-I', str(HERE / 'report.py'),
@@ -1919,26 +2069,24 @@ class Tuner(unittest.TestCase):
         self.assertEqual(tune.windows_for(config, 5), [('greedy', 1), ('greedy', 2), ('greedy', 4)])
 
     def test_the_shallowest_depth_within_the_margin_wins(self):
-        rates = {  # C: {depth: request tok/s}, the same in both kinds
+        rates = {
             1: {0: 100, 1: 150, 2: 180, 3: 200, 4: 210, 5: 212},
+            4: {0: 250, 1: 280, 2: 300, 3: 330, 4: 360, 5: 361},
             8: {0: 400, 1: 430, 2: 470, 3: 520},
-            16: {0: 600, 1: 560},
-            32: {0: 850},
+            16: {0: 600, 1: 560}, 32: {0: 850},
         }
         with tempfile.TemporaryDirectory() as directory:
             run = Path(directory)
-            (run / 'config.json').write_text(json.dumps(CONFIG))
-            for c, row in rates.items():
-                for depth, rate in row.items():
-                    for p in (1, 2, 3):
-                        for kind in ('greedy', 'sampled'):
-                            window(run, f'd{depth}p{p}', kind, c, depth, rate * (1 + 0.002 * p),
-                                   {f'i{c}-r{c * (depth + 1)}': 10})
-            # C4: depth 5 lands on depth 4's plans, which beat depth 3 clearly.
-            for depth, rate, rows in ((0, 250, 4), (3, 330, 16), (4, 360, 20), (5, 361, 20)):
-                for p in (1, 2, 3):
-                    for kind in ('greedy', 'sampled'):
-                        window(run, f'd{depth}p{p}', kind, 4, depth, rate, {f'i4-r{rows}': 10})
+            depth_fixture(run, lambda c, k, d, p: rates[c][d],
+                          concurrencies=sorted(rates), depths=list(range(6)), repeats=3)
+            for path in run.glob('d5/windows/*-c4-*.json'):
+                row = json.loads(path.read_text())
+                row['full']['histogram'] = {'i4-r20': 10}
+                path.write_text(json.dumps(row))
+                summary_path = run / 'summary.json'
+                summary = json.loads(summary_path.read_text())
+                summary['processes']['d5']['windows'][path.stem]['full'] = row['full']
+                summary_path.write_text(json.dumps(summary))
             out = report.evaluate(run)
         chosen = {c: v['depth'] for c, v in out['selection'].items()}
         # C1: depth 5 beats depth 4 by 1%, within the margin; C4: depth 5
@@ -2236,26 +2384,16 @@ class Tuner(unittest.TestCase):
     def test_runs_merge_into_one_schedule(self):
         with tempfile.TemporaryDirectory() as directory:
             low, high = Path(directory) / 'low', Path(directory) / 'high'
-            for run, rates in ((low, {1: {0: 100, 5: 200}, 4: {0: 300, 3: 400}}),
-                               (high, {8: {0: 400, 3: 500}, 16: {0: 600, 1: 590}})):
-                run.mkdir()
-                (run / 'config.json').write_text(json.dumps(
-                    {**CONFIG, 'model': {**MODEL, 'concurrencies': sorted(rates)}}))
-                for c, row in rates.items():
-                    for depth, rate in row.items():
-                        for kind in ('greedy', 'sampled'):
-                            window(run, f'd{depth}p1', kind, c, depth, rate, {f'i{c}-r{c * (depth + 1)}': 10})
-            self.assertEqual(report.merged([low, high]), '1:5,4:3,16:0')
+            for run, cs in ((low, [1, 4]), (high, [8, 16])):
+                depth_fixture(run, lambda c, k, d, p: 100 + (50 if c < 16 else -10) * d,
+                              concurrencies=cs)
+            self.assertEqual(report.merged([low, high]), '1:1,16:0')
 
     def test_unstable_depths_are_not_chosen(self):
         with tempfile.TemporaryDirectory() as directory:
             run = Path(directory)
-            (run / 'config.json').write_text(json.dumps(CONFIG))
-            for depth, rate in ((0, 100), (1, 150), (2, 190)):
-                for p in (1, 2):
-                    for kind in ('greedy', 'sampled'):
-                        shapes = {f'i1-r{depth + 1}': 10 + (p if depth == 2 else 0)}
-                        window(run, f'd{depth}p{p}', kind, 1, depth, rate, shapes)
+            depth_fixture(run, lambda c, k, d, p: (100 + 50 * d) * (1 + .1 * p if d == 2 else 1),
+                          concurrencies=[1], depths=[0, 1, 2])
             out = report.evaluate(run)
         self.assertEqual(out['selection']['1']['depth'], 1)
         self.assertFalse(out['selection']['1']['depths'][2]['stable'])

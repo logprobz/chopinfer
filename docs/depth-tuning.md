@@ -344,11 +344,20 @@ is its request tok/s over depth 0's (a weighted geometric mean when a
 config measures more than one kind).
 Among stable depths (identical shapes, spread within the limit) the
 shallowest within the margin of the best wins (the larger of 1.5% and the
-best depth's spread). `python3 -I tools/tune/report.py RUN_LOW RUN_HIGH`
+best depth's spread). `python3 -B -I tools/tune/report.py RUN_LOW RUN_HIGH`
 merges split jobs into one schedule. The emitted schedule goes into the
 profile's `depths` with the run cited by date and numbers in the model
 README, and its landing batch passes the stability gate like any drafting
 change.
+
+Recommendations require a passed depth sweep with every declared timed
+window, repeat, workload kind and eligible depth present, including depth
+zero. Failed, running, historical and synthetic captures are non-adoptable.
+Use `python3 -B -I tools/tune/report.py --diagnostic RUN` to inspect their
+measurements without a schedule. Regenerating an invalid report removes
+the old recommendation. A complete experiment with no stable depth reports
+a depth-zero fallback and does not claim a measured win. CPU dry runs test
+the runner's mechanics and never attach a recommended schedule.
 
 ## Step costs per verify width
 

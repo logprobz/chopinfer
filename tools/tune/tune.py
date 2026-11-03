@@ -1561,7 +1561,10 @@ def main(args):
             elif state['mode'] == 'exact':
                 state['costs'] = report.costs(run)['summary']
             else:
-                state['depths'] = report.evaluate(run)['depths']
+                result = report.evaluate(run, diagnostic=True)
+                state['depth_report'] = {k: result[k] for k in ('adoptable', 'reasons')}
+                if result['adoptable']:
+                    state['depths'] = result['depths']
         except Exception as error:
             if state['status'] != 'void':
                 state['status'] = 'failed'

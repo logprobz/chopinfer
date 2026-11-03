@@ -1,5 +1,6 @@
 """Check changed workspace packages and their transitive workspace dependents,
-and run ci/cpu.sh's Python and shell checks the change affects."""
+run ci/cpu.sh's Python and shell checks the change affects, and run the
+pre-push leak check over the commits HEAD adds to the base."""
 import argparse
 import json
 import os
@@ -77,6 +78,18 @@ def output(*command):
     return subprocess.check_output(command, stderr=stderr)
 
 
+def history_check(base):
+    """(the number of commits HEAD adds to `base`, the leak check over them).
+
+    The check is tools/dev/pre-push.sh's: every file version and message,
+    merge messages included, that a push of those commits would publish. It
+    is None when HEAD adds no commit; the tree check covers uncommitted edits."""
+    commits = int(output("git", "rev-list", "--count", "HEAD", "--not", base))
+    if not commits:
+        return 0, None
+    return commits, ["python3", "-B", "tests/leak_guard.py", "--rev", "HEAD", "--messages", "HEAD", "--base", base]
+
+
 def main(arguments=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="HEAD", help="Compare working tree with this ref (default HEAD)")
@@ -129,7 +142,7 @@ def main(arguments=None):
                 old_sources[path] = old
     graph = change_scope.Graph(metadata, edges=edges, old_sources=old_sources)
     if not (args.report or args.contributor or args.doctor):
-        return check(args, graph, paths)
+        return check(args, graph, paths, base)
     import validation
     catalog = validation.Catalog(change_scope.ROOT, metadata)
     catalog.retain_previous(old_declarations)
@@ -156,7 +169,7 @@ def refused(problems):
     return 2 if problems else 0
 
 
-def check(args, graph, paths):
+def check(args, graph, paths, base):
     jobs = int(os.environ.get("CHOPINFER_CI_JOBS", os.cpu_count() or 8))
     if refused(preflight.temporary_directory(os.environ)):
         return 2
@@ -167,6 +180,9 @@ def check(args, graph, paths):
         names = selection["packages"]
         print("quick packages: " + (", ".join(names) or "none"), flush=True)
         print("quick checks: " + (", ".join(step.name for step in checks) or "none"), flush=True)
+        commits, history = history_check(base)
+        print("quick history: " + (f"leak guard over {commits} commits since {base[:12]}" if history else "none"),
+              flush=True)
         if gate_only:
             print("left to ci/cpu.sh (fresh Rust builds): " + ", ".join(gate_only), flush=True)
         if args.list:
@@ -176,6 +192,8 @@ def check(args, graph, paths):
         if refused(preflight.problems([step.name for step in checks], ["--workspace"] if selection["workspace"]
                                       else names)):
             return 2
+        if history:
+            subprocess.run(history, check=True)
         subprocess.run(["cargo", "fmt", "--all", "--check"], check=True)
         if not names and not selection["workspace"] and not checks:
             print("No changed inputs. bash ci/cpu.sh runs every check.")

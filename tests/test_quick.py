@@ -23,6 +23,9 @@ import change_scope
 import check_inputs
 import runner
 
+BASE = "0123456789abcdef0123456789abcdef01234567"
+HISTORY = ["python3", "-B", "tests/leak_guard.py", "--rev", "HEAD", "--messages", "HEAD", "--base", BASE]
+
 
 class Selection(unittest.TestCase):
     def setUp(self):
@@ -227,10 +230,11 @@ class Preflight(unittest.TestCase):
         stderr = io.StringIO()
         with patch.dict(os.environ, {**env, **variables}, clear=True), \
              patch.object(quick, "tooling_checks", return_value=([], [], set())), \
+             patch.object(quick, "history_check", return_value=(1, HISTORY)), \
              patch.object(quick.subprocess, "run", side_effect=self.subprocess_run) as run, \
              contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
             try:
-                status = quick.check(args, graph, ["crates/x/src/lib.rs"])
+                status = quick.check(args, graph, ["crates/x/src/lib.rs"], BASE)
             except self.Ran:
                 status = "ran"
         return status, stderr.getvalue(), [call.args[0] for call in run.call_args_list if call.args[0][0] != "chmod"]
@@ -253,7 +257,78 @@ class Preflight(unittest.TestCase):
             # Tests that read no reference start without them.
             status, stderr, run = self.check(["runtime-kv"], TMPDIR=directory)
             self.assertEqual((status, stderr), ("ran", ""))
-            self.assertEqual([argv[:2] for argv in run], [["cargo", "fmt"]])
+            self.assertEqual(run, [HISTORY])
+
+
+class History(unittest.TestCase):
+    """quick runs the pre-push leak check over the commits HEAD adds to the
+    base before anything else, merge-only ranges included."""
+
+    def check(self, packages, history=(2, HISTORY), listing=False, guard_status=0):
+        graph = Mock()
+        graph.select.return_value = {"packages": packages, "workspace": False}
+        args = Mock(all=False, list=listing)
+        calls = []
+
+        def subprocess_run(argv, *args, **kwargs):
+            if argv[0] == "chmod":
+                return subprocess.CompletedProcess(argv, 0)
+            calls.append(argv)
+            status = guard_status if argv[:3] == ["python3", "-B", "tests/leak_guard.py"] else 0
+            if status and kwargs.get("check"):
+                raise subprocess.CalledProcessError(status, argv)
+            return subprocess.CompletedProcess(argv, status)
+
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.dict(os.environ, {"TMPDIR": directory}), \
+             patch.object(quick, "tooling_checks", return_value=([], [], set())), \
+             patch.object(quick, "history_check", return_value=history), \
+             patch.object(quick.subprocess, "run", side_effect=subprocess_run), \
+             patch.object(quick.rust_tests, "run", return_value=0), \
+             contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
+            try:
+                quick.check(args, graph, ["crates/x/src/lib.rs"], BASE)
+                error = None
+            except subprocess.CalledProcessError as raised:
+                error = raised
+        return calls, stdout.getvalue(), error
+
+    def test_the_command_covers_the_commits_head_adds(self):
+        with patch.object(quick, "output", return_value=b"3\n") as output:
+            self.assertEqual(quick.history_check(BASE), (3, HISTORY))
+        output.assert_called_once_with("git", "rev-list", "--count", "HEAD", "--not", BASE)
+        with patch.object(quick, "output", return_value=b"0\n"):
+            self.assertEqual(quick.history_check(BASE), (0, None))
+
+    def test_the_leak_check_runs_first(self):
+        calls, stdout, error = self.check(["runtime-kv"])
+        self.assertIsNone(error)
+        self.assertEqual([argv[:2] for argv in calls], [["python3", "-B"], ["cargo", "fmt"], ["cargo", "clippy"]])
+        self.assertEqual(calls[0], HISTORY)
+        self.assertIn(f"quick history: leak guard over 2 commits since {BASE[:12]}", stdout)
+
+    def test_a_leak_stops_quick(self):
+        calls, _, error = self.check(["runtime-kv"], guard_status=1)
+        self.assertEqual(error.cmd, HISTORY)
+        self.assertEqual(calls, [HISTORY])
+
+    def test_no_commits_run_no_leak_check(self):
+        calls, stdout, error = self.check(["runtime-kv"], history=(0, None))
+        self.assertIsNone(error)
+        self.assertNotIn(HISTORY, calls)
+        self.assertIn("quick history: none", stdout)
+
+    def test_listing_runs_nothing(self):
+        calls, stdout, _ = self.check(["runtime-kv"], listing=True)
+        self.assertEqual(calls, [])
+        self.assertIn("quick history: leak guard over 2 commits", stdout)
+
+    def test_commits_without_changed_inputs_are_still_checked(self):
+        calls, stdout, error = self.check([])
+        self.assertIsNone(error)
+        self.assertEqual(calls, [HISTORY, ["cargo", "fmt", "--all", "--check"]])
+        self.assertIn("No changed inputs", stdout)
 
 
 class AffectedChecks(unittest.TestCase):

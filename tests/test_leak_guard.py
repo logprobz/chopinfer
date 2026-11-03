@@ -157,6 +157,27 @@ class GitModes(Isolated):
         self.assertEqual(code, 1)
         self.assertIn('message:1: email address: author Test <', err)
 
+    def test_merge_messages_are_checked(self):
+        # Git's default merge subject names the merged branch.
+        branch = f'notes-{HOST}'
+        self.repo.git('checkout', '-q', '-b', branch)
+        self.repo.commit('Add notes', {'notes.md': 'Plain text.\n'})
+        self.repo.git('checkout', '-q', 'main')
+        main = self.repo.commit('Edit the readme', {'README.md': '# Fixture\n\nMore.\n'})
+        for message, finding in ((None, 'local deny-list pattern'),
+                                 ('Merge the notes (' + 'REVIEW' + '-A4)', 'internal review label'),
+                                 ('Merge the notes', None)):
+            with self.subTest(message=message):
+                self.repo.git('reset', '-q', '--hard', main)
+                self.repo.git('merge', '-q', '--no-ff', *(['-m', message] if message else ['--no-edit']), branch)
+                head = self.repo.git('rev-parse', 'HEAD')
+                code, err = self.outgoing(head)
+                if finding:
+                    self.assertEqual(code, 1)
+                    self.assertIn(f'commit {head[:12]} message:3: {finding}', err)
+                else:
+                    self.assertEqual((code, err), (0, ''))
+
     def test_citations_outside_the_history_fail(self):
         self.repo.git('checkout', '-q', '--orphan', 'side')
         self.repo.git('rm', '-rqf', '.')

@@ -1274,7 +1274,7 @@ fn capabilities(value: &Value) -> Checked<()> {
     if choice(
         &declared["speculation"],
         "capabilities.speculation",
-        &["none", "lookup", "mtp", "dflash"],
+        &["none", "lookup", "mtp", "dflash", "dspark"],
     )? != "none"
     {
         needed.extend([

@@ -35,7 +35,9 @@ import statistics
 import sys
 from pathlib import Path
 
-import prefill_report
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import prefill_report  # noqa: E402
 
 
 def load(run, allow_void=False):

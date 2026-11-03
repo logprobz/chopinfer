@@ -164,6 +164,33 @@ def ab_fixture(root, **overrides):
 
 
 class Tuner(unittest.TestCase):
+    def test_isolated_report_cli_from_an_external_directory(self):
+        import os
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runs = []
+            for c in (1, 8):
+                run = root / f'c{c}'
+                run.mkdir()
+                runs.append(run)
+                config = {**CONFIG, 'model': {**MODEL, 'concurrencies': [c], 'depths': [0, 1]}}
+                (run / 'config.json').write_text(json.dumps(config))
+                for depth in (0, 1):
+                    for kind in config['kinds']:
+                        window(run, f'd{depth}p1', kind, c, depth, 100 + 50 * depth,
+                               {f'i{c}-r{c * (depth + 1)}': 10})
+            env = {key: value for key, value in os.environ.items() if key != 'PYTHONPATH'}
+            for selected in (runs[:1], runs):
+                result = subprocess.run([sys.executable, '-B', '-I', str(HERE / 'report.py'),
+                                         *map(str, selected)], cwd=root, env=env,
+                                        text=True, capture_output=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout)['depths'], '1:1')
+                for run in selected:
+                    self.assertTrue((run / 'tune.json').is_file())
+                    self.assertIn('Schedule:', (run / 'tune.md').read_text())
+
     def test_counters_sum_eviction_classes_and_keep_legacy_recordings(self):
         from types import SimpleNamespace
         from unittest.mock import patch

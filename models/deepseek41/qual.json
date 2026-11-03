@@ -1005,7 +1005,7 @@
             "workload_sha256"
           ],
           "op": "eq",
-          "value": "bb39334b089e2861ec26b6c700c74951e8293e61268b5acef3b64b93fc73fe76",
+          "value": "5d63c0f78def9858b4e0e6dc6490d31c086081c80b8eca2ac069fb9e961562c1",
           "source": "models/deepseek41/README.md#qualification"
         },
         {
@@ -1116,7 +1116,7 @@
             "candidate"
           ],
           "op": "eq",
-          "value": "bb39334b089e2861ec26b6c700c74951e8293e61268b5acef3b64b93fc73fe76",
+          "value": "5d63c0f78def9858b4e0e6dc6490d31c086081c80b8eca2ac069fb9e961562c1",
           "source": "models/deepseek41/README.md#qualification"
         },
         {
@@ -1126,7 +1126,7 @@
             "reference"
           ],
           "op": "eq",
-          "value": "bb39334b089e2861ec26b6c700c74951e8293e61268b5acef3b64b93fc73fe76",
+          "value": "5d63c0f78def9858b4e0e6dc6490d31c086081c80b8eca2ac069fb9e961562c1",
           "source": "models/deepseek41/README.md#qualification"
         }
       ]

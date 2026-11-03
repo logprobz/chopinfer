@@ -170,6 +170,35 @@ class SoakMixTests(unittest.TestCase):
             check_structured(message(json.dumps(dict(valid, age=-1))))
 
 
+class SoakMediaFixtureTests(unittest.TestCase):
+    """The media mix reads its fixtures from the declaration's
+    soak_media_fixtures input when it states one (a model whose
+    media_fixtures holds other media, such as image probes), else from
+    media_fixtures."""
+
+    def requested(self, **inputs):
+        """The fixture directory the media mix's image request is built from
+        under a declaration with `inputs`."""
+        module = soak.media_module()
+        seen = []
+        with patch("common.qualification_config", return_value={"model": "soak-fixture", "inputs": inputs}), \
+             patch.object(soak, "media_module", return_value=module), \
+             patch.object(module, "messages", lambda case, fixture_dir: seen.append(fixture_dir)):
+            soak.media_requests(["image-blue-square.png"])
+        return seen
+
+    def test_a_declared_soak_fixture_input_is_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(self.requested(media_fixtures=f"{directory}/probes",
+                                            soak_media_fixtures=f"{directory}/functional"),
+                             [Path(directory) / "functional"])
+
+    def test_without_one_the_media_fixtures_are_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(self.requested(media_fixtures=f"{directory}/functional"),
+                             [Path(directory) / "functional"])
+
+
 class FakeClient:
     """A server whose structured answers cycle valid, cut off, invalid."""
 

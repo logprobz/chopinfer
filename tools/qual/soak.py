@@ -205,10 +205,20 @@ def prefix_messages(worker_id, turn, conversation):
 MEDIA_CASES = ("image-blue-square.png", "video-red-then-blue")
 
 
+def media_fixtures():
+    """The media mix's fixture directory: the declaration's
+    soak_media_fixtures input when it states one (a model whose
+    media_fixtures holds other media, such as image probes), else
+    media_fixtures."""
+    from common import qualification_config
+    declared = qualification_config()["inputs"]
+    return input_path("soak_media_fixtures" if "soak_media_fixtures" in declared else "media_fixtures")
+
+
 def media_requests(case_ids=MEDIA_CASES, fixture_dir=None):
     """(case id, messages) for the media mix, each fixture read and verified once."""
     multimodal_cases = media_module()
-    fixture_dir = fixture_dir or input_path("media_fixtures")
+    fixture_dir = fixture_dir or media_fixtures()
     by_id = {case["id"]: case for case in multimodal_cases.cases()}
     return [(case_id, multimodal_cases.messages(by_id[case_id], fixture_dir)) for case_id in case_ids]
 

@@ -582,6 +582,10 @@ GLM 46, MiMo 44 and Qwen 55 seconds (2026-10-27).
 The model warnings remain active.
 `ci/quick.sh` always selects quick; `ci/cpu.sh` selects CPU.
 Missing executed cases or peak RSS reports fail the stage.
+Each quick or CPU route sweep and each bundle's
+`route_memory_reuses_state_across_varying_shapes` test reruns itself alone
+in a child process of its test binary, so the 16 GiB peak RSS budget
+counts only that sweep, even where a library's tests share one process.
 
 Full and exhaustive sweeps run only in bounded pieces. Build the bundle test
 executable through `tools/dev/heavy.sh`, then run the coordinator outside a

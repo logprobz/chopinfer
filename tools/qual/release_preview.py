@@ -312,7 +312,8 @@ def model_facts(model):
             'soak_constants': declared,
             'soak_warmup': declared.get('WARMUP_SECONDS', {}).get('value', 0),
             'soak_allowance': declared.get('CACHE_ALLOWANCE_MIB', {}).get('value', {'host': 0, 'device': 0}),
-            'checks': value['checks'], 'kv_offload': value.get('kv_offload')}
+            'checks': value['checks'], 'kv_offload': value.get('kv_offload'),
+            'capabilities': value.get('capabilities')}
 
 
 def queue_clients(facts):
@@ -2019,8 +2020,28 @@ def compare_screens(run, context):
         run.row(config, None, 'gsm8k-paired', 'fail', error=str(error))
 
 
+def unserved_capabilities(run):
+    """A default row for each boolean capability the model's top-level
+    declaration states false: not applicable, with its
+    `capabilities.not_served` reason. One without a reason fails, so a
+    capability the model does not serve is never silently skipped."""
+    declared = run.facts.get('capabilities') or {}
+    reasons = declared.get('not_served', {})
+    for name, served in declared.items():
+        if served is not False:
+            continue
+        if name in reasons:
+            run.row('default', 'capability', name, 'not_applicable', reason=reasons[name])
+        else:
+            run.row('default', 'capability', name, 'fail',
+                    error=f'capabilities.{name} is false without its capabilities.not_served reason')
+
+
 def run_configuration(run, name, config, devices=None):
     facts = run.facts
+    # A development subset (select_checks) states only its own checks.
+    if name == 'default' and not facts.get('selected_checks'):
+        unserved_capabilities(run)
     directory = run.directory / name
     package = run.packages[f"{facts['model']}/{name}"]
     checkpoint = Path(package['checkpoint'])
@@ -2247,8 +2268,10 @@ def finish(run):
             and not run.args.no_baseline_update and not run.replay):
         update = run.stores['last-good'].update(run.directory, result)
         print(update, flush=True)
-    print(f"{run.facts['model']} {run.args.suite}: {'PASS' if passed else 'FAIL'}; {run.out / 'results.json'}",
-          flush=True)
+    # A not-applicable row is not a pass: the summary counts them.
+    unserved = sum(row['status'] == 'not_applicable' for row in run.rows)
+    print(f"{run.facts['model']} {run.args.suite}: {'PASS' if passed else 'FAIL'}"
+          f"{f', {unserved} not applicable' if unserved else ''}; {run.out / 'results.json'}", flush=True)
     return 0 if passed else 1
 
 
@@ -2263,11 +2286,11 @@ def report(directory, result):
         identity = value.get('source') or {}
         lines.append(f"Used install {features or 'plain'}: {identity.get('commit', 'unknown')}"
                      f"{' (with uncommitted changes)' if identity.get('dirty') else ''}.")
-    lines.extend(['', '| Check | Result | Values | Error |', '|---|---|---|---|'])
+    lines.extend(['', '| Check | Result | Values | Error or reason |', '|---|---|---|---|'])
     for row in result['rows']:
         values = '; '.join(line({'id': '', 'status': '', 'values': [value]}).split('; ', 1)[1]
                            for value in row.get('values', []))
-        lines.append(f"| {row['id']} | {row['status']} | {values} | {row.get('error', '')} |")
+        lines.append(f"| {row['id']} | {row['status']} | {values} | {row.get('error') or row.get('reason') or ''} |")
     (directory / 'report.md').write_text('\n'.join(lines) + '\n')
 
 

@@ -2057,7 +2057,7 @@ class FakeRun:
         runner.write(receipts / f"{script.removesuffix('.py')}.json", value)
         return 0
 
-    def run(self, *extra):
+    def run(self, *extra, output=None):
         self.prepare()
         from common import input_path
         import declaration
@@ -2069,9 +2069,23 @@ class FakeRun:
                 patch.object(runner, 'queue', lambda url, facts: {
                     'passed': True, 'mechanics_only': False, 'requests': clients, 'concurrency': clients}), \
                 patch.dict(os.environ, {self.facts['checkpoint']: str(self.checkpoint)}), \
-                contextlib.redirect_stdout(io.StringIO()):
+                contextlib.redirect_stdout(output or io.StringIO()):
             code = runner.main(['run', '--model', self.model, '--out', str(self.base / 'run'), *extra])
         return code, runner.read(self.base / 'run/results.json')
+
+
+def declaring(fake, **changed):
+    """The runner reading `fake`'s model with top-level capabilities that
+    serve everything except as `changed` states."""
+    served = {'text': True, 'frontend': True, 'api': True, 'structured': True, 'prefix_cache': True,
+              'preemption': True, 'long_context': True, 'stability': True, 'media': ['image'],
+              'speculation': 'mtp', 'kv_offload': True}
+    fake.facts = dict(fake.facts, capabilities={**served, **changed})
+    return patch.object(runner, 'model_facts', return_value=fake.facts)
+
+
+# The reason a fixture declares for the capability it does not serve.
+UNSERVED = 'The bundle declares no KV offload; a preempted request recomputes.'
 
 
 class FakeRunTests(unittest.TestCase):
@@ -2288,6 +2302,43 @@ class RunTests(FakeRunTests):
                 self.assertEqual((result['source'], result['install_source']), (fake.identity(), fake.identity()))
                 # A quick run never moves the stored baselines.
                 self.assertFalse((runner.VALIDATION / 'last-good').exists())
+
+    def test_an_unserved_capability_is_a_not_applicable_row_with_its_reason(self):
+        """Each boolean capability the top-level declaration states false is
+        a default row of its own: not applicable with its not_served reason,
+        never a pass. The report shows the reason and the summary counts it."""
+        with self.validation() as base:
+            fake = FakeRun(base, model())
+            output = io.StringIO()
+            with declaring(fake, kv_offload=False, not_served={'kv_offload': UNSERVED}):
+                code, result = fake.run('--suite', 'quick', output=output)
+            self.assertEqual((code, result['passed']), (0, True), result['rows'])
+            rows = [row for row in result['rows'] if '/capability/' in row['id']]
+            self.assertEqual(rows, [{'id': 'default/capability/kv_offload', 'status': 'not_applicable',
+                                     'reason': UNSERVED}])
+            self.assertIn(f'default/capability/kv_offload NOT_APPLICABLE; {UNSERVED}\n', output.getvalue())
+            self.assertIn(f'| default/capability/kv_offload | not_applicable |  | {UNSERVED} |\n',
+                          (base / 'run/report.md').read_text())
+            count = sum(row['status'] == 'not_applicable' for row in result['rows'])
+            self.assertIn(f'{fake.model} quick: PASS, {count} not applicable; ', output.getvalue())
+
+    def test_an_unserved_capability_without_its_reason_fails(self):
+        with self.validation() as base:
+            fake = FakeRun(base, model())
+            with declaring(fake, kv_offload=False, stability=False, not_served={'kv_offload': UNSERVED}):
+                code, result = fake.run('--suite', 'quick')
+            self.assertEqual((code, result['passed']), (1, False))
+            failed = [row for row in result['rows'] if row['status'] not in runner.PASSING]
+            self.assertEqual([row['id'] for row in failed], ['default/capability/stability'], failed)
+            self.assertIn('capabilities.not_served', failed[0]['error'])
+
+    def test_a_check_subset_states_no_capability_rows(self):
+        with self.validation() as base:
+            fake = FakeRun(base, model(lambda facts: 'api' in facts['quick']))
+            with declaring(fake, kv_offload=False, stability=False):
+                code, result = fake.run('--suite', 'quick', '--check', 'api')
+            self.assertEqual(code, 0, result['rows'])
+            self.assertFalse([row for row in result['rows'] if '/capability/' in row['id']])
 
     def test_determinism_and_greedy_records_are_eval_captures(self):
         """Each arm's determinism and greedy record is taken by the install's
@@ -2713,6 +2764,19 @@ class RescoreTests(FakeRunTests):
             code, rows = self.replay(fake)
             self.assertEqual(code, 0)
             self.assertEqual([row['id'] for row in rows], ids)
+
+    def test_a_replay_states_each_unserved_capability_again(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(runner, 'VALIDATION', Path(temporary) / 'validation'):
+            fake = FakeRun(Path(temporary), model())
+            with declaring(fake, kv_offload=False, not_served={'kv_offload': UNSERVED}):
+                code, _ = fake.run('--suite', 'quick')
+                self.assertEqual(code, 0)
+                code, rows = self.replay(fake)
+            self.assertEqual(code, 0)
+            row, = [row for row in rows if '/capability/' in row['id']]
+            self.assertEqual((row['id'], row['status'], row['reason'], row['recorded']),
+                             ('default/capability/kv_offload', 'not_applicable', UNSERVED, 'not_applicable'))
 
     def test_the_rescore_entry_points_judge_shutdown_evidence_without_pythonpath(self):
         # The test process has the repository on sys.path; the entry points

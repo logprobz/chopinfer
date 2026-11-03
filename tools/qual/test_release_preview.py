@@ -1722,10 +1722,17 @@ print('CLEANUP_COMPLETE', flush=True)
 
     def test_serve_option_facts_match_runtime_host(self):
         source = (runner.ROOT / 'crates/runtime-host/src/command.rs').read_text()
-        valueless = re.search(r'VALUELESS_FLAGS_V1: &\[&str\] = &\[(.*?)\];', source, re.S).group(1)
-        self.assertEqual(tuple(re.findall(r'"(--[a-z-]+)"', valueless)), runner.VALUELESS_SERVE_FLAGS)
-        self.assertIn('drain_timeout_ms: parsed.drain_timeout_ms.unwrap_or(30_000)', source)
-        self.assertEqual(runner.DRAIN_DEFAULT_MS, 30000)
+        options = (runner.ROOT / 'crates/runtime-host/src/command/serve_options.rs').read_text()
+        valueless = re.findall(r'ServeOptionV1::new\(\s*"(--[a-z-]+)",\s*Flag,', options)
+        self.assertIn('--describe-options', valueless)
+        self.assertCountEqual([flag for flag in valueless if flag != '--describe-options'],
+                              runner.VALUELESS_SERVE_FLAGS)
+        defaults = source.split('impl Default for ServingOptionsV1 {', 1)[1].split('\nimpl ', 1)[0]
+        drain = re.search(r'drain_timeout_ms: ([\d_]+),', defaults).group(1)
+        self.assertEqual(runner.DRAIN_DEFAULT_MS, int(drain.replace('_', '')))
+        resolution = (runner.ROOT / 'crates/runtime-host/src/command/serve_config.rs').read_text()
+        self.assertIn('drain_timeout_ms: parsed.drain_timeout_ms.unwrap_or(defaults.drain_timeout_ms)',
+                      resolution)
 
     def test_refused_drain_starts_no_server(self):
         with tempfile.TemporaryDirectory() as temporary, \

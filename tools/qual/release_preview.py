@@ -85,7 +85,7 @@ SHUTDOWN_TIMEOUT = 30
 DRAIN_DEFAULT_MS = 30000
 DRAIN_CLEANUP_SECONDS = 10
 STOP_KILL_SECONDS = 10
-# The serve flags that take no value (runtime-host VALUELESS_FLAGS_V1).
+# The serve flags that take no value (runtime-host SERVE_OPTIONS_V1).
 VALUELESS_SERVE_FLAGS = ('--enable-request-id-headers', '--allow-credentials', '--fake-host-services',
                          '--list-model-options', '--check')
 WRAPPER_KILL_SECONDS = 5

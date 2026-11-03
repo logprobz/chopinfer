@@ -66,11 +66,13 @@ for graphs; DSpark reserves 640 MiB. Package capacity and CPU checks do not
 establish release qualification.
 
 The scheduler admits 64-token aligned shared-prefix anchors in addition to
-the chunk grid and prompt ends. For an unaligned prompt, it cuts at
-`prompt_tokens / 64 * 64` and executes the remaining 1 to 63 tokens in a
-separate prefill step. Each endpoint produces complete target state and,
-for DSpark, the 134-row raw feature history, including six preserved older
-rows. An anchor costs 53 pages (2.88 MiB) per rank for AR or 125 pages
+the chunk grid and prompt ends. An unaligned prompt publishes an anchor at
+`prompt_tokens / 64 * 64`. On these profiles the step that reaches it
+continues to the prompt end and captures the anchor inside the step, for up
+to eight requests per step; a remainder that does not fit the step's budget
+runs as a separate prefill step. Each endpoint produces complete target
+state and, for DSpark, the 134-row raw feature history, including six
+preserved older rows. An anchor costs 53 pages (2.88 MiB) per rank for AR or 125 pages
 (6.79 MiB) for DSpark. See [prefill dependencies](prefill-dependencies.md).
 
 On 2026-10-27, TP4 shared-document and multi-turn comparisons measured a
@@ -300,11 +302,11 @@ longer selects the bundle's step or commit records. Existing diagnostic
 capture directories, AR Engram tracing and the shared
 `CHOPINFER_DEVICE_RESULTS` control remain available.
 
-### Candidate dense prefill tail folds
+### Dense prefill tail folds
 
-`prefill_tail_folds=true` changes only remainder work in Flash TP4 dense
-prefill. It keeps every option-off registration and every compact, matrix
-and staged-scale choice, including tabled widths with a 64-row remainder.
+Flash TP4 dense prefill folds only remainder work. It keeps every earlier
+registration and every compact, matrix and staged-scale choice, including
+tabled widths with a 64-row remainder.
 The existing 1-64-row route and aligned widths also stay unchanged. At
 65-127 rows it replaces the generic fold with 64 rows plus the rest. Above
 128 rows it replaces a split tail or the partial tile of an ordinary TMA
@@ -317,25 +319,27 @@ full part at its rounded width. For example, an 8191-row q-b projection has
 a 127-row remainder, beyond that shape's split limit of 112, so it keeps the
 ordinary TMA kernel for the first 8064 rows and folds 64 plus 63. The
 `max_tail_rows=16` shapes use padded TMA above 16, but belong to other
-topologies and remain unchanged by this TP4 option.
+topologies and remain unchanged.
 
-The option covers attention q/kv/o, the indexer query, shared-expert
+The folds cover attention q/kv/o, the indexer query, shared-expert
 gate/up/down and `engram.kv`. Every tail has separate aligned scratch and
 sliced activation, scale and output spans. Status retains its original span
 and uses the piece's row offset. The partition relies on eager prefill
 planning at its live row count; it does not support padded or graph prefill.
-The option defaults to false and can coexist with `prefill_anchor_items`,
-which defaults to 0.
+The folds were adopted on 2026-11-02 after bitwise exactness, a served
+step-time A/B and stateful replay acceptance; see
+[prefill dependencies](prefill-dependencies.md). No option selects the
+earlier split-tail routes on Flash TP4.
 
 CPU tests compare fake-host result metadata and committed request state,
-pin routes and spans, and sweep both served profiles with the option on
-and off. Each tail piece must match option-off lowering at the same row
-count. Direct-step allowances cover every selected remainder independently
-of inherited cone gaps. Internal output-cone tails have candidate allowances;
-preserved full launches newly exposed by changed fallback totals have explicit
-accounting exceptions. These CPU checks do not establish GPU arithmetic
-equality. The candidate is not adopted, and no performance claim follows
-from them.
+pin routes and spans, and sweep both served profiles. Each tail piece must
+match the unpartitioned lowering at the same row count. Direct-step
+allowances cover every selected remainder independently of inherited cone
+gaps. Internal output-cone tails have their own allowances; preserved full
+launches newly exposed by changed fallback totals have explicit accounting
+exceptions. These CPU checks do not establish GPU arithmetic equality; the
+lab probe below and the served checks in
+[prefill dependencies](prefill-dependencies.md) do.
 
 On 2026-11-02, exhaustive CPU fake-host execution of packed-2 rows 2 through
 8192 and packed-32 rows 32 through 8192 corrected the simulated packed-cone
@@ -352,7 +356,7 @@ DSpark retains feature rows as additional dependency roots, changing the
 backward output cones. The audit compares fallback counts across widths,
 so a fallback launch alone does not establish an allowance gap.
 
-The ignored lab probe compares the current route with the partition at
+The ignored lab probe compares the split-tail route with the partition at
 85, 127, 789, 831, 853, 1557 and 1599 rows for the Flash TP4 q/kv/o,
 indexer, shared-expert and Engram shapes. Before timing it requires bitwise
 equal outputs and statuses on clean inputs and with a poisoned scale in the
@@ -363,8 +367,8 @@ symbol partition helper. Its source records why other served registrations
 cannot affect these queries. Each device interleaves identical-operand A/A
 controls with A/B visits using gated CUDA events and cold weights. Each
 result reports the A/A spread. It records power limits and clocks and
-refuses a changed power limit. Lab results locate work; adoption still
-requires served acceptance.
+refuses a changed power limit. Lab results locate work; adoption also
+required served acceptance.
 
 Prepare the test executable and stage the locked timing probe before the
 GPU reservation. Keep the staged cubin and receipts outside the tree:
@@ -382,22 +386,17 @@ the admitted job to five minutes including termination:
 source ~/.config/chopinfer/local.env && bash tools/dev/heavy.sh --label ds41tail-probe env CHOPINFER_KERNEL_REQUIRE=1 CHOPINFER_KERNEL_PROBE_CUBIN="${CHOPINFER_DATA:?}/tail-fold-probe/probe_sm120.cubin" timeout --signal=TERM --kill-after=5s 295s cargo test -p model-deepseek41-lab --test prefill_tail_folds --locked --offline prefill_tail_folds_pair -- --ignored --exact --nocapture
 ```
 
-### Prompt-end grid-anchor candidate
+### Prompt-end grid anchors
 
-The candidate is restored behind `prefill_anchor_items`, default 0. It
-accepts continuations at any start without a minimum row count. CPU
-structural checks do not establish GPU exactness or served acceptance.
-
-The previous prompt-end grid-anchor candidate was removed. A TP4 AR C1 replay on
-2026-10-29 matched all 40 turn pairs bitwise but regressed throughput by
-0.66% and TTFT p95 in both pairs. An off-grid 789-row prefill took
-311-313 ms, while separate 768- and 21-row steps totaled 288-294 ms.
-The tail selected split-tail dense routes instead of exact-row folds.
-The final DSpark C1 gate also regressed TTFT p95 in both pairs: 303.03
-to 324.71 ms and 308.08 to 321.54 ms. The declared gate failed despite
-the cold AR C4 throughput gain.
-The restored candidate still needs served stateful acceptance across cold
-and warm turns before changing the default schedule.
+Flash TP4 with upper skip and scheduler cuts declares in-step prompt-end
+anchors through `chop_bundle_prefill_anchors_api_v2`, up to eight per step
+and at most the served sequence count. Continuations may start anywhere,
+with no minimum row count. Other topologies declare none and keep the
+separate tail step. An earlier candidate failed its 2026-10-29 gate because
+fused unaligned steps took split-tail dense routes; with the tail folds the
+fused schedule was adopted on 2026-11-02. The measured tail cost, exactness
+results and acceptance verdicts, including the accepted `tp4-ar` C8
+stall-time tradeoff, are in [prefill dependencies](prefill-dependencies.md).
 
 ### Removed short-prefill graph candidate
 

@@ -196,6 +196,7 @@ class Reader:
         self.files = Files(self.limits)
         self.gaps = []
         self.closures = {}
+        self.compiler_directories = {}
         self.records = self.entries = self.report_count = 0
 
     def enumerate(self, inputs):
@@ -361,17 +362,33 @@ class Reader:
         path = Path(string(directory))
         require(path.is_absolute() and '..' not in path.parts, 'invalid compiler search path')
         try:
-            with os.scandir(path) as entries:  # check-inputs: walks outside the repository
-                result = []
-                for entry in entries:
-                    self.entries += 1
-                    require(self.entries <= self.limits.entries, 'compiler search traversal bound')
-                    if entry.name in names:
-                        sha = self.files.read(Path(entry.path).resolve(strict=True), self.limits.artifact_bytes)[0]
-                        result.append(entry.name + ':' + sha)
-                return sorted(result)
+            before = signature(path.stat())
         except FileNotFoundError:
+            before = None
+        cached = self.compiler_directories.get(path)
+        if cached is not None:
+            require(before == cached[0], 'compiler search directory changed during inspection')
+            entries = cached[1]
+        else:
+            entries = None
+            if before is not None:
+                entries = []
+                with os.scandir(path) as listing:  # check-inputs: walks outside the repository
+                    for entry in listing:
+                        self.entries += 1
+                        require(self.entries <= self.limits.entries, 'compiler search traversal bound')
+                        entries.append(entry.name)
+                require(signature(path.stat()) == before, 'compiler search directory changed during inspection')
+            self.compiler_directories[path] = before, entries
+        if entries is None:
             return None
+        result = []
+        for name in entries:
+            if name in names:
+                sha = self.files.read((path / name).resolve(strict=True), self.limits.artifact_bytes)[0]
+                result.append(name + ':' + sha)
+        require(signature(path.stat()) == before, 'compiler search directory changed during inspection')
+        return sorted(result)
 
     def verify(self, report):
         require(report["source_membership_complete"] and report["cubins"], "incomplete source membership")

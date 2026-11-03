@@ -66,6 +66,41 @@ class ReaderTests(unittest.TestCase):
         report.pop('compiler_freshness')
         self.assertEqual(self.read(report)['status'], 'stale')
 
+    def test_compiler_search_counts_each_directory_once_across_reports(self):
+        directory = self.root / 'compiler-search'
+        directory.mkdir()
+        for name in ('nvcc', 'nvcc.profile', 'unrelated-a', 'unrelated-b'):
+            (directory / name).write_bytes(name.encode())
+        reader = kr.Reader(kr.Limits(entries=4))
+        for _ in range(10):
+            for name in ('nvcc', 'nvcc.profile'):
+                self.assertEqual(reader.compiler_search(str(directory), {name}),
+                                 [name + ':' + kr.digest(name.encode())])
+        self.assertEqual(reader.entries, 4)
+        other = self.root / 'other-search'
+        other.mkdir()
+        (other / 'unrelated').write_bytes(b'other')
+        with self.assertRaisesRegex(ValueError, 'traversal bound'):
+            reader.compiler_search(str(other), {'nvcc'})
+
+    def test_cached_compiler_search_rechecks_directory_and_file_changes(self):
+        directory = self.root / 'compiler-search'
+        directory.mkdir()
+        compiler = directory / 'nvcc'
+        compiler.write_bytes(b'compiler')
+        reader = kr.Reader()
+        reader.compiler_search(str(directory), {'nvcc'})
+        compiler.write_bytes(b'changed compiler')
+        with self.assertRaisesRegex(ValueError, 'changed during inspection'):
+            reader.compiler_search(str(directory), {'nvcc'})
+        reader = kr.Reader()
+        reader.compiler_search(str(directory), {'nvcc'})
+        directory.rename(self.root / 'previous-search')
+        directory.mkdir()
+        (directory / 'nvcc.profile').write_bytes(b'new input')
+        with self.assertRaisesRegex(ValueError, 'changed during inspection'):
+            reader.compiler_search(str(directory), {'nvcc.profile'})
+
     def test_structural_refusals(self):
         changes = [lambda r: r.update(schema="future"), lambda r: r.update(lock_status="unknown"),
                    lambda r: r.update(source_membership_complete=1),

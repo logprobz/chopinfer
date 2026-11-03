@@ -2039,9 +2039,6 @@ def unserved_capabilities(run):
 
 def run_configuration(run, name, config, devices=None):
     facts = run.facts
-    # A development subset (select_checks) states only its own checks.
-    if name == 'default' and not facts.get('selected_checks'):
-        unserved_capabilities(run)
     directory = run.directory / name
     package = run.packages[f"{facts['model']}/{name}"]
     checkpoint = Path(package['checkpoint'])
@@ -2118,6 +2115,10 @@ def run_configuration(run, name, config, devices=None):
             run.row(name, arm['arm'], 'server', 'fail', error=str(error))
     if config.get('screens', True):
         compare_screens(run, context)
+    # A configuration refused before it runs states only why; a development
+    # subset (select_checks) states only its own checks.
+    if name == 'default' and not facts.get('selected_checks'):
+        unserved_capabilities(run)
 
 
 def device_pairs():

@@ -2340,6 +2340,18 @@ class RunTests(FakeRunTests):
             self.assertEqual(code, 0, result['rows'])
             self.assertFalse([row for row in result['rows'] if '/capability/' in row['id']])
 
+    def test_a_refused_configuration_states_no_capability_rows(self):
+        with self.validation() as base:
+            fake = FakeRun(base, model())
+            fake.prepare()
+            os.utime(fake.checkpoint / 'model.safetensors', ns=(1, 1))
+            with declaring(fake, kv_offload=False, not_served={'kv_offload': UNSERVED}), \
+                    patch.object(runner, 'source', fake.identity), \
+                    inert_gpu_query(), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(runner.main(['run', '--model', fake.model, '--out', str(base / 'stale')]), 1)
+            result = runner.read(base / 'stale/results.json')
+            self.assertEqual([row['id'] for row in result['rows']], ['default/configuration'])
+
     def test_determinism_and_greedy_records_are_eval_captures(self):
         """Each arm's determinism and greedy record is taken by the install's
         `chopinfer eval capture` under the model's declaration, bound to the

@@ -166,6 +166,14 @@ class NvccCacheTests(unittest.TestCase):
         self.assertEqual(self.call_count(), 6)
         self.assertFalse(self.cache.exists())
 
+    def test_unrepresentable_compiler_freshness_bypasses_even_a_warm_key(self):
+        stage = self.worktree('one')
+        self.compile(stage)
+        calls = self.call_count()
+        self.compile(stage, CHOPINFER_NVCC_CACHE_BYPASS='1')
+        self.assertEqual(self.call_count(), calls + 1)
+        self.assertEqual(self.events()[-1], 'bypass')
+
     def test_inputs_the_key_cannot_describe_bypass_the_cache(self):
         stage = self.worktree("one")
         options = self.root / "options"

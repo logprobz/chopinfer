@@ -14,6 +14,9 @@ import stat
 SCHEMA = "chopinfer-kernel-build-v1"
 FILENAMES = {"kernel-build-report.json", "kernel-build-report.profile.json"}
 FLAGS = ("source_membership_complete", "source_ownership_complete", "entry_declarations_complete")
+COMPILER_ENV = ("PATH", "LD_LIBRARY_PATH", "NVCC_PREPEND_FLAGS", "NVCC_APPEND_FLAGS", "NVCC_CCBIN",
+                "SOURCE_DATE_EPOCH", "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "GCC_EXEC_PREFIX",
+                "COMPILER_PATH", "LD_PRELOAD", "LD_AUDIT")
 RECIPE_FIELDS = ("toolchain_version", "nvcc_sha256", "flags", "defines", "headers",
                  "include_dirs", "generated_sha256", "source_closure_sha256")
 # Directory-form locks keep one gating file per source family.
@@ -49,6 +52,18 @@ def string(value):
 
 def digest(value):
     return hashlib.sha256(value).hexdigest()
+
+
+def freshness_bytes(value):
+    environment = dict(value['environment'])
+    for name in ('PATH', 'LD_LIBRARY_PATH'):
+        paths = environment.get(name)
+        environment[name] = [entry for path in paths.split(':')
+                             for entry in value['search_directories'].get(path) or []] if paths else []
+    searches = sorted(entries for entries in value['search_directories'].values() if entries)
+    material = [value['version'], value['toolchain_version'], value['flags'], environment,
+                {key: item['sha256'] for key, item in value['files'].items()}, searches]
+    return json.dumps(material, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False).encode()
 
 
 def hash_string(value):
@@ -342,10 +357,60 @@ class Reader:
         require(len(covered) == len(set(covered)), "duplicate lock family coverage")
         require(set(covered) == names, "lock families do not cover the reported cubins")
 
+    def compiler_search(self, directory, names):
+        path = Path(string(directory))
+        require(path.is_absolute() and '..' not in path.parts, 'invalid compiler search path')
+        try:
+            with os.scandir(path) as entries:  # check-inputs: walks outside the repository
+                result = []
+                for entry in entries:
+                    self.entries += 1
+                    require(self.entries <= self.limits.entries, 'compiler search traversal bound')
+                    if entry.name in names:
+                        sha = self.files.read(Path(entry.path).resolve(strict=True), self.limits.artifact_bytes)[0]
+                        result.append(entry.name + ':' + sha)
+                return sorted(result)
+        except FileNotFoundError:
+            return None
+
     def verify(self, report):
         require(report["source_membership_complete"] and report["cubins"], "incomplete source membership")
         require(report["lock_status"] == "Verified", "lock is " + report["lock_status"])
         files = self.files
+        freshness = report.get('compiler_freshness')
+        require(isinstance(freshness, dict), 'missing compiler freshness')
+        require(type(freshness.get('version')) is int and freshness['version'] == 1, 'unsupported compiler freshness')
+        require(isinstance(freshness.get('environment'), dict) and set(COMPILER_ENV) <= set(freshness['environment']),
+                'incomplete compiler environment inventory')
+        require(isinstance(freshness.get('files'), dict) and {'nvcc', 'nvcc.profile'} <= set(freshness['files']),
+                'missing compiler inputs')
+        require(isinstance(freshness.get('search_directories'), dict), 'invalid compiler search inventory')
+        require(all(name in freshness['environment'] for name in os.environ if name.startswith('NVCC_')),
+                'unmodelled nvcc environment')
+        require(digest(freshness_bytes(freshness)) == hash_string(freshness['sha256']), 'compiler freshness digest differs')
+        for name, expected in freshness['environment'].items():
+            require(expected is None or isinstance(expected, str), 'invalid compiler environment value')
+            current = os.environ.get(name)
+            if current != expected and name in ('PATH', 'LD_LIBRARY_PATH'):
+                def candidates(value):
+                    return [entry for directory in value.split(':')
+                            for entry in self.compiler_search(directory, freshness['files']) or []] if value else []
+                matches = candidates(current) == candidates(expected)
+            else:
+                matches = current == expected
+            require(matches, 'stale compiler environment: ' + name)
+        self.records += len(freshness['files']) + len(freshness['search_directories'])
+        require(self.records <= self.limits.records, 'aggregate compiler input bound')
+        for value in freshness['files'].values():
+            location = files.location(string(value['location']))
+            require(Path(string(value['lookup'])).resolve(strict=True) == location, 'stale compiler lookup')
+            require(files.read(location, self.limits.artifact_bytes)[0] == hash_string(value['sha256']), 'stale compiler input')
+        for directory, expected in freshness['search_directories'].items():
+            require(self.compiler_search(directory, freshness['files']) == expected, 'stale compiler search directory')
+        for cubin in report['cubins']:
+            require(freshness['flags'] == cubin['recipe']['flags']
+                    and freshness['toolchain_version'] == cubin['recipe']['toolchain_version'],
+                    'compiler freshness differs from build recipe')
         if "lock_families" not in report:
             lock_hash, lock, _ = files.read(report["lock_path"], self.limits.report_bytes, contents=True)
             require(lock_hash == report["lock_sha256"], "stale lock digest")

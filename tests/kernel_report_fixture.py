@@ -2,6 +2,7 @@
 from copy import deepcopy
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 import tomllib
@@ -40,6 +41,8 @@ def make_report(directory, package=f"bundle-qwen38@{VERSION}", *, source="chopin
     members.append({"closure_key": "generated/entry.cu", "file": key})
     compiler = directory / "nvcc"
     compiler.write_bytes(b"compiler")
+    compiler_profile = directory / 'nvcc.profile'
+    compiler_profile.write_bytes(b'compiler profile')
     binary = directory / "fixture_v1.cubin"
     binary.write_bytes(b"cubin")
     closure = hashlib.sha256()
@@ -66,6 +69,12 @@ def make_report(directory, package=f"bundle-qwen38@{VERSION}", *, source="chopin
               "files": files, "cubins": [{"name": identity["name"], "path": str(binary),
               "identity_path": str(sidecar), "identity": identity, "recipe": recipe,
               "recipe_sha256": kr.digest(kr.recipe_bytes(recipe)), "membership": members, "declarations": []}]}
+    freshness = {'version': 1, 'toolchain_version': recipe['toolchain_version'], 'flags': recipe['flags'],
+                 'environment': {name: os.environ.get(name) for name in kr.COMPILER_ENV},
+                 'files': {path.name: {'lookup': str(path), 'location': str(path), 'sha256': kr.digest(path.read_bytes())}
+                           for path in (compiler, compiler_profile)}, 'search_directories': {}}
+    freshness['sha256'] = kr.digest(kr.freshness_bytes(freshness))
+    report['compiler_freshness'] = freshness
     path = directory / "kernel-build-report.json"
     write_report(path, report)
     return path, report, {owner: root}

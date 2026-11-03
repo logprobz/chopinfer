@@ -71,14 +71,30 @@ which is `0` for lock updates and line-info builds, whose results no lock
 comparison checks. The toolchain digest covers the nvcc version, the bytes of
 nvcc, `nvcc.profile`, every program `nvcc -dryrun` shows the compilation
 running (host compiler, its `cc1plus`, `cicc`, `ptxas`), the shared libraries
-`ldd` resolves for them, and libdevice; it is computed once per toolkit and
-build-script process. A cubin gets no variables and compiles directly when its
+`ldd` resolves for them, and libdevice. The compiler descriptor is recomputed
+for each build call before local or shared reuse. It also records ordered
+flags, supported compiler/preprocessor environment settings and compiler
+search candidates. A cubin bypasses both reuse layers when its
 generated unit, closure, defines or `NVCC_PREPEND_FLAGS`/`NVCC_APPEND_FLAGS`
 name `__DATE__`, `__TIME__` or `__TIMESTAMP__`; when the environment sets a
 setting the dry run reports that the key does not model (for example
 `PTXAS_FLAGS`, `INCLUDES` or `NVVMIR_LIBRARY_DIR`; `MODELLED_SETTINGS` in
 `src/cache_key.rs` lists the modelled ones), or `LD_PRELOAD` or `LD_AUDIT`; or
-when the toolchain cannot be identified.
+when the toolchain cannot be identified. Options files, unsupported options,
+relative compiler search paths (including empty path entries), and loader
+injection also bypass reuse. These configurations still compile and compare
+locks, but cannot supply current compiler provenance. The wrapper records an
+explicit `CHOPINFER_NVCC_CACHE_BYPASS=1` request as a bypass event.
+
+Local outputs have a separate `*.freshness.json` sidecar. Legacy outputs
+without it rebuild or use the shared cache under the new descriptor key;
+legacy build reports lack current-input evidence. This causes a one-time
+cache migration without changing any kernel lock, source-closure identity or
+cubin bytes. The additive report field is `compiler_freshness`, checked by
+both Rust and Python readers. Cargo tracks this same compiler file and
+environment inventory, including unset supported variables. Changes to
+`PATH` or `LD_LIBRARY_PATH` rerun the build script and may rebuild dependent
+bundle crates. Untrackable configurations force build-script reevaluation.
 
 [`tools/nvcc_cache/nvcc_cache.py`](../../tools/nvcc_cache/nvcc_cache.py) is a
 content-addressed cache behind that hook, shared by worktrees and fresh

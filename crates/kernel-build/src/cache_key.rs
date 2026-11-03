@@ -1,72 +1,212 @@
-//! What a caching `CHOPINFER_NVCC_WRAPPER` (tools/nvcc_cache) is told about
-//! one cubin compilation. The wrapper keys a cubin on these variables and its
-//! arguments, so they hold everything outside the source closure that changes
-//! the cubin; a compilation they cannot describe gets no key and the wrapper
-//! runs nvcc unchanged.
+//! Compiler configuration evidence shared by local reuse, the wrapper and reports.
 
 use crate::{BuildError, BuildOptions, GeneratedUnit, Toolchain, digest, err, io, run};
-use std::collections::BTreeMap;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
 
-/// The dry-run settings the key models: the programs found on PATH and the
-/// shared libraries they load are hashed into the compiler identity, and the
-/// wrapper keys the NVCC_* text, caching only options it fully describes.
-/// When the environment sets any other setting `nvcc -dryrun` reports
-/// (PTXAS_FLAGS, INCLUDES, NVVMIR_LIBRARY_DIR and the rest), or one of
-/// LOADER_VARIABLES, the compilation gets no key.
 const MODELLED_SETTINGS: &[&str] = &[
     "PATH",
     "LD_LIBRARY_PATH",
     "NVCC_PREPEND_FLAGS",
     "NVCC_APPEND_FLAGS",
     "NVCC_CCBIN",
+    "SOURCE_DATE_EPOCH",
+    "CPATH",
+    "C_INCLUDE_PATH",
+    "CPLUS_INCLUDE_PATH",
+    "GCC_EXEC_PREFIX",
+    "COMPILER_PATH",
 ];
-/// Loader variables that change the compilers without changing their files.
 const LOADER_VARIABLES: &[&str] = &["LD_PRELOAD", "LD_AUDIT"];
-/// nvcc options from the environment, scanned for build-time macros.
-const NVCC_OPTION_VARIABLES: &[&str] = &["NVCC_PREPEND_FLAGS", "NVCC_APPEND_FLAGS"];
+const SEARCH_SETTINGS: &[&str] = &[
+    "PATH",
+    "LD_LIBRARY_PATH",
+    "CPATH",
+    "C_INCLUDE_PATH",
+    "CPLUS_INCLUDE_PATH",
+    "GCC_EXEC_PREFIX",
+    "COMPILER_PATH",
+];
 
-/// The key variables for one compilation, or None when its sources or
-/// defines name the build time or the compiler configuration cannot be
-/// identified. A cached cubin is offered only when the lock comparison
-/// verifies the result.
-pub(crate) fn cache_variables(
-    toolchain: &Toolchain,
-    flags: &[&str],
-    files: &[PathBuf],
-    unit: &GeneratedUnit,
-    defines: &[(String, String)],
-    source_closure_sha256: &str,
-    options: BuildOptions,
-) -> Option<[(&'static str, String); 3]> {
-    let defined_time = defines.iter().any(|(name, value)| {
-        names_build_time(name.as_bytes()) || names_build_time(value.as_bytes())
-    }) || NVCC_OPTION_VARIABLES.iter().any(|name| {
-        env::var_os(name).is_some_and(|value| names_build_time(value.as_encoded_bytes()))
-    });
-    if defined_time || uses_build_time(files, unit) {
-        return None;
-    }
-    let compiler = compiler_identity(toolchain, flags)?;
-    Some(variables(&compiler, source_closure_sha256, options))
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompilerInput {
+    pub lookup: PathBuf,
+    pub location: PathBuf,
+    pub sha256: String,
 }
 
-fn variables(
-    compiler: &str,
-    source_closure_sha256: &str,
-    options: BuildOptions,
-) -> [(&'static str, String); 3] {
-    let lock_verified = !options.lock_update && !options.profile_line_info;
+/// Additive freshness evidence. It is not part of a locked cubin identity.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompilerFreshness {
+    pub version: u32,
+    pub toolchain_version: String,
+    pub flags: Vec<String>,
+    pub environment: BTreeMap<String, Option<String>>,
+    pub files: BTreeMap<String, CompilerInput>,
+    pub search_directories: BTreeMap<PathBuf, Option<Vec<String>>>,
+    pub sha256: String,
+}
+
+impl CompilerFreshness {
+    fn identity(&self) -> Result<String, BuildError> {
+        let files: BTreeMap<_, _> = self.files.iter().map(|(k, v)| (k, &v.sha256)).collect();
+        let mut environment: BTreeMap<String, serde_json::Value> = self
+            .environment
+            .iter()
+            .map(|(key, value)| (key.clone(), serde_json::json!(value)))
+            .collect();
+        for name in ["PATH", "LD_LIBRARY_PATH"] {
+            let candidates: Vec<_> = self
+                .environment
+                .get(name)
+                .and_then(Option::as_deref)
+                .filter(|value| !value.is_empty())
+                .into_iter()
+                .flat_map(|value| value.split(':'))
+                .filter_map(|path| {
+                    self.search_directories
+                        .get(Path::new(path))
+                        .and_then(Option::as_ref)
+                })
+                .flatten()
+                .collect();
+            environment.insert(name.into(), serde_json::json!(candidates));
+        }
+        let mut searches: Vec<_> = self
+            .search_directories
+            .values()
+            .filter_map(Option::as_ref)
+            .filter(|entries| !entries.is_empty())
+            .collect();
+        searches.sort();
+        let material = (
+            &self.version,
+            &self.toolchain_version,
+            &self.flags,
+            environment,
+            files,
+            searches,
+        );
+        Ok(digest(
+            &serde_json::to_vec(&material).map_err(|e| err(e.to_string()))?,
+        ))
+    }
+
+    pub(crate) fn verify_current(&self) -> Result<(), BuildError> {
+        if self.version != 1
+            || self.identity()? != self.sha256
+            || !self.files.contains_key("nvcc")
+            || !self.files.contains_key("nvcc.profile")
+            || MODELLED_SETTINGS
+                .iter()
+                .chain(LOADER_VARIABLES)
+                .any(|name| !self.environment.contains_key(*name))
+        {
+            return Err(err("invalid compiler freshness descriptor"));
+        }
+        if env::vars_os().any(|(name, _)| {
+            name.to_str().is_some_and(|name| {
+                name.starts_with("NVCC_") && !self.environment.contains_key(name)
+            })
+        }) {
+            return Err(err("unmodelled nvcc environment"));
+        }
+        for (name, expected) in &self.environment {
+            let current = env::var(name).ok();
+            let matches =
+                if current != *expected && matches!(name.as_str(), "PATH" | "LD_LIBRARY_PATH") {
+                    // Cargo adds build/tool directories to these variables. Empty
+                    // search directories cannot change the selected compiler bytes.
+                    let names = self.files.keys().cloned().collect();
+                    search_candidates(current.as_deref(), &names)?
+                        == search_candidates(expected.as_deref(), &names)?
+                } else {
+                    current == *expected
+                };
+            if !matches {
+                return Err(err(format!("stale compiler environment: {name}")));
+            }
+        }
+        for input in self.files.values() {
+            if fs::canonicalize(&input.lookup).map_err(|e| io("resolve compiler input", e))?
+                != input.location
+                || digest(&fs::read(&input.location).map_err(|e| io("read compiler input", e))?)
+                    != input.sha256
+            {
+                return Err(err("stale compiler input"));
+            }
+        }
+        for (path, expected) in &self.search_directories {
+            if directory_entries(path, &self.files.keys().cloned().collect())? != *expected {
+                return Err(err("stale compiler search directory"));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn variables(
+        &self,
+        closure: &str,
+        options: BuildOptions,
+    ) -> [(&'static str, String); 3] {
+        variables(&self.sha256, closure, options)
+    }
+
+    pub(crate) fn emit_cargo(&self) {
+        for name in self.environment.keys() {
+            println!("cargo:rerun-if-env-changed={name}");
+        }
+        for input in self.files.values() {
+            println!("cargo:rerun-if-changed={}", input.location.display());
+            if input.lookup != input.location {
+                println!("cargo:rerun-if-changed={}", input.lookup.display());
+            }
+        }
+        for directory in self.search_directories.keys() {
+            println!("cargo:rerun-if-changed={}", directory.display());
+        }
+    }
+}
+
+pub(crate) fn compiler_freshness(
+    toolchain: &Toolchain,
+    flags: &[&str],
+) -> Option<CompilerFreshness> {
+    // No path-only memoization: a caller may change inputs and build again in this process.
+    match compiler_inputs(toolchain, flags) {
+        Ok(mut value) => {
+            value.sha256 = value.identity().ok()?;
+            Some(value)
+        }
+        Err(error) => {
+            eprintln!("compiler freshness unavailable, compiling without reuse: {error}");
+            None
+        }
+    }
+}
+
+pub(crate) fn emit_environment() {
+    for name in MODELLED_SETTINGS.iter().chain(LOADER_VARIABLES) {
+        println!("cargo:rerun-if-env-changed={name}");
+    }
+}
+
+fn variables(compiler: &str, closure: &str, options: BuildOptions) -> [(&'static str, String); 3] {
     [
-        ("CHOPINFER_NVCC_CACHE_CLOSURE", source_closure_sha256.into()),
+        ("CHOPINFER_NVCC_CACHE_CLOSURE", closure.into()),
         ("CHOPINFER_NVCC_CACHE_TOOLCHAIN", compiler.into()),
         (
             "CHOPINFER_NVCC_CACHE_LOOKUP",
-            if lock_verified { "1" } else { "0" }.into(),
+            if !options.lock_update && !options.profile_line_info {
+                "1"
+            } else {
+                "0"
+            }
+            .into(),
         ),
     ]
 }
@@ -77,56 +217,107 @@ fn names_build_time(bytes: &[u8]) -> bool {
         .any(|name| bytes.windows(name.len()).any(|window| window == *name))
 }
 
-/// Whether the generated unit or a closure file names the compilation date or
-/// time, which no key holds. Each file is read once per process.
-fn uses_build_time(files: &[PathBuf], unit: &GeneratedUnit) -> bool {
-    static SCANNED: Mutex<BTreeMap<PathBuf, bool>> = Mutex::new(BTreeMap::new());
-    if names_build_time(unit.translation_unit.as_bytes())
-        || names_build_time(unit.header.as_bytes())
-    {
-        return true;
-    }
-    let mut scanned = SCANNED
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    files.iter().any(|file| {
-        *scanned
-            .entry(file.clone())
-            .or_insert_with(|| fs::read(file).map_or(true, |bytes| names_build_time(&bytes)))
-    })
-}
-
-/// A digest of the nvcc version and binary, nvcc.profile, and every program
-/// and libdevice file `nvcc -dryrun` shows a cubin compilation using, with
-/// the host preprocessor's cc1plus. File contents, not paths, enter it.
-/// Computed once per toolkit and process.
-fn compiler_identity(toolchain: &Toolchain, flags: &[&str]) -> Option<String> {
-    static IDENTITIES: Mutex<BTreeMap<PathBuf, Option<String>>> = Mutex::new(BTreeMap::new());
-    let mut identities = IDENTITIES
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    identities
-        .entry(toolchain.home.clone())
-        .or_insert_with(|| match compiler_inputs(toolchain, flags) {
-            Ok(inputs) => {
-                let mut text = format!("{}\n", toolchain.version);
-                for (name, sha256) in inputs {
-                    text.push_str(&format!("{name} {sha256}\n"));
-                }
-                Some(digest(text.as_bytes()))
-            }
-            Err(error) => {
-                eprintln!("nvcc cache key unavailable, compiling without the cache: {error}");
-                None
-            }
+pub(crate) fn sources_reusable(
+    files: &[PathBuf],
+    unit: &GeneratedUnit,
+    defines: &[(String, String)],
+) -> bool {
+    !names_build_time(unit.translation_unit.as_bytes())
+        && !names_build_time(unit.header.as_bytes())
+        && !defines.iter().any(|(name, value)| {
+            names_build_time(name.as_bytes()) || names_build_time(value.as_bytes())
         })
-        .clone()
+        && !files
+            .iter()
+            .any(|file| fs::read(file).map_or(true, |bytes| names_build_time(&bytes)))
 }
 
-fn compiler_inputs(
-    toolchain: &Toolchain,
-    flags: &[&str],
-) -> Result<BTreeMap<String, String>, BuildError> {
+fn safe_option(option: &str) -> bool {
+    if let Some(options) = option.strip_prefix("-Xptxas=") {
+        return options.split(',').all(|v| {
+            matches!(
+                v,
+                "-O0" | "-O1" | "-O2" | "-O3" | "-v" | "-lineinfo" | "-fmad=true" | "-fmad=false"
+            ) || v.strip_prefix("-warn-").is_some_and(|s| {
+                !s.is_empty() && s.bytes().all(|c| c.is_ascii_lowercase() || c == b'-')
+            }) || v
+                .strip_prefix("-maxrregcount=")
+                .is_some_and(|s| !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit()))
+        });
+    }
+    matches!(
+        option,
+        "-cubin"
+            | "-lineinfo"
+            | "-O0"
+            | "-O1"
+            | "-O2"
+            | "-O3"
+            | "--fmad=true"
+            | "--fmad=false"
+            | "--use_fast_math"
+    ) || option
+        .strip_prefix("-std=c++")
+        .is_some_and(|s| s.len() == 2 && s.bytes().all(|c| c.is_ascii_digit()))
+        || option.strip_prefix("-arch=").is_some_and(|s| {
+            !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
+        })
+        || option.strip_prefix("-I").is_some_and(|s| !s.is_empty())
+        || option
+            .strip_prefix("-D")
+            .is_some_and(|s| crate::identifier(s.split('=').next().unwrap_or_default()))
+}
+
+fn directory_entries(
+    path: &Path,
+    names: &BTreeSet<String>,
+) -> Result<Option<Vec<String>>, BuildError> {
+    match fs::read_dir(path) {
+        Ok(entries) => {
+            let mut values = Vec::new();
+            for entry in entries {
+                let entry = entry.map_err(|e| io("read compiler search directory", e))?;
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if names.contains(&name) {
+                    let bytes = fs::read(entry.path())
+                        .map_err(|e| io("read compiler search candidate", e))?;
+                    values.push(format!("{name}:{}", digest(&bytes)));
+                }
+            }
+            values.sort();
+            Ok(Some(values))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(io("read compiler search directory", error)),
+    }
+}
+
+fn search_candidates(
+    value: Option<&str>,
+    names: &BTreeSet<String>,
+) -> Result<Vec<String>, BuildError> {
+    let mut candidates = Vec::new();
+    for path in value
+        .filter(|value| !value.is_empty())
+        .into_iter()
+        .flat_map(|value| value.split(':'))
+    {
+        let path = Path::new(path);
+        if !path.is_absolute() {
+            return Err(err("relative compiler search path"));
+        }
+        candidates.extend(directory_entries(path, names)?.unwrap_or_default());
+    }
+    Ok(candidates)
+}
+
+fn compiler_inputs(toolchain: &Toolchain, flags: &[&str]) -> Result<CompilerFreshness, BuildError> {
+    if env::vars_os().any(|(name, _)| {
+        name.to_str()
+            .is_some_and(|name| name.starts_with("NVCC_") && !MODELLED_SETTINGS.contains(&name))
+    }) {
+        return Err(err("unmodelled nvcc environment"));
+    }
     let nvcc = toolchain.tool("nvcc");
     let output = Command::new(&nvcc)
         .current_dir(&toolchain.home)
@@ -139,18 +330,34 @@ fn compiler_inputs(
         return Err(err("nvcc -dryrun failed"));
     }
     let text = String::from_utf8(output.stderr)
-        .map_err(|e| err(format!("nvcc -dryrun output is not UTF-8: {e}")))?;
-    let mut inputs = BTreeMap::from([("nvcc".to_string(), toolchain.nvcc_sha256.clone())]);
+        .map_err(|e| err(format!("nvcc -dryrun is not UTF-8: {e}")))?;
+    let mut files = BTreeMap::<String, CompilerInput>::new();
     let mut add = |path: &Path| -> Result<(), BuildError> {
-        let path = fs::canonicalize(path).map_err(|e| io(&path.display().to_string(), e))?;
+        // Retain the lookup path as well as its bytes, so replacing a symlink's target is seen.
+        let path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            toolchain.home.join(path)
+        };
         let name = path
             .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let bytes = fs::read(&path).map_err(|e| io(&path.display().to_string(), e))?;
-        inputs.insert(name, digest(&bytes));
+            .ok_or_else(|| err("unnamed compiler input"))?
+            .to_string_lossy()
+            .into_owned();
+        let bytes = fs::read(&path).map_err(|e| io("read compiler input", e))?;
+        let input = CompilerInput {
+            lookup: path.clone(),
+            location: fs::canonicalize(&path).map_err(|e| io("resolve compiler input", e))?,
+            sha256: digest(&bytes),
+        };
+        if let Some(previous) = files.insert(name, input.clone())
+            && previous.sha256 != input.sha256
+        {
+            return Err(err("ambiguous compiler input name"));
+        }
         Ok(())
     };
+    add(&nvcc)?;
     add(&nvcc.with_file_name("nvcc.profile"))?;
     let mut variables = BTreeMap::new();
     let mut programs = Vec::new();
@@ -166,49 +373,97 @@ fn compiler_inputs(
         };
         let program = resolve(&expand(program.trim_matches('"'), &variables)?, &variables)?;
         if line.split_whitespace().any(|arg| arg == "-E") {
-            // The host compiler driver preprocesses through cc1plus.
             let mut command = Command::new(&program);
             command.arg("-print-prog-name=cc1plus");
             let cc1plus = PathBuf::from(run(command, "host compiler cc1plus")?.trim());
-            if cc1plus.is_absolute() {
-                add(&cc1plus)?;
-                programs.push(cc1plus);
+            if !cc1plus.is_absolute() {
+                return Err(err("unresolved host compiler component"));
             }
+            add(&cc1plus)?;
+            programs.push(cc1plus);
         }
         add(&program)?;
         programs.push(program);
     }
-    let unmodelled = variables
+    let names: BTreeSet<_> = variables
         .keys()
         .map(String::as_str)
-        .filter(|name| !MODELLED_SETTINGS.contains(name))
+        .chain(MODELLED_SETTINGS.iter().copied())
         .chain(LOADER_VARIABLES.iter().copied())
-        .find(|name| env::var_os(name).is_some());
-    if let Some(name) = unmodelled {
-        return Err(err(format!("the environment sets {name}")));
+        .collect();
+    let mut environment = BTreeMap::new();
+    for name in names {
+        let value = env::var(name).map(Some).or_else(|error| match error {
+            env::VarError::NotPresent => Ok(None),
+            other => Err(err(other.to_string())),
+        })?;
+        if value.is_some() && !MODELLED_SETTINGS.contains(&name) {
+            return Err(err(format!("unmodelled compiler environment: {name}")));
+        }
+        environment.insert(name.to_string(), value);
     }
-    for program in &programs {
+    for name in ["NVCC_PREPEND_FLAGS", "NVCC_APPEND_FLAGS"] {
+        if let Some(value) = environment.get(name).and_then(Option::as_ref)
+            && (value.contains(['\\', '\'', '"'])
+                || names_build_time(value.as_bytes())
+                || !value.split_whitespace().all(safe_option))
+        {
+            return Err(err("unsupported nvcc options or build-time macro"));
+        }
+    }
+    for program in programs.iter().chain(std::iter::once(&nvcc)) {
         for library in shared_libraries(program)? {
             add(&library)?;
         }
     }
+    let loader_cache = Path::new("/etc/ld.so.cache");
+    if loader_cache.is_file() {
+        add(loader_cache)?;
+    }
     let libdevice = variables
         .get("NVVMIR_LIBRARY_DIR")
-        .ok_or_else(|| err("nvcc -dryrun named no NVVMIR_LIBRARY_DIR"))?;
-    let mut files = fs::read_dir(libdevice)
+        .ok_or_else(|| err("nvcc named no libdevice directory"))?;
+    let mut library_files = fs::read_dir(libdevice)
         .map_err(|e| io("read libdevice", e))?
-        .map(|entry| entry.map(|entry| entry.path()))
+        .map(|entry| entry.map(|e| e.path()))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| io("read libdevice", e))?;
-    files.sort();
-    for file in files {
+    library_files.sort();
+    for file in library_files {
         add(&file)?;
     }
-    Ok(inputs)
+    let search_names = files.keys().cloned().collect();
+    let mut search_directories = BTreeMap::new();
+    for name in SEARCH_SETTINGS {
+        if let Some(value) = environment.get(*name).and_then(Option::as_ref) {
+            if value.is_empty() {
+                continue;
+            }
+            for path in value.split(':').map(Path::new) {
+                if !path.is_absolute() {
+                    return Err(err("relative compiler search path"));
+                }
+                search_directories
+                    .insert(path.to_path_buf(), directory_entries(path, &search_names)?);
+            }
+        }
+    }
+    for path in [toolchain.home.join("bin"), PathBuf::from(libdevice)] {
+        let path =
+            fs::canonicalize(path).map_err(|e| io("resolve compiler search directory", e))?;
+        search_directories.insert(path.clone(), directory_entries(&path, &search_names)?);
+    }
+    Ok(CompilerFreshness {
+        version: 1,
+        toolchain_version: toolchain.version.clone(),
+        flags: flags.iter().map(|s| (*s).into()).collect(),
+        environment,
+        files,
+        search_directories,
+        sha256: String::new(),
+    })
 }
 
-/// The shared libraries the loader resolves for a program under the current
-/// LD_LIBRARY_PATH, the loader included.
 fn shared_libraries(program: &Path) -> Result<Vec<PathBuf>, BuildError> {
     let mut command = Command::new("ldd");
     command.arg(program);
@@ -268,6 +523,89 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
+    fn source_time_scan_observes_in_process_mutation() {
+        let path = std::env::temp_dir().join(format!("kernel-time-scan-{}.h", std::process::id()));
+        let unit = crate::GeneratedUnit {
+            translation_unit: String::new(),
+            header: String::new(),
+        };
+        std::fs::write(&path, "int unchanged;\n").unwrap();
+        assert!(super::sources_reusable(
+            std::slice::from_ref(&path),
+            &unit,
+            &[]
+        ));
+        std::fs::write(&path, "const char *clock = __TIME__;\n").unwrap();
+        assert!(!super::sources_reusable(
+            std::slice::from_ref(&path),
+            &unit,
+            &[]
+        ));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn compiler_descriptor_observes_flags_and_profile_in_process() {
+        let real = Toolchain::detect().unwrap();
+        let root =
+            std::env::temp_dir().join(format!("kernel-compiler-descriptor-{}", std::process::id()));
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::copy(real.tool("nvcc"), bin.join("nvcc")).unwrap();
+        std::fs::copy(real.tool("ptxas"), bin.join("ptxas")).unwrap();
+        let profile = std::fs::read_to_string(real.tool("nvcc.profile"))
+            .unwrap()
+            .replace("$(_HERE_)/..", &real.home.display().to_string());
+        std::fs::write(bin.join("nvcc.profile"), &profile).unwrap();
+        let private = Toolchain {
+            home: root.clone(),
+            ..real
+        };
+        let first = super::compiler_freshness(&private, NVCC_FLAGS).unwrap();
+        let mut flags = NVCC_FLAGS.to_vec();
+        flags.push("--fmad=false");
+        assert_ne!(
+            first.sha256,
+            super::compiler_freshness(&private, &flags).unwrap().sha256
+        );
+        std::fs::write(
+            bin.join("nvcc.profile"),
+            format!("{profile}\n# compiler freshness probe\n"),
+        )
+        .unwrap();
+        assert!(
+            first
+                .verify_current()
+                .unwrap_err()
+                .to_string()
+                .contains("compiler")
+        );
+        assert_ne!(
+            first.sha256,
+            super::compiler_freshness(&private, NVCC_FLAGS)
+                .unwrap()
+                .sha256
+        );
+        let component = super::compiler_freshness(&private, NVCC_FLAGS).unwrap();
+        assert_eq!(component.files["ptxas"].location, bin.join("ptxas"));
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(bin.join("ptxas"))
+            .unwrap()
+            .write_all(b"\0compiler freshness probe")
+            .unwrap();
+        assert!(component.verify_current().is_err());
+        assert_ne!(
+            component.sha256,
+            super::compiler_freshness(&private, NVCC_FLAGS)
+                .unwrap()
+                .sha256
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn the_compiler_identity_covers_the_cubin_compilers() {
         if std::env::consts::OS != "linux" || !std::path::Path::new("/usr/local/cuda").exists() {
             eprintln!("SKIP: the compiler identity requires Linux and nvcc");
@@ -282,10 +620,13 @@ mod tests {
             "cc1plus",
             "libc.so.6",
         ] {
-            assert!(inputs.contains_key(name), "{name}: {inputs:?}");
+            assert!(inputs.files.contains_key(name), "{name}: {inputs:?}");
         }
         assert!(
-            inputs.keys().any(|name| name.starts_with("libdevice")),
+            inputs
+                .files
+                .keys()
+                .any(|name| name.starts_with("libdevice")),
             "{inputs:?}"
         );
     }

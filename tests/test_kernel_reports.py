@@ -51,6 +51,21 @@ class ReaderTests(unittest.TestCase):
                     self.assertTrue(row["issues"])
                     path.write_bytes(original)
 
+    def test_compiler_freshness_rejects_stale_profile_environment_and_legacy_reports(self):
+        import os
+        from unittest.mock import patch
+        profile = self.path.parent / 'nvcc.profile'
+        original = profile.read_bytes()
+        profile.write_bytes(original + b'\nPTXAS_FLAGS += -O0\n')
+        self.assertEqual(self.read()['status'], 'stale')
+        profile.write_bytes(original)
+        self.assertEqual(self.read()['status'], 'current')
+        with patch.dict(os.environ, {'NVCC_APPEND_FLAGS': '--fmad=false'}):
+            self.assertEqual(self.read()['status'], 'stale')
+        report = deepcopy(self.report)
+        report.pop('compiler_freshness')
+        self.assertEqual(self.read(report)['status'], 'stale')
+
     def test_structural_refusals(self):
         changes = [lambda r: r.update(schema="future"), lambda r: r.update(lock_status="unknown"),
                    lambda r: r.update(source_membership_complete=1),

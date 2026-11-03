@@ -1,6 +1,7 @@
 //! Build-script driver for locked, audited SM120 native cubins.
 
 mod cache_key;
+pub use cache_key::{CompilerFreshness, CompilerInput};
 pub mod report;
 pub mod selection;
 pub mod tuning;
@@ -1300,6 +1301,7 @@ fn build_declared(
         context.validate()?;
     }
     if options.emit_cargo_directives {
+        cache_key::emit_environment();
         println!("cargo:rerun-if-env-changed=KERNELS_LOCK_UPDATE");
         println!("cargo:rerun-if-env-changed=CHOPINFER_CUDA_HOME");
         println!("cargo:rerun-if-env-changed=CHOPINFER_KERNEL_LINEINFO");
@@ -1329,13 +1331,31 @@ fn build_declared(
         LockTarget::Families(lock) => Some(lock.assign(specs)?),
         LockTarget::File(_) => None,
     };
+    if digest(&fs::read(toolchain.tool("nvcc")).map_err(|e| io("read current nvcc", e))?)
+        != toolchain.nvcc_sha256
+    {
+        return Err(err("nvcc changed after toolchain detection"));
+    }
     let out_dir = fs::canonicalize(out_dir).map_err(|e| io("canonicalize cubin out_dir", e))?;
     let mut sorted: Vec<&CubinSpec> = specs.iter().collect();
     sorted.sort_by(|a, b| a.name.cmp(&b.name));
     let mut built = Vec::new();
     let mut records = Vec::new();
     let mut memberships = Vec::new();
+    let mut freshness_complete = true;
     let flags = flags(options);
+    let compiler = cache_key::compiler_freshness(toolchain, &flags);
+    if options.emit_cargo_directives {
+        if let Some(compiler) = &compiler {
+            compiler.emit_cargo();
+        } else {
+            // A missing dependency makes Cargo reconsider untrackable configurations.
+            println!(
+                "cargo:rerun-if-changed={}",
+                out_dir.join("compiler-inputs-untracked").display()
+            );
+        }
+    }
     let workers = build_workers(
         std::thread::available_parallelism().map_or(8, |count| count.get()),
         std::env::var("CHOPINFER_KERNEL_BUILD_JOBS").ok().as_deref(),
@@ -1343,11 +1363,14 @@ fn build_declared(
     for batch in sorted.chunks(workers) {
         let out_dir = out_dir.as_path();
         let flags = flags.as_slice();
+        let compiler = compiler.as_ref();
         let results = std::thread::scope(|scope| {
             let workers = batch
                 .iter()
                 .map(|&spec| {
-                    scope.spawn(move || build_one(toolchain, spec, out_dir, options, flags))
+                    scope.spawn(move || {
+                        build_one(toolchain, spec, out_dir, options, flags, compiler)
+                    })
                 })
                 .collect::<Vec<_>>();
             workers
@@ -1359,10 +1382,11 @@ fn build_declared(
                 })
                 .collect::<Result<Vec<_>, BuildError>>()
         })?;
-        for (cubin, identity, membership) in results {
+        for (cubin, identity, membership, reusable) in results {
             built.push(cubin);
             records.push(identity);
             memberships.push(membership);
+            freshness_complete &= reusable;
         }
     }
     let evidence = match (lock, assignment) {
@@ -1388,6 +1412,7 @@ fn build_declared(
         options,
         context,
         declarations,
+        compiler.as_ref().filter(|_| freshness_complete),
     )?;
     Ok(built)
 }
@@ -1409,7 +1434,8 @@ fn build_one(
     out_dir: &Path,
     options: BuildOptions,
     flags: &[&str],
-) -> Result<(BuiltCubin, CubinIdentity, Vec<report::ClosureInput>), BuildError> {
+    compiler: Option<&CompilerFreshness>,
+) -> Result<(BuiltCubin, CubinIdentity, Vec<report::ClosureInput>, bool), BuildError> {
     let generated = generate(spec)?;
     let stage = out_dir.join(format!("{}.stage", spec.name));
     if stage.exists() {
@@ -1440,6 +1466,15 @@ fn build_one(
     };
     let path = out_dir.join(format!("{}{suffix}.cubin", spec.name));
     let identity_path = out_dir.join(format!("{}{suffix}.identity.json", spec.name));
+    let freshness_path = out_dir.join(format!("{}{suffix}.freshness.json", spec.name));
+    let compiler =
+        compiler.filter(|_| cache_key::sources_reusable(&files, &generated, &spec.defines));
+    if compiler.is_none() && options.emit_cargo_directives {
+        println!(
+            "cargo:rerun-if-changed={}",
+            out_dir.join("compiler-inputs-untracked").display()
+        );
+    }
     let expected_entries = spec
         .entries
         .iter()
@@ -1451,7 +1486,13 @@ fn build_one(
             allowed_local_bytes: e.allowed_local_bytes,
         })
         .collect::<Vec<_>>();
-    if let (Ok(bytes), Ok(cubin_bytes)) = (fs::read(&identity_path), fs::read(&path))
+    if !options.lock_update
+        && !options.profile_line_info
+        && compiler.is_some()
+        && let Ok(bytes) = fs::read(&freshness_path)
+        && let Ok(freshness) = serde_json::from_slice::<Option<CompilerFreshness>>(&bytes)
+        && freshness.as_ref() == compiler
+        && let (Ok(bytes), Ok(cubin_bytes)) = (fs::read(&identity_path), fs::read(&path))
         && let Ok(cached) = serde_json::from_slice::<CubinIdentity>(&bytes)
         && cached.name == spec.name
         && cached.line_info == options.profile_line_info
@@ -1475,6 +1516,7 @@ fn build_one(
             },
             cached,
             membership,
+            true,
         ));
     }
     let root =
@@ -1491,18 +1533,18 @@ fn build_one(
     }
     let mut command = nvcc_command(&toolchain.tool("nvcc"));
     command.current_dir(&stage);
-    if nvcc_wrapper().is_some()
-        && let Some(variables) = cache_key::cache_variables(
-            toolchain,
-            flags,
-            &files,
-            &generated,
-            &spec.defines,
-            &source_closure_sha256,
-            options,
-        )
-    {
-        command.envs(variables);
+    for name in [
+        "CHOPINFER_NVCC_CACHE_CLOSURE",
+        "CHOPINFER_NVCC_CACHE_TOOLCHAIN",
+        "CHOPINFER_NVCC_CACHE_LOOKUP",
+        "CHOPINFER_NVCC_CACHE_BYPASS",
+    ] {
+        command.env_remove(name);
+    }
+    if let Some(compiler) = compiler {
+        command.envs(compiler.variables(&source_closure_sha256, options));
+    } else {
+        command.env("CHOPINFER_NVCC_CACHE_BYPASS", "1");
     }
     command.args(flags).arg("-I.");
     for dir in &spec.include_dirs {
@@ -1534,6 +1576,11 @@ fn build_one(
         .map_err(|e| err(format!("serialize {} identity: {e}", spec.name)))?;
     identity_json.push('\n');
     fs::write(&identity_path, identity_json).map_err(|e| io("write cubin identity", e))?;
+    fs::write(
+        &freshness_path,
+        serde_json::to_vec(&compiler).map_err(|e| err(e.to_string()))?,
+    )
+    .map_err(|e| io("write compiler freshness", e))?;
     Ok((
         BuiltCubin {
             name: spec.name.clone(),
@@ -1546,6 +1593,7 @@ fn build_one(
         },
         identity,
         membership,
+        compiler.is_some(),
     ))
 }
 

@@ -9,6 +9,7 @@ and describes the compilation in the environment:
                                   and libdevice nvcc runs
   CHOPINFER_NVCC_CACHE_LOOKUP     1 when kernel-build compares the result with
                                   its lock; 0 compiles and refreshes the entry
+  CHOPINFER_NVCC_CACHE_BYPASS     1 when compiler freshness cannot be represented
 
 The key is those two digests, the arguments (paths below the working directory
 made relative, the output path left out) and the environment that changes
@@ -273,6 +274,11 @@ def run(argv, env):
     root = env.get("CHOPINFER_NVCC_CACHE_DIR")
     keyed = all(env.get(name) for name in ("CHOPINFER_NVCC_CACHE_CLOSURE", "CHOPINFER_NVCC_CACHE_TOOLCHAIN"))
     split = split_output(argv[1:])
+    if root and split is not None and env.get('CHOPINFER_NVCC_CACHE_BYPASS') == '1':
+        start = time.monotonic()
+        status = compile_command(argv, env)
+        Cache(root, env).log('bypass', '-', time.monotonic() - start, os.path.basename(split[1]))
+        return status
     if not root or not keyed or split is None:
         return compile_command(argv, env)
     args, output = split

@@ -687,6 +687,7 @@ fn a_refused_custom_operation_produces_no_row_and_leaves_nothing_pending() {
 fn a_refused_release_is_retryable_and_retains_every_resource_until_it_succeeds() {
     let (backend, mut instance) = created();
     let acquired = backend.live_resource_count();
+    let device_objects = backend.with_device(FakeHostDeviceV1::live_object_count);
     backend.with_device_mut(|device| device.refuse(FakeRefusalV1::ReleaseStream));
 
     let refusal = instance
@@ -694,9 +695,23 @@ fn a_refused_release_is_retryable_and_retains_every_resource_until_it_succeeds()
         .expect_err("a host that will not take the stream back refuses the destroy");
 
     assert_eq!(refusal, BundleAbiError::Status(BundleStatusV1::HostError));
-    // The releases before the stream succeeded and are gone; the stream and the
-    // two the host must still take after it are all the fixture is holding.
-    assert_eq!(backend.live_resource_count(), 3, "acquired {acquired}");
+    // The last acquisition is persistent state. Its buffer is released, but
+    // its host-owned stream refuses cleanup, so the state handle and every
+    // earlier fixture resource must remain owned.
+    assert_eq!(backend.live_resource_count(), acquired);
+    assert_eq!(
+        backend.with_device(FakeHostDeviceV1::live_object_count),
+        device_objects - 1
+    );
+    assert_eq!(
+        bundle_recurrent_fixture::destroy_v1(instance.handle()),
+        BundleStatusV1::HostError
+    );
+    assert_eq!(backend.live_resource_count(), acquired);
+    assert_eq!(
+        backend.with_device(FakeHostDeviceV1::live_object_count),
+        device_objects - 1
+    );
 
     // The wrapper poisons after a refused destroy, so the retry names the
     // handle directly, which is what whoever owns the native handle would do.
@@ -706,6 +721,7 @@ fn a_refused_release_is_retryable_and_retains_every_resource_until_it_succeeds()
         BundleStatusV1::Success
     );
     assert_eq!(backend.live_resource_count(), 0);
+    assert_eq!(backend.with_device(FakeHostDeviceV1::live_object_count), 0);
     assert_eq!(unreleased_resource_count_v1(), 0);
 }
 

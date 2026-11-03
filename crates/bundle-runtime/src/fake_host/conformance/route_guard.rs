@@ -8,6 +8,8 @@ mod rotation;
 mod sweep;
 
 use super::Serving;
+#[cfg(test)]
+pub(super) use budget::{in_own_process, with_rss_limit};
 use kernel_core::route::RouteTag;
 use runtime_bundle_sdk::warmup::{AllocatedShape, VerifyShape, verify_shapes, waves};
 pub use sweep::{memory_regression, sweep};

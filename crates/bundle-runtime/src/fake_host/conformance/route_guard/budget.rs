@@ -6,12 +6,52 @@ use std::time::{Duration, Instant};
 const GIB: u64 = 1024 * 1024 * 1024;
 const MAX_CGROUP_BYTES: u64 = 24 * GIB;
 const MAX_RSS_BYTES: u64 = 16 * GIB;
+/// Set in a child process that runs one test alone.
+#[cfg(test)]
+const CHILD: &str = "CHOPINFER_TEST_ROUTE_MEMORY_CHILD";
+
+#[cfg(test)]
+thread_local! {
+    /// bundle-runtime's own probe sweeps run under a smaller bound.
+    static LIMIT: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
 
 pub(super) struct Budget {
     started: Instant,
     peak: u64,
+    limit: u64,
     label: String,
     cgroup: Option<u64>,
+}
+
+fn rss_limit() -> u64 {
+    #[cfg(test)]
+    if let Some(limit) = LIMIT.get() {
+        return limit;
+    }
+    MAX_RSS_BYTES
+}
+
+/// Run `run` with sweeps on this thread bounded by `limit` bytes.
+#[cfg(test)]
+pub(in crate::fake_host::conformance) fn with_rss_limit<R>(
+    limit: u64,
+    run: impl FnOnce() -> R,
+) -> R {
+    struct Restore(Option<u64>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            LIMIT.set(self.0);
+        }
+    }
+    let _restore = Restore(LIMIT.replace(Some(limit)));
+    run()
+}
+
+/// Whether this process is the child that runs one test alone.
+#[cfg(test)]
+pub(in crate::fake_host::conformance) fn in_own_process() -> bool {
+    std::env::var_os(CHILD).is_some()
 }
 
 fn rss(status: &str) -> Result<u64, String> {
@@ -82,6 +122,7 @@ impl Budget {
         let mut budget = Self {
             started: Instant::now(),
             peak: 0,
+            limit: rss_limit(),
             label: label.into(),
             cgroup: full.then(cgroup_limit),
         };
@@ -95,11 +136,11 @@ impl Budget {
             .expect("route sweep needs peak RSS accounting");
         self.peak = self.peak.max(rss(&status).expect("process peak RSS"));
         assert!(
-            self.peak <= MAX_RSS_BYTES,
+            self.peak <= self.limit,
             "{}: route sweep peak RSS {} exceeds budget {} bytes",
             self.label,
             self.peak,
-            MAX_RSS_BYTES
+            self.limit
         );
         if self.cgroup.is_some() {
             assert!(
@@ -122,7 +163,7 @@ impl Drop for Budget {
             "{}: peak_rss_bytes={} rss_budget_bytes={} cgroup_memory_max_bytes={:?} elapsed_seconds={:.3}",
             self.label,
             self.peak,
-            MAX_RSS_BYTES,
+            self.limit,
             self.cgroup,
             self.started.elapsed().as_secs_f64()
         );
@@ -138,6 +179,7 @@ mod tests {
         Budget {
             started: Instant::now(),
             peak: MAX_RSS_BYTES + 1,
+            limit: MAX_RSS_BYTES,
             label: "fixture".into(),
             cgroup: None,
         }
@@ -150,6 +192,7 @@ mod tests {
         Budget {
             started: Instant::now() - Duration::from_secs(781),
             peak: 0,
+            limit: MAX_RSS_BYTES,
             label: "fixture".into(),
             cgroup: Some(MAX_CGROUP_BYTES),
         }

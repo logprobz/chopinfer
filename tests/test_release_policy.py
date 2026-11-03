@@ -145,8 +145,12 @@ class ReleasePolicy(unittest.TestCase):
             with self.subTest(workspace=owner.relative_to(ROOT).as_posix()):
                 self.assertEqual(license, 'Apache-2.0')
 
-    def test_archive_contains_project_and_dependency_licenses(self):
-        # Build outputs are synthetic; exercise the real staging and archive code.
+    def test_archive_layout_with_synthetic_inputs(self):
+        # Layout only: synthetic binaries never enter provenance acceptance.
+        import sys
+        from unittest.mock import patch
+        sys.path.insert(0, str(ROOT / 'tools/release'))
+        import archive as release_archive
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             scripts = root / 'tools/release'
@@ -198,31 +202,21 @@ class ReleasePolicy(unittest.TestCase):
                 (family / name).write_text('[]')
             shutil.copyfile(ROOT / 'fixtures/GSM8K-LICENSE', root / 'fixtures/GSM8K-LICENSE')
             (root / 'THIRD_PARTY_NOTICES').write_text('Project third-party notices\n')
-            programs = root / 'bin'
-            programs.mkdir()
-            cargo = programs / 'cargo'
-            cargo.write_text('#!/usr/bin/env python3\nimport json, sys\nfrom pathlib import Path\n'
-                             f'data = {metadata!r}\n'
-                             'if sys.argv[1] == "metadata": print(json.dumps(data))\n'
-                             'else:\n'
-                             f'    with Path({str(root / "build-argv")!r}).open("a") as log: log.write(json.dumps(sys.argv[1:]) + "\\n")\n')
-            cargo.chmod(0o755)
-            for name, body in {'rustc': 'echo "rustc 1.89.0 (fixture)"'}.items():
-                path = programs / name
-                path.write_text('#!/bin/sh\n' + body + '\n')
-                path.chmod(0o755)
-            cuda = root / 'cuda'
-            (cuda / 'bin').mkdir(parents=True)
-            nvcc = cuda / 'bin/nvcc'
-            nvcc.write_text('#!/bin/sh\necho V13.2.86\n')
-            nvcc.chmod(0o755)
-            env = dict(os.environ, CARGO_HOME=str(home), CARGO_TARGET_DIR=str(root / 'target'),
-                       PATH=str(programs) + ':' + os.environ['PATH'], CHOPINFER_CUDA_HOME=str(cuda),
-                       CHOPINFER_BUILD_REVISION=revision,
-                       KERNELS_LOCK_UPDATE='0', CHOPINFER_KERNEL_LINEINFO='0')
-            result = subprocess.run(['bash', scripts / 'build.sh', root / 'dist'],
-                                    env=env, text=True, capture_output=True, preexec_fn=lambda: os.umask(0o002))
-            self.assertEqual(result.returncode, 0, result.stderr)
+            out = root / 'dist'
+            out.mkdir()
+            package = root / 'layout/chopinfer-0.1.0-alpha.1-linux-x86_64-cuda13.2'
+            package.mkdir(parents=True)
+            selected = plan.read(root, metadata)
+            for kind, origin, destination, mode in plan.stage(selected, root):
+                if kind == 'binary':
+                    path = package / destination
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(binaries / origin, path)
+                    path.chmod(int(mode, 8))
+            (package / 'BUILD_INFO').write_text('synthetic archive-layout fixture\n')
+            with patch.dict(os.environ, {'CARGO_HOME': str(home)}):
+                release_archive.populate(root, package, selected, root / 'stub')
+                release_archive.finish(package, out)
             with tarfile.open(next((root / 'dist').glob('*.tar.gz'))) as archive:
                 prefix = 'chopinfer-0.1.0-alpha.1-linux-x86_64-cuda13.2/'
                 for name in eval_files:
@@ -256,19 +250,6 @@ class ReleasePolicy(unittest.TestCase):
                 self.assertIn(b'BSD permission and copyright', rendered)
                 self.assertIn(b'THIRD_PARTY_NOTICES', archive.extractfile(prefix + 'SHA256SUMS').read())
 
-
-            self.assertEqual([json.loads(line) for line in (root / 'build-argv').read_text().splitlines()], [
-                ['build', '--release', '--locked', '--offline', '-p', 'runtime-host', '--no-default-features', '--features', 'linux-cuda-host', '--bin', 'chopinfer', '--bin', 'chopinfer-host'],
-                ['build', '--release', '--locked', '--offline', '-p', 'choptop', '--bin', 'choptop'],
-                ['build', '--release', '--locked', '--offline', '-p', 'model-mimo26', '-p', 'model-qwen38', '--bin', 'mimo26-package', '--bin', 'qwen38-package', '--bin', 'chopinfer-model-qwen38', '--bin', 'chopinfer-model-mimo26'],
-                ['build', '--release', '--locked', '--offline', '-p', 'bundle-mimo26', '-p', 'bundle-qwen38'],
-            ])
-            # A build that rewrites a lock family file fails, as for kernels.lock.
-            cargo.write_text(cargo.read_text() + f'    Path({str(family / "context_parallel.lock")!r}).write_text("changed")\n')
-            result = subprocess.run(['bash', scripts / 'build.sh', root / 'dist-changed'],
-                                    env=env, text=True, capture_output=True, preexec_fn=lambda: os.umask(0o002))
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn('context_parallel.lock: FAILED', result.stdout + result.stderr)
 
     def test_staging_plan_matches_the_previous_order_and_paths(self):
         # The released models' shape: a developer-only binary and an

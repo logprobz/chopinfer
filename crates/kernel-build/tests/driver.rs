@@ -791,6 +791,18 @@ fn report_distinguishes_legacy_profiling_and_skipped_builds() {
     .unwrap();
     let release = BuildReport::read(&case.out().join(BUILD_REPORT_FILE)).unwrap();
     release.verify_current().unwrap();
+    let mut legacy = release.clone();
+    legacy.compiler_freshness = None;
+    assert!(
+        legacy
+            .verify_current()
+            .unwrap_err()
+            .to_string()
+            .contains("compiler freshness")
+    );
+    let mut stale = release.clone();
+    stale.compiler_freshness.as_mut().unwrap().sha256 = "0".repeat(64);
+    assert!(stale.verify_current().is_err());
     assert!(!release.source_ownership_complete && !release.entry_declarations_complete);
     build(
         &toolchain,

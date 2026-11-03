@@ -44,7 +44,7 @@ fn main() {
     let sampling = build(
         &toolchain,
         &[kernels_sm120::sampling::cubin_spec()],
-        &artifact_dir,
+        &artifact_dir.join("sampling"),
         &manifest.join("kernels.lock"),
         BuildOptions::from_env(),
     )
@@ -59,7 +59,7 @@ fn main() {
     let mapped = build(
         &toolchain,
         &[kernels_sm120::sampling::mapped::cubin_spec()],
-        &artifact_dir,
+        &artifact_dir.join("mapped-sampling"),
         &manifest.join("sampling-mapped.lock"),
         BuildOptions::from_env(),
     )

@@ -45,7 +45,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 HARNESS = ('tune.py', 'runner.py', 'report.py', 'faults.py', 'stub.py', 'prompts.py', 'preflight.py', 'recorded.py',
-           'tune.job.in', 'prefill_report.py')
+           'tune.job.in', 'prefill_report.py', 'depth_evidence.py', 'depth_identity.py')
 sys.path.insert(0, str(HERE))
 import prompts as builder  # noqa: E402
 
@@ -457,6 +457,8 @@ def main():
         seal['prompt_file'] = external['prompt_file']
         if seal['sha256'][external['prompt_file']['path']] != external['prompt_file']['sha256']:
             raise ValueError('prompt_file changed before sealing')
+    import depth_identity
+    seal['capture_identity'] = depth_identity.sealed_capture(seal)
     (stage / 'runtime-seal.json').write_text(json.dumps(seal, indent=2, sort_keys=True) + '\n')
     payload = digest(stage / 'runtime-seal.json')
     text = (copy / 'tune.job.in').read_text()

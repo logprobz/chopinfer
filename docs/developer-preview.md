@@ -103,6 +103,12 @@ default inputs; `--modalities text` omits encoders and `--modalities all`
 enables the package's additional media. See the
 [qualification limits](serving-profiles.md#qualification-scope).
 
+The release builder prints a recorded prebuilt directory for later
+`tools/release/build.sh --stage-from PREBUILT OUTPUT` use. Raw directories
+from older builds need rebuilding. Native and Docker builds use the same
+[producer and staging checks](contributing.md#release); provenance does not
+qualify a model's numerical output.
+
 ## Send a request and stop
 
 Allow 600 seconds for cold checkpoint verification, preparation, loading

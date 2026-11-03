@@ -252,6 +252,7 @@ assert Path(sys.argv[1]).is_file()
             with patch.object(build, 'ROOT', root):
                 with self.assertRaisesRegex(ValueError, 'full source revision required'):
                     build.revision()
+
                 with patch.dict(os.environ, CHOPINFER_BUILD_REVISION=revision):
                     with self.assertRaisesRegex(ValueError, 'full source revision required'):
                         build.revision()
@@ -271,6 +272,24 @@ assert Path(sys.argv[1]).is_file()
                 (git / 'HEAD').write_text('unknown\n')
                 with self.assertRaisesRegex(ValueError, 'full source revision required'):
                     build.revision()
+
+    def test_revision_resolves_worktree_git_metadata(self):
+        spec = importlib.util.spec_from_file_location('deployment_build', ROOT / 'deploy/docker/build.py')
+        build = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(build)
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {}, clear=True):
+            root = Path(directory) / 'source'
+            root.mkdir()
+            common = Path(directory) / 'metadata'
+            private = common / 'worktrees/fixture'
+            private.mkdir(parents=True)
+            (common / 'refs/heads').mkdir(parents=True)
+            (root / '.git').write_text(f'gitdir: {private}\n')
+            (private / 'commondir').write_text('../..\n')
+            (private / 'HEAD').write_text('ref: refs/heads/main\n')
+            (common / 'refs/heads/main').write_text('a' * 40 + '\n')
+            with patch.object(build, 'ROOT', root):
+                self.assertEqual(build.revision(), 'a' * 40)
 
     def test_release_build_records_validated_inputs(self):
         spec = importlib.util.spec_from_file_location('deployment_build', ROOT / 'deploy/docker/build.py')

@@ -126,6 +126,9 @@ pub struct BuildReport {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lock_families: Vec<FamilyLock>,
     pub compiler_path: PathBuf,
+    /// Compiler configuration evidence, absent from legacy or untrackable builds.
+    #[serde(default)]
+    pub compiler_freshness: Option<crate::CompilerFreshness>,
     pub files: BTreeMap<String, SourceFile>,
     pub cubins: Vec<ReportedCubin>,
 }
@@ -154,6 +157,11 @@ impl BuildReport {
                 "kernel build report is incomplete or not lock-verified",
             ));
         }
+        let freshness = self
+            .compiler_freshness
+            .as_ref()
+            .ok_or_else(|| err("missing compiler freshness"))?;
+        freshness.verify_current()?;
         if self.lock_families.is_empty() {
             let identities = self.cubins.iter().map(|c| c.identity.clone()).collect();
             verify_lock(&self.lock_path, self.lock_sha256.as_deref(), identities)?;
@@ -204,6 +212,11 @@ impl BuildReport {
             contents.insert(id, bytes);
         }
         for cubin in &self.cubins {
+            if freshness.flags != cubin.recipe.flags
+                || freshness.toolchain_version != cubin.recipe.toolchain_version
+            {
+                return Err(err("compiler freshness differs from the build recipe"));
+            }
             let identity: serde_json::Value = serde_json::from_slice(
                 &fs::read(&cubin.identity_path)
                     .map_err(|e| io("read reported cubin identity", e))?,
@@ -298,6 +311,7 @@ pub(crate) fn skipped(
             lock_sha256: None,
             lock_families: vec![],
             compiler_path: PathBuf::new(),
+            compiler_freshness: None,
             files: BTreeMap::new(),
             cubins: vec![],
         },
@@ -319,6 +333,7 @@ pub(crate) fn write(
     options: BuildOptions,
     context: Option<&BuildContext>,
     declarations: Option<&BTreeMap<String, Vec<EntryDeclaration>>>,
+    compiler_freshness: Option<&crate::CompilerFreshness>,
 ) -> Result<(), BuildError> {
     let mut roots = Vec::new();
     if let Some(context) = context {
@@ -355,6 +370,7 @@ pub(crate) fn write(
         lock_sha256,
         lock_families,
         compiler_path: toolchain.tool("nvcc"),
+        compiler_freshness: compiler_freshness.cloned(),
         files: BTreeMap::new(),
         cubins: vec![],
     };

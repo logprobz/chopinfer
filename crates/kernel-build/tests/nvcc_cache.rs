@@ -64,7 +64,7 @@ fn cache_job() {
     };
     let options = BuildOptions {
         lock_update: mode == "update",
-        emit_cargo_directives: false,
+        emit_cargo_directives: mode == "cargo",
         profile_line_info: false,
     };
     match build(
@@ -162,10 +162,27 @@ impl Scenario {
     /// build, and a lock rewrite must record a different cubin.
     fn assert_change_is_seen(&mut self, change: impl FnOnce(&mut Self)) {
         let cold = self.build("cold", true, true).unwrap();
+        // Give both reuse paths the identical initial bytes, even for __TIME__.
+        fs::create_dir_all(self.dir.join("cold-direct")).unwrap();
+        for suffix in ["cubin", "identity.json", "freshness.json"] {
+            let name = format!("cache_probe.{suffix}");
+            fs::copy(
+                self.dir.join("cold").join(&name),
+                self.dir.join("cold-direct").join(&name),
+            )
+            .unwrap();
+        }
         change(self);
+        let local = self.build("cold", false, true);
+        let local_direct = self.build("cold-direct", false, false);
         let cached = self.build("cached", false, true);
         let uncached = self.build("uncached", false, false);
-        for (label, result) in [("cached", &cached), ("uncached", &uncached)] {
+        for (label, result) in [
+            ("local", &local),
+            ("local-direct", &local_direct),
+            ("cached", &cached),
+            ("uncached", &uncached),
+        ] {
             let error = result.as_ref().expect_err(label);
             assert!(error.contains("kernels.lock mismatch"), "{label}: {error}");
         }
@@ -185,12 +202,145 @@ fn an_unchanged_build_hits() {
     };
     let scenario = Scenario::new("hit", wrapper, FMA_BODY);
     let cold = scenario.build("cold", true, true).unwrap();
+    let before = scenario.events();
+    assert_eq!(scenario.build("cold", false, true).unwrap(), cold);
+    assert_eq!(
+        scenario.events(),
+        before,
+        "unchanged local reuse must not compile"
+    );
+    fs::remove_file(scenario.dir.join("cold/cache_probe.freshness.json")).unwrap();
+    assert_eq!(scenario.build("cold", false, true).unwrap(), cold);
+    assert_ne!(
+        scenario.events(),
+        before,
+        "legacy output must consult the wrapper"
+    );
     assert_eq!(scenario.build("warm", false, true).unwrap(), cold);
     let events = scenario.events();
     assert!(
         events.contains(" refresh ") && events.contains(" hit "),
         "{events}"
     );
+}
+
+fn local_compiler_option_change(cached: bool) {
+    let Some(wrapper) = wrapper() else {
+        return;
+    };
+    let mut scenario = Scenario::new(
+        if cached {
+            "local-wrapper"
+        } else {
+            "local-direct"
+        },
+        wrapper,
+        FMA_BODY,
+    );
+    let cold = scenario.build("same-output", true, cached).unwrap();
+    assert_eq!(scenario.build("same-output", false, cached).unwrap(), cold);
+    scenario.set("NVCC_APPEND_FLAGS", "--fmad=false");
+    for output in ["same-output", "fresh-output"] {
+        let error = scenario.build(output, false, cached).unwrap_err();
+        assert!(error.contains("kernels.lock mismatch"), "{output}: {error}");
+    }
+}
+
+#[test]
+fn local_reuse_detects_compiler_options_without_a_wrapper() {
+    local_compiler_option_change(false);
+}
+
+#[test]
+fn local_reuse_detects_compiler_options_with_a_wrapper() {
+    local_compiler_option_change(true);
+}
+
+#[test]
+fn cargo_rebuilds_after_a_compiler_profile_change() {
+    let Some(wrapper) = wrapper() else {
+        return;
+    };
+    let mut scenario = Scenario::new("cargo-profile", wrapper, FMA_BODY);
+    let real = fs::canonicalize("/usr/local/cuda").unwrap();
+    let bin = scenario.dir.join("cuda/bin");
+    fs::create_dir_all(&bin).unwrap();
+    fs::copy(real.join("bin/nvcc"), bin.join("nvcc")).unwrap();
+    for name in ["cuobjdump", "nvdisasm"] {
+        std::os::unix::fs::symlink(real.join("bin").join(name), bin.join(name)).unwrap();
+    }
+    let profile = fs::read_to_string(real.join("bin/nvcc.profile"))
+        .unwrap()
+        .replace("$(_HERE_)/..", &real.display().to_string());
+    fs::write(bin.join("nvcc.profile"), &profile).unwrap();
+    scenario.set(
+        "CHOPINFER_CUDA_HOME",
+        scenario.dir.join("cuda").display().to_string(),
+    );
+    let cold = scenario.build("output", true, false).unwrap();
+    let project = scenario.dir.join("cargo-project");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("Cargo.toml"), "[package]\nname = \"freshness-cargo-probe\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n").unwrap();
+    fs::write(project.join("src/lib.rs"), "pub fn fixture() {}\n").unwrap();
+    fs::write(project.join("build.rs"), r#"
+use std::{env, fs::OpenOptions, io::Write, process::Command};
+fn main() {
+    let output = Command::new(env::var("COMPILER_FIXTURE_BINARY").unwrap())
+        .args(["cache_job", "--exact", "--nocapture", "--test-threads=1"])
+        .output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if let Some(index) = line.find("cargo:rerun-") { println!("{}", &line[index..]); }
+    }
+    writeln!(OpenOptions::new().create(true).append(true).open("build-count").unwrap(), "build").unwrap();
+    std::fs::write(std::path::Path::new(&env::var_os("OUT_DIR").unwrap()).join("generated"), "generated").unwrap();
+}
+"#).unwrap();
+    let job = format!(
+        "{}\n{}\n{}\ncargo\n\n{}",
+        scenario.dir.join("src").display(),
+        scenario.dir.join("output").display(),
+        scenario.dir.join("kernels.lock").display(),
+        FMA_BODY
+    );
+    let run = || {
+        let output = Command::new("cargo")
+            .current_dir(&project)
+            .args(["build", "--offline", "--quiet"])
+            .env("CARGO_TARGET_DIR", scenario.dir.join("cargo-target"))
+            .env("COMPILER_FIXTURE_BINARY", env::current_exe().unwrap())
+            .env(JOB, &job)
+            .envs(scenario.env.iter().map(|(name, value)| (name, value)))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        fs::read_to_string(project.join("build-count"))
+            .unwrap()
+            .lines()
+            .count()
+    };
+    assert_eq!(run(), 1);
+    assert_eq!(run(), 1, "unchanged Cargo build must remain fresh");
+    fs::write(
+        bin.join("nvcc.profile"),
+        format!("{profile}\n# changed compiler input\n"),
+    )
+    .unwrap();
+    assert_eq!(
+        run(),
+        2,
+        "Cargo must track nvcc.profile without a source edit"
+    );
+    assert_eq!(
+        run(),
+        2,
+        "Cargo must become fresh again after the compiler change"
+    );
+    assert_eq!(scenario.build("output", false, false).unwrap(), cold);
 }
 
 #[test]
@@ -242,10 +392,12 @@ fn an_nvcc_profile_change_is_not_served_from_the_cache() {
         )
         .unwrap()
     });
-    // The fixture toolkit was keyed: its first build stored, nothing hit.
+    // The first changed build misses. A later lookup may reuse its changed
+    // bytes, but every changed build must still fail the original lock.
     let events = scenario.events();
     assert!(
-        events.contains(" refresh ") && !events.contains(" hit "),
+        events.lines().next().unwrap().contains(" refresh ")
+            && events.lines().nth(1).unwrap().contains(" miss "),
         "{events}"
     );
 }
@@ -262,7 +414,7 @@ fn a_date_dependent_cubin_is_not_cached() {
     );
     scenario.set("SOURCE_DATE_EPOCH", "0");
     scenario.assert_change_is_seen(|scenario| scenario.set("SOURCE_DATE_EPOCH", "864000"));
-    assert_eq!(scenario.events(), "");
+    assert!(scenario.events().contains(" bypass ") && !scenario.events().contains(" hit "));
 }
 
 #[test]
@@ -289,9 +441,9 @@ fn a_time_macro_in_a_define_is_not_cached() {
     let mut spec = Scenario::new("time-define", wrapper.clone(), BODY);
     spec.define = "BUILD_CLOCK=__TIME__";
     spec.assert_change_is_seen(later);
-    assert_eq!(spec.events(), "");
+    assert!(spec.events().contains(" bypass ") && !spec.events().contains(" hit "));
     let mut environment = Scenario::new("time-environment", wrapper, BODY);
     environment.set("NVCC_APPEND_FLAGS", "-DBUILD_CLOCK=__TIME__");
     environment.assert_change_is_seen(later);
-    assert_eq!(environment.events(), "");
+    assert!(environment.events().contains(" bypass ") && !environment.events().contains(" hit "));
 }

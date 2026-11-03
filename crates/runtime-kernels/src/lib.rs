@@ -55,3 +55,36 @@ pub static SAMPLING_CUBIN: &[u8] = &[];
 pub static MAPPED_SAMPLING_CUBIN: &[u8] = include_bytes!(env!("RUNTIME_MAPPED_SAMPLING_CUBIN"));
 #[cfg(not(target_os = "linux"))]
 pub static MAPPED_SAMPLING_CUBIN: &[u8] = &[];
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::{MAPPED_SAMPLING_CUBIN, SAMPLING_CUBIN};
+    use kernel_build::{BUILD_REPORT_FILE, BuildReport, digest};
+    use std::path::Path;
+
+    #[test]
+    fn both_host_sampling_reports_survive() {
+        let mut directories = Vec::new();
+        for (path, name, bytes) in [
+            (
+                env!("RUNTIME_SAMPLING_CUBIN"),
+                "sampling_sm120",
+                SAMPLING_CUBIN,
+            ),
+            (
+                env!("RUNTIME_MAPPED_SAMPLING_CUBIN"),
+                "sampling_mapped_sm120",
+                MAPPED_SAMPLING_CUBIN,
+            ),
+        ] {
+            let directory = Path::new(path).parent().unwrap();
+            let report = BuildReport::read(&directory.join(BUILD_REPORT_FILE)).unwrap();
+            assert_eq!(report.cubins.len(), 1);
+            assert_eq!(report.cubins[0].name, name);
+            report.verify_current().unwrap();
+            assert_eq!(report.cubins[0].identity["cubin_sha256"], digest(bytes));
+            directories.push(directory);
+        }
+        assert_ne!(directories[0], directories[1]);
+    }
+}

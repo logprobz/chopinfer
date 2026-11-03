@@ -3,8 +3,10 @@
 from qual_test_config import setUpModule
 
 import base64
+import contextlib
 import copy
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -13,10 +15,12 @@ import subprocess
 import sys
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 import zlib
 
+import common
 import declaration
 import prefix_exact
 from prefix_exact import (MEDIA_PAIRS, PROMPT_END_ARMS, block_colors, cache_errors, evaluate,
@@ -501,6 +505,91 @@ class ReportRefusalTests(unittest.TestCase):
                                     capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 1, result.stderr)
             self.assertIn("--slice reports one shard record", result.stderr)
+
+
+class LiveServer:
+    """A live server whose /health reports `serving` and which names its
+    process on every response."""
+
+    def __init__(self, model, serving):
+        self.model, self.serving = model, serving
+        self.responders = {(serving["checkpoint_identity"], serving["startup_nonce"])}
+
+    def identity(self, model=None):
+        return {"url": "http://127.0.0.1:1", "model": self.model, "models": [self.model],
+                "health": {"status": "ready", "serving": self.serving}}
+
+
+class CheckpointBindingTests(unittest.TestCase):
+    """A record binds to the gate's checkpoint pin whether or not the gate
+    pins the exact reference it scores, as a configuration without
+    references (DeepSeek's kv-bf16) does not. A report still refuses a
+    record that names no binding."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.exact = self.root / "exact.json"
+        ids = list(range(70))
+        self.exact.write_text(json.dumps({"schema": prefix_exact.prefix_policy()["reference_schema"],
+                                          "texts": [text("a", ids, [-1.0] * 69, ids[1:])]}))
+        unpinned = mock.patch("verify_exact.exact_pinned", return_value=False)
+        unpinned.start()
+        self.addCleanup(unpinned.stop)
+
+    def record(self, identity=None):
+        """The exit code (or refusal) and receipt of a record whose scoring is
+        replaced: the binding happens before it and the confirmation after."""
+        pin = common.checkpoint_pin()
+        serving = {**serving_server()["health"]["serving"], "served_model_names": [pin["served_model_name"]],
+                   "checkpoint_identity": identity or pin["checkpoint_identity"]}
+        server = LiveServer(pin["served_model_name"], serving)
+        argv = ["prefix_exact.py", "record", "--url", "http://127.0.0.1:1", "--exact", str(self.exact),
+                "--skip-media", "--acceptance-prompts", "0"]
+        output = io.StringIO()
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(prefix_exact, "Client", lambda url, timeout=None: server))
+            stack.enter_context(mock.patch.object(sys, "argv", argv))
+            stack.enter_context(contextlib.redirect_stdout(output))
+            for name, value in (("score_position", mock.Mock(return_value={})),
+                                ("score_prompt_end", mock.Mock(return_value={})),
+                                ("detokenized", mock.Mock(return_value={})),
+                                ("evaluate", mock.Mock(return_value={"passed": True})),
+                                ("skipped_checks", mock.Mock(return_value=[]))):
+                stack.enter_context(mock.patch.object(prefix_exact, name, value))
+            with self.assertRaises(SystemExit) as exited:
+                prefix_exact.main()
+        if exited.exception.code != 0:
+            return pin, exited.exception.code, None
+        return pin, 0, json.loads(Path(json.loads(output.getvalue().splitlines()[-1])["receipt"]).read_text())
+
+    def test_a_record_without_an_exact_pin_binds(self):
+        pin, code, recorded = self.record()
+        self.assertEqual(code, 0)
+        bound = recorded["server"]["checkpoint"]
+        self.assertEqual((bound["checkpoint_identity"], bound["startup_nonce"]),
+                         (pin["checkpoint_identity"], "d" * 32))
+        self.assertEqual(prefix_exact.serving_identity(recorded)["checkpoint_identity"], pin["checkpoint_identity"])
+        _, code, _ = self.record("0" * 64)
+        self.assertRegex(str(code), "refused: the server loaded checkpoint 0{64}, not the pinned")
+
+    def test_a_report_refuses_an_unbound_record(self):
+        scored = {"text": "a", "category": "prose", "position": 65, "anchor": 64,
+                  **{arm: row(-1.0, {"65": -1.0}) for arm in prefix_exact.ARMS},
+                  "cached": {"primer": 0, "cold": 0, "chunked": 0, "hit": 64}}
+        unbound = serving_server()
+        del unbound["checkpoint"]
+        recorded = {"family": prefix_exact.prefix_policy()["family"], "server": unbound, "run_id": "test",
+                    "reference_sha256": hashlib.sha256(self.exact.read_bytes()).hexdigest(),
+                    "block_tokens": 64, "top_logprobs": 5, "positions": [scored], "prompt_end": [],
+                    "detokenized": {"65": "65"}}
+        path = self.root / "record.json"
+        path.write_text(json.dumps(recorded))
+        args = SimpleNamespace(exact=str(self.exact), record=[str(path)], split_record=[], slice=False)
+        with self.assertRaisesRegex(SystemExit, "invalid serving identity: checkpoint.checkpoint_identity "
+                                                "differs from health"):
+            prefix_exact.report(args)
 
 
 class CoverageTests(unittest.TestCase):

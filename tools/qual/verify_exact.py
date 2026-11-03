@@ -87,6 +87,13 @@ def exact_pinned():
     return pinned_kind(input_path("exact")) is not None
 
 
+def checkpoint_pinned():
+    """Whether the gate pins a checkpoint (`qualification.checkpoint`). A
+    record then binds to it whether or not the gate pins the exact reference
+    the record scores."""
+    return "checkpoint" in qualification_config()["qualification"]
+
+
 def pins_exact(path):
     """Whether `path` is the gate's pinned exact input, which must then hold
     the pinned bytes."""
@@ -331,7 +338,7 @@ def row_capacity_coverage(observed, required, speculative):
 def record(args):
     client = Client(args.url, args.timeout)
     server = client.identity(args.model)
-    if exact_pinned():
+    if checkpoint_pinned():
         try:
             bind_checkpoint(server, args.server_log, args.url)
         except ValueError as error:

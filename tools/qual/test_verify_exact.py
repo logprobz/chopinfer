@@ -749,18 +749,72 @@ class TracingServer:
             "token_logprobs": [-1.0] * len(emitted), "top_logprobs": [{"x": -1.0}] * len(emitted)}}]}, 0.01
 
 
+def run_main(argv):
+    """`verify_exact.main()`'s exit code (or refusal message) and output."""
+    import verify_exact
+    output = io.StringIO()
+    with mock.patch.object(sys, "argv", ["verify_exact.py", *argv]), contextlib.redirect_stdout(output):
+        try:
+            verify_exact.main()
+        except SystemExit as exited:
+            return exited.code, output.getvalue()
+    return None, output.getvalue()
+
+
+class PinnedServer(TracingServer):
+    """A TracingServer whose /health reports `identity` under the gate's
+    served name, and which names its process on every response."""
+
+    def __init__(self, ids, log, pin, identity, nonce="a" * 32):
+        super().__init__(ids, log, 1)
+        self.model, self.serving = pin["served_model_name"], {"checkpoint_identity": identity,
+                                                              "startup_nonce": nonce}
+        self.responders = {(identity, nonce)}
+
+    def identity(self, model):
+        return {"url": "http://127.0.0.1:1", "model": self.model, "models": [self.model],
+                "health": {"status": "ready", "serving": self.serving}}
+
+
+class CheckpointBindingTests(unittest.TestCase):
+    """A record binds to the gate's checkpoint pin whether or not the gate
+    pins the exact reference it scores, as a configuration without
+    references (DeepSeek's kv-bf16) does not."""
+
+    def record(self, identity=None):
+        from common import checkpoint_pin
+        pin = checkpoint_pin()
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch("verify_exact.exact_pinned", return_value=False):
+            exact = Path(directory, "exact.json")
+            exact.write_text(json.dumps(ONE_TEXT))
+            server = PinnedServer(ONE_TEXT["texts"][0]["prompt_token_ids"], Path(directory, "trace.log"), pin,
+                                  identity or pin["checkpoint_identity"])
+            with mock.patch("verify_exact.Client", lambda url, timeout: server), \
+                    mock.patch("verify_exact.metrics_text", return_value=""), \
+                    mock.patch("verify_exact.snapshot", return_value={}), \
+                    mock.patch("verify_exact.difference", return_value={}):
+                code, output = run_main(["record", "--exact", str(exact), "--arm", "forced", "--k", "0"])
+        return pin, code, output
+
+    def test_a_record_without_an_exact_pin_binds(self):
+        pin, code, output = self.record()
+        self.assertEqual(code, 0, output)
+        recorded = json.loads(Path(json.loads(output.splitlines()[-1])["receipt"]).read_text())
+        bound = recorded["server"]["checkpoint"]
+        self.assertEqual((bound["checkpoint_identity"], bound["startup_nonce"]),
+                         (pin["checkpoint_identity"], "a" * 32))
+
+    def test_a_record_without_an_exact_pin_refuses_another_checkpoint(self):
+        _, code, _ = self.record("0" * 64)
+        self.assertRegex(str(code), "refused: the server loaded checkpoint 0{64}, not the pinned")
+
+
 class SmallBucketTests(unittest.TestCase):
     """B8 and B16 AR draws carry bucket evidence through the command line."""
 
     def main(self, argv):
-        import verify_exact
-        output = io.StringIO()
-        with mock.patch.object(sys, "argv", ["verify_exact.py", *argv]), contextlib.redirect_stdout(output):
-            try:
-                verify_exact.main()
-            except SystemExit as exited:
-                return exited.code, output.getvalue()
-        return None, output.getvalue()
+        return run_main(argv)
 
     def record(self, directory, exact, arm, bucket, capacity):
         log = Path(directory, f"{arm}.log")
@@ -776,8 +830,11 @@ class SmallBucketTests(unittest.TestCase):
         return code, receipt
 
     def test_record_and_report_with_eight_and_sixteen_row_controls(self):
+        # A gate that pins neither a checkpoint nor the exact reference: the
+        # records stay unbound.
         with tempfile.TemporaryDirectory() as directory, \
-                mock.patch("verify_exact.exact_pinned", return_value=False):
+                mock.patch("verify_exact.exact_pinned", return_value=False), \
+                mock.patch("verify_exact.checkpoint_pinned", return_value=False):
             exact = Path(directory, "exact.json")
             exact.write_text(json.dumps(ONE_TEXT))
             recorded = {arm: self.record(directory, exact, arm, bucket, capacity)

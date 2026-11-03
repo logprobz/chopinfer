@@ -153,7 +153,7 @@ serve --bundle DIR [--checkpoint DIR [--load-threads N]
   [--weight-keeper-identity FILE]
   [--listen ADDR] [--topology ID] [--devices 0,1,...]
   [--max-context-tokens N] [--max-sequences N] [--max-batch-tokens N]
-  [--prefill-chunk-tokens N] [--queue-depth N] [--queue-wait-ms N] [--drain-timeout-ms N]
+  [--prefill-chunk-tokens N] [--max-connections N] [--queue-depth N] [--queue-wait-ms N] [--drain-timeout-ms N]
   [--gpu-memory-utilization F] [--graph-memory-reserve-mib N] [--kv-pages N]
   [--kv-cache-dtype auto|bf16|fp8|mixed] [--context-parallel-size N]
   [--model-option NAME=VALUE]... [--list-model-options]
@@ -422,6 +422,7 @@ impl PrefillPolicyV1 {
 pub struct ServingOptionsV1 {
     pub maximum_context_tokens: Option<usize>,
     pub maximum_sequences: usize,
+    pub maximum_connections: usize,
     pub maximum_batch_tokens: Option<usize>,
     pub prefill_chunk_tokens: Option<usize>,
     pub queue_depth: Option<usize>,
@@ -471,6 +472,7 @@ impl Default for ServingOptionsV1 {
         Self {
             maximum_context_tokens: None,
             maximum_sequences: DEFAULT_SERVED_SEQUENCES_V1,
+            maximum_connections: runtime_server::DEFAULT_MAX_CONNECTIONS,
             maximum_batch_tokens: None,
             prefill_chunk_tokens: None,
             queue_depth: None,
@@ -1943,10 +1945,16 @@ pub(crate) const SERVE_OPTIONS_V1: &[ServeOptionV1] = {
             "prompt tokens per prefill chunk, within the batch budget",
         ),
         ServeOptionV1::new(
+            "--max-connections",
+            Count,
+            Server,
+            "positive accepted socket limit, including buffer waiters (default 1024)",
+        ),
+        ServeOptionV1::new(
             "--queue-depth",
             Count,
             Scheduling,
-            "requests that may wait beyond the served sequences; unbounded by default",
+            "requests that may wait beyond the served sequences; no queue-depth bound by default",
         ),
         ServeOptionV1::new(
             "--queue-wait-ms",
@@ -2601,6 +2609,9 @@ fn parse_serve_command_v1(arguments: &[String]) -> Result<HostCommandV1, HostCom
         serving: Box::new(ServingOptionsV1 {
             maximum_context_tokens: parsed.maximum_context_tokens,
             maximum_sequences,
+            maximum_connections: parsed
+                .maximum_connections
+                .unwrap_or(runtime_server::DEFAULT_MAX_CONNECTIONS),
             maximum_batch_tokens: parsed.maximum_batch_tokens,
             prefill_chunk_tokens: parsed.prefill_chunk_tokens,
             queue_depth: parsed.queue_depth,
@@ -5873,7 +5884,9 @@ fn server_config_v1(
         return Err(usage_error("--max-sequences must admit at least one"));
     }
     let defaults = ServerConfig::default();
-    // Keep backend staging bounded; the default transport waits for a slot.
+    let connections = connection_count_v1(serving.maximum_connections)?;
+    // Bound prepared-request staging separately from accepted sockets. When
+    // staging is full, a request on an admitted connection waits for a slot.
     let in_flight = serving
         .maximum_sequences
         .checked_add(serving.queue_depth.unwrap_or(PREPARED_QUEUE_DEPTH_V1))
@@ -5899,6 +5912,7 @@ fn server_config_v1(
         config
     };
     let config = config
+        .with_max_connections(connections)
         .with_queue_wait(std::time::Duration::from_millis(serving.queue_wait_ms))
         .with_responses_store(128, serving.responses_store_bytes);
     if let Some(envelope) = envelope {
@@ -6903,6 +6917,7 @@ struct ArgumentsV1 {
     debug_preempt_every: Option<usize>,
     debug_swap_every: Option<usize>,
     maximum_sequences: Option<usize>,
+    maximum_connections: Option<usize>,
     maximum_batch_tokens: Option<usize>,
     prefill_chunk_tokens: Option<usize>,
     queue_depth: Option<usize>,
@@ -7354,6 +7369,10 @@ impl ArgumentsV1 {
                     count_v1(flag, value)?,
                     flag,
                 )?,
+                "--max-connections" => {
+                    let count = connection_count_v1(count_v1(flag, value)?)?;
+                    set_once_v1(&mut parsed.maximum_connections, count, flag)?;
+                }
                 "--queue-depth" => {
                     set_once_v1(&mut parsed.queue_depth, count_v1(flag, value)?, flag)?;
                 }
@@ -7587,6 +7606,7 @@ impl ArgumentsV1 {
                 "--prefill-chunk-tokens",
                 self.prefill_chunk_tokens.is_some(),
             ),
+            ("--max-connections", self.maximum_connections.is_some()),
             ("--queue-depth", self.queue_depth.is_some()),
             ("--queue-wait-ms", self.queue_wait_ms.is_some()),
             ("--drain-timeout-ms", self.drain_timeout_ms.is_some()),
@@ -7862,6 +7882,16 @@ fn prefill_budget_v1(
     }
 }
 
+fn connection_count_v1(count: usize) -> Result<usize, HostCommandErrorV1> {
+    if count == 0 || count > tokio::sync::Semaphore::MAX_PERMITS {
+        return Err(usage_error(format!(
+            "--max-connections must be from 1 to {}",
+            tokio::sync::Semaphore::MAX_PERMITS
+        )));
+    }
+    Ok(count)
+}
+
 fn count_v1(flag: &str, value: &str) -> Result<usize, HostCommandErrorV1> {
     value
         .parse::<usize>()
@@ -8034,6 +8064,61 @@ mod tests {
 
     fn arguments(words: &[&str]) -> Vec<String> {
         words.iter().map(|word| (*word).to_owned()).collect()
+    }
+
+    #[test]
+    fn connection_limit_defaults_overrides_and_invalid_values_reach_transport() {
+        let defaults =
+            server_config_v1(ServingOptionsV1::default(), RequestSurfaceV1::Full, None).unwrap();
+        assert_eq!(defaults.max_connections(), Some(1024));
+        let HostCommandV1::Serve { serving, .. } = parse_host_command_v1(&arguments(&[
+            "serve",
+            "--bundle",
+            "fixture",
+            "--max-connections",
+            "7",
+        ]))
+        .unwrap() else {
+            panic!("serve command");
+        };
+        assert_eq!(serving.maximum_connections, 7);
+        assert_eq!(
+            server_config_v1(*serving, RequestSurfaceV1::Full, None)
+                .unwrap()
+                .max_connections(),
+            Some(7)
+        );
+        for value in [
+            "0".to_owned(),
+            "-1".to_owned(),
+            "no".to_owned(),
+            usize::MAX.to_string(),
+        ] {
+            assert!(
+                parse_host_command_v1(&arguments(&[
+                    "serve",
+                    "--bundle",
+                    "fixture",
+                    "--max-connections",
+                    &value
+                ]))
+                .is_err(),
+                "{value}"
+            );
+        }
+        for count in [0, usize::MAX] {
+            assert!(
+                server_config_v1(
+                    ServingOptionsV1 {
+                        maximum_connections: count,
+                        ..Default::default()
+                    },
+                    RequestSurfaceV1::Full,
+                    None
+                )
+                .is_err()
+            );
+        }
     }
 
     #[test]
@@ -8840,6 +8925,7 @@ mod tests {
             ServingOptionsV1 {
                 maximum_context_tokens: Some(1024),
                 maximum_sequences: 2,
+                maximum_connections: runtime_server::DEFAULT_MAX_CONNECTIONS,
                 maximum_batch_tokens: Some(64),
                 prefill_chunk_tokens: Some(16),
                 queue_depth: Some(4),

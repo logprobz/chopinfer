@@ -564,11 +564,20 @@
       "repeatable": false
     },
     {
+      "flag": "--max-connections",
+      "value": "N",
+      "choices": null,
+      "group": "server",
+      "help": "positive accepted socket limit, including buffer waiters (default 1024)",
+      "model_launch": true,
+      "repeatable": false
+    },
+    {
       "flag": "--queue-depth",
       "value": "N",
       "choices": null,
       "group": "scheduling",
-      "help": "requests that may wait beyond the served sequences; unbounded by default",
+      "help": "requests that may wait beyond the served sequences; no queue-depth bound by default",
       "model_launch": true,
       "repeatable": false
     },

@@ -764,7 +764,7 @@ says which level wrote it: `startup logging: level=info`.
 | Level | Adds |
 |---|---|
 | `error` | Server faults and requests that fail after admission: 5xx lines, `generation request failed`, worker and rank failures and fatal exits. Every bundle message the host does not recognize is written at every level, because the bundle log has no severity and such a message can be a failure's only detail. |
-| `warn` | Client refusals (4xx), drain refusals, requests cut off at the drain deadline, connections closed at `--max-connections`, and degraded paths such as fallbacks and warmup warnings. |
+| `warn` | Client refusals (4xx), drain refusals, requests cut off at the drain deadline, connections closed at `--max-connections` (default 1,024 accepted sockets, including buffer waiters; overflow closes without an HTTP response), transient accept resource exhaustion, and degraded paths such as fallbacks and warmup warnings. |
 | `info` | Startup and shutdown summaries, client cancellations, the graph-cache capacity, capture failure, eviction and release events, and the summary line. |
 | `debug` | Routine traces: bundle step and commit shapes, drafter catch-up and confidence records, route records, per-capture graph-cache events, mapped-row samples and warmup progress. With these, the output is what serve wrote before it had levels, plus the request and summary lines. |
 

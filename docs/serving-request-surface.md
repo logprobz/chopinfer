@@ -306,10 +306,17 @@ unsupported.
 A server runs at most `--max-sequences` live sequences (8 without a profile;
 the serving profiles and the image use 32). Further requests wait:
 
-- The waiting queue is unbounded by default, so load makes requests wait
-  instead of returning 429. `--queue-depth N` bounds it to N requests beyond
-  the live sequences (0 admits only the live ones); a full bounded queue
-  returns 429.
+- Requests on admitted connections have no queue-depth bound by default.
+  `--queue-depth N` bounds waiting requests to N beyond the live sequences
+  (0 admits only the live ones); a full bounded queue returns 429.
+- `--max-connections N` bounds accepted sockets and their tasks to N
+  (default 1,024), including keep-alive sockets and buffer waiters. Overflow
+  sockets close immediately, without a delivered HTTP 503. At most one
+  transient accepted socket exists beyond the cap; the kernel listen backlog
+  is outside it. This bound does not guarantee process file-descriptor headroom.
+  Interrupted or aborted accepts retry; temporary descriptor or socket-resource
+  exhaustion logs a warning and retries after 100 ms, while shutdown stays
+  responsive.
 - Waiting has no time limit by default. `--queue-wait-ms N` returns 429 for a
   request not admitted to the backend within N ms of arrival.
 - A client disconnect cancels a queued request. A streaming client that stops
@@ -320,7 +327,12 @@ the serving profiles and the image use 32). Further requests wait:
   backend admission).
 
 Payload memory stays bounded while requests wait: connections share a 512 MiB
-transport budget (1 MiB each), bodies wait for an intake reservation, and
+transport budget (1 MiB each, 512 active buffer slots). The default socket
+cap leaves room for 512 additional unread waiters when those slots are full.
+The first-header deadline starts at accept and includes that wait. Receiving
+one complete head disarms it, so it cannot cut off a slow body or generation;
+subsequent keep-alive heads retain their own timeout. Bodies wait for an intake
+reservation, and
 media preparation waits for host memory from an 8 GiB media budget. A request
 whose media are all inline (data URL) images is planned from the images'
 headers first and waits for what they need, at most 4 GiB; a request with any

@@ -2326,7 +2326,17 @@ where
                 WorkerPhase::Decode
             },
         );
-        let step = engine.step();
+        let step = engine.step_with_admission(|id| {
+            if progress.is_stalled() {
+                return;
+            }
+            if let Some(generation) = active.get_mut(&id)
+                && let Some(response) = generation.admission.take()
+            {
+                generation.group_admitted.set(true);
+                let _ = response.send(Ok(()));
+            }
+        });
         if progress.is_stalled() {
             // The watchdog has already failed this worker; a step that
             // returned late does not make it trusted again.
@@ -2339,15 +2349,6 @@ where
         update_transfer_readiness(&engine, state);
         if let Err(error) = &step {
             runtime_log::error!("generation engine step failed: {error:?}");
-        }
-        for (id, generation) in &mut active {
-            if generation.admission.is_some()
-                && !matches!(engine.request_state(*id), Ok(RequestState::Queued))
-                && let Some(response) = generation.admission.take()
-            {
-                generation.group_admitted.set(true);
-                let _ = response.send(Ok(()));
-            }
         }
         let events = engine.drain_events();
         for event in events {

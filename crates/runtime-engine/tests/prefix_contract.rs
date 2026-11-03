@@ -40,6 +40,7 @@ struct FoldingExecutor {
     /// Requests admitted and not yet retired, as a bundle with per-request
     /// state tracks them.
     admitted: BTreeSet<RequestId>,
+    admission_notifications: Option<Arc<std::sync::Mutex<BTreeSet<RequestId>>>>,
     input_tokens: usize,
     /// Updates state in place, so a step is never rolled back for one
     /// request's sampling failure.
@@ -109,6 +110,12 @@ impl ModelExecutor for FoldingExecutor {
     }
 
     fn admit_request_v1(&mut self, id: RequestId) -> Result<(), ExecutorError> {
+        if let Some(notified) = &self.admission_notifications {
+            assert!(
+                notified.lock().unwrap().contains(&id),
+                "executor admission preceded notification: {id:?}"
+            );
+        }
         self.admitted.insert(id);
         Ok(())
     }
@@ -558,7 +565,23 @@ fn requests_admitted_after_restores_free_pages_are_admitted_by_the_executor() {
         engine.submit(request(id, &prompt, 4)).unwrap();
         prompts.push((id, prompt));
     }
-    engine.run_until_idle(64).unwrap();
+    let notified = Arc::new(std::sync::Mutex::new(BTreeSet::new()));
+    engine.executor_mut().admission_notifications = Some(Arc::clone(&notified));
+    for _ in 0..64 {
+        if engine
+            .step_with_admission(|id| {
+                notified.lock().unwrap().insert(id);
+            })
+            .unwrap()
+            == runtime_engine::StepStatus::Idle
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        *notified.lock().unwrap(),
+        (2..6).map(RequestId::new).collect()
+    );
     engine.audit().unwrap();
     let mut tokens = BTreeMap::<u64, Vec<u32>>::new();
     for event in engine.drain_events() {
@@ -574,6 +597,47 @@ fn requests_admitted_after_restores_free_pages_are_admitted_by_the_executor() {
     }
     assert_eq!(engine.executor().restores.len(), 4);
     assert!(engine.executor().admitted.is_empty());
+}
+
+#[test]
+fn admission_observation_preserves_fixed_schedule_outputs_and_usage() {
+    let run_schedule = |observe| {
+        let mut engine = Engine::new(config(true), FoldingExecutor::default()).unwrap();
+        for id in 1..=3 {
+            engine
+                .submit(request(id, &words(9 + id as u32, 3), 4).with_prompt_logprobs(2))
+                .unwrap();
+        }
+        let mut events = Vec::new();
+        let mut notifications = Vec::new();
+        for _ in 0..64 {
+            let status = if observe {
+                engine
+                    .step_with_admission(|id| notifications.push(id))
+                    .unwrap()
+            } else {
+                engine.step().unwrap()
+            };
+            engine.audit().unwrap();
+            events.extend(engine.drain_events());
+            if status == runtime_engine::StepStatus::Idle {
+                break;
+            }
+        }
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event.kind(), EngineEventKind::Finished { .. }))
+                .count(),
+            3
+        );
+        if observe {
+            assert_eq!(notifications.len(), 3);
+        }
+        let usage = engine.metrics().snapshot();
+        (events, usage.prompt_tokens, usage.generation_tokens)
+    };
+    assert_eq!(run_schedule(false), run_schedule(true));
 }
 
 #[test]

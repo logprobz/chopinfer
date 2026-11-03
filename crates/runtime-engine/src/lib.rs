@@ -2284,6 +2284,17 @@ impl<E: ModelExecutor> Engine<E> {
     /// metrics side sees the pool as the last transition left it rather than
     /// as the last successful one did.
     pub fn step(&mut self) -> Result<StepStatus, EngineError> {
+        self.step_with_admission(|_| {})
+    }
+
+    /// Runs one step, notifying the observer of scheduler admission before
+    /// executor admission, prefix restore, drafting, or execution can block.
+    /// Admission reserves capacity; it publishes no output and execution can
+    /// still fail. A preempted request can be admitted again in a later step.
+    pub fn step_with_admission(
+        &mut self,
+        mut admitted: impl FnMut(RequestId),
+    ) -> Result<StepStatus, EngineError> {
         let _range = profile::ranges::Range::new(c"engine.step");
         self.ensure_retirement_ready()?;
         if self.model_state_failed {
@@ -2295,7 +2306,7 @@ impl<E: ModelExecutor> Engine<E> {
         if self.step_trace {
             self.host_clock.step_entered();
         }
-        let result = self.step_and_retire();
+        let result = self.step_and_retire(&mut admitted);
         if self.step_trace {
             if let Some(mut record) = self.pending_step_trace.take() {
                 record.host.finish_trace();
@@ -2306,9 +2317,12 @@ impl<E: ModelExecutor> Engine<E> {
         result
     }
 
-    fn step_and_retire(&mut self) -> Result<StepStatus, EngineError> {
+    fn step_and_retire(
+        &mut self,
+        admitted: &mut dyn FnMut(RequestId),
+    ) -> Result<StepStatus, EngineError> {
         self.poll_transfers(false)?;
-        let status = self.step_scheduled_batch();
+        let status = self.step_scheduled_batch(admitted);
         // The batch function has released every model transaction borrow.
         // Anchors capture executor state before a finished request retires.
         let captured = self.capture_prefixes();
@@ -2323,14 +2337,17 @@ impl<E: ModelExecutor> Engine<E> {
         status
     }
 
-    fn step_scheduled_batch(&mut self) -> Result<StepStatus, EngineError> {
+    fn step_scheduled_batch(
+        &mut self,
+        admitted: &mut dyn FnMut(RequestId),
+    ) -> Result<StepStatus, EngineError> {
         if let Some(policy) = self.speculation.as_mut() {
             policy.clear_diagnostics();
         }
         let scheduling_timer = profile::PhaseTimer::new(profile::StepPhase::Scheduling);
         let retired_before = self.retire_terminals()?;
         self.preempt()?;
-        self.restore_prefixes()?;
+        self.restore_prefixes(admitted)?;
         let mut host_drafts = Vec::new();
         let mut draft_error = None;
         let mut allocation = None;
@@ -3153,9 +3170,9 @@ impl<E: ModelExecutor> Engine<E> {
     /// it shares, which can admit more requests, so admission repeats until
     /// it admits nothing. The batch's own admission then finds nothing new,
     /// and every admitted request has passed the executor's admission.
-    fn restore_prefixes(&mut self) -> Result<(), EngineError> {
+    fn restore_prefixes(&mut self, admitted: &mut dyn FnMut(RequestId)) -> Result<(), EngineError> {
         loop {
-            if !self.admit_and_restore()? {
+            if !self.admit_and_restore(admitted)? {
                 return Ok(());
             }
         }
@@ -3163,7 +3180,10 @@ impl<E: ModelExecutor> Engine<E> {
 
     /// One admission pass and the restores it made due; returns whether a
     /// further pass could admit more.
-    fn admit_and_restore(&mut self) -> Result<bool, EngineError> {
+    fn admit_and_restore(
+        &mut self,
+        notify: &mut dyn FnMut(RequestId),
+    ) -> Result<bool, EngineError> {
         let lookahead = self
             .speculation
             .as_ref()
@@ -3172,6 +3192,9 @@ impl<E: ModelExecutor> Engine<E> {
             .scheduler
             .admit_with_lookahead(lookahead)
             .map_err(EngineError::Scheduler)?;
+        for &id in admitted.admitted() {
+            notify(id);
+        }
         let mut first_error = None;
         for &id in admitted.admitted() {
             if let Err(error) = self.executor.admit_request_v1(id) {

@@ -82,6 +82,12 @@ fn capture_prefill_policy_equivalence() {
         else {
             panic!("serve");
         };
+        configurations.insert(
+            format!("{name}/server"),
+            serde_json::json!({
+                "config": format!("{:?}", server_config_v1(*serving, RequestSurfaceV1::Full, None).unwrap()),
+            }),
+        );
         let config = engine_config_v1(
             &manifest,
             ModelVocabulary::new(128).unwrap(),

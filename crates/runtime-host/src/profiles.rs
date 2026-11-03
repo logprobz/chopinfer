@@ -1165,6 +1165,125 @@ mod tests {
     /// Explicit speculation options over a direct profile resolve with the
     /// profile's tokens, and are refused where the profile has none.
     #[test]
+    fn model_option_precedence_preserves_source_roles() {
+        // Isolate the process environment from parallel Rust tests.
+        if std::env::var_os("CHOPINFER_TEST_PROFILE_SOURCES").is_none() {
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "profiles::tests::model_option_precedence_preserves_source_roles",
+                ])
+                .env("CHOPINFER_TEST_PROFILE_SOURCES", "1")
+                .env("CHOPINFER_MODEL_OPTIONS", "budget=8,mode=fast")
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stdout)
+            );
+            return;
+        }
+        let mut entry = fixture()["profiles"]["test"].clone();
+        entry["model_options"] = serde_json::json!({"budget": 2});
+        let profile = runtime_bundle::preparation::DirectProfile {
+            name: "test".into(),
+            profile: entry,
+        };
+        for (explicit, expected) in [(vec![], "8"), (vec!["--model-option", "budget=4"], "4")] {
+            let words: Vec<String> = [
+                "serve",
+                "--model",
+                "checkpoint",
+                "--tensor-parallel-size",
+                "2",
+            ]
+            .into_iter()
+            .chain(explicit)
+            .map(String::from)
+            .collect();
+            let crate::HostCommandV1::Serve {
+                selection: crate::preparation::ServeSelection::Model(model),
+                ..
+            } = crate::parse_host_command_v1(&words).unwrap()
+            else {
+                panic!("model")
+            };
+            let resolved = direct_arguments(
+                &profile,
+                2,
+                &model.serve_arguments,
+                Path::new("/direct-package"),
+            )
+            .unwrap();
+            let crate::HostCommandV1::Serve { model_options, .. } =
+                crate::parse_host_command_v1(&resolved.arguments).unwrap()
+            else {
+                panic!("serve")
+            };
+            assert_eq!(model_options["budget"], expected);
+            assert_eq!(model_options["mode"], "fast");
+        }
+        let entry = direct_entry(&profile).unwrap();
+        let crate::HostCommandV1::Serve { model_options, .. } =
+            direct_command(&direct_defaults(&entry)).unwrap()
+        else {
+            panic!("serve")
+        };
+        assert_eq!(model_options["budget"], "2");
+        assert_eq!(model_options["mode"], "fast");
+    }
+
+    #[test]
+    fn zero_token_profiles_gate_companions_before_explicit_tokens() {
+        let package = package("ar-token-override");
+        let path = package.join("profiles.json");
+        for speculation in [
+            serde_json::json!({"mode":"fixed", "tokens":0, "draft_cost":"per-block", "drafter":"none"}),
+            serde_json::json!({"mode":"balanced", "tokens":0, "draft_cost":"per-block", "drafter":"none",
+                              "depths":"1:3,8:0", "widths":"4,8"}),
+            serde_json::json!({"mode":"table", "tokens":0, "draft_cost":"per-block", "drafter":"none",
+                              "costs":"1:13500:4400:700:760,8:22300:4400:700:780"}),
+        ] {
+            let mut file = fixture();
+            file["profiles"]["test"]["speculation"] = speculation;
+            std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+            let direct = runtime_bundle::preparation::DirectProfile {
+                name: "test".into(),
+                profile: file["profiles"]["test"].clone(),
+            };
+            let explicit = ["--speculative-tokens", "3"].map(String::from);
+            let direct = direct_arguments(&direct, 2, &explicit, &package).unwrap();
+            let packaged = [
+                "serve".into(),
+                "--bundle".into(),
+                package.to_str().unwrap().into(),
+                "--profile".into(),
+                format!("{}#test", path.display()),
+                "--speculative-tokens".into(),
+                "3".into(),
+            ];
+            for words in [&direct.arguments[..], &packaged[..]] {
+                let crate::HostCommandV1::Serve {
+                    speculative_tokens,
+                    speculation_mode,
+                    draft_cost_model,
+                    verify_widths,
+                    ..
+                } = crate::parse_host_command_v1(words).unwrap()
+                else {
+                    panic!("serve")
+                };
+                assert_eq!(speculative_tokens, 3);
+                assert_eq!(speculation_mode, runtime_engine::SpeculationMode::Adaptive);
+                assert_eq!(draft_cost_model, runtime_engine::DraftCostModel::PerBlock);
+                assert_eq!(verify_widths, runtime_engine::VerifyWidths::default());
+            }
+        }
+        std::fs::remove_dir_all(package).unwrap();
+    }
+
+    #[test]
     fn explicit_speculation_options_resolve_with_the_profile_tokens() {
         let entry = fixture()["profiles"]["test"].clone();
         let resolve = |entry: &serde_json::Value, explicit: &[&str]| {
@@ -2640,6 +2759,58 @@ mod translate_tests {
     /// An autoregressive profile over a drafting pick with a TBT budget
     /// resets the budget, which drops the pick's TBT target, and serves
     /// exactly its own configuration.
+    #[test]
+    fn translation_keeps_profile_explicit_and_reset_argument_order() {
+        let pick = drafting(serde_json::json!({
+            "context_parallel_size": 2,
+            "model_options": {"a": 1, "b": 2},
+        }));
+        let target = profile(serde_json::json!({"model_options": {"a": 3, "b": 4}}));
+        let explicit = [
+            "--max-sequences",
+            "01",
+            "--model-option",
+            "a=5",
+            "--prefix-cache",
+            "off",
+        ]
+        .map(String::from);
+        let target = apply_defaults(&direct_defaults(&target), &explicit);
+        let translated = translate_options(&pick, &target).unwrap();
+        assert_eq!(
+            translated.arguments,
+            [
+                "--max-batch-tokens",
+                "8192",
+                "--prefill-chunk-tokens",
+                "2048",
+                "--gpu-memory-utilization",
+                "1",
+                "--kv-cache-dtype",
+                "auto",
+                "--speculative-tokens",
+                "0",
+                "--draft-cost",
+                "per-token",
+                "--graph-memory-reserve-mib",
+                "320",
+                "--model-option",
+                "b=4",
+                "--max-sequences",
+                "01",
+                "--model-option",
+                "a=5",
+                "--prefix-cache",
+                "off",
+                "--context-parallel-size",
+                "1",
+                "--prefill-policy",
+                "fixed",
+            ]
+        );
+        assert!(translated.inherited_model_options.is_empty());
+    }
+
     #[test]
     fn an_autoregressive_profile_resets_the_picks_tbt_budget() {
         let pick = drafting(serde_json::json!({}));

@@ -844,6 +844,26 @@ print(json.dumps(reply), flush=True)
                                      f"what it printed is in {written}")
         shutil.rmtree(written)
 
+    def test_profile_loading_preserves_environment_failures(self):
+        path = self.root / "environment-profiles.json"
+        path.write_text(json.dumps(self.helper_result("serving-profiles")))
+        for name, value in (("CHOPINFER_MODEL_OPTIONS", "malformed"),
+                            ("CHOPINFER_LOG_LEVEL", "verbose"),
+                            ("CHOPINFER_LOG_SUMMARY_SECONDS", "0")):
+            environment = dict(self.environment, **{name: value})
+            for words in (("profiles", "list", path), ("profiles", "show", path, "tp4-ar")):
+                result = subprocess.run([self.host, *words], env=environment, text=True,
+                                        capture_output=True, timeout=HANG_SECONDS)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(name, result.stderr)
+            result = subprocess.run([self.host, "models", "--json"], env=environment, text=True,
+                                    capture_output=True, timeout=HANG_SECONDS)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            catalog = json.loads(result.stdout)
+            self.assertEqual(catalog["models"], [])
+            self.assertEqual(len(catalog["errors"]), 1)
+            self.assertIn(name, catalog["errors"][0]["message"])
+
     def refusal_message(self, stderr):
         # The host's refusal is its last report: the program name and the
         # message, with the usage text a usage error carries.

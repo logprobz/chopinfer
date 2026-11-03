@@ -7,7 +7,6 @@ const GIB: u64 = 1024 * 1024 * 1024;
 const MAX_CGROUP_BYTES: u64 = 24 * GIB;
 const MAX_RSS_BYTES: u64 = 16 * GIB;
 /// Set in a child process that runs one test alone.
-#[cfg(test)]
 const CHILD: &str = "CHOPINFER_TEST_ROUTE_MEMORY_CHILD";
 
 #[cfg(test)]
@@ -52,6 +51,39 @@ pub(in crate::fake_host::conformance) fn with_rss_limit<R>(
 #[cfg(test)]
 pub(in crate::fake_host::conformance) fn in_own_process() -> bool {
     std::env::var_os(CHILD).is_some()
+}
+
+/// Run `run` in a child process of this test binary that runs only the
+/// calling test, and return whether `run` ran in this process. VmHWM is a
+/// whole-process high-water mark, and a library whose tests share one
+/// process runs many of them at once, so a sweep measured there would be
+/// charged for every other test's memory.
+pub(super) fn own_process(run: impl FnOnce()) -> bool {
+    if std::env::var_os(CHILD).is_some() {
+        run();
+        return true;
+    }
+    // libtest names each test's thread after the test.
+    let test = std::thread::current()
+        .name()
+        .expect("route sweeps run on a libtest test thread")
+        .to_owned();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([test.as_str(), "--exact", "--nocapture"])
+        .env(CHILD, "1")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap_or_else(|e| panic!("{test}: start its own process: {e}"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    print!("{stdout}");
+    eprint!("{stderr}");
+    assert!(
+        output.status.success() && stdout.contains("test result: ok. 1 passed;"),
+        "{test}: route sweep failed in its own process ({}):\n{stdout}{stderr}",
+        output.status
+    );
+    false
 }
 
 fn rss(status: &str) -> Result<u64, String> {

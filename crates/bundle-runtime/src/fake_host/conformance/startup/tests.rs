@@ -670,3 +670,11 @@ fn route_memory_fails_a_sweep_whose_cases_retain_memory_past_its_budget() {
     let message = failure.downcast_ref::<String>().map_or("", String::as_str);
     assert!(message.contains("exceeds budget"), "{message}");
 }
+
+#[test]
+fn route_memory_is_not_charged_for_memory_its_test_process_holds() {
+    // Past the limit: a sweep measured in this process would fail.
+    let held = std::hint::black_box((!in_own_process()).then(|| vec![1u8; 384 << 20]));
+    with_rss_limit(PROBE_RSS_LIMIT, memory_regression::<Adapter<NONE>>);
+    drop(held);
+}

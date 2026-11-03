@@ -244,6 +244,34 @@ checksums and licenses. Verify the archive before publishing it. The archive
 contains binaries, libraries and declarations, not weights. Installation
 instructions are [shipped with it](../tools/release/INSTALL.md).
 
+The builder uses a fresh private Cargo target below `CARGO_TARGET_DIR`,
+which is a scratch root, and prints a `Prebuilt:` directory. It disables
+Rust compiler wrappers, forces normal release settings and all lock/profile
+bypasses off, and verifies every selected kernel lock record, including child
+selections and both host samplers. Shared nvcc cache hits still compare the
+pinned locks. If the requested scratch root is inside the source context
+(as in the Docker command), the private target goes under `TMPDIR` instead.
+
+The prebuilt directory contains `release-build.json`, a portable producer
+record binding each artifact's bytes to the revision, actual source inputs,
+release configuration, kernel identities and compiler freshness. Preserve
+that directory to stage the same verified build again:
+
+```sh
+bash tools/release/build.sh --stage-from "$PREBUILT" "$CHOPINFER_DATA/restaged-release"
+```
+
+Unrecorded directories must be rebuilt through the producer. Staging checks
+the record and every artifact before executing staged code, copies through
+bounded no-follow reads, and includes `BUILD_PROVENANCE.json` under the
+archive's checksums. `CHOPINFER_BUILD_REVISION`, when set, must equal HEAD.
+Native Git worktrees and Docker contexts retaining HEAD and loose or packed
+refs are supported. Retained refs establish the declared revision and supplied
+source bytes, not proof that those bytes equal a clean Git tree. The record
+trusts the controlled producer; it is not a signature authenticating another
+builder. These provenance checks do not replace the full CPU gate or affected
+model qualification before publishing.
+
 ## Pull requests
 
 See [accepted contributions](../.github/CONTRIBUTING.md#what-is-accepted).

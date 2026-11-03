@@ -27,9 +27,15 @@ def fixture():
         root = release_fixture.create(directory)
         scratch = directory / 'builds'
         release_fixture.write(scratch, 'release/chopinfer', 'unproven old output\n')
-        with patch.dict(os.environ, {'CHOPINFER_BUILD_REVISION': 'a' * 40}):
-            result = provenance.produce(root, scratch)
-        prebuilt = Path(result['prebuilt'])
+        env = {**os.environ, 'CHOPINFER_BUILD_REVISION': 'a' * 40, 'CARGO_TARGET_DIR': str(scratch)}
+        built = subprocess.run(['bash', root / 'tools/release/build.sh', directory / 'archive'],
+                               env=env, text=True, capture_output=True)
+        if built.returncode:
+            raise RuntimeError(built.stdout + built.stderr)
+        prebuilt = Path(next(line.removeprefix('Prebuilt: ') for line in built.stdout.splitlines()
+                             if line.startswith('Prebuilt: ')))
+        result = {'prebuilt': str(prebuilt), 'record': str(prebuilt / provenance.RECORD),
+                  'target': str(prebuilt.parent / 'target')}
         _FIXTURE = dict(directory=directory, root=root, scratch=scratch, result=result, prebuilt=prebuilt,
                         record=json.loads((prebuilt / provenance.RECORD).read_text()))
     return _FIXTURE
@@ -119,6 +125,14 @@ class CompiledProducer(unittest.TestCase):
             with self.subTest(change=change), patch.dict(os.environ, change):
                 with self.assertRaises(ValueError):
                     provenance.configuration(self.root)
+
+    def test_docker_link_stub_flags_keep_the_same_release_configuration(self):
+        stub = self.directory / 'docker-link-stub'
+        stub.mkdir()
+        cuda = Path(os.environ.get('CHOPINFER_CUDA_HOME', '/usr/local/cuda')).resolve()
+        (stub / 'libcuda.so.1').symlink_to(cuda / 'targets/x86_64-linux/lib/stubs/libcuda.so')
+        with patch.dict(os.environ, {'RUSTFLAGS': '-L native=' + str(stub)}):
+            self.assertEqual(provenance.configuration(self.root), self.record['configuration'])
 
     def test_missing_host_and_child_kernel_reports_are_rejected(self):
         target = Path(self.result['target'])

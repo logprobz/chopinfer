@@ -253,7 +253,6 @@ impl Profile {
         explicit: &ServingInputsV1,
     ) -> Result<ServingInputsV1, HostCommandErrorV1> {
         let mut inputs = ServingInputsV1 {
-            order: self.option_order(),
             devices: Some(
                 self.devices
                     .iter()
@@ -1265,6 +1264,47 @@ mod tests {
         .unwrap();
         directory
     }
+    #[test]
+    fn serving_diagnostic_parity_checks_profiles_before_explicit_errors() {
+        let package = package("diagnostic-parity");
+        let profile = package.join("profiles.json");
+        std::fs::write(&profile, serde_json::to_vec(&fixture()).unwrap()).unwrap();
+        let missing_package = package.join("missing");
+        let missing_profile = package.join("missing.json");
+        let reference = format!("{}#test", profile.display());
+        let absent = format!("{}#test", missing_profile.display());
+        let unknown = format!("{}#absent", profile.display());
+        let parse = |words: &[String]| crate::parse_host_command_v1(words).unwrap_err().to_string();
+        for (bundle, selected) in [
+            (None, &reference),
+            (Some(&missing_package), &reference),
+            (Some(&package), &absent),
+            (Some(&package), &unknown),
+        ] {
+            let mut words = vec!["serve".to_owned(), "--profile".into(), selected.clone()];
+            if let Some(bundle) = bundle {
+                words.extend(["--bundle".into(), bundle.display().to_string()]);
+            }
+            let expected = parse(&words);
+            for invalid in [
+                vec!["--max-sequences", "invalid"],
+                vec!["--scenario", "commit"],
+                vec!["--unknown", "value"],
+                vec!["--max-sequences"],
+                vec!["--check", "--check"],
+                vec!["--bundle", "another"],
+            ] {
+                if bundle.is_none() && invalid[0] == "--bundle" {
+                    continue;
+                }
+                let mut invalid_words = words.clone();
+                invalid_words.extend(invalid.iter().map(|word| (*word).to_owned()));
+                assert_eq!(parse(&invalid_words), expected, "{invalid_words:?}");
+            }
+        }
+        std::fs::remove_dir_all(package).unwrap();
+    }
+
     /// The profile lookup reads the manifest as a bounded regular file: a
     /// link, a FIFO (without blocking) and a file past the manifest bound are
     /// refused before any of it is read into memory.
@@ -1316,8 +1356,6 @@ mod tests {
         serving.prefill_budget
     }
 
-    /// Explicit speculation options over a direct profile resolve with the
-    /// profile's tokens, and are refused where the profile has none.
     #[test]
     fn profile_adapter_allows_replacing_invalid_generic_direct_defaults() {
         for (field, value, words) in [
@@ -1524,6 +1562,8 @@ mod tests {
         std::fs::remove_dir_all(package).unwrap();
     }
 
+    /// Explicit speculation options over a direct profile resolve with the
+    /// profile's tokens, and are refused where the profile has none.
     #[test]
     fn explicit_speculation_options_resolve_with_the_profile_tokens() {
         let entry = fixture()["profiles"]["test"].clone();
@@ -2985,9 +3025,6 @@ mod translate_tests {
             .collect()
     }
 
-    /// An autoregressive profile over a drafting pick with a TBT budget
-    /// resets the budget, which drops the pick's TBT target, and serves
-    /// exactly its own configuration.
     #[test]
     fn profile_adapter_translates_replaced_invalid_pick_defaults() {
         let pick = profile(serde_json::json!({
@@ -3057,6 +3094,9 @@ mod translate_tests {
         assert!(translated.inherited_model_options.is_empty());
     }
 
+    /// An autoregressive profile over a drafting pick with a TBT budget
+    /// resets the budget, which drops the pick's TBT target, and serves
+    /// exactly its own configuration.
     #[test]
     fn an_autoregressive_profile_resets_the_picks_tbt_budget() {
         let pick = drafting(serde_json::json!({}));

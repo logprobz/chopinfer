@@ -746,8 +746,6 @@ pub(super) fn describe_serve_options_v1() -> String {
 /// than something quietly ignored.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ServingInputsV1 {
-    /// Source order for external launch emission and inherited reset discovery.
-    pub(crate) order: Vec<&'static str>,
     pub(crate) model_options: std::collections::BTreeMap<String, String>,
     pub(crate) list_model_options: bool,
     /// `serve --check`: the startup checks that need no device.
@@ -937,6 +935,40 @@ impl ServingInputsV1 {
         parsed.reject_unsupported("serve", &accepted)?;
         Ok(parsed.serving)
     }
+
+    /// Selection diagnostics preceded explicit value parsing in serving.
+    /// Read only those fields when decoding failed, using the same grammar.
+    pub(super) fn profile_selection(arguments: &[String]) -> Result<Self, HostCommandErrorV1> {
+        let mut selection = Self::default();
+        for (flag, values) in options(arguments) {
+            if let Some(message) = retired_flag_message_v1(&flag) {
+                return Err(HostCommandErrorV1::Usage(message.into()));
+            }
+            if flag == "--profile" {
+                profile_reference_v1(&mut selection.profile, values.first())?;
+            } else if flag == "--bundle" && selection.bundle.is_none() {
+                selection.bundle = values.into_iter().next();
+            }
+        }
+        Ok(selection)
+    }
+}
+
+fn profile_reference_v1(
+    reference: &mut Option<String>,
+    value: Option<&String>,
+) -> Result<(), HostCommandErrorV1> {
+    if reference.is_some() {
+        return Err(HostCommandErrorV1::Usage(
+            "--profile given more than once".into(),
+        ));
+    }
+    *reference = Some(
+        value
+            .ok_or_else(|| HostCommandErrorV1::Usage("--profile requires FILE#NAME".into()))?
+            .clone(),
+    );
+    Ok(())
 }
 
 impl ArgumentsV1 {
@@ -948,26 +980,15 @@ impl ArgumentsV1 {
         let mut parsed = Self::default();
         let mut remaining = arguments.iter().peekable();
         while let Some(flag) = remaining.next() {
-            if let Some(option) = SERVE_OPTIONS_V1.iter().find(|option| option.flag == flag) {
-                parsed.order.push(option.flag);
-            }
             if let Some(message) = retired_flag_message_v1(flag) {
-                return Err(usage_error(message));
+                return Err(if profile {
+                    HostCommandErrorV1::Usage(message.into())
+                } else {
+                    usage_error(message)
+                });
             }
             if flag == "--profile" && profile {
-                if parsed.profile.is_some() {
-                    return Err(HostCommandErrorV1::Usage(
-                        "--profile given more than once".into(),
-                    ));
-                }
-                parsed.profile = Some(
-                    remaining
-                        .next()
-                        .ok_or_else(|| {
-                            HostCommandErrorV1::Usage("--profile requires FILE#NAME".into())
-                        })?
-                        .clone(),
-                );
+                profile_reference_v1(&mut parsed.profile, remaining.next())?;
                 continue;
             }
             if is_valueless_v1(flag) {

@@ -87,9 +87,6 @@ impl ServingInputsV1 {
             }
         }
         serving
-            .order
-            .retain(|flag| !crate::profiles::MODEL_OPTIONS.contains(flag));
-        serving
     }
 
     /// Restore a profile-owned setting from resolved values. Text is emitted
@@ -178,11 +175,7 @@ impl ServingInputsV1 {
             }
             _ => return Ok(false),
         }
-        let restored = self.contains(flag);
-        if restored {
-            self.order.push(flag);
-        }
-        Ok(restored)
+        Ok(self.contains(flag))
     }
 
     /// The typed override decision, also usable before a profile default's
@@ -232,12 +225,6 @@ impl ServingInputsV1 {
         inherited
             .remote_media_flags
             .retain(|flag| !explicit.remote_media_flags.contains(flag));
-        inherited.order = self
-            .order
-            .iter()
-            .copied()
-            .filter(|flag| inherited.contains(flag))
-            .collect();
         inherited
     }
 
@@ -255,7 +242,6 @@ impl ServingInputsV1 {
         merged
             .remote_media_flags
             .extend(explicit.remote_media_flags.clone());
-        merged.order.extend(explicit.order.iter().copied());
         merged
     }
 
@@ -321,7 +307,15 @@ pub(super) fn parse_serve_command_v1(
     arguments: &[String],
 ) -> Result<HostCommandV1, HostCommandErrorV1> {
     let environment = EnvironmentV1::process()?;
-    let explicit = ServingInputsV1::decode(arguments)?;
+    let explicit = match ServingInputsV1::decode(arguments) {
+        Ok(explicit) => explicit,
+        Err(error) => {
+            // Package/profile declarations were checked before explicit values.
+            // Preserve that refusal order without decoding successful inputs twice.
+            crate::profiles::resolve_inputs(ServingInputsV1::profile_selection(arguments)?)?;
+            return Err(error);
+        }
+    };
     let compatibility = environment.compatibility_arguments(&explicit, arguments);
     // Live serving gives environment model options explicit precedence over
     // profile defaults. Standalone profile callers apply environment below them.

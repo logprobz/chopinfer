@@ -6454,6 +6454,52 @@ mod tests {
     }
 
     #[test]
+    fn serving_diagnostic_parity_keeps_retired_flags_bare() {
+        for (flag, message) in [
+            (
+                "--install-root",
+                "--install-root is gone: select a package directory with --bundle DIR",
+            ),
+            (
+                "--load",
+                "--load is gone: packages carry no rank images; --checkpoint DIR loads the checkpoint through the bundle's weight plan",
+            ),
+            (
+                "--kv-memory-fraction",
+                "--kv-memory-fraction is gone: --gpu-memory-utilization F lets this server's own allocations take F of each GPU's total memory; the default 1.0 takes all of it but the graph memory reserve (--graph-memory-reserve-mib)",
+            ),
+            (
+                "--refresh-model",
+                "--refresh-model is gone: --model loads the checkpoint directly and reads no tensor contents to refresh; check its contents with chopinfer verify --model DIR",
+            ),
+            (
+                "--mixed-decode-steps",
+                "--mixed-decode-steps is retired: use --prefill-policy fixed|tbt|adaptive; remove the retired flag before deploying",
+            ),
+        ] {
+            for prefix in [
+                vec!["serve", "--bundle", "fixture"],
+                vec!["serve", "--model", "checkpoint"],
+                vec!["weights", "identity", "--bundle", "fixture"],
+            ] {
+                for invalid in [vec![], vec!["--max-sequences", "invalid"]] {
+                    let mut words = prefix.clone();
+                    words.extend(invalid);
+                    words.push(flag);
+                    assert_eq!(refusal(&words), message, "{words:?}");
+                }
+            }
+            let words = arguments(&["--bundle", "fixture", flag]);
+            assert_eq!(
+                parse_conformance_host_command_v1(&words)
+                    .unwrap_err()
+                    .to_string(),
+                format!("{message}\n{}", super::HOST_COMMAND_USAGE_V1),
+            );
+        }
+    }
+
+    #[test]
     fn a_selection_is_a_package_directory() {
         let selected = parse_host_command_v1(&arguments(&[
             "serve",

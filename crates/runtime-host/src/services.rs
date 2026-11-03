@@ -6,9 +6,11 @@
 //! rejected without reaching the device. Resources release in reverse
 //! acquisition order; a release out of order is refused and changes nothing.
 
+mod acquisition;
 #[cfg(all(test, feature = "fake-host-services"))]
 mod acquisition_tests;
 mod weight_content;
+use acquisition::{CompoundCleanupV1, ConstructionRankV1, RankAllocationV1, RankOwnerV1};
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1257,7 +1259,8 @@ struct AuthenticatedComponentRecordV1 {
 struct RankArenaRecordV1 {
     image: SlotKeyV1,
     rank: u32,
-    buffer: SlotKeyV1,
+    buffer: Option<SlotKeyV1>,
+    complete: bool,
     /// The mapped host buffer holding this rank's host-placed views.
     host_buffer: Option<SlotKeyV1>,
     layout: RankImageLayoutV1,
@@ -1606,6 +1609,24 @@ fn prepare_rank_upload_v1<D: HostDeviceBackendV1>(
         lent: false,
     };
     let context_object = state.contexts.get(context_key)?.object;
+    let segments = layout
+        .device_segments()
+        .into_iter()
+        .map(|(start, length)| (rank_image.offset + start, length))
+        .collect();
+    let arena_key = insert_ordered_v1(&mut state.order, &mut state.arenas, |order| {
+        Ok(RankArenaRecordV1 {
+            image: image_key,
+            rank: upload.rank,
+            buffer: None,
+            host_buffer: None,
+            complete: false,
+            layout: layout.clone(),
+            alignment,
+            order,
+        })
+    })?;
+    state.unpublished_arenas.push(arena_key);
     let imported = match lent {
         Some(lent) => {
             let mapped = if lent.image.byte_length == layout.device_bytes() {
@@ -1637,6 +1658,7 @@ fn prepare_rank_upload_v1<D: HostDeviceBackendV1>(
                     {
                         return Err(status);
                     }
+                    state.retry_acquisition_cleanup()?;
                     None
                 }
             }
@@ -1662,6 +1684,7 @@ fn prepare_rank_upload_v1<D: HostDeviceBackendV1>(
             alignment,
         )?,
     };
+    state.arenas.get_mut(arena_key)?.buffer = Some(buffer);
     let origin = Some(origin);
     let destination = state.buffers.get(buffer)?.object;
     let host_buffer = if layout.cuts.is_empty() {
@@ -1681,54 +1704,16 @@ fn prepare_rank_upload_v1<D: HostDeviceBackendV1>(
                     read_segments_v1(&storage, &cuts, offset, chunk)
                 })
         };
-        match state.allocate_mapped_host_buffer(
+        Some(state.allocate_mapped_host_buffer(
             stream,
             origin,
             layout.host_bytes(),
             alignment,
             &mut fill,
-        ) {
-            Ok(key) => Some(key),
-            Err(status) => {
-                let _ = state.release_host_buffer(buffer);
-                return Err(status);
-            }
-        }
+        )?)
     };
-    let release_buffers = |state: &mut HostStateV1<D>| {
-        if let Some(host_buffer) = host_buffer {
-            let _ = state.release_host_buffer(host_buffer);
-        }
-        let _ = state.release_host_buffer(buffer);
-    };
-    let order = match state.order.acquire() {
-        Ok(order) => order,
-        Err(status) => {
-            release_buffers(state);
-            return Err(status);
-        }
-    };
-    let segments = layout
-        .device_segments()
-        .into_iter()
-        .map(|(start, length)| (rank_image.offset + start, length))
-        .collect();
-    let arena = match state.arenas.insert(RankArenaRecordV1 {
-        image: image_key,
-        rank: upload.rank,
-        buffer,
-        host_buffer,
-        layout,
-        alignment,
-        order,
-    }) {
-        Ok(key) => BundleRankArenaHandleV1::from_parts(key.generation, key.slot),
-        Err(status) => {
-            let _ = state.order.release(order);
-            release_buffers(state);
-            return Err(status);
-        }
-    };
+    state.arenas.get_mut(arena_key)?.host_buffer = host_buffer;
+    let arena = BundleRankArenaHandleV1::from_parts(arena_key.generation, arena_key.slot);
     Ok(PreparedRankUploadV1 {
         arena,
         stream,
@@ -1832,7 +1817,7 @@ struct SymbolRecordV1 {
 struct PhysicalKvRecordV1 {
     plan: PagedKvPlanV1,
     pool: KvPool,
-    rank_buffers: Vec<SlotKeyV1>,
+    allocation: RankAllocationV1,
     order: u64,
 }
 
@@ -1886,7 +1871,7 @@ struct MappedGatherRecordV1 {
 }
 
 struct StateRecordV1 {
-    buffers: Vec<SlotKeyV1>,
+    allocation: RankAllocationV1,
     order: u64,
 }
 
@@ -1949,12 +1934,13 @@ impl ReleaseOrderV1 {
 /// The KV and state services allocate from these, because their ABI calls carry
 /// no context, pool, or stream. They are created on first use and released once
 /// the last KV pool or state allocation that needs them is gone.
+#[derive(Default)]
 struct HostRankV1 {
-    context: DeviceObjectV1,
+    context: Option<DeviceObjectV1>,
     context_owned: bool,
-    pool: DeviceObjectV1,
+    pool: Option<DeviceObjectV1>,
     pool_owned: bool,
-    stream: DeviceObjectV1,
+    stream: Option<DeviceObjectV1>,
 }
 
 struct HostStateV1<D> {
@@ -1968,6 +1954,11 @@ struct HostStateV1<D> {
     buffers: SlotTableV1<DeviceBufferRecordV1>,
     /// A rejected buffer stays in its reserved slot until backend cleanup succeeds.
     pending_buffer_cleanup: Option<SlotKeyV1>,
+    pending_compound_cleanup: Option<CompoundCleanupV1>,
+    /// Reserved before uploads start and cleared only after publication or cleanup.
+    unpublished_arenas: Vec<SlotKeyV1>,
+    serving_kv_construction: Vec<ConstructionRankV1>,
+    logits_read_stream: Option<DeviceObjectV1>,
     images: SlotTableV1<CompiledImageRecordV1>,
     authenticated_components: SlotTableV1<AuthenticatedComponentRecordV1>,
     arenas: SlotTableV1<RankArenaRecordV1>,
@@ -2051,7 +2042,7 @@ impl HostServicesV1Backend<crate::fake::FakeHostDeviceV1> {
             .arenas
             .get(slot_key_v1(arena.generation(), arena.slot()).unwrap())
             .unwrap();
-        let buffer = state.buffers.get(record.buffer).unwrap();
+        let buffer = state.buffers.get(record.buffer.unwrap()).unwrap();
         let bytes = state.device.buffer_bytes(buffer.object).unwrap().to_vec();
         (
             bytes,
@@ -2204,6 +2195,10 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
                 pools: SlotTableV1::new(),
                 buffers: SlotTableV1::new(),
                 pending_buffer_cleanup: None,
+                pending_compound_cleanup: None,
+                unpublished_arenas: Vec::new(),
+                serving_kv_construction: Vec::new(),
+                logits_read_stream: None,
                 images: SlotTableV1::new(),
                 authenticated_components: SlotTableV1::new(),
                 arenas: SlotTableV1::new(),
@@ -2329,8 +2324,15 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
         }
         let key = slot_key_v1(arena.generation(), arena.slot())?;
         let record = state.arenas.get(key)?;
-        let (order, buffer, host_buffer, rank) =
-            (record.order, record.buffer, record.host_buffer, record.rank);
+        if !record.complete {
+            return Err(BundleStatusV1::InvalidState);
+        }
+        let (order, buffer, host_buffer, rank) = (
+            record.order,
+            record.buffer.ok_or(BundleStatusV1::InvalidState)?,
+            record.host_buffer,
+            record.rank,
+        );
         let byte_length = record.layout.device_bytes();
         let ComponentStorageV1::Planned(image) = &state.images.get(record.image)?.storage else {
             return Err(BundleStatusV1::InvalidArgument);
@@ -2481,14 +2483,15 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
         let stream = state
             .device
             .create_stream(context_object, HOST_STREAM_KIND_V1)?;
+        state.logits_read_stream = Some(stream);
         let mut bytes = vec![0; byte_length as usize];
         let result = state
             .device
             .copy_device_to_host(stream, &mut bytes, range)
             .and_then(|()| state.device.synchronize_stream(stream));
-        let released = state.device.release_stream(stream);
+        state.pending_compound_cleanup = Some(CompoundCleanupV1::LogitsRead);
+        state.retry_acquisition_cleanup()?;
         result?;
-        released?;
         Ok(bytes)
     }
 }
@@ -3398,7 +3401,7 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
 
     /// Retries the one rejected allocation before admitting more resources or
     /// tearing down a dependency. Its slot already owns all cleanup metadata.
-    fn retry_acquisition_cleanup(&mut self) -> HostServiceResultV1<()> {
+    fn retry_buffer_cleanup(&mut self) -> HostServiceResultV1<()> {
         let Some(key) = self.pending_buffer_cleanup else {
             return Ok(());
         };
@@ -3553,100 +3556,101 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
     /// Releases one host-owned buffer, keeping its slot until the driver agrees.
     fn release_host_buffer(&mut self, key: SlotKeyV1) -> HostServiceResultV1<()> {
         self.retry_acquisition_cleanup()?;
+        self.release_registered_host_buffer(key)
+    }
+
+    fn release_registered_host_buffer(&mut self, key: SlotKeyV1) -> HostServiceResultV1<()> {
         let object = self.buffers.get(key)?.object;
         self.device.release_device_buffer(object)?;
         self.buffers.remove(key).map(|_| ())
     }
 
-    /// Creates the host's own per-rank context, pool, and stream on first use.
+    /// Creates each phase in its retained rank record before the next can fail.
     fn acquire_host_ranks(&mut self) -> HostServiceResultV1<()> {
         self.retry_acquisition_cleanup()?;
-        if self.host_ranks.is_empty() {
+        if self.host_rank_users == 0 {
+            debug_assert!(self.host_ranks.is_empty());
             let rank_count = self.config.topology.rank_count();
+            self.host_ranks
+                .try_reserve_exact(rank_count as usize)
+                .map_err(|_| BundleStatusV1::ResourceExhausted)?;
             for rank in 0..rank_count {
                 let ordinal = self
                     .config
                     .topology
                     .device_ordinal(rank)
                     .ok_or(BundleStatusV1::InvalidState)?;
-                let built = self.build_host_rank(rank, ordinal);
-                match built {
-                    Ok(host_rank) => self.host_ranks.push(host_rank),
-                    Err(status) => {
-                        self.release_host_ranks();
-                        return Err(status);
-                    }
-                }
+                self.host_ranks.push(HostRankV1::default());
+                let index = self.host_ranks.len() - 1;
+                let (context, owned) = match self.context_by_rank.get(&rank) {
+                    Some(key) => (self.contexts.get(*key)?.object, false),
+                    None => (self.device.create_context(rank, ordinal)?, true),
+                };
+                self.host_ranks[index].context = Some(context);
+                self.host_ranks[index].context_owned = owned;
+                let selected_pool = self
+                    .context_by_rank
+                    .get(&rank)
+                    .and_then(|key| self.pool_by_context.get(key))
+                    .map(|key| self.pools.get(*key).map(|record| record.object))
+                    .transpose()?;
+                let (pool, owned) = match selected_pool {
+                    Some(pool) => (pool, false),
+                    None => (self.device.create_memory_pool(context)?, true),
+                };
+                self.host_ranks[index].pool = Some(pool);
+                self.host_ranks[index].pool_owned = owned;
+                self.host_ranks[index].stream =
+                    Some(self.device.create_stream(context, HOST_STREAM_KIND_V1)?);
             }
         }
-        self.host_rank_users += 1;
+        if self.host_ranks.len() != self.config.topology.rank_count() as usize
+            || self
+                .host_ranks
+                .iter()
+                .any(|rank| rank.context.is_none() || rank.pool.is_none() || rank.stream.is_none())
+        {
+            return Err(BundleStatusV1::InvalidState);
+        }
+        self.host_rank_users = self
+            .host_rank_users
+            .checked_add(1)
+            .ok_or(BundleStatusV1::ResourceExhausted)?;
         Ok(())
     }
 
-    fn build_host_rank(&mut self, rank: u32, ordinal: i32) -> HostServiceResultV1<HostRankV1> {
-        let (context, context_owned) = match self.context_by_rank.get(&rank) {
-            Some(key) => (self.contexts.get(*key)?.object, false),
-            None => (self.device.create_context(rank, ordinal)?, true),
-        };
-        let selected_pool = self
-            .context_by_rank
-            .get(&rank)
-            .and_then(|context_key| self.pool_by_context.get(context_key))
-            .map(|pool_key| self.pools.get(*pool_key).map(|record| record.object))
-            .transpose()?;
-        let (pool, pool_owned) = if let Some(pool) = selected_pool {
-            (pool, false)
-        } else {
-            match self.device.create_memory_pool(context) {
-                Ok(pool) => (pool, true),
-                Err(status) => {
-                    if context_owned {
-                        let _ = self.device.release_context(context);
-                    }
-                    return Err(status);
-                }
+    fn release_host_ranks(&mut self) -> HostServiceResultV1<()> {
+        while let Some(rank) = self.host_ranks.last_mut() {
+            if let Some(stream) = rank.stream {
+                self.device.release_stream(stream)?;
+                rank.stream = None;
             }
-        };
-        match self.device.create_stream(context, HOST_STREAM_KIND_V1) {
-            Ok(stream) => Ok(HostRankV1 {
-                context,
-                context_owned,
-                pool,
-                pool_owned,
-                stream,
-            }),
-            Err(status) => {
-                if pool_owned {
-                    let _ = self.device.release_memory_pool(pool);
+            if let Some(pool) = rank.pool {
+                if rank.pool_owned {
+                    self.device.release_memory_pool(pool)?;
                 }
-                if context_owned {
-                    let _ = self.device.release_context(context);
-                }
-                Err(status)
+                rank.pool = None;
             }
+            if let Some(context) = rank.context {
+                if rank.context_owned {
+                    self.device.release_context(context)?;
+                }
+                rank.context = None;
+            }
+            self.host_ranks.pop();
         }
+        Ok(())
     }
 
-    fn release_host_ranks(&mut self) {
-        if self.retry_acquisition_cleanup().is_err() {
-            return;
+    fn drop_host_rank_user(&mut self) -> HostServiceResultV1<()> {
+        if self.host_rank_users == 1 {
+            self.release_host_ranks()?;
         }
-        for host_rank in std::mem::take(&mut self.host_ranks).into_iter().rev() {
-            let _ = self.device.release_stream(host_rank.stream);
-            if host_rank.pool_owned {
-                let _ = self.device.release_memory_pool(host_rank.pool);
-            }
-            if host_rank.context_owned {
-                let _ = self.device.release_context(host_rank.context);
-            }
-        }
-    }
-
-    fn drop_host_rank_user(&mut self) {
-        self.host_rank_users = self.host_rank_users.saturating_sub(1);
-        if self.host_rank_users == 0 {
-            self.release_host_ranks();
-        }
+        self.host_rank_users = self
+            .host_rank_users
+            .checked_sub(1)
+            .ok_or(BundleStatusV1::InvalidState)?;
+        Ok(())
     }
 
     /// Applies one prepared append's declared page work to every rank buffer.
@@ -3668,7 +3672,7 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
         }
         let record = self.kv.get(kv_key)?;
         let plan = record.plan;
-        let rank_buffers = record.rank_buffers.clone();
+        let rank_buffers = record.allocation.buffers.clone();
         let page_bytes = plan.bytes_per_page();
         let bytes_per_token = plan.bytes_per_token() as u64;
         let segments = plan.segments_per_page();
@@ -3677,7 +3681,8 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
                 .host_ranks
                 .get(rank)
                 .ok_or(BundleStatusV1::InvalidState)?
-                .stream;
+                .stream
+                .ok_or(BundleStatusV1::InvalidState)?;
             let object = self.buffers.get(*buffer_key)?.object;
             for page in &pages.zero {
                 let offset = plan
@@ -3726,29 +3731,25 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
         Ok(())
     }
 
-    /// Allocates one host-owned buffer per rank of the same byte length.
+    /// Appends each buffer to its reserved parent before allocating another.
     fn allocate_rank_buffers(
         &mut self,
+        owner: RankOwnerV1,
         bytes_per_rank: u64,
         alignment: u64,
-    ) -> HostServiceResultV1<Vec<SlotKeyV1>> {
-        let mut buffers = Vec::new();
+    ) -> HostServiceResultV1<()> {
+        self.acquire_host_ranks()?;
+        self.rank_allocation_mut(owner)?.host_rank_user = true;
         for index in 0..self.host_ranks.len() {
-            let (pool, stream) = {
-                let host_rank = &self.host_ranks[index];
-                (host_rank.pool, host_rank.stream)
-            };
-            match self.allocate_host_buffer(pool, None, Some(stream), bytes_per_rank, alignment) {
-                Ok(buffer) => buffers.push(buffer),
-                Err(status) => {
-                    for buffer in buffers.into_iter().rev() {
-                        let _ = self.release_host_buffer(buffer);
-                    }
-                    return Err(status);
-                }
-            }
+            let host_rank = &self.host_ranks[index];
+            let pool = host_rank.pool.ok_or(BundleStatusV1::InvalidState)?;
+            let stream = host_rank.stream.ok_or(BundleStatusV1::InvalidState)?;
+            let buffer =
+                self.allocate_host_buffer(pool, None, Some(stream), bytes_per_rank, alignment)?;
+            self.rank_allocation_mut(owner)?.buffers.push(buffer);
         }
-        Ok(buffers)
+        self.rank_allocation_mut(owner)?.complete = true;
+        Ok(())
     }
 }
 
@@ -3844,44 +3845,46 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         })?;
         let contexts = ranks.iter().map(|rank| rank.2).collect::<Vec<_>>();
         let kv_bytes = plan.bytes_per_rank_pool();
+        state
+            .serving_kv_construction
+            .try_reserve_exact(ranks.len())
+            .map_err(|_| BundleStatusV1::ResourceExhausted)?;
         let mut allocated = Vec::new();
-        for (context_key, pool_key, context, pool) in ranks {
-            let result = (|| {
+        allocated
+            .try_reserve_exact(ranks.len())
+            .map_err(|_| BundleStatusV1::ResourceExhausted)?;
+        let result = (|| {
+            for (context_key, pool_key, context, pool) in ranks {
+                state
+                    .serving_kv_construction
+                    .push(ConstructionRankV1::default());
+                let index = state.serving_kv_construction.len() - 1;
                 let stream = state.device.create_stream(context, HOST_STREAM_KIND_V1)?;
-                let origin = BufferOriginV1 {
-                    context: context_key,
-                    pool: pool_key,
-                    lent: false,
-                };
-                match state.allocate_host_buffer(
+                state.serving_kv_construction[index].stream = Some(stream);
+                let buffer = state.allocate_host_buffer(
                     pool,
-                    Some(origin),
+                    Some(BufferOriginV1 {
+                        context: context_key,
+                        pool: pool_key,
+                        lent: false,
+                    }),
                     Some(stream),
                     plan.bytes_per_rank_pool(),
                     layout.alignment_bytes(),
-                ) {
-                    Ok(buffer) => Ok((buffer, stream)),
-                    Err(error) => {
-                        let _ = state.device.release_stream(stream);
-                        Err(error)
-                    }
-                }
-            })();
-            match result {
-                Ok(item) => allocated.push(item),
-                Err(error) => {
-                    for (buffer, stream) in allocated.into_iter().rev() {
-                        let _ = state.release_host_buffer(buffer);
-                        let _ = state.device.release_stream(stream);
-                    }
-                    return Err(error);
-                }
+                )?;
+                state.serving_kv_construction[index].buffer = Some(buffer);
+                allocated.push((buffer, stream));
             }
+            Ok(())
+        })();
+        if let Err(status) = result {
+            return Err(state.fail_acquisition(CompoundCleanupV1::ServingKv, status));
         }
         state.serving_kv = Some(ServingKvRecordV1 {
             plan,
             rank_buffers: allocated,
         });
+        state.serving_kv_construction.clear();
         // Each pool allocation synchronized its stream, so free memory now
         // has the pool in it.
         let mut device_memory = Vec::with_capacity(rooms.len());
@@ -4010,7 +4013,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         if state
             .host_ranks
             .iter()
-            .any(|host_rank| !host_rank.context_owned && host_rank.context == object)
+            .any(|host_rank| !host_rank.context_owned && host_rank.context == Some(object))
         {
             return Err(BundleStatusV1::InvalidState);
         }
@@ -4112,7 +4115,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         if state
             .host_ranks
             .iter()
-            .any(|host_rank| !host_rank.pool_owned && host_rank.pool == object)
+            .any(|host_rank| !host_rank.pool_owned && host_rank.pool == Some(object))
         {
             return Err(BundleStatusV1::InvalidState);
         }
@@ -4231,6 +4234,11 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         rank: u32,
     ) -> HostServiceResultV1<BundleRankArenaHandleV1> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
+        state
+            .unpublished_arenas
+            .try_reserve_exact(1)
+            .map_err(|_| BundleStatusV1::ResourceExhausted)?;
         let upload = RankArenaUploadV1 {
             context,
             pool,
@@ -4248,7 +4256,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                 for (image, _) in &timing.images {
                     image.release_buffers();
                 }
-                return Err(status);
+                return Err(state.fail_acquisition(CompoundCleanupV1::Arenas, status));
             }
         };
         timing.prepared();
@@ -4279,11 +4287,14 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
                 "lent_bytes":if prepared.lent {prepared.byte_length()} else {0},
             })
         );
-        drop(state);
         if let Err(status) = result {
-            let _ = self.release_rank_arena(prepared.arena);
-            return Err(status);
+            return Err(state.fail_acquisition(CompoundCleanupV1::Arenas, status));
         }
+        for index in 0..state.unpublished_arenas.len() {
+            let key = state.unpublished_arenas[index];
+            state.arenas.get_mut(key)?.complete = true;
+        }
+        state.unpublished_arenas.clear();
         Ok(prepared.arena)
     }
 
@@ -4292,6 +4303,11 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         uploads: &[RankArenaUploadV1],
     ) -> HostServiceResultV1<Vec<BundleRankArenaHandleV1>> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
+        state
+            .unpublished_arenas
+            .try_reserve_exact(uploads.len())
+            .map_err(|_| BundleStatusV1::ResourceExhausted)?;
         let lent = borrow_rank_images_v1(&mut state, uploads)?;
         let mut timing = DirectLoadTimingV1::new(&state, uploads);
         let mut prepared = Vec::with_capacity(uploads.len());
@@ -4425,13 +4441,14 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             })
         );
         let arenas: Vec<_> = prepared.iter().map(|rank| rank.arena).collect();
-        drop(state);
         if let Err(status) = result {
-            for arena in arenas.into_iter().rev() {
-                let _ = self.release_rank_arena(arena);
-            }
-            return Err(status);
+            return Err(state.fail_acquisition(CompoundCleanupV1::Arenas, status));
         }
+        for index in 0..state.unpublished_arenas.len() {
+            let key = state.unpublished_arenas[index];
+            state.arenas.get_mut(key)?.complete = true;
+        }
+        state.unpublished_arenas.clear();
         Ok(arenas)
     }
 
@@ -4442,16 +4459,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             return Err(BundleStatusV1::InvalidState);
         }
         let key = key_of_v1!(arena);
-        let record = state.arenas.get(key)?;
-        let (order, buffer, host_buffer) = (record.order, record.buffer, record.host_buffer);
-        state.order.preflight(order)?;
-        if let Some(host_buffer) = host_buffer {
-            state.release_host_buffer(host_buffer)?;
-            state.arenas.get_mut(key)?.host_buffer = None;
-        }
-        state.release_host_buffer(buffer)?;
-        state.order.release(order)?;
-        state.arenas.remove(key).map(|_| ())
+        state.release_arena(key)
     }
 
     fn resolve_compiled_image_view(
@@ -4468,9 +4476,12 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         if record.image != image_key || record.rank != rank {
             return Err(BundleStatusV1::InvalidArgument);
         }
-        let buffer = state.buffers.get(record.buffer)?;
-        let handle =
-            BundleDeviceBufferHandleV1::from_parts(record.buffer.generation, record.buffer.slot);
+        if !record.complete {
+            return Err(BundleStatusV1::InvalidState);
+        }
+        let buffer_key = record.buffer.ok_or(BundleStatusV1::InvalidState)?;
+        let buffer = state.buffers.get(buffer_key)?;
+        let handle = BundleDeviceBufferHandleV1::from_parts(buffer_key.generation, buffer_key.slot);
         if view_id == COMPILED_IMAGE_ARENA_VIEW_V1 {
             return Ok(CompiledImageSpanV1::new(
                 rank,
@@ -4504,7 +4515,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             )
         } else {
             (
-                record.buffer,
+                buffer_key,
                 record.layout.device_offset(span.offset, span.byte_length)?,
             )
         };
@@ -5690,42 +5701,28 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             .map_err(|_| BundleStatusV1::InvalidArgument)?;
         let pool = KvPool::new(geometry, request_capacity)
             .map_err(|_| BundleStatusV1::ResourceExhausted)?;
-        state.acquire_host_ranks()?;
-        let rank_buffers = match state
-            .allocate_rank_buffers(plan.bytes_per_rank_pool(), layout.alignment_bytes())
+        let allocation = RankAllocationV1::new(layout.rank_count() as usize)?;
+        let key = {
+            let HostStateV1 { order, kv, .. } = &mut *state;
+            insert_ordered_v1(order, kv, |order| {
+                Ok(PhysicalKvRecordV1 {
+                    plan,
+                    pool,
+                    allocation,
+                    order,
+                })
+            })?
+        };
+        let owner = RankOwnerV1::Kv(key);
+        if let Err(status) =
+            state.allocate_rank_buffers(owner, plan.bytes_per_rank_pool(), layout.alignment_bytes())
         {
-            Ok(buffers) => buffers,
-            Err(status) => {
-                state.drop_host_rank_user();
-                return Err(status);
-            }
-        };
-        let order = match state.order.acquire() {
-            Ok(order) => order,
-            Err(status) => {
-                release_rank_buffers_v1(&mut state, rank_buffers);
-                state.drop_host_rank_user();
-                return Err(status);
-            }
-        };
-        let owned = rank_buffers.clone();
-        match state.kv.insert(PhysicalKvRecordV1 {
-            plan,
-            pool,
-            rank_buffers,
-            order,
-        }) {
-            Ok(key) => Ok(BundlePhysicalKvHandleV1::from_parts(
-                key.generation,
-                key.slot,
-            )),
-            Err(status) => {
-                let _ = state.order.release(order);
-                release_rank_buffers_v1(&mut state, owned);
-                state.drop_host_rank_user();
-                Err(status)
-            }
+            return Err(state.fail_acquisition(CompoundCleanupV1::Ranks(owner), status));
         }
+        Ok(BundlePhysicalKvHandleV1::from_parts(
+            key.generation,
+            key.slot,
+        ))
     }
 
     fn create_kv_request(
@@ -5737,27 +5734,31 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         state.retry_acquisition_cleanup()?;
         let kv_key = key_of_v1!(kv);
         let quota = usize::try_from(quota_tokens).map_err(|_| BundleStatusV1::InvalidArgument)?;
-        let sequence = state
-            .kv
-            .get_mut(kv_key)?
-            .pool
-            .create_sequence(quota)
-            .map_err(|_| BundleStatusV1::ResourceExhausted)?;
-        let order = state.order.acquire()?;
-        match state.kv_requests.insert(KvRequestRecordV1 {
-            kv: kv_key,
-            sequence,
-            order,
-        }) {
-            Ok(key) => Ok(BundleKvRequestHandleV1::from_parts(
-                key.generation,
-                key.slot,
-            )),
-            Err(status) => {
-                let _ = state.order.release(order);
-                Err(status)
-            }
+        if !state.kv.get(kv_key)?.allocation.complete {
+            return Err(BundleStatusV1::InvalidState);
         }
+        let HostStateV1 {
+            order,
+            kv,
+            kv_requests,
+            ..
+        } = &mut *state;
+        let key = insert_ordered_v1(order, kv_requests, |order| {
+            let sequence = kv
+                .get_mut(kv_key)?
+                .pool
+                .create_sequence(quota)
+                .map_err(|_| BundleStatusV1::ResourceExhausted)?;
+            Ok(KvRequestRecordV1 {
+                kv: kv_key,
+                sequence,
+                order,
+            })
+        })?;
+        Ok(BundleKvRequestHandleV1::from_parts(
+            key.generation,
+            key.slot,
+        ))
     }
 
     fn prepare_kv(
@@ -5771,43 +5772,29 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         let record = state.kv_requests.get(request_key)?;
         let (kv_key, sequence) = (record.kv, record.sequence);
         let tokens = decode_append_operation_v1(operation)?;
-        let prepared = state
-            .kv
-            .get_mut(kv_key)?
-            .pool
-            .prepare_append_batch(&[(sequence, tokens)])
-            .map_err(|_| BundleStatusV1::ResourceExhausted)?;
-        let prepared_id = prepared.id();
-        let pages = kv_page_work_v1(&prepared);
-        let order = match state.order.acquire() {
-            Ok(order) => order,
-            Err(status) => {
-                let _ = state
-                    .kv
-                    .get_mut(kv_key)
-                    .map(|record| record.pool.rollback_prepared(prepared_id));
-                return Err(status);
-            }
-        };
-        match state.kv_transactions.insert(KvTransactionRecordV1 {
-            kv: kv_key,
-            prepared: prepared_id,
-            pages,
+        let HostStateV1 {
             order,
-        }) {
-            Ok(key) => Ok(BundleKvTransactionHandleV1::from_parts(
-                key.generation,
-                key.slot,
-            )),
-            Err(status) => {
-                let _ = state.order.release(order);
-                let _ = state
-                    .kv
-                    .get_mut(kv_key)
-                    .map(|record| record.pool.rollback_prepared(prepared_id));
-                Err(status)
-            }
-        }
+            kv,
+            kv_transactions,
+            ..
+        } = &mut *state;
+        let key = insert_ordered_v1(order, kv_transactions, |order| {
+            let prepared = kv
+                .get_mut(kv_key)?
+                .pool
+                .prepare_append_batch(&[(sequence, tokens)])
+                .map_err(|_| BundleStatusV1::ResourceExhausted)?;
+            Ok(KvTransactionRecordV1 {
+                kv: kv_key,
+                prepared: prepared.id(),
+                pages: kv_page_work_v1(&prepared),
+                order,
+            })
+        })?;
+        Ok(BundleKvTransactionHandleV1::from_parts(
+            key.generation,
+            key.slot,
+        ))
     }
 
     fn commit_kv(&self, transaction: BundleKvTransactionHandleV1) -> HostServiceResultV1<()> {
@@ -5874,8 +5861,12 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         let request_key = slot_key_v1(request.generation(), request.slot())?;
         let record = state.kv_requests.get(request_key)?;
         let kv = state.kv.get(record.kv)?;
+        if !kv.allocation.complete {
+            return Err(BundleStatusV1::InvalidState);
+        }
         let buffer_key = *kv
-            .rank_buffers
+            .allocation
+            .buffers
             .get(rank as usize)
             .ok_or(BundleStatusV1::InvalidState)?;
         let buffer = state.buffers.get(buffer_key)?;
@@ -5924,18 +5915,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             return Err(BundleStatusV1::InvalidState);
         }
         let key = key_of_v1!(kv);
-        let order = state.kv.get(key)?.order;
-        state.order.preflight(order)?;
-        let mut owned = std::mem::take(&mut state.kv.get_mut(key)?.rank_buffers);
-        if let Err(status) = release_owned_rank_buffers_v1(&mut state, &mut owned) {
-            // The record keeps exactly the buffers the driver still owns.
-            state.kv.get_mut(key)?.rank_buffers = owned;
-            return Err(status);
-        }
-        state.order.release(order)?;
-        state.kv.remove(key)?;
-        state.drop_host_rank_user();
-        Ok(())
+        state.release_rank_allocation(RankOwnerV1::Kv(key))
     }
 
     fn allocate_state(&self, request: &StateRequestV1) -> HostServiceResultV1<BundleStateHandleV1> {
@@ -5955,32 +5935,19 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         {
             return Err(BundleStatusV1::InvalidArgument);
         }
-        state.acquire_host_ranks()?;
-        let buffers = match state.allocate_rank_buffers(contract.bytes, contract.alignment) {
-            Ok(buffers) => buffers,
-            Err(status) => {
-                state.drop_host_rank_user();
-                return Err(status);
-            }
+        let allocation = RankAllocationV1::new(state.config.topology.rank_count() as usize)?;
+        let key = {
+            let HostStateV1 { order, states, .. } = &mut *state;
+            insert_ordered_v1(order, states, |order| {
+                Ok(StateRecordV1 { allocation, order })
+            })?
         };
-        let order = match state.order.acquire() {
-            Ok(order) => order,
-            Err(status) => {
-                release_rank_buffers_v1(&mut state, buffers);
-                state.drop_host_rank_user();
-                return Err(status);
-            }
-        };
-        let owned = buffers.clone();
-        match state.states.insert(StateRecordV1 { buffers, order }) {
-            Ok(key) => Ok(BundleStateHandleV1::from_parts(key.generation, key.slot)),
-            Err(status) => {
-                let _ = state.order.release(order);
-                release_rank_buffers_v1(&mut state, owned);
-                state.drop_host_rank_user();
-                Err(status)
-            }
+        let owner = RankOwnerV1::State(key);
+        if let Err(status) = state.allocate_rank_buffers(owner, contract.bytes, contract.alignment)
+        {
+            return Err(state.fail_acquisition(CompoundCleanupV1::Ranks(owner), status));
         }
+        Ok(BundleStateHandleV1::from_parts(key.generation, key.slot))
     }
 
     fn resolve_state_view(
@@ -5991,7 +5958,11 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         let state = self.state.borrow();
         let key = slot_key_v1(state_handle.generation(), state_handle.slot())?;
         let record = state.states.get(key)?;
+        if !record.allocation.complete {
+            return Err(BundleStatusV1::InvalidState);
+        }
         let buffer_key = *record
+            .allocation
             .buffers
             .get(rank as usize)
             .ok_or(BundleStatusV1::InvalidState)?;
@@ -6010,18 +5981,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             return Err(BundleStatusV1::InvalidState);
         }
         let key = key_of_v1!(state_handle);
-        let order = state.states.get(key)?.order;
-        state.order.preflight(order)?;
-        let mut owned = std::mem::take(&mut state.states.get_mut(key)?.buffers);
-        if let Err(status) = release_owned_rank_buffers_v1(&mut state, &mut owned) {
-            // The record keeps exactly the buffers the driver still owns.
-            state.states.get_mut(key)?.buffers = owned;
-            return Err(status);
-        }
-        state.order.release(order)?;
-        state.states.remove(key)?;
-        state.drop_host_rank_user();
-        Ok(())
+        state.release_rank_allocation(RankOwnerV1::State(key))
     }
 
     fn create_collective(
@@ -6376,31 +6336,6 @@ fn upload_chunked_component_range_v1<D: HostDeviceBackendV1>(
             &chunk[..count],
         )?;
         copied += count_u64;
-    }
-    Ok(())
-}
-
-fn release_rank_buffers_v1<D: HostDeviceBackendV1>(
-    state: &mut HostStateV1<D>,
-    buffers: Vec<SlotKeyV1>,
-) {
-    for buffer in buffers.into_iter().rev() {
-        let _ = state.release_host_buffer(buffer);
-    }
-}
-
-/// Releases owned rank buffers newest first, keeping the ones still live.
-///
-/// A driver that refuses one release leaves that buffer and every older one in
-/// `buffers`, so the owning record keeps exactly what the driver still holds and
-/// the same release can be retried.
-fn release_owned_rank_buffers_v1<D: HostDeviceBackendV1>(
-    state: &mut HostStateV1<D>,
-    buffers: &mut Vec<SlotKeyV1>,
-) -> HostServiceResultV1<()> {
-    while let Some(buffer) = buffers.last().copied() {
-        state.release_host_buffer(buffer)?;
-        buffers.pop();
     }
     Ok(())
 }
@@ -7233,14 +7168,14 @@ mod tests {
                 .get(slot_key_v1(selected.generation(), selected.slot()).expect("handle"))
                 .expect("live selected context")
                 .object;
-            assert_eq!(state.host_ranks[0].context, selected_object);
+            assert_eq!(state.host_ranks[0].context, Some(selected_object));
             assert!(!state.host_ranks[0].context_owned);
             let selected_pool_object = state
                 .pools
                 .get(slot_key_v1(selected_pool.generation(), selected_pool.slot()).expect("handle"))
                 .expect("live selected pool")
                 .object;
-            assert_eq!(state.host_ranks[0].pool, selected_pool_object);
+            assert_eq!(state.host_ranks[0].pool, Some(selected_pool_object));
             assert!(!state.host_ranks[0].pool_owned);
         }
         assert_eq!(
@@ -7251,7 +7186,7 @@ mod tests {
             backend.release_context(selected),
             Err(runtime_bundle_abi::BundleStatusV1::InvalidState)
         );
-        backend.state.borrow_mut().drop_host_rank_user();
+        backend.state.borrow_mut().drop_host_rank_user().unwrap();
         backend
             .release_memory_pool(selected_pool)
             .expect("release pool after state");
@@ -7413,11 +7348,12 @@ mod tests {
             .kv
             .get(kv_key)
             .expect("the record is live")
-            .rank_buffers
+            .allocation
+            .buffers
             .clone();
         // Every page starts distinguishable, so a zero and a copy both show.
         for (rank, buffer_key) in rank_buffers.iter().enumerate() {
-            let stream = state.host_ranks[rank].stream;
+            let stream = state.host_ranks[rank].stream.unwrap();
             let object = state
                 .buffers
                 .get(*buffer_key)

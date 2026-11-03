@@ -88,7 +88,9 @@ impl Direct {
         match self {
             Self::Context => key!(s.select_context(2, 2)),
             Self::Pool => key!(s.select_memory_pool(fixture.other)),
-            Self::Buffer => key!(s.allocate_device_buffer(fixture.pool, fixture.stream, 64, 64)),
+            Self::Buffer => {
+                key!(s.allocate_device_buffer(fixture.pool, fixture.stream, 64, 64))
+            }
             Self::Stream => key!(s.create_stream(fixture.context, 0)),
             Self::StageStream => {
                 key!(s.select_stage_stream(fixture.context, 0, b"fixture-stage", 0))
@@ -645,3 +647,5 @@ fn rejected_host_buffers_retain_ownership_until_cleanup_succeeds() {
         }
     }
 }
+
+mod compound;

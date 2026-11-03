@@ -86,6 +86,10 @@ A change lands when these pass. The CPU checks run on its final tip:
 - `cargo check --locked --offline --workspace --tests --keep-going`;
 - `python3 -B tests/leak_guard.py`, `bash tests/bundle-boundary.sh` and
   `bash tests/model-neutral-host.sh`;
+- the pre-push leak check over the change's commits, every file version
+  and message: `bash ci/quick.sh --base REF` runs
+  `python3 -B tests/leak_guard.py --rev HEAD --messages HEAD --base REF`
+  before its other checks;
 - when the change touches a model's bundle, kernels or routes, that
   model's quick and CPU [route sweep tiers](kernel-library.md#route-classes-and-served-envelopes)
   and journal pins;
@@ -99,6 +103,10 @@ Rebase the range for landing, show with `git range-diff` that its patches
 are unchanged, and run the CPU checks above on the rebased tip. If the
 rebase resolves a conflict in serving code, say so; the integrator decides
 whether the GPU evidence must be rerun.
+
+Commit messages, merge messages included, must not name internal session
+branches, worktrees or review labels. Write each merge message yourself
+(`git merge -m`); git's default subject names the branches.
 
 The full CPU gate (`bash ci/cpu.sh`) is optional per batch; the integrator
 decides whether a batch needs it. It is required before a [release](#release).

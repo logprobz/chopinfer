@@ -28,10 +28,14 @@ Read [BUNDLE_ARCHITECTURE.md](BUNDLE_ARCHITECTURE.md),
   usernames, local absolute paths, container names, GPU UUIDs or PCI bus IDs.
   Refer to local locations through variables such as `$CHOPINFER_DATA` or
   `$CHOPINFER_MIMO_CHECKPOINT` (see `local.env.example`).
+- The same holds for commit messages, merge messages included. They also
+  never name internal session branches, worktrees or review labels; write
+  each merge message instead of keeping git's default subject.
 - Docs state results (numbers, configuration, date) in prose. Do not link
   receipts or local logs.
 - `tests/leak_guard.py` (part of `ci/cpu.sh`) enforces the mechanical part of
-  these rules.
+  these rules; `bash ci/quick.sh --base REF` also runs it over the change's
+  commits and their messages.
 
 ## Engineering rules
 

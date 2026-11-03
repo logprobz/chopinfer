@@ -200,6 +200,8 @@ def verify_kernel_outputs(root, outputs, locks, target):
 
 def controlled_environment(root, config, revision, target, stub):
     env = dict(os.environ)
+    jobs = int(env.get('CARGO_BUILD_JOBS', '8'))
+    require(jobs > 0, 'release CARGO_BUILD_JOBS must be positive')
     for name in list(env):
         if name.startswith(('CARGO_PROFILE_', 'CARGO_TARGET_')) or name in ('RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS'):
             env.pop(name)
@@ -207,6 +209,7 @@ def controlled_environment(root, config, revision, target, stub):
     rustc, _ = rust_tools(root, env)
     env['PATH'] = str(rustc.parent) + ':' + env.get('PATH', '')
     env.update(CARGO_TARGET_DIR=str(target), CARGO_BUILD_TARGET=config['target'], CARGO_NET_OFFLINE='true',
+               CARGO_BUILD_JOBS=str(min(jobs, 8)),
                CARGO_INCREMENTAL='0', CHOPINFER_BUILD_REVISION=revision,
                CARGO_ENCODED_RUSTFLAGS='-L\x1fnative=' + str(stub), RUSTC_WRAPPER='', RUSTC_WORKSPACE_WRAPPER='',
                RUNTIME_KERNELS_CUBIN_DIR=str(target / 'host-cubins'), RUSTC=str(rustc))
@@ -267,7 +270,8 @@ def produce(root, scratch):
             continue
         log = private / f'cargo-{index}.jsonl'
         with log.open('w') as stream:
-            subprocess.run(['cargo', 'build', '--release', '--locked', '--offline', '--target', TARGET,
+            subprocess.run(['nice', '-n', '19', 'cargo', 'build', '--release', '--locked', '--offline', '--target', TARGET,
+                            '--jobs', env['CARGO_BUILD_JOBS'],
                             '--message-format=json-render-diagnostics', *forced, *arguments],
                            cwd=root, env=env, stdout=stream, check=True)
         for message in cargo_messages(log.read_text()):

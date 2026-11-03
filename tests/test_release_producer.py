@@ -42,6 +42,16 @@ def fixture():
 
 
 class SourceContext(unittest.TestCase):
+    def test_controlled_build_caps_jobs_and_honors_a_smaller_budget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(provenance, 'rust_tools', return_value=(root / 'rustc', root / 'cargo')):
+                for requested, expected in [('64', '8'), ('2', '2')]:
+                    with self.subTest(requested=requested), patch.dict(os.environ, {'CARGO_BUILD_JOBS': requested}):
+                        env = provenance.controlled_environment(root, {'target': provenance.TARGET}, 'a' * 40,
+                                                               root / 'target', root / 'stub')
+                        self.assertEqual(env['CARGO_BUILD_JOBS'], expected)
+
     def test_record_binding_covers_artifact_bytes_and_roles(self):
         record = {'source': {}, 'configuration': {}, 'locks': {}, 'kernels': [],
                   'artifacts': [{'path': 'host', 'role': 'bin', 'size': 1, 'sha256': 'a' * 64}]}

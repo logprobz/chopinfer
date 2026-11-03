@@ -7,7 +7,7 @@ use std::cmp::Ordering;
 
 use serde_json::{Map, Value, json};
 
-use crate::capture::{self, flag, option, receipt, thinking_kwargs};
+use crate::capture::{self, flag, option, receipt, thinking_control};
 use crate::declaration::Check;
 use crate::http::{Event, HttpError};
 use crate::json::{python_cmp, python_eq, python_float_repr, python_round, truthy};
@@ -501,30 +501,29 @@ struct Case {
     validator: Validator,
 }
 
-/// The 12 cases in order (`structured.cases`). `thinking` is the
-/// frontend's switch, off then on.
-/// `thinking` holds the answer-only and the thinking switches
-/// (`common.answer_kwargs`, `thinking_kwargs(True)`); where `reasons` (the
+/// The 12 cases in order (`structured.cases`). `controls` holds the
+/// request members of the answer-only and the thinking switches
+/// (`common.answer_control`, `thinking_control(True)`); where `reasons` (the
 /// frontend refuses disabled thinking) an answer-only case follows its
 /// reasoning within `reasoning_max_tokens` (`structured.cases`).
 fn cases(
     constants: &Constants,
-    thinking: &[Value; 2],
+    controls: &[Map<String, Value>; 2],
     reasoning_max_tokens: i64,
     reasons: bool,
 ) -> Vec<Case> {
-    let chat = |prompt: &str, switch: &Value, extra: Value| {
-        let mut body = json!({"messages": [{"role": "user", "content": prompt}],
-                              "chat_template_kwargs": switch});
+    let chat = |prompt: &str, control: &Map<String, Value>, extra: Value| {
+        let mut body = json!({"messages": [{"role": "user", "content": prompt}]});
         if let (Some(body), Value::Object(extra)) = (body.as_object_mut(), extra) {
+            body.extend(control.clone());
             body.extend(extra);
-            if reasons && switch == &thinking[0] && !body.contains_key("max_tokens") {
+            if reasons && control == &controls[0] && !body.contains_key("max_tokens") {
                 body.insert("max_tokens".into(), json!(reasoning_max_tokens));
             }
         }
         body
     };
-    let off = &thinking[0];
+    let off = &controls[0];
     let person = &constants.person;
     let prompt = constants.person_prompt.as_str();
     let schema_format = |strict: bool| {
@@ -643,7 +642,7 @@ fn cases(
             chat_path,
             chat(
                 prompt,
-                &thinking[1],
+                &controls[1],
                 json!({"response_format": schema_format(true), "max_tokens": reasoning_max_tokens}),
             ),
             json_check(),
@@ -711,13 +710,23 @@ fn capture_structured(capture: &mut Capture<'_>) -> Result<Value, KindError> {
     let settings = Settings::of(capture.check)?;
     let constants = Constants::of(capture.check)?;
     let reasons = !capture::thinking_can_be_disabled(capture)?;
-    let thinking = [
-        capture::answer_kwargs(capture)?,
-        thinking_kwargs(capture, true)?,
-    ];
+    let control = |enabled| {
+        thinking_control(capture, enabled).map(|(key, value)| Map::from_iter([(key.into(), value)]))
+    };
+    let thinking = control(true)?;
+    // `common.answer_control`: thinking disabled where the frontend admits
+    // it, otherwise no switch, but the empty template options object a
+    // template-keyword request has always sent.
+    let answer = if !reasons {
+        control(false)?
+    } else if thinking.contains_key("chat_template_kwargs") {
+        Map::from_iter([("chat_template_kwargs".into(), json!({}))])
+    } else {
+        Map::new()
+    };
     let catalog = cases(
         &constants,
-        &thinking,
+        &[answer, thinking],
         settings.reasoning_max_tokens,
         reasons,
     );

@@ -70,7 +70,7 @@ count lookups; the vLLM ones count tokens.
 | `chop_intake_budget_bytes` | Configured listener budget for request bodies |
 | `chop_intake_used_bytes` | Currently charged bytes, including the 16 KiB minimum per request |
 | `chop_instance_poisoned{model_name,engine}` | Sticky 1 after model commit/rollback, retirement or prefix-state failure makes reuse unsafe |
-| `chop_generation_worker_{starting,ready,failed,stopped}` | One-hot worker lifecycle state |
+| `chop_generation_worker_{starting,ready,failed,stopped,kv_stalled}` | One-hot worker lifecycle state; `kv_stalled` is temporarily unready while overdue transfers retain their leases, and recovers when they complete. Engine summaries use the same state name |
 | `chop_speculation_k_total{model_name,engine,k}` | Scheduled decode/verify items by selected K, including K=0; counts attempted work even if execution fails |
 | `chop_step_gpu_seconds{model_name,engine}` | Histogram of executor-reported kernel time per measured execution, absent when no executor measurement exists |
 | `chop_batches_total`, `chop_{prefill_only,decode_only,mixed}_batches_total` | Actual batch composition |

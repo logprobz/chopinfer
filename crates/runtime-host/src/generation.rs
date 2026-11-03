@@ -58,6 +58,55 @@ const READY: u8 = 1;
 const FAILED: u8 = 2;
 const STOPPED: u8 = 3;
 const KV_STALLED: u8 = 4;
+/// One interpretation of the atomic lifecycle state for every observer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WorkerState {
+    Starting,
+    Ready,
+    Failed,
+    Stopped,
+    KvStalled,
+}
+
+impl WorkerState {
+    fn load(state: &AtomicU8) -> Self {
+        match state.load(Ordering::Acquire) {
+            STARTING => Self::Starting,
+            READY => Self::Ready,
+            FAILED => Self::Failed,
+            STOPPED => Self::Stopped,
+            KV_STALLED => Self::KvStalled,
+            _ => Self::Failed,
+        }
+    }
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::Ready => "ready",
+            Self::Failed => "failed",
+            Self::Stopped => "stopped",
+            Self::KvStalled => "kv_stalled",
+        }
+    }
+
+    fn readiness(self) -> BackendReadiness {
+        match self {
+            Self::Ready => BackendReadiness::Ready,
+            Self::Starting => {
+                BackendReadiness::NotReady("generation worker is starting".to_owned())
+            }
+            Self::Failed => BackendReadiness::Terminated("generation worker failed".to_owned()),
+            Self::Stopped => {
+                BackendReadiness::Terminated("generation worker is stopped".to_owned())
+            }
+            Self::KvStalled => BackendReadiness::NotReady(
+                "KV transfer is overdue; polling retained leases".to_owned(),
+            ),
+        }
+    }
+}
+
 const FAILURE_MESSAGE: &str = "generation worker failed";
 const FAILURE_CODE: &str = "generation_worker_failed";
 const DECODE_MESSAGE: &str = "model output could not be decoded";
@@ -1246,15 +1295,7 @@ impl GenerationBackend for EngineGenerationBackend {
     }
 
     fn readiness(&self) -> BackendReadiness {
-        match self.state.load(Ordering::Acquire) {
-            READY => BackendReadiness::Ready,
-            STARTING => BackendReadiness::NotReady("generation worker is starting".to_owned()),
-            FAILED => BackendReadiness::Terminated("generation worker failed".to_owned()),
-            KV_STALLED => BackendReadiness::NotReady(
-                "KV transfer is overdue; polling retained leases".to_owned(),
-            ),
-            _ => BackendReadiness::Terminated("generation worker is stopped".to_owned()),
-        }
+        WorkerState::load(&self.state).readiness()
     }
 
     fn maximum_sequence_tokens(&self) -> usize {
@@ -1810,7 +1851,7 @@ impl NativeRuntimeMetricsV1 {
     /// Renders one complete snapshot, at the monotonic time it was asked for.
     #[must_use]
     pub fn prometheus(&self, monotonic_micros: u64) -> String {
-        let state = self.state.load(Ordering::Acquire);
+        let state = WorkerState::load(&self.state);
         let mut output = format!(
             "# TYPE chop_process_uptime_seconds gauge\nchop_process_uptime_seconds {}.{:06}\n",
             monotonic_micros / 1_000_000,
@@ -1820,14 +1861,16 @@ impl NativeRuntimeMetricsV1 {
         // requests exactly as a healthy idle one does. Which of those it is
         // only these say, so they are published beside the counters rather
         // than left for a reader to assume.
-        for (name, value) in [
-            ("chop_generation_worker_starting", STARTING),
-            ("chop_generation_worker_ready", READY),
-            ("chop_generation_worker_failed", FAILED),
-            ("chop_generation_worker_stopped", STOPPED),
+        for value in [
+            WorkerState::Starting,
+            WorkerState::Ready,
+            WorkerState::Failed,
+            WorkerState::Stopped,
+            WorkerState::KvStalled,
         ] {
+            let name = value.name();
             output.push_str(&format!(
-                "# TYPE {name} gauge\n{name} {}\n",
+                "# TYPE chop_generation_worker_{name} gauge\nchop_generation_worker_{name} {}\n",
                 u8::from(state == value)
             ));
         }
@@ -1909,12 +1952,7 @@ impl MetricsSnapshotProvider for NativeRuntimeMetricsV1 {
             kv_tokens_capacity: kv.capacity_tokens,
             kv_blocks_used: kv.blocks_used,
             kv_block_capacity: kv.block_capacity,
-            worker_state: match self.state.load(Ordering::Acquire) {
-                STARTING => "starting",
-                READY => "ready",
-                FAILED => "failed",
-                _ => "stopped",
-            },
+            worker_state: WorkerState::load(&self.state).name(),
         })
     }
 }

@@ -1403,6 +1403,32 @@ impl runtime_engine::MonotonicClock for TransferClock {
     }
 }
 
+fn assert_worker_state_report(backend: &EngineGenerationBackend, expected: &str) {
+    let metrics = backend.runtime_metrics(&[]);
+    assert_eq!(metrics.summary().unwrap().worker_state, expected);
+    let exposition = metrics.prometheus(0);
+    for state in ["starting", "ready", "failed", "stopped", "kv_stalled"] {
+        assert!(
+            exposition.lines().any(|line| line
+                == format!(
+                    "chop_generation_worker_{state} {}",
+                    u8::from(state == expected)
+                )),
+            "{state}: {exposition}"
+        );
+    }
+    match expected {
+        "ready" => assert_eq!(backend.readiness(), BackendReadiness::Ready),
+        "starting" | "kv_stalled" => {
+            assert!(matches!(backend.readiness(), BackendReadiness::NotReady(_)))
+        }
+        _ => assert!(matches!(
+            backend.readiness(),
+            BackendReadiness::Terminated(_)
+        )),
+    }
+}
+
 #[test]
 fn overdue_idle_copy_changes_readiness_once_and_recovers_after_completion() {
     let clock = Arc::new(TransferClock::default());
@@ -1435,8 +1461,10 @@ fn overdue_idle_copy_changes_readiness_once_and_recovers_after_completion() {
     wait(&|| metrics.snapshot().offload.oldest_pending_micros == 9_000_000);
     assert_eq!(backend.readiness(), BackendReadiness::Ready);
     assert_eq!(metrics.snapshot().offload.stalls, 0);
+    assert_worker_state_report(&backend, "ready");
     clock.0.store(11_000_000, Ordering::Relaxed);
     wait(&|| matches!(backend.readiness(), BackendReadiness::NotReady(_)));
+    assert_worker_state_report(&backend, "kv_stalled");
     assert_eq!(metrics.snapshot().offload.stalled_transfers, 1);
     assert_eq!(metrics.snapshot().offload.stalls, 1);
     clock.0.store(20_000_000, Ordering::Relaxed);
@@ -1451,9 +1479,17 @@ fn overdue_idle_copy_changes_readiness_once_and_recovers_after_completion() {
     wait(&|| {
         backend.readiness() == BackendReadiness::Ready && metrics.snapshot().offload.used_pages == 0
     });
+    assert_worker_state_report(&backend, "ready");
     assert_eq!(metrics.snapshot().offload.stalled_transfers, 0);
     assert_eq!(metrics.snapshot().offload.oldest_pending_micros, 0);
     backend.shutdown();
+    assert_worker_state_report(&backend, "stopped");
+    // No worker thread remains: exercise otherwise transient and invalid states.
+    for (raw, expected) in [(STARTING, "starting"), (FAILED, "failed"), (255, "failed")] {
+        backend.state.store(raw, Ordering::Release);
+        assert_worker_state_report(&backend, expected);
+    }
+    backend.state.store(STOPPED, Ordering::Release);
     assert!(matches!(
         backend.readiness(),
         BackendReadiness::Terminated(_)
@@ -1480,6 +1516,23 @@ fn a_busy_step_detects_an_overdue_copy_and_cancellation_keeps_its_lease() {
     assert_eq!(engine.metrics().snapshot().offload.used_pages, 0);
     engine.step().unwrap();
     engine.audit().unwrap();
+}
+
+#[test]
+fn late_transfer_completion_cannot_revive_a_failed_worker() {
+    let clock = Arc::new(TransferClock::default());
+    let (mut engine, mode, id) = pending_copy_engine_with_clock(clock.clone());
+    engine.cancel(id).unwrap();
+    clock.0.store(11_000_000, Ordering::Relaxed);
+    engine.poll_idle_kv_transfers().unwrap();
+    let state = AtomicU8::new(FAILED);
+    update_transfer_readiness(&engine, &state);
+    assert_eq!(state.load(Ordering::Acquire), FAILED);
+    mode.store(1, Ordering::Relaxed);
+    assert!(!engine.poll_idle_kv_transfers().unwrap());
+    update_transfer_readiness(&engine, &state);
+    assert_eq!(state.load(Ordering::Acquire), FAILED);
+    assert_eq!(engine.metrics().snapshot().offload.used_pages, 0);
 }
 
 #[test]

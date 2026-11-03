@@ -817,7 +817,10 @@ fn successful_execution_times_preserve_shared_phase_histograms() {
     ] {
         assert!(text.contains(&format!("{line}\n")), "{line}\n{text}");
     }
-    assert_eq!(text.matches("# TYPE chop_step_execution_seconds ").count(), 1);
+    assert_eq!(
+        text.matches("# TYPE chop_step_execution_seconds ").count(),
+        1
+    );
 }
 
 #[test]

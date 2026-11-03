@@ -18,7 +18,7 @@ pub const DEFAULT_TENSOR_PARALLEL_SIZE: u32 = 4;
 /// The installed family helpers are named `chopinfer-model-<model>`.
 const HELPER_PREFIX: &str = "chopinfer-model-";
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct LocalModel {
     pub path: PathBuf,
     pub cache_root: Option<PathBuf>,
@@ -30,6 +30,32 @@ pub struct LocalModel {
     /// The invocation's serve options other than the model selection and
     /// preparation options; they override the family's serving profile.
     pub serve_arguments: Vec<String>,
+}
+
+impl std::fmt::Debug for LocalModel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Read option boundaries with the serving grammar: a key may look
+        // like a flag, and another option's value may spell --api-key.
+        let arguments: Vec<String> = crate::profiles::options(&self.serve_arguments)
+            .into_iter()
+            .flat_map(|(flag, values)| {
+                let values = if flag == "--api-key" {
+                    values.into_iter().map(|_| "[redacted]".into()).collect()
+                } else {
+                    values
+                };
+                std::iter::once(flag).chain(values)
+            })
+            .collect();
+        f.debug_struct("LocalModel")
+            .field("path", &self.path)
+            .field("cache_root", &self.cache_root)
+            .field("tensor_parallel_size", &self.tensor_parallel_size)
+            .field("activation_policy", &self.activation_policy)
+            .field("modalities", &self.modalities)
+            .field("serve_arguments", &arguments)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

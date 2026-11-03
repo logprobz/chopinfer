@@ -12275,6 +12275,44 @@ mod tests {
     }
 
     #[test]
+    fn direct_model_debug_redacts_api_key_values() {
+        for secret in ["synthetic-direct-key", "--synthetic-option-looking-key"] {
+            let command = super::parse_host_command_v1(&arguments(&[
+                "serve",
+                "--model",
+                "checkpoint",
+                "--fake-host-services",
+                "--allowed-local-media-path",
+                "--api-key",
+                "--listen",
+                "127.0.0.1:19090",
+                "--api-key",
+                secret,
+            ]))
+            .unwrap();
+            let super::HostCommandV1::Serve {
+                selection: crate::preparation::ServeSelection::Model(model),
+                http_options,
+                ..
+            } = &command
+            else {
+                panic!("expected direct model")
+            };
+            assert_eq!(
+                http_options.api_key,
+                Some(runtime_server::ApiKey::new(secret))
+            );
+            assert!(model.serve_arguments.iter().any(|word| word == secret));
+            for diagnostic in [format!("{model:?}"), format!("{command:?}")] {
+                assert!(!diagnostic.contains(secret), "{diagnostic}");
+                assert!(diagnostic.contains("[redacted]"));
+                assert!(diagnostic.contains("127.0.0.1:19090"));
+                assert!(diagnostic.contains("\"--allowed-local-media-path\", \"--api-key\""));
+            }
+        }
+    }
+
+    #[test]
     fn api_key_precedence_and_redaction() {
         use runtime_server::ApiKey;
         let cli = Some(ApiKey::new("cli"));

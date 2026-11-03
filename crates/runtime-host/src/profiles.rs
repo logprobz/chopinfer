@@ -460,7 +460,7 @@ pub(crate) struct Resolution {
 /// reads them: valueless flags take none, `--served-model-name` takes every
 /// following word up to the next option, and every other flag one value even
 /// when it looks like an option.
-fn options(arguments: &[String]) -> Vec<(String, Vec<String>)> {
+pub(crate) fn options(arguments: &[String]) -> Vec<(String, Vec<String>)> {
     let mut options = Vec::new();
     let mut words = arguments.iter().peekable();
     while let Some(word) = words.next() {

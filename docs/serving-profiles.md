@@ -27,9 +27,10 @@ through 64. Package capacity alone is not serving qualification.
 DeepSeek ships `tp4-ar` and `tp4-dspark`. Both use exact upper-skip prefill
 with 8192-token grid ends and 64-token aligned shared-prefix anchors. An
 unaligned prompt's last 1-63 tokens run in the same step as its aligned
-anchor, which the bundle captures inside the step, when the remainder fits
-the step's budget; otherwise they take a separate step. Since 2026-11-02
-this fused schedule, with exact-row dense tail folds, is the only one. On
+anchor, which the bundle captures inside the step, when the chunk through
+the prompt end fits the step's budget; otherwise they take a separate step.
+Since 2026-11-02 this fused schedule, with exact-row dense tail folds, is the
+default, and with upper skip no option restores the separate tail step. On
 `tp4-ar` C8 it trades lower TTFT for longer decode stalls
 ([prefill dependencies](../models/deepseek41/prefill-dependencies.md)).
 The full-prefill and 2048-token profiles were retired after shared-prefix

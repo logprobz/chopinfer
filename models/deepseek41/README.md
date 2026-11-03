@@ -69,8 +69,9 @@ The scheduler admits 64-token aligned shared-prefix anchors in addition to
 the chunk grid and prompt ends. An unaligned prompt publishes an anchor at
 `prompt_tokens / 64 * 64`. On these profiles the step that reaches it
 continues to the prompt end and captures the anchor inside the step, for up
-to eight requests per step; a remainder that does not fit the step's budget
-runs as a separate prefill step. Each endpoint produces complete target
+to eight requests per step. A chunk through the prompt end that does not fit
+the step's budget stops at the anchor, and the remainder runs as a separate
+prefill step. Each endpoint produces complete target
 state and, for DSpark, the 134-row raw feature history, including six
 preserved older rows. An anchor costs 53 pages (2.88 MiB) per rank for AR or 125 pages
 (6.79 MiB) for DSpark. See [prefill dependencies](prefill-dependencies.md).
@@ -356,7 +357,8 @@ DSpark retains feature rows as additional dependency roots, changing the
 backward output cones. The audit compares fallback counts across widths,
 so a fallback launch alone does not establish an allowance gap.
 
-The ignored lab probe compares the split-tail route with the partition at
+The ignored lab probe compares the unpartitioned route (the generic fold at
+85 and 127 rows, split tail or padded TMA above 128) with the partition at
 85, 127, 789, 831, 853, 1557 and 1599 rows for the Flash TP4 q/kv/o,
 indexer, shared-expert and Engram shapes. Before timing it requires bitwise
 equal outputs and statuses on clean inputs and with a poisoned scale in the
@@ -391,12 +393,13 @@ source ~/.config/chopinfer/local.env && bash tools/dev/heavy.sh --label ds41tail
 Flash TP4 with upper skip and scheduler cuts declares in-step prompt-end
 anchors through `chop_bundle_prefill_anchors_api_v2`, up to eight per step
 and at most the served sequence count. Continuations may start anywhere,
-with no minimum row count. Other topologies declare none and keep the
-separate tail step. An earlier candidate failed its 2026-10-29 gate because
-fused unaligned steps took split-tail dense routes; with the tail folds the
-fused schedule was adopted on 2026-11-02. The measured tail cost, exactness
-results and acceptance verdicts, including the accepted `tp4-ar` C8
-stall-time tradeoff, are in [prefill dependencies](prefill-dependencies.md).
+with no minimum row count. Other topologies and configurations without upper
+skip declare none and keep the separate tail step. An earlier candidate
+failed its 2026-10-29 gate because fused unaligned steps took split-tail
+dense routes; with the tail folds the fused schedule was adopted on
+2026-11-02. The measured tail cost, exactness results and acceptance
+verdicts, including the accepted `tp4-ar` C8 stall-time tradeoff, are in
+[prefill dependencies](prefill-dependencies.md).
 
 ### Removed short-prefill graph candidate
 

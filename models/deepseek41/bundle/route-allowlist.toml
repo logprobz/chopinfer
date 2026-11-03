@@ -1,4 +1,6 @@
 # Served route gaps. Remove each entry when its tracked range is qualified.
+# P4 also covers preserved full TMA launches at unanchored packed-2 widths
+# 8190 and 8191. Separate allowances for those widths are stale with anchors.
 # The backbone router finish covers Decode-2/4 and Verify-2..32; its eight
 # unfused-stage exceptions are retired. HC and drafter entries remain separate.
 # `tp4-dspark*` also names tp4-dspark-rows192, the profile at the package's 192
@@ -1365,8 +1367,8 @@ phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n1280_k5120_g1_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_admit_v1"
 symbol = "chop_deepseek41_dense_decode_n1280_k5120_g1_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_admit_v1"
-rows = [[384, 384], [448, 448], [512, 512], [640, 640], [768, 768], [896, 896], [960, 960], [1024, 1024], [1152, 1152], [1280, 1280], [1408, 1408], [1472, 1472], [1536, 1536], [1664, 1664], [1792, 1792], [1920, 1920], [2048, 2048], [2176, 2176], [2304, 2304], [2432, 2432], [2496, 2496], [2560, 2560], [2688, 2688], [2816, 2816], [2944, 2944], [3072, 3072], [3200, 3200], [3328, 3328], [3456, 3456], [3584, 3584], [3712, 3712], [3840, 3840], [3968, 3968], [4096, 4096], [4224, 4224], [4352, 4352], [4480, 4480], [4608, 4608], [4736, 4736], [4864, 4864], [4992, 4992], [5120, 5120], [5248, 5248], [5376, 5376], [5504, 5504], [5632, 5632], [5760, 5760], [5888, 5888], [6016, 6016], [6144, 6144], [6272, 6272], [6400, 6400], [6528, 6528], [6656, 6656], [6784, 6784], [6912, 6912], [7040, 7040], [7168, 7168], [7296, 7296], [7424, 7424], [7552, 7552], [7680, 7680], [7808, 7808], [7936, 7936], [8064, 8064], [8192, 8192]]
-reason = "The dense tail partition emits exact-row reuse fallbacks from internal single-prompt and chunk output-cone parts at these outer widths. Their inner remainder may exceed 64 even when the outer width is aligned or selects a measured matrix route. These internal cone tails remain independent of inherited cone exceptions. Qualify a fast route for these rows before removing this exception"
+rows = [[384, 384], [448, 448], [512, 512], [529, 533], [535, 536], [640, 640], [657, 661], [663, 664], [768, 768], [785, 789], [791, 792], [896, 896], [960, 960], [1024, 1024], [1041, 1045], [1047, 1048], [1152, 1152], [1280, 1280], [1408, 1408], [1472, 1472], [1536, 1536], [1664, 1664], [1792, 1792], [1920, 1920], [2048, 2048], [2176, 2176], [2304, 2304], [2432, 2432], [2496, 2496], [2560, 2560], [2688, 2688], [2816, 2816], [2944, 2944], [3072, 3072], [3200, 3200], [3328, 3328], [3456, 3456], [3584, 3584], [3712, 3712], [3840, 3840], [3968, 3968], [4096, 4096], [4224, 4224], [4352, 4352], [4480, 4480], [4608, 4608], [4736, 4736], [4864, 4864], [4992, 4992], [5120, 5120], [5248, 5248], [5376, 5376], [5504, 5504], [5632, 5632], [5760, 5760], [5888, 5888], [6016, 6016], [6144, 6144], [6272, 6272], [6400, 6400], [6528, 6528], [6656, 6656], [6784, 6784], [6912, 6912], [7040, 7040], [7168, 7168], [7296, 7296], [7424, 7424], [7552, 7552], [7680, 7680], [7808, 7808], [7936, 7936], [8064, 8064], [8192, 8192]]
+reason = "The dense tail partition emits these n1280 reuse fallbacks from internal output-cone parts. Exhaustive CPU fake-host execution on 2026-11-03 covered every single and chunk row from 1 to 8192, packed-2 row from 2 to 8192 and packed-32 row from 32 to 8192 with anchors. It adds 28 outer widths to the existing cone allowance, all reached in single mode and all four chunk modes; seven also occur in packed-2. Existing single-mode witnesses keep the allowance used with and without anchors on every full-tier seed. Qualify a fast route for these rows before removing this exception."
 task = "PREFILL-tail-folds-cone-tails"
 
 [[allow]]
@@ -1375,8 +1377,8 @@ phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n1280_k5120_g1_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_admit_v1"
 symbol = "chop_deepseek41_dense_decode_n1280_k5120_g1_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_admit_v1"
-rows = [[145, 149], [151, 152], [273, 277], [279, 280], [384, 384], [401, 405], [407, 408], [448, 448], [512, 512], [640, 640], [768, 768], [789, 789], [896, 896], [913, 917], [919, 920], [960, 960], [1024, 1024], [1152, 1152], [1169, 1173], [1175, 1176], [1280, 1280], [1408, 1408], [1425, 1429], [1431, 1432], [1472, 1472], [1536, 1536], [1557, 1557], [1664, 1664], [1681, 1685], [1687, 1688], [1792, 1792], [1920, 1920], [1937, 1941], [1943, 1944], [2048, 2048], [2065, 2069], [2071, 2072], [2176, 2176], [2193, 2197], [2199, 2200], [2304, 2304], [2321, 2325], [2327, 2328], [2432, 2432], [2449, 2453], [2455, 2456], [2496, 2496], [2560, 2560], [2577, 2581], [2583, 2584], [2688, 2688], [2705, 2709], [2711, 2712], [2816, 2816], [2833, 2837], [2839, 2840], [2944, 2944], [2961, 2965], [2967, 2968], [3072, 3072], [3089, 3093], [3095, 3096], [3200, 3200], [3217, 3221], [3223, 3224], [3328, 3328], [3345, 3349], [3351, 3352], [3456, 3456], [3473, 3477], [3479, 3480], [3584, 3584], [3601, 3605], [3607, 3608], [3712, 3712], [3729, 3733], [3735, 3736], [3840, 3840], [3857, 3861], [3863, 3864], [3968, 3968], [3985, 3989], [3991, 3992], [4096, 4096], [4113, 4117], [4119, 4120], [4224, 4224], [4241, 4245], [4247, 4248], [4352, 4352], [4369, 4373], [4375, 4376], [4480, 4480], [4497, 4501], [4503, 4504], [4608, 4608], [4625, 4629], [4631, 4632], [4736, 4736], [4753, 4757], [4759, 4760], [4864, 4864], [4881, 4885], [4887, 4888], [4992, 4992], [5009, 5013], [5015, 5016], [5120, 5120], [5137, 5141], [5143, 5144], [5248, 5248], [5265, 5269], [5271, 5272], [5376, 5376], [5504, 5504], [5632, 5632], [5760, 5760], [5888, 5888], [6016, 6016], [6144, 6144], [6272, 6272], [6400, 6400], [6417, 6421], [6423, 6424], [6528, 6528], [6545, 6549], [6551, 6552], [6656, 6656], [6680, 6680], [6784, 6784], [6801, 6805], [6807, 6808], [6912, 6912], [6929, 6933], [6935, 6936], [7040, 7040], [7060, 7060], [7168, 7168], [7296, 7296], [7424, 7424], [7552, 7552], [7680, 7680], [7808, 7808], [7936, 7936], [8064, 8064], [8192, 8192]]
-reason = "The dense tail partition needs these AR n1280 reuse-fallback gaps in single, chunk and packed output cones. This combines the existing single/chunk cone rows with 268 additional rows observed by exhaustive CPU fake-host execution of packed-2 rows 2 to 8192 and packed-32 rows 32 to 8192 on 2026-11-02. Full-tier packed probes never reach these rows, so the modes share one allowance with a single-mode witness on every seed. Other tail-fold allowances remain separate. Qualify a fast route for these rows before removing this exception. Anchored single prompts expose this fallback at mandatory outer widths 789 and 1557, and anchored chunk continuations at 1557, observed in the CPU route sweep on 2026-11-03."
+rows = [[145, 149], [151, 152], [273, 277], [279, 280], [384, 384], [401, 405], [407, 408], [448, 448], [512, 512], [529, 533], [535, 536], [640, 640], [657, 661], [663, 664], [768, 768], [785, 789], [791, 792], [896, 896], [913, 917], [919, 920], [960, 960], [1024, 1024], [1041, 1045], [1047, 1048], [1152, 1152], [1169, 1173], [1175, 1176], [1280, 1280], [1297, 1301], [1303, 1304], [1408, 1408], [1425, 1429], [1431, 1432], [1472, 1472], [1536, 1536], [1553, 1557], [1559, 1560], [1664, 1664], [1681, 1685], [1687, 1688], [1792, 1792], [1809, 1813], [1815, 1816], [1920, 1920], [1937, 1941], [1943, 1944], [2048, 2048], [2065, 2069], [2071, 2072], [2176, 2176], [2193, 2197], [2199, 2200], [2304, 2304], [2321, 2325], [2327, 2328], [2432, 2432], [2449, 2453], [2455, 2456], [2496, 2496], [2560, 2560], [2577, 2581], [2583, 2584], [2688, 2688], [2705, 2709], [2711, 2712], [2816, 2816], [2833, 2837], [2839, 2840], [2944, 2944], [2961, 2965], [2967, 2968], [3072, 3072], [3089, 3093], [3095, 3096], [3200, 3200], [3217, 3221], [3223, 3224], [3328, 3328], [3345, 3349], [3351, 3352], [3456, 3456], [3473, 3477], [3479, 3480], [3584, 3584], [3601, 3605], [3607, 3608], [3712, 3712], [3729, 3733], [3735, 3736], [3840, 3840], [3857, 3861], [3863, 3864], [3968, 3968], [3985, 3989], [3991, 3992], [4096, 4096], [4113, 4117], [4119, 4120], [4224, 4224], [4241, 4245], [4247, 4248], [4352, 4352], [4369, 4373], [4375, 4376], [4480, 4480], [4497, 4501], [4503, 4504], [4608, 4608], [4625, 4629], [4631, 4632], [4736, 4736], [4753, 4757], [4759, 4760], [4864, 4864], [4881, 4885], [4887, 4888], [4992, 4992], [5009, 5013], [5015, 5016], [5120, 5120], [5137, 5141], [5143, 5144], [5248, 5248], [5265, 5269], [5271, 5272], [5376, 5376], [5393, 5397], [5399, 5400], [5504, 5504], [5521, 5525], [5527, 5528], [5632, 5632], [5649, 5653], [5655, 5656], [5760, 5760], [5777, 5781], [5783, 5784], [5888, 5888], [5905, 5909], [5911, 5912], [6016, 6016], [6033, 6037], [6039, 6040], [6144, 6144], [6161, 6165], [6167, 6168], [6272, 6272], [6289, 6293], [6295, 6296], [6400, 6400], [6417, 6421], [6423, 6424], [6528, 6528], [6545, 6549], [6551, 6552], [6656, 6656], [6673, 6677], [6679, 6680], [6784, 6784], [6801, 6805], [6807, 6808], [6912, 6912], [6929, 6933], [6935, 6936], [7040, 7040], [7057, 7061], [7063, 7064], [7168, 7168], [7185, 7189], [7191, 7192], [7296, 7296], [7313, 7317], [7319, 7320], [7424, 7424], [7441, 7445], [7447, 7448], [7552, 7552], [7569, 7573], [7575, 7576], [7680, 7680], [7697, 7701], [7703, 7704], [7808, 7808], [7825, 7829], [7831, 7832], [7936, 7936], [7953, 7957], [7959, 7960], [8064, 8064], [8081, 8085], [8087, 8088], [8192, 8192]]
+reason = "The dense tail partition needs these AR n1280 reuse-fallback gaps in single, chunk and packed output cones. Exhaustive CPU fake-host execution on 2026-11-03 covered every single and chunk row from 1 to 8192, packed-2 row from 2 to 8192 and packed-32 row from 32 to 8192 with anchors. It adds 171 outer widths to the existing partition allowance, all reached in single mode and all four chunk modes; 21 also occur in packed-32. The combined allowance retains single-mode witnesses with and without anchors on every full-tier seed. Qualify a fast route for these rows before removing this exception."
 task = "PREFILL-tail-folds-cones"
 
 [[allow]]
@@ -1395,8 +1397,8 @@ phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n1280_k5120_g1_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_packed_v1"
 symbol = "chop_deepseek41_dense_decode_n1280_k5120_g1_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_packed_v1"
-rows = [[384, 384], [448, 448], [512, 512], [640, 640], [768, 768], [896, 896], [960, 960], [1024, 1024], [1152, 1152], [1280, 1280], [1408, 1408], [1472, 1472], [1536, 1536], [1664, 1664], [1792, 1792], [1920, 1920], [2048, 2048], [2176, 2176], [2304, 2304], [2432, 2432], [2496, 2496], [2560, 2560], [2688, 2688], [2816, 2816], [2944, 2944], [3072, 3072], [3200, 3200], [3328, 3328], [3456, 3456], [3584, 3584], [3712, 3712], [3840, 3840], [3968, 3968], [4096, 4096], [4224, 4224], [4352, 4352], [4480, 4480], [4608, 4608], [4736, 4736], [4864, 4864], [4992, 4992], [5120, 5120], [5248, 5248], [5376, 5376], [5504, 5504], [5632, 5632], [5760, 5760], [5888, 5888], [6016, 6016], [6144, 6144], [6272, 6272], [6400, 6400], [6528, 6528], [6656, 6656], [6784, 6784], [6912, 6912], [7040, 7040], [7168, 7168], [7296, 7296], [7424, 7424], [7552, 7552], [7680, 7680], [7808, 7808], [7936, 7936], [8064, 8064], [8192, 8192]]
-reason = "The dense tail partition emits exact-row reuse fallbacks from internal single-prompt and chunk output-cone parts at these outer widths. Their inner remainder may exceed 64 even when the outer width is aligned or selects a measured matrix route. These internal cone tails remain independent of inherited cone exceptions. Qualify a fast route for these rows before removing this exception"
+rows = [[384, 384], [448, 448], [512, 512], [529, 533], [535, 536], [640, 640], [657, 661], [663, 664], [768, 768], [785, 789], [791, 792], [896, 896], [960, 960], [1024, 1024], [1041, 1045], [1047, 1048], [1152, 1152], [1280, 1280], [1408, 1408], [1472, 1472], [1536, 1536], [1664, 1664], [1792, 1792], [1920, 1920], [2048, 2048], [2176, 2176], [2304, 2304], [2432, 2432], [2496, 2496], [2560, 2560], [2688, 2688], [2816, 2816], [2944, 2944], [3072, 3072], [3200, 3200], [3328, 3328], [3456, 3456], [3584, 3584], [3712, 3712], [3840, 3840], [3968, 3968], [4096, 4096], [4224, 4224], [4352, 4352], [4480, 4480], [4608, 4608], [4736, 4736], [4864, 4864], [4992, 4992], [5120, 5120], [5248, 5248], [5376, 5376], [5504, 5504], [5632, 5632], [5760, 5760], [5888, 5888], [6016, 6016], [6144, 6144], [6272, 6272], [6400, 6400], [6528, 6528], [6656, 6656], [6784, 6784], [6912, 6912], [7040, 7040], [7168, 7168], [7296, 7296], [7424, 7424], [7552, 7552], [7680, 7680], [7808, 7808], [7936, 7936], [8064, 8064], [8192, 8192]]
+reason = "The dense tail partition emits these n1280 reuse fallbacks from internal output-cone parts. Exhaustive CPU fake-host execution on 2026-11-03 covered every single and chunk row from 1 to 8192, packed-2 row from 2 to 8192 and packed-32 row from 32 to 8192 with anchors. It adds 28 outer widths to the existing cone allowance, all reached in single mode and all four chunk modes; seven also occur in packed-2. Existing single-mode witnesses keep the allowance used with and without anchors on every full-tier seed. Qualify a fast route for these rows before removing this exception."
 task = "PREFILL-tail-folds-cone-tails"
 
 [[allow]]
@@ -1405,8 +1407,8 @@ phase = "prefill"
 family = "mxfp8_fold"
 entry = "mxfp8_fold/reuse-fallback/chop_deepseek41_dense_decode_n1280_k5120_g1_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_packed_v1"
 symbol = "chop_deepseek41_dense_decode_n1280_k5120_g1_single_e4m3_ue8m0_k32x4_f32_f32_n32r1s3w1f0_v1_packed_v1"
-rows = [[145, 149], [151, 152], [273, 277], [279, 280], [384, 384], [401, 405], [407, 408], [448, 448], [512, 512], [640, 640], [768, 768], [789, 789], [896, 896], [913, 917], [919, 920], [960, 960], [1024, 1024], [1152, 1152], [1169, 1173], [1175, 1176], [1280, 1280], [1408, 1408], [1425, 1429], [1431, 1432], [1472, 1472], [1536, 1536], [1557, 1557], [1664, 1664], [1681, 1685], [1687, 1688], [1792, 1792], [1920, 1920], [1937, 1941], [1943, 1944], [2048, 2048], [2065, 2069], [2071, 2072], [2176, 2176], [2193, 2197], [2199, 2200], [2304, 2304], [2321, 2325], [2327, 2328], [2432, 2432], [2449, 2453], [2455, 2456], [2496, 2496], [2560, 2560], [2577, 2581], [2583, 2584], [2688, 2688], [2705, 2709], [2711, 2712], [2816, 2816], [2833, 2837], [2839, 2840], [2944, 2944], [2961, 2965], [2967, 2968], [3072, 3072], [3089, 3093], [3095, 3096], [3200, 3200], [3217, 3221], [3223, 3224], [3328, 3328], [3345, 3349], [3351, 3352], [3456, 3456], [3473, 3477], [3479, 3480], [3584, 3584], [3601, 3605], [3607, 3608], [3712, 3712], [3729, 3733], [3735, 3736], [3840, 3840], [3857, 3861], [3863, 3864], [3968, 3968], [3985, 3989], [3991, 3992], [4096, 4096], [4113, 4117], [4119, 4120], [4224, 4224], [4241, 4245], [4247, 4248], [4352, 4352], [4369, 4373], [4375, 4376], [4480, 4480], [4497, 4501], [4503, 4504], [4608, 4608], [4625, 4629], [4631, 4632], [4736, 4736], [4753, 4757], [4759, 4760], [4864, 4864], [4881, 4885], [4887, 4888], [4992, 4992], [5009, 5013], [5015, 5016], [5120, 5120], [5137, 5141], [5143, 5144], [5248, 5248], [5265, 5269], [5271, 5272], [5376, 5376], [5504, 5504], [5632, 5632], [5760, 5760], [5888, 5888], [6016, 6016], [6144, 6144], [6272, 6272], [6400, 6400], [6417, 6421], [6423, 6424], [6528, 6528], [6545, 6549], [6551, 6552], [6656, 6656], [6680, 6680], [6784, 6784], [6801, 6805], [6807, 6808], [6912, 6912], [6929, 6933], [6935, 6936], [7040, 7040], [7060, 7060], [7168, 7168], [7296, 7296], [7424, 7424], [7552, 7552], [7680, 7680], [7808, 7808], [7936, 7936], [8064, 8064], [8192, 8192]]
-reason = "The dense tail partition needs these AR n1280 reuse-fallback gaps in single, chunk and packed output cones. This combines the existing single/chunk cone rows with 268 additional rows observed by exhaustive CPU fake-host execution of packed-2 rows 2 to 8192 and packed-32 rows 32 to 8192 on 2026-11-02. Full-tier packed probes never reach these rows, so the modes share one allowance with a single-mode witness on every seed. Other tail-fold allowances remain separate. Qualify a fast route for these rows before removing this exception. Anchored single prompts expose this fallback at mandatory outer widths 789 and 1557, and anchored chunk continuations at 1557, observed in the CPU route sweep on 2026-11-03."
+rows = [[145, 149], [151, 152], [273, 277], [279, 280], [384, 384], [401, 405], [407, 408], [448, 448], [512, 512], [529, 533], [535, 536], [640, 640], [657, 661], [663, 664], [768, 768], [785, 789], [791, 792], [896, 896], [913, 917], [919, 920], [960, 960], [1024, 1024], [1041, 1045], [1047, 1048], [1152, 1152], [1169, 1173], [1175, 1176], [1280, 1280], [1297, 1301], [1303, 1304], [1408, 1408], [1425, 1429], [1431, 1432], [1472, 1472], [1536, 1536], [1553, 1557], [1559, 1560], [1664, 1664], [1681, 1685], [1687, 1688], [1792, 1792], [1809, 1813], [1815, 1816], [1920, 1920], [1937, 1941], [1943, 1944], [2048, 2048], [2065, 2069], [2071, 2072], [2176, 2176], [2193, 2197], [2199, 2200], [2304, 2304], [2321, 2325], [2327, 2328], [2432, 2432], [2449, 2453], [2455, 2456], [2496, 2496], [2560, 2560], [2577, 2581], [2583, 2584], [2688, 2688], [2705, 2709], [2711, 2712], [2816, 2816], [2833, 2837], [2839, 2840], [2944, 2944], [2961, 2965], [2967, 2968], [3072, 3072], [3089, 3093], [3095, 3096], [3200, 3200], [3217, 3221], [3223, 3224], [3328, 3328], [3345, 3349], [3351, 3352], [3456, 3456], [3473, 3477], [3479, 3480], [3584, 3584], [3601, 3605], [3607, 3608], [3712, 3712], [3729, 3733], [3735, 3736], [3840, 3840], [3857, 3861], [3863, 3864], [3968, 3968], [3985, 3989], [3991, 3992], [4096, 4096], [4113, 4117], [4119, 4120], [4224, 4224], [4241, 4245], [4247, 4248], [4352, 4352], [4369, 4373], [4375, 4376], [4480, 4480], [4497, 4501], [4503, 4504], [4608, 4608], [4625, 4629], [4631, 4632], [4736, 4736], [4753, 4757], [4759, 4760], [4864, 4864], [4881, 4885], [4887, 4888], [4992, 4992], [5009, 5013], [5015, 5016], [5120, 5120], [5137, 5141], [5143, 5144], [5248, 5248], [5265, 5269], [5271, 5272], [5376, 5376], [5393, 5397], [5399, 5400], [5504, 5504], [5521, 5525], [5527, 5528], [5632, 5632], [5649, 5653], [5655, 5656], [5760, 5760], [5777, 5781], [5783, 5784], [5888, 5888], [5905, 5909], [5911, 5912], [6016, 6016], [6033, 6037], [6039, 6040], [6144, 6144], [6161, 6165], [6167, 6168], [6272, 6272], [6289, 6293], [6295, 6296], [6400, 6400], [6417, 6421], [6423, 6424], [6528, 6528], [6545, 6549], [6551, 6552], [6656, 6656], [6673, 6677], [6679, 6680], [6784, 6784], [6801, 6805], [6807, 6808], [6912, 6912], [6929, 6933], [6935, 6936], [7040, 7040], [7057, 7061], [7063, 7064], [7168, 7168], [7185, 7189], [7191, 7192], [7296, 7296], [7313, 7317], [7319, 7320], [7424, 7424], [7441, 7445], [7447, 7448], [7552, 7552], [7569, 7573], [7575, 7576], [7680, 7680], [7697, 7701], [7703, 7704], [7808, 7808], [7825, 7829], [7831, 7832], [7936, 7936], [7953, 7957], [7959, 7960], [8064, 8064], [8081, 8085], [8087, 8088], [8192, 8192]]
+reason = "The dense tail partition needs these AR n1280 reuse-fallback gaps in single, chunk and packed output cones. Exhaustive CPU fake-host execution on 2026-11-03 covered every single and chunk row from 1 to 8192, packed-2 row from 2 to 8192 and packed-32 row from 32 to 8192 with anchors. It adds 171 outer widths to the existing partition allowance, all reached in single mode and all four chunk modes; 21 also occur in packed-32. The combined allowance retains single-mode witnesses with and without anchors on every full-tier seed. Qualify a fast route for these rows before removing this exception."
 task = "PREFILL-tail-folds-cones"
 
 [[allow]]
@@ -1542,143 +1544,3 @@ task = "PREFILL-tail-folds-packed-cones"
 # The tail partition also changes the total fallback counts used by the gap
 # detector. At the packed-2 upper edge it exposes these unchanged full TMA
 # launches; keep their accounting exception separate from the base P4 gaps.
-
-[[allow]]
-profiles = ["tp4-ar", "tp4-dspark*"]
-phase = "prefill"
-family = "mxfp8_prefill"
-entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_prefill_tma_v1_admit_v1"
-symbol = "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_prefill_tma_v1_admit_v1"
-rows = [[8190, 8191]]
-reason = "At packed-2 widths 8190 and 8191 the dense tail partition changes neighboring fallback totals and exposes this preserved full TMA launch as a gap. Its symbol, tile and full-row operands stay unchanged. This accounting gap belongs to the dense tail packed-cones, independently of the base P4 exception"
-task = "PREFILL-tail-folds-packed-full"
-
-[[allow]]
-profiles = ["tp4-ar", "tp4-dspark*"]
-phase = "prefill"
-family = "mxfp8_prefill"
-entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_prefill_tma_v1_packed_v1"
-symbol = "chop_deepseek41_mxfp8_fold_m8192_n1024_k4096_g2_f32_v2_prefill_tma_v1_packed_v1"
-rows = [[8190, 8191]]
-reason = "At packed-2 widths 8190 and 8191 the dense tail partition changes neighboring fallback totals and exposes this preserved full TMA launch as a gap. Its symbol, tile and full-row operands stay unchanged. This accounting gap belongs to the dense tail packed-cones, independently of the base P4 exception"
-task = "PREFILL-tail-folds-packed-full"
-
-[[allow]]
-profiles = ["tp4-ar", "tp4-dspark*"]
-phase = "prefill"
-family = "mxfp8_prefill"
-entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_prefill_tma_v1_admit_v1"
-symbol = "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_prefill_tma_v1_admit_v1"
-rows = [[8190, 8191]]
-reason = "At packed-2 widths 8190 and 8191 the dense tail partition changes neighboring fallback totals and exposes this preserved full TMA launch as a gap. Its symbol, tile and full-row operands stay unchanged. This accounting gap belongs to the dense tail packed-cones, independently of the base P4 exception"
-task = "PREFILL-tail-folds-packed-full"
-
-[[allow]]
-profiles = ["tp4-ar", "tp4-dspark*"]
-phase = "prefill"
-family = "mxfp8_prefill"
-entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_prefill_tma_v1_packed_v1"
-symbol = "chop_deepseek41_mxfp8_fold_m8192_n1280_k5120_g1_f32_v2_prefill_tma_v1_packed_v1"
-rows = [[8190, 8191]]
-reason = "At packed-2 widths 8190 and 8191 the dense tail partition changes neighboring fallback totals and exposes this preserved full TMA launch as a gap. Its symbol, tile and full-row operands stay unchanged. This accounting gap belongs to the dense tail packed-cones, independently of the base P4 exception"
-task = "PREFILL-tail-folds-packed-full"
-
-[[allow]]
-profiles = ["tp4-ar", "tp4-dspark*"]
-phase = "prefill"
-family = "mxfp8_prefill"
-entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_prefill_tma_v1_admit_v1"
-symbol = "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_prefill_tma_v1_admit_v1"
-rows = [[8190, 8191]]
-reason = "At packed-2 widths 8190 and 8191 the dense tail partition changes neighboring fallback totals and exposes this preserved full TMA launch as a gap. Its symbol, tile and full-row operands stay unchanged. This accounting gap belongs to the dense tail packed-cones, independently of the base P4 exception"
-task = "PREFILL-tail-folds-packed-full"
-
-[[allow]]
-profiles = ["tp4-ar", "tp4-dspark*"]
-phase = "prefill"
-family = "mxfp8_prefill"
-entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_prefill_tma_v1_packed_v1"
-symbol = "chop_deepseek41_mxfp8_fold_m8192_n4096_k1280_g1_f32_v2_prefill_tma_v1_packed_v1"
-rows = [[8190, 8191]]
-reason = "At packed-2 widths 8190 and 8191 the dense tail partition changes neighboring fallback totals and exposes this preserved full TMA launch as a gap. Its symbol, tile and full-row operands stay unchanged. This accounting gap belongs to the dense tail packed-cones, independently of the base P4 exception"
-task = "PREFILL-tail-folds-packed-full"
-
-[[allow]]
-profiles = ["tp4-ar", "tp4-dspark*"]
-phase = "prefill"
-family = "mxfp8_prefill"
-entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_prefill_tma_v1_admit_v1"
-symbol = "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_prefill_tma_v1_admit_v1"
-rows = [[8190, 8191]]
-reason = "At packed-2 widths 8190 and 8191 the dense tail partition changes neighboring fallback totals and exposes this preserved full TMA launch as a gap. Its symbol, tile and full-row operands stay unchanged. This accounting gap belongs to the dense tail packed-cones, independently of the base P4 exception"
-task = "PREFILL-tail-folds-packed-full"
-
-[[allow]]
-profiles = ["tp4-ar", "tp4-dspark*"]
-phase = "prefill"
-family = "mxfp8_prefill"
-entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_prefill_tma_v1_packed_v1"
-symbol = "chop_deepseek41_mxfp8_fold_m8192_n5120_k2048_g1_f32_v2_prefill_tma_v1_packed_v1"
-rows = [[8190, 8191]]
-reason = "At packed-2 widths 8190 and 8191 the dense tail partition changes neighboring fallback totals and exposes this preserved full TMA launch as a gap. Its symbol, tile and full-row operands stay unchanged. This accounting gap belongs to the dense tail packed-cones, independently of the base P4 exception"
-task = "PREFILL-tail-folds-packed-full"
-
-[[allow]]
-profiles = ["tp4-ar", "tp4-dspark*"]
-phase = "prefill"
-family = "mxfp8_prefill"
-entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_prefill_tma_v1_admit_v1"
-symbol = "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_prefill_tma_v1_admit_v1"
-rows = [[8190, 8191]]
-reason = "At packed-2 widths 8190 and 8191 the dense tail partition changes neighboring fallback totals and exposes this preserved full TMA launch as a gap. Its symbol, tile and full-row operands stay unchanged. This accounting gap belongs to the dense tail packed-cones, independently of the base P4 exception"
-task = "PREFILL-tail-folds-packed-full"
-
-[[allow]]
-profiles = ["tp4-ar", "tp4-dspark*"]
-phase = "prefill"
-family = "mxfp8_prefill"
-entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_prefill_tma_v1_packed_v1"
-symbol = "chop_deepseek41_mxfp8_fold_m8192_n5120_k576_g1_f32_v2_prefill_tma_v1_packed_v1"
-rows = [[8190, 8191]]
-reason = "At packed-2 widths 8190 and 8191 the dense tail partition changes neighboring fallback totals and exposes this preserved full TMA launch as a gap. Its symbol, tile and full-row operands stay unchanged. This accounting gap belongs to the dense tail packed-cones, independently of the base P4 exception"
-task = "PREFILL-tail-folds-packed-full"
-
-[[allow]]
-profiles = ["tp4-ar", "tp4-dspark*"]
-phase = "prefill"
-family = "mxfp8_prefill"
-entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_prefill_tma_v1_admit_v1"
-symbol = "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_prefill_tma_v1_admit_v1"
-rows = [[8190, 8191]]
-reason = "At packed-2 widths 8190 and 8191 the dense tail partition changes neighboring fallback totals and exposes this preserved full TMA launch as a gap. Its symbol, tile and full-row operands stay unchanged. This accounting gap belongs to the dense tail packed-cones, independently of the base P4 exception"
-task = "PREFILL-tail-folds-packed-full"
-
-[[allow]]
-profiles = ["tp4-ar", "tp4-dspark*"]
-phase = "prefill"
-family = "mxfp8_prefill"
-entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_prefill_tma_v1_packed_v1"
-symbol = "chop_deepseek41_mxfp8_fold_m8192_n512_k5120_g1_f32_v2_prefill_tma_v1_packed_v1"
-rows = [[8190, 8191]]
-reason = "At packed-2 widths 8190 and 8191 the dense tail partition changes neighboring fallback totals and exposes this preserved full TMA launch as a gap. Its symbol, tile and full-row operands stay unchanged. This accounting gap belongs to the dense tail packed-cones, independently of the base P4 exception"
-task = "PREFILL-tail-folds-packed-full"
-
-[[allow]]
-profiles = ["tp4-ar", "tp4-dspark*"]
-phase = "prefill"
-family = "mxfp8_prefill"
-entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_prefill_tma_v1_admit_v1"
-symbol = "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_prefill_tma_v1_admit_v1"
-rows = [[8190, 8191]]
-reason = "At packed-2 widths 8190 and 8191 the dense tail partition changes neighboring fallback totals and exposes this preserved full TMA launch as a gap. Its symbol, tile and full-row operands stay unchanged. This accounting gap belongs to the dense tail packed-cones, independently of the base P4 exception"
-task = "PREFILL-tail-folds-packed-full"
-
-[[allow]]
-profiles = ["tp4-ar", "tp4-dspark*"]
-phase = "prefill"
-family = "mxfp8_prefill"
-entry = "mxfp8_prefill/chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_prefill_tma_v1_packed_v1"
-symbol = "chop_deepseek41_mxfp8_fold_m8192_n576_k5120_g1_f32_v2_prefill_tma_v1_packed_v1"
-rows = [[8190, 8191]]
-reason = "At packed-2 widths 8190 and 8191 the dense tail partition changes neighboring fallback totals and exposes this preserved full TMA launch as a gap. Its symbol, tile and full-row operands stay unchanged. This accounting gap belongs to the dense tail packed-cones, independently of the base P4 exception"
-task = "PREFILL-tail-folds-packed-full"

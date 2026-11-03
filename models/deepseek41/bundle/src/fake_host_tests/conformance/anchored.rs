@@ -38,6 +38,11 @@ impl Startup for Anchored {
     /// second anchored item, and a 67-row spare write.
     fn envelope(serving: &conformance::Serving) -> conformance::Envelope {
         let mut envelope = Served::envelope(serving);
+        // Anchors change internal cone tails at these single, chunk and packed
+        // widths. Keep their n1280 fallback gaps in every tier and full-tier seed.
+        envelope.probes.extend([533, 661, 1045, 7317]);
+        envelope.probes.sort_unstable();
+        envelope.probes.dedup();
         let anchored = |mode: &str, offset, lengths: &[u32]| conformance::CutCase {
             mode: mode.into(),
             offset,

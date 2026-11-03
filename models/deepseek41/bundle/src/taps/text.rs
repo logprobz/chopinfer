@@ -8,6 +8,12 @@
 //! collapse and final norm (the rows the LM head reads). The names and values follow the reference's `taps`
 //! (`models/deepseek41/reference.py`). The declaration leaves the columns
 //! to the geometry.
+//!
+//! The reduction inputs (`inputs`) are read before their stage instead:
+//! each `Reduce`'s completed local F32 partial on every rank
+//! (`L<nn>.x.attn.partial`, `L<nn>.x.mlp.partial`, one file per rank), which
+//! the all-reduce's own launches may round in place. They are detail taps,
+//! kept only in the layers `CHOPINFER_TAPS_LAYERS` names.
 
 use runtime_bundle_abi::DeviceBufferSpanV1;
 use runtime_bundle_sdk::taps::{TapCompare, TapDType, TapSharding, TapSpec};
@@ -34,6 +40,8 @@ pub enum Buffer {
     /// F32 normed rows: the final norm's output, the LM head's input.
     NormedWide,
     WindowLatent,
+    /// A sublayer's F32 rank partials, before the all-reduce.
+    Partial,
     Reduced,
     ExpertWeights,
     ExpertIds,
@@ -52,6 +60,7 @@ impl Buffer {
             Self::HeadCollapsed => scratch.head_collapsed,
             Self::NormedWide => scratch.normed_wide,
             Self::WindowLatent => scratch.window_latent,
+            Self::Partial => scratch.partial,
             Self::Reduced => scratch.reduced,
             Self::ExpertWeights => scratch.expert_weights,
             Self::ExpertIds => scratch.expert_ids,
@@ -207,12 +216,35 @@ pub fn taps(stage: Stage, shape: &Shape) -> Vec<Tap> {
     taps
 }
 
+/// The taps to copy before `stage` runs: each rank's completed local F32
+/// partial of a `Reduce`, which its launches may round in place before the
+/// exchange.
+pub fn inputs(stage: Stage, shape: &Shape) -> Vec<Tap> {
+    let Stage::Reduce(layer, sublayer) = stage else {
+        return Vec::new();
+    };
+    let name = format!("{}.x.{}.partial", scope(layer), names(sublayer).1);
+    let mut tap = dense(name, Buffer::Partial, shape.dims().hidden, TapDType::F32);
+    tap.spec.layer = Some(layer);
+    tap.spec.detail = true;
+    tap.spec.sharding = TapSharding::RankPartial;
+    vec![tap]
+}
+
+/// The taps of `stage` in the order a capture writes them: its inputs,
+/// then its outputs.
+pub fn stage_specs(stage: Stage, shape: &Shape) -> impl Iterator<Item = TapSpec> {
+    inputs(stage, shape)
+        .into_iter()
+        .chain(taps(stage, shape))
+        .map(|tap| tap.spec)
+}
+
 /// Every tap of a prefill's program, once per name.
 pub fn specs(shape: &Shape) -> Vec<TapSpec> {
     stages(shape.geometry, Phase::Prefill { rows: 1 })
         .into_iter()
-        .flat_map(|stage| taps(stage, shape))
-        .map(|tap| tap.spec)
+        .flat_map(|stage| stage_specs(stage, shape))
         .collect()
 }
 
@@ -256,7 +288,7 @@ mod tests {
                 };
                 let scratch = bound(&shape);
                 for stage in stages(g, Phase::Prefill { rows: 1 }) {
-                    for tap in taps(stage, &shape) {
+                    for tap in inputs(stage, &shape).into_iter().chain(taps(stage, &shape)) {
                         let row = tap.buffer.span(&scratch).length / u64::from(scratch_rows());
                         assert_eq!(
                             row,
@@ -291,6 +323,29 @@ mod tests {
             assert_eq!(norm.buffer.span(&scratch), scratch.normed_wide);
             assert_eq!(head.spec.dtype, TapDType::F32);
             assert_eq!(norm.spec.dtype, TapDType::F32);
+        }
+    }
+
+    /// The rank partials read the all-reduce's input rows on each rank
+    /// (`Lowering::reduce_views`), and only a `Reduce` stage has inputs.
+    #[test]
+    fn the_partial_taps_read_the_all_reduce_input() {
+        let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
+        let scratch = bound(&shape);
+        for stage in stages(&FLASH, Phase::Prefill { rows: 1 }) {
+            let read = inputs(stage, &shape);
+            match stage {
+                Stage::Reduce(layer, sublayer) => {
+                    let [tap] = &read[..] else {
+                        panic!("one partial tap of {stage:?}")
+                    };
+                    assert_eq!(tap.buffer.span(&scratch), scratch.partial);
+                    assert_eq!(tap.spec.layer, Some(layer));
+                    let site = format!("x.{}.partial", names(sublayer).1);
+                    assert_eq!(runtime_bundle_sdk::taps::site(&tap.spec.name), site);
+                }
+                _ => assert!(read.is_empty(), "{stage:?}"),
+            }
         }
     }
 
@@ -332,8 +387,9 @@ mod tests {
         }
     }
 
-    /// The layers' taps follow the reference's sites in program order, and
-    /// the filter keeps a layer's.
+    /// The layers' taps follow the reference's sites in program order, with
+    /// each sublayer's rank partials, detail taps, just before its
+    /// all-reduced output; the filter keeps a layer's.
     #[test]
     fn every_layer_taps_the_reference_sites_in_program_order() {
         let shape = Shape::new(&FLASH, Ranks::TP4).unwrap();
@@ -353,6 +409,7 @@ mod tests {
                 "x.hc.attn",
                 "attn.in",
                 "x.latent",
+                "x.attn.partial",
                 "attn.out",
                 "x.hc.ffn.pre",
                 "x.hc.ffn.post",
@@ -361,10 +418,20 @@ mod tests {
                 "mlp.in",
                 "router.weights",
                 "router.ids",
+                "x.mlp.partial",
                 "mlp.out",
                 "out",
             ]
         );
+        for spec in specs(&shape) {
+            let partial = spec.name.ends_with(".partial");
+            assert_eq!(spec.detail, partial, "{}", spec.name);
+            if partial {
+                assert_eq!(spec.sharding, TapSharding::RankPartial);
+                assert_eq!(spec.dtype, TapDType::F32);
+                assert_eq!(spec.cols, shape.dims().hidden);
+            }
+        }
         assert_eq!(names[names.len() - 2..], ["final.x.hc.head", "final.norm"]);
         let filter = TapFilter {
             layers: None,

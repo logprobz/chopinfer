@@ -61,6 +61,8 @@ mod prefill_tma_scales;
 mod producer_epilogues;
 mod projection_reuse;
 mod query_window;
+#[cfg(feature = "diagnostic-taps")]
+mod reduce_inputs;
 mod router_gaps;
 mod router_prefill;
 mod scale_banks;

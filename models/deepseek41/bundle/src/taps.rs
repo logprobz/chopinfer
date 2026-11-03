@@ -15,8 +15,10 @@
 //! Text taps (`text`): while the sites filter selects one, every prefill
 //! runs stage by stage across the ranks, and after each stage its selected
 //! taps' rows are read back from rank 0's scratch; decode and verify graph
-//! buckets are not tapped. `tools/qual/tapdiff.py` compares the steps with
-//! the reference runner's taps (`models/deepseek41/reference.py`, `taps`).
+//! buckets are not tapped. Before each all-reduce, its selected input
+//! taps read every rank's F32 partial (`text::inputs`).
+//! `tools/qual/tapdiff.py` compares the steps with the reference runner's
+//! taps (`models/deepseek41/reference.py`, `taps`).
 //!
 //! One tap step per tapped phase: a prefill's encoder rows are written into
 //! its text step when text taps are on, else into a step of their own. A
@@ -372,7 +374,8 @@ mod enabled {
         /// Opens the tap step of a phase of `program` over `inputs` on
         /// `ranks` ranks, whose stages, in order, are `stages`: the
         /// prefill's encoder rows (`step`), then every selected text tap of
-        /// each stage, declared in the order `capture` writes them.
+        /// each stage, its inputs before its outputs, declared in the order
+        /// `capture_inputs` and `capture` write them.
         pub fn begin(
             &mut self,
             program: &str,
@@ -387,19 +390,35 @@ mod enabled {
             if let Some(stale) = self.open.take() {
                 stale.cancel().map_err(|error| error.to_string())?;
             }
-            let capture = shared::begin(
-                taps,
-                program,
-                ranks,
-                inputs,
-                &mut self.encoders,
-                stages.iter().flat_map(|&stage| {
-                    super::text::taps(stage, shape)
-                        .into_iter()
-                        .map(|tap| tap.spec)
-                }),
-            )?;
+            let specs = || {
+                stages
+                    .iter()
+                    .flat_map(|&stage| super::text::stage_specs(stage, shape))
+            };
+            let capture = shared::begin(taps, program, ranks, inputs, &mut self.encoders, specs())?;
             self.open = Some(capture);
+            Ok(())
+        }
+
+        /// Copies the open step's rows of the selected taps `stage` reads
+        /// before it runs (`text::inputs`) from `buffers`, each rank's on
+        /// its stream, once the work queued there is done.
+        pub fn capture_inputs(
+            &mut self,
+            services: &HostServicesV1,
+            streams: &[BundleStreamHandleV1],
+            buffers: &[RankBuffers],
+            shape: &Shape,
+            stage: Stage,
+        ) -> Result<(), TapError> {
+            let (Some(taps), Some(capture)) = (&self.taps, &mut self.open) else {
+                return Ok(());
+            };
+            for tap in super::text::inputs(stage, shape) {
+                shared::capture(taps, capture, services, streams, &tap.spec, |index| {
+                    tap.buffer.span(&buffers[index].scratch)
+                })?;
+            }
             Ok(())
         }
 

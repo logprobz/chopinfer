@@ -1878,7 +1878,8 @@ impl Instance {
 impl Instance {
     /// Issues an eager prefill stage by stage across the ranks, each
     /// stage's launches collective by collective as `launch_eager` queues
-    /// a program, and copies the stage's selected taps once its work is
+    /// a program, and copies the stage's selected input taps once the
+    /// work before it is done and its selected taps once its own work is
     /// done (`crate::taps`).
     fn launch_tapped(
         &mut self,
@@ -1933,7 +1934,26 @@ impl Instance {
         let _unwinding = PoisonOnUnwind(&self.collectives);
         let mut unit = Unit::default();
         let mut started = vec![false; streams.len()];
+        // Work is queued on every rank, and nothing established that it
+        // finished.
+        let failed = |instance: &Self, stage: Stage, error| {
+            instance.collectives.poison();
+            match error {
+                runtime_bundle_sdk::taps::TapError::Host(error) => error,
+                runtime_bundle_sdk::taps::TapError::Io(error) => {
+                    instance.log(&format!("taps: {stage:?}: {error}"));
+                    BundleAbiError::Status(BundleStatusV1::InternalError)
+                }
+            }
+        };
         for (&stage, ranges) in order.iter().zip(&walk) {
+            // The stage's inputs that its own launches may change in place.
+            let inputs =
+                self.taps
+                    .capture_inputs(&self.services, streams, &self.buffers, &shape, stage);
+            if let Err(error) = inputs {
+                return Err(failed(self, stage, error));
+            }
             let segments = ranges
                 .iter()
                 .enumerate()
@@ -1970,16 +1990,7 @@ impl Instance {
                 stage,
             );
             if let Err(error) = captured {
-                // Work is queued on every rank, and nothing established
-                // that it finished.
-                self.collectives.poison();
-                return Err(match error {
-                    runtime_bundle_sdk::taps::TapError::Host(error) => error,
-                    runtime_bundle_sdk::taps::TapError::Io(error) => {
-                        self.log(&format!("taps: {stage:?}: {error}"));
-                        BundleAbiError::Status(BundleStatusV1::InternalError)
-                    }
-                });
+                return Err(failed(self, stage, error));
             }
         }
         self.taps.end();

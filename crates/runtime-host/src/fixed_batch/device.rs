@@ -199,10 +199,12 @@ impl Config {
 
     fn serve_command(&self) -> Result<crate::HostCommandV1> {
         use crate::command::serve_config::EnvironmentV1;
-        use crate::command::serve_options::{ServingInputsV1, validate_model_option_v1};
+        use crate::command::serve_options::{
+            ServingInputsV1, model_option_pair_v1, validate_model_option_v1,
+        };
         let environment = EnvironmentV1::process()?;
         let path = |value: &std::path::Path| PathBuf::from(value.to_string_lossy().into_owned());
-        let inputs = ServingInputsV1 {
+        let mut inputs = ServingInputsV1 {
             bundle: Some(self.bundle.to_string_lossy().into_owned()),
             direct_checkpoint: Some(path(&self.checkpoint)),
             weight_keeper: self.weight_keeper.as_deref().map(path),
@@ -213,11 +215,17 @@ impl Config {
                 .map(crate::weight_keeper::KeeperPolicyV1::parse)
                 .transpose()
                 .map_err(crate::command::usage_error)?,
-            model_options: self.model_options.clone(),
             ..Default::default()
         };
         for (name, value) in &self.model_options {
-            validate_model_option_v1(name, value)?;
+            let (name, value) = model_option_pair_v1(name.clone(), value.clone());
+            validate_model_option_v1(&name, &value)?;
+            if inputs.model_options.insert(name.clone(), value).is_some() {
+                return Err(crate::command::usage_error(format!(
+                    "model option '{name}' given more than once"
+                ))
+                .into());
+            }
         }
         let resolved = crate::profiles::Resolution::plain(inputs);
         Ok(crate::command::serve_config::resolve_inputs(
@@ -231,6 +239,31 @@ impl Config {
 #[cfg(test)]
 mod configuration_tests {
     use super::*;
+
+    #[test]
+    fn replay_model_options_keep_assignment_boundaries() {
+        for model_options in [
+            json!({"budget=small":"7"}),
+            json!({"budget":"7", "budget=small":"8"}),
+        ] {
+            let config: Config = serde_json::from_value(json!({
+                "bundle":"bundle", "checkpoint":"checkpoint", "topology":"topology",
+                "trace":"trace.json", "output":"capture", "concurrency":1,
+                "verify":false, "owned":false, "source":{}, "model_options":model_options
+            }))
+            .unwrap();
+            let mut words = ["serve", "--bundle", "bundle", "--checkpoint", "checkpoint"]
+                .map(String::from)
+                .to_vec();
+            for (name, value) in &config.model_options {
+                words.extend(["--model-option".into(), format!("{name}={value}")]);
+            }
+            assert_eq!(
+                config.serve_command().map_err(|error| error.to_string()),
+                crate::parse_host_command_v1(&words).map_err(|error| error.to_string())
+            );
+        }
+    }
 
     #[test]
     fn transition_wire_carries_drafter_seed_position_and_temperature() {

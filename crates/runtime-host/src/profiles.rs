@@ -303,10 +303,7 @@ impl Profile {
         for (name, value) in self.model_option_texts() {
             // Preserve the assignment boundary of the profile's external
             // spelling without serializing and reparsing a serve command.
-            let (name, value) = match name.split_once('=') {
-                Some((name, prefix)) => (name.to_owned(), format!("{prefix}={value}")),
-                None => (name, value),
-            };
+            let (name, value) = serve_options::model_option_pair_v1(name, value);
             if explicit.model_options.contains_key(&name) {
                 continue;
             }

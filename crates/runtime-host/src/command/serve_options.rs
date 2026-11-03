@@ -1764,6 +1764,15 @@ pub(crate) fn speculation_mode_v1(value: &str) -> Result<SpeculationMode, HostCo
     })
 }
 
+/// Preserve the first assignment separator when schema keys supplied the
+/// name part of NAME=VALUE. Validation follows source-specific inheritance.
+pub(crate) fn model_option_pair_v1(name: String, value: String) -> (String, String) {
+    match name.split_once('=') {
+        Some((name, prefix)) => (name.to_owned(), format!("{prefix}={value}")),
+        None => (name, value),
+    }
+}
+
 /// Lexical checks shared by CLI, profile, environment and replay adapters.
 pub(crate) fn validate_model_option_v1(name: &str, value: &str) -> Result<(), HostCommandErrorV1> {
     if !runtime_bundle::model_options::valid_name(name) || value.len() > 1024 {

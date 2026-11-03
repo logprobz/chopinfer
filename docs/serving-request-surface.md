@@ -85,7 +85,11 @@ prompt token (the first is null). Positive `prompt_logprobs` with
 `chop.prompt-rows.v2`. With a grammar that admits fewer tokens than
 requested, masked entries serialize with logprob `-9999`.
 `return_token_ids` adds generated IDs (and prompt IDs) to responses and
-stream chunks.
+stream chunks. Nonstreaming completion choices carry their own `prompt_token_ids`,
+`prompt_text`, and requested `prompt_logprobs`. With one prompt, including
+`n > 1`, the root fields remain aliases of choice 0. With multiple prompts,
+those root fields are absent; each choice carries its corresponding prompt.
+Chat retains its single-prompt root representation.
 
 **Truncation.** `truncate_prompt_tokens` keeps at most N prompt tokens after
 tokenization; `-1` uses the context minus the requested output. The default

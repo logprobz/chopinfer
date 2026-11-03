@@ -2635,6 +2635,168 @@
    "error": "capabilities.unqualified_media.image"
   },
   {
+   "name": "an unserved capability declared false with its reason",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false,
+     "not_served": {
+      "kv_offload": "The bundle declares no KV offload; preempted requests recompute."
+     }
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": null
+  },
+  {
+   "name": "an unserved capability needs a reason",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false,
+     "not_served": {
+      "kv_offload": " "
+     }
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.not_served.kv_offload"
+  },
+  {
+   "name": "an unserved capability cannot be declared true",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false,
+     "not_served": {
+      "api": "The bundle declares no KV offload; preempted requests recompute."
+     }
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.not_served.api"
+  },
+  {
+   "name": "not_served names a boolean capability",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false,
+     "not_served": {
+      "media": "The bundle declares no KV offload; preempted requests recompute."
+     }
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.not_served.media"
+  },
+  {
+   "name": "not_served names a known capability",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false,
+     "not_served": {
+      "offload": "The bundle declares no KV offload; preempted requests recompute."
+     }
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.not_served.offload"
+  },
+  {
+   "name": "not_served must map each capability to its reason",
+   "set": {
+    "/capabilities": {
+     "text": true,
+     "frontend": false,
+     "api": true,
+     "structured": false,
+     "prefix_cache": false,
+     "preemption": false,
+     "long_context": false,
+     "stability": false,
+     "media": [
+      "image"
+     ],
+     "speculation": "none",
+     "kv_offload": false,
+     "not_served": [
+      "kv_offload"
+     ]
+    }
+   },
+   "remove": [
+    "/checks/media/informational_reason"
+   ],
+   "error": "capabilities.not_served"
+  },
+  {
    "name": "speculative coverage contracts",
    "set": {
     "/capabilities": {

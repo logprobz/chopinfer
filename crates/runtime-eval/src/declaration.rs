@@ -1205,7 +1205,12 @@ fn capabilities(value: &Value) -> Checked<()> {
     ];
     let mut required: Vec<_> = obligations.iter().map(|(name, _)| *name).collect();
     required.extend(["media", "speculation", "kv_offload"]);
-    let declared = fields(declared, "capabilities", &required, &["unqualified_media"])?;
+    let declared = fields(
+        declared,
+        "capabilities",
+        &required,
+        &["unqualified_media", "not_served"],
+    )?;
     let mut needed = Vec::new();
     for (name, module) in obligations {
         if boolean(&declared[name], &format!("capabilities.{name}"))? {
@@ -1241,6 +1246,20 @@ fn capabilities(value: &Value) -> Checked<()> {
                     &field,
                     "must not keep reference items in qualification.media.coverage",
                 );
+            }
+            text(reason, &field)?;
+        }
+    }
+    // A boolean capability the model does not serve is declared false, and
+    // here with its reason.
+    if let Some(not_served) = declared.get("not_served") {
+        for (name, reason) in object(not_served, "capabilities.not_served")? {
+            let field = format!("capabilities.not_served.{name}");
+            if !obligations.iter().any(|(own, _)| own == name) && name != "kv_offload" {
+                return fail(&field, "must name a boolean capability");
+            }
+            if boolean(&declared[name], &format!("capabilities.{name}"))? {
+                return fail(&field, "must name a capability declared false");
             }
             text(reason, &field)?;
         }

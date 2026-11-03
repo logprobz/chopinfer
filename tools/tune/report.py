@@ -186,6 +186,7 @@ def schedule(selection):
 
 def evaluate(run, diagnostic=False):
     import depth_evidence
+    import depth_identity
     run = Path(run)
     # Invalidate the old recommendation even if a malformed input cannot be read.
     (run / 'tune.json').write_text(json.dumps({'adoptable': False, 'depths': None, 'selection': {},
@@ -194,11 +195,13 @@ def evaluate(run, diagnostic=False):
     config, rows = load(run, allow_void=True)
     path = run / 'summary.json'
     summary = json.loads(path.read_text()) if path.exists() else {}
-    reasons, installs = [], {}
+    reasons, installs, partition = [], {}, None
     try:
+        partition = depth_identity.describe(config, summary)
         depth_evidence.validate(config, rows, summary)
         installs = arm_installs(run, rows)
-    except (KeyError, TypeError, ValueError) as error:
+        partition = depth_identity.validate(run, config, rows, summary)
+    except (KeyError, TypeError, ValueError, OSError) as error:
         reasons.append(str(error))
     groups = {}
     for r in rows:
@@ -217,6 +220,7 @@ def evaluate(run, diagnostic=False):
     out = {'adoptable': not reasons, 'reasons': reasons,
            'depths': schedule(selection) if not reasons else None, 'selection': selection,
            'arm_installs': installs,
+           'partition': partition,
            'cells': {f'c{c}/{k}/d{d}': v for (c, k, d), v in sorted(cells.items())}}
     (run / 'tune.json').write_text(json.dumps(out, indent=2, sort_keys=True) + '\n')
     text = (markdown(config, cells, selection, out['depths']) if not reasons else
@@ -225,6 +229,9 @@ def evaluate(run, diagnostic=False):
             + '\n'.join(f"| {key} | {cell['measurements']} | {cell['request_median']} |"
                         for key, cell in out['cells'].items()) + '\n')
     (run / 'tune.md').write_text('\n'.join(install_lines(installs)) + text)
+    if partition:
+        with (run / 'tune.md').open('a') as stream:
+            stream.write(depth_identity.partition_text(partition))
     if reasons and not diagnostic:
         raise ValueError('non-adoptable depth capture: ' + '; '.join(reasons))
     return out
@@ -263,12 +270,46 @@ def markdown(config, cells, selection, depths):
     return '\n'.join(lines)
 
 
-def merged(runs):
-    """One schedule from several runs' selections."""
-    selection = {}
+def merged(runs, diagnostic=False):
+    """Combine disjoint partitions only when their measured targets agree."""
+    import depth_identity
+    if not runs:
+        raise ValueError('give at least one run directory')
+    root = Path(runs[0])
+    invalid = {'adoptable': False, 'depths': None, 'selection': {}, 'reasons': ['merge validation did not complete']}
+    (root / 'merged-tune.json').write_text(json.dumps(invalid) + '\n')
+    (root / 'merged-tune.md').write_text('# Non-adoptable combined capture\n')
+    selection, reasons, partitions, common, covered, reports = {}, [], [], None, set(), []
     for run in runs:
-        selection.update(evaluate(run)['selection'])
-    return schedule(selection)
+        result = evaluate(run, diagnostic=True)
+        reports.append(result)
+        reasons.extend(result['reasons'])
+        partition = result['partition']
+        if partition is None:
+            continue
+        partitions.append(partition)
+        if not result['adoptable']:
+            continue
+        cs = set(partition['concurrencies'])
+        if covered & cs:
+            reasons.append('overlapping concurrency partitions')
+        covered |= cs
+        if common is not None and common != partition['common']:
+            reasons.append('incompatible capture identities or selection policy')
+        common = partition['common']
+        selection.update(result['selection'])
+    out = {'adoptable': not reasons, 'reasons': reasons, 'depths': schedule(selection) if not reasons else None,
+           'selection': selection if not reasons else {}, 'partitions': partitions}
+    # Invalid merged reports retain measurements, never individual recommendations.
+    if diagnostic:
+        out['reports'] = [{**result, 'depths': None, 'selection': {}} for result in reports]
+    (root / 'merged-tune.json').write_text(json.dumps(out, indent=2, sort_keys=True) + '\n')
+    text = ('# Combined depth capture\n\nSchedule: `' + out['depths'] + '`.\n' if not reasons else
+            '# Non-adoptable combined capture\n\n' + '\n'.join(f'- {r}' for r in reasons) + '\n')
+    (root / 'merged-tune.md').write_text(text + ''.join(depth_identity.partition_text(p) for p in partitions))
+    if reasons and not diagnostic:
+        raise ValueError('non-adoptable combined capture: ' + '; '.join(reasons))
+    return out
 
 
 def percentile(values, q):
@@ -880,6 +921,6 @@ if __name__ == '__main__':
     elif sys.argv[1:2] == ['--costs']:
         print(json.dumps({'costs': costs(sys.argv[2])['summary']}))
     elif sys.argv[1:2] == ['--diagnostic']:
-        print(json.dumps({'reports': [evaluate(run, diagnostic=True) for run in sys.argv[2:]]}))
+        print(json.dumps(merged(sys.argv[2:], diagnostic=True)))
     else:
-        print(json.dumps({'depths': merged(sys.argv[1:])}))
+        print(json.dumps(merged(sys.argv[1:])))

@@ -14,6 +14,7 @@ import report  # noqa: E402
 import prefill_report  # noqa: E402
 import stage  # noqa: E402
 import tune  # noqa: E402
+import depth_identity  # noqa: E402
 
 # A synthetic model: depths 0-5 over 32 verify rows, two repeats each.
 MODEL = {'max_depth': 5, 'verify_rows': 32, 'concurrencies': [1, 2, 4, 8, 16, 32], 'repeats': 2}
@@ -55,11 +56,25 @@ def frozen_fixture(root, names=('base', 'head')):
                           'if sys.argv[1:3] == ["weights", "identity"]:\n'
                           '    out = Path(sys.argv[sys.argv.index("--output") + 1])\n'
                           '    out.write_text(Path(__file__).with_name("identity.json").read_text())\n'
+                          'elif "--check" in sys.argv:\n'
+                          '    check = json.loads(Path(__file__).with_name("serve-check.json").read_text())\n'
+                          '    for i, word in enumerate(sys.argv[1:], 1):\n'
+                          '        key, sep, value = word.removeprefix("--").partition("=")\n'
+                          '        if not sep and i + 1 < len(sys.argv): value = sys.argv[i + 1]\n'
+                          '        if key in check["settings"] or key == "speculation-depths": check["settings"][key] = value\n'
+                          '        if key == "profile": check["profile"] = value\n'
+                          '    print(json.dumps(check))\n'
                           'elif "--list-model-options" in sys.argv:\n'
                           '    print("{}")\nelse:\n    sys.exit(2)\n')
         binary.chmod(0o755)
         identity['images'][0]['recipe_identity'] = ('b' if name == 'base' else 'd') * 64
         (binary.parent / 'identity.json').write_text(json.dumps(identity))
+        (binary.parent / 'serve-check.json').write_text(json.dumps({
+            'schema': 'chopinfer.serve-check.v1', 'profile': 'fixture', 'model_options': [],
+            'settings': {'speculation': 'balanced', 'speculative-tokens': '1', 'speculative-rows': '32',
+                         'speculation-widths': '6,8,16,32', 'speculation-confidence': 'off',
+                         'max-sequences': '32', 'prefill-policy': 'adaptive', 'kv-pages': '64',
+                         'prefix-cache': 'on', 'kv-cache-dtype': 'fp8'}}))
         fixture_content(root, name)
         source = root / f'source-{name}'
         shutil.copytree(HERE.parents[1] / 'tools/qual', source / 'tools/qual',
@@ -67,10 +82,11 @@ def frozen_fixture(root, names=('base', 'head')):
         (source / '.commit').write_text(revision + '\n')
         bundle = root / f'cache-{name}' / 'fixture'
         bundle.mkdir(parents=True)
-        (bundle / 'manifest.json').write_text('{}\n')
+        (bundle / 'manifest.json').write_text('{"id": "fixture.v1"}\n')
         (logs / f'version-{name}.txt').write_text(f'fixture ({revision})\n')
         (logs / f'install-{name}.sha256').write_text(f'{stage.digest(binary)}  {binary}\n')
-        (logs / f'prepare-{name}.json').write_text(json.dumps({'result': 'prepared-direct', 'bundle': str(bundle)}))
+        (logs / f'prepare-{name}.json').write_text(json.dumps({'result': 'prepared-direct', 'bundle': str(bundle),
+                                                            'checkpoint_identity': 'a' * 64}))
         stage.protect(binary.parent.parent)
         stage.protect(bundle)
     workload = root / 'workload.json'
@@ -124,28 +140,65 @@ def priming_fixture(c):
             'last_completed': 1, 'window_started': 2}
 
 
-def depth_fixture(run, rates=None, **model):
+def depth_fixture(run, rates=None, sealed_config=None, **model):
     """Complete bounded depth evidence for report validation, never GPU evidence."""
     from collections import Counter
     from copy import deepcopy
-    config = deepcopy({**CONFIG, 'tokens': {'default': 256},
-                       'model': {**MODEL, 'concurrencies': [8], 'depths': [0, 1], **model}})
+    config = deepcopy(sealed_config or {**CONFIG, 'tokens': {'default': 256}, 'workload': 'fixture',
+                       'sampling': {'seed': 7, 'temperature': 1.0},
+                       'model': {**MODEL, 'model': 'fixture', 'tensor_parallel_size': 1,
+                                 'speculation_mode': 'balanced', 'serve_arguments': [],
+                                 'adoption_target': {'profile': 'fixture', 'arguments': []},
+                                 'concurrencies': [8], 'depths': [0, 1], **model}})
     run.mkdir(parents=True, exist_ok=True)
     (run / 'config.json').write_text(json.dumps(config))
     summary = {'status': 'passed', 'dry_run': False, 'mode': 'sweep', 'errors': [],
                'greedy_differences': [], 'sampled_differences': [], 'processes': {}, 'exact': Counter(),
                'order': tune.order(config)}
+    prompts = []
+    for i in range(128):
+        body = {'prompt': f'fixture {i}'}
+        prompts.append({**body, 'sha256': __import__('hashlib').sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()})
+    (run / 'prompts.json').write_text(json.dumps(prompts))
+    install = {'revision': '1' * 40, 'bundle_id': 'fixture.v1', 'package_identity': 'a' * 64,
+               'checkpoint_identity': 'b' * 64,
+               'artifacts': {'install': {'bin/chopinfer': 'c' * 64}, 'package': {'manifest.json': 'a' * 64}}}
+    capture = {'schema': 'chopinfer-depth-capture.v1', 'config_sha256': depth_identity.digest(config),
+               'prompts_sha256': depth_identity.digest(prompts), 'installs': {'head': install}}
+    summary['capture_identity'] = capture
+    settings = {'speculation': 'balanced', 'speculative-tokens': '5', 'speculative-rows': '64',
+                'speculation-widths': '6,8,16,32,64', 'speculation-confidence': 'off',
+                'max-sequences': '32', 'prefill-policy': 'adaptive', 'prefix-cache': 'on', 'kv-cache-dtype': 'fp8'}
+    resolved = {'schema': 'chopinfer.serve-check.v1', 'profile': 'fixture', 'settings': settings, 'model_options': []}
+    summary['depth_preflight'] = {'capture_sha256': depth_identity.digest(capture),
+                                 'target_declaration': config['model']['adoption_target'],
+                                 'target': {'resolved': resolved}, 'cases': []}
+    summary['arm_installs'] = {arm['label']: {'install': 'head', 'revision': install['revision']}
+                               for arm in tune.arms(config)}
     for visit in tune.visits(config):
         depth = visit['depth']
         process = summary['processes'][visit['label']] = {
-            'depth': depth, 'windows': {}, 'metrics': {'preemptions': 0, 'prefix_cache_evictions': 0}}
+            'depth': depth, 'windows': {}, 'metrics': {'preemptions': 0, 'prefix_cache_evictions': 0},
+            'install': 'head', 'revision': install['revision'], 'capture_sha256': depth_identity.digest(capture),
+            'serve_argv': ['chopinfer', 'serve', '--speculation-depths', f'1:{depth}'],
+            'serving': {'bundle_id': install['bundle_id'], 'package_identity': install['package_identity'],
+                        'checkpoint_identity': install['checkpoint_identity'], 'metadata_identity': 'd' * 64,
+                        'source_commit': install['revision'], 'model_options': {},
+                        'profile': {'name': 'fixture', 'tensor_parallel_size': 1, 'max_sequences': 32,
+                                    'prefix_cache': True, 'kv_cache_dtype': 'fp8',
+                                    'speculation': {'mode': 'balanced', 'tokens': 5}}}}
+        summary['depth_preflight']['cases'].append({'arm': visit['arm'], 'argv': process['serve_argv'],
+            'resolved': {**resolved, 'settings': {**settings, 'speculation-depths': f'1:{depth}'}}, 'env': {}})
         for repeat, windows in visit['passes']:
             for kind, c in windows:
                 rate = rates(c, kind, depth, repeat) if rates else 100 + 50 * depth
-                groups = model.get('groups', {}).get(str(c), 1)
+                groups = config['model'].get('groups', {}).get(str(c), 1)
+                tokens = config['tokens'].get(str(c), config['tokens']['default'])
                 record = {'name': f'{kind}-c{c}', 'arm': visit['arm'], 'visit': visit['visit'],
+                          'capture_sha256': depth_identity.digest(capture), 'install': 'head', 'revision': install['revision'],
+                          'prompts': [p['sha256'] for p in prompts[:c * groups]],
                           'kind': kind, 'concurrency': c, 'depth': depth, 'repeat': repeat,
-                          'tokens': 256, 'groups': groups, 'request_seconds': groups * c * 256 / rate,
+                          'tokens': tokens, 'groups': groups, 'request_seconds': groups * c * tokens / rate,
                           'request_tokens_per_second': rate,
                           'full': {'steps': 10, 'tokens': c * 10, 'seconds': c * 10 / rate,
                                    'tokens_per_second': rate, 'histogram': {f'i{c}-r{c * (depth + 1)}': 10}},
@@ -154,11 +207,28 @@ def depth_fixture(run, rates=None, **model):
                 path = run / visit['label'] / 'windows' / f'{name}.json'
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(json.dumps(record))
-                process['windows'][name] = {key: record[key] for key in ('request_tokens_per_second', 'full')}
+                process['windows'][name] = {key: record[key] for key in ('request_tokens_per_second', 'full', 'install', 'revision')}
                 summary['exact'][record['name']] += 1
     summary['windows'] = {'planned': tune.planned_windows(config), 'executed': sum(summary['exact'].values())}
     (run / 'summary.json').write_text(json.dumps(summary))
     return config, summary
+
+
+def rebind_depth_fixture(run, config, summary):
+    """Re-seal deliberate fixture variations to test compatibility after binding."""
+    capture = summary['capture_identity']
+    capture['config_sha256'] = depth_identity.digest(config)
+    capture['prompts_sha256'] = depth_identity.digest(json.loads((run / 'prompts.json').read_text()))
+    sha = depth_identity.digest(capture)
+    summary['depth_preflight']['capture_sha256'] = sha
+    for process in summary['processes'].values():
+        process['capture_sha256'] = sha
+    for path in run.glob('*/windows/*.json'):
+        row = json.loads(path.read_text())
+        row['capture_sha256'] = sha
+        path.write_text(json.dumps(row))
+    (run / 'config.json').write_text(json.dumps(config))
+    (run / 'summary.json').write_text(json.dumps(summary))
 
 
 def warmup_fixture(config):
@@ -201,6 +271,162 @@ def ab_fixture(root, **overrides):
 
 
 class Tuner(unittest.TestCase):
+    def test_depth_merge_checks_content_and_policy_after_rebinding(self):
+        mutations = {
+            'sampling': lambda c, s: c['sampling'].update(seed=8),
+            'weights': lambda c, s: c['kinds'].update(sampled=.8),
+            'selection': lambda c, s: c['selection'].update(margin=.02),
+            'workload': lambda c, s: c.update(workload='other'),
+            'model': lambda c, s: c['model'].update(model='other'),
+            'executable': lambda c, s: s['capture_identity']['installs']['head']['artifacts']['install'].update(
+                {'bin/chopinfer': 'e' * 64}),
+            'helper': lambda c, s: s['capture_identity']['installs']['head']['artifacts']['install'].update(
+                {'bin/helper': 'e' * 64}),
+            'package-file': lambda c, s: s['capture_identity']['installs']['head']['artifacts']['package'].update(
+                {'library.so': 'f' * 64}),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                low, high = Path(directory) / 'low', Path(directory) / 'high'
+                depth_fixture(low, concurrencies=[1])
+                config, summary = depth_fixture(high, concurrencies=[8])
+                mutate(config, summary)
+                rebind_depth_fixture(high, config, summary)
+                self.assertTrue(report.evaluate(high)['adoptable'])
+                with self.assertRaisesRegex(ValueError, 'incompatible'):
+                    report.merged([low, high])
+                merged = report.merged([low, high], diagnostic=True)
+                self.assertIsNone(merged['depths'])
+                self.assertEqual(merged['selection'], {})
+
+    def test_depth_target_and_live_identity_cannot_be_replaced(self):
+        mutations = {
+            'target': lambda c, s: s['depth_preflight']['target']['resolved']['settings'].update(**{'prefill-policy': 'fixed'}),
+            'widths': lambda c, s: s['depth_preflight']['cases'][0]['resolved']['settings'].update(**{'speculation-widths': '32'}),
+            'capacity': lambda c, s: s['depth_preflight']['cases'][0]['resolved']['settings'].update(**{'speculative-rows': '128'}),
+            'depth': lambda c, s: s['depth_preflight']['cases'][0]['resolved']['settings'].update(**{'speculation-depths': '1:0'}),
+            'argv': lambda c, s: s['processes']['d1'].update(serve_argv=['chopinfer', 'serve', '--prefill-policy', 'fixed']),
+            'environment': lambda c, s: s['processes']['d1'].update(env={'CHOPINFER_FIXTURE': '1'}),
+            'checkpoint': lambda c, s: s['processes']['d1']['serving'].update(checkpoint_identity='e' * 64),
+            'package': lambda c, s: s['processes']['d1']['serving'].update(package_identity='e' * 64),
+            'revision': lambda c, s: s['processes']['d1']['serving'].update(source_commit='2' * 40),
+            'profile': lambda c, s: s['processes']['d1']['serving']['profile'].update(name='other'),
+            'options': lambda c, s: s['processes']['d1']['serving'].update(model_options={'control': True}),
+            'unresolved': lambda c, s: s.pop('depth_preflight'),
+            'no-target': lambda c, s: c['model'].pop('adoption_target'),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                run = Path(directory)
+                config, summary = depth_fixture(run)
+                mutate(config, summary)
+                (run / 'config.json').write_text(json.dumps(config))
+                (run / 'summary.json').write_text(json.dumps(summary))
+                with self.assertRaisesRegex(ValueError, 'non-adoptable'):
+                    report.evaluate(run)
+                out = report.evaluate(run, diagnostic=True)
+                self.assertIsNone(out['depths'])
+                self.assertIn('resolved_by_concurrency', out['partition'])
+
+    def test_depth_partitions_keep_planning_limits_separate_from_serving(self):
+        with tempfile.TemporaryDirectory() as directory:
+            low, high = Path(directory) / 'low', Path(directory) / 'high'
+            depth_fixture(low, concurrencies=[1], repeats=3, verify_rows=16, groups={'1': 2},
+                          warm=[1], planning={'startup_seconds': 2})
+            depth_fixture(high, concurrencies=[8], repeats=1, verify_rows=64, warm=[8],
+                          planning={'startup_seconds': 4})
+            out = report.merged([low, high])
+            self.assertEqual(out['depths'], '1:1')
+            self.assertEqual([part['verify_rows'] for part in out['partitions']], [16, 64])
+            self.assertIn('Declared planning verify rows: 16', (low / 'merged-tune.md').read_text())
+
+    def test_profile_jobs_inherit_non_depth_settings_and_cover_eligible_depths(self):
+        count = 0
+        for path in sorted((HERE.parents[1] / 'models').glob('*/depth-tune.json')):
+            model = json.loads(path.read_text())
+            for name, job in model.get('jobs', {}).items():
+                if not name.startswith('profile-'):
+                    continue
+                count += 1
+                profile = json.loads(path.with_name('profiles.json').read_text())['profiles'][job['adoption_target']['profile']]
+                config = {'model': {**model, **job}, 'kinds': model['kinds']}
+                self.assertEqual(job['serve_arguments'], ['--profile', job['adoption_target']['profile']])
+                self.assertEqual(job['extra_arguments'], [])
+                self.assertEqual(job['adoption_target']['arguments'], ['--kv-pages', str(model['kv_pages'])])
+                capacity = profile['speculation']['rows']
+                actual = {(c, arm['depth']) for arm in tune.arms(config)
+                          for _, c in tune.windows_for(config, arm['depth'])}
+                expected = {(c, d) for c in job['concurrencies'] for d in range(model['max_depth'] + 1)
+                            if d == 0 or c * (d + 1) <= capacity}
+                self.assertEqual(actual, expected)
+        self.assertEqual(count, 3)
+
+    def test_stage_preflight_resolves_equivalent_profile_arguments(self):
+        import os
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            model = frozen_fixture(root, names=('head',))
+            model.update(mode='sweep', depths=[0, 1], keeper=False,
+                         adoption_target={'profile': 'fixture', 'arguments': ['--kv-pages', '64']})
+            model.pop('arms')
+            model.pop('pairs')
+            stages, runs = [], []
+            model['planning']['tokens_per_second']['8'] = 100
+            model['planning']['ar_tokens_per_second']['8'] = 100
+            for name, c, extra in [('default', 1, []), ('explicit', 8, ['--prefill-policy=adaptive'])]:
+                model['concurrencies'] = [c]
+                model['extra_arguments'] = extra
+                result = stage_fixture(root, model, names=('head',), destination=name)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                staged = root / name
+                stages.append(staged)
+                result = subprocess.run([sys.executable, '-B', '-I', str(staged / 'harness/preflight.py'), str(staged)],
+                    env={**os.environ, 'CHOPINFER_TEST_CHECKPOINT': str(root / 'checkpoint')},
+                    text=True, capture_output=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                checks = json.loads(next(staged.glob('validation/argv-*/preflight.json')).read_text())
+                target = depth_identity.normalized(checks['target']['resolved'])
+                self.assertTrue(all(depth_identity.normalized(case['resolved']) == target for case in checks['cases']))
+                seal = json.loads((staged / 'runtime-seal.json').read_text())
+                run = root / f'{name}-run'
+                runs.append(run)
+                config, summary = depth_fixture(run, sealed_config=seal['config'])
+                (run / 'prompts.json').write_text(json.dumps(seal['prompts']))
+                summary['capture_identity'] = seal['capture_identity']
+                summary['depth_preflight'] = checks
+                install = seal['capture_identity']['installs']['head']
+                for case in checks['cases']:
+                    process = summary['processes'][case['arm']]
+                    process['serve_argv'] = case['argv'][:-1]
+                    process['serving'].update({k: install[k] for k in
+                                              ('bundle_id', 'package_identity', 'checkpoint_identity')})
+                    process['serving']['profile']['speculation']['tokens'] = 1
+                for path in run.glob('*/windows/*.json'):
+                    row = json.loads(path.read_text())
+                    row['prompts'] = [p['sha256'] for p in seal['prompts'][:row['concurrency'] * row['groups']]]
+                    path.write_text(json.dumps(row))
+                rebind_depth_fixture(run, config, summary)
+            self.assertEqual([json.loads((s / 'runtime-seal.json').read_text())['capture_identity']['installs']
+                              for s in stages][0],
+                             json.loads((stages[1] / 'runtime-seal.json').read_text())['capture_identity']['installs'])
+            result = subprocess.run([sys.executable, '-B', '-I', str(HERE / 'report.py'), *map(str, runs)],
+                                    cwd=root, text=True, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout)['depths'], '1:1')
+
+    def test_depth_merge_rejects_overlap_and_different_sampling(self):
+        with tempfile.TemporaryDirectory() as directory:
+            low, high = Path(directory) / 'low', Path(directory) / 'high'
+            depth_fixture(low, concurrencies=[1])
+            config, _ = depth_fixture(high, concurrencies=[8])
+            config['sampling'] = {'seed': 99, 'temperature': .8}
+            (high / 'config.json').write_text(json.dumps(config))
+            with self.assertRaisesRegex(ValueError, 'non-adoptable'):
+                report.merged([low, high])
+            with self.assertRaisesRegex(ValueError, 'non-adoptable'):
+                report.merged([low, low])
+
     def test_depth_evidence_refuses_incomplete_or_invalid_captures(self):
         import shutil
         mutations = {
@@ -976,7 +1202,8 @@ class Tuner(unittest.TestCase):
             original = path.read_bytes()
             seal = json.loads(original)
             self.assertEqual(set(seal), {'schema', 'ready', 'config', 'install', 'harness_source', 'prompts',
-                                         'prompt_sources', 'cold_files', 'sha256'})
+                                         'prompt_sources', 'cold_files', 'sha256', 'capture_identity'})
+            self.assertEqual(seal['capture_identity'], depth_identity.sealed_capture(seal))
             self.assertNotIn('name', seal['install'])
             result = stage_fixture(root, model, names=('head',))
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -2387,7 +2614,7 @@ class Tuner(unittest.TestCase):
             for run, cs in ((low, [1, 4]), (high, [8, 16])):
                 depth_fixture(run, lambda c, k, d, p: 100 + (50 if c < 16 else -10) * d,
                               concurrencies=cs)
-            self.assertEqual(report.merged([low, high]), '1:1,16:0')
+            self.assertEqual(report.merged([low, high])['depths'], '1:1,16:0')
 
     def test_unstable_depths_are_not_chosen(self):
         with tempfile.TemporaryDirectory() as directory:

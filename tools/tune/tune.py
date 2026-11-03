@@ -34,6 +34,7 @@ import faults
 import prompts as prompt_builder
 import report
 import runner as r
+import depth_identity
 
 S = Path(__file__).resolve().parent
 STAGE = S.parent
@@ -245,6 +246,10 @@ def validate(payload, dry):
         if faults.file_identity(identity['path']) != identity:
             raise RuntimeError('sealed cold image metadata changed')
     check_installs(m, require_proofs=True)
+    capture = depth_identity.sealed_capture(m)
+    if 'capture_identity' in m and m['capture_identity'] != capture:
+        raise RuntimeError('capture identity differs from the runtime seal')
+    m['capture_identity'] = capture
     if m['ready']:
         for install in sealed_installs(m)[0].values():
             for root in (Path(install['install']), Path(install['prepared']['bundle'])):
@@ -492,12 +497,14 @@ def confidence_chooses(floor, items, width, drafts):
     return items >= 2 and drafts > floor and items * (1 + min(floor, drafts)) < width
 
 
-def allocation_possible(config, arm, items):
+def allocation_possible(config, arm, items, resolved=None):
     """A full cohort with executable drafts and output room can reserve
     beyond its balanced width, and confidence chooses among the reserved
     drafts. Tail limits may reduce individual steps."""
     model = config['model']
     args = [*model.get('serve_arguments', []), *model.get('extra_arguments', []), *arm['arguments']]
+    if resolved:
+        args += [word for key, value in resolved['settings'].items() for word in (f'--{key}', value)]
     capacity = int(argument_value(args, '--speculative-rows', model['verify_rows']))
     rows = min(items * (step_depth(arm.get('depths', arm['depth']), items) + 1), capacity)
     widths = argument_value(args, '--speculation-widths')
@@ -1294,7 +1301,7 @@ def run_windows(server, arm, state, power, root, passes, reference):
                 w['route'] = check_fallbacks(name, w['steps'], arm_fallbacks(config, arm))
                 w['allocated_steps'] = check_allocations(
                     f'{label} {name} {tag} group {g}', w['steps'], record['confidence']['enabled'],
-                    allocation_possible(config, arm, c))
+                    allocation_possible(config, arm, c, record.get('resolved')))
                 full = full_concurrency(w['steps'], c)
                 check_full_allocations(f'{label} {name} {tag} group {g}', config, c, w['steps'], full)
                 w['energy'] = power.window(w['started'], w['ended'], c * tokens)
@@ -1308,6 +1315,7 @@ def run_windows(server, arm, state, power, root, passes, reference):
             finishes = [f for w in parts for f in w['finishes']] if all(w['finishes'] for w in parts) else None
             value = {'name': name, 'kind': kind, 'concurrency': c, 'depth': depth, 'repeat': repeat, 'tokens': tokens,
                      **arm_identity(SEAL, arm),
+                     'capture_sha256': depth_identity.digest(SEAL['capture_identity']),
                      'arm': arm['arm'], 'visit': arm['visit'],
                      'allocated_steps': sum(w['allocated_steps'] for w in parts),
                      'fallback_launches': sum(w['route']['fallback_launches'] for w in parts),
@@ -1357,7 +1365,8 @@ def run_arm(run, arm, state, dry, keep, reference_pass, warmup_only=False):
         server.env['TUNE_STUB_CLOSED_LOOP'] = '1'
     records = state.setdefault('warmup_processes', {}) if warmup_only else state['processes']
     record = records[label] = {'depth': depth, 'args': arguments, 'windows': {}, 'gpu_memory_mib': {}, **identity,
-                                          'reference_pass': reference_pass}
+                              'reference_pass': reference_pass, 'serve_argv': server.server_command,
+                              'capture_sha256': depth_identity.digest(SEAL['capture_identity'])}
     if arm.get('env'):
         record['env'] = arm['env']
     power = Power(root, dry)
@@ -1373,6 +1382,15 @@ def run_arm(run, arm, state, dry, keep, reference_pass, warmup_only=False):
         record['process_group'] = json.loads(server.pidfile.read_text())['pgid']
         record['readiness_seconds'] = server.readiness
         memory('ready')
+        record['serving'] = server.health.get('serving', {})
+        preflight = state.get('depth_preflight')
+        if preflight:
+            case = next(case for case in preflight['cases'] if case['arm'] == arm['arm'])
+            if depth_identity.launch_arguments(server.server_command) != depth_identity.launch_arguments(case['argv']):
+                raise RuntimeError('actual launch differs from frozen preflight')
+            record['resolved'] = depth_identity.normalized(case['resolved'])
+            depth_identity.check_health(record['serving'], SEAL['capture_identity']['installs'][identity['install']],
+                                        record['resolved'], model)
         mode = ((server.health.get('serving') or {}).get('profile') or {}).get('speculation', {}).get('mode')
         record['speculation_mode'] = mode
         if mode != model['speculation_mode']:
@@ -1380,7 +1398,10 @@ def run_arm(run, arm, state, dry, keep, reference_pass, warmup_only=False):
         if mode == 'off' and server.health['serving']['profile']['speculation'].get('tokens') != 0:
             raise RuntimeError(f'{label}: AR profile reports draft tokens')
         log = (server.directory / 'server.log').read_text(errors='replace')
-        record['confidence'] = confidence_startup(log, [*model['serve_arguments'], *arguments])
+        confidence_args = [*model['serve_arguments'], *arguments]
+        if record.get('resolved'):
+            confidence_args += ['--speculation-confidence', record['resolved']['settings']['speculation-confidence']]
+        record['confidence'] = confidence_startup(log, confidence_args)
         record['weights'] = weight_source(log)
         wanted = 'borrowed' if keep else 'loaded'
         if (not dry or model.get('mode') == 'ab' or len(sealed_installs(SEAL)[0]) > 1) and record['weights']['source'] != wanted:
@@ -1484,6 +1505,7 @@ def main(args):
     global SEAL_RUN
     SEAL_RUN = run
     state = {'status': 'running', 'dry_run': args.dry_run, 'revision': m['install'].get('revision'),
+             'capture_identity': m['capture_identity'],
              'arm_installs': {arm['label']: arm_identity(m, arm) for arm in arms(config)},
              'mode': config['model'].get('mode', 'sweep'), 'order': order(config), 'processes': {}, 'exact': {},
              'reference': {}, 'tokens': [], 'greedy_differences': [], 'sampled_differences': [],
@@ -1496,6 +1518,9 @@ def main(args):
         signal.signal(sig, r.interrupted)
     reference = None
     try:
+        if not args.dry_run and config['model'].get('adoption_target'):
+            import preflight
+            state['depth_preflight'] = preflight.depth_checks(m, run / 'preflight')
         if shutil.disk_usage(run).free < DATA_RESERVE:
             raise RuntimeError('the output volume is under its free-space reserve')
         keep = keeper(run, args.dry_run)

@@ -350,6 +350,42 @@ profile's `depths` with the run cited by date and numbers in the model
 README, and its landing batch passes the stability gate like any drafting
 change.
 
+Split recommendations also require disjoint concurrency ranges and the same
+frozen install and package bytes, checkpoint, prompts, sampling, selection
+policy and resolved serving target. Declare `adoption_target` with the frozen
+package's `profile`, explicit non-depth `arguments` and optional `env` model
+controls. Preflight resolves the target and every arm through `serve --check`
+without CUDA; a real job repeats this check and binds live health identities
+and launch arguments to it. Equivalent explicit and default flags may match.
+The report keeps each partition's arguments, environment and resolved settings.
+Its `verify_rows` remains a planning bound, not proof of runtime capacity.
+
+For the profile-matched split jobs, with `local.env` sourced and `TUNE_ROUND`
+pointing to a frozen integration install:
+
+```sh
+for job in profile-low profile-c8 profile-c16c32; do
+  stage="$CHOPINFER_DATA/depth/stages/$job"
+  python3 -B -I tools/tune/stage.py --model models/deepseek41/depth-tune.json \
+    --install-dir "$TUNE_ROUND" --job "$job" "$stage"
+  python3 -B -I "$stage/harness/preflight.py" "$stage"
+done
+# Queue each stage's tune.job on designated idle devices, then report its runs.
+python3 -B -I tools/tune/report.py \
+  "$CHOPINFER_DATA/depth/runs/profile-low" \
+  "$CHOPINFER_DATA/depth/runs/profile-c8" \
+  "$CHOPINFER_DATA/depth/runs/profile-c16c32"
+```
+
+These jobs inherit `tp4-dspark` settings from the frozen package and explicitly
+declare the fixed test KV pool. They do not change or qualify the profile.
+The existing `low`, `high-c8` and `high-c16c32` experiments retain their
+different widths, disabled confidence and fixed prefill policy. Their combined
+reports are diagnostic; use `--diagnostic` to inspect them. A capture without
+a resolved sealed target cannot provide an adoptable schedule. Combined JSON
+and Markdown are saved as `merged-tune.json` and `merged-tune.md` in the first
+run directory, with the same refusal behavior as individual reports.
+
 Recommendations require a passed depth sweep with every declared timed
 window, repeat, workload kind and eligible depth present, including depth
 zero. Failed, running, historical and synthetic captures are non-adoptable.

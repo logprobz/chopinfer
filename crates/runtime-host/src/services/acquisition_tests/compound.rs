@@ -304,13 +304,13 @@ fn logits_read_keeps_its_temporary_stream_when_sync_and_release_refuse() {
         device.refuse(FakeRefusalV1::ReleaseStream);
     });
     assert_eq!(
-        s.read_logits_view_row(view.clone(), 0),
+        s.read_logits_view_row(view, 0),
         Err(BundleStatusV1::HostError)
     );
     assert_eq!(s.with_device(FakeHostDeviceV1::live_object_count), live + 1);
     let issued = s.with_device(FakeHostDeviceV1::issued_object_count);
     assert_eq!(
-        s.read_logits_view_row(view.clone(), 0),
+        s.read_logits_view_row(view, 0),
         Err(BundleStatusV1::HostError)
     );
     assert_eq!(s.with_device(FakeHostDeviceV1::issued_object_count), issued);

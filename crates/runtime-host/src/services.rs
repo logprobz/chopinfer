@@ -5701,7 +5701,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             .map_err(|_| BundleStatusV1::InvalidArgument)?;
         let pool = KvPool::new(geometry, request_capacity)
             .map_err(|_| BundleStatusV1::ResourceExhausted)?;
-        let allocation = RankAllocationV1::new(layout.rank_count() as usize)?;
+        let allocation = RankAllocationV1::new(layout.rank_count())?;
         let key = {
             let HostStateV1 { order, kv, .. } = &mut *state;
             insert_ordered_v1(order, kv, |order| {

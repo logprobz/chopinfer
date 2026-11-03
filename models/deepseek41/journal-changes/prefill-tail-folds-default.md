@@ -9,6 +9,9 @@ including two folds for widths 65 through 127.
 
 Two linked CPU proofs audit the default change. A capture-only intermediate
 revision reserves both fold workspaces while retaining the previous routes.
+The named workspace-reservation stage and its committed source patch are
+listed in the [reproduction recipe](prefill-adoption-stages.md). They
+recreate the final sealed source tree directly from the committed base.
 The [workspace specification](prefill-tail-folds-workspace.json) compares
 that revision with the pre-adoption baseline. It permits only these
 256-byte-aligned allocation changes, one per affected rank:

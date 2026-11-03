@@ -1,0 +1,61 @@
+diff --git a/models/deepseek41/bundle/src/fake_host_tests/prefill_plan_templates.rs b/models/deepseek41/bundle/src/fake_host_tests/prefill_plan_templates.rs
+index ece5a8c355b0968b613c826ba0b0a4d0fc0f979f..cf5525f59b58d3da1022eed845abdf2a759f999d 100644
+--- a/models/deepseek41/bundle/src/fake_host_tests/prefill_plan_templates.rs
++++ b/models/deepseek41/bundle/src/fake_host_tests/prefill_plan_templates.rs
+@@ -595,8 +595,8 @@ fn lifecycle(dspark: bool, verify: bool) -> (Vec<String>, Counts) {
+ 
+ /// The long-context lifecycle issues, with templates and with each reused
+ /// template lowered again, the journal pinned from fresh lowerings before
+-/// templates were kept by default. The pins stand for that comparison, so
+-/// they are digests compared here, not journals a capture dumps.
++/// templates were kept by default. Both verification modes are captured by
++/// the journal proof, with identical bodies sharing the same pin.
+ #[test]
+ fn long_context_templates_issue_the_fresh_lowerings_journal() {
+     let mut mismatches = Vec::new();
+@@ -631,12 +631,12 @@ fn long_context_templates_issue_the_fresh_lowerings_journal() {
+                 },
+                 "dspark={dspark} verify={verify}"
+             );
+-            let observed = bundle_runtime::fake_host::journal_digest(&journal);
+-            if observed != expected {
+-                mismatches.push(format!(
+-                    "{name} verify={verify}: ({}, {:#018x})",
+-                    observed.0, observed.1
+-                ));
++            if let Err(error) = bundle_runtime::fake_host::check_journal(
++                &journal,
++                expected,
++                &format!("{name}-{verify}.journal"),
++            ) {
++                mismatches.push(format!("{name} verify={verify}: {error}"));
+             }
+         }
+     }
+@@ -645,8 +645,8 @@ fn long_context_templates_issue_the_fresh_lowerings_journal() {
+ 
+ /// A launch failure inside a reused template poisons the instance exactly
+ /// as it does in a full lowering: the journal is the one pinned from a
+-/// fresh lowering before templates were kept by default (a digest, as in
+-/// `long_context_templates_issue_the_fresh_lowerings_journal`).
++/// fresh lowering before templates were kept by default, also covered by
++/// the sealed journal proof.
+ #[test]
+ fn a_failed_launch_of_a_reused_template_poisons_the_instance() {
+     let mut mismatches = Vec::new();
+@@ -693,9 +693,12 @@ fn a_failed_launch_of_a_reused_template_poisons_the_instance() {
+         } else {
+             ("flash-tp4-ar-failed-template", (31864, 0xe005e62b7bf8f901))
+         };
+-        let observed = bundle_runtime::fake_host::journal_digest(&host.device.journal.borrow());
+-        if observed != expected {
+-            mismatches.push(format!("{name}: ({}, {:#018x})", observed.0, observed.1));
++        if let Err(error) = bundle_runtime::fake_host::check_journal(
++            &host.device.journal.borrow(),
++            expected,
++            &format!("{name}.journal"),
++        ) {
++            mismatches.push(format!("{name}: {error}"));
+         }
+     }
+     assert!(mismatches.is_empty(), "{mismatches:#?}");

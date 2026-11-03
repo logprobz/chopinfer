@@ -26,6 +26,11 @@ journals identical and six declared additions. It does not claim a history
 comparison for the added fixtures. The default-change proof then compares
 all 44 fixture histories against that expanded base.
 
+The comparison base is the named template-exposure stage in the
+[reproduction recipe](prefill-adoption-stages.md). Its committed source
+patch preserves the original pins and recreates the sealed source tree
+without relying on the original unreferenced commit.
+
 The CPU proof is PROVEN: 36 journals identical, eight changed only as
 declared, and all 44 histories compared. It authorizes 112 added allocation
 records, 112 zeros and 84 releases. The failed-template fixtures account

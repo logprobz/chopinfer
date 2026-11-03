@@ -55,6 +55,12 @@ pub const FAKE_SERVED_HISTORY_ENTRIES_V1: usize = 4096;
 /// and a refused fill or copy must leave a KV append uncommitted.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum FakeRefusalV1 {
+    CreateContext,
+    CreateMemoryPool,
+    CreateStream,
+    CreateEvent,
+    CreateMappedGather,
+    ReleaseMappedGather,
     SubmitOffload,
     QueryOffload,
     ReleaseContext,
@@ -829,6 +835,7 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
         &mut self,
         plan: crate::device::mapped_gather::MappedGatherPlanV1,
     ) -> HostDeviceResultV1<DeviceObjectV1> {
+        self.check(FakeRefusalV1::CreateMappedGather)?;
         self.prepare_gather(plan)
     }
     fn enqueue_mapped_gather(
@@ -852,6 +859,7 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
         self.complete_gather(gather)
     }
     fn release_mapped_gather(&mut self, gather: DeviceObjectV1) -> HostDeviceResultV1<()> {
+        self.check(FakeRefusalV1::ReleaseMappedGather)?;
         self.release_gather(gather)
     }
 
@@ -1051,6 +1059,7 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
         rank: u32,
         device_ordinal: i32,
     ) -> HostDeviceResultV1<DeviceObjectV1> {
+        self.check(FakeRefusalV1::CreateContext)?;
         if device_ordinal < 0 {
             return Err(BundleStatusV1::InvalidArgument);
         }
@@ -1082,6 +1091,7 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
         &mut self,
         context: DeviceObjectV1,
     ) -> HostDeviceResultV1<DeviceObjectV1> {
+        self.check(FakeRefusalV1::CreateMemoryPool)?;
         self.require(context, FakeObjectKindV1::Context)?;
         // A context's pool is one object, the way a driver's default pool is.
         // Handing out a second one would hide an aliasing mistake rather than
@@ -1399,6 +1409,7 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
         context: DeviceObjectV1,
         _stream_kind: u32,
     ) -> HostDeviceResultV1<DeviceObjectV1> {
+        self.check(FakeRefusalV1::CreateStream)?;
         self.require(context, FakeObjectKindV1::Context)?;
         let stream = self.create(FakeObjectKindV1::Stream, Vec::new())?;
         self.context_of.insert(stream.get(), context.get());
@@ -1454,6 +1465,7 @@ impl HostDeviceBackendV1 for FakeHostDeviceV1 {
     }
 
     fn create_event(&mut self, context: DeviceObjectV1) -> HostDeviceResultV1<DeviceObjectV1> {
+        self.check(FakeRefusalV1::CreateEvent)?;
         self.require(context, FakeObjectKindV1::Context)?;
         self.create(FakeObjectKindV1::Event, Vec::new())
     }

@@ -36,7 +36,7 @@ impl std::fmt::Debug for LocalModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Read option boundaries with the serving grammar: a key may look
         // like a flag, and another option's value may spell --api-key.
-        let arguments: Vec<String> = crate::profiles::options(&self.serve_arguments)
+        let arguments: Vec<String> = crate::command::serve_options::options(&self.serve_arguments)
             .into_iter()
             .flat_map(|(flag, values)| {
                 let values = if flag == "--api-key" {

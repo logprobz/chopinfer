@@ -1,5 +1,6 @@
 //! Model-neutral, versioned serving presets. Artifact declarations remain authoritative.
 use crate::command::HostCommandErrorV1;
+use crate::command::serve_options::options;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path};
 
@@ -456,30 +457,6 @@ pub(crate) struct Resolution {
     pub qualified_max_sequences: Option<usize>,
 }
 
-/// The options of `arguments` as `(flag, values)` words, as the serve parser
-/// reads them: valueless flags take none, `--served-model-name` takes every
-/// following word up to the next option, and every other flag one value even
-/// when it looks like an option.
-pub(crate) fn options(arguments: &[String]) -> Vec<(String, Vec<String>)> {
-    let mut options = Vec::new();
-    let mut words = arguments.iter().peekable();
-    while let Some(word) = words.next() {
-        let mut values = Vec::new();
-        if !crate::command::VALUELESS_FLAGS_V1.contains(&word.as_str())
-            && let Some(value) = words.next()
-        {
-            values.push(value.clone());
-            if word == "--served-model-name" {
-                while words.peek().is_some_and(|name| !name.starts_with("--")) {
-                    values.push(words.next().expect("peeked name").clone());
-                }
-            }
-        }
-        options.push((word.clone(), values));
-    }
-    options
-}
-
 /// `defaults` (a profile's options) under `explicit` options: an explicit
 /// flag replaces the default, `--speculative-tokens 0` also drops the
 /// default speculation mode, an explicit mode other than `table` or zero
@@ -553,7 +530,7 @@ pub(crate) fn resolve(arguments: &[String]) -> Result<Resolution, HostCommandErr
     // An option's value is never read as `--profile`, even an API key or a
     // path that looks like one.
     for (flag, values) in options(arguments) {
-        if let Some(message) = crate::command::retired_flag_message_v1(&flag) {
+        if let Some(message) = crate::command::serve_options::retired_flag_message_v1(&flag) {
             return Err(error(message));
         }
         if flag == "--profile" {
@@ -2648,7 +2625,7 @@ mod tests {
         };
         assert_eq!(http_options.served_model_names, ["a", "b"]);
         assert_eq!(profile_name.as_deref(), Some("test"));
-        for flag in crate::command::VALUELESS_FLAGS_V1 {
+        for flag in crate::command::serve_options::VALUELESS_FLAGS_V1 {
             let words = [*flag, "--bundle", bundle, "--profile", &reference].map(String::from);
             let resolved = resolve(&words).unwrap();
             assert!(resolved.arguments.contains(&flag.to_string()));

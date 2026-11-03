@@ -753,10 +753,7 @@
       "queue_timeout_seconds": 2700,
       "repeats": 2,
       "extra_arguments": [],
-      "serve_arguments": [
-        "--profile",
-        "tp4-dspark"
-      ],
+      "serve_arguments": [],
       "adoption_target": {
         "profile": "tp4-dspark",
         "arguments": [
@@ -794,10 +791,7 @@
       "queue_timeout_seconds": 1800,
       "repeats": 2,
       "extra_arguments": [],
-      "serve_arguments": [
-        "--profile",
-        "tp4-dspark"
-      ],
+      "serve_arguments": [],
       "adoption_target": {
         "profile": "tp4-dspark",
         "arguments": [
@@ -826,10 +820,7 @@
       "queue_timeout_seconds": 1800,
       "repeats": 2,
       "extra_arguments": [],
-      "serve_arguments": [
-        "--profile",
-        "tp4-dspark"
-      ],
+      "serve_arguments": [],
       "adoption_target": {
         "profile": "tp4-dspark",
         "arguments": [

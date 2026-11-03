@@ -51,6 +51,8 @@ def frozen_fixture(root, names=('base', 'head')):
         binary.parent.mkdir(parents=True)
         binary.write_text('#!/usr/bin/env python3\nimport json, sys\nfrom pathlib import Path\n'
                           f'# Synthetic revision {revision}\n'
+                          'if "--model" in sys.argv and "--profile" in sys.argv:\n'
+                          '    sys.exit("--profile applies to an explicit package")\n'
                           'if "fixture-ar" in sys.argv and any(x.startswith(("--speculation", "--speculative-", "--draft-")) for x in sys.argv):\n'
                           '    sys.exit("--speculation requires positive --speculative-tokens")\n'
                           'if sys.argv[1:3] == ["weights", "identity"]:\n'
@@ -350,7 +352,8 @@ class Tuner(unittest.TestCase):
                 count += 1
                 profile = json.loads(path.with_name('profiles.json').read_text())['profiles'][job['adoption_target']['profile']]
                 config = {'model': {**model, **job}, 'kinds': model['kinds']}
-                self.assertEqual(job['serve_arguments'], ['--profile', job['adoption_target']['profile']])
+                # Direct loading applies the frozen family's profile itself.
+                self.assertEqual(job['serve_arguments'], [])
                 self.assertEqual(job['extra_arguments'], [])
                 self.assertEqual(job['adoption_target']['arguments'], ['--kv-pages', str(model['kv_pages'])])
                 capacity = profile['speculation']['rows']

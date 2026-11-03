@@ -172,6 +172,7 @@ def steps(target, work, jobs, test_threads, exhaustive=False):
         step("quick-selection", PY + ["tests/test_quick.py"]),
         step("ci-runner", PY + ["tests/test_ci_runner.py"]),
         step("kernel-report-reader", PY + ["tests/test_kernel_reports.py"]),
+        step("release-provenance", PY + ["tests/test_release_producer.py"]),
         step("benchmark-loop", PY + ["tests/test_benchmark_loop.py"]),
         step("startup-timing", PY + ["tools/dev/test_startup_timing.py", "-v"]),
         step("depth-tuner", PY + ["tools/tune/test_tune.py", "-v"]),

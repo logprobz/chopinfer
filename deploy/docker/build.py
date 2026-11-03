@@ -8,6 +8,8 @@ import sys
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'tools/release'))
+import source_context  # noqa: E402
 
 
 def inputs():
@@ -31,26 +33,7 @@ def inputs():
 
 
 def revision():
-    supplied = os.environ.get('CHOPINFER_BUILD_REVISION', '')
-    head = ROOT / '.git/HEAD'
-    found = ''
-    if head.is_file():
-        found = head.read_text().strip()
-        if found.startswith('ref: '):
-            ref = found[5:]
-            if not re.fullmatch(r'refs/[A-Za-z0-9_./-]+', ref) or '..' in ref:
-                raise ValueError('invalid Git HEAD reference')
-            loose = ROOT / '.git' / ref
-            found = loose.read_text().strip() if loose.is_file() else ''
-            packed = ROOT / '.git/packed-refs'
-            if not found and packed.is_file():
-                found = next((line.split()[0] for line in packed.read_text().splitlines()
-                              if len(line.split()) == 2 and line.split()[1] == ref), '')
-    if not re.fullmatch(r'[0-9a-f]{40}', found):
-        raise ValueError('full source revision required from Git HEAD: use a standalone clone or --build-arg BUILDKIT_CONTEXT_KEEP_GIT_DIR=1')
-    if supplied and supplied != found:
-        raise ValueError('CHOPINFER_BUILD_REVISION differs from Git HEAD')
-    return found
+    return source_context.revision(ROOT)
 
 
 def main():
@@ -69,8 +52,7 @@ def main():
         if 'V13.2.86' not in nvcc:
             raise ValueError('installed CUDA compiler differs from CUDA_COMPILER_VERSION')
         return
-    source_revision = os.environ.get('CHOPINFER_BUILD_REVISION') or subprocess.check_output(
-        ['git', 'rev-parse', '--verify', 'HEAD'], cwd=ROOT, text=True).strip()
+    source_revision = revision()
     command = ['docker', 'buildx', 'build', '--load', *sys.argv[1:],
                '--build-arg', f'CHOPINFER_BUILD_REVISION={source_revision}']
     for name, value in values.items():

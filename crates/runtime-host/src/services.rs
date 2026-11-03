@@ -1574,6 +1574,7 @@ fn prepare_rank_upload_v1<D: HostDeviceBackendV1>(
     upload: RankArenaUploadV1,
     lent: Option<crate::weight_keeper::LentImageV1>,
 ) -> HostServiceResultV1<PreparedRankUploadV1> {
+    state.retry_acquisition_cleanup()?;
     let context_key = slot_key_v1(upload.context.generation(), upload.context.slot())?;
     let image_key = slot_key_v1(upload.image.generation(), upload.image.slot())?;
     state.refuse_during_capture(context_key)?;
@@ -1965,6 +1966,8 @@ struct HostStateV1<D> {
     contexts: SlotTableV1<ContextRecordV1>,
     pools: SlotTableV1<MemoryPoolRecordV1>,
     buffers: SlotTableV1<DeviceBufferRecordV1>,
+    /// A rejected buffer stays in its reserved slot until backend cleanup succeeds.
+    pending_buffer_cleanup: Option<SlotKeyV1>,
     images: SlotTableV1<CompiledImageRecordV1>,
     authenticated_components: SlotTableV1<AuthenticatedComponentRecordV1>,
     arenas: SlotTableV1<RankArenaRecordV1>,
@@ -2200,6 +2203,7 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
                 contexts: SlotTableV1::new(),
                 pools: SlotTableV1::new(),
                 buffers: SlotTableV1::new(),
+                pending_buffer_cleanup: None,
                 images: SlotTableV1::new(),
                 authenticated_components: SlotTableV1::new(),
                 arenas: SlotTableV1::new(),
@@ -2319,6 +2323,7 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
         upload_stream: BundleStreamHandleV1,
     ) -> HostServiceResultV1<crate::weight_keeper::KeptImageV1> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         if !state.captures.is_empty() {
             return Err(BundleStatusV1::InvalidState);
         }
@@ -2455,6 +2460,7 @@ impl<D: HostDeviceBackendV1> HostServicesV1Backend<D> {
             return Err(BundleStatusV1::InvalidArgument);
         }
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let context_key = slot_key_v1(raw.context.generation(), raw.context.slot())?;
         state.refuse_during_capture(context_key)?;
         let context = state.contexts.get(context_key)?;
@@ -2924,6 +2930,7 @@ macro_rules! key_of_v1 {
 /// succeeded pops the order entry and frees the slot.
 macro_rules! release_driver_resource_v1 {
     ($state:expr, $table:ident, $key:expr, $driver_release:ident) => {{
+        $state.retry_acquisition_cleanup()?;
         let key = $key;
         let (order, object) = {
             let record = $state.$table.get(key)?;
@@ -2939,6 +2946,7 @@ macro_rules! release_driver_resource_v1 {
 /// Releases one host-tracked resource whose finalization cannot fail.
 macro_rules! release_tracked_resource_v1 {
     ($state:expr, $table:ident, $key:expr) => {{
+        $state.retry_acquisition_cleanup()?;
         let key = $key;
         let order = $state.$table.get(key)?.order;
         $state.order.preflight(order)?;
@@ -3388,23 +3396,51 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
         Ok(self.contexts.get(key)?.object)
     }
 
-    /// Refuses and releases a buffer whose address does not meet the caller's
-    /// alignment, which may exceed the allocator's own guarantee.
+    /// Retries the one rejected allocation before admitting more resources or
+    /// tearing down a dependency. Its slot already owns all cleanup metadata.
+    fn retry_acquisition_cleanup(&mut self) -> HostServiceResultV1<()> {
+        let Some(key) = self.pending_buffer_cleanup else {
+            return Ok(());
+        };
+        let record = self.buffers.get(key)?;
+        let (object, owner) = (record.object, record.owner);
+        if let BufferOwnerV1::Bundle(order) = owner {
+            self.order.preflight(order)?;
+        }
+        self.device.release_device_buffer(object)?;
+        if let BufferOwnerV1::Bundle(order) = owner {
+            self.order.release(order)?;
+        }
+        self.buffers.remove(key)?;
+        self.pending_buffer_cleanup = None;
+        Ok(())
+    }
+
+    /// Validation happens only after the allocation has an internal owner.
     fn check_buffer_alignment(
-        device: &mut D,
-        object: DeviceObjectV1,
+        &mut self,
+        key: SlotKeyV1,
         alignment: u64,
     ) -> HostServiceResultV1<()> {
-        let status = match device.allocation_satisfies_alignment(object, alignment) {
+        let object = self.buffers.get(key)?.object;
+        let status = match self
+            .device
+            .allocation_satisfies_alignment(object, alignment)
+        {
             Ok(true) => return Ok(()),
             Ok(false) => BundleStatusV1::Unsupported,
             Err(status) => status,
         };
-        let _ = device.release_device_buffer(object);
+        runtime_log::error!(
+            "host buffer alignment rejected: requested {alignment} bytes, status {status:?}"
+        );
+        debug_assert!(self.pending_buffer_cleanup.is_none());
+        self.pending_buffer_cleanup = Some(key);
+        self.retry_acquisition_cleanup()?;
         Err(status)
     }
 
-    /// Reserves a handle before the backend constructs any kind of buffer.
+    /// Reserves a handle before construction and keeps it through validation.
     fn record_buffer(
         &mut self,
         byte_length: u64,
@@ -3413,19 +3449,22 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
         origin: Option<BufferOriginV1>,
         make: impl FnOnce(&mut D) -> HostServiceResultV1<DeviceObjectV1>,
     ) -> HostServiceResultV1<SlotKeyV1> {
-        let Self {
-            device, buffers, ..
-        } = self;
-        buffers.try_insert_with(|| {
-            let object = make(device)?;
-            Self::check_buffer_alignment(device, object, alignment)?;
-            Ok(DeviceBufferRecordV1 {
-                object,
-                byte_length,
-                owner,
-                origin,
-            })
-        })
+        self.retry_acquisition_cleanup()?;
+        let key = {
+            let Self {
+                device, buffers, ..
+            } = self;
+            buffers.try_insert_with(|| {
+                Ok(DeviceBufferRecordV1 {
+                    object: make(device)?,
+                    byte_length,
+                    owner,
+                    origin,
+                })
+            })?
+        };
+        self.check_buffer_alignment(key, alignment)?;
+        Ok(key)
     }
 
     /// Allocates one host-owned buffer that its owner releases, not the bundle.
@@ -3513,6 +3552,7 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
 
     /// Releases one host-owned buffer, keeping its slot until the driver agrees.
     fn release_host_buffer(&mut self, key: SlotKeyV1) -> HostServiceResultV1<()> {
+        self.retry_acquisition_cleanup()?;
         let object = self.buffers.get(key)?.object;
         self.device.release_device_buffer(object)?;
         self.buffers.remove(key).map(|_| ())
@@ -3520,6 +3560,7 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
 
     /// Creates the host's own per-rank context, pool, and stream on first use.
     fn acquire_host_ranks(&mut self) -> HostServiceResultV1<()> {
+        self.retry_acquisition_cleanup()?;
         if self.host_ranks.is_empty() {
             let rank_count = self.config.topology.rank_count();
             for rank in 0..rank_count {
@@ -3587,6 +3628,9 @@ impl<D: HostDeviceBackendV1> HostStateV1<D> {
     }
 
     fn release_host_ranks(&mut self) {
+        if self.retry_acquisition_cleanup().is_err() {
+            return;
+        }
         for host_rank in std::mem::take(&mut self.host_ranks).into_iter().rev() {
             let _ = self.device.release_stream(host_rank.stream);
             if host_rank.pool_owned {
@@ -3721,6 +3765,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
 
     fn acquire_serving_kv(&self, layout_id: &[u8]) -> HostServiceResultV1<u64> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let policy = state.config.serving_kv.ok_or(BundleStatusV1::Unsupported)?;
         if policy.utilization_millionths == 0 || policy.utilization_millionths > 1_000_000 {
             return Err(BundleStatusV1::InvalidArgument);
@@ -3902,6 +3947,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         device_ordinal: i32,
     ) -> HostServiceResultV1<BundleContextHandleV1> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let expected = state
             .config
             .topology
@@ -3948,6 +3994,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
 
     fn release_context(&self, context: BundleContextHandleV1) -> HostServiceResultV1<()> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let key = key_of_v1!(context);
         // A selection that is not the last one gives nothing back, so it is
         // neither ordered nor guarded: it only says this user is done.
@@ -3983,6 +4030,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         context: BundleContextHandleV1,
     ) -> HostServiceResultV1<BundleMemoryPoolHandleV1> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let context_key = key_of_v1!(context);
         let context_object = state.contexts.get(context_key)?.object;
         // Repeated selection keeps one logical pool handle per rank context.
@@ -4027,6 +4075,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         enabled: bool,
     ) -> HostServiceResultV1<()> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let pool_key = key_of_v1!(pool);
         let peer_key = key_of_v1!(peer_context);
         let pool_object = state.pools.get(pool_key)?.object;
@@ -4049,6 +4098,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
 
     fn release_memory_pool(&self, pool: BundleMemoryPoolHandleV1) -> HostServiceResultV1<()> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let key = key_of_v1!(pool);
         let (context, users) = {
             let record = state.pools.get(key)?;
@@ -4084,6 +4134,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         alignment: u64,
     ) -> HostServiceResultV1<BundleDeviceBufferHandleV1> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let pool_key = key_of_v1!(pool);
         let pool_record = state.pools.get(pool_key)?;
         state.refuse_during_capture(pool_record.context)?;
@@ -4098,26 +4149,34 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         } else {
             None
         };
-        let order = state.order.acquire()?;
-        let registered = state.record_buffer(byte_length, alignment, BufferOwnerV1::Bundle(order), Some(pool_origin), |device| {
-            device.allocate_device_buffer(pool_object, stream_object, byte_length, alignment).inspect_err(|status| {
-                runtime_log::error!("host allocate_device_buffer: {byte_length} bytes, pool {}, stream {:?}: {status:?}", pool_object.get(), stream_object.map(DeviceObjectV1::get));
+        let key = {
+            let HostStateV1 {
+                device,
+                order,
+                buffers,
+                ..
+            } = &mut *state;
+            insert_ordered_v1(order, buffers, |order| {
+                Ok(DeviceBufferRecordV1 {
+                object: device.allocate_device_buffer(pool_object, stream_object, byte_length, alignment).inspect_err(|status| {
+                    runtime_log::error!("host allocate_device_buffer: {byte_length} bytes, pool {}, stream {:?}: {status:?}", pool_object.get(), stream_object.map(DeviceObjectV1::get));
+                })?,
+                byte_length,
+                owner: BufferOwnerV1::Bundle(order),
+                origin: Some(pool_origin),
             })
-        });
-        match registered {
-            Ok(key) => Ok(BundleDeviceBufferHandleV1::from_parts(
-                key.generation,
-                key.slot,
-            )),
-            Err(status) => {
-                state.order.release(order)?;
-                Err(status)
-            }
-        }
+            })?
+        };
+        state.check_buffer_alignment(key, alignment)?;
+        Ok(BundleDeviceBufferHandleV1::from_parts(
+            key.generation,
+            key.slot,
+        ))
     }
 
     fn release_device_buffer(&self, buffer: BundleDeviceBufferHandleV1) -> HostServiceResultV1<()> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let key = key_of_v1!(buffer);
         let record = state.buffers.get(key)?;
         if let Some(origin) = record.origin {
@@ -4139,6 +4198,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         component_role: &[u8],
     ) -> HostServiceResultV1<BundleCompiledImageHandleV1> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let component = state
             .config
             .components
@@ -4377,6 +4437,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
 
     fn release_rank_arena(&self, arena: BundleRankArenaHandleV1) -> HostServiceResultV1<()> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         if !state.captures.is_empty() {
             return Err(BundleStatusV1::InvalidState);
         }
@@ -4516,6 +4577,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
     ) -> HostServiceResultV1<runtime_bundle_abi::BundleMappedGatherHandleV1> {
         use crate::device::mapped_gather::{MappedGatherPlanV1, MappedGatherPlaneV1};
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let producer_key = key_of_v1!(producer);
         let context = state.streams.get(producer_key)?.context;
         state.refuse_during_capture(context)?;
@@ -4758,6 +4820,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         component_role: &[u8],
     ) -> HostServiceResultV1<BundleAuthenticatedComponentHandleV1> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         if component_role == runtime_bundle_abi::BUNDLE_PROBE_AUTHORITY_ROLE_V1 {
             return Err(BundleStatusV1::NotFound);
         }
@@ -4900,6 +4963,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         peer_context: BundleContextHandleV1,
     ) -> HostServiceResultV1<BundlePeerAccessHandleV1> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let owner_key = key_of_v1!(owner_context);
         let peer_key = key_of_v1!(peer_context);
         if owner_key == peer_key {
@@ -4946,6 +5010,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         peer_access: BundlePeerAccessHandleV1,
     ) -> HostServiceResultV1<()> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let key = key_of_v1!(peer_access);
         let (order, edge) = {
             let record = state.peers.get(key)?;
@@ -4963,6 +5028,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         stream_kind: u32,
     ) -> HostServiceResultV1<BundleStreamHandleV1> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let context_key = key_of_v1!(context);
         let context_object = state.contexts.get(context_key)?.object;
         insert_stream_v1(&mut state, context_key, context_object, stream_kind, None)
@@ -4976,6 +5042,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         stream_kind: u32,
     ) -> HostServiceResultV1<BundleStreamHandleV1> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let context_key = key_of_v1!(context);
         let record = state.contexts.get(context_key)?;
         if record.rank != rank {
@@ -5023,6 +5090,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
 
     fn release_stream(&self, stream: BundleStreamHandleV1) -> HostServiceResultV1<()> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let key = key_of_v1!(stream);
         state.refuse_during_capture(state.streams.get(key)?.context)?;
         let (order, object, stage) = {
@@ -5040,6 +5108,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
 
     fn begin_graph_capture(&self, stream: BundleStreamHandleV1) -> HostServiceResultV1<()> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let key = key_of_v1!(stream);
         let record = state.streams.get(key)?;
         let (context, object) = (record.context, record.object);
@@ -5061,6 +5130,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         stream: BundleStreamHandleV1,
     ) -> HostServiceResultV1<BundleGraphHandleV1> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let key = key_of_v1!(stream);
         let record = state.streams.get(key)?;
         let (context, stream_object) = (record.context, record.object);
@@ -5165,6 +5235,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         context: BundleContextHandleV1,
     ) -> HostServiceResultV1<BundleEventHandleV1> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let context_object = state.context_object(context)?;
         let key = {
             let HostStateV1 {
@@ -5439,6 +5510,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         module_bytes: &[u8],
     ) -> HostServiceResultV1<BundleCudaModuleHandleV1> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let context_object = state.context_object(context)?;
         let key = {
             let HostStateV1 {
@@ -5467,6 +5539,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         symbol_name: &[u8],
     ) -> HostServiceResultV1<BundleCudaSymbolHandleV1> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let module_record = state.modules.get(key_of_v1!(module))?;
         let module_object = module_record.object;
         let module_context = module_record.context;
@@ -5589,6 +5662,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         request: &PhysicalKvRequestV1,
     ) -> HostServiceResultV1<BundlePhysicalKvHandleV1> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         if !state.captures.is_empty() {
             return Err(BundleStatusV1::InvalidState);
         }
@@ -5660,6 +5734,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         quota_tokens: u64,
     ) -> HostServiceResultV1<BundleKvRequestHandleV1> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let kv_key = key_of_v1!(kv);
         let quota = usize::try_from(quota_tokens).map_err(|_| BundleStatusV1::InvalidArgument)?;
         let sequence = state
@@ -5691,6 +5766,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         operation: &[u8],
     ) -> HostServiceResultV1<BundleKvTransactionHandleV1> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let request_key = key_of_v1!(request);
         let record = state.kv_requests.get(request_key)?;
         let (kv_key, sequence) = (record.kv, record.sequence);
@@ -5824,6 +5900,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
 
     fn release_kv_request(&self, request: BundleKvRequestHandleV1) -> HostServiceResultV1<()> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         let key = key_of_v1!(request);
         let record = state.kv_requests.get(key)?;
         let kv = record.kv;
@@ -5842,6 +5919,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
 
     fn release_physical_kv(&self, kv: BundlePhysicalKvHandleV1) -> HostServiceResultV1<()> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         if !state.captures.is_empty() {
             return Err(BundleStatusV1::InvalidState);
         }
@@ -5862,6 +5940,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
 
     fn allocate_state(&self, request: &StateRequestV1) -> HostServiceResultV1<BundleStateHandleV1> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         if !state.captures.is_empty() {
             return Err(BundleStatusV1::InvalidState);
         }
@@ -5926,6 +6005,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
 
     fn release_state(&self, state_handle: BundleStateHandleV1) -> HostServiceResultV1<()> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         if !state.captures.is_empty() {
             return Err(BundleStatusV1::InvalidState);
         }
@@ -5949,6 +6029,7 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
         request: &CollectiveRequestV1,
     ) -> HostServiceResultV1<BundleCollectiveHandleV1> {
         let mut state = self.state.borrow_mut();
+        state.retry_acquisition_cleanup()?;
         if request.rank_count != u64::from(state.config.topology.rank_count()) {
             return Err(BundleStatusV1::Unsupported);
         }

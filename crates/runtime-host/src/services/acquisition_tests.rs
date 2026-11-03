@@ -545,3 +545,103 @@ fn mapped_gather_reserves_metadata_before_constructor_and_refusal() {
         assert_eq!(s.live_resource_count(), 0);
     }
 }
+
+fn rejected_buffer_retains_cleanup(host: Option<HostBuffer>, query_error: bool) {
+    let fixture = DirectFixture::new();
+    let s = &fixture.services;
+    let issued = s.with_device(FakeHostDeviceV1::issued_object_count);
+    let live = s.with_device(FakeHostDeviceV1::live_object_count);
+    let orders = s.live_resource_count();
+    s.with_device_mut(|device| {
+        if query_error {
+            device.refuse(FakeRefusalV1::AllocationAlignment);
+        } else {
+            device.set_allocation_alignment(1);
+        }
+        device.refuse(FakeRefusalV1::ReleaseDeviceBuffer);
+    });
+    let acquire = || match host {
+        Some(kind) => kind.acquire(&fixture),
+        None => Direct::Buffer.acquire(&fixture),
+    };
+    assert_eq!(
+        acquire(),
+        Err(BundleStatusV1::HostError),
+        "cleanup failure must be returned: {host:?}, query_error={query_error}"
+    );
+    assert_eq!(
+        s.state.borrow().buffers.live_count(),
+        1,
+        "the rejected buffer must retain an internal owner"
+    );
+    assert_eq!(s.with_device(FakeHostDeviceV1::live_object_count), live + 1);
+    assert_eq!(
+        s.live_resource_count(),
+        orders + usize::from(host.is_none())
+    );
+    for _ in 0..2 {
+        assert_eq!(acquire(), Err(BundleStatusV1::HostError));
+        assert_eq!(
+            s.with_device(FakeHostDeviceV1::issued_object_count),
+            issued + 1
+        );
+        assert_eq!(s.state.borrow().buffers.live_count(), 1);
+    }
+    assert_eq!(
+        s.release_stream(fixture.stream),
+        Err(BundleStatusV1::HostError)
+    );
+    assert_eq!(
+        s.release_memory_pool(fixture.pool),
+        Err(BundleStatusV1::HostError)
+    );
+    assert_eq!(
+        s.release_context(fixture.context),
+        Err(BundleStatusV1::HostError)
+    );
+    s.with_device_mut(|device| {
+        device.allow(FakeRefusalV1::AllocationAlignment);
+        device.set_allocation_alignment(64);
+    });
+    assert_eq!(
+        acquire(),
+        Err(BundleStatusV1::HostError),
+        "valid new buffers still wait for retained cleanup"
+    );
+    assert_eq!(
+        s.with_device(FakeHostDeviceV1::issued_object_count),
+        issued + 1
+    );
+    s.with_device_mut(|device| device.allow(FakeRefusalV1::ReleaseDeviceBuffer));
+    let key = acquire().unwrap();
+    assert_eq!(
+        s.with_device(FakeHostDeviceV1::issued_object_count),
+        issued + 2
+    );
+    assert_eq!(s.with_device(FakeHostDeviceV1::live_object_count), live + 1);
+    if host.is_some() {
+        s.state.borrow_mut().release_host_buffer(key).unwrap();
+    } else {
+        Direct::Buffer.release(&fixture, key);
+    }
+    assert_eq!(s.state.borrow().buffers.live_count(), 0);
+    assert_eq!(s.live_resource_count(), orders);
+    fixture.release();
+}
+
+#[test]
+fn rejected_bundle_buffer_retains_ownership_until_cleanup_succeeds() {
+    for query_error in [false, true] {
+        rejected_buffer_retains_cleanup(None, query_error);
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn rejected_host_buffers_retain_ownership_until_cleanup_succeeds() {
+    for host in HOST_BUFFERS {
+        for query_error in [false, true] {
+            rejected_buffer_retains_cleanup(Some(host), query_error);
+        }
+    }
+}

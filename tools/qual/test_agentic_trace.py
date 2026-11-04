@@ -2,6 +2,7 @@
 import argparse
 import copy
 from contextlib import redirect_stdout
+import gzip
 import io
 import json
 import time
@@ -199,6 +200,51 @@ class TraceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'workload_digest'):
             compare(results[0], changed)
 
+
+
+class ReceiptFormTests(unittest.TestCase):
+    def setUp(self):
+        import common
+        self.common = common
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.value = dict(levels=[], passed=True, label='caf\u00e9')
+
+    def write(self, compressed):
+        with patch.object(self.common, 'RECEIPTS', self.root), redirect_stdout(io.StringIO()):
+            return self.common.receipt('agentic-mixed', {'model': 'M'}, self.value, True, compressed=compressed)
+
+    def test_compressed_and_plain_receipts_hold_the_same_value(self):
+        compressed, plain = self.write(True), self.write(False)
+        self.assertTrue(compressed.name.endswith('-agentic-mixed.json.gz'))
+        self.assertTrue(plain.name.endswith('-agentic-mixed.json'))
+        raw = compressed.read_bytes()
+        # One gzip member with no stored name and a zero modification time.
+        self.assertEqual((raw[:3], raw[3] & 0x08, raw[4:8]), (b'\x1f\x8b\x08', 0, bytes(4)))
+        value, other = self.common.read_receipt(compressed), self.common.read_receipt(plain)
+        self.assertEqual(other, json.loads(plain.read_text()))
+        # The two writes differ only in their stamps.
+        self.assertEqual({k: v for k, v in value.items() if k != 'at'}, {k: v for k, v in other.items() if k != 'at'})
+        self.assertTrue(compressed.name.startswith(value['at']))
+        self.assertEqual(value['label'], 'caf\u00e9')
+        for path in (compressed, plain):
+            self.assertEqual(self.common.receipt_summary(path), path.parent / (path.name.split('.')[0] + '.md'))
+
+    def test_historical_plain_fixtures_still_read(self):
+        fixture = Path(__file__).resolve().parents[2] / 'fixtures' / 'agentic' / 'v2-sweep-tbt.json'
+        self.assertEqual(self.common.read_receipt(fixture), json.loads(fixture.read_text()))
+
+    def test_truncated_or_corrupt_compressed_receipts_are_value_errors(self):
+        raw = self.write(True).read_bytes()
+        cases = dict(truncated=raw[:len(raw) // 2], unterminated=raw[:-8], corrupt=raw[:10] + bytes(len(raw) - 10),
+                     not_json=gzip.compress(b'{"levels": ['))
+        for name, data in cases.items():
+            with self.subTest(name):
+                path = self.root / f'{name}.json.gz'
+                path.write_bytes(data)
+                with self.assertRaises(ValueError):
+                    self.common.read_receipt(path)
 
 if __name__ == '__main__':
     unittest.main()

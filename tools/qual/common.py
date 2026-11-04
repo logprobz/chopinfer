@@ -2,6 +2,7 @@
 
 import argparse
 from datetime import datetime, timezone
+import gzip
 import hashlib
 import json
 import math
@@ -16,6 +17,7 @@ import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
+import zlib
 
 import declaration
 
@@ -896,29 +898,59 @@ def compared_timing(loads):
     return {"rule": HOST_LOAD_RULE, "timing": "informational" if reasons else "evidence", "reasons": reasons}
 
 
-def receipt(check, identity, result, mechanics_only=False, load_samples=None, load_windows=None):
+def receipt(check, identity, result, mechanics_only=False, load_samples=None, load_windows=None, compressed=False):
     """Writes a receipt with the host load of `load_samples`, the host load
     samples that bound the check's timed work (oldest first, the first at
     its start and the last at its end), or of `load_windows`, one such list
     per separate timed window (`host_load_windows`). Without them the
-    receipt's timing is informational (`unbounded_host_load`)."""
+    receipt's timing is informational (`unbounded_host_load`).
+
+    A `compressed` receipt is the same JSON value, compact and sorted, in
+    one gzip member without a name or time (`.json.gz`); `read_receipt`
+    reads either form."""
     load = (host_load_windows(load_windows) if load_windows else
             host_load(load_samples) if load_samples else unbounded_host_load())
     directory = receipt_root()
     directory.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    path = directory / f"{stamp}-{check}.json"
+    path = directory / f"{stamp}-{check}.json{'.gz' if compressed else ''}"
     value = {"schema": "chopinfer-qualification/v1", "check": check, "at": stamp,
              "server": identity, "mechanics_only": mechanics_only, "host_load": load, **result}
-    with path.open("x") as output:
-        json.dump(value, output, indent=2, sort_keys=True)
-        output.write("\n")
+    if compressed:
+        # One-shot compact encoding uses the C encoder; json.dump and indent do not.
+        data = (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        with path.open("xb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0,
+                                                   compresslevel=6) as output:
+            output.write(data)
+    else:
+        with path.open("x") as output:
+            json.dump(value, output, indent=2, sort_keys=True)
+            output.write("\n")
     written = {"receipt": str(path), "passed": value.get("passed"),
                "skipped": value.get("skipped"), "errors": value.get("errors", [])}
     if "experimental_determinism" in value:
         written.update(qualified=False, experimental_determinism=True)
     print(json.dumps(written))
     return path
+
+
+def read_receipt(path):
+    """A receipt's value, from its plain or compressed (`receipt`) form. A
+    truncated or corrupt compressed receipt raises ValueError, as a
+    truncated plain one does."""
+    data = Path(path).read_bytes()
+    if data[:2] == b"\x1f\x8b":
+        try:
+            data = gzip.decompress(data)
+        except (EOFError, OSError, zlib.error) as error:
+            raise ValueError(f"invalid compressed receipt: {error}") from error
+    return json.loads(data)
+
+
+def receipt_summary(path):
+    """The Markdown summary beside a receipt of either form."""
+    path = Path(path)
+    return path.with_name(path.name.removesuffix(".gz").removesuffix(".json") + ".md")
 
 
 def served_entries(row):

@@ -1076,10 +1076,41 @@ mod tests {
         })
     }
 
+    /// A native index row's BF16 keys through the shared checked MXFP4
+    /// reference, which refuses the NaN scale 255 and every product BF16
+    /// cannot hold, as the device reader marks such a key invalid.
+    fn index_operands(
+        codes: &[u8],
+        scales: &[u8],
+    ) -> Result<Vec<u16>, kernel_core::precision::PrecisionError> {
+        use kernel_core::contract::WeightFormat;
+        use kernel_core::precision::packed::{MatrixView, ScaleBytes};
+        use kernel_core::precision::{DecodeOrder, NibbleOrder};
+        let view = MatrixView {
+            tensor: "index key",
+            format: WeightFormat::Mxfp4,
+            rows: 1,
+            k: codes.len() * 2,
+            row_origin: 0,
+            k_origin: 0,
+            nibble_order: NibbleOrder::EvenLow,
+            codes,
+            local: Some(ScaleBytes {
+                dtype: DType::Ue8M0,
+                bytes: scales,
+            }),
+            global: None,
+        };
+        (0..view.k)
+            .map(|c| view.bf16_operand(0, c, DecodeOrder::ExactScaledOperand))
+            .collect()
+    }
+
     /// The CPU form of `compare_storage_on_device`: every BF16 value the
     /// comparison layout's oracle writes widens to the native oracle's code
     /// times scale, bit for bit, and row status agrees. Compressed rows
-    /// decode as latent attention reads them. Returns the values compared.
+    /// decode as latent attention reads them, index rows as the native index
+    /// reader does. Returns the values compared.
     fn bf16_holds_native(
         query: Query,
         images: (&Images, &Images),
@@ -1087,7 +1118,6 @@ mod tests {
         native: &Stored,
         bf16: &Stored,
     ) -> LabResult<usize> {
-        use kernel_core::codec::{SmallFloat, decode_ue8m0_f64};
         use kernel_core::latent_attention::LatentKvFormat;
         use kernel_core::latent_attention_oracle::decode_native_page;
         if native.status != bf16.status {
@@ -1115,13 +1145,13 @@ mod tests {
                     0,
                 )
                 .map_err(|e| format!("row {row}: {}", e.0))?,
-                Query::Index(_) | Query::IndexBf16(_) => (0..width)
-                    .map(|c| {
-                        let code = (native.codes[source.start + c / 2] >> (4 * (c % 2))) & 15;
-                        SmallFloat::E2M1.decode_f64(code)
-                            * decode_ue8m0_f64(native.scales[scale.start + c / 32])
-                    })
-                    .collect(),
+                Query::Index(_) | Query::IndexBf16(_) => {
+                    index_operands(&native.codes[source], &native.scales[scale])
+                        .map_err(|e| format!("row {row}: {e}"))?
+                        .into_iter()
+                        .map(|bits| f64::from(bf16_to_f32(bits)))
+                        .collect()
+                }
             };
             for (channel, value) in decoded.into_iter().enumerate() {
                 let at = target.start + 2 * channel;
@@ -1161,7 +1191,11 @@ mod tests {
 
     #[test]
     fn cpu_write_oracles_store_the_native_decode_in_bf16_for_every_status_case() {
-        let mut compared = 0;
+        let plane = |query: Query| match query {
+            Query::Index(_) | Query::IndexBf16(_) => "index",
+            Query::Compressed(_) => "compressed",
+        };
+        let mut visited = Vec::new();
         for query in comparison_queries() {
             for variant in std::iter::once(StatusCase::Normal).chain(STATUS_CASES) {
                 if status_family_for(variant, [query]).is_empty() {
@@ -1171,14 +1205,68 @@ mod tests {
                 let bf16 = prepared_status_case(bf16_storage(query), variant).images();
                 assert_same_inputs(query, &native, &bf16);
                 for live in [1, 3, CAPACITY] {
+                    let what = format!(
+                        "{} r{} {variant:?} live {live}",
+                        plane(query),
+                        query.ratio()
+                    );
                     let left = stored(query, &native, live).unwrap();
                     let right = stored(bf16_storage(query), &bf16, live).unwrap();
-                    compared += bf16_holds_native(query, (&native, &bf16), live, &left, &right)
-                        .unwrap_or_else(|e| panic!("{variant:?} {query:?} live {live}: {e}"));
+                    let images = (&native, &bf16);
+                    let compared = bf16_holds_native(query, images, live, &left, &right)
+                        .unwrap_or_else(|e| panic!("{what}: {e}"));
+                    assert!(compared > 0, "{what}: no value compared");
+                    if plane(query) == "index" && variant == StatusCase::Normal {
+                        // The reader refuses the NaN scale, and a changed
+                        // valid scale changes every product of its block.
+                        let at = slots(query, &native, live, true).unwrap()[0].1.start;
+                        let mut bad = left.clone();
+                        bad.scales[at] = 255;
+                        let error =
+                            bf16_holds_native(query, images, live, &bad, &right).expect_err(&what);
+                        assert!(error.contains("UE8M0 scale 0xff"), "{what}: {error}");
+                        bad.scales[at] = left.scales[at] ^ 1;
+                        let error =
+                            bf16_holds_native(query, images, live, &bad, &right).expect_err(&what);
+                        assert!(error.contains("channel"), "{what}: {error}");
+                    }
+                    visited.push(what);
                 }
             }
         }
-        assert!(compared > 0);
+        // Every plane and ratio, with each status case its plane admits.
+        use StatusCase::*;
+        let index = [
+            Normal,
+            InputNonfinite,
+            RotaryNonfinite,
+            NormNonfinite,
+            DecodeOverflow,
+            Holes,
+            PriorFlags,
+        ];
+        let compressed = [
+            Normal,
+            Saturation,
+            InputNonfinite,
+            RoundedOverflow,
+            RotaryNonfinite,
+            RotaryOverflow,
+            Holes,
+            PriorFlags,
+        ];
+        let mut expected = Vec::new();
+        for ratio in [1, 2] {
+            for (plane, variants) in [("index", &index[..]), ("compressed", &compressed[..])] {
+                for variant in variants {
+                    for live in [1, 3, CAPACITY] {
+                        expected.push(format!("{plane} r{ratio} {variant:?} live {live}"));
+                    }
+                }
+            }
+        }
+        assert_eq!(expected.len(), 90);
+        assert_eq!(visited, expected);
     }
 
     type Blocks = Vec<(Vec<f32>, u8)>;

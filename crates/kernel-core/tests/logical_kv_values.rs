@@ -12,10 +12,10 @@
 //!   quantizer's row status, then `apply` for codes or `fake_quant` for
 //!   BF16. A flagged row stores zero codes with the invalid scale byte, or
 //!   BF16 zeros. Latent attention reads compressed pages; the pooled indexer
-//!   oracle scores decoded index keys.
+//!   oracle scores index keys decoded by the shared checked MXFP4 reference.
 
 use kernel_core::codec::{SmallFloat, bf16_to_f32, decode_ue8m0_f64, f32_to_bf16};
-use kernel_core::contract::{AttentionPhase, DType, Refusal};
+use kernel_core::contract::{AttentionPhase, DType, Refusal, WeightFormat};
 use kernel_core::latent_attention::{
     LatentAttentionOutput, LatentAttentionQuery, LatentKvFormat, LatentWindowStorage,
 };
@@ -27,11 +27,13 @@ use kernel_core::latent_attention_oracle::{
 use kernel_core::latent_glue::{LatentWindowWrite, WindowAddressing};
 use kernel_core::latent_glue_oracle::{exact_window_bf16, store_window_rows};
 use kernel_core::pooled_indexer::{IndexerCandidates, PooledIndexerQuery, PositionIndexerQuery};
-use kernel_core::pooled_indexer_oracle::{decode_bf16, pool_scores};
+use kernel_core::pooled_indexer_oracle::{decode_bf16, encode_bf16, pool_scores};
+use kernel_core::precision::packed::{MatrixView, ScaleBytes};
 use kernel_core::precision::quantizer::{
     BlockQuantization, BlockQuantizeQuery, NONFINITE_INPUT, QuantizeOutput, SCALE_OVERFLOW,
     UNREPRESENTABLE_OUTPUT,
 };
+use kernel_core::precision::{DecodeOrder, NibbleOrder, PrecisionError};
 use kernel_core::quantize::Scales;
 
 const LATENT: usize = 512;
@@ -282,10 +284,28 @@ impl Pages {
     }
 }
 
-/// The native index reader's decode, code times scale.
-fn index_decode(codes: &[u8], scales: &[u8]) -> Vec<f64> {
-    (0..codes.len() * 2)
-        .map(|c| e2m1((codes[c / 2] >> (4 * (c % 2))) & 15) * decode_ue8m0_f64(scales[c / 32]))
+/// The native index reader's BF16 keys: each E2M1 code times its UE8M0
+/// scale through the shared checked MXFP4 reference, which refuses the NaN
+/// scale 255 and every product BF16 cannot hold, as the device reader marks
+/// a key invalid for scale 255 or a non-finite BF16 product.
+fn index_decode(codes: &[u8], scales: &[u8]) -> Result<Vec<u16>, PrecisionError> {
+    let view = MatrixView {
+        tensor: "index key",
+        format: WeightFormat::Mxfp4,
+        rows: 1,
+        k: codes.len() * 2,
+        row_origin: 0,
+        k_origin: 0,
+        nibble_order: NibbleOrder::EvenLow,
+        codes,
+        local: Some(ScaleBytes {
+            dtype: DType::Ue8M0,
+            bytes: scales,
+        }),
+        global: None,
+    };
+    (0..view.k)
+        .map(|c| view.bf16_operand(0, c, DecodeOrder::ExactScaledOperand))
         .collect()
 }
 
@@ -869,9 +889,9 @@ fn index_bf16_pages_hold_the_native_decode_at_edge_scales() {
     let pages = Pages::store(INDEX, 32, &written);
     let mut native = Vec::new();
     for slot in 0..written.len() {
-        let decoded = index_decode(pages.row_codes(slot), pages.row_scales(slot));
-        assert_holds(pages.stored(slot), &decoded, &format!("index slot {slot}"));
-        native.extend(decoded);
+        let decoded = index_decode(pages.row_codes(slot), pages.row_scales(slot)).unwrap();
+        assert_eq!(pages.stored(slot), decoded, "index slot {slot}");
+        native.extend(decoded.into_iter().map(widen));
     }
     let q = (0..2 * INDEX)
         .map(|i| ((i % 5) as f64 - 2.0) * 0.25)
@@ -880,6 +900,69 @@ fn index_bf16_pages_hold_the_native_decode_at_edge_scales() {
         scores(&q, &native).unwrap(),
         scores(&q, &decode_bf16(&pages.bf16[..written.len() * INDEX])).unwrap()
     );
+}
+
+#[test]
+fn index_reader_and_bf16_writer_agree_on_raw_scale_bytes() {
+    let format = BlockQuantization::E2M1Ceil32;
+    // Blocks 1 to 3 hold a valid key at 2^-7 around the block under test.
+    let rest = (0..3 * 16)
+        .map(|i| [0x21_u8, 0xa3, 0x5c, 0x76][i % 4])
+        .collect::<Vec<_>>();
+    let q = (0..2 * INDEX)
+        .map(|i| ((i % 7) as f64 - 3.0) * 0.125)
+        .collect::<Vec<_>>();
+    let (mut admitted, mut reader_only, mut refused) = (0, 0, 0);
+    // The format's scale ends: 0 (2^-127), the writer's floor 1, 252 (the
+    // last that admits every code), 253 and 254 (magnitudes from 4 and from
+    // 2 overflow BF16) and the NaN byte 255.
+    for scale in [0_u8, 1, 252, 253, 254, 255] {
+        for code in 0..16_u8 {
+            let what = format!("code {code:#x} scale {scale}");
+            let codes = [vec![code | (code << 4); 16], rest.clone()].concat();
+            let scales = [scale, 120, 120, 120];
+            let native = index_decode(&codes, &scales);
+            // The pair's logical value in every channel, as the writer gets it.
+            let logical = (0..INDEX)
+                .map(|c| {
+                    e2m1((codes[c / 2] >> (4 * (c % 2))) & 15) * decode_ue8m0_f64(scales[c / 32])
+                })
+                .collect::<Vec<_>>();
+            let written = write(
+                format,
+                &logical.iter().map(|&v| v as f32).collect::<Vec<_>>(),
+                0,
+            );
+            assert_eq!(native.is_ok(), written.status == 0, "{what}");
+            let Ok(native) = native else {
+                // Refused by both: the reader refuses the key, the writer
+                // flags the row, and the value in BF16 is no key to score.
+                assert_eq!(written.status, NONFINITE_INPUT, "{what}");
+                assert!(
+                    scores(&q, &decode_bf16(&encode_bf16(&logical))).is_err(),
+                    "{what}"
+                );
+                refused += 1;
+                continue;
+            };
+            // Under the writer's floor scale 2^-126, 0.5 and 1.5 times 2^-127
+            // are code ties, so only the reader holds those values.
+            if scale == 0 && matches!(code & 7, 1 | 3) {
+                assert_ne!(written.bf16, native, "{what}");
+                assert_eq!(written.scales[0], 1, "{what}");
+                reader_only += 1;
+                continue;
+            }
+            assert_eq!(written.bf16, native, "{what}");
+            assert_eq!(
+                scores(&q, &native.into_iter().map(widen).collect::<Vec<_>>()).unwrap(),
+                scores(&q, &decode_bf16(&written.bf16)).unwrap(),
+                "{what}"
+            );
+            admitted += 1;
+        }
+    }
+    assert_eq!((admitted, reader_only, refused), (64, 4, 28));
 }
 
 /// Window values of E4M3 magnitudes with at most five of seven bits set,
@@ -1055,21 +1138,21 @@ fn one_flipped_index_key_bit_changes_its_score() {
     // 120 is 2^-7: every flipped scale keeps exact BF16 products.
     assert!(rows.iter().all(|r| r.scales.iter().all(|&s| s == 120)));
     let pages = Pages::store(INDEX, 32, &rows);
+    // Both keys as the native reader decodes them; a refused key refuses
+    // the score.
     let native = |codes: &[u8], scales: &[u8]| {
-        let keys = (0..2)
-            .flat_map(|slot| {
-                index_decode(
-                    &codes[slot * INDEX / 2..(slot + 1) * INDEX / 2],
-                    &scales[slot * INDEX / 32..(slot + 1) * INDEX / 32],
-                )
-            })
-            .collect::<Vec<_>>();
-        for &key in &keys {
-            assert_eq!(widen(f32_to_bf16(key as f32)).to_bits(), key.to_bits());
+        let mut keys = Vec::with_capacity(2 * INDEX);
+        for slot in 0..2 {
+            let decoded = index_decode(
+                &codes[slot * INDEX / 2..(slot + 1) * INDEX / 2],
+                &scales[slot * INDEX / 32..(slot + 1) * INDEX / 32],
+            )
+            .map_err(|_| Refusal("the native reader refuses the key"))?;
+            keys.extend(decoded.into_iter().map(widen));
         }
-        keys
+        Ok::<_, Refusal>(keys)
     };
-    let keys = native(&pages.codes, &pages.scales);
+    let keys = native(&pages.codes, &pages.scales).unwrap();
     // Head 0 agrees in sign with key 0 everywhere, so its dot stays positive.
     let q = (0..2 * INDEX)
         .map(|i| {
@@ -1085,7 +1168,7 @@ fn one_flipped_index_key_bit_changes_its_score() {
         &pages.codes,
         every_bit(0..INDEX / 2),
         &baseline,
-        |codes| scores(&q, &native(codes, &pages.scales)),
+        |codes| scores(&q, &native(codes, &pages.scales)?),
         "index code",
     );
     assert!(refused.is_empty(), "{refused:?}");
@@ -1093,7 +1176,7 @@ fn one_flipped_index_key_bit_changes_its_score() {
         &pages.scales,
         every_bit(0..INDEX / 32),
         &baseline,
-        |scales| scores(&q, &native(&pages.codes, scales)),
+        |scales| scores(&q, &native(&pages.codes, scales)?),
         "index scale",
     );
     assert!(refused.is_empty(), "{refused:?}");

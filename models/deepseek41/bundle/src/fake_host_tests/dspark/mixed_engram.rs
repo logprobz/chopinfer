@@ -18,11 +18,40 @@ fn verifier(slot: u64) -> u64 {
     100 + slot
 }
 
+/// KV pages of a slot: slot `s` takes pages from `s * SLOT_PAGES`, room for
+/// an 8000-row prompt.
+const SLOT_PAGES: u64 = 128;
+
+fn pages(slot: u64, end: u64) -> Vec<u64> {
+    (0..end.div_ceil(64))
+        .map(|page| slot * SLOT_PAGES + page)
+        .collect()
+}
+
+/// A three-token prompt of `request` in slot `slot`, scoring its last row.
+fn prompt(request: u64, slot: u64) -> Vec<u8> {
+    BatchRequestV1::new(
+        BatchWireVersionV1::V3,
+        vec![BatchItemV1::new(request, false, 3, true, vec![0, 1, 2])],
+        vec![BatchAppendV1::new(0, 3, 3, pages(slot, 3), None)],
+    )
+    .with_state_slots(vec![slot])
+    .encode()
+    .unwrap()
+}
+
+/// A fake host serving `verify_rows` verify rows with every slot's pages.
+fn host(verify_rows: u32) -> Rc<Host> {
+    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+    host.speculation.set(Some((5, verify_rows)));
+    host.kv_pages.set(24 * SLOT_PAGES);
+    host
+}
+
 /// A mixed step as the prefill API negotiates it: request `request`
 /// prefills the first `rows` rows of its prompt in slot `slot` beside
 /// verify items of `(slot, committed tokens, rows)`.
 fn mixed(request: u64, slot: u64, rows: u64, items: &[(u64, u64, u32)]) -> Vec<u8> {
-    let pages = |slot: u64, end: u64| (0..end.div_ceil(64)).map(|page| slot * 8 + page).collect();
     let mut requests = vec![BatchItemV1::new(
         request,
         false,
@@ -80,17 +109,12 @@ fn schedule(
     options: &[(&str, serde_json::Value)],
     backend: impl FnOnce(Rc<Host>) -> MappedHost,
 ) -> Run {
-    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-    host.speculation.set(Some((5, verify_rows)));
+    let host = host(verify_rows);
     let mut instance = create_backend_with_options(&host, true, backend(Rc::clone(&host)), options)
         .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
     let mut ends = Vec::new();
     for slot in 0..widths.len() as u64 {
-        execute(
-            &mut instance,
-            &host,
-            &crate::fake_host_tests::prompt(verifier(slot), slot, 0, 3, true),
-        );
+        execute(&mut instance, &host, &prompt(verifier(slot), slot));
         instance.commit().unwrap();
         ends.push(3);
     }
@@ -169,21 +193,26 @@ fn groups<'a>(kinds: &[&'a str]) -> Vec<(&'a str, usize)> {
 
 /// The 32- and 64-row verify phases of C8 and C16 (four- and six-row
 /// items), each beside two 512-row prefills, so the second step reuses the
-/// cycle's gathers and replays the verify graphs the first captured; and
-/// the same steps with eager DSpark pieces.
+/// cycle's gathers and replays the verify graphs the first captured, and
+/// the same steps with eager DSpark pieces; and the 64-row phase beside
+/// the 2048- and 8000-row prefills of the admitted range.
 #[test]
 fn mixed_verify_rows_land_the_synchronous_bytes_after_the_last_prefill_join() {
     let c16 = [vec![6; 10], vec![4]].concat();
-    for (verify_rows, widths) in [(32, vec![4; 8]), (64, c16)] {
+    for (verify_rows, widths, prefills, modes) in [
+        (32, vec![4; 8], [512, 512], &[false, true][..]),
+        (64, c16.clone(), [512, 512], &[false, true]),
+        (64, c16, [2048, 8000], &[false]),
+    ] {
         let rows: u64 = widths.iter().map(|&w| u64::from(w)).sum();
-        for eager in [false, true] {
+        for &eager in modes {
             let mut options = Vec::new();
             if eager {
                 options.push((DSPARK_GRAPH_HANDLES_PER_RANK, 0.into()));
             }
             let run = |options: &[(&str, serde_json::Value)]| {
                 bundle_runtime::routes::with_logging(|| {
-                    schedule(verify_rows, &widths, &[512, 512], options, |host| {
+                    schedule(verify_rows, &widths, &prefills, options, |host| {
                         MappedHost::with_row_ids(host)
                     })
                 })
@@ -331,16 +360,11 @@ fn a_failed_verify_join_settles_the_mixed_gathers() {
     let options = [(DSPARK_MIXED_PREPARED_ENGRAM, true.into())];
     // Eight three-token prompts on `backend`, and the waits they made.
     let prompted = |backend: fn(Rc<Host>) -> MappedHost| {
-        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
-        host.speculation.set(Some((5, 32)));
+        let host = host(32);
         let mut instance =
             create_backend_with_options(&host, true, backend(Rc::clone(&host)), &options).unwrap();
         for slot in 0..8 {
-            execute(
-                &mut instance,
-                &host,
-                &crate::fake_host_tests::prompt(verifier(slot), slot, 0, 3, true),
-            );
+            execute(&mut instance, &host, &prompt(verifier(slot), slot));
             instance.commit().unwrap();
         }
         let waits = order(&host.journal.borrow())

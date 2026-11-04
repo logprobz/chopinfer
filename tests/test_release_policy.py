@@ -24,7 +24,9 @@ plan_spec.loader.exec_module(plan)
 
 
 def inventory_fixture(root, models=('mimo26', 'qwen38', 'unselected')):
-    """Small metadata graph with selected and developer-only binary targets."""
+    """Small metadata graph with selected and developer-only binary targets.
+    A model named `disabled` declares its release targets with the release
+    disabled; `unselected` declares none."""
     packages = []
     for model in models:
         bins = [f'chopinfer-model-{model}', f'{model}-package']
@@ -44,7 +46,9 @@ def inventory_fixture(root, models=('mimo26', 'qwen38', 'unselected')):
         text += f'[bundle]\npackage = "bundle-{model}"\ncdylib = ["bundle_{model}"]\n'
         text += f'[compiler]\npackage = "model-{model}"\nbin = {json.dumps(bins)}\n'
         if selected:
-            text += f'[release]\nenabled = true\nbins = ["{model}-package", "chopinfer-model-{model}"]\ncdylibs = ["bundle_{model}"]\n'
+            enabled = 'false' if model == 'disabled' else 'true'
+            text += (f'[release]\nenabled = {enabled}\nbins = ["{model}-package", "chopinfer-model-{model}"]\n'
+                     f'cdylibs = ["bundle_{model}"]\n')
         (directory / 'model.toml').write_text(text)
         (directory / 'bundle/kernels.lock').write_text('{}')
         (directory / 'profiles.json').write_text('{}')
@@ -311,6 +315,28 @@ class ReleasePolicy(unittest.TestCase):
             rows = [row for row in plan.stage(records, root) if row[0] == 'eval']
         self.assertEqual(rows, [('eval', 'models/mimo26', '-', '-'), ('eval', 'models/qwen38', '-', '-'),
                                 ('eval', 'models/qwen38', 'a', '-'), ('eval', 'models/qwen38', 'b-2', '-')])
+
+    def test_dev_views_read_a_disabled_models_declared_targets(self):
+        # A model outside the release keeps its declared targets for the dev
+        # redeploy (tools/dev/redeploy-common.sh); the release never stages it.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            metadata = inventory_fixture(root, models=('qwen38', 'disabled', 'unselected'))
+            path = root / 'models/unselected/model.toml'
+            path.write_text(path.read_text() + '[release]\nenabled = false\n')
+            released = plan.read(root, metadata)
+            declared = plan.read(root, metadata, declared=True)
+            self.assertEqual([model.name for model in released], ['qwen38'])
+            self.assertEqual([model.name for model in declared], ['disabled', 'qwen38'])
+            self.assertFalse([row for row in plan.stage(released, root) if any('disabled' in field for field in row)])
+            self.assertEqual(plan.serving(declared, 'disabled'), (
+                ('chopinfer', 'bin/chopinfer'), ('chopinfer-model-disabled', 'bin/chopinfer-model-disabled'),
+                ('libbundle_disabled.so', 'lib/libbundle_disabled.so')))
+            self.assertEqual(plan.serving(declared, 'disabled', extras=True),
+                             (('disabled-package', 'bin/disabled-package'),))
+            for records, name in ((released, 'disabled'), (declared, 'unselected')):
+                with self.assertRaisesRegex(ValueError, f"model '{name}' is not selected for release"):
+                    plan.serving(records, name)
 
     def test_selected_third_model_uses_declared_artifact_names(self):
         with tempfile.TemporaryDirectory() as directory:

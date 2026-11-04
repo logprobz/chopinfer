@@ -292,16 +292,20 @@ def _kernel_locks(root, directory, relative) -> tuple[str, ...]:
     return tuple(found)
 
 
-def release_plan(models) -> tuple[ReleaseModel, ...]:
+def release_plan(models, *, declared=False) -> tuple[ReleaseModel, ...]:
     """Select opted-in models and refuse collisions across the complete plan.
 
     Eval files are discovered by the release consumer for each selected model.
     The lock destinations are stable consumer rules, not extra assets. Serving
-    profiles ship inside each package, not beside the host.
+    profiles ship inside each package, not beside the host. With `declared`,
+    a model whose release is disabled is planned too when it declares
+    targets or assets, as the dev redeploy installs it
+    (tools/dev/redeploy-common.sh); the release itself never passes it.
     """
     planned, destinations = [], {}
     for model in models:
-        if not model.release.enabled:
+        release = model.release
+        if not release.enabled and not (declared and (release.bins or release.cdylibs or release.assets)):
             continue
         label = f"{model.directory}/model.toml.release"
         targets = tuple(_release_target(model, name, kind, f"{label}.{key}[{i}]")

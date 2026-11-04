@@ -135,7 +135,7 @@ assert Path(sys.argv[1]).is_file()
         from test_release_policy import inventory_fixture
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            metadata = inventory_fixture(root, models=('third', 'unselected'))
+            metadata = inventory_fixture(root, models=('third', 'unselected', 'disabled'))
             path = root / 'models/third/model.toml'
             replacements = {'third-package': 'assemble-third', 'chopinfer-model-third': 'chopinfer-model-custom', 'bundle_third': 'native_custom'}
             text = path.read_text()
@@ -154,7 +154,8 @@ assert Path(sys.argv[1]).is_file()
             shutil.copyfile(ROOT / 'tools/model_sdk/inventory.py', root / 'tools/model_sdk/inventory.py')
             release = root / 'release'
             release.mkdir()
-            names = ('chopinfer', 'chopinfer-model-custom', 'libnative_custom.so', 'assemble-third')
+            names = ('chopinfer', 'chopinfer-model-custom', 'libnative_custom.so', 'assemble-third',
+                     'chopinfer-model-disabled', 'libbundle_disabled.so', 'disabled-package')
             for name in names:
                 (release / name).write_bytes(name.encode())
             programs = root / 'programs'
@@ -173,6 +174,14 @@ assert Path(sys.argv[1]).is_file()
                 path = root / 'install' / relative
                 self.assertEqual(path.read_bytes(), path.name.encode())
                 self.assertEqual(path.stat().st_mode & 0o777, 0o755)
+            # A model whose release is disabled still installs its declared targets.
+            disabled = [*command[:-2], str(root / 'disabled-install'), 'disabled']
+            result = subprocess.run(disabled, env=env, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual({path.relative_to(root / 'disabled-install').as_posix()
+                              for path in (root / 'disabled-install').rglob('*') if path.is_file()},  # check-inputs: walks outside the repository
+                             {'bin/chopinfer', 'bin/chopinfer-model-disabled', 'lib/libbundle_disabled.so',
+                              'bin/disabled-package'})
             result = subprocess.run([*command[:-1], 'unselected'], env=env, text=True, capture_output=True)
             self.assertEqual(result.returncode, 2)
             self.assertIn("model 'unselected' is not selected for release", result.stderr)

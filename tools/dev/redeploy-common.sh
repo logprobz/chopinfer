@@ -7,7 +7,8 @@ duration() { printf '%d.%03d' "$(( $1 / 1000 ))" "$(( $1 % 1000 ))"; }
 show_command() { printf '  '; printf '%q ' "$@"; printf '\n'; }
 
 # The host's helper discovery protocol uses the chopinfer-model- prefix.
-# Libraries and additional binaries come from the selected inventory targets.
+# Libraries and additional binaries come from the model's declared release
+# targets, whether or not the release ships the model.
 redeploy_install_plan() {
     local view=$1 model=$2 helper
     helper=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../release" && pwd -P)/plan.py

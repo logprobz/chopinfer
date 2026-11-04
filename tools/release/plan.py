@@ -13,14 +13,16 @@ from model_sdk import inventory
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def read(root, metadata=None):
+def read(root, metadata=None, declared=False):
+    """The release plan; with `declared`, also the declared targets of models
+    whose release is disabled (inventory.release_plan)."""
     models = inventory.load(root)
     if metadata is None:
         metadata = json.loads(subprocess.check_output([
             'cargo', 'metadata', '--format-version', '1', '--no-deps', '--locked', '--offline',
         ], cwd=root))
     inventory.check_metadata(models, metadata, root)
-    return inventory.release_plan(models)
+    return inventory.release_plan(models, declared=declared)
 
 
 def binaries(plan):
@@ -96,7 +98,9 @@ def main(arguments=None):
     try:
         root = args.root.resolve()
         metadata = json.loads(args.metadata.read_text()) if args.metadata else None
-        plan = read(root, metadata)
+        # The serving and extras views feed the dev redeploy, which installs
+        # a model's declared targets whether or not the release ships it.
+        plan = read(root, metadata, declared=args.view in ('serving', 'extras'))
         if args.view.startswith('build-'):
             rows = [(arg,) for arg in build_args(plan, 'bin' if args.view == 'build-bins' else 'cdylib')]
         elif args.view == 'libraries':

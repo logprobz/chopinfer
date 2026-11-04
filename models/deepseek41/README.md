@@ -1089,11 +1089,19 @@ between KV layouts:
   request restored from a prefix hit. The native layout also writes its
   stored codes and scales (`.codes`, `.scales`).
 
+Text and KV-state taps run every prefill stage by stage, which keeps no
+prompt-end anchor, so a tapped instance offers the scheduler none and the
+host ends a chunk at the prompt's last whole page (a multiple of 64 tokens)
+to capture it instead. Its prefix hits therefore restore only from captures
+at a committed chunk end, and the KV-state taps cover those restores. A
+tapped server never restores from a prompt-end anchor, so that path stays
+untapped.
+
 `taps.json` states their files, shapes and row positions, and the coverage
 they leave unresolved: verify steps, instances with the DSpark drafter
-loaded, ring cells outside the window and the compressors' open groups.
-Serving builds have no taps, and a serving bundle refuses to create while a
-taps variable is set.
+loaded, anchor restores, ring cells outside the window and the
+compressors' open groups. Serving builds have no taps, and a serving bundle
+refuses to create while a taps variable is set.
 
 ### DSpark qualification
 

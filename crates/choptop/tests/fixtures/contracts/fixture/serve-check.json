@@ -10,6 +10,7 @@
     "graph-memory-reserve-mib": "1024",
     "kv-cache-dtype": "auto",
     "kv-offload-gib": "0",
+    "kv-offload-prefix": "off",
     "max-batch-tokens": "128",
     "max-preemptions": "3",
     "max-sequences": "1",

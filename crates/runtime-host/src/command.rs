@@ -1510,6 +1510,7 @@ pub(crate) fn effective_settings_v1(
         "kv-offload-gib",
         (serving.kv_offload.budget_bytes >> 30).to_string(),
     );
+    set("kv-offload-prefix", on_off(serving.kv_offload_prefix));
     if serving.kv_offload.budget_bytes > 0 {
         set(
             "kv-offload-min-tokens",

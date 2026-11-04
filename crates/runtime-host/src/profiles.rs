@@ -95,6 +95,14 @@ pub(crate) struct Profile {
     /// `--graph-memory-reserve-mib`; absent keeps the host's 1 GiB.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub graph_memory_reserve_mib: Option<u64>,
+    /// `--kv-offload-gib`, the pinned host arena of swaps and the RAM prefix
+    /// tier; absent keeps offload off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_offload_gib: Option<u64>,
+    /// `--kv-offload-prefix`; absent keeps the RAM prefix tier off. On needs
+    /// a positive `kv_offload_gib` and the prefix cache.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_offload_prefix: Option<bool>,
     pub status: Status,
     pub evidence: Vec<String>,
 }
@@ -295,6 +303,8 @@ impl Profile {
                     .map(|mib| serve_options::graph_memory_reserve_mib_v1(Some(mib)))
                     .transpose()?
             },
+            kv_offload_gib: self.kv_offload_gib,
+            kv_offload_prefix: self.kv_offload_prefix,
             prefill_policy: self.prefill_policy,
             decode_tbt_target_ms: self.decode_tbt_target_ms.map(|target| target as usize),
             ..Default::default()
@@ -400,6 +410,10 @@ impl Profile {
                 "--graph-memory-reserve-mib",
                 self.graph_memory_reserve_mib.is_some(),
             ),
+            // The arena before the tier: restoring the arena's default
+            // also drops an inherited tier.
+            ("--kv-offload-gib", self.kv_offload_gib.is_some()),
+            ("--kv-offload-prefix", self.kv_offload_prefix.is_some()),
             ("--prefill-policy", self.prefill_policy.is_some()),
             (
                 "--decode-tbt-target-ms",
@@ -540,6 +554,13 @@ impl Profile {
                 "profile context-parallel size must divide its tensor-parallel size",
             ));
         }
+        if self.kv_offload_prefix == Some(true)
+            && (self.kv_offload_gib.unwrap_or(0) == 0 || !self.prefix_cache)
+        {
+            return Err(error(
+                "profile kv_offload_prefix needs a positive kv_offload_gib and the prefix cache",
+            ));
+        }
         if (self.speculation.drafter == "none") != (self.speculation.tokens == 0) {
             return Err(error(
                 "profile drafter must be none exactly when speculative tokens are zero",
@@ -611,6 +632,15 @@ impl Profile {
         }
         if let Some(mib) = self.graph_memory_reserve_mib {
             args.extend(["--graph-memory-reserve-mib".into(), mib.to_string()]);
+        }
+        if let Some(gib) = self.kv_offload_gib {
+            args.extend(["--kv-offload-gib".into(), gib.to_string()]);
+        }
+        if let Some(enabled) = self.kv_offload_prefix {
+            args.extend([
+                "--kv-offload-prefix".into(),
+                if enabled { "on" } else { "off" }.into(),
+            ]);
         }
         if let Some(policy) = self.prefill_policy {
             args.extend(["--prefill-policy".into(), policy.name().into()]);
@@ -2233,6 +2263,119 @@ mod tests {
     }
 
     #[test]
+    fn ram_tier_profile_defaults_and_explicit_overrides() {
+        let serve = |data: &serde_json::Value, flags: &[&str]| {
+            let file = Profiles::parse(&serde_json::to_vec(data).unwrap()).unwrap();
+            let defaults = file.get("test").unwrap().arguments(&file.served_model_name);
+            let flags: Vec<String> = flags.iter().map(|flag| (*flag).to_owned()).collect();
+            let mut args = vec!["serve".into()];
+            args.extend(apply_defaults(&defaults, &flags));
+            crate::parse_host_command_v1(&args)
+        };
+        let tier = |command: crate::HostCommandV1| {
+            let settings = crate::command::effective_settings_v1(&command);
+            let crate::HostCommandV1::Serve { serving, .. } = command else {
+                panic!("serve");
+            };
+            assert_eq!(
+                settings["kv-offload-gib"],
+                (serving.kv_offload.budget_bytes >> 30).to_string()
+            );
+            assert_eq!(
+                settings["kv-offload-prefix"],
+                if serving.kv_offload_prefix {
+                    "on"
+                } else {
+                    "off"
+                }
+            );
+            (
+                serving.kv_offload.budget_bytes >> 30,
+                serving.kv_offload_prefix,
+            )
+        };
+        let mut data = fixture();
+        data["profiles"]["test"]["prefix_cache"] = true.into();
+        // A profile without the fields serves without offload.
+        assert_eq!(tier(serve(&data, &[]).unwrap()), (0, false));
+        assert_eq!(
+            tier(
+                serve(
+                    &data,
+                    &["--kv-offload-gib", "8", "--kv-offload-prefix", "on"]
+                )
+                .unwrap()
+            ),
+            (8, true)
+        );
+        data["profiles"]["test"]["kv_offload_gib"] = 64.into();
+        data["profiles"]["test"]["kv_offload_prefix"] = true.into();
+        let file = Profiles::parse(&serde_json::to_vec(&data).unwrap()).unwrap();
+        let arguments = file.get("test").unwrap().arguments("fixture").join(" ");
+        assert!(
+            arguments.contains("--kv-offload-gib 64 --kv-offload-prefix on"),
+            "{arguments}"
+        );
+        // An explicit flag overrides each field; one that turns off what the
+        // tier needs also drops the profile's tier, as explicit reserved
+        // admission drops its arena.
+        for (flags, expected) in [
+            (&[][..], (64, true)),
+            (&["--kv-offload-gib", "32"][..], (32, true)),
+            (&["--kv-offload-prefix", "off"][..], (64, false)),
+            (&["--kv-offload-gib", "0"][..], (0, false)),
+            (&["--prefix-cache", "off"][..], (64, false)),
+            (&["--admission", "reserved"][..], (0, false)),
+            (&["--debug-prefix-ram"][..], (64, true)),
+        ] {
+            assert_eq!(tier(serve(&data, flags).unwrap()), expected, "{flags:?}");
+        }
+        for (flags, expected) in [
+            (
+                &["--kv-offload-gib", "0", "--kv-offload-prefix", "on"][..],
+                "--kv-offload-prefix on requires positive --kv-offload-gib",
+            ),
+            (
+                &["--kv-offload-gib", "0", "--debug-prefix-ram"][..],
+                "--debug-prefix-ram requires --kv-offload-prefix on",
+            ),
+        ] {
+            let refusal = serve(&data, flags).unwrap_err().to_string();
+            assert!(refusal.contains(expected), "{flags:?}: {refusal}");
+        }
+        data["profiles"]["test"]["kv_offload_prefix"] = false.into();
+        assert_eq!(tier(serve(&data, &[]).unwrap()), (64, false));
+        assert_eq!(
+            tier(serve(&data, &["--kv-offload-prefix", "on"]).unwrap()),
+            (64, true)
+        );
+        // The tier needs the profile's own arena and prefix cache, and the
+        // fields take a count and a boolean.
+        for (field, value) in [
+            ("kv_offload_gib", serde_json::Value::Null),
+            ("kv_offload_gib", 0.into()),
+            ("prefix_cache", false.into()),
+        ] {
+            let mut invalid = data.clone();
+            invalid["profiles"]["test"]["kv_offload_prefix"] = true.into();
+            invalid["profiles"]["test"][field] = value;
+            let refusal = Profiles::parse(&serde_json::to_vec(&invalid).unwrap())
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(
+                refusal.contains("kv_offload_prefix needs a positive kv_offload_gib"),
+                "{field}: {refusal}"
+            );
+        }
+        for (field, value) in [("kv_offload_prefix", "on"), ("kv_offload_gib", "64")] {
+            let mut invalid = data.clone();
+            invalid["profiles"]["test"][field] = value.into();
+            assert!(Profiles::parse(&serde_json::to_vec(&invalid).unwrap()).is_err());
+        }
+    }
+
+    #[test]
     fn prefill_policy_profile_resolution_and_flag_override() {
         for value in ["fixed", "tbt", "adaptive"] {
             let mut data = fixture();
@@ -3118,6 +3261,38 @@ mod translate_tests {
             ]
         );
         assert!(translated.inherited_model_options.is_empty());
+    }
+
+    /// A pick's arena and RAM prefix tier are reset by the arena alone,
+    /// which drops the tier; a target's own arena and tier are its options.
+    #[test]
+    fn the_ram_tier_translates_between_profiles() {
+        let tier = serde_json::json!({"kv_offload_gib": 64, "kv_offload_prefix": true});
+        let without = profile(serde_json::json!({}));
+        let with = profile(tier.clone());
+        let smaller =
+            profile(serde_json::json!({"kv_offload_gib": 16, "kv_offload_prefix": false}));
+        for (pick, target, context) in [
+            (&with, &without, "a pick's tier"),
+            (&without, &with, "a target's tier"),
+            (&with, &smaller, "a target's own arena"),
+            (&smaller, &with, "a pick's own arena"),
+        ] {
+            check_translation(pick, target, translate(pick, target), context);
+        }
+        let reset = translate(&with, &without).unwrap().arguments;
+        assert!(
+            reset
+                .windows(2)
+                .any(|pair| pair == ["--kv-offload-gib", "0"]),
+            "{reset:?}"
+        );
+        assert!(!flags(&reset).contains(&"--kv-offload-prefix".to_owned()));
+        let crate::HostCommandV1::Serve { serving, .. } = served(&with, &reset) else {
+            panic!("serve");
+        };
+        assert_eq!(serving.kv_offload.budget_bytes, 0);
+        assert!(!serving.kv_offload_prefix);
     }
 
     /// An autoregressive profile over a drafting pick with a TBT budget

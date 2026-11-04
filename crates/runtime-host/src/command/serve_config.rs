@@ -123,6 +123,8 @@ impl ServingInputsV1 {
             }
             "--kv-cache-dtype" => self.kv_cache_dtype = Some(serving.kv_cache_dtype),
             "--prefix-cache" => self.prefix_cache = Some(serving.prefix_cache),
+            "--kv-offload-gib" => self.kv_offload_gib = Some(serving.kv_offload.budget_bytes >> 30),
+            "--kv-offload-prefix" => self.kv_offload_prefix = Some(serving.kv_offload_prefix),
             "--reply-history-observer" => {
                 self.reply_history_observer = Some(serving.reply_history_observer)
             }
@@ -200,6 +202,14 @@ impl ServingInputsV1 {
                         .is_some_and(|mode| !matches!(mode, SpeculationMode::Balanced(_)))
             }
             "--decode-tbt-target-ms" => self.prefill_policy == Some(PrefillPolicyV1::Fixed),
+            // Offload needs optimistic admission, and the RAM prefix tier
+            // the offload arena and the prefix cache.
+            "--kv-offload-gib" => self.optimistic_admission == Some(false),
+            "--kv-offload-prefix" => {
+                self.optimistic_admission == Some(false)
+                    || self.kv_offload_gib == Some(0)
+                    || self.prefix_cache == Some(false)
+            }
             _ => false,
         }
     }

@@ -666,11 +666,11 @@ fn index(shape: &Shape, rank: u32, layouts: &BTreeMap<String, String>) -> (Vec<u
 }
 
 impl FakeHost {
-    fn device(shape: Shape, kv: KvLayout) -> FakeDevice {
+    fn device(shape: Shape, _kv: KvLayout) -> FakeDevice {
         let device = FakeDevice::default();
-        // The native Flash TP4 default requires resident BF16 collectives.
-        // Refusal tests replace this report explicitly.
-        if shape.geometry == &FLASH && shape.ranks() == 4 && kv.storage == KvStorage::Native {
+        // The Flash TP4 default requires resident BF16 collectives at both
+        // KV layouts. Refusal tests replace this report explicitly.
+        if shape.geometry == &FLASH && shape.ranks() == 4 {
             device.residency.set(Some(BundleRawClusterResidencyV1 {
                 multiprocessor_count: 188,
                 usable_multiprocessors: 188,
@@ -1471,6 +1471,14 @@ fn journal_steps_with(host: &Rc<Host>, options: &[(&str, serde_json::Value)]) {
 /// five-launch KV fork/join unit from the third to the second piece per rank;
 /// piece node counts change from 44/201/1288 to 45/211/1317. The audit retains
 /// every other operation and allocation, and all five other journals exactly.
+/// BF16 KV storage at TP4 takes the native prefill partials, so the two
+/// layouts differ in their stored KV alone: each of its 1620 prefill F32
+/// reduce-scatter, all-gather and round triples becomes one BF16-partial
+/// collective (972 two-shot, 648 one-shot), the rounded module's two
+/// resolves per rank become the two BF16-partial modules' three, and the
+/// prefill protocol buffers take their BF16-partial sizes
+/// (`journal-changes/bf16-kv-partials.md`). The native journals are
+/// byte-identical.
 const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp1",
@@ -1502,7 +1510,7 @@ const FLASH_JOURNALS: [(&str, KvStorage, (usize, u64)); 6] = [
     (
         "deepseek41-flash-tp4",
         KvStorage::Bf16,
-        (78921, 0xb156b671839fde0e),
+        (75693, 0xe8ef0472dcb0c911),
     ),
 ];
 
@@ -1942,23 +1950,18 @@ fn every_kv_layout_lowers_every_stage() {
                 0
             }
         );
-        // Native prefills replace each F32 scatter/gather/round triple
-        // with one BF16-partial collective. Decode retains the triple.
+        // Both layouts' prefills replace each F32 scatter/gather/round
+        // triple with one BF16-partial collective. Decode retains the triple.
         let bf16_partials = launches("chop_comm_allreduce_phased_oneshot_bf16_v1");
         assert_eq!(
             bf16_partials,
-            if kv.storage == KvStorage::Native {
-                (2 * FLASH.layers() as usize + 1) * shape.ranks() as usize
-            } else {
-                0
-            }
+            (2 * FLASH.layers() as usize + 1) * shape.ranks() as usize
         );
         counts.push((
             kv.storage,
             journal.iter().filter(|l| l.starts_with("launch")).count()
                 + 2 * fused_candidates
                 + fused_prefill
-                + 2 * bf16_partials
                 - packed
                 - cache_producers
                 - hierarchical_groups,
@@ -1969,8 +1972,8 @@ fn every_kv_layout_lowers_every_stage() {
         assert_eq!(host.acquired.get(), host.released.get());
     }
     // After the validated query packs, cache producers, group/final merges
-    // and fused candidates, prefill finishes and BF16 collectives, both
-    // layouts lower the same stages.
+    // and fused candidates and prefill finishes, both layouts lower the
+    // same stages.
     assert_eq!(counts[0].1, counts[1].1, "{counts:?}");
 }
 

@@ -15,7 +15,7 @@ const REDUCTIONS: usize = 81;
 const DEFERRED: usize = 77;
 
 /// A residency report that holds the phased grids, which the fake device
-/// gives native Flash TP4 by default.
+/// gives Flash TP4 by default.
 fn report() -> BundleRawClusterResidencyV1 {
     BundleRawClusterResidencyV1 {
         multiprocessor_count: 188,
@@ -115,26 +115,42 @@ fn prefill_keeps_its_reductions_with_the_option() {
     assert_eq!(launches(&journals[0]), launches(&journals[1]));
 }
 
-/// Without proven residency for the phased grids, decode keeps the
-/// composed form with the option on.
+/// Without proven residency, create refuses Flash TP4 at both KV layouts
+/// with the option on. Both layouts' prefills require the BF16 partials,
+/// whose admission grids have the phased F32 entries' shape, so no report
+/// admits them and leaves decode on the composed form: the phased decode
+/// fallback can no longer be reached through create.
 #[test]
-fn decode_falls_back_on_unproven_residency() {
-    for kind in 0..4 {
-        let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[1]);
-        let mut value = report();
-        match kind {
-            0 => value = BundleRawClusterResidencyV1::unreported(),
-            1 => value.max_active_clusters = 0,
-            2 => value.flags |= BUNDLE_CLUSTER_RESIDENCY_V1_MPS_CLIENT,
-            _ => value.usable_multiprocessors = 1,
+fn unproven_residency_refuses_create_at_both_layouts() {
+    for kv in KV_LAYOUTS {
+        for kind in 0..4 {
+            let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), kv);
+            let mut value = report();
+            match kind {
+                0 => value = BundleRawClusterResidencyV1::unreported(),
+                1 => value.max_active_clusters = 0,
+                2 => value.flags |= BUNDLE_CLUSTER_RESIDENCY_V1_MPS_CLIENT,
+                _ => value.usable_multiprocessors = 1,
+            }
+            host.device.residency.set(Some(value));
+            let record = crate::config::tests::with_option(
+                crate::config::tests::record(&host.shape, host.kv, 1, false),
+                PHASED_DECODE_REDUCE,
+                true.into(),
+            );
+            let result = api().create(HostServicesTableV1::new(Rc::clone(&host)), &record);
+            assert!(result.is_err(), "{:?} {kind}", kv.storage);
+            assert!(
+                host.logs
+                    .borrow()
+                    .iter()
+                    .any(|line| line.contains("cannot admit")),
+                "{:?} {kind}: {:?}",
+                kv.storage,
+                host.logs.borrow()
+            );
+            assert_eq!(host.acquired.get(), host.released.get());
         }
-        host.device.residency.set(Some(value));
-        let mut instance = instance(&host, 1, true);
-        let journal = decode_step(&host, &mut instance, 1);
-        assert_eq!(count(&journal, ONE_SHOT) + count(&journal, TWO_SHOT), 0);
-        assert_eq!(count(&journal, SCATTER), 4 * REDUCTIONS);
-        assert_eq!(count(&journal, ROUND), 4 * (REDUCTIONS - DEFERRED));
-        instance.destroy().unwrap();
     }
 }
 
@@ -210,7 +226,7 @@ fn phased_decode_lifetimes_journal() {
     let mut mismatches = Vec::new();
     for (kv, expected) in [
         (KV_LAYOUTS[0], (77337, 0xc569ccf643653b17)),
-        (KV_LAYOUTS[1], (78925, 0xf3c08f5b709c91c3)),
+        (KV_LAYOUTS[1], (75717, 0xcfb832d9702b470c)),
     ] {
         let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), kv);
         host.device.residency.set(Some(report()));

@@ -4,8 +4,9 @@
 //! `model.py:271-278`), and the embedding's BF16 shard rows widened into F32
 //! partials (an own op) and reduced the same way, which gives back each
 //! row's bits as one rank holds it.
-//! Native Flash TP4 prefills default to the separate BF16 AllReduce
-//! contract, rounding each completed local partial before transport.
+//! Flash TP4 prefills at either KV storage default to the separate BF16
+//! AllReduce contract, rounding each completed local partial before
+//! transport.
 //! Decode, verification and other shapes retain F32 partials.
 //!
 //! Each rank's op keeps comm state regions (`OpInfo::state`) that its
@@ -34,11 +35,10 @@ enum Partials {
     Prefill,
 }
 
-fn partials_mode(shape: &Shape, storage: KvStorage) -> Partials {
-    if shape.ranks() == 4
-        && shape.geometry == &model_deepseek41_contract::geometry::FLASH
-        && storage == KvStorage::Native
-    {
+/// Both KV storages take the same prefill partials, so BF16 storage
+/// differs from native in its stored KV alone.
+fn partials_mode(shape: &Shape, _storage: KvStorage) -> Partials {
+    if shape.ranks() == 4 && shape.geometry == &model_deepseek41_contract::geometry::FLASH {
         Partials::Prefill
     } else {
         Partials::Off
@@ -536,7 +536,7 @@ mod selection_tests {
     use model_deepseek41_contract::geometry::{FLASH, GEOMETRIES};
 
     #[test]
-    fn partials_and_gather_keep_their_geometry_and_storage_gates() {
+    fn partials_and_gather_keep_their_geometry_gates_at_both_storages() {
         for geometry in GEOMETRIES {
             for ranks in [Ranks::TP1, Ranks::TP2, Ranks::TP4] {
                 let Ok(shape) = Shape::new(geometry, ranks) else {
@@ -546,7 +546,7 @@ mod selection_tests {
                 for storage in [KvStorage::Native, KvStorage::Bf16] {
                     assert_eq!(
                         bf16_partials_requested(&shape, storage),
-                        geometry == &FLASH && ranks == Ranks::TP4 && storage == KvStorage::Native,
+                        geometry == &FLASH && ranks == Ranks::TP4,
                     );
                     assert!(matches!(
                         query(&shape, storage),

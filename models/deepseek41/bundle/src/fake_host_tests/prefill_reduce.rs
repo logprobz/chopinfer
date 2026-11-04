@@ -1,85 +1,16 @@
 use super::*;
-const ROUND_SYMBOL: &str = "chop_comm_allreduce_phased_round_f32_v1";
 
-fn report() -> BundleRawClusterResidencyV1 {
-    BundleRawClusterResidencyV1 {
-        multiprocessor_count: 188,
-        usable_multiprocessors: 188,
-        max_active_clusters: 188,
-        flags: BUNDLE_CLUSTER_RESIDENCY_V1_CLUSTERS_REPORTED
-            | BUNDLE_CLUSTER_RESIDENCY_V1_COOPERATIVE_LAUNCH,
-        ..BundleRawClusterResidencyV1::unreported()
-    }
-}
 fn host() -> Rc<Host> {
-    // BF16 KV retains F32 partials and their rounded prefill gather.
-    let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[1]);
-    host.device.residency.set(Some(report()));
-    host
-}
-fn count(journal: &[String], symbol: &str) -> usize {
-    journal
-        .iter()
-        .filter(|s| s.starts_with("launch ") && s.contains(symbol))
-        .count()
+    // BF16 KV takes the native prefill partials and their protocol state,
+    // on the residency the fake device gives Flash TP4 by default.
+    FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[1])
 }
 
+/// A pending prefill reset at BF16 KV drains every rank, zeroes exactly
+/// the prefill partials' protocol state and drains again before the next
+/// prefill's first launch.
 #[test]
-fn prefill_bf16_gather_routes_every_hidden_reduction_after_admission() {
-    for (rows, expected) in [(511, 0), (512, 81), (1057, 81), (8191, 81), (8192, 81)] {
-        let host = host();
-        let mut instance = create(&host, 4);
-        assert_eq!(host.device.residency_queries.borrow().len(), 8);
-        host.device.journal.borrow_mut().clear();
-        step(
-            &mut instance,
-            &prompt(7, 0, 0, rows, true),
-            &mut Views::default(),
-        );
-        let journal = host.device.journal.borrow();
-        assert_eq!(count(&journal, ROUND_SYMBOL), 4 * expected);
-        assert_eq!(
-            count(&journal, "chop_comm_allgather_scattered_f32_v1"),
-            4 * (81 - expected)
-        );
-        drop(journal);
-        instance.destroy().unwrap();
-        assert_eq!(host.acquired.get(), host.released.get());
-    }
-}
-
-#[test]
-fn prefill_bf16_gather_falls_back_on_unproven_residency() {
-    for kind in 0..4 {
-        let host = host();
-        let mut value = report();
-        match kind {
-            0 => value = BundleRawClusterResidencyV1::unreported(),
-            1 => value.max_active_clusters = 0,
-            2 => value.flags |= BUNDLE_CLUSTER_RESIDENCY_V1_MPS_CLIENT,
-            _ => value.usable_multiprocessors = 1,
-        }
-        host.device.residency.set(Some(value));
-        let mut instance = create(&host, 4);
-        host.device.journal.borrow_mut().clear();
-        step(
-            &mut instance,
-            &prompt(7, 0, 0, 1024, true),
-            &mut Views::default(),
-        );
-        let journal = host.device.journal.borrow();
-        assert_eq!(count(&journal, ROUND_SYMBOL), 0);
-        assert_eq!(
-            count(&journal, "chop_comm_allgather_scattered_f32_v1"),
-            4 * 81
-        );
-        drop(journal);
-        instance.destroy().unwrap();
-    }
-}
-
-#[test]
-fn prefill_bf16_gather_resets_only_its_protocol_after_join() {
+fn prefill_partials_reset_only_their_protocol_after_join_at_bf16_kv() {
     use bundle_runtime::entry::Bundle;
     let host = host();
     let mut instance = create(&host, 4);
@@ -134,43 +65,4 @@ fn prefill_bf16_gather_resets_only_its_protocol_after_join() {
     );
     drop(journal);
     instance.destroy().unwrap();
-}
-
-#[test]
-fn prefill_bf16_gather_partial_rank_failure_poisoning_is_terminal() {
-    let reference = host();
-    let mut instance = create(&reference, 4);
-    reference.device.journal.borrow_mut().clear();
-    step(
-        &mut instance,
-        &prompt(7, 0, 0, 1024, true),
-        &mut Views::default(),
-    );
-    let lines = reference.device.journal.borrow().clone();
-    instance.destroy().unwrap();
-    let at = lines
-        .iter()
-        .position(|s| s.starts_with("launch ") && s.contains(ROUND_SYMBOL))
-        .unwrap();
-    let before = lines[..at]
-        .iter()
-        .filter(|s| s.starts_with("launch "))
-        .count();
-    let host = host();
-    let mut instance = create(&host, 4);
-    host.device.fail_launch.set(Some(before as u32 + 1));
-    assert_eq!(
-        instance.execute(&prompt(7, 0, 0, 1024, true), &mut Views::default()),
-        Err(BundleAbiError::Status(BundleStatusV1::HostError))
-    );
-    let submitted = host.device.journal.borrow().clone();
-    assert_eq!(
-        instance.capture_prefix_state(7, 1024, &[200]),
-        Err(BundleAbiError::Status(BundleStatusV1::InvalidState))
-    );
-    assert_eq!(
-        instance.destroy(),
-        Err(BundleAbiError::Status(BundleStatusV1::InvalidState))
-    );
-    assert_eq!(*host.device.journal.borrow(), submitted);
 }

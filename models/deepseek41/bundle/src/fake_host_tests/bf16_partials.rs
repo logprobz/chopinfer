@@ -277,14 +277,15 @@ fn unset_bf16_partials_select_prefill_and_keep_decode_f32() {
     assert_eq!(host.acquired.get(), host.released.get());
 }
 
+/// BF16 KV storage takes the native prefill partials, so the two layouts
+/// differ in their stored KV alone. Decode keeps F32.
 #[test]
-fn unset_bf16_partials_keep_other_kv_on_f32() {
+fn unset_bf16_partials_select_prefill_at_bf16_kv() {
     let host = FakeHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[1]);
     assert_eq!(host.kv.storage, KvStorage::Bf16);
     let mut instance = create(&host, 1);
     assert!(
-        !host
-            .device
+        host.device
             .journal
             .borrow()
             .iter()
@@ -294,6 +295,24 @@ fn unset_bf16_partials_keep_other_kv_on_f32() {
     step(
         &mut instance,
         &prompt(7, 0, 0, 63, true),
+        &mut Views::default(),
+    );
+    {
+        let journal = host.device.journal.borrow();
+        assert!(
+            journal
+                .iter()
+                .any(|line| line.starts_with("launch ") && partial_entry(line))
+        );
+        assert!(
+            !journal.iter().any(|line| line.starts_with("launch ")
+                && line.contains("chop_comm_reduce_scatter_f32_v1"))
+        );
+    }
+    host.device.journal.borrow_mut().clear();
+    step(
+        &mut instance,
+        &decode(&[(7, 0, 63, 9)]),
         &mut Views::default(),
     );
     let journal = host.device.journal.borrow();

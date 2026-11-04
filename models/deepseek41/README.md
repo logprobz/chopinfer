@@ -1083,9 +1083,9 @@ between KV layouts:
   rank (`L<nn>.x.attn.partial`, `L<nn>.x.mlp.partial`), read before its
   all-reduce, which may round it in place. They cover the eager prefill
   alone: a tapped instance never runs the upper-skip schedule or its
-  ordered DMA reductions, and decode and verify steps write KV-state taps
-  only, so DMA reductions and decode reductions, phased or not, are not
-  tapped;
+  ordered DMA reductions, decode steps write KV-state taps only and verify
+  steps write none, so DMA reductions and decode and verify reductions,
+  phased or not, are not tapped;
 - KV state: a request's window rings, compressed latents and index keys on
   every rank (`L<nn>.x.kv.window`, `L<nn>.x.kv.compressed`,
   `L<nn>.x.kv.index`), as the logical BF16 values the attention reads,

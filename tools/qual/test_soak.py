@@ -2,9 +2,11 @@
 
 from qual_test_config import setUpModule
 
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import tempfile
 import subprocess
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -44,8 +46,78 @@ class SoakMemoryTests(unittest.TestCase):
     @patch("soak.Path.read_text")
     def test_host_rss_counts_the_same_serving_tree(self, read, tree):
         from soak import host_memory
-        read.side_effect = ["VmRSS: 1024 kB\n", "VmRSS: 2048 kB\n"]
-        self.assertEqual(host_memory(123), 3)
+        read.side_effect = ["VmRSS:\t    1024 kB\nRssAnon:\t     512 kB\nRssFile:\t     256 kB\n"
+                            "RssShmem:\t     256 kB\n",
+                            "VmRSS:\t    2048 kB\nRssAnon:\t    1024 kB\nRssFile:\t     768 kB\n"
+                            "RssShmem:\t     256 kB\n"]
+        self.assertEqual(host_memory(123), {"host_rss_mib": 3, "host_rss_anon_mib": 1.5,
+                                            "host_rss_file_mib": 1, "host_rss_shmem_mib": 0.5})
+        # A part one process does not report is unknown for the tree; VmRSS
+        # stays required.
+        read.side_effect = ["VmRSS: 1024 kB\nRssAnon: 512 kB\nRssFile: 512 kB\n",
+                            "VmRSS: 2048 kB\nRssAnon: 1024 kB\nRssFile: 768 kB\nRssShmem: 256 kB\n"]
+        self.assertEqual(host_memory(123), {"host_rss_mib": 3, "host_rss_anon_mib": 1.5,
+                                            "host_rss_file_mib": 1.25, "host_rss_shmem_mib": None})
+        read.side_effect = ["RssAnon: 512 kB\n", "VmRSS: 2048 kB\n"]
+        with self.assertRaisesRegex(RuntimeError, "no resident memory sample"):
+            host_memory(123)
+
+    @patch("soak.device_memory", return_value=350)
+    @patch("soak.host_memory", return_value={"host_rss_mib": 3, "host_rss_anon_mib": 1.5,
+                                             "host_rss_file_mib": 1, "host_rss_shmem_mib": 0.5})
+    def test_samples_record_the_mapped_views_the_host_serves(self, host, device):
+        # runtime-host mapped_views.rs: the resident bytes only while
+        # residency is visible.
+        visible = ("# TYPE chop_mapped_view_bytes gauge\nchop_mapped_view_bytes 8192\n"
+                   "# TYPE chop_mapped_view_residency_visible gauge\nchop_mapped_view_residency_visible 1\n"
+                   "# TYPE chop_mapped_view_resident_bytes gauge\nchop_mapped_view_resident_bytes 4096\n")
+        hidden = ("# TYPE chop_mapped_view_bytes gauge\nchop_mapped_view_bytes 8192\n"
+                  "# TYPE chop_mapped_view_residency_visible gauge\nchop_mapped_view_residency_visible 0\n")
+        for text, expected in ((visible, {"mapped_view_bytes": 8192, "mapped_view_resident_bytes": 4096}),
+                               (hidden, {"mapped_view_bytes": 8192}), ("chop_batches_total 3\n", {})):
+            with self.subTest(expected), patch("soak.metrics_text", return_value=text):
+                sample = soak.memory_sample(123, 0, None)
+                self.assertEqual({key: sample[key] for key in sample if key.startswith("mapped_view")}, expected)
+                self.assertEqual((sample["mib"], sample["host_rss_mib"], sample["host_rss_anon_mib"],
+                                  sample["host_rss_file_mib"], sample["host_rss_shmem_mib"]), (350, 3, 1.5, 1, 0.5))
+        with patch("soak.metrics_text", side_effect=OSError("connection refused")):
+            self.assertEqual(soak.memory_sample(123, 0, None)["mapped_view_error"], "OSError: connection refused")
+        # A gauge that is not a whole number of bytes is an error of the
+        # scrape, beside a kept sample.
+        for value in ("NaN", "+Inf", "-Inf", "-1", "8192.5", "x", ""):
+            with self.subTest(value=value), patch("soak.metrics_text",
+                                                  return_value=f"chop_mapped_view_bytes {value}\n"):
+                sample = soak.memory_sample(123, 0, None)
+                self.assertNotIn("mapped_view_bytes", sample)
+                self.assertTrue(sample["mapped_view_error"].startswith(("ValueError", "IndexError")))
+                self.assertEqual((sample["mib"], sample["host_rss_mib"]), (350, 3))
+
+    def test_the_soak_samples_the_parts_and_mapped_views_of_its_server(self):
+        argv = ["soak", "--duration", "0.3", "--concurrency", "2", "--server-pid", "123"]
+        parts = {"host_rss_mib": 3, "host_rss_anon_mib": 1.5, "host_rss_file_mib": 1, "host_rss_shmem_mib": 0.5}
+        with patch("sys.argv", argv), patch.object(soak, "Client", FakeClient), \
+             patch.object(soak, "device_memory", return_value=350), \
+             patch.object(soak, "host_memory", return_value=parts), \
+             patch.object(soak, "metrics_text", return_value="chop_mapped_view_bytes 8192\n"), \
+             patch.object(soak, "receipt") as receipt:
+            with self.assertRaises(SystemExit):
+                soak.main()
+        report = receipt.call_args.args[2]
+        self.assertGreaterEqual(len(report["memory_samples"]), 2)
+        for sample in report["memory_samples"]:
+            self.assertEqual({key: sample[key] for key in (*parts, "mapped_view_bytes")},
+                             {**parts, "mapped_view_bytes": 8192})
+        self.assertEqual(report["errors"], [])
+
+    def test_the_recorded_parts_leave_the_memory_verdict_alone(self):
+        limits = {"device": 512, "host": 512}
+        rows = [{"elapsed_seconds": t, "mib": 1000, "host_rss_mib": 4000 + t // 4} for t in range(0, 1201, 30)]
+        recorded = [{**row, "host_rss_anon_mib": 3000 + 9 * row["elapsed_seconds"], "host_rss_file_mib": 900,
+                     "host_rss_shmem_mib": 100, "mapped_view_bytes": 2 ** 40,
+                     "mapped_view_resident_bytes": 2 ** 30 * row["elapsed_seconds"]} for row in rows]
+        for allowance in (None, {"host": 0, "device": 0}):
+            self.assertEqual(soak.memory_rule(recorded, 1200, limits, 0, allowance),
+                             soak.memory_rule(rows, 1200, limits, 0, allowance))
 
 
 
@@ -242,8 +314,75 @@ class StructuredKeepTests(unittest.TestCase):
         self.assertFalse(report["passed"])
 
 
-if __name__ == "__main__":
-    unittest.main()
+class MetricsServer:
+    """A local /metrics endpoint that answers every scrape with `body`, cut to
+    its first `sent` bytes under the full Content-Length when `sent` is set."""
+
+    def __init__(self, body, sent=None):
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(handler):
+                handler.send_response(200)
+                handler.send_header("Content-Type", "text/plain; version=0.0.4")
+                handler.send_header("Content-Length", str(len(body)))
+                handler.end_headers()
+                handler.wfile.write(body if sent is None else body[:sent])
+
+            def log_message(handler, *args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class MetricsClient(FakeClient):
+    """A FakeClient whose /metrics is served at `url`."""
+
+    def __init__(self, url, timeout=900):
+        super().__init__(url, timeout)
+        self.url, self.timeout = url, timeout
+
+
+class MappedViewScrapeTests(unittest.TestCase):
+    """The mapped-view gauges are recorded only: a scrape that fails in
+    transport, decoding or parsing keeps each memory sample beside its error
+    and leaves the soak verdict alone."""
+
+    def soak(self, body, sent=None):
+        server = MetricsServer(body, sent)
+        self.addCleanup(server.close)
+        argv = ["soak", "--url", server.url, "--duration", "0.3", "--concurrency", "2", "--server-pid", "123"]
+        with patch("sys.argv", argv), patch.object(soak, "Client", MetricsClient), \
+             patch.object(soak, "device_memory", return_value=350), \
+             patch.object(soak, "host_memory", return_value={"host_rss_mib": 3, "host_rss_anon_mib": 1.5,
+                                                             "host_rss_file_mib": 1, "host_rss_shmem_mib": 0.5}), \
+             patch.object(soak, "receipt") as receipt:
+            with self.assertRaises(SystemExit) as exited:
+                soak.main()
+        return exited.exception.code, receipt.call_args.args[2]
+
+    def test_a_failed_scrape_keeps_the_sample_and_the_verdict(self):
+        served = b"chop_mapped_view_bytes 8192\nchop_mapped_view_resident_bytes 4096\n"
+        code, report = self.soak(served)
+        self.assertEqual((code, report["passed"], report["errors"]), (0, True, []))
+        self.assertGreaterEqual(len(report["memory_samples"]), 2)
+        self.assertTrue(all(sample["mapped_view_bytes"] == 8192 for sample in report["memory_samples"]))
+        for label, body, sent, cause in (
+                ("truncated response", served * 4, 20, "IncompleteRead"),
+                ("bad encoding", served + b"# \xff\xfe\n", None, "UnicodeDecodeError"),
+                ("NaN gauge", b"chop_mapped_view_bytes NaN\n", None, "not a finite whole number of bytes")):
+            with self.subTest(label):
+                failed_code, failed = self.soak(body, sent)
+                self.assertEqual((failed_code, failed["passed"], failed["errors"]), (code, report["passed"], []))
+                self.assertEqual(len(failed["memory_samples"]), len(report["memory_samples"]))
+                for sample in failed["memory_samples"]:
+                    self.assertEqual((sample["mib"], sample["host_rss_mib"]), (350, 3))
+                    self.assertNotIn("mapped_view_bytes", sample)
+                    self.assertIn(cause, sample["mapped_view_error"])
 
 
 class MemoryRule(unittest.TestCase):
@@ -279,3 +418,7 @@ class MemoryRule(unittest.TestCase):
                                   (0, {"host": 0}), (0, {"host": -1, "device": 0}), (0, [0, 0])):
             with self.subTest(warmup=warmup, allowance=allowance), self.assertRaises(ValueError):
                 soak.memory_rule(self.samples(lambda t: 0), 1200, {"device": 512, "host": 512}, warmup, allowance)
+
+
+if __name__ == "__main__":
+    unittest.main()

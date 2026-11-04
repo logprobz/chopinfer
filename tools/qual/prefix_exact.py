@@ -911,10 +911,10 @@ def record_split(args, client, server, model, exact):
     raise SystemExit(0 if summary["passed"] else 1)
 
 
-def bind_server(args, server, path):
-    """Bind the record to the live server's checkpoint when the gate pins the
-    exact reference it scores against."""
-    if verify_exact.pins_exact(path):
+def bind_server(args, server):
+    """Bind the record to the live server's checkpoint whenever the gate pins
+    one. The exact pin governs only which reference load_exact checks."""
+    if verify_exact.checkpoint_pinned():
         try:
             bind_checkpoint(server, args.server_log, args.url)
         except ValueError as error:
@@ -1062,7 +1062,7 @@ def record(args):
     exact = load_exact(path)
     client = Client(args.url, args.timeout)
     server = client.identity(args.model)
-    bind_server(args, server, path)
+    bind_server(args, server)
     model = server["model"]
     policy = prefix_policy()
     reuse = reuse_tokens(server)

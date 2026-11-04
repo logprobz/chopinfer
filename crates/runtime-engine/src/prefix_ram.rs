@@ -22,9 +22,19 @@
 //!
 //! Promotions start as soon as admission plans them, at the step's start
 //! for any left over and after each admission pass.
+//!
+//! An allocation larger than F can still meet a pool whose only remaining
+//! victim is the anchor under demotion. Then the engine cancels the
+//! demotion and waits for the cancel to settle, which drains at most the
+//! copy's issued chunks, instead of waiting for the whole copy (A8): when
+//! batch formation, an admission allocation or a capture's snapshot finds
+//! the pool exhausted, and when a promotion larger than the step's budget
+//! waits for no demotion to be outstanding. No demotion starts in a step
+//! that cancelled one, nor while such a promotion waits.
 use super::*;
 use offload::TransferOwner;
-use runtime_kv::{KvError, PrefixCacheKeyV1};
+use runtime_kv::{KvError, KvTransferPoll, PrefixCacheKeyV1};
+use runtime_scheduler::{AdmissionReport, PrefixRamConfig};
 
 /// Steps the measured bounds look back over.
 const WINDOW_STEPS: usize = 16;
@@ -120,6 +130,7 @@ impl StepWindow {
 /// What the driver keeps between steps.
 #[derive(Clone, Debug)]
 pub(super) struct PrefixRamDriver {
+    config: PrefixRamConfig,
     /// Pages of one prefill chunk and of one snapshot: the lead's floor.
     chunk_pages: usize,
     snapshot_pages: usize,
@@ -129,12 +140,14 @@ pub(super) struct PrefixRamDriver {
     /// measurement.
     allocated_mark: u64,
     evicted_mark: u64,
+    /// A demotion was cancelled this step.
+    cancelled: bool,
 }
 
 impl PrefixRamDriver {
     pub(super) fn new(config: &EngineConfig, scheduler: &Scheduler) -> Option<Self> {
-        config.scheduler.prefix_ram()?;
         Some(Self {
+            config: config.scheduler.prefix_ram()?,
             chunk_pages: config
                 .scheduler
                 .prefill_chunk_limit()
@@ -144,6 +157,7 @@ impl PrefixRamDriver {
             evicted: StepWindow::default(),
             allocated_mark: scheduler.kv_allocated_pages(),
             evicted_mark: scheduler.kv_evicted_pages(),
+            cancelled: false,
         })
     }
 
@@ -154,8 +168,15 @@ impl PrefixRamDriver {
             evicted: StepWindow::default(),
             allocated_mark: scheduler.kv_allocated_pages(),
             evicted_mark: scheduler.kv_evicted_pages(),
+            cancelled: false,
             ..self.clone()
         }
+    }
+
+    /// Whether a deferred promotion larger than the step's budget waits for
+    /// no demotion to be outstanding.
+    fn promotion_starved(&self, scheduler: &Scheduler) -> bool {
+        scheduler.deferred_promotion_pages() > self.config.promotion_budget_pages
     }
 
     /// Records the pages the step since the last call allocated and evicted.
@@ -206,9 +227,10 @@ impl<E: ModelExecutor> Engine<E> {
     /// host entries their publishes made unusable, and submits promotions
     /// admission planned and left unsubmitted.
     pub(super) fn begin_prefix_ram_step(&mut self) -> Result<(), EngineError> {
-        if self.prefix_ram_driver().is_none() {
+        let Some(ram) = self.prefix_ram_driver() else {
             return Ok(());
-        }
+        };
+        ram.cancelled = false;
         self.scheduler
             .begin_prefix_ram_step()
             .map_err(EngineError::Scheduler)?;
@@ -217,13 +239,88 @@ impl<E: ModelExecutor> Engine<E> {
     }
 
     /// After an admission pass: submits the promotions it planned and drops
-    /// the host entries its resumes made unusable.
-    pub(super) fn after_prefix_ram_admission(&mut self) -> Result<(), EngineError> {
-        if self.prefix_ram_driver().is_none() {
-            return Ok(());
-        }
+    /// the host entries its resumes made unusable. When an allocation found
+    /// the pool exhausted, or a promotion larger than the budget waits for
+    /// no demotion to be outstanding, cancels the outstanding demotion and
+    /// returns that admission should run again.
+    pub(super) fn after_prefix_ram_admission(
+        &mut self,
+        report: &AdmissionReport,
+    ) -> Result<bool, EngineError> {
+        let Some(ram) = self.offload.as_ref().and_then(|state| state.ram.as_ref()) else {
+            return Ok(false);
+        };
+        let starved = ram.promotion_starved(&self.scheduler);
         self.start_promotions()?;
-        self.drop_invalidated_host_entries()
+        self.drop_invalidated_host_entries()?;
+        if report.pool_exhausted().is_empty() && !starved {
+            return Ok(false);
+        }
+        self.cancel_demotion_for_headroom()
+    }
+
+    /// Cancels the outstanding demotion for an allocation that needs the
+    /// pages it leases, and waits for the cancel to settle: the copy issues
+    /// no further chunk and reports once its issued chunks drain. Returns
+    /// whether it cancelled one. Forced demotions, whose GPU anchors are
+    /// already gone, swaps and promotions are never cancelled.
+    pub(super) fn cancel_demotion_for_headroom(&mut self) -> Result<bool, EngineError> {
+        let Some(state) = self.offload.as_mut() else {
+            return Ok(false);
+        };
+        if state.ram.as_ref().is_none_or(|ram| ram.config.forced) {
+            return Ok(false);
+        }
+        let Some((&id, transfer)) = state.transfers.iter_mut().find(|(_, transfer)| {
+            matches!(
+                transfer.owner,
+                TransferOwner::Demotion {
+                    cancelled: false,
+                    ..
+                }
+            )
+        }) else {
+            return Ok(false);
+        };
+        match self.executor.cancel_kv_transfer_v1(id) {
+            // A copy that had already finished reports through its poll.
+            Ok(_) => {}
+            Err(error) if error.is_fatal() => {
+                self.prefix_state_unconfirmed = true;
+                self.metrics.poison();
+                return Err(EngineError::Executor(error));
+            }
+            // A refused cancel leaves the copy to finish.
+            Err(_) => return Ok(false),
+        }
+        if let TransferOwner::Demotion { cancelled, .. } = &mut transfer.owner {
+            *cancelled = true;
+        }
+        if let Some(ram) = state.ram.as_mut() {
+            ram.cancelled = true;
+        }
+        let deadline = std::time::Instant::now() + self.executor.kv_transfer_drain_timeout_v1();
+        loop {
+            match self.executor.poll_kv_transfer_v1(id) {
+                Ok(KvTransferPoll::Finished(completion)) => {
+                    self.finish_transfer(id, completion)?;
+                    return Ok(true);
+                }
+                // A late cancel is not lost DMA: the copy keeps its lease and
+                // the next step polls it again.
+                Ok(KvTransferPoll::Pending) if std::time::Instant::now() >= deadline => {
+                    return Ok(true);
+                }
+                Ok(KvTransferPoll::Pending) => {
+                    std::thread::sleep(std::time::Duration::from_micros(100));
+                }
+                Err(error) => {
+                    self.prefix_state_unconfirmed = true;
+                    self.metrics.poison();
+                    return Err(EngineError::Executor(error));
+                }
+            }
+        }
     }
 
     fn start_promotions(&mut self) -> Result<(), EngineError> {
@@ -274,7 +371,13 @@ impl<E: ModelExecutor> Engine<E> {
             .as_mut()
             .ok_or(EngineError::InvariantViolation)?;
         match self.scheduler.begin_demotion(&mut state.tier, key) {
-            Ok(plan) => self.submit_anchor_transfer(TransferOwner::Demotion { key }, plan),
+            Ok(plan) => self.submit_anchor_transfer(
+                TransferOwner::Demotion {
+                    key,
+                    cancelled: false,
+                },
+                plan,
+            ),
             // The host tier had no room older than the anchor.
             Err(ScheduleError::Kv(KvError::PoolExhausted { .. })) => Ok(()),
             Err(error) => Err(EngineError::Scheduler(error)),
@@ -282,10 +385,14 @@ impl<E: ModelExecutor> Engine<E> {
     }
 
     /// The first candidate within the lead that meets the start rule, when
-    /// no demotion is outstanding.
+    /// no demotion is outstanding, none was cancelled this step and no
+    /// promotion larger than the budget waits.
     fn plan_demotion(&self) -> Option<PrefixCacheKeyV1> {
         let ram = self.offload.as_ref()?.ram.as_ref()?;
-        if self.scheduler.outstanding_demotions() > 0 {
+        if self.scheduler.outstanding_demotions() > 0
+            || ram.cancelled
+            || ram.promotion_starved(&self.scheduler)
+        {
             return None;
         }
         let deferred = self.scheduler.deferred_promotion_pages();
@@ -318,12 +425,17 @@ mod tests {
     #[test]
     fn the_lead_and_the_bound_follow_the_measured_steps() {
         let mut driver = PrefixRamDriver {
+            config: PrefixRamConfig {
+                forced: false,
+                promotion_budget_pages: 8,
+            },
             chunk_pages: 4,
             snapshot_pages: 2,
             allocated: StepWindow::default(),
             evicted: StepWindow::default(),
             allocated_mark: 0,
             evicted_mark: 0,
+            cancelled: false,
         };
         // With nothing measured, the lead is one chunk and one snapshot past
         // the deferred promotion, and F is the promotion and the swap-ins.

@@ -28,8 +28,12 @@ pub(super) struct Transfer {
 pub(super) enum TransferOwner {
     /// A swap out of a preempted request's boundary, or its reload.
     Request(RequestId),
-    /// A demotion of a public GPU anchor.
-    Demotion { key: PrefixCacheKeyV1 },
+    /// A demotion of a public GPU anchor; `cancelled` once an allocation
+    /// that needed its leased pages cancelled it.
+    Demotion {
+        key: PrefixCacheKeyV1,
+        cancelled: bool,
+    },
     /// A promotion of a public host entry into a pending anchor.
     Promotion(PendingAnchorId),
 }

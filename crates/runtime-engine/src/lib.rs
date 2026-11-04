@@ -60,8 +60,8 @@ use runtime_sampling::{
 };
 use runtime_scheduler::{
     AdmissionPolicy, Batch, BatchOutcome, BatchPhase, ChunkMedia, DraftBudget, DraftCandidate,
-    DraftLimits, PrefixRequestV1, RequestSpec, RequestState, ScheduleError, Scheduler,
-    SchedulerCapacityProfile, SchedulerConfig, SubmitError,
+    DraftLimits, PrefixCaptureStartV1, PrefixRequestV1, RequestSpec, RequestState, ScheduleError,
+    Scheduler, SchedulerCapacityProfile, SchedulerConfig, SubmitError,
 };
 
 pub use runtime_scheduler::RequestId;
@@ -2455,6 +2455,15 @@ impl<E: ModelExecutor> Engine<E> {
             self.metrics.error();
             return Err(EngineError::Executor(error));
         }
+        // A demotion's lease may hold the pages the batch needs: cancel it
+        // instead of waiting for its copy, and form the batch next step.
+        if matches!(
+            next,
+            Err(ScheduleError::Kv(runtime_kv::KvError::PoolExhausted { .. }))
+        ) && self.cancel_demotion_for_headroom()?
+        {
+            return Ok(StepStatus::Progressed);
+        }
         let next = match next {
             Err(ScheduleError::Kv(runtime_kv::KvError::PoolExhausted { .. }))
             | Err(ScheduleError::Overloaded(_))
@@ -3267,7 +3276,7 @@ impl<E: ModelExecutor> Engine<E> {
             return Err(EngineError::Executor(error));
         }
         self.start_reloads()?;
-        self.after_prefix_ram_admission()?;
+        let retry_ram = self.after_prefix_ram_admission(&admitted)?;
         let retry_admission = self.scheduler.swap_needs_discard();
         if retry_admission {
             self.metrics.offload_fallback("staging_capacity");
@@ -3332,7 +3341,7 @@ impl<E: ModelExecutor> Engine<E> {
                     .map_err(EngineError::Scheduler)?,
             }
         }
-        Ok(!admitted.admitted().is_empty() || retry_admission)
+        Ok(!admitted.admitted().is_empty() || retry_admission || retry_ram)
     }
 
     /// Captures every anchor the last commit made due. A refused capture only
@@ -3347,11 +3356,22 @@ impl<E: ModelExecutor> Engine<E> {
                     .map_err(EngineError::Scheduler)?;
                 continue;
             }
-            if let Some(pages) = self
+            let started = self
                 .scheduler
-                .begin_prefix_capture(&capture)
-                .map_err(EngineError::Scheduler)?
+                .start_prefix_capture(&capture)
+                .map_err(EngineError::Scheduler)?;
+            // The snapshot may need the pages a demotion leases: cancel it
+            // and start the capture once more.
+            let started = if started == PrefixCaptureStartV1::NoPages
+                && self.cancel_demotion_for_headroom()?
             {
+                self.scheduler
+                    .start_prefix_capture(&capture)
+                    .map_err(EngineError::Scheduler)?
+            } else {
+                started
+            };
+            if let PrefixCaptureStartV1::Pages(pages) = started {
                 let started = self.clock.now_micros();
                 let captured = self.executor.capture_prefix_state_v1(
                     capture.request_id(),

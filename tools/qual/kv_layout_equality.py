@@ -61,7 +61,8 @@ in KV_PLANES and every phase in KV_PHASES, and of a restore when the
 captures hold a prefix-hit pair. A step that wrote no tap (one that kept
 no row, or a verify step) compares as empty.
 
-    python3 tools/qual/kv_layout_equality.py compare NATIVE_RECORD COMPARISON_RECORD
+    python3 tools/qual/kv_layout_equality.py compare NATIVE_RECORD COMPARISON_RECORD \\
+        --native-forced NATIVE_FORCED --comparison-forced COMPARISON_FORCED
     python3 tools/qual/kv_layout_equality.py taps NATIVE_CAPTURE COMPARISON_CAPTURE \\
         --native-planes PLANES.json [--experimental]
 """
@@ -77,25 +78,52 @@ import re
 import struct
 import sys
 
-from common import receipt
+import hashlib
+
+from common import bound_live, receipt
 import determinism
 import experimental_determinism
 from prefix_exact import serving_identity
 import tap_binding
+import verify_exact
 # tap_binding puts the repository root on the path.
 from tools.model_sdk import diagnostic as wire
 
 _RECORD = ["record", "--url", "{url}", "--model", "{name}", "--timeout", "120", "--run-id", "{run_id}",
            "--server-log", "{server_log}", "{image}"]
+# The pinned references whose texts the forced records force beside the
+# exact reference's (verify_exact.py --reference), and the runner adds to
+# the configuration's forcing file: the long-context reference, whose forced
+# decode continues its long history.
+RUNNER_FORCED_REFERENCES = ["long_context"]
+# A forced record, as release_preview.py RECORDS["verify_ar"] takes one.
+_FORCED = ["record", "--url", "{url}", "--model", "{name}", "--k", "0", "--require-row-shapes", "--server-log",
+           "{server_log}", *(word for name in RUNNER_FORCED_REFERENCES for word in ("--reference", name))]
 # The correctness runner's arms and records (tools/qual/README.md#kv-layout-equality):
-# the kv-native server replaces the configuration's --kv-cache-dtype with
-# auto; the configuration's own server records the comparison layout.
-RUNNER_ARMS = {"kv-native": ["--kv-cache-dtype", "auto"]}
+# the kv-native servers replace the configuration's --kv-cache-dtype with
+# auto, kv-native-forced also forcing the reference tokens as
+# release_preview.py FORCED does; the configuration's own server records
+# the comparison layout's determinism, and its forced prefix arm the
+# comparison layout's forced record.
+RUNNER_ARMS = {"kv-native": ["--kv-cache-dtype", "auto"],
+               "kv-native-forced": ["--kv-cache-dtype", "auto", "--debug-reference-tokens", "{reference_tokens}"]}
 RUNNER_RECORDS = {"kv_layout_native": ("kv-native", "determinism.py", [*_RECORD, "--arm", "kv-native"]),
-                  "kv_layout_comparison": ("spec", "determinism.py", [*_RECORD, "--arm", "kv-comparison"])}
+                  "kv_layout_comparison": ("spec", "determinism.py", [*_RECORD, "--arm", "kv-comparison"]),
+                  "kv_layout_native_forced": ("kv-native-forced", "verify_exact.py",
+                                              [*_FORCED, "--arm", "kv-native-forced"]),
+                  "kv_layout_comparison_forced": ("prefix", "verify_exact.py",
+                                                  [*_FORCED, "--arm", "kv-comparison-forced"])}
 RUNNER_CHECK_ARM = "offline"
+# The native layout's kv_cache_planes as its package declares them, which the
+# native record must report: none for a single-code element. A model's
+# declaration states its own (constants.kv_layout_equality.NATIVE_PLANES).
+NATIVE_PLANES = []
 # The serving identity fields that follow the KV layout.
 LAYOUT_FIELDS = ("package_identity",)
+# The serving identity fields each forced record shares with the
+# determinism record of its layout: one build, package and option map.
+BUILD_FIELDS = ("checkpoint_identity", "package_identity", "metadata_identity", "source_commit", "bundle_id",
+                "version", "model", *tap_binding.OPTIONS)
 # The effective profile fields of the KV layout, which `layout_errors`
 # validates instead of requiring them equal.
 LAYOUT_PROFILE = ("kv_cache_dtype", "kv_cache_planes")
@@ -134,23 +162,37 @@ NATIVE_KV_FORMATS = {"window": ["e4m3", "ue8m0", 32], "compressed": ["e2m1", "ue
 NOTHING_SELECTED = "no selected live tensors"
 
 
+def served_errors(left, right, what):
+    """Why two serving identities do not name one build, profile and option
+    map in two KV layouts: every identity and profile field, `model_options`
+    included, is equal with its JSON type but the package identity (which
+    may follow the layout) and the layout fields, which `layout_errors`
+    validates against NATIVE_PLANES; each reports a complete option map."""
+    errors = []
+    for side, identity in zip(SIDES, (left, right)):
+        if not (isinstance(identity.get("model_options"), dict) and identity["model_options"]
+                and type(identity.get("model_options_qualified")) is bool):
+            errors.append(f"the {side} {what[:-1]} reports no complete model_options and model_options_qualified")
+    for key in sorted((left.keys() | right.keys()) - {"profile", *LAYOUT_FIELDS}):
+        if not same(left.get(key), right.get(key)):
+            errors.append(f"the {what} differ in serving identity {key}")
+    profiles = left["profile"], right["profile"]
+    for key in sorted((profiles[0].keys() | profiles[1].keys()) - set(LAYOUT_PROFILE)):
+        if not same(profiles[0].get(key), profiles[1].get(key)):
+            errors.append(f"the {what} differ in profile {key}")
+    return errors + layout_errors(*profiles, NATIVE_PLANES)
+
+
 def identities(native, comparison):
-    """The two records' serving identities, refused unless they name one
-    build and profile that differ only in KV storage."""
+    """The two records' serving identities, refused unless they come from
+    one run and name one build, profile and option map that differ only in
+    KV storage (`served_errors`)."""
     left, right = serving_identity(native), serving_identity(comparison)
     errors = []
     if native.get("run_id") != comparison.get("run_id") or not native.get("run_id"):
         errors.append("the records come from different runs")
-    for key in sorted((left.keys() | right.keys()) - {"profile", *LAYOUT_FIELDS}):
-        if left.get(key) != right.get(key):
-            errors.append(f"the records differ in serving identity {key}")
-    profiles = left["profile"], right["profile"]
-    for key in sorted((profiles[0].keys() | profiles[1].keys()) - {"kv_cache_dtype"}):
-        if profiles[0].get(key) != profiles[1].get(key):
-            errors.append(f"the records differ in profile {key}")
-    dtypes = [profile["kv_cache_dtype"] for profile in profiles]
-    if dtypes[0] == dtypes[1]:
-        errors.append(f"both records serve KV dtype {dtypes[0]}")
+    errors += served_errors(left, right, "records")
+    dtypes = [identity["profile"]["kv_cache_dtype"] for identity in (left, right)]
     return {"native": left, "comparison": right, "kv_cache_dtypes": dtypes}, errors
 
 
@@ -187,8 +229,129 @@ def layout_errors(native, comparison, native_planes):
     return errors
 
 
-def compare(native, comparison):
-    """The check's result for two determinism records."""
+def forced_expectation():
+    """(exact reference digest, {forced reference: digest}, [(text, forced
+    positions, prefill positions)]) the gate's pinned references define for
+    a forced record (verify_exact.py record --k 0 --reference ...): each
+    text of the exact reference and of RUNNER_FORCED_REFERENCES, every
+    position forcing reaches from its score_from (agreement read over every
+    forced text) and every scored prefill row."""
+    path = verify_exact.exact_path(None)
+    exact = verify_exact.load_exact(path)
+    named = verify_exact.named_references(RUNNER_FORCED_REFERENCES)
+    texts = verify_exact.forced_texts(exact, named)
+    expected = []
+    for text in texts:
+        ids = text["prompt_token_ids"]
+        agreed = verify_exact.agreed_continuations(texts, ids)
+        forced = [start + offset for start, count in verify_exact.forced_runs(agreed, text["score_from"], len(ids))
+                  for offset in range(count)]
+        expected.append((text["name"], forced, list(range(text["score_from"], len(ids)))))
+    return (hashlib.sha256(path.read_bytes()).hexdigest(), {name: digest for name, (digest, _) in named.items()},
+            expected)
+
+
+def forced_rows(record, side):
+    """({text: {position: forced row}}, {text: {position: prefill row}},
+    errors) of one forced record: a passing, live-bound K=0 record of one
+    phase per text."""
+    errors = []
+    if not (record.get("passed") is True and type(record.get("k")) is int and record["k"] == 0
+            and not record.get("pooled_decode")):
+        errors.append(f"the {side} forced record is not a passing K=0 record")
+    if not bound_live(record.get("server") or {}):
+        errors.append(f"the {side} forced record is not bound live to the gate's checkpoint pin")
+    forced, prefill = {}, {}
+    for text in record.get("texts") or []:
+        passes = text.get("passes") or []
+        if len(passes) != 1 or not same(passes[0].get("phase"), 0) or text.get("name") in forced:
+            errors.append(f"the {side} forced record does not hold one phase-0 pass of text {text.get('name')}")
+            continue
+        forced[text["name"]] = {int(position): row for position, row in passes[0]["positions"].items()}
+    for name, rows in (record.get("prefill") or {}).items():
+        prefill[name] = {int(position): row for position, row in rows.items()}
+    return forced, prefill, errors
+
+
+def first_positions(left, right, limit=3):
+    """Up to `limit` positions one set holds and the other lacks, each way."""
+    return sorted(left - right)[:limit], sorted(right - left)[:limit]
+
+
+def compare_forced(native, comparison, served):
+    """The forced records' result and errors: both live-bound records of the
+    gate's pinned references, forcing every position those define, from the
+    build and layouts of the determinism records `served`, and bit-identical
+    at every forced row's logprob and top-5 and every prefill row."""
+    errors = []
+    identities_of = [serving_identity(record) for record in (native, comparison)]
+    errors += served_errors(*identities_of, "forced records")
+    for side, identity in zip(SIDES, identities_of):
+        fields = [(key, identity.get(key), served[side].get(key)) for key in BUILD_FIELDS]
+        fields += [(f"profile {key}", identity["profile"].get(key), served[side]["profile"].get(key))
+                   for key in LAYOUT_PROFILE]
+        errors += [f"the {side} forced record differs from its determinism record in {key}"
+                   for key, forced, recorded in fields if not same(forced, recorded)]
+    digest, references, expected = forced_expectation()
+    result = {"kv_cache_dtypes": [identity["profile"].get("kv_cache_dtype") for identity in identities_of],
+              "references": references, "texts": len(expected)}
+    rows = []
+    for side, record in zip(SIDES, (native, comparison)):
+        if record.get("reference_sha256") != digest:
+            errors.append(f"the {side} forced record scores another exact reference than the gate pins")
+        if not same(record.get("references", {}), references):
+            errors.append(f"the {side} forced record forces references {sorted(record.get('references') or {})}, "
+                          f"not the pinned {sorted(references)}")
+        forced, prefill, refused = forced_rows(record, side)
+        errors += refused
+        rows.append((forced, prefill))
+    if errors:
+        return result, errors
+    for name, positions, scored in expected:
+        held = [({*forced.get(name, {})}, {*prefill.get(name, {})}) for forced, prefill in rows]
+        if held[0] != held[1]:
+            for kind, index in (("forced", 0), ("prefill", 1)):
+                if held[0][index] != held[1][index]:
+                    native_only, comparison_only = first_positions(held[0][index], held[1][index])
+                    errors.append(f"the forced records hold other {kind} positions of {name}: the native record "
+                                  f"alone holds {native_only}, the comparison record {comparison_only}")
+            continue
+        for kind, index, wanted in (("forced", 0, set(positions)), ("prefill", 1, set(scored))):
+            if held[0][index] != wanted:
+                missing, extra = first_positions(wanted, held[0][index])
+                errors.append(f"the forced records hold other {kind} positions of {name} than its references "
+                              f"define: missing {missing}, extra {extra}")
+    named = {name for forced, _ in rows for name in forced} | {name for _, prefill in rows for name in prefill}
+    if unexpected := sorted(named - {name for name, _, _ in expected}):
+        errors.append(f"the forced records hold texts no pinned reference names: {unexpected}")
+    if errors:
+        return result, errors
+    differences, first = 0, None
+    for name, positions, scored in expected:
+        cells = [(position, "forced", 0, field) for position in positions for field in ("logprob", "top")]
+        cells += [(position, "prefill", 1, field) for position in scored for field in ("logprob", "top1")]
+        differing = set()
+        for position, kind, index, field in sorted(cells, key=lambda cell: (cell[0], cell[2])):
+            values = [side[index][name][position].get(field) for side in rows]
+            if not same(*values):
+                differing.add(position)
+                if first is None:
+                    first = {"text": name, "position": position, "row": kind, "field": field,
+                             "native": values[0], "comparison": values[1]}
+        differences += len(differing)
+    result |= {"positions": sum(len(positions) for _, positions, _ in expected),
+               "prefill_rows": sum(len(scored) for _, _, scored in expected),
+               "equal": first is None, "first_difference": first, "differing_positions": differences}
+    if first is not None:
+        errors.append(f"the forced records differ at {first['text']} position {first['position']} "
+                      f"({first['row']} {first['field']}: {first['native']!r} vs {first['comparison']!r}); "
+                      f"{differences} positions differ")
+    return result, errors
+
+
+def compare(native, comparison, native_forced, comparison_forced):
+    """The check's result for two determinism records and two forced records
+    of the native and comparison layouts."""
     served, errors = identities(native, comparison)
     result = {"kv_cache_dtypes": served["kv_cache_dtypes"],
               "package_identities": [served[side].get("package_identity") for side in ("native", "comparison")],
@@ -200,7 +363,8 @@ def compare(native, comparison):
                    "max_abs_difference": metrics.get("max_abs_difference")}
         if not metrics["passed"]:
             errors.append(determinism.describe(metrics))
-    return dict(result, passed=not errors, errors=errors)
+    result["forced"], forced_errors = compare_forced(native_forced, comparison_forced, served)
+    return dict(result, passed=not errors and not forced_errors, errors=errors + forced_errors)
 
 
 def capture_identities(native, comparison, native_planes, experimental=False):
@@ -699,6 +863,9 @@ def main():
     parser.add_argument("native", type=Path,
                         help="the record (taps: the tap capture) of the package's preferred KV layout")
     parser.add_argument("comparison", type=Path, help="the record (taps: the tap capture) of the comparison KV layout")
+    parser.add_argument("--native-forced", type=Path,
+                        help="compare: the native layout's forced record (verify_exact.py record)")
+    parser.add_argument("--comparison-forced", type=Path, help="compare: the comparison layout's forced record")
     parser.add_argument("--native-planes", type=Path,
                         help="taps: a JSON file of the native layout's kv_cache_planes (NATIVE_PLANES)")
     parser.add_argument("--experimental", action="store_true",
@@ -707,21 +874,27 @@ def main():
     if args.command == "taps":
         if args.native_planes is None:
             parser.error("taps needs --native-planes")
+        if args.native_forced is not None or args.comparison_forced is not None:
+            parser.error("--native-forced and --comparison-forced apply to compare")
         taps_command(args)
     if args.native_planes is not None or args.experimental:
         parser.error("--native-planes and --experimental apply to taps")
+    if args.native_forced is None or args.comparison_forced is None:
+        parser.error("compare needs --native-forced and --comparison-forced")
+    paths = (args.native, args.comparison, args.native_forced, args.comparison_forced)
     records = []
     try:
-        records = [json.loads(path.read_text()) for path in (args.native, args.comparison)]
+        records = [json.loads(path.read_text()) for path in paths]
         result = compare(*records)
     except (OSError, ValueError, KeyError, SystemExit) as error:
         result = {"passed": False, "errors": [str(error)]}
-    servers = {side: (value.get("server") if isinstance(value, dict) else None)
-               for side, value in zip(("native", "comparison"), records)}
+    servers = [value.get("server") if isinstance(value, dict) else None for value in records] + [None] * 4
     # Compares saved records. No timed work, so no host load samples: the
     # receipt's timing reads informational.
-    receipt("kv-layout-equality", {"records": servers}, dict(result, native=str(args.native),
-                                                             comparison=str(args.comparison)))
+    receipt("kv-layout-equality", {"records": dict(zip(SIDES, servers[:2])),
+                                   "forced_records": dict(zip(SIDES, servers[2:4]))},
+            dict(result, native=str(args.native), comparison=str(args.comparison),
+                 native_forced=str(args.native_forced), comparison_forced=str(args.comparison_forced)))
     print(json.dumps({key: result.get(key) for key in ("passed", "errors", "first_difference")}))
     raise SystemExit(0 if result["passed"] else 1)
 

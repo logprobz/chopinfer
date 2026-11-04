@@ -24,44 +24,106 @@ from test_determinism import recorded
 QUAL = Path(__file__).resolve().parent
 
 
-def server(kv_cache_dtype, package="b"):
-    """A bound server identity of one build, serving `kv_cache_dtype`."""
+# Bound records of a gate that pins its checkpoint, exact reference and a
+# long-context reference in the repository: Qwen3.8's, whose pinned
+# long_context text holds 32,768 tokens.
+GATE = "qwen38"
+# The native layout's planes the record fixtures report and declare.
+RECORD_PLANES = [{"name": "compressed", "code": "fp4_e2m1", "scale": {"format": "e4m3", "block": 16},
+                  "bytes_per_token": 720},
+                 {"name": "index", "code": "fp4_e2m1", "scale": {"format": "ue8m0", "block": 32},
+                  "bytes_per_token": 170}]
+
+
+def gated(test):
+    """Selects GATE's declaration and RECORD_PLANES for `test`."""
+    import declaration
+    for selected in (patch.dict(os.environ, {"CHOPINFER_QUAL_CONFIG": str(declaration.named(GATE))}),
+                     patch.object(kv_layout_equality, "NATIVE_PLANES", RECORD_PLANES)):
+        selected.start()
+        test.addCleanup(selected.stop)
+
+
+def server(kv_cache_dtype, package="b", nonce="d"):
+    """A server identity of one build bound to the gate's checkpoint pin,
+    serving `kv_cache_dtype` (with RECORD_PLANES when it is mixed)."""
+    import common
+    pin = common.checkpoint_pin()
+    profile = {"name": "tp4", "tensor_parallel_size": 4, "kv_cache_dtype": kv_cache_dtype,
+               "max_sequences": 32, "prefix_cache": True,
+               "speculation": {"mode": "adaptive", "drafter": "fixture", "tokens": 5}}
+    if kv_cache_dtype == "mixed":
+        profile["kv_cache_planes"] = copy.deepcopy(RECORD_PLANES)
     serving = {
-        "checkpoint_identity": "a" * 64, "package_identity": package * 64,
-        "metadata_identity": "c" * 64, "startup_nonce": "d" * 32,
+        "checkpoint_identity": pin["checkpoint_identity"], "package_identity": package * 64,
+        "metadata_identity": "c" * 64, "startup_nonce": nonce * 32,
         "source_commit": "e" * 40, "bundle_id": "fixture.v1", "version": "1",
-        "served_model_names": ["fixture"],
-        "profile": {"name": "tp4", "tensor_parallel_size": 4, "kv_cache_dtype": kv_cache_dtype,
-                    "max_sequences": 32, "prefix_cache": True,
-                    "speculation": {"mode": "adaptive", "drafter": "fixture", "tokens": 5}}}
-    return {"model": "fixture", "health": {"serving": serving},
+        "served_model_names": [pin["served_model_name"]], "profile": profile, **copy.deepcopy(OPTIONS)}
+    return {"model": pin["served_model_name"], "health": {"serving": serving},
             "checkpoint": {key: serving[key] for key in (
                 "checkpoint_identity", "package_identity", "metadata_identity", "startup_nonce")}}
 
 
-def records():
-    """A native and a comparison record of the same answers in one run."""
-    native = dict(recorded(image=False, arm="kv-native"), server=server("auto"))
+def records(native_dtype="mixed"):
+    """A native and a comparison determinism record of the same answers in
+    one run."""
+    native = dict(recorded(image=False, arm="kv-native"), server=server(native_dtype))
     comparison = dict(recorded(image=False, arm="kv-comparison"), server=server("bf16", package="f"))
     return native, comparison
 
 
+def forced(native_dtype="mixed"):
+    """A native and a comparison forced record of the same rows at every
+    position the gate's pinned references define (verify_exact.py record
+    --k 0 --reference long_context)."""
+    digest, references, expected = kv_layout_equality.forced_expectation()
+    texts, prefill = [], {}
+    for name, positions, scored in expected:
+        rows = {str(position): {"logprob": -1.0 - position / 4096, "top": {"x": -0.5, "y": -1.0 - position / 8192},
+                                "row": "decode"} for position in positions}
+        texts.append({"name": name, "category": "c", "passes": [{"phase": 0, "requests": [], "positions": rows}]})
+        prefill[name] = {str(position): {"logprob": -2.0 - position / 4096, "top1": position % 7} for position in scored}
+    value = {"passed": True, "arm": "kv-native-forced", "k": 0, "pooled_decode": False, "concurrency": 1,
+             "top_logprobs": 5, "reference_sha256": digest, "references": references, "texts": texts,
+             "prefill": prefill, "server": server(native_dtype, nonce="1")}
+    return value, dict(copy.deepcopy(value), arm="kv-comparison-forced", server=server("bf16", package="f", nonce="2"))
+
+
+def compared(determinism=None, forced_records=None):
+    return kv_layout_equality.compare(*(determinism or records()), *(forced_records or forced()))
+
+
 class CompareTests(unittest.TestCase):
-    def test_identical_answers_from_two_layouts_pass(self):
-        result = kv_layout_equality.compare(*records())
+    def setUp(self):
+        gated(self)
+
+    def test_identical_answers_and_forced_rows_from_two_layouts_pass(self):
+        result = compared()
         self.assertTrue(result["passed"], result["errors"])
         self.assertTrue(result["equal"])
         self.assertIsNone(result["first_difference"])
-        self.assertEqual(result["kv_cache_dtypes"], ["auto", "bf16"])
+        self.assertEqual(result["kv_cache_dtypes"], ["mixed", "bf16"])
         # The package may follow the KV layout; both are reported.
         self.assertEqual(result["package_identities"], ["b" * 64, "f" * 64])
         self.assertEqual((result["requests"], result["tokens"]), (11, 29))
+        forced_result = result["forced"]
+        self.assertTrue(forced_result["equal"])
+        self.assertEqual(forced_result["kv_cache_dtypes"], ["mixed", "bf16"])
+        import declaration
+        pins = declaration.load(declaration.named(GATE))["qualification"]["references"]
+        self.assertEqual(forced_result["references"], {"long_context": pins["long_context"]["sha256"]})
+        # The exact reference's 35 texts and the long-context text, whose
+        # 1,024 positions continue a 31,744-token forced prefill.
+        self.assertEqual(forced_result["texts"], 36)
+        _, _, expected = kv_layout_equality.forced_expectation()
+        self.assertEqual(expected[-1][:2], ("long_32k", list(range(31744, 32768))))
+        self.assertEqual(forced_result["positions"], sum(len(positions) for _, positions, _ in expected))
 
     def test_one_ulp_logprob_difference_fails_at_its_request_and_position(self):
         native, comparison = records()
         value = comparison["requests"][2]["logprobs"][1]
         comparison["requests"][2]["logprobs"][1] = math.nextafter(value, 0.0)
-        result = kv_layout_equality.compare(native, comparison)
+        result = compared((native, comparison))
         self.assertFalse(result["passed"])
         self.assertEqual({key: result["first_difference"][key] for key in ("request", "field", "position")},
                          {"request": "fibonacci", "field": "logprobs", "position": 1})
@@ -70,24 +132,59 @@ class CompareTests(unittest.TestCase):
     def test_a_token_difference_fails_at_its_first_position(self):
         native, comparison = records()
         comparison["requests"][0]["token_ids"][2] += 1
-        result = kv_layout_equality.compare(native, comparison)
+        result = compared((native, comparison))
         self.assertFalse(result["passed"])
         self.assertEqual((result["first_difference"]["field"], result["first_difference"]["position"]),
                          ("token_ids", 2))
 
-    def test_records_must_name_one_build_and_profile_in_one_run_with_two_layouts(self):
+    def test_a_one_ulp_change_in_a_forced_row_fails_at_its_text_and_position(self):
+        def ulp(record, text, position, kind, field):
+            if kind == "forced":
+                [text_entry] = [entry for entry in record["texts"] if entry["name"] == text]
+                row = text_entry["passes"][0]["positions"][str(position)]
+            else:
+                row = record["prefill"][text][str(position)]
+            if field == "top":
+                row["top"]["y"] = math.nextafter(row["top"]["y"], 0.0)
+            else:
+                row[field] = math.nextafter(row[field], 0.0)
+        for text, position, kind, field in (("long_32k", 32000, "forced", "logprob"),
+                                            ("long_32k", 31744, "forced", "top"),
+                                            ("math_word", 7, "prefill", "logprob")):
+            with self.subTest(text=text, kind=kind, field=field):
+                native, comparison = forced()
+                ulp(comparison, text, position, kind, field)
+                result = compared(forced_records=(native, comparison))
+                self.assertFalse(result["passed"])
+                self.assertEqual({key: result["forced"]["first_difference"][key]
+                                  for key in ("text", "position", "row", "field")},
+                                 {"text": text, "position": position, "row": kind, "field": field})
+                self.assertEqual(result["forced"]["differing_positions"], 1)
+                self.assertIn(f"the forced records differ at {text} position {position} ({kind} {field}:",
+                              result["errors"][-1])
+        # A changed prefill top-1 token differs too.
+        native, comparison = forced()
+        comparison["prefill"]["long_32k"]["31800"]["top1"] += 1
+        self.assertEqual(compared(forced_records=(native, comparison))["forced"]["first_difference"]["field"], "top1")
+
+    def test_records_must_name_one_build_profile_and_options_in_one_run_with_two_layouts(self):
         native, comparison = records()
+        serving = lambda value: value["server"]["health"]["serving"]  # noqa: E731
         for mutate, error in (
-                (lambda value: value["server"]["health"]["serving"]["profile"].update(kv_cache_dtype="auto"),
-                 "both records serve KV dtype auto"),
-                (lambda value: value["server"]["health"]["serving"]["profile"].update(max_sequences=16),
+                (lambda value: serving(value)["profile"].update(max_sequences=16),
                  "the records differ in profile max_sequences"),
-                (lambda value: value["server"]["health"]["serving"].update(source_commit="9" * 40),
+                (lambda value: serving(value).update(source_commit="9" * 40),
                  "the records differ in serving identity source_commit"),
+                (lambda value: serving(value)["model_options"].update(fast_route=False),
+                 "the records differ in serving identity model_options"),
+                (lambda value: serving(value)["model_options"].update(fast_route=1),
+                 "the records differ in serving identity model_options"),
+                (lambda value: serving(value).pop("model_options"),
+                 "the comparison record reports no complete model_options and model_options_qualified"),
                 (lambda value: value.update(run_id="another"), "the records come from different runs")):
             changed = copy.deepcopy(comparison)
             mutate(changed)
-            result = kv_layout_equality.compare(native, changed)
+            result = compared((native, changed))
             self.assertFalse(result["passed"])
             self.assertIn(error, result["errors"])
             # A refused pair is never compared.
@@ -95,7 +192,122 @@ class CompareTests(unittest.TestCase):
         # A record without a bound serving identity is refused.
         unbound = dict(comparison, server={"model": "fixture"})
         with self.assertRaises(SystemExit):
-            kv_layout_equality.compare(native, unbound)
+            compared((native, unbound))
+
+    def test_layouts_follow_the_declared_planes_and_the_bf16_arm_reports_none(self):
+        native, comparison = records()
+        profile = lambda value: value["server"]["health"]["serving"]["profile"]  # noqa: E731
+        plane = {"name": "window", "code": "fp8_e4m3", "scale": {"format": "ue8m0", "block": 32},
+                 "bytes_per_token": 33}
+        for name, side, mutate, error in (
+                ("missing plane", 0, lambda planes: planes.pop(), "the native profile's kv_cache_planes differ"),
+                ("extra plane", 0, lambda planes: planes.append(plane), "the native profile's kv_cache_planes differ"),
+                ("mismatched plane", 0, lambda planes: planes[0].update(bytes_per_token=18),
+                 "the native profile's kv_cache_planes differ"),
+                ("reordered planes", 0, lambda planes: planes.reverse(), "the native profile's kv_cache_planes differ"),
+                ("no planes", 0, lambda planes: planes.clear(), "the native profile's kv_cache_planes differ")):
+            with self.subTest(name):
+                changed = [copy.deepcopy(native), copy.deepcopy(comparison)]
+                mutate(profile(changed[side])["kv_cache_planes"])
+                result = compared(changed)
+                self.assertFalse(result["passed"])
+                self.assertTrue(any(message.startswith(error) for message in result["errors"]), result["errors"])
+        for name, mutate, error in (
+                ("mixed without planes", lambda value: profile(value[0]).pop("kv_cache_planes"),
+                 "the native profile serves KV dtype mixed without kv_cache_planes"),
+                ("bf16 arm reports planes", lambda value: profile(value[1]).update(
+                    kv_cache_planes=copy.deepcopy(RECORD_PLANES)), "the comparison profile reports kv_cache_planes"),
+                ("both bf16", lambda value: [profile(value[0]).update(kv_cache_dtype="bf16"),
+                                             profile(value[0]).pop("kv_cache_planes")], "both serve KV dtype bf16"),
+                ("unknown dtype", lambda value: profile(value[1]).update(kv_cache_dtype="auto"),
+                 "the comparison profile reports KV dtype 'auto', not one of bf16, fp8, mixed")):
+            with self.subTest(name):
+                changed = [copy.deepcopy(native), copy.deepcopy(comparison)]
+                mutate(changed)
+                result = compared(changed)
+                self.assertFalse(result["passed"])
+                self.assertIn(error, result["errors"])
+        # The same rule binds the forced records.
+        forced_native, forced_comparison = forced()
+        profile(forced_comparison)["kv_cache_planes"] = copy.deepcopy(RECORD_PLANES)
+        result = compared(forced_records=(forced_native, forced_comparison))
+        self.assertIn("the comparison profile reports kv_cache_planes", result["errors"])
+
+    def test_unbound_or_foreign_forced_records_are_refused(self):
+        serving = lambda value: value["server"]["health"]["serving"]  # noqa: E731
+
+        def bound(key, value):
+            return lambda record: [where.update({key: value}) for where in (serving(record),
+                                                                              record["server"]["checkpoint"])]
+        another_checkpoint = bound("checkpoint_identity", "0" * 64)
+        for name, mutate, error in (
+                ("another checkpoint", another_checkpoint,
+                 "the comparison forced record is not bound live to the gate's checkpoint pin"),
+                ("rescored", lambda value: value["server"].update(rescored_from="x"), None),
+                ("unqualified options", lambda value: serving(value).update(model_options_qualified=False),
+                 "the comparison forced record is not bound live to the gate's checkpoint pin"),
+                ("another build", lambda value: serving(value).update(source_commit="9" * 40),
+                 "the comparison forced record differs from its determinism record in source_commit"),
+                ("another package", bound("package_identity", "9" * 64),
+                 "the comparison forced record differs from its determinism record in package_identity"),
+                ("failed", lambda value: value.update(passed=False),
+                 "the comparison forced record is not a passing K=0 record"),
+                ("speculative", lambda value: value.update(k=1),
+                 "the comparison forced record is not a passing K=0 record"),
+                ("another exact reference", lambda value: value.update(reference_sha256="0" * 64),
+                 "the comparison forced record scores another exact reference than the gate pins"),
+                ("no long context", lambda value: value.pop("references"),
+                 "the comparison forced record forces references [], not the pinned ['long_context']"),
+                ("another long context", lambda value: value["references"].update(long_context="0" * 64),
+                 "the comparison forced record forces references ['long_context'], not the pinned ['long_context']")):
+            with self.subTest(name):
+                native, comparison = forced()
+                mutate(comparison)
+                if error is None:
+                    with self.assertRaises(SystemExit):
+                        compared(forced_records=(native, comparison))
+                    continue
+                result = compared(forced_records=(native, comparison))
+                self.assertFalse(result["passed"])
+                self.assertIn(error, result["errors"])
+                self.assertNotIn("equal", result["forced"])
+
+    def test_forced_position_sets_must_be_equal_and_the_ones_the_references_define(self):
+        def drop(record, text, position, kind="forced"):
+            if kind == "forced":
+                [entry] = [entry for entry in record["texts"] if entry["name"] == text]
+                del entry["passes"][0]["positions"][str(position)]
+            else:
+                del record["prefill"][text][str(position)]
+        native, comparison = forced()
+        drop(comparison, "long_32k", 32767)
+        result = compared(forced_records=(native, comparison))
+        self.assertFalse(result["passed"])
+        self.assertIn("the forced records hold other forced positions of long_32k: the native record alone holds "
+                      "[32767], the comparison record []", result["errors"])
+        native, comparison = forced()
+        for record in (native, comparison):
+            drop(record, "long_32k", 32767)
+            drop(record, "math_word", 3, "prefill")
+        result = compared(forced_records=(native, comparison))
+        self.assertIn("the forced records hold other forced positions of long_32k than its references define: "
+                      "missing [32767], extra []", result["errors"])
+        self.assertIn("the forced records hold other prefill positions of math_word than its references define: "
+                      "missing [3], extra []", result["errors"])
+        # Without the long-context text (a record of the exact texts alone,
+        # or one whose server could not hold the long history) nothing passes.
+        native, comparison = forced()
+        for record in (native, comparison):
+            record["texts"].pop()
+            record["prefill"].pop("long_32k")
+        result = compared(forced_records=(native, comparison))
+        self.assertTrue(any(message.startswith("the forced records hold other forced positions of long_32k than its "
+                                               "references define: missing [31744, 31745, 31746]")
+                            for message in result["errors"]), result["errors"])
+        native, comparison = forced()
+        comparison["texts"].append(copy.deepcopy(comparison["texts"][0]))
+        result = compared(forced_records=(native, comparison))
+        self.assertIn("the comparison forced record does not hold one phase-0 pass of text frozen0", result["errors"])
 
 
 # Synthetic tap captures of two KV layouts in the representation a
@@ -783,25 +995,41 @@ class TapsTests(unittest.TestCase):
 
 class CommandTests(unittest.TestCase):
     def test_compare_writes_a_receipt_and_exits_with_the_result(self):
-        native, comparison = records()
-        failing = copy.deepcopy(comparison)
-        failing["requests"][0]["tokens"][0] += "x"
+        import declaration
+        # The command reads the module's NATIVE_PLANES, none: an FP8 native
+        # layout reports no planes.
+        with patch.dict(os.environ, {"CHOPINFER_QUAL_CONFIG": str(declaration.named(GATE))}):
+            (native, comparison), (native_forced, comparison_forced) = records("fp8"), forced("fp8")
+        failing = copy.deepcopy(comparison_forced)
+        failing["texts"][-1]["passes"][0]["positions"]["32000"]["logprob"] += 1.0
         with tempfile.TemporaryDirectory() as directory:
-            paths = []
-            for name, value in (("native", native), ("comparison", comparison), ("failing", failing)):
-                paths.append(Path(directory) / f"{name}.json")
-                paths[-1].write_text(json.dumps(value))
+            paths = {}
+            for name, value in (("native", native), ("comparison", comparison), ("native_forced", native_forced),
+                                ("comparison_forced", comparison_forced), ("failing", failing)):
+                paths[name] = Path(directory) / f"{name}.json"
+                paths[name].write_text(json.dumps(value))
             receipts = Path(directory) / "receipts"
-            env = dict(os.environ, CHOPINFER_QUAL_RECEIPTS=str(receipts))
-            for other, code in ((paths[1], 0), (paths[2], 1)):
-                result = subprocess.run([sys.executable, "-B", str(QUAL / "kv_layout_equality.py"), "compare",
-                                         str(paths[0]), str(other)], env=env, capture_output=True, text=True)
+            env = dict(os.environ, CHOPINFER_QUAL_RECEIPTS=str(receipts),
+                       CHOPINFER_QUAL_CONFIG=str(declaration.named(GATE)))
+            command = [sys.executable, "-B", str(QUAL / "kv_layout_equality.py"), "compare", str(paths["native"]),
+                       str(paths["comparison"]), "--native-forced", str(paths["native_forced"])]
+            for other, code in ((paths["comparison_forced"], 0), (paths["failing"], 1)):
+                result = subprocess.run([*command, "--comparison-forced", str(other)], env=env,
+                                        capture_output=True, text=True)
                 self.assertEqual(result.returncode, code, result.stderr)
-                self.assertEqual(json.loads(result.stdout.splitlines()[-1])["passed"], code == 0)
+                summary = json.loads(result.stdout.splitlines()[-1])
+                self.assertEqual(summary["passed"], code == 0, summary["errors"])
+            self.assertIn("the forced records differ at long_32k position 32000 (forced logprob:",
+                          summary["errors"][0])
             written = sorted(receipts.glob("*-kv-layout-equality.json"))
             self.assertEqual(len(written), 2)
             value = json.loads(written[0].read_text())
-            self.assertEqual(value["check"], "kv-layout-equality")
+            self.assertEqual((value["check"], value["passed"]), ("kv-layout-equality", True))
+            self.assertEqual(value["server"]["forced_records"]["comparison"]["health"]["serving"]["startup_nonce"],
+                             "2" * 32)
+            refused = subprocess.run(command, env=env, capture_output=True, text=True)
+            self.assertEqual(refused.returncode, 2)
+            self.assertIn("compare needs --native-forced and --comparison-forced", refused.stderr)
 
     def test_taps_compares_two_captures_writes_a_receipt_and_exits_with_the_result(self):
         with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR")) as directory:
@@ -831,22 +1059,74 @@ class CommandTests(unittest.TestCase):
 
 
 class RunnerTests(unittest.TestCase):
-    def test_the_native_arm_replaces_the_configuration_kv_dtype_and_the_check_runs_offline(self):
+    FILES = ["kv_layout_native", "kv_layout_comparison", "kv_layout_native_forced", "kv_layout_comparison_forced"]
+
+    def test_the_native_arms_replace_the_configuration_kv_dtype_and_the_check_runs_offline(self):
         # Any previewed model: the check replaces its suite and KV arms.
         facts = runner.model_facts(sorted(runner.declaration.previewed(runner.ROOT))[0])
         facts = dict(facts, full=["kv_layout_equality"],
-                     checks={"kv_layout_equality": {"module": "kv_layout_equality",
-                                                    "files": ["kv_layout_native", "kv_layout_comparison"]}})
+                     checks={"kv_layout_equality": {"module": "kv_layout_equality", "files": self.FILES}})
+        serve = ["--kv-cache-dtype", "bf16", "--speculative-tokens", "0"]
         with patch.object(runner, "module_records", lambda name, model=None: (
                 kv_layout_equality.RUNNER_ARMS, kv_layout_equality.RUNNER_RECORDS)):
-            arms = runner.plan(facts, "full", "default", {"serve": ["--kv-cache-dtype", "bf16"],
-                                                          "environment": {}, "features": []})
+            arms = runner.plan(facts, "full", "default", {"serve": serve, "environment": {}, "features": []})
         by_name = {arm["arm"]: arm for arm in arms}
-        self.assertEqual(by_name["kv-native"]["serve"], ["--kv-cache-dtype", "auto"])
-        self.assertEqual(by_name["spec"]["serve"], ["--kv-cache-dtype", "bf16"])
-        self.assertEqual([step["input"] for step in by_name["kv-native"]["steps"]], ["kv_layout_native"])
-        self.assertIn("kv_layout_comparison", [step.get("input") for step in by_name["spec"]["steps"]])
+        self.assertEqual(by_name["kv-native"]["serve"], ["--speculative-tokens", "0", "--kv-cache-dtype", "auto"])
+        self.assertEqual(by_name["kv-native-forced"]["serve"],
+                         ["--speculative-tokens", "0", "--kv-cache-dtype", "auto", *runner.FORCED])
+        # The comparison layout's forced record runs on the forced prefix arm.
+        self.assertEqual(by_name["prefix"]["serve"], [*serve, *runner.FORCED])
+        self.assertEqual(by_name["spec"]["serve"], serve)
+        records = {step["input"]: (arm["arm"], step) for arm in arms for step in arm["steps"]
+                   if step["kind"] == "record" and step["input"] in self.FILES}
+        self.assertEqual({name: arm for name, (arm, _) in records.items()},
+                         {"kv_layout_native": "kv-native", "kv_layout_comparison": "spec",
+                          "kv_layout_native_forced": "kv-native-forced", "kv_layout_comparison_forced": "prefix"})
+        # Forced records are verify_ar's K=0 records with row shapes, of the
+        # exact reference and the long-context reference.
+        verify_ar = runner.RECORDS["verify_ar"][2]
+        for name, label in (("kv_layout_native_forced", "kv-native-forced"),
+                            ("kv_layout_comparison_forced", "kv-comparison-forced")):
+            step = records[name][1]
+            self.assertEqual(step["script"], "verify_exact.py")
+            arguments = step["arguments"]
+            self.assertEqual(arguments[arguments.index("--arm") + 1], label)
+            self.assertEqual(set(verify_ar) - {"ar"}, set(arguments) - {label, "--reference", "long_context"})
+            self.assertEqual(arguments[arguments.index("--reference") + 1], "long_context")
         self.assertIn("kv_layout_equality", [step.get("check") for step in by_name["offline"]["steps"]])
+
+    def test_only_the_bf16_configuration_adds_the_long_context_reference_to_its_forcing_file(self):
+        # Each previewed model's configurations and suites write the forcing
+        # file the runner wrote before (verify_exact.py references --out)
+        # byte for byte, except a configuration that runs this check.
+        import verify_exact
+        exact = {"texts": [{"name": "t", "prompt_token_ids": [1, 2, 3]}]}
+        long = {"texts": [{"name": "long", "prompt_token_ids": [1, 4, 5, 6]}]}
+
+        def written(argv, out):
+            out.unlink(missing_ok=True)
+            with patch.object(sys, "argv", ["verify_exact.py", *argv]), \
+                    patch.object(verify_exact, "exact_path", return_value=Path("exact.json")), \
+                    patch.object(verify_exact, "load_exact", return_value=exact), \
+                    patch.object(verify_exact, "named_references",
+                                 lambda names: {name: ("0" * 64, long) for name in names or []}):
+                verify_exact.main()
+            return out.read_bytes()
+        changed = []
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / "reference-tokens.json"
+            before = written(["references", "--out", str(out)], out)
+            for model in sorted(runner.declaration.previewed(runner.ROOT)):
+                facts = runner.model_facts(model)
+                for name in runner.configurations(model):
+                    selected = runner.configuration_facts(facts, name)
+                    for suite in runner.SUITES:
+                        command = runner.references_command(selected, suite, str(out))
+                        self.assertEqual(command[:3], [sys.executable, "-B", str(runner.TOOLS / "verify_exact.py")])
+                        after = written(command[3:], out)
+                        if after != before:
+                            changed.append((model, name, suite, json.loads(after)["sequences"]))
+        self.assertEqual(changed, [("deepseek41", "kv-bf16", "full", [[1, 2, 3], [1, 4, 5, 6]])])
 
 
 if __name__ == "__main__":

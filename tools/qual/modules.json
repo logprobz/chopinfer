@@ -238,6 +238,7 @@
   },
   "kv_layout_equality": {
    "BLOCK_BYTES": "number",
+   "BUILD_FIELDS": "number",
    "DESCRIPTOR_FIELDS": "list",
    "KV_DTYPES": "list",
    "KV_PHASES": "list",
@@ -246,16 +247,19 @@
    "LAYOUT_FIELDS": "list",
    "LAYOUT_PROFILE": "list",
    "NATIVE_KV_FORMATS": "dict",
+   "NATIVE_PLANES": "list",
    "NOTHING_SELECTED": "str",
    "PROCESS_STEP_FIELDS": "list",
    "REQUEST_FIELDS": "list",
    "RESTORE_PHASE": "str",
    "RUNNER_ARMS": "dict",
    "RUNNER_CHECK_ARM": "str",
+   "RUNNER_FORCED_REFERENCES": "list",
    "RUNNER_RECORDS": "number",
    "SHOWN": "int",
    "SIDES": "list",
    "TAP_BYTES": "dict",
+   "_FORCED": "number",
    "_RECORD": "list"
   },
   "kv_offload": {

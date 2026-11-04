@@ -2465,11 +2465,12 @@ impl<E: ModelExecutor> Engine<E> {
             return Err(EngineError::Executor(error));
         }
         // A demotion's lease may hold the pages the batch needs: cancel it
-        // instead of waiting for its copy, and form the batch next step.
+        // instead of waiting for its copy, and form the batch next step. A
+        // cancel still pending waits below like any other copy.
         if matches!(
             next,
             Err(ScheduleError::Kv(runtime_kv::KvError::PoolExhausted { .. }))
-        ) && self.cancel_demotion_for_headroom()?
+        ) && self.cancel_demotion_for_headroom()? == prefix_ram::HeadroomCancel::Settled
         {
             return Ok(StepStatus::Progressed);
         }
@@ -3371,9 +3372,9 @@ impl<E: ModelExecutor> Engine<E> {
                 .start_prefix_capture(&capture)
                 .map_err(EngineError::Scheduler)?;
             // The snapshot may need the pages a demotion leases: cancel it
-            // and start the capture once more.
+            // and, once the cancel settles, start the capture once more.
             let started = if started == PrefixCaptureStartV1::NoPages
-                && self.cancel_demotion_for_headroom()?
+                && self.cancel_demotion_for_headroom()? == prefix_ram::HeadroomCancel::Settled
             {
                 self.scheduler
                     .start_prefix_capture(&capture)

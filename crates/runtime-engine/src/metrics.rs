@@ -1110,6 +1110,8 @@ pub struct PrefixRamMetrics {
     pub eviction_log_discarded: u64,
     /// Waits for a demotion's cancel that an allocation needed.
     pub headroom_waits: u64,
+    /// Of those, cancels still pending at the executor's drain timeout.
+    pub cancel_timeouts: u64,
     /// Requests that preferred a ready host entry and resumed from their GPU
     /// match or cold, by reason: pool_exhausted, capacity, failed,
     /// invalidated, gpu_resident.
@@ -1159,6 +1161,10 @@ impl EngineMetrics {
 
     pub(crate) fn prefix_ram_headroom_wait(&self) {
         self.prefix_ram(|metrics| metrics.headroom_waits += 1);
+    }
+
+    pub(crate) fn prefix_ram_cancel_timeout(&self) {
+        self.prefix_ram(|metrics| metrics.cancel_timeouts += 1);
     }
 
     pub(crate) fn prefix_ram_fallback(&self, reason: PrefixRamFallbackV1) {
@@ -1236,6 +1242,12 @@ impl PrefixRamMetrics {
             "chop_prefix_ram_headroom_waits_total",
             "counter",
             self.headroom_waits,
+        );
+        metric(
+            out,
+            "chop_prefix_ram_cancel_timeouts_total",
+            "counter",
+            self.cancel_timeouts,
         );
         labelled(
             out,

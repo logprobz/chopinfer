@@ -5,6 +5,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use runtime_engine::{
     Engine, EngineConfig, EngineError, EngineEventKind, EngineMetrics, EngineRequest,
@@ -91,6 +93,11 @@ struct Model {
     status: Vec<(KvTransferClass, KvTransferStatus)>,
     /// The status a cancelled copy reports.
     cancelled_status: Option<KvTransferStatus>,
+    /// Cancelled copies stay pending while set: their issued chunks never
+    /// drain.
+    unsettled: bool,
+    /// The drain timeout the executor reports; five seconds otherwise.
+    drain_timeout: Option<Duration>,
     refused: Vec<KvTransferClass>,
     submitted: Vec<(KvTransferClass, usize)>,
     /// The class and pages of each copy that completed.
@@ -186,6 +193,9 @@ impl ModelExecutor for Model {
             .expect("only submitted copies are polled");
         let class = copy.submission.class();
         if copy.cancelled {
+            if self.unsettled {
+                return Ok(KvTransferPoll::Pending);
+            }
             let status = self
                 .cancelled_status
                 .unwrap_or(KvTransferStatus::FailedIdle);
@@ -233,6 +243,10 @@ impl ModelExecutor for Model {
 
     fn kv_offload_page_bytes_v1(&self) -> u64 {
         PAGE_BYTES
+    }
+
+    fn kv_transfer_drain_timeout_v1(&self) -> Duration {
+        self.drain_timeout.unwrap_or(Duration::from_secs(5))
     }
 
     fn kv_transfer_cancel_v1_supported(&self) -> bool {
@@ -355,15 +369,33 @@ impl MonotonicClock for FixedClock {
     }
 }
 
-fn engine_from(config: EngineConfig, model: Model) -> Engine<Model> {
+/// A clock that moves a millisecond every time it is read.
+#[derive(Debug, Default)]
+struct TickingClock(AtomicU64);
+
+impl MonotonicClock for TickingClock {
+    fn now_micros(&self) -> u64 {
+        self.0.fetch_add(1_000, Ordering::Relaxed)
+    }
+}
+
+fn engine_with_clock(
+    config: EngineConfig,
+    model: Model,
+    clock: Arc<dyn MonotonicClock>,
+) -> Engine<Model> {
     Engine::new_with_runtime_metrics(
         config,
         model,
-        Arc::new(FixedClock),
+        clock,
         EngineMetrics::default(),
         KvMetrics::default(),
     )
     .unwrap()
+}
+
+fn engine_from(config: EngineConfig, model: Model) -> Engine<Model> {
+    engine_with_clock(config, model, Arc::new(FixedClock))
 }
 
 fn engine(pages: usize, tier: Option<PrefixRamConfig>, model: Model) -> Engine<Model> {
@@ -810,6 +842,65 @@ fn a_batch_without_pages_cancels_the_demotion_instead_of_waiting() {
     assert_cancelled_for_headroom(&engine);
 }
 
+#[test]
+fn a_cancel_still_pending_at_the_drain_timeout_frees_no_pages() {
+    // X's cancelled demotion never drains within the one-millisecond drain
+    // timeout, and the clock passes its two-millisecond stall deadline.
+    let mut engine = engine_with_clock(
+        config(12, Some(tier(false, 16))),
+        Model {
+            held: vec![KvTransferClass::Demotion],
+            unsettled: true,
+            drain_timeout: Some(Duration::from_millis(1)),
+            ..model()
+        },
+        Arc::new(TickingClock::default()),
+    );
+    run(&mut engine, &[(1, &prompt(1, 8), 1)]);
+    // R's snapshot needs X's pages: R finishes, and its capture falls back
+    // as one that found no pages, without starting again.
+    run(&mut engine, &[(2, &prompt(2, 36), 1)]);
+    assert!(
+        !engine
+            .executor()
+            .captures
+            .contains(&(RequestId::new(2), 36))
+    );
+    let cancels = engine.executor().cancels.clone();
+    assert_eq!(cancels.len(), 1);
+    // The copy keeps its leases and its ledger entry, which every step's
+    // audit checks, and is polled on.
+    assert!(engine.executor().copies.contains_key(&cancels[0]));
+    let text = prometheus(&engine);
+    assert_eq!(metric(&text, "chop_prefix_ram_cancel_timeouts_total"), 1);
+    assert_eq!(metric(&text, "chop_prefix_ram_headroom_waits_total"), 1);
+    assert_eq!(demotions(&text, "cancelled"), 0);
+    // Like any overdue copy, it marks the engine's copies stalled.
+    assert!(engine.has_stalled_kv_transfers());
+    assert_eq!(metric(&text, "chop_kv_offload_stalled_transfers"), 1);
+    // A batch that needs its pages waits as for any pending copy, and
+    // cancels nothing more.
+    submit(&mut engine, &[(3, &prompt(3, 40), 1)]);
+    let mut outputs = Outputs::new();
+    for _ in 0..20 {
+        assert_eq!(step(&mut engine, &mut outputs), StepStatus::Progressed);
+    }
+    assert!(!outputs.contains_key(&RequestId::new(3)));
+    assert_eq!(engine.executor().cancels, cancels);
+    // Once its issued chunks drain, the cancel settles and the batch runs.
+    engine.executor_mut().unsettled = false;
+    while !finished(&outputs, &[(3, &[], 1)]) {
+        step(&mut engine, &mut outputs);
+    }
+    assert!(!engine.executor().copies.contains_key(&cancels[0]));
+    assert!(!engine.has_stalled_kv_transfers());
+    let text = prometheus(&engine);
+    assert_eq!(demotions(&text, "cancelled"), 1);
+    assert_eq!(demotions(&text, "failed"), 0);
+    assert_eq!(metric(&text, "chop_prefix_ram_cancel_timeouts_total"), 1);
+    assert_eq!(metric(&text, "chop_prefix_ram_headroom_waits_total"), 1);
+}
+
 /// H's 16-token anchor demoted on a 33-page pool with a 24-token prefill
 /// chunk, then X's anchor under a demotion that never finishes unless
 /// cancelled, and R, alive, whose 27 pages and two snapshots (its final
@@ -1061,6 +1152,7 @@ fn every_tier_family_is_exported_from_startup() {
         "chop_prefix_cache_ram_hits_total",
         "chop_prefix_cache_ram_reused_tokens_total",
         "chop_prefix_ram_headroom_waits_total",
+        "chop_prefix_ram_cancel_timeouts_total",
         "chop_prefix_ram_evictions_total",
         "chop_prefix_ram_eviction_log_discarded_total",
         "chop_prefix_ram_anchors",

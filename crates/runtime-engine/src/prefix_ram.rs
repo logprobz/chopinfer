@@ -30,7 +30,9 @@
 //! batch formation, an admission allocation or a capture's snapshot finds
 //! the pool exhausted, and when a promotion larger than the step's budget
 //! waits for no demotion to be outstanding. No demotion starts in a step
-//! that cancelled one, nor while such a promotion waits.
+//! that cancelled one, nor while such a promotion waits. A cancel still
+//! pending at the executor's drain timeout frees nothing: it stays an
+//! overdue copy, and its caller proceeds as without its pages.
 //!
 //! Forced mode, for exactness runs only, demotes every public capture at
 //! the end of its step, in capture order and without the bounds above; the
@@ -49,6 +51,19 @@ use runtime_scheduler::{AdmissionReport, PrefixCaptureV1, PrefixRamConfig};
 
 /// Steps the measured bounds look back over.
 const WINDOW_STEPS: usize = 16;
+
+/// How a cancel for headroom ended.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum HeadroomCancel {
+    /// Nothing was cancelled: no demotion was outstanding, it was forced or
+    /// already cancelled, or the executor refused the cancel.
+    None,
+    /// The cancelled copy settled, so the pages it leased are free.
+    Settled,
+    /// The cancelled copy's issued chunks were still in flight at the drain
+    /// timeout, so its pages stay leased.
+    Pending,
+}
 
 /// Whether the engine runs the RAM prefix tier, and why not when it was
 /// configured and left off.
@@ -331,20 +346,29 @@ impl<E: ModelExecutor> Engine<E> {
         if report.pool_exhausted().is_empty() && !starved {
             return Ok(false);
         }
-        self.cancel_demotion_for_headroom()
+        Ok(self.cancel_demotion_for_headroom()? == HeadroomCancel::Settled)
     }
 
     /// Cancels the outstanding demotion for an allocation that needs the
-    /// pages it leases, and waits for the cancel to settle: the copy issues
-    /// no further chunk and reports once its issued chunks drain. Returns
-    /// whether it cancelled one. Forced demotions, whose GPU anchors are
-    /// already gone, swaps and promotions are never cancelled.
-    pub(super) fn cancel_demotion_for_headroom(&mut self) -> Result<bool, EngineError> {
+    /// pages it leases, and polls until the cancel settles: the copy issues
+    /// no further chunk and reports once its issued chunks drain. Forced
+    /// demotions, whose GPU anchors are already gone, swaps and promotions
+    /// are never cancelled.
+    ///
+    /// A cancel still pending at the executor's drain timeout is an overdue
+    /// copy like any other: it keeps its leases and its ledger entry, every
+    /// step polls it, and past its stall deadline it warns once and marks
+    /// the engine's copies stalled. No caller acts as if its pages were
+    /// free: a capture falls back as one that found no pages, batch
+    /// formation waits as it does for any pending copy, and admission does
+    /// not run again. `chop_prefix_ram_cancel_timeouts_total` counts these
+    /// cancels.
+    pub(super) fn cancel_demotion_for_headroom(&mut self) -> Result<HeadroomCancel, EngineError> {
         let Some(state) = self.offload.as_mut() else {
-            return Ok(false);
+            return Ok(HeadroomCancel::None);
         };
         if state.ram.as_ref().is_none_or(|ram| ram.config.forced) {
-            return Ok(false);
+            return Ok(HeadroomCancel::None);
         }
         let Some((&id, transfer)) = state.transfers.iter_mut().find(|(_, transfer)| {
             matches!(
@@ -355,7 +379,7 @@ impl<E: ModelExecutor> Engine<E> {
                 }
             )
         }) else {
-            return Ok(false);
+            return Ok(HeadroomCancel::None);
         };
         match self.executor.cancel_kv_transfer_v1(id) {
             // A copy that had already finished reports through its poll.
@@ -366,7 +390,7 @@ impl<E: ModelExecutor> Engine<E> {
                 return Err(EngineError::Executor(error));
             }
             // A refused cancel leaves the copy to finish.
-            Err(_) => return Ok(false),
+            Err(_) => return Ok(HeadroomCancel::None),
         }
         if let TransferOwner::Demotion { key, cancelled } = &mut transfer.owner {
             *cancelled = true;
@@ -381,12 +405,13 @@ impl<E: ModelExecutor> Engine<E> {
             match self.executor.poll_kv_transfer_v1(id) {
                 Ok(KvTransferPoll::Finished(completion)) => {
                     self.finish_transfer(id, completion)?;
-                    return Ok(true);
+                    return Ok(HeadroomCancel::Settled);
                 }
                 // A late cancel is not lost DMA: the copy keeps its lease and
                 // the next step polls it again.
                 Ok(KvTransferPoll::Pending) if std::time::Instant::now() >= deadline => {
-                    return Ok(true);
+                    self.metrics.prefix_ram_cancel_timeout();
+                    return Ok(HeadroomCancel::Pending);
                 }
                 Ok(KvTransferPoll::Pending) => {
                     std::thread::sleep(std::time::Duration::from_micros(100));

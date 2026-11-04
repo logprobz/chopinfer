@@ -1072,9 +1072,35 @@ Copy-on-write, restore pins and transfer leases keep their existing page
 reference ownership. Private preemption anchors remain evictable in the
 maximal tier and cannot supersede public anchors. The candidate changes
 retention, not capture boundaries, snapshot bytes or restore arithmetic.
-It needs stateful replay exactness and acceptance before adoption; adoption
-deletes the candidate switch and old policy. See the
+See the
 [prefix eviction metrics](operations-observability.md#prefix-cache-accounting).
+
+Adoption was refused on 2026-11-04, and the candidate stays default-off.
+Its stateful replay screen ran DeepSeek V4.1 Flash TP4 DSpark at main
+5a556015f7 with the `tp4-dspark` profile defaults, at 300 W enforced on
+each GPU. It used one ABBA block per cell, LRU as A and ancestry as B.
+With the switch on, every exactness check passed:
+- fixed-batch replay, greedy, sampled and cross-process determinism;
+- all 28 prefix slices and the prefix gate;
+- the C1 guard;
+- the switch off/on guards for Qwen, GLM and MiMo.
+
+The timing verdict was a tradeoff, not a replacement:
+- With idle long sessions (`idle-frontiers-wt`), ancestry raised the cache
+  hit rate by 10.9 points and output tokens per second by 17%. It cut p95
+  TTFT by 28% and returning-request p95 TTFT by 46%, using 17% less energy
+  per token.
+- With a shared prefix, ancestry lowered the cache hit rate by 1.9 points.
+  Output tokens per second and valid sessions per minute fell 3.1% (2.9%
+  to 3.3% in the two pairs). The p50 decode gap rose 12%, stall time per
+  1,000 gaps grew, and it used 3% more energy per token.
+- With default thinking, ancestry made returning-request p95 TTFT 1.2%
+  worse and the returning p95 decode gap 0.5% worse. Every other metric was
+  unresolved.
+
+Making it the default would need a new screen with resolved gains and no
+resolved regression in any cell. The alternative is a declared serving
+option whose profile default is chosen per workload.
 
 Offload is disabled by default. Transfers retain page references until all
 ranks complete; swap-in restores newly reserved pages before admission.

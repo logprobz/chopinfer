@@ -360,8 +360,12 @@ claim depends on noisy or quantized CPU measurements.
 
 `CHOPINFER_PREFIX_ANCESTRY=1` enables the default-off ancestry eviction
 candidate in the host. Unset or any other value keeps global LRU. This is a
-candidate switch, pending [stateful replay acceptance](contributing.md#stateful-replay-acceptance),
-not a serving option. Adoption removes the switch and the old LRU path.
+candidate switch, not a serving option. Its
+[stateful replay acceptance](contributing.md#stateful-replay-acceptance)
+screen on 2026-11-04 was a tradeoff, and adoption was refused
+([KV offload and prefix state](numerics.md#kv-offload-and-prefix-state)).
+Adopting it as the default would remove the switch and the old LRU path;
+a declared serving option would keep both policies.
 
 ## Refused batches
 

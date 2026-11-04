@@ -3353,6 +3353,39 @@
         "media": [],
         "speculation": "none"
       }
+    },
+    "ram-forced": {
+      "opt_in": true,
+      "serve": [
+        "--kv-offload-gib",
+        "16",
+        "--kv-offload-prefix",
+        "on",
+        "--debug-prefix-ram"
+      ],
+      "checks": [
+        "prefix_exact",
+        "determinism",
+        "soak",
+        "spec_verify",
+        "verify_exact"
+      ],
+      "quick": [
+        "determinism"
+      ],
+      "capabilities": {
+        "text": false,
+        "frontend": false,
+        "api": false,
+        "structured": false,
+        "prefix_cache": true,
+        "preemption": false,
+        "long_context": false,
+        "stability": true,
+        "kv_offload": false,
+        "media": [],
+        "speculation": "mtp"
+      }
     }
   },
   "kv_offload": {

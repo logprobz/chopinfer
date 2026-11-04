@@ -1084,6 +1084,10 @@ def plan(facts, suite, config_name, config, inputs=()):
                 if record is None:
                     continue
                 where, script, arguments = record
+                if script == 'prefix_exact.py' and '--debug-prefix-ram' in config['serve']:
+                    # A configuration that forces the RAM prefix tier records
+                    # the RAM-hit arm (prefix_exact.py record --ram-hit).
+                    arguments = [*arguments, '--ram-hit']
                 output = ({'produces': True} if name in module_option(
                     checks[check]['module'], 'RUNNER_DIRECTORY_INPUTS', [], facts['model']) else {})
                 step(where, 'record', id=name, input=name, script=script, arguments=arguments, **output)

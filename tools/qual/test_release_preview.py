@@ -30,7 +30,9 @@ MODELS = sorted(runner.declaration.previewed(runner.ROOT))
 VALUE = '20261014T000000000000Z-0123abcd'
 # The shipped opt-in configurations: every other one (GLM's experimental k5
 # included) is selected by a full run and required by last good.
-OPT_IN = set()
+OPT_IN = {('glm5next', 'ram-forced'), ('qwen38', 'ram-forced')}
+# The serve words that force the RAM prefix tier: every hit restored from RAM.
+RAM_FORCED = ['--kv-offload-gib', '16', '--kv-offload-prefix', 'on', '--debug-prefix-ram']
 
 
 def model(predicate=lambda facts: True):
@@ -395,6 +397,36 @@ class PlanTests(unittest.TestCase):
                     # offline steps run after it, on no server.
                     last = [arm for arm in arms if arm.get('server', True)][-1]
                     self.assertEqual(last['serve'][:len(served['serve'])], served['serve'])
+
+    def test_a_configuration_that_forces_the_ram_tier_records_the_ram_hit_arm(self):
+        def prefix_records(facts, name, config):
+            return [step['arguments'] for arm in runner.plan(facts, 'full', name, config) for step in arm['steps']
+                    if step['kind'] == 'record' and step['script'] == 'prefix_exact.py']
+
+        for name in MODELS:
+            facts = runner.model_facts(name)
+            if 'prefix_exact' not in facts['full']:
+                continue
+            with self.subTest(model=name):
+                base = runner.configurations(name)['default']
+                plain = prefix_records(facts, 'default', base)
+                self.assertTrue(plain)
+                self.assertFalse([arguments for arguments in plain if '--ram-hit' in arguments])
+                self.assertEqual(prefix_records(facts, 'default', dict(base, serve=RAM_FORCED)),
+                                 [[*arguments, '--ram-hit'] for arguments in plain])
+                # The tier without the forced mode keeps GPU hits: no RAM-hit arm.
+                self.assertEqual(prefix_records(facts, 'default', dict(base, serve=RAM_FORCED[:-1])), plain)
+        for name, config in sorted(OPT_IN):
+            with self.subTest(model=name, config=config):
+                served = runner.configurations(name)[config]
+                self.assertEqual(served['serve'], RAM_FORCED)
+                arms = runner.plan(runner.model_facts(name), 'full', config, served)
+                records = prefix_records(runner.model_facts(name), config, served)
+                self.assertTrue(records)
+                self.assertTrue(all(arguments[-1] == '--ram-hit' for arguments in records))
+                self.assertTrue(all(arm['serve'][:len(RAM_FORCED)] == RAM_FORCED for arm in arms
+                                    if arm.get('server', True)))
+                self.assertEqual({arm['arm'] for arm in arms}, {'verify-ar', 'verify-spec', 'prefix', 'ar', 'spec'})
 
     def test_two_gpu_configurations_run_together_on_separate_pairs(self):
         configs = {'default': {'tensor_parallel_size': 4}, 'tp2-a': {'tensor_parallel_size': 2},

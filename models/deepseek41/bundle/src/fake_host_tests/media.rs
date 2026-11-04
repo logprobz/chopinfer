@@ -703,3 +703,220 @@ fn prefill_engram_keeps_media_reason() {
         assert_eq!(host.acquired.get(), host.released.get());
     });
 }
+
+/// A grid text prefill beside a prefill item without a boundary, on the
+/// served configuration (Flash TP4, 8192-token chunks, upper skip, cuts,
+/// the anchors export, no taps) of an instance that also serves images.
+/// An image prompt or a scored prompt has no grid contract, so a step that
+/// holds one runs the full schedule, which keeps no anchors. The scheduler
+/// therefore keeps no grid anchor in a step whose prefill candidates
+/// include one (`SchedulerConfig::with_grid_anchor_items`, pinned by
+/// runtime-scheduler's `grid_anchor_items_end_at_the_anchor_beside_a_prefill_without_a_contract`
+/// and `grid_anchor_items_end_at_the_anchor_beside_a_later_prefill_without_a_contract`):
+/// the text chunk ends at its anchor beside the other prompt, and its tail
+/// follows alone. These tests pin the bundle side of that rule: the steps
+/// the scheduler forms run, and the anchored step it no longer forms is
+/// refused.
+mod anchor_mix {
+    use super::*;
+    use bundle_runtime::fake_host::RecordingSink;
+    use runtime_bundle_sdk::prefill::{Boundary, encode_with_cuts};
+
+    type Sink = RecordingSink<super::super::conformance::Limits>;
+
+    #[derive(Clone, Copy, Debug)]
+    enum Other {
+        None,
+        Image,
+        Scored,
+    }
+
+    fn create_served(host: &Rc<Backend<MediaHost>>) -> BundleInstanceV1 {
+        use crate::config::tests::{media_record, with_option};
+        let record = media_record(&host.shape, host.kv, 4);
+        let record = with_option(record, "prefill_chunk_tokens", 8192.into());
+        let record = with_option(record, "prefill_upper_skip", true.into());
+        let services =
+            HostServicesTableV1::new(Rc::new(dspark::host::MappedHost::new(Rc::clone(host))));
+        api()
+            .with_prefill_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_API_V1)
+            .unwrap()
+            .with_prefill_cuts_api(crate::instance::prefill::PREFILL_CUTS_API)
+            .unwrap()
+            .with_device_results_api(crate::api::BUNDLE_DEEPSEEK41_DEVICE_RESULTS_API_V1)
+            .unwrap()
+            .with_prefill_anchors_api(crate::api::BUNDLE_DEEPSEEK41_PREFILL_ANCHORS_API_V2)
+            .unwrap()
+            .create(services, &record)
+            .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()))
+    }
+
+    /// Request `text` (789 prompt tokens in slot 0, anchored when `anchor`)
+    /// first, then `other` in slot 1, in one cuts envelope naming only the
+    /// text item's boundary.
+    fn mixed(text: u64, anchor: bool, other: Other, other_id: u64) -> Vec<u8> {
+        mixed_chunk(text, 0, 789, anchor, other, other_id)
+    }
+
+    /// [`mixed`] with the text item prefilling `count` tokens after
+    /// `previous` of its 789-token prompt.
+    fn mixed_chunk(
+        text: u64,
+        previous: u64,
+        count: u64,
+        anchor: bool,
+        other: Other,
+        other_id: u64,
+    ) -> Vec<u8> {
+        let end = previous + count;
+        let last = end == 789;
+        let mut items = vec![
+            BatchItemV1::new(
+                text,
+                false,
+                count as u32,
+                last,
+                (previous as u32..end as u32).collect(),
+            )
+            .with_anchor(anchor),
+        ];
+        let mut appends = vec![BatchAppendV1::new(
+            previous,
+            count,
+            end,
+            (0..end.div_ceil(64)).collect(),
+            None,
+        )];
+        let mut slots = vec![0];
+        let mut media = None;
+        match other {
+            Other::None => {}
+            Other::Image => {
+                let image_token = FLASH.shape.tokens.image;
+                let patches = u64::from(GRID[1] * GRID[2]);
+                let payload_bytes = patches * u64::from(PATCH_COLUMNS) * 4;
+                media = Some(BatchMediaSectionV3 {
+                    encodes: vec![BatchMediaEncodeV3 {
+                        encoder: 0,
+                        geometry: [GRID[0], GRID[1], GRID[2], 0],
+                        output_rows: IMAGE_ROWS,
+                        pages: vec![ARENA_PAGE],
+                        payload_offset: 0,
+                        payload_bytes,
+                    }],
+                    injects: vec![BatchMediaInjectV3 {
+                        item_index: 1,
+                        item_row: 1,
+                        rows: IMAGE_ROWS,
+                        arena_row: ARENA_PAGE * PAGE_ROWS,
+                    }],
+                    payload: (0..payload_bytes).map(|byte| (byte % 251) as u8).collect(),
+                });
+                let rows = IMAGE_ROWS + 2;
+                let mut tokens = vec![5];
+                tokens.extend(std::iter::repeat_n(image_token, IMAGE_ROWS as usize));
+                tokens.push(6);
+                items.push(BatchItemV1::new(other_id, false, rows, true, tokens));
+                appends.push(BatchAppendV1::new(
+                    0,
+                    u64::from(rows),
+                    u64::from(rows),
+                    vec![16],
+                    None,
+                ));
+                slots.push(1);
+            }
+            Other::Scored => {
+                items.push(
+                    BatchItemV1::new(other_id, false, 40, true, (0..40).collect())
+                        .with_prompt_rows(true),
+                );
+                appends.push(BatchAppendV1::new(0, 40, 40, vec![16], None));
+                slots.push(1);
+            }
+        }
+        let mut batch =
+            BatchRequestV1::new(BatchWireVersionV1::V3, items, appends).with_state_slots(slots);
+        if let Some(media) = media {
+            batch = batch.with_media(media);
+        }
+        encode_with_cuts(
+            &batch.encode().unwrap(),
+            &[Boundary {
+                request_id: text,
+                prompt_tokens: 789,
+                chunk_end: end,
+                chunk_tokens: 8192,
+            }],
+        )
+        .unwrap()
+    }
+
+    /// The steps the scheduler forms: an anchored 789-token text prompt
+    /// alone keeps its anchor; beside an image or a scored prompt (13 and 40
+    /// rows, as in the scheduler's tests) its chunk ends unanchored at 768,
+    /// and the 21-token tail follows alone.
+    #[test]
+    fn split_steps_beside_a_prefill_without_a_boundary_run() {
+        let host = MediaHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+        let mut instance = create_served(&host);
+        assert_eq!(instance.prefill_anchor_items(), Ok(Some(4)));
+        let run = |instance: &mut BundleInstanceV1, request: Vec<u8>| {
+            instance
+                .execute_prefill_cuts(&request, &mut Sink::default())
+                .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+            instance
+                .commit()
+                .unwrap_or_else(|e| panic!("{e:?}: {:?}", host.logs.borrow()));
+        };
+        run(&mut instance, mixed(1, true, Other::None, 2));
+        instance.retire_request(1).unwrap();
+        for (text, other) in [(11, Other::Image), (21, Other::Scored)] {
+            run(
+                &mut instance,
+                mixed_chunk(text, 0, 768, false, other, text + 1),
+            );
+            run(
+                &mut instance,
+                mixed_chunk(text, 768, 21, false, Other::None, text + 1),
+            );
+            instance.retire_request(text).unwrap();
+            instance.retire_request(text + 1).unwrap();
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+
+    /// The step the scheduler no longer forms, the anchored 789-token text
+    /// prompt beside an image or a scored prompt, keeps no anchors and is
+    /// refused. A refused step opens no ledger step, so its requests hold
+    /// no state to retire.
+    #[test]
+    fn anchored_text_beside_a_prefill_without_a_boundary_is_refused() {
+        let host = MediaHost::new(Shape::new(&FLASH, Ranks::TP4).unwrap(), KV_LAYOUTS[0]);
+        let mut instance = create_served(&host);
+        for (text, other) in [(11, Other::Image), (21, Other::Scored)] {
+            let logs = host.logs.borrow().len();
+            let request = mixed(text, true, other, text + 1);
+            assert_eq!(
+                instance.execute_prefill_cuts(&request, &mut Sink::default()),
+                Err(BundleAbiError::Status(BundleStatusV1::InvalidArgument)),
+                "{other:?}"
+            );
+            assert_eq!(
+                instance.last_execute_refusal(),
+                Some("DeepSeek V4.1: a step keeps at most 0 anchors"),
+                "{other:?}"
+            );
+            assert!(
+                host.logs.borrow()[logs..]
+                    .iter()
+                    .any(|line| line.contains("a step keeps at most 0 anchors")),
+                "{other:?}: {:?}",
+                host.logs.borrow()
+            );
+        }
+        instance.destroy().unwrap();
+        assert_eq!(host.acquired.get(), host.released.get());
+    }
+}

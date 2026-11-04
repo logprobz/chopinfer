@@ -31,8 +31,10 @@ complete state inside that step. The whole chunk through the prompt end must
 fit the request's chunk limit and the step's token budget and, with timing
 cuts, its timing share. A grid boundary is never fused, and a replay that
 also captures the original prompt end keeps that capture. Other topologies,
-configurations without upper skip (including those without cuts) and chunks
-that do not fit run the last tokens as a separate prefill step. Prompts
+configurations without upper skip (including those without cuts), chunks
+that do not fit and chunks formed while an image or scored prompt waits to
+prefill (such a prompt has no boundary, so its step keeps no anchors) run
+the last tokens as a separate prefill step. Prompts
 shorter than 64 tokens have no interior aligned cut; a hit at the rounded
 end only needs the remainder.
 

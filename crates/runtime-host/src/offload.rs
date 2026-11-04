@@ -15,6 +15,8 @@ pub const KV_COPY_CHUNK_BYTES: usize = 8 * 1024 * 1024;
 /// Demotion chunks issued and not yet drained, at most, on each rank. A
 /// foreground copy waits at most for these to drain.
 pub const KV_DEMOTION_CHUNKS_IN_FLIGHT: usize = 4;
+/// Bytes of copy chunks issued and not yet drained, at most, on each rank.
+pub const KV_COPY_WINDOW_BYTES: usize = GIB as usize;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct KvOffloadOptionsV1 {
     pub budget_bytes: u64,
@@ -59,6 +61,15 @@ impl HostArenaPlanV1 {
             rank_count: ranks,
             allocated_bytes: pages * page_bytes * ranks as u64,
         })
+    }
+    /// Pages of one copy chunk: as many as fit [`KV_COPY_CHUNK_BYTES`], at
+    /// least one.
+    pub fn chunk_pages(&self) -> usize {
+        (KV_COPY_CHUNK_BYTES / self.page_bytes).max(1)
+    }
+    /// Bytes the demotion chunks in flight on one rank hold at most.
+    pub fn demotion_window_bytes(&self) -> usize {
+        KV_DEMOTION_CHUNKS_IN_FLIGHT * self.chunk_pages() * self.page_bytes
     }
     pub fn buffer_pages(&self) -> Vec<usize> {
         let per = GIB as usize / self.page_bytes;
@@ -279,7 +290,7 @@ impl OffloadQueue {
         let now = Instant::now();
         let horizon = now + Duration::from_millis(20);
         while self.in_flight.len() < 128
-            && self.in_flight.iter().map(|c| c.bytes).sum::<usize>() < GIB as usize
+            && self.in_flight.iter().map(|c| c.bytes).sum::<usize>() < KV_COPY_WINDOW_BYTES
         {
             // Do not interleave two transfers: they can name the same shared
             // pages, and chunk completion assumes one transfer in flight. A
@@ -323,14 +334,13 @@ impl OffloadQueue {
             {
                 break;
             }
-            let room = (GIB as usize - self.in_flight.iter().map(|c| c.bytes).sum::<usize>())
+            let room = (KV_COPY_WINDOW_BYTES
+                - self.in_flight.iter().map(|c| c.bytes).sum::<usize>())
                 / self.plan.page_bytes;
             if room == 0 {
                 break;
             }
-            let chunk = (KV_COPY_CHUNK_BYTES / self.plan.page_bytes)
-                .max(1)
-                .min(room);
+            let chunk = self.plan.chunk_pages().min(room);
             let end = (t.cursor + chunk).min(t.plan.pages().len());
             let pages = &t.plan.pages()[t.cursor..end];
             let mut ranks = Vec::new();
@@ -680,6 +690,23 @@ mod tests {
             "MemAvailable: 18446744073709551615 kB",
         ] {
             assert!(mem_available_v1(input).is_err());
+        }
+    }
+    #[test]
+    fn chunks_and_the_demotion_window_follow_the_page_size() {
+        const MIB: usize = 1024 * 1024;
+        for (page_bytes, chunk_pages, window) in [
+            // A GLM page: 18 pages fill one chunk.
+            (454_656, 18, 32_735_232),
+            (2 * MIB, 4, 32 * MIB),
+            (8 * MIB, 1, 32 * MIB),
+            // A page past the chunk size is a chunk of its own.
+            (16 * MIB, 1, 64 * MIB),
+        ] {
+            let plan = HostArenaPlanV1::new(4 * GIB, 64 * GIB, page_bytes as u64, 4).unwrap();
+            assert_eq!(plan.chunk_pages(), chunk_pages, "{page_bytes}");
+            assert_eq!(plan.demotion_window_bytes(), window, "{page_bytes}");
+            assert!(window <= KV_COPY_WINDOW_BYTES);
         }
     }
     #[test]

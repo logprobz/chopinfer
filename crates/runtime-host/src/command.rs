@@ -3909,13 +3909,14 @@ impl ServedEngineV1 {
         };
         // The engine runs the tier only with prefix caching, KV offload and
         // demotion cancel, and reports why not otherwise.
-        let config = match self.prefix_ram {
-            Some(forced) => config.with_prefix_ram(prefix_ram_config_v1(
-                forced,
-                pool_control.pages().unwrap_or(0),
-            )),
+        let prefix_ram = self
+            .prefix_ram
+            .map(|forced| prefix_ram_config_v1(forced, pool_control.pages().unwrap_or(0)));
+        let config = match prefix_ram {
+            Some(tier) => config.with_prefix_ram(tier),
             None => config,
         };
+        let page_tokens = loaded.manifest().kv_layout().page_tokens() as usize;
         let offload_plan = if allocate_offload {
             pool_control.initialize_offload(self.kv_offload)?
         } else {
@@ -3927,7 +3928,7 @@ impl ServedEngineV1 {
                 plan.pages_per_rank,
                 plan.allocated_bytes,
                 plan.rank_count,
-                plan.pages_per_rank * loaded.manifest().kv_layout().page_tokens() as usize
+                plan.pages_per_rank * page_tokens
             );
         }
         let model_executor = BundleModelExecutorV1::new_with_batch_wire(
@@ -4019,15 +4020,81 @@ impl ServedEngineV1 {
             pool_control: serving_kv.then_some(pool_control),
             reference,
         };
-        Engine::new_with_runtime_metrics(
+        let engine = Engine::new_with_runtime_metrics(
             config,
             executor,
             Arc::new(runtime_engine::SystemMonotonicClock::new()),
             EngineMetrics::default(),
             kv_metrics_v1(self.kv_dtype),
         )
-        .map_err(|error| format!("the serving engine is unusable: {error}"))
+        .map_err(|error| format!("the serving engine is unusable: {error}"))?;
+        if let Some(tier) = prefix_ram {
+            runtime_log::info_stdout!(
+                "{}",
+                prefix_ram_startup_line_v1(
+                    engine.prefix_ram_status(),
+                    offload_plan.filter(|_| offload_capability),
+                    page_tokens,
+                    tier,
+                    offload_capability,
+                )
+            );
+        }
+        Ok(engine)
     }
+}
+
+/// The startup line of the RAM prefix tier `--kv-offload-prefix on` asked
+/// for: its bounds when the engine runs it, or why it is off. `plan` is the
+/// offload arena the executor copies through, which the tier shares with
+/// request swaps; `offload_capability` whether the bundle declares
+/// `chop.kv-offload.v1`.
+fn prefix_ram_startup_line_v1(
+    status: runtime_engine::PrefixRamStatusV1,
+    plan: Option<crate::offload::HostArenaPlanV1>,
+    page_tokens: usize,
+    tier: runtime_scheduler::PrefixRamConfig,
+    offload_capability: bool,
+) -> String {
+    use runtime_engine::{PrefixRamStatusV1, PrefixRamUnavailableV1};
+    let forced = match status {
+        PrefixRamStatusV1::Active { forced } => forced,
+        PrefixRamStatusV1::Unavailable(PrefixRamUnavailableV1::NoOffload)
+            if !offload_capability =>
+        {
+            return format!(
+                "prefix RAM tier: off, because the bundle does not declare {}",
+                crate::offload::KV_OFFLOAD_CAPABILITY_V1
+            );
+        }
+        PrefixRamStatusV1::Unavailable(reason) => {
+            return format!("prefix RAM tier: off, because {}", reason.reason());
+        }
+        PrefixRamStatusV1::Off => return "prefix RAM tier: off".to_owned(),
+    };
+    let mode = if forced {
+        " in its debug exactness mode (--debug-prefix-ram), where every public capture is \
+         demoted and every hit is a RAM hit"
+    } else {
+        ""
+    };
+    let Some(plan) = plan else {
+        return format!("prefix RAM tier: on{mode}");
+    };
+    format!(
+        "prefix RAM tier: on{mode}; {} pinned bytes across {} ranks in the KV offload arena it \
+         shares with swaps, {} pages and {} tokens per rank, no staging buffer; copies in flight \
+         at most {} bytes per rank, demotions at most {} chunks ({} bytes) per rank; promotions \
+         at most {} pages per step",
+        plan.allocated_bytes,
+        plan.rank_count,
+        plan.pages_per_rank,
+        plan.pages_per_rank * page_tokens,
+        crate::offload::KV_COPY_WINDOW_BYTES,
+        crate::offload::KV_DEMOTION_CHUNKS_IN_FLIGHT,
+        plan.demotion_window_bytes(),
+        tier.promotion_budget_pages,
+    )
 }
 
 /// The RAM prefix tier's configuration over a pool of `pool_pages` pages
@@ -5857,6 +5924,10 @@ fn run_error(message: impl Into<String>) -> HostCommandErrorV1 {
 #[cfg(test)]
 #[path = "prefill_policy_tests.rs"]
 mod prefill_policy_tests;
+
+#[cfg(all(test, feature = "fake-host-services"))]
+#[path = "prefix_ram_tests.rs"]
+mod prefix_ram_tests;
 
 #[cfg(test)]
 mod tests {

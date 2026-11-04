@@ -1251,12 +1251,51 @@ mod tests {
             }}
         })
     }
+    /// A test's own directory under the temporary directory, removed when
+    /// the test ends, a failed test's included.
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        /// A new, empty `{label}-{process}-{serial}` under the temporary
+        /// directory.
+        fn new(label: &str) -> Self {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "{label}-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            // A reused process ID may have left one behind.
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl std::ops::Deref for Scratch {
+        type Target = std::path::Path;
+
+        fn deref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl AsRef<std::path::Path> for Scratch {
+        fn as_ref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
     /// A package directory whose manifest names the fixture profile's bundle
     /// at two ranks, for `--profile` to serve.
-    fn package(label: &str) -> std::path::PathBuf {
-        let directory =
-            std::env::temp_dir().join(format!("profile-package-{label}-{}", std::process::id()));
-        std::fs::create_dir_all(&directory).unwrap();
+    fn package(label: &str) -> Scratch {
+        let directory = Scratch::new(&format!("profile-package-{label}"));
         std::fs::write(
             directory.join("manifest.json"),
             br#"{"id":"fixture.v1","target":{"topologies":[{"id":"fixture-tp2","rank_count":2}]}}"#,
@@ -1277,9 +1316,9 @@ mod tests {
         let parse = |words: &[String]| crate::parse_host_command_v1(words).unwrap_err().to_string();
         for (bundle, selected) in [
             (None, &reference),
-            (Some(&missing_package), &reference),
-            (Some(&package), &absent),
-            (Some(&package), &unknown),
+            (Some(missing_package.as_path()), &reference),
+            (Some(&*package), &absent),
+            (Some(&*package), &unknown),
         ] {
             let mut words = vec!["serve".to_owned(), "--profile".into(), selected.clone()];
             if let Some(bundle) = bundle {
@@ -1302,7 +1341,6 @@ mod tests {
                 assert_eq!(parse(&invalid_words), expected, "{invalid_words:?}");
             }
         }
-        std::fs::remove_dir_all(package).unwrap();
     }
 
     /// The profile lookup reads the manifest as a bounded regular file: a
@@ -1316,9 +1354,7 @@ mod tests {
             (facts.id.as_str(), facts.topologies),
             ("fixture.v1", vec![("fixture-tp2".to_owned(), 2)])
         );
-        let root =
-            std::env::temp_dir().join(format!("profile-package-facts-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let root = Scratch::new("profile-package-facts");
         let linked = root.join("linked");
         std::fs::create_dir_all(&linked).unwrap();
         std::os::unix::fs::symlink(regular.join("manifest.json"), linked.join("manifest.json"))
@@ -1346,7 +1382,6 @@ mod tests {
             let refusal = PackageFacts::read(directory).err().unwrap().to_string();
             assert!(refusal.contains(expected), "{refusal}");
         }
-        std::fs::remove_dir_all(&root).unwrap();
     }
 
     fn budget(command: crate::HostCommandV1) -> runtime_scheduler::PrefillBudget {
@@ -1559,7 +1594,6 @@ mod tests {
                 assert_eq!(verify_widths, runtime_engine::VerifyWidths::default());
             }
         }
-        std::fs::remove_dir_all(package).unwrap();
     }
 
     /// Explicit speculation options over a direct profile resolve with the
@@ -2160,7 +2194,6 @@ mod tests {
             PrefillBudget::Tbt(MixedPolicy::new(150, 512, 0).unwrap())
         );
         std::fs::remove_file(path).unwrap();
-        std::fs::remove_dir_all(bundle).unwrap();
     }
 
     #[test]
@@ -2289,7 +2322,6 @@ mod tests {
             assert_eq!(shown["prefill_policy"], default);
         }
         std::fs::remove_file(path).unwrap();
-        std::fs::remove_dir_all(bundle).unwrap();
     }
 
     #[test]
@@ -2392,7 +2424,6 @@ mod tests {
             }
         }
         std::fs::remove_file(path).unwrap();
-        std::fs::remove_dir_all(&package).unwrap();
     }
 
     /// Writes `profiles` into `package` as its serving profiles component,
@@ -2458,7 +2489,6 @@ mod tests {
             "{refusal}"
         );
         std::fs::remove_file(file).unwrap();
-        std::fs::remove_dir_all(&package).unwrap();
     }
 
     /// Every model's profiles, carried by a package of their bundle and
@@ -2515,7 +2545,6 @@ mod tests {
                     carried.qualified_max_sequences,
                     named.qualified_max_sequences
                 );
-                std::fs::remove_dir_all(&package).unwrap();
                 checked += 1;
             }
         }
@@ -2602,7 +2631,6 @@ mod tests {
             Some(2)
         );
         std::fs::remove_file(path).unwrap();
-        std::fs::remove_dir_all(&package).unwrap();
     }
 
     /// A profile's own model options must resolve against the package's
@@ -2658,7 +2686,6 @@ mod tests {
         let refusal = resolve(&words(&[])).err().unwrap().to_string();
         assert!(refusal.contains("the package declares none"), "{refusal}");
         std::fs::remove_file(path).unwrap();
-        std::fs::remove_dir_all(&package).unwrap();
     }
 
     #[test]
@@ -2954,7 +2981,6 @@ mod tests {
             "{refusal}"
         );
         std::fs::remove_file(path).unwrap();
-        std::fs::remove_dir_all(&package).unwrap();
     }
 }
 

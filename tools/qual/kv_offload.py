@@ -23,8 +23,10 @@ The prefix-pressure arm (`kv-offload-prefix-pressure`, record `--arm tier
 --scenario prefix-pressure`) runs the pressure workload with the RAM prefix
 tier on (`--kv-offload-prefix on`) and no forced swaps. The fill evicts
 every anchor C1 and the warm cohort left, so C16 can find them only in the
-host tier. Its judge pairs it with the pressure scenario's off arm: every
-C1 request bitwise equal, promotions and RAM hits above zero, the tier's
+host tier. Its judge pairs it with the pressure scenario's off arm: both
+records complete, without a failed C1, warm, fill or control request, the
+off arm passing its own end gates, every C1 request bitwise equal, the
+fill's precondition met, promotions and RAM hits above zero, the tier's
 missed demotions recorded, no transfer pending, swapped request or stall
 at the end. The tier's counters must be exposed: missing evidence never
 becomes zero. The tier holds its entries after the run, so its host pages

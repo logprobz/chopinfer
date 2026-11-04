@@ -134,8 +134,9 @@ class Offload(unittest.TestCase):
                      "tokens": ["a"] * 32, "logprobs": [-0.5] * 32, "top": [{"a": -0.5}] * 32,
                      "finish_reason": "length", "usage": {"prompt_tokens": 10, "completion_tokens": 32,
                      "total_tokens": 42}, "observed": deepcopy(snapshot)} for i in range(36)]
-        off = {"arm": "off", "scenario": "pressure", "output_tokens": 96, "concurrency": 16,
+        off = {"arm": "off", "scenario": "pressure", "output_tokens": 96, "concurrency": 16, "passed": True,
                "c1": requests, "c16": deepcopy(requests), "repeat": deepcopy(requests), "warm": deepcopy(requests),
+               "fill": {"rows": [{"name": "fill-0", "prompt_sha256": "fill"}], "precondition": True},
                "before": deepcopy(snapshot), "after": deepcopy(snapshot),
                "c16_before": deepcopy(snapshot), "c16_after": deepcopy(snapshot)}
         tier = deepcopy(off)
@@ -157,6 +158,14 @@ class Offload(unittest.TestCase):
         self.assertEqual(result["status"], "fail")
         self.assertEqual(result["metrics"]["c16_equality"]["tier_identical"], 36)
         self.assertEqual(kind.score(capture, check=check)["different_requests"], ["item-0"])
+        # A failed fill request fails the pair.
+        tier["c1"][0]["logprobs"][0] = -0.5
+        tier["fill"]["rows"][0]["error"] = "failed"
+        tier["passed"] = False
+        failed = kvo.kinds.rescore(kind, capture, reference, check)
+        self.assertEqual(failed["status"], "fail")
+        self.assertEqual({gate["name"] for gate in failed["metrics"]["gates"] if not gate["passed"]},
+                         {"fill_errors", "failed_records"})
 
     def test_offload_facts_compile_without_a_preview(self):
         # Readers that drop a model's preview (the GSM8K floor fixtures)

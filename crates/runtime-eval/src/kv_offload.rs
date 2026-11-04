@@ -169,6 +169,71 @@ fn gate(gates: &mut Vec<Value>, name: &str, value: u64, op: &str, limit: u64) {
     gates.push(json!({"name": name, "value": value, "op": op, "limit": limit, "passed": passed}));
 }
 
+/// The invalid requests of a record's measured and control cohorts. C16,
+/// the warm cohort under pressure and the off arm's control repeat must each
+/// hold the C1 requests.
+fn cohort_errors(
+    record: &Value,
+    identities: &[(&str, &str)],
+    pressure: bool,
+) -> Result<u64, String> {
+    let mut errors = 0;
+    for key in ["c16", "warm", "repeat"] {
+        let cohort = rows(record, key)?;
+        let required = key == "c16"
+            || (key == "warm" && pressure)
+            || (key == "repeat" && record["arm"] == "off");
+        if required && (cohort.len() != 36 || names(cohort)? != identities) {
+            return Err(format!("kv_offload: missing or mismatched {key} requests"));
+        }
+        errors += cohort.iter().filter(|row| !valid_row(row)).count() as u64;
+    }
+    Ok(errors)
+}
+
+/// A record's end gates: the final value of each of `keys` zero, no
+/// disallowed fallback, and for the off arm no preemption or copy at all.
+fn end_gates(
+    gates: &mut Vec<Value>,
+    record: &Value,
+    keys: &[&str],
+    pressure: bool,
+) -> Result<(), String> {
+    let arm = record["arm"].as_str().ok_or("kv_offload: missing arm")?;
+    let before = &record["before"];
+    let after = &record["after"];
+    // Absolute final counters catch stalls even in warmup or the C1 phase.
+    for key in keys {
+        gate(
+            gates,
+            &format!("{arm}_end_{key}"),
+            count(after, key)?,
+            "eq",
+            0,
+        );
+    }
+    let disallowed = fallbacks(&fallback_delta(before, after)?, pressure)?.1;
+    gate(
+        gates,
+        &format!("{arm}_disallowed_fallbacks"),
+        disallowed,
+        "eq",
+        0,
+    );
+    if arm == "off" {
+        for key in ["preemptions", "swap_out", "swap_in"] {
+            gate(
+                gates,
+                &format!("off_{key}"),
+                difference(before, after, key)?,
+                "eq",
+                0,
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Return every gate's measured value and limit, plus informational C16 equality.
 pub fn judge(args: &Value) -> Result<Value, String> {
     let policy = facts(&args["facts"])?;
@@ -265,47 +330,13 @@ pub fn judge(args: &Value) -> Result<Value, String> {
     let control = rows(off, "repeat")?;
     let mut c16_errors = 0;
     for record in [off, swap] {
-        for key in ["c16", "warm", "repeat"] {
-            let cohort = rows(record, key)?;
-            let required = key == "c16"
-                || (key == "warm" && pressure)
-                || (key == "repeat" && record["arm"] == "off");
-            if required && (cohort.len() != 36 || names(cohort)? != identities) {
-                return Err(format!("kv_offload: missing or mismatched {key} requests"));
-            }
-            c16_errors += cohort.iter().filter(|row| !valid_row(row)).count() as u64;
-        }
-        let before = &record["before"];
-        let after = &record["after"];
-        // Absolute final counters catch stalls even in warmup or the C1 phase.
-        for key in ["host_pages_used", "swapped_requests", "stalls"] {
-            gate(
-                &mut gates,
-                &format!("{}_end_{key}", record["arm"].as_str().unwrap()),
-                count(after, key)?,
-                "eq",
-                0,
-            );
-        }
-        let disallowed = fallbacks(&fallback_delta(before, after)?, pressure)?.1;
-        gate(
+        c16_errors += cohort_errors(record, &identities, pressure)?;
+        end_gates(
             &mut gates,
-            &format!("{}_disallowed_fallbacks", record["arm"].as_str().unwrap()),
-            disallowed,
-            "eq",
-            0,
-        );
-        if record["arm"] == "off" {
-            for key in ["preemptions", "swap_out", "swap_in"] {
-                gate(
-                    &mut gates,
-                    &format!("off_{key}"),
-                    difference(before, after, key)?,
-                    "eq",
-                    0,
-                );
-            }
-        }
+            record,
+            &["host_pages_used", "swapped_requests", "stalls"],
+            pressure,
+        )?;
     }
     gate(&mut gates, "c16_errors", c16_errors, "eq", 0);
     for key in ["swap_out", "swap_in"] {
@@ -376,10 +407,13 @@ fn labelled(before: &Value, after: &Value, key: &str) -> Result<BTreeMap<String,
 
 /// Judge the prefix-pressure arm: the pressure workload with the RAM prefix
 /// tier on and no forced swaps, against the pressure scenario's off arm.
-/// Every C1 request must be bitwise equal, the tier must promote anchors and
-/// serve RAM hits, and it must end with no transfer pending or overdue, no
-/// request swapped and no stall. Its missed demotions are reported, and C16
-/// equality is informational.
+/// Both records must be complete captures with every C1, warm, fill and
+/// control request served, and the off arm must pass its own end gates.
+/// Every C1 request must be bitwise equal, the fill must have evicted every
+/// earlier anchor, the tier must promote anchors and serve RAM hits, and it
+/// must end with no transfer pending or overdue, no request swapped and no
+/// stall. Its missed demotions are reported, and C16 equality is
+/// informational.
 pub fn judge_prefix(args: &Value) -> Result<Value, String> {
     facts(&args["facts"])?;
     let off = &args["off"];
@@ -429,28 +463,40 @@ pub fn judge_prefix(args: &Value) -> Result<Value, String> {
         0,
     );
     let mut c16_errors = 0;
+    let mut fill_errors = 0;
+    let mut failed = 0;
     for record in [off, tier] {
-        for key in ["warm", "c16"] {
-            let cohort = rows(record, key)?;
-            if cohort.len() != 36 || names(cohort)? != identities {
-                return Err(format!("kv_offload: missing or mismatched {key} requests"));
-            }
-            c16_errors += cohort.iter().filter(|row| !valid_row(row)).count() as u64;
-        }
+        c16_errors += cohort_errors(record, &identities, true)?;
+        fill_errors += rows(&record["fill"], "rows")?
+            .iter()
+            .filter(|row| row.get("error").is_some())
+            .count() as u64;
+        // A record whose capture saw any request fail is not evidence.
+        failed += u64::from(record["passed"].as_bool() != Some(true));
     }
     gate(&mut gates, "c16_errors", c16_errors, "eq", 0);
+    gate(&mut gates, "fill_errors", fill_errors, "eq", 0);
+    gate(&mut gates, "failed_records", failed, "eq", 0);
+    let precondition = tier["fill"]["precondition"]
+        .as_bool()
+        .ok_or("kv_offload: missing fill precondition")?;
+    gate(
+        &mut gates,
+        "tier_fill_precondition",
+        u64::from(precondition),
+        "eq",
+        1,
+    );
+    end_gates(
+        &mut gates,
+        off,
+        &["host_pages_used", "swapped_requests", "stalls"],
+        true,
+    )?;
     let before = &tier["before"];
     let after = &tier["after"];
     // The tier keeps its entries, so host pages stay in use; its copies must not.
-    for key in ["swapped_requests", "stalls"] {
-        gate(
-            &mut gates,
-            &format!("tier_end_{key}"),
-            count(after, key)?,
-            "eq",
-            0,
-        );
-    }
+    end_gates(&mut gates, tier, &["swapped_requests", "stalls"], true)?;
     for key in ["pending_micros", "stalled_transfers"] {
         gate(
             &mut gates,
@@ -460,13 +506,6 @@ pub fn judge_prefix(args: &Value) -> Result<Value, String> {
             0,
         );
     }
-    gate(
-        &mut gates,
-        "tier_disallowed_fallbacks",
-        fallbacks(&fallback_delta(before, after)?, true)?.1,
-        "eq",
-        0,
-    );
     let (start, end) = (&before["tier"], &after["tier"]);
     let promotions = labelled(start, end, "promotions")?;
     gate(

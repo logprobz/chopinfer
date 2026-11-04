@@ -280,7 +280,10 @@ fn facts_require_all_positive_typed_fields_and_bounded_coverage() {
 /// anchors from RAM and whose tier ended idle.
 fn prefix_fixture() -> Value {
     let pressure = fixture(true);
-    let off = pressure["off"].clone();
+    let mut off = pressure["off"].clone();
+    off["passed"] = json!(true);
+    off["fill"] =
+        json!({"rows": [{"name": "fill-0", "prompt_sha256": "fill"}], "precondition": true});
     let mut tier = off.clone();
     tier["arm"] = json!("tier");
     tier["scenario"] = json!("prefix-pressure");
@@ -420,4 +423,51 @@ fn prefix_pressure_refuses_missing_tier_evidence_and_other_arms() {
     let mut value = prefix_fixture();
     value["tier"]["c16"] = json!([]);
     assert!(judge_prefix(&value).is_err());
+}
+
+#[test]
+fn prefix_pressure_keeps_the_off_arms_end_gates_and_control() {
+    for key in ["host_pages_used", "swapped_requests", "stalls"] {
+        let mut value = prefix_fixture();
+        value["off"]["after"][key] = json!(1);
+        prefix_fails(value, &format!("off_end_{key}"));
+    }
+    for key in ["preemptions", "swap_out", "swap_in"] {
+        let mut value = prefix_fixture();
+        value["off"]["after"][key] = json!(1);
+        prefix_fails(value, &format!("off_{key}"));
+    }
+    let mut value = prefix_fixture();
+    value["off"]["after"]["fallbacks"] = json!({"restore": 1});
+    prefix_fails(value, "off_disallowed_fallbacks");
+    let mut value = prefix_fixture();
+    value["off"]["repeat"][3]["error"] = json!("failed");
+    prefix_fails(value, "c16_errors");
+    let mut value = prefix_fixture();
+    value["off"]["repeat"] = json!([]);
+    assert!(judge_prefix(&value).unwrap_err().contains("repeat"));
+}
+
+#[test]
+fn prefix_pressure_rejects_failed_fill_and_capture_evidence() {
+    for arm in ["off", "tier"] {
+        let mut value = prefix_fixture();
+        value[arm]["fill"]["rows"][0]["error"] = json!("failed");
+        value[arm]["passed"] = json!(false);
+        let result = judge_prefix(&value).unwrap();
+        assert_eq!(result["passed"], false, "{result}");
+        prefix_fails(value.clone(), "fill_errors");
+        prefix_fails(value, "failed_records");
+    }
+    let mut value = prefix_fixture();
+    value["tier"].as_object_mut().unwrap().remove("passed");
+    prefix_fails(value, "failed_records");
+    let mut value = prefix_fixture();
+    value["tier"]["fill"]["precondition"] = json!(false);
+    prefix_fails(value, "tier_fill_precondition");
+    for key in ["rows", "precondition"] {
+        let mut value = prefix_fixture();
+        value["tier"]["fill"].as_object_mut().unwrap().remove(key);
+        assert!(judge_prefix(&value).is_err(), "{key}");
+    }
 }

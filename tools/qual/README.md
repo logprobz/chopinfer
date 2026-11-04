@@ -407,8 +407,10 @@ as it raises the all-hit counter. Report the two arms' records separately.
 `kv_offload.py`'s `kv-offload-prefix-pressure` arm runs the pressure
 workload with the tier on (`--kv-offload-prefix on`) and no forced swaps,
 so C16 finds the anchors the fill evicted only in RAM. `report --off
-PRESSURE_OFF --tier TIER` judges it against the pressure off arm: every C1
-request bitwise equal, promotions and RAM hits above zero, missed demotions
+PRESSURE_OFF --tier TIER` judges it against the pressure off arm: both
+records complete captures without a failed request, the off arm passing its
+own end and control gates, every C1 request bitwise equal, the fill's
+precondition met, promotions and RAM hits above zero, missed demotions
 recorded, and no pending transfer, swapped request or stall at the end.
 Models whose bundles declare `chop.kv-offload.v1` run it in their full
 cohorts as `kv_offload_prefix_pressure`.

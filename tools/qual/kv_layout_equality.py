@@ -48,11 +48,13 @@ incomplete UTF-8 byte token decodes to "", so their entries merge.
 
 Both pairs must name one checkpoint, metadata, source commit, bundle,
 version, served model, effective profile and complete `model_options` map,
-compared with their JSON types (the determinism records from one run); the
-forced records must be live-bound to the gate's checkpoint pin and match
-their layout's determinism record in those fields and its package. The
+compared with their JSON types (the determinism records from one run). The
 package identity may differ with the KV layout; both are reported. The
-layout fields are validated by `layout_errors` against NATIVE_PLANES.
+layout fields are validated by `layout_errors` against NATIVE_PLANES. Each
+forced record must be live-bound to the gate's checkpoint pin and equal its
+layout's determinism record in every identity, option and profile field,
+its package included, but FORCED_ARM_FIELDS: its own process's startup
+nonce (forcing reference tokens reports nothing in /health).
 Presence is part of equality: a compared field one side holds, even as
 null, and the other lacks is a difference.
 
@@ -158,10 +160,14 @@ RUNNER_CHECK_ARM = "offline"
 NATIVE_PLANES = []
 # The serving identity fields that follow the KV layout.
 LAYOUT_FIELDS = ("package_identity",)
-# The serving identity fields each forced record shares with the
-# determinism record of its layout: one build, package and option map.
-BUILD_FIELDS = ("checkpoint_identity", "package_identity", "metadata_identity", "source_commit", "bundle_id",
-                "version", "model", *tap_binding.OPTIONS)
+# The serving identity fields in which a forced record may differ from the
+# determinism record of its layout. Each forced arm serves that record's arm
+# arguments with --debug-reference-tokens added, in another process, which
+# draws its own startup nonce (each record is bound live to its own, and
+# serving_identity leaves it out). /health reports no reference-tokens option
+# or digest, so every other identity, option and profile field, the package
+# identity included, must be equal.
+FORCED_ARM_FIELDS = ("startup_nonce",)
 # The effective profile fields of the KV layout, which `layout_errors`
 # validates instead of requiring them equal.
 LAYOUT_PROFILE = ("kv_cache_dtype", "kv_cache_planes")
@@ -403,19 +409,21 @@ def first_positions(left, right, limit=3):
 
 def compare_forced(native, comparison, served):
     """The forced records' result and errors: both live-bound records of the
-    gate's pinned references, forcing every position those define, from the
-    build and layouts of the determinism records `served`, and bit-identical
-    at every forced row's logprob and top-5 and every prefill row."""
+    gate's pinned references, forcing every position those define, each
+    served as its layout's determinism record in `served` was (every field
+    but FORCED_ARM_FIELDS), and bit-identical at every forced row's logprob
+    and top-5 and every prefill row."""
     errors = []
     identities_of = [serving_identity(record) for record in (native, comparison)]
     errors += served_errors(*identities_of, "forced records")
     names = ("forced record", "determinism record")
     for side, identity in zip(SIDES, identities_of):
-        pairs = [(identity, served[side], BUILD_FIELDS, ""),
-                 (identity["profile"], served[side]["profile"], LAYOUT_PROFILE, "profile ")]
-        errors += [f"the {side} forced record differs from its determinism record in "
-                   f"{where}{key}{presence(names, alone)}" for forced, recorded, keys, where in pairs
-                   for key, alone in differing_keys(picked(forced, keys), picked(recorded, keys))]
+        fields = [(key, alone) for key, alone in differing_keys(identity, served[side],
+                                                                {"profile", *FORCED_ARM_FIELDS})]
+        fields += [(f"profile {key}", alone) for key, alone in differing_keys(identity["profile"],
+                                                                              served[side]["profile"])]
+        errors += [f"the {side} forced record differs from its determinism record in {key}{presence(names, alone)}"
+                   for key, alone in fields]
     digest, references, expected, requests = forced_expectation()
     result = {"kv_cache_dtypes": [identity["profile"].get("kv_cache_dtype") for identity in identities_of],
               "references": references, "texts": len(expected), "forced_references": requests}

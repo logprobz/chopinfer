@@ -367,6 +367,44 @@ class CompareTests(unittest.TestCase):
                 self.assertIn(error, result["errors"])
                 self.assertNotIn("equal", result["forced"])
 
+    def test_forced_records_equal_their_layouts_determinism_records_but_in_the_forced_arm_fields(self):
+        # Each forced arm is its layout's determinism server forcing
+        # reference tokens, which /health does not report: forced records
+        # that agree with each other are still refused when they differ from
+        # their determinism records in any field but FORCED_ARM_FIELDS.
+        self.assertEqual(kv_layout_equality.FORCED_ARM_FIELDS, ("startup_nonce",))
+        serving = lambda value: value["server"]["health"]["serving"]  # noqa: E731
+        for name, mutate, field in (
+                ("max sequences", lambda value: value["profile"].update(max_sequences=1), "profile max_sequences"),
+                ("prefix cache", lambda value: value["profile"].update(prefix_cache=False), "profile prefix_cache"),
+                ("speculation", lambda value: value["profile"]["speculation"].update(tokens=0), "profile speculation"),
+                ("profile name", lambda value: value["profile"].update(name="tp8"), "profile name"),
+                ("an option", lambda value: value["model_options"].update(fast_route=False), "model_options"),
+                ("a typed option", lambda value: value["model_options"].update(fast_route=1), "model_options"),
+                ("a version", lambda value: value.update(version="2"), "version"),
+                ("a field only the forced arm reports", lambda value: value.update(kv_page_tokens=64),
+                 "kv_page_tokens: only the forced record holds it"),
+                ("a profile field only the forced arm reports, as null",
+                 lambda value: value["profile"].update(context_parallel_size=None),
+                 "profile context_parallel_size: only the forced record holds it")):
+            with self.subTest(name):
+                native, comparison = forced()
+                for record in (native, comparison):
+                    mutate(serving(record))
+                result = compared(forced_records=(native, comparison))
+                self.assertFalse(result["passed"])
+                for side in SIDES:
+                    self.assertIn(f"the {side} forced record differs from its determinism record in {field}",
+                                  result["errors"])
+                self.assertNotIn("equal", result["forced"])
+        # A field the determinism records alone hold differs too.
+        determinism = records()
+        for record in determinism:
+            serving(record)["kv_page_tokens"] = 64
+        result = compared(determinism)
+        self.assertEqual(result["errors"], [f"the {side} forced record differs from its determinism record in "
+                                            "kv_page_tokens: only the determinism record holds it" for side in SIDES])
+
     def test_the_long_text_is_one_request_of_one_prefill_and_the_rest_decode_rows(self):
         # A record whose long-context text scores fewer decode rows, or
         # labels them otherwise, is refused on either side, even when both

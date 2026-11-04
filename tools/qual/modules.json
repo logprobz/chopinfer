@@ -8,6 +8,10 @@
   "agentic_fake": {
    "EVENT_SECONDS": "number"
   },
+  "agentic_legacy_policy": {
+   "MODES": "list",
+   "POLICY_METRICS": "dict"
+  },
   "agentic_metrics": {
    "ENDED_IN_THINKING": "str",
    "INVALID_SESSION": "str",
@@ -37,8 +41,15 @@
   },
   "agentic_server": {
    "MODES": "list",
-   "POLICY_METRICS": "dict"
+   "RETIRED_FLAGS": "set",
+   "RETIRED_METRICS": "set"
   },
+  "agentic_trace": {
+   "CLASSES": "list",
+   "RANGES": "list",
+   "SCHEMA": "str"
+  },
+  "agentic_trace_analysis": {},
   "agentic_workload": {
    "CORPUS": "number",
    "DEFAULT_MAX_TOOL_RESULT_BYTES": "int",
@@ -325,11 +336,12 @@
    "Unbound": "number"
   },
   "refs": {
-   "CODE_INPUTS": "list",
-   "KEPT_SECTIONS": "list",
-   "LOCK_KEYS": "list",
+   "CODE_INPUTS": "set",
+   "KEPT_SECTIONS": "set",
+   "LOCK_KEYS": "set",
+   "PROOF_INPUTS": "set",
    "ROOT": "number",
-   "SNAPSHOT_FIELDS": "list"
+   "SNAPSHOT_FIELDS": "set"
   },
   "release_gate": {
    "judge": "number",

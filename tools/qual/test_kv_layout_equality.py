@@ -1243,14 +1243,131 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual({suite for _, _, suite, _ in running}, {"full"})
 
 
+def continuation(sequences, history):
+    """The tokens after `history` on which every sequence starting with it
+    agrees, empty when none does: runtime-host's
+    ReferenceTokensV1::continuation, whose first token the server forces."""
+    first, agreed = None, 0
+    for sequence in sequences:
+        if len(sequence) > len(history) and sequence[:len(history)] == history:
+            if first is None:
+                first, agreed = sequence[len(history):], len(sequence) - len(history)
+            else:
+                agreed = kv_layout_equality.verify_exact.common_prefix(
+                    first[:agreed], sequence[len(history):len(history) + agreed])
+    return [] if first is None else first[:agreed]
+
+
+def forced_walk(sequences, prompt, max_tokens):
+    """(each step's history length, agreed reach and forced token, the last
+    history) of a request that sends `prompt` for `max_tokens` outputs to a
+    server forcing `sequences`, up to and including the first step it does
+    not force, whose sampled token no reference decides."""
+    history, steps = list(prompt), []
+    for _ in range(max_tokens):
+        agreed = continuation(sequences, history)
+        steps.append((len(history), len(agreed), agreed[:1]))
+        if not agreed:
+            break
+        history.append(agreed[0])
+    return steps, history
+
+
+def option(arguments, flag, default=None):
+    """The value of `flag` in a planned record's arguments."""
+    return arguments[arguments.index(flag) + 1] if flag in arguments else default
+
+
+class Tokenizing:
+    """A client that answers /tokenize with no tokens and keeps the chat
+    messages it was asked to render."""
+
+    def __init__(self):
+        self.messages = []
+
+    def request(self, path, body):
+        assert path == "/tokenize", path
+        self.messages.append(body["messages"])
+        return {"tokens": []}, 0.0
+
+
+def forcing_requests(test, model, name):
+    """({record: [(prompt token IDs, max tokens)]}, [chat messages]) of every
+    request a forcing arm (serve --debug-reference-tokens) of `model`'s
+    configuration `name` receives in its full suite, other than the forced
+    references' own texts', derived from its planned records and their
+    declared inputs with the record tools' own functions."""
+    import common
+    import prefix_exact
+    import verify_exact
+    facts = runner.model_facts(model)
+    arms = runner.plan(facts, "full", name, runner.configurations(model)[name])
+    requests, chats = {}, []
+    for arm in arms:
+        if "--debug-reference-tokens" not in arm["serve"]:
+            continue
+        for step in arm["steps"]:
+            test.assertEqual(step["kind"], "record", f"derive the requests of {step['id']} on {arm['arm']}")
+            arguments, sent = step["arguments"], requests.setdefault(step["id"], [])
+            if step["script"] == "verify_exact.py":
+                exact = verify_exact.load_exact(verify_exact.exact_path(option(arguments, "--exact")))
+                named = verify_exact.named_references(
+                    [arguments[index + 1] for index, word in enumerate(arguments) if word == "--reference"])
+                texts = verify_exact.forced_texts(exact, named)
+                own = {text["name"] for _, value in named.values() for text in value["texts"]}
+                phases = int(option(arguments, "--phases", int(option(arguments, "--k", 0)) + 1))
+                chosen = option(arguments, "--texts")
+                for text in texts:
+                    if text["name"] in own or chosen and text["name"] not in chosen.split(","):
+                        continue
+                    ids = text["prompt_token_ids"]
+                    agreed = verify_exact.agreed_continuations(texts, ids)
+                    for phase in range(phases):
+                        sent += [(ids[:start], count) for start, count in
+                                 verify_exact.forced_runs(agreed, text["score_from"] + phase, len(ids))]
+                    # prefill_capture: the whole text, one output.
+                    sent.append((ids, 1))
+            elif step["script"] == "prefix_exact.py":
+                test.assertNotIn("--split", arguments, "derive the split record's requests")
+                policy = prefix_exact.prefix_policy()
+                exact = prefix_exact.load_exact(option(arguments, "--exact") or common.input_path("exact"))
+                chosen = option(arguments, "--texts")
+                texts = [text for text in exact["texts"] if not chosen or text["name"] in chosen.split(",")]
+                block = int(option(arguments, "--block-tokens", policy["block_tokens"]))
+                stride = int(option(arguments, "--stride", 1))
+                shard = prefix_exact.parse_shard(option(arguments, "--shard")) if "--shard" in arguments else None
+                select = (lambda entries: prefix_exact.shard_entries(entries, *shard)) if shard else (lambda entries: entries)
+                for text, position, anchor in select(prefix_exact.positions(texts, block, stride)):
+                    ids = text["prompt_token_ids"]
+                    sent += [(prefix_exact.primer(ids, anchor), 1), (ids[:position], 1)]
+                ends = option(arguments, "--prompt-end-stride")
+                ends = (stride if policy["prompt_end"] else 0) if ends is None else int(ends)
+                if ends:
+                    for text, position, anchor in select(prefix_exact.prompt_end_positions(texts, block, ends)):
+                        ids = text["prompt_token_ids"]
+                        sent += [(ids[:anchor], 1), (ids[:position], 1)]
+                first_shard = shard is None or shard[0] == 1
+                if first_shard and policy["media"] and "--skip-media" not in arguments:
+                    chats += [prefix_exact.media_messages(image, question, "run")
+                              for _, question, *images in prefix_exact.MEDIA_PAIRS for image in (*images, None)]
+                count = int(option(arguments, "--acceptance-prompts", 12))
+                if first_shard and policy["acceptance"] and count:
+                    client = Tokenizing()
+                    prefix_exact.acceptance_prompts(client, "model", "run", count)
+                    chats += client.messages
+            else:
+                test.fail(f"derive the requests of {step['script']} on {arm['arm']}")
+    return requests, chats
+
+
 class DeclarationTests(unittest.TestCase):
     """Each model configuration that runs this check (a BF16 comparison
     configuration such as kv-bf16)."""
 
     @staticmethod
     def configurations():
-        """The expanded declaration path of each configuration whose full
-        suite runs kv_layout_equality."""
+        """(model, configuration, expanded declaration path) of each
+        configuration whose full suite runs kv_layout_equality."""
         import declaration
         found = []
         for model in sorted(runner.declaration.previewed(runner.ROOT)):
@@ -1258,14 +1375,14 @@ class DeclarationTests(unittest.TestCase):
             for name in runner.configurations(model):
                 selected = runner.configuration_facts(facts, name)
                 if any(selected["checks"][check]["module"] == "kv_layout_equality" for check in selected["full"]):
-                    found.append(declaration.named(runner.declaration_name(model, name)))
+                    found.append((model, name, declaration.named(runner.declaration_name(model, name))))
         return found
 
     def test_a_configuration_declares_both_layouts_records_and_the_native_planes(self):
         import declaration
         configurations = self.configurations()
         self.assertTrue(configurations)
-        for path in configurations:
+        for _, _, path in configurations:
             with self.subTest(configuration=path.name):
                 value = declaration.load(path)
                 [check] = [check for check in value["checks"] if check["module"] == "kv_layout_equality"]
@@ -1299,33 +1416,64 @@ class DeclarationTests(unittest.TestCase):
                 self.assertLessEqual(set(kv_layout_equality.RUNNER_FORCED_REFERENCES),
                                      set(value["qualification"]["references"]))
 
-    def test_the_long_context_reference_moves_no_forceable_position_of_the_exact_texts(self):
-        # The runner adds the long-context text to the configuration's forcing
-        # file, which every forced arm of the configuration serves: no exact
-        # text may gain or lose a forceable position, so its other forced
-        # records score the positions they did.
+    def test_every_other_forcing_arm_request_has_the_same_forced_reach_with_and_without_the_long_sequence(self):
+        """The runner adds the long-context sequence to the forcing file every
+        forcing arm of the configuration serves. For every request those arms
+        receive other than the long-context text's own (prefix_exact's scored
+        positions, primers and prompt ends, verify_exact's forced runs and
+        prefill captures, derived from the configuration's planned records
+        and declared inputs), the server's agreed reach and forced token at
+        each history it forces from the request's prompt end onward are the
+        same with and without the long-context sequence, and where forcing
+        stops the long-context sequence starts with no later history. A chat
+        prompt (prefix_exact's media and acceptance requests) opens with BOS
+        and a role boundary token, as every declared chat render does, and
+        the long-context sequence holds neither as its second token, so it
+        starts with no chat history."""
         import common
         import declaration
         import verify_exact
         checked = 0
-        for path in self.configurations():
+        for model, name, path in self.configurations():
             value = declaration.load(path)
             declared = [common.declared_path(value["inputs"]["exact"]),
-                        *(common.declared_path(value["qualification"]["references"][name]["path"])
-                          for name in kv_layout_equality.RUNNER_FORCED_REFERENCES)]
+                        *(common.declared_path(value["qualification"]["references"][reference]["path"])
+                          for reference in kv_layout_equality.RUNNER_FORCED_REFERENCES)]
             if not all(file is not None and file.is_file() for file in declared):
                 continue
-            with patch.dict(os.environ, {"CHOPINFER_QUAL_CONFIG": str(path)}):
+            with self.subTest(configuration=path.name), \
+                    patch.dict(os.environ, {"CHOPINFER_QUAL_CONFIG": str(path)}):
                 exact = verify_exact.load_exact(verify_exact.exact_path(None))
                 named = verify_exact.named_references(kv_layout_equality.RUNNER_FORCED_REFERENCES)
-            forced = verify_exact.forced_texts(exact, named)
-            for text in exact["texts"]:
-                ids, start = text["prompt_token_ids"], text["score_from"]
-                alone, beside = (verify_exact.agreed_continuations(texts, ids)[start:]
-                                 for texts in (exact["texts"], forced))
-                self.assertEqual([reach >= 1 for reach in alone], [reach >= 1 for reach in beside],
-                                 (path.name, text["name"]))
-            checked += 1
+                without = [text["prompt_token_ids"] for text in exact["texts"]]
+                added = [text["prompt_token_ids"] for _, reference in named.values() for text in reference["texts"]]
+                forcing = [*without, *added]
+                requests, chats = forcing_requests(self, model, name)
+                self.assertTrue(all(requests.values()), {record: len(sent) for record, sent in requests.items()})
+                for record, sent in requests.items():
+                    for prompt, outputs in sent:
+                        alone, history = forced_walk(without, prompt, outputs)
+                        beside, _ = forced_walk(forcing, prompt, outputs)
+                        self.assertEqual(alone, beside, (record, len(prompt), outputs))
+                        if alone[-1][1] == 0:
+                            self.assertFalse(any(sequence[:len(history)] == history for sequence in added),
+                                             (record, len(prompt)))
+                # Chat prompts, from the declared chat renders and frontend.
+                frontend = json.loads(common.declared_path(value["inputs"]["frontend"]).read_text())["vocabulary"]
+                bos = frontend["bos_token_id"]
+                roles = {token["id"] for token in frontend["boundary_tokens"]} - {bos, frontend["eos_token_id"]}
+                renders = json.loads(common.declared_path(value["inputs"]["chat_renders"]).read_text())
+                self.assertTrue(renders)
+                for render in renders:
+                    self.assertEqual(render["token_ids"][0], bos, render["id"])
+                    self.assertIn(render["token_ids"][1], roles, render["id"])
+                first_roles = {render["messages"][0]["role"] for render in renders}
+                self.assertTrue(chats)
+                for messages in chats:
+                    self.assertIn(messages[0]["role"], first_roles)
+                for sequence in added:
+                    self.assertNotIn(sequence[1], roles | {bos})
+                checked += 1
         if not checked:
             self.skipTest("needs a configuration's pinned exact and long-context references under $CHOPINFER_DATA")
 

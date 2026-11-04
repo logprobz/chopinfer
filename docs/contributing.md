@@ -83,6 +83,13 @@ libraries marked `lib-tests-in-one-process` one at a time before nextest.
 `RUST_TEST_THREADS` still limits tests within each such library; nextest's
 `--test-threads` limit does not control those separate processes.
 
+A test removes what it creates under `TMPDIR` when it ends, through a guard
+that removes its directory on drop (each crate's test `Scratch`), so a normal
+run leaves nothing there. A fixture that several test processes share, such
+as the models' native module fixture (`cached_native_fixture`), is built once
+into the Cargo target directory instead, since nextest runs each test in a
+process of its own.
+
 ### Landing and release gates
 
 A change lands when these pass. The CPU checks run on its final tip:

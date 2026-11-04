@@ -56,22 +56,60 @@ SHELL_TOKEN = re.compile(r"[A-Za-z0-9_.*/${}-]+")
 SHELL_ROOT = re.compile(r"^(?:\$\{?[A-Za-z_]+\}?/)+")
 
 
-def glob_expression(pattern):
-    """A shell glob as a regular expression: `*` stays within one path part, `**` crosses parts,
-    and a character class (`[a-z]`, `[!_]`) matches one character of a part."""
-    parts = re.split(r"(\*\*/?|\*|\?|\[!?\]?[^]/]*\])", pattern)
-    special = {"**/": "(?:.*/)?", "**": ".*", "*": "[^/]*", "?": "[^/]"}
+def glob_class(members):
+    """A character class's members (between `[` and `]`) as a regular expression, read as
+    fnmatch reads them: a leading `!` negates, `x-y` is a range, a backward range matches
+    nothing and every other character stands for itself. A class matches one character of a
+    path part, never `/`."""
+    negated = members.startswith("!")
+    members = members[negated:]
+    items, index = [], 0
+    while index < len(members):
+        if index + 2 < len(members) and members[index + 1] == "-":
+            low, high = members[index], members[index + 2]
+            if low <= high:
+                items.append(f"{re.escape(low)}-{re.escape(high)}")
+            index += 3
+        else:
+            items.append(re.escape(members[index]))
+            index += 1
+    if negated:
+        return "[^/" + "".join(items) + "]"
+    return "[" + "".join(items) + "]" if items else "(?!)"
 
-    def translated(part):
-        if part in special:
-            return special[part]
-        if len(part) > 2 and part[0] == "[" and part[-1] == "]":
-            negated = part[1] == "!"
-            members = "".join(char if char == "-" else re.escape(char) for char in part[1 + negated:-1])
-            # The split keeps `/` out of a class, so only a negated one must exclude it.
-            return f"[^/{members}]" if negated else f"[{members}]"
-        return re.escape(part)
-    return re.compile("".join(translated(part) for part in parts))
+
+def glob_expression(pattern):
+    """A shell glob as a regular expression: `*` and `?` stay within one path part, `**`
+    crosses parts, and a character class (glob_class) matches one character of a part. A `[`
+    that opens no class within its part stands for itself, as in fnmatch."""
+    expression, index = [], 0
+    while index < len(pattern):
+        char = pattern[index]
+        if pattern.startswith("**/", index):
+            expression.append("(?:.*/)?")
+            index += 3
+        elif pattern.startswith("**", index):
+            expression.append(".*")
+            index += 2
+        elif char in "*?":
+            expression.append("[^/]*" if char == "*" else "[^/]")
+            index += 1
+        elif char == "[":
+            # The class ends at the first `]` after an optional `!` and a `]` member.
+            end = index + 1
+            end += end < len(pattern) and pattern[end] == "!"
+            end += end < len(pattern) and pattern[end] == "]"
+            end = pattern.find("]", end)
+            if end < 0 or "/" in pattern[index:end]:
+                expression.append(re.escape(char))
+                index += 1
+            else:
+                expression.append(glob_class(pattern[index + 1:end]))
+                index = end + 1
+        else:
+            expression.append(re.escape(char))
+            index += 1
+    return re.compile("".join(expression))
 
 
 def unittest_names(argv, index):

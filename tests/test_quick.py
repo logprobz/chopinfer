@@ -2,6 +2,7 @@
 import importlib.util
 import contextlib
 import io
+import fnmatch
 import json
 import os
 import shutil
@@ -561,7 +562,8 @@ class CheckInputs(unittest.TestCase):
         # Character classes in a pattern, a nested global over an enclosing parameter, and
         # resolve's positional argument.
         "tools/listing/classes.py": 'from pathlib import Path\nHERE = Path(__file__).parent\n'
-                                    'MODULES = HERE.glob("[a-z_]*.py")\nOTHERS = HERE.glob("[!a-z]*.json")\n',
+                                    'MODULES = HERE.glob("[a-z_]*.py")\nOTHERS = HERE.glob("[!a-z]*.json")\n'
+                                    'NOTHING = HERE.glob("[z-a]*.sh")\n',
         "tools/listing/factory.py": 'from pathlib import Path\nHERE = Path(__file__).parent\n'
                                     'def factory(HERE):\n    def listed():\n        global HERE\n'
                                     '        return HERE.glob("*.py")\n    return listed\n',
@@ -637,6 +639,19 @@ class CheckInputs(unittest.TestCase):
                     self.assertTrue(path.startswith("fixtures/"), path)
         self.assertGreater(directories, 0)
 
+    def test_glob_classes_read_as_fnmatch_reads_them(self):
+        # pathlib reads each part of a pattern as fnmatch does; within a part a glob must match the
+        # same names, and never raise.
+        patterns = ("[z-a]*", "[!z-a]?", "[az-ab]", "[a-c-e]", "[--a]", "[a-]", "[-a]", "[]a]", "[!]a]",
+                    "[]", "[!]", "[^a]", "[!^]", "[[]", "[\\]", "[a&&b]", "[a~~b]", "[a||b]", "x[", "[!a-c]*.py")
+        names = ("a", "b", "c", "d", "e", "z", "-", "]", "!", "^", "[", "\\", "&", "~", "|", "x[", "[]", "[!]",
+                 "ab", "zz", "d.py", "aa.py")
+        for pattern in patterns:
+            expression = check_inputs.glob_expression(pattern)
+            for name in names:
+                with self.subTest(pattern=pattern, name=name):
+                    self.assertEqual(bool(expression.fullmatch(name)), fnmatch.fnmatchcase(name, pattern))
+
     def test_computed_loads_cover_the_named_directories_modules(self):
         inputs = self.scanner().inputs(["python3", "-B", "tests/test_computed.py"])
         self.assertTrue(inputs.covers("ci/loaded.py"))
@@ -669,8 +684,9 @@ class CheckInputs(unittest.TestCase):
         for path in ("tools/listing/listed.py", "tools/listing/data/added.py", "tools/listing/deep/added.sh"):
             self.assertTrue(forms.covers(path), path)
         classes = self.scanner().inputs(["python3", "-B", "tools/listing/classes.py"])
+        # A descending range matches nothing, as in pathlib.
         for path, covered in (("tools/listing/listed.py", True), ("tools/listing/Upper.json", True),
-                              ("tools/listing/cases.json", False)):
+                              ("tools/listing/cases.json", False), ("tools/listing/zed.sh", False)):
             self.assertEqual(classes.covers(path), covered, path)
         for script in ("tools/listing/factory.py", "tools/listing/strict.py"):
             self.assertTrue(self.scanner().inputs(["python3", "-B", script]).covers("tools/listing/listed.py"), script)

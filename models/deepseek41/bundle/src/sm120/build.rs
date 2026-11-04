@@ -580,6 +580,13 @@ pub fn selection(
         }
         owners.push((shared::cubin_name(geometry), geometry.id));
         owners.push((mxfp8_fold::dense_cubin_name(geometry), geometry.id));
+        // The geometries `mxfp8_fold::dense_wide_cubins` compiles a module for.
+        if !mxfp8_fold::wide_catalog(geometry)
+            .expect("wide verify fold catalog")
+            .is_empty()
+        {
+            owners.push((mxfp8_fold::dense_wide_cubin_name(geometry), geometry.id));
+        }
         owners.push((mxfp8_fold::cubin_name(geometry), geometry.id));
         owners.push((mxfp8_fold::prefill_cubin_name(geometry), geometry.id));
         owners.push((mxfp8_fold::prefill_split_cubin_name(geometry), geometry.id));

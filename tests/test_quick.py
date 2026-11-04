@@ -418,6 +418,15 @@ class AffectedChecks(unittest.TestCase):
         modules = self.qualification_modules("tools/qual/color_probe.py")
         self.assertIn("test_color_probe", modules)
         self.assertNotIn("test_tapdiff", modules)
+        # checks.py reads one module's constants, not module_metadata's listing of them all.
+        self.assertNotIn("test_checks", modules)
+
+    def test_module_metadata_runs_for_each_module_it_lists(self):
+        # module_metadata.py derives modules.json from every module in tools/qual, so an
+        # edited or added module selects the test that keeps it current.
+        for path in ("tools/qual/refs.py", "tools/qual/agentic_server.py", "tools/qual/added_module.py"):
+            with self.subTest(path=path):
+                self.assertIn("test_module_metadata", self.qualification_modules(path))
 
     def test_portable_shell_guards_run_when_changed(self):
         for path, name in (("tests/bundle-boundary.sh", "bundle-boundary"),
@@ -515,6 +524,16 @@ class CheckInputs(unittest.TestCase):
         "models/a/model.toml": "",
         "fixtures/tree/nested/two.bin": "",
         "fixtures/tree/nested/three.rs": "",
+        # Listings of a directory built from __file__ or literals, and of one joined to an unknown name.
+        "tools/listing/lister.py": 'import ast\nfrom pathlib import Path\nHERE = Path(__file__).parent\n'
+                                   'ROOT = Path(__file__).resolve().parents[2]\n'
+                                   'for path in HERE.glob("*.py"):\n    ast.parse(path.read_text())\n'
+                                   'for path in (ROOT / "fixtures" / "listed").rglob("*.py"):\n    pass\n'
+                                   'for path in (output / "fixtures").rglob("*.py"):\n    pass\n',
+        "tools/listing/listed.py": "import tools.unlisted\n",
+        "tools/unlisted.py": "",
+        "fixtures/listed/deep/case.py": "",
+        "fixtures/other/case.py": "",
     }
 
     def scanner(self):
@@ -584,6 +603,15 @@ class CheckInputs(unittest.TestCase):
         self.assertTrue(inputs.covers("ci/loaded.py"))
         # Covered, not scanned in turn.
         self.assertFalse(inputs.covers("tools/unloaded.py"))
+
+    def test_listings_of_known_directories_cover_what_they_list(self):
+        inputs = self.scanner().inputs(["python3", "-B", "tools/listing/lister.py"])
+        # Python included, and a file added where a listing looks.
+        for path in ("tools/listing/listed.py", "tools/listing/added.py", "fixtures/listed/deep/case.py"):
+            self.assertTrue(inputs.covers(path), path)
+        # Listed, not scanned in turn; a directory joined to an unknown name is not listed.
+        for path in ("tools/unlisted.py", "fixtures/other/case.py"):
+            self.assertFalse(inputs.covers(path), path)
 
     def test_the_model_inventory_check_covers_the_ci_modules_its_tests_load(self):
         import cpu

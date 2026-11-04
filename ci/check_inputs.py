@@ -13,7 +13,14 @@ walks trees (an rglob or walk call, a Git listing or search, or a `**`
 glob pattern). Below it, compiled source (SOURCE) is covered only by a walk
 without a literal name pattern or with one the source name matches; other
 files may be read through a path built from parts and stay covered. Its
-Python and shell files are covered where they are imported or named. A
+Python and shell files are covered where they are imported, named or
+listed. A glob or rglob call lists the directory its receiver names when
+that is built from `__file__` (`Path(__file__).parent`, `.parents[N]`) or a
+literal and joined with literals by `/`, directly or through a name's one
+module-level assignment: what its literal pattern matches there is covered,
+Python and shell files included, but not scanned in turn. A receiver built
+from anything else, such as a parameter, lists nothing, and a call on a
+line that declares its walk (below) keeps the declaration. A
 walk whose line says `check-inputs: walks outside the repository` reads
 only directories outside the tree, such as installs and checkpoints; one
 whose line says `check-inputs: walks DIR, ...` walks only those repository
@@ -128,6 +135,64 @@ def walks(tree, text):
     return patterns, declared
 
 
+# Calls that list a directory, each with whether it lists every depth.
+LISTINGS = {"glob": False, "rglob": True}
+# Calls whose result names the path they are given, or the one they are called on.
+SAME_PATH = ("Path", "PurePath", "PurePosixPath", "resolve", "absolute")
+
+
+def assigned_once(tree):
+    """The values of the names a file assigns exactly once at module level."""
+    values, seen = {}, set()
+    for statement in tree.body:
+        targets = statement.targets if isinstance(statement, ast.Assign) else []
+        if len(targets) == 1 and isinstance(targets[0], ast.Name):
+            name = targets[0].id
+            if name in seen:
+                values.pop(name, None)
+            else:
+                values[name] = statement.value
+            seen.add(name)
+    return values
+
+
+def listed_directory(node, assigned, path, seen=frozenset()):
+    """(anchored, directory) for the receiver of a listing in the file at `path`:
+    anchored, and relative to the root, when it is built from __file__
+    (`Path(__file__).parent`, `.parents[N]`); not anchored when it is a literal; either
+    joined with literals by `/`. A name counts through its one module-level assignment
+    (`assigned`). None for any other receiver, such as a parameter."""
+    def named(child):
+        return listed_directory(child, assigned, path, seen)
+
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return False, node.value
+    if isinstance(node, ast.Name):
+        if node.id == "__file__":
+            return True, path
+        if node.id in assigned and node.id not in seen:
+            return listed_directory(assigned[node.id], assigned, path, seen | {node.id})
+        return None
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        left, right = named(node.left), named(node.right)
+        return (left[0], os.path.join(left[1], right[1])) if left and right and not right[0] else None
+    if isinstance(node, ast.Call):
+        name = getattr(node.func, "attr", getattr(node.func, "id", None))
+        if name not in SAME_PATH or node.keywords:
+            return None
+        if len(node.args) == 1:
+            return named(node.args[0])
+        return named(node.func.value) if not node.args and isinstance(node.func, ast.Attribute) else None
+    if isinstance(node, ast.Attribute) and node.attr == "parent":
+        levels, base = 1, named(node.value)
+    elif (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) and node.value.attr == "parents"
+          and isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, int)):
+        levels, base = node.slice.value + 1, named(node.value.value)
+    else:
+        return None
+    return base and (base[0], os.path.normpath(os.path.join(base[1], *[".."] * levels)))
+
+
 class Inputs:
     """What one check covers: files, directories (their own files, or whole trees) and globs."""
 
@@ -229,7 +294,8 @@ class Scanner:
                 tree = ast.parse(text)
             except SyntaxError:
                 return found
-            strings, imports, loads = [], [], []
+            strings, imports, loads, listings = [], [], [], []
+            lines = text.splitlines()
             for node in ast.walk(tree):
                 if isinstance(node, ast.Constant) and isinstance(node.value, str):
                     strings.append(node.value)
@@ -239,6 +305,11 @@ class Scanner:
                     name = getattr(node.func, "attr", getattr(node.func, "id", None))
                     if name in LOADERS and len(node.args) > LOADERS[name]:
                         loads.append(node.args[LOADERS[name]])
+                    # A listing with a literal pattern, unless its line declares what it walks.
+                    if (name in LISTINGS and isinstance(node.func, ast.Attribute) and node.args
+                            and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)
+                            and not DECLARED_WALK.search(lines[node.lineno - 1])):
+                        listings.append((node.func.value, node.args[0].value, LISTINGS[name]))
             # A path is often joined from parts (ROOT / "tools" / "qual" / "x.py"), so names also
             # resolve against the directories the file names; those may be on its import path too.
             for _ in range(3):
@@ -251,6 +322,20 @@ class Scanner:
             for value in strings:
                 if MODULE_NAME.fullmatch(value):
                     found.modules.update(self.module(value, bases, whole=True))
+            # A listing of a repository directory covers what its pattern matches there, now or
+            # once added, Python and shell files included; like computed loads, those are not
+            # scanned in turn. A literal directory resolves like a named one.
+            assigned = assigned_once(tree) if listings else {}
+            for receiver, pattern, recursive in listings:
+                directory = listed_directory(receiver, assigned, path)
+                if not directory:
+                    continue
+                anchored, value = directory
+                for base in ["."] if anchored else bases[:2]:
+                    listed = os.path.normpath(os.path.join(base, value))
+                    glob = os.path.normpath(os.path.join(listed, "**" if recursive else "", pattern))
+                    if (listed == "." or listed in self.directories) and not glob.startswith(("..", "/")):
+                        found.globs.add(glob)
             patterns, declared = walks(tree, text)
             # Any sign of a walk covers the non-source files below every directory the file
             # names; "" matches no source name.

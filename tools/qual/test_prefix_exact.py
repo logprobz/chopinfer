@@ -925,16 +925,21 @@ class RamServer(FakeServer):
 
     def request(self, path, body=None, stream=False):
         response, seconds = super().request(path, body, stream)
+        self.count(response, self.gpu_hits > 0)
+        return response, seconds
+
+    def count(self, response, gpu):
+        """Count a response's hit, a GPU hit when `gpu`; returns whether it hit."""
         cached = ((response.get("usage") or {}).get("prompt_tokens_details") or {}).get("cached_tokens")
         if cached:
             self.counts["hits"] += 1
             self.counts["reused_tokens"] += cached
-            if self.gpu_hits:
-                self.gpu_hits -= 1
+            if gpu:
+                self.gpu_hits = max(0, self.gpu_hits - 1)
             else:
                 self.counts["ram_hits"] += 1
                 self.counts["ram_reused_tokens"] += cached
-        return response, seconds
+        return bool(cached)
 
     def metrics(self, client):
         return super().metrics(client) + ("".join(f"{prefix_exact.RAM_COUNTERS[key]} {value}\n"
@@ -1028,16 +1033,29 @@ class RamHitArmTests(unittest.TestCase):
             self.assertTrue(failed["ram_hit_errors"])
             self.assertNotIn("ram_hit_errors", prefix_exact.judged_split({"rows": rows}, 64))
 
-    def test_the_record_carries_every_scored_sections_ram_evidence(self):
-        server = RamServer(64, self.ids)
-        server.identity = lambda model: {"model": "m"}
+    def test_a_media_hit_that_stays_on_the_gpu_fails_the_ram_hit_arm(self):
+        for gpu, errors in ((0, []), (1, ["media"])):
+            with self.subTest(gpu_media_hits=gpu):
+                server = RamMediaServer([], gpu_media_hits=gpu)
+                ram = []
+                with mock.patch.object(prefix_exact, "metrics_text", server.metrics):
+                    result = prefix_exact.ram_scored(server, ram, "media", lambda: prefix_exact.media_check(
+                        server, "m", "run", 64), prefix_exact.media_cached)
+                self.assertTrue(result["passed"])
+                # Three repeats, the other image and its cold control per pair.
+                self.assertEqual(len(prefix_exact.media_cached(result)), 5 * len(result["cases"]))
+                self.assertGreater(ram[0]["hit_requests"], 0)
+                self.assertEqual([error["section"] for error in prefix_exact.ram_errors(ram)], errors)
+
+    def record(self, server, skip_media=False):
+        """record --ram-hit against `server`, returning its receipt."""
         prompts = [list(range(2000 + index, 2100 + index)) for index in range(2)]
         exact = {"schema": prefix_exact.prefix_policy()["reference_schema"],
                  "texts": [text("a", self.ids, [-0.5] * 199, self.ids[1:])]}
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory, "exact.json")
             path.write_text(json.dumps(exact))
-            args = mock.Mock(exact=str(path), url="http://unused", timeout=1, model=None, skip_media=True,
+            args = mock.Mock(exact=str(path), url="http://unused", timeout=1, model=None, skip_media=skip_media,
                              shard=None, split=None, texts=None, block_tokens=64, stride=1, concurrency=2,
                              prompt_end_stride=None, acceptance_prompts=2, acceptance_tokens=8,
                              run_id="ram", ram_hit=True, server_log=None)
@@ -1050,7 +1068,29 @@ class RamHitArmTests(unittest.TestCase):
                     mock.patch.object(prefix_exact, "receipt") as receipt, \
                     self.assertRaises(SystemExit):
                 prefix_exact.record(args)
-        recorded = receipt.call_args.args[2]
+        return receipt.call_args.args[2]
+
+    def test_the_record_brackets_the_media_check(self):
+        if not prefix_exact.prefix_policy()["media"]:
+            self.skipTest("the selected policy runs no media check")
+        recorded = self.record(RamMediaServer(self.ids))
+        self.assertEqual([section["section"] for section in recorded["ram_hits"]],
+                         ["positions", "prompt_end", "media", "acceptance"])
+        self.assertTrue(recorded["media"]["passed"])
+        self.assertTrue(recorded["checks"]["ram_hits"], recorded["ram_hit_errors"])
+        self.assertTrue(recorded["checks"]["media"])
+        # A media hit the server kept on the GPU fails only the RAM check.
+        recorded = self.record(RamMediaServer(self.ids, gpu_media_hits=1))
+        self.assertTrue(recorded["checks"]["media"])
+        self.assertTrue(recorded["checks"]["hit_equals_cold"])
+        self.assertEqual([error["section"] for error in recorded["ram_hit_errors"]], ["media"])
+        self.assertFalse(recorded["checks"]["ram_hits"])
+        self.assertFalse(recorded["passed"])
+
+    def test_the_record_carries_every_scored_sections_ram_evidence(self):
+        server = RamServer(64, self.ids)
+        server.identity = lambda model: {"model": "m"}
+        recorded = self.record(server, skip_media=True)
         self.assertEqual(recorded["hit_tier"], "ram")
         self.assertEqual([section["section"] for section in recorded["ram_hits"]],
                          ["positions", "prompt_end", "acceptance"])
@@ -1345,6 +1385,30 @@ class MediaChatServer:
         return {"choices": [{"message": {"content": ""}, "logprobs": {"content": [
                     {"token": f"t{token}", "logprob": -0.5} for token in tokens]}}],
                 "usage": response["usage"]}, 0.0
+
+
+class RamMediaServer:
+    """A RamServer over `reference` for completions and a MediaChatServer
+    for chat, both behind the forced RAM tier: every hit counts as a RAM hit
+    except the first `gpu_media_hits` media hits, which stay GPU hits."""
+
+    def __init__(self, reference, gpu_media_hits=0):
+        self.text, self.media = RamServer(64, reference), MediaChatServer(64)
+        self.gpu_media_hits = gpu_media_hits
+
+    def identity(self, model):
+        return {"model": "m"}
+
+    def request(self, path, body=None, stream=False):
+        if path not in ("/tokenize", "/v1/chat/completions"):
+            return self.text.request(path, body, stream)
+        response, seconds = self.media.request(path, body, stream)
+        if path != "/tokenize" and self.text.count(response, self.gpu_media_hits > 0):
+            self.gpu_media_hits = max(0, self.gpu_media_hits - 1)
+        return response, seconds
+
+    def metrics(self, client):
+        return self.text.metrics(client) + "chop_media_cache_hits_total 0\n"
 
 
 class MediaSizingTests(unittest.TestCase):

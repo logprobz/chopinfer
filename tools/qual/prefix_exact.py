@@ -107,8 +107,8 @@ mode demotes every public capture to the host tier and drops its GPU anchor,
 so every hit restores an anchor copied back from RAM. The record is the
 GPU-hit arm's, judged the same way (hit rows bitwise equal to cold, the
 anchor rules' cached tokens, the drafter acceptance bound), and also
-`ram_hits`: around the scored positions, the acceptance check and a split
-record, the server's `chop_prefix_cache_ram_hits_total` must rise once for
+`ram_hits`: around the scored positions, the media check, the acceptance
+check and a split record, the server's `chop_prefix_cache_ram_hits_total` must rise once for
 each request that reported cached tokens, as its all-hit counter does, and
 its reused tokens must all be RAM ones. Records of the two arms never
 merge in `report`.
@@ -656,6 +656,13 @@ def acceptance_cached(result):
     return [run[arm]["cached_tokens"] for run in result["runs"] for arm in ARMS]
 
 
+def media_cached(result):
+    """The cached tokens of every request of the media check."""
+    return [tokens for case in result["cases"]
+            for tokens in (*case["first"]["cached_tokens"], case["second"]["cached_tokens"],
+                           case["second"]["cold_cached_tokens"])]
+
+
 def media_cases(client, model, run_id, reuse):
     """Each media pair's prompts, with the text after the image grown until
     both prompts span two units of `reuse` tokens past the media start: a
@@ -712,7 +719,7 @@ def media_check(client, model, run_id, reuse, cases=None):
             "second": {"image": second[:2], "content": other["content"],
                        "prompt_tokens": sized["prompt_tokens"][1],
                        "cached_tokens": other["cached_tokens"], "encoder_cache_hits": encoder_hits,
-                       "cold_content": other_cold["content"],
+                       "cold_content": other_cold["content"], "cold_cached_tokens": other_cold["cached_tokens"],
                        "same_tokens_as_cold": other["tokens"] == other_cold["tokens"],
                        "max_abs_dlogprob_vs_cold": max(
                            (abs(a - b) for a, b in zip(other["logprobs"], other_cold["logprobs"])),
@@ -1196,7 +1203,8 @@ def record(args):
         "positions": scored, "prompt_end": prompt_end,
         "detokenized": detokenized(client, model, top1_ids),
         "media": ({"kind": "image", "status": "not_applicable", "passed": None, "reason": media_reason}
-                  if media_reason else media_check(client, model, args.run_id, reuse, media_prompts) if media else None),
+                  if media_reason else ram_scored(client, ram, "media", lambda: media_check(
+                      client, model, args.run_id, reuse, media_prompts), media_cached) if media else None),
         "acceptance": ram_scored(client, ram, "acceptance", lambda: acceptance_check(
             client, model, args.run_id, args.acceptance_prompts, args.acceptance_tokens, reuse),
             acceptance_cached) if acceptance else None}

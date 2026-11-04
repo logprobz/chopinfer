@@ -238,6 +238,7 @@
   },
   "kv_layout_equality": {
    "BLOCK_BYTES": "number",
+   "DESCRIPTOR_FIELDS": "list",
    "KV_DTYPES": "list",
    "KV_PHASES": "list",
    "KV_PLANES": "list",

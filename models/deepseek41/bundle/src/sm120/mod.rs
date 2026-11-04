@@ -1345,19 +1345,19 @@ impl crate::Kernels {
 
     /// The payload of the copy-engine reduction that replaces a prefill
     /// collective, or `None` for a collective it does not replace. The
-    /// F32-partial contract sends F32 partials; the BF16-partial contract's
-    /// two-shot and turns entries send each rank's partial rounded once to
-    /// BF16, as they do. With `composed`, the composed form's F32
-    /// reduce-scatter (unadmitted phased entries) is replaced with F32
-    /// partials: under the BF16-partial contract its preceding launches
-    /// have already rounded the partials in place, so the sum is the same.
+    /// BF16-partial contract's two-shot and turns entries send each rank's
+    /// partial rounded once to BF16, as they do. With `composed`, the
+    /// composed form's F32 reduce-scatter (unadmitted phased entries) is
+    /// replaced with F32 partials: under the BF16-partial contract its
+    /// preceding launches have already rounded the partials in place, so
+    /// the sum is the same.
     pub(crate) fn prefill_dma_payload(
         symbol: &str,
         composed: bool,
     ) -> Option<crate::ops::DmaPayload> {
         use crate::ops::DmaPayload;
-        use kernels_sm120::comm::{phased_bf16, phased_f32, phased_turns_bf16};
-        if symbol == phased_f32::ROUND_SYMBOL || composed && symbol == COMPOSED_SCATTER {
+        use kernels_sm120::comm::{phased_bf16, phased_turns_bf16};
+        if composed && symbol == COMPOSED_SCATTER {
             Some(DmaPayload::F32)
         } else if symbol == phased_bf16::SYMBOL || symbol == phased_turns_bf16::SYMBOL {
             Some(DmaPayload::Bf16)

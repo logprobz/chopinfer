@@ -472,13 +472,20 @@ long_context`, on the runner's `kv-native-forced` arm and the
 configuration's forced `prefix` arm). Every request's text, finish reason,
 token IDs, tokens and selected and top logprobs must be bit-identical. The
 forced records must hold the same positions, those the gate's pinned exact
-and long-context references define, with bit-identical logprobs and top-5
-at every forced position and bit-identical prefill rows; the first
-differing text and position is named. The long-context text (for a
-`long_128k` reference, 131,072 tokens) is forced through its prefill
-(130,048 tokens) and then decoded for its 1,024 scored positions, which
-reaches multi-chunk prefill and decode over a long history; the runner
-adds it to the configuration's forcing file (`RUNNER_FORCED_REFERENCES`). A teacher capture cannot stand
+and long-context references define, each with the row kind its request
+gives it, with bit-identical logprobs and top-5 at every forced position
+and bit-identical prefill rows; the first differing text and position is
+named. Every row must first be complete and typed: a finite float logprob,
+and a top-5 map of string labels to finite floats (5 entries, 6 when the
+forced token ranks below them, fewer only where the completions API's
+decoded labels merge tokens) or a prefill row's top-1 token ID. The
+long-context text (for a `long_128k` reference, 131,072 tokens scored from
+130,048) is one request of a 130,048-token prompt and 1,024 forced outputs:
+the first from the prompt's last prefill row, the other 1,023 from decode
+rows. The comparator requires exactly that 1 prefill and 1,023 decode rows
+on each side and reports them (`forced_references`). This reaches
+multi-chunk prefill and decode over a long history; the runner adds the
+text to the configuration's forcing file (`RUNNER_FORCED_REFERENCES`). A teacher capture cannot stand
 in for it, since the teacher scores prefill rows only. A server that cannot
 hold the long history refuses the record, naming the KV capacity it needs,
 and the check fails.

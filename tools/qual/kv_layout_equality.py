@@ -25,9 +25,12 @@ a `kv-native` server, which serves `auto`, the package's preferred layout;
 and a forced record of each layout (verify_exact.py record --k 0
 --require-row-shapes --reference long_context, on the forced `prefix` arm
 and a `kv-native-forced` arm), which teacher-forces the exact reference's
-texts and the pinned long-context text: for a long_128k reference a
-130,048-token forced prefill and 1,024 forced decode positions, which no
-teacher capture can stand in for since it scores prefill rows only. The
+texts and the pinned long-context text: for a long_128k reference one
+request of a 130,048-token prompt and 1,024 forced outputs, the first from
+the prompt's last prefill row and the other 1,023 from decode rows, which
+each record must hold exactly (row kinds as forced_expectation derives
+them), and which no teacher capture can stand in for since it scores
+prefill rows only. The
 runner adds RUNNER_FORCED_REFERENCES to the configuration's forcing file.
 `compare` requires every request's text, finish reason, token IDs, tokens
 and selected and top logprobs to be bit-identical across the determinism

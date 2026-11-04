@@ -781,6 +781,10 @@ mod tests {
         pub gpu_memory_utilization: f64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub graph_memory_reserve_mib: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub kv_offload_gib: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub kv_offload_prefix: Option<bool>,
         pub status: ProfileStatus,
         pub evidence: Vec<String>,
     }
@@ -871,6 +875,37 @@ mod tests {
                     assert!(matches!(qualification.status, ProfileStatus::Experimental));
                 }
             }
+        }
+    }
+
+    /// A profile that declares the host's offload arena and RAM prefix tier
+    /// keeps them through the experimental rewrite and still reads as the
+    /// host's schema.
+    #[test]
+    fn offload_profile_fields_keep_the_host_schema() {
+        static GEOMETRY: model_qwen38_contract::geometry::Geometry =
+            model_qwen38_contract::geometry::Geometry {
+                id: "offload-test",
+                ..model_qwen38_contract::geometry::FLASH
+            };
+        let precision = PrecisionDocument {
+            version: 1,
+            operations: Vec::new(),
+        };
+        for flash in Shape::ALL {
+            let mut profile = select_profile(flash, &precision).unwrap();
+            let fields = profile.profile.as_object_mut().unwrap();
+            fields.insert("kv_offload_gib".into(), 64.into());
+            fields.insert("kv_offload_prefix".into(), true.into());
+            experimental_profile(&GEOMETRY, &mut profile).unwrap();
+            let qualification: Qualification =
+                serde_json::from_value(profile.profile.clone()).unwrap();
+            assert_eq!(qualification.kv_offload_gib, Some(64));
+            assert_eq!(qualification.kv_offload_prefix, Some(true));
+            assert_eq!(
+                serde_json::to_value(&qualification).unwrap()["kv_offload_prefix"],
+                true
+            );
         }
     }
 

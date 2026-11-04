@@ -184,7 +184,7 @@ fn traced_steps_report_the_prepared_gather_waits_their_execution_completed() {
         );
         let record = engine.pending_step_trace.take().unwrap();
         exposed.push(record.host.mapped_gather_exposed);
-        engine.drain_events();
+        assert!(!engine.drain_events().is_empty());
     }
     assert_eq!(exposed, [0, 2, 0, 0]);
 }

@@ -1264,6 +1264,28 @@ pub struct AdmissionReport {
     blocked: Option<Overload>,
     ram_waits: Vec<(RequestId, runtime_kv::PendingAnchorId)>,
     ram_fallbacks: Vec<(RequestId, PrefixRamFallbackV1)>,
+    pool_exhausted: Vec<AdmissionExhaustionV1>,
+}
+
+/// An allocation admission could not make: too few pages were free or
+/// evictable, although the reservations left room. Pages an outstanding
+/// copy leases are neither.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AdmissionExhaustionV1 {
+    pub request_id: RequestId,
+    pub allocation: AdmissionAllocationV1,
+    pub needed: usize,
+    pub free: usize,
+}
+
+/// What an exhausted admission allocation was for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AdmissionAllocationV1 {
+    /// A swapped request's pages for its reload; admission stops there.
+    SwapIn,
+    /// A promotion's pending anchor, with a demotion outstanding; the
+    /// request waits once a step for the demotion's cancel.
+    Promotion,
 }
 
 impl AdmissionReport {
@@ -1289,6 +1311,14 @@ impl AdmissionReport {
     #[must_use]
     pub fn ram_fallbacks(&self) -> &[(RequestId, PrefixRamFallbackV1)] {
         &self.ram_fallbacks
+    }
+
+    /// Requests whose admission allocation found the pool exhausted and
+    /// that wait: an outstanding demotion's cancel may free the pages for a
+    /// retry in the same step.
+    #[must_use]
+    pub fn pool_exhausted(&self) -> &[AdmissionExhaustionV1] {
+        &self.pool_exhausted
     }
 }
 
@@ -1384,6 +1414,20 @@ impl PrefixCaptureV1 {
     pub const fn tokens(&self) -> usize {
         self.tokens
     }
+}
+
+/// What starting a due capture did.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PrefixCaptureStartV1 {
+    /// The anchor is published; the bundle fills these snapshot pages.
+    Pages(Vec<BlockId>),
+    /// Nothing to capture: no snapshot pages are configured, the key has an
+    /// anchor already, or the boundary is off the block geometry or inside
+    /// media.
+    Skipped,
+    /// Too few pages were free or evictable for the snapshot. Nothing was
+    /// inserted; the capture may start again before it ends.
+    NoPages,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1984,6 +2028,7 @@ impl Scheduler {
         let mut blocked = None;
         let mut ram_waits = Vec::new();
         let mut ram_fallbacks = Vec::new();
+        let mut pool_exhausted = Vec::new();
         for index in 0..self.requests.len() {
             if self.requests[index].state != RequestState::Queued {
                 continue;
@@ -2052,6 +2097,15 @@ impl Scheduler {
                         if let Some(id) = started {
                             ram_waits.push((spec.id, id));
                         }
+                        continue;
+                    }
+                    ram::RamChoice::Exhausted { needed, free } => {
+                        pool_exhausted.push(AdmissionExhaustionV1 {
+                            request_id: spec.id,
+                            allocation: AdmissionAllocationV1::Promotion,
+                            needed,
+                            free,
+                        });
                         continue;
                     }
                     // A failed promotion start evicts nothing, but the GPU
@@ -2198,7 +2252,13 @@ impl Scheduler {
                     state_pages,
                 ) {
                     Ok(hit) => hit,
-                    Err(KvError::PoolExhausted { .. }) => {
+                    Err(KvError::PoolExhausted { needed, free }) => {
+                        pool_exhausted.push(AdmissionExhaustionV1 {
+                            request_id: spec.id,
+                            allocation: AdmissionAllocationV1::SwapIn,
+                            needed,
+                            free,
+                        });
                         blocked = Some(Overload::KvCapacity);
                         break;
                     }
@@ -2292,6 +2352,7 @@ impl Scheduler {
             blocked,
             ram_waits,
             ram_fallbacks,
+            pool_exhausted,
         })
     }
 
@@ -3732,24 +3793,51 @@ impl Scheduler {
     }
 
     /// Publishes a due capture's anchor and returns the snapshot pages the
-    /// bundle must fill, or `None` when there is nothing to capture.
+    /// bundle must fill, or `None` when there is nothing to capture or no
+    /// page for its snapshot ([`Self::start_prefix_capture`] tells them
+    /// apart).
     pub fn begin_prefix_capture(
         &mut self,
         capture: &PrefixCaptureV1,
     ) -> Result<Option<Vec<BlockId>>, ScheduleError> {
+        Ok(match self.start_prefix_capture(capture)? {
+            PrefixCaptureStartV1::Pages(pages) => Some(pages),
+            PrefixCaptureStartV1::Skipped | PrefixCaptureStartV1::NoPages => None,
+        })
+    }
+
+    /// [`Self::begin_prefix_capture`], telling a capture that found no page
+    /// for its snapshot from one with nothing to capture. A capture without
+    /// pages inserted nothing and changed nothing but evictions, and its
+    /// sequence is untouched until [`Self::end_prefix_capture`], so the engine
+    /// may start it again before ending it, after pages were freed.
+    pub fn start_prefix_capture(
+        &mut self,
+        capture: &PrefixCaptureV1,
+    ) -> Result<PrefixCaptureStartV1, ScheduleError> {
         self.ensure_no_pending()?;
+        // The pool returns no pages for a key that has an anchor (touched),
+        // for a content boundary off the block geometry or inside media, and
+        // when too few pages are free or evictable for the snapshot.
+        let existed = self.kv.has_anchor(capture.key);
+        let started = |pages: Option<Vec<BlockId>>, skipped: bool| match pages {
+            Some(pages) => PrefixCaptureStartV1::Pages(pages),
+            None if existed || skipped => PrefixCaptureStartV1::Skipped,
+            None => PrefixCaptureStartV1::NoPages,
+        };
         if capture.private {
             let Some(state_pages) = self
                 .offload
                 .map(|config| config.snapshot_pages)
                 .or(self.config.prefix_state_pages)
             else {
-                return Ok(None);
+                return Ok(PrefixCaptureStartV1::Skipped);
             };
-            return self
+            let pages = self
                 .kv
                 .insert_private_anchor(capture.key, capture.handle, state_pages)
-                .map_err(ScheduleError::Kv);
+                .map_err(ScheduleError::Kv)?;
+            return Ok(started(pages, false));
         }
         self.audit_public_capture(capture)?;
         // A non-interior insertion captures the handle's whole committed
@@ -3764,29 +3852,31 @@ impl Scheduler {
             return Err(ScheduleError::InvariantViolation);
         }
         let Some(state_pages) = self.config.prefix_state_pages else {
-            return Ok(None);
+            return Ok(PrefixCaptureStartV1::Skipped);
         };
         if let Some(identity) = &capture.ancestry {
-            return self
+            let skipped = identity.block_tokens() != self.kv.geometry().block_tokens()
+                || identity.splits_media(capture.tokens);
+            let pages = self
                 .kv
                 .insert_content_anchor(identity, capture.handle, capture.tokens, state_pages)
-                .map_err(ScheduleError::Kv);
+                .map_err(ScheduleError::Kv)?;
+            return Ok(started(pages, skipped));
         }
-        if capture.interior {
-            return self
-                .kv
-                .insert_prefix_anchor(
-                    capture.key,
-                    capture.chain,
-                    capture.handle,
-                    capture.tokens,
-                    state_pages,
-                )
-                .map_err(ScheduleError::Kv);
+        let pages = if capture.interior {
+            self.kv.insert_prefix_anchor(
+                capture.key,
+                capture.chain,
+                capture.handle,
+                capture.tokens,
+                state_pages,
+            )
+        } else {
+            self.kv
+                .insert_anchor(capture.key, capture.chain, capture.handle, state_pages)
         }
-        self.kv
-            .insert_anchor(capture.key, capture.chain, capture.handle, state_pages)
-            .map_err(ScheduleError::Kv)
+        .map_err(ScheduleError::Kv)?;
+        Ok(started(pages, false))
     }
 
     /// Drops the anchor of a capture the bundle failed to write.
@@ -3940,6 +4030,14 @@ impl Scheduler {
     #[must_use]
     pub fn kv_stats(&self) -> KvStats {
         self.kv.stats()
+    }
+
+    /// Pages the pool's allocations have taken from its free list: appends
+    /// with their copies, snapshots, restore staging and pending anchors.
+    /// The difference of two reads is the gross allocation between them.
+    #[must_use]
+    pub const fn kv_allocated_pages(&self) -> u64 {
+        self.kv.allocated_pages()
     }
 
     #[must_use]

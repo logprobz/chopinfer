@@ -111,6 +111,9 @@ pub(super) struct RequestRam {
     pub(super) refused: Vec<PrefixCacheKeyV1>,
     /// Why it last gave up a preferred host entry, reported when it admits.
     pub(super) fallback: Option<PrefixRamFallbackV1>,
+    /// It waited this step for an outstanding demotion's cancel after its
+    /// promotion found the pool exhausted.
+    pub(super) exhausted: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -157,6 +160,9 @@ pub(super) enum RamChoice {
     /// Wait for a promotion: one it started or joined, reported with its
     /// id, or one the step's budget or a forced demotion in flight defers.
     Wait(Option<PendingAnchorId>),
+    /// Wait for the engine to cancel an outstanding demotion: the
+    /// promotion's pending anchor found too few free and evictable pages.
+    Exhausted { needed: usize, free: usize },
 }
 
 impl Scheduler {
@@ -168,10 +174,11 @@ impl Scheduler {
             .filter(|_| self.offload.is_some_and(|config| config.enabled))
     }
 
-    /// One step's allocation bound F, in pages: no engine step takes more
-    /// pages from the pool than this, which the start rule of a demotion
-    /// ([`Self::prefix_demotion_headroom`]) keeps free or evictable. It is
-    /// a worst-case bound from the configuration and the resume plans:
+    /// One step's worst-case allocation bound, in pages: no engine step
+    /// takes more pages from the pool than this. The engine's measured F
+    /// for the start rule of a demotion ([`Self::prefix_demotion_headroom`])
+    /// is capped by it. It comes from the configuration and the resume
+    /// plans:
     ///
     /// - the batch: a step appends at most the token budget's tokens, since
     ///   every item costs at least as many budget tokens as it appends; an
@@ -206,19 +213,30 @@ impl Scheduler {
             .config
             .prefix_ram
             .map_or(0, |config| config.promotion_budget_pages);
-        let resumes = self
-            .resumes
-            .values()
-            .filter(|plan| plan.host.is_some() && plan.destination.is_none())
-            .map(|plan| pages(plan.tokens).saturating_add(swap_state))
-            .fold(0usize, usize::saturating_add);
         pages(self.config.scheduled_token_budget)
             .saturating_add(sequences.saturating_mul(2))
             .saturating_add(
                 sequences.saturating_mul(public.saturating_mul(2).saturating_add(private)),
             )
             .saturating_add(promotions)
-            .saturating_add(resumes)
+            .saturating_add(self.swap_in_pages())
+    }
+
+    /// Pages the swapped requests that may resume next step allocate before
+    /// the batch: each boundary's pages and its snapshot pages.
+    #[must_use]
+    pub fn swap_in_pages(&self) -> usize {
+        let block_tokens = self.kv.geometry().block_tokens();
+        let state = self
+            .offload
+            .map(|config| config.snapshot_pages)
+            .or(self.config.prefix_state_pages)
+            .unwrap_or(0);
+        self.resumes
+            .values()
+            .filter(|plan| plan.host.is_some() && plan.destination.is_none())
+            .map(|plan| plan.tokens.div_ceil(block_tokens).saturating_add(state))
+            .fold(0usize, usize::saturating_add)
     }
 
     /// Starts a step of the tier: settles every promotion whose copy ended
@@ -233,6 +251,11 @@ impl Scheduler {
         self.ensure_no_pending()?;
         self.ram.budget_used = 0;
         self.ram.deferred_pages = 0;
+        if self.requests.iter().any(|record| record.ram.exhausted) {
+            for record in &mut self.requests {
+                record.ram.exhausted = false;
+            }
+        }
         let forced = self.config.prefix_ram.is_some_and(|config| config.forced);
         let mut settled = Vec::new();
         let ids: Vec<_> = self.ram.promotions.keys().copied().collect();
@@ -393,16 +416,20 @@ impl Scheduler {
         }
     }
 
-    /// The start rule of a demotion of `key` under
-    /// [`Self::step_allocation_bound`].
+    /// The start rule of a demotion of `key` under the engine's per-step
+    /// allocation bound `f_pages`, capped by [`Self::step_allocation_bound`]:
+    /// free pages plus the pages evicting every other evictable anchor frees
+    /// cover F plus the pages evicting this one frees.
     #[must_use]
-    pub fn prefix_demotion_headroom(&self, key: PrefixCacheKeyV1) -> bool {
-        self.kv.demotion_headroom(key, self.step_allocation_bound())
+    pub fn prefix_demotion_headroom(&self, key: PrefixCacheKeyV1, f_pages: usize) -> bool {
+        self.kv
+            .demotion_headroom(key, f_pages.min(self.step_allocation_bound()))
     }
 
     /// The largest promotion this step deferred because the step's budget
-    /// was spent or a demotion was outstanding. While it is nonzero, a new
-    /// demotion would defer it again.
+    /// was spent or a demotion was outstanding: the largest pending
+    /// promotion a measured F adds. One larger than the budget waits for no
+    /// demotion to be outstanding.
     #[must_use]
     pub const fn deferred_promotion_pages(&self) -> usize {
         self.ram.deferred_pages
@@ -551,8 +578,15 @@ impl Scheduler {
         }
         let id = match self.kv.create_pending_anchor(key, state_pages) {
             Ok(id) => id,
-            Err(KvError::PoolExhausted { .. }) => {
-                self.requests[index].ram.fallback = Some(PrefixRamFallbackV1::PoolExhausted);
+            Err(KvError::PoolExhausted { needed, free }) => {
+                let ram = &mut self.requests[index].ram;
+                // An outstanding demotion's lease may hold the pages: the
+                // request waits once a step for the engine to cancel it.
+                if !self.ram.demotions.is_empty() && !ram.exhausted {
+                    ram.exhausted = true;
+                    return Ok(RamChoice::Exhausted { needed, free });
+                }
+                ram.fallback = Some(PrefixRamFallbackV1::PoolExhausted);
                 return Ok(RamChoice::Gpu);
             }
             Err(error) => return Err(ScheduleError::Kv(error)),

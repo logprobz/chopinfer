@@ -9,9 +9,10 @@ use runtime_kv::{
     PrefixChainV1, PrefixEvictionV1, PrefixHostInvalidationV1, PrefixPublishV1,
 };
 use runtime_scheduler::{
-    AdmissionPolicy, AdmissionReport, BatchOutcome, OffloadConfig, OptimisticAdmission,
-    PrefixRamConfig, PrefixRamFallbackV1, PrefixRamHitV1, PrefixRequestV1, RequestId, RequestSpec,
-    RequestState, ScheduleError, Scheduler, SchedulerConfig,
+    AdmissionAllocationV1, AdmissionExhaustionV1, AdmissionPolicy, AdmissionReport, BatchOutcome,
+    OffloadConfig, OptimisticAdmission, PrefixCaptureStartV1, PrefixRamConfig, PrefixRamFallbackV1,
+    PrefixRamHitV1, PrefixRequestV1, RequestId, RequestSpec, RequestState, ScheduleError,
+    Scheduler, SchedulerConfig,
 };
 
 const BLOCK: usize = 4;
@@ -617,35 +618,236 @@ fn the_step_budget_defers_promotions_and_a_large_one_waits_for_demotions() {
     assert_eq!(h.admit().ram_waits().len(), 1);
     assert_eq!(h.s.reserved_pages(), ANCHOR_PAGES);
 }
-#[test]
-fn an_exhausted_pool_falls_back_to_a_recomputed_gpu_match() {
-    let mut h = Harness::new(16, tier(false, 64));
-    host_only(&mut h, 1);
+/// A short anchor of prompt 1 on the GPU, its 17-token anchor in RAM, and a
+/// 44-token anchor under demotion filling the pool: its lease leaves four
+/// evictable pages, while a promotion of the 17-token entry needs six.
+fn exhausted(h: &mut Harness) -> KvTransferPlan {
+    host_only(h, 1);
     h.run(2, &prompt(1, 8));
-    // A captured 44-token anchor evicts the older long one and fills the
-    // pool.
     let big = prompt(3, 44);
     h.run(3, &big);
     assert_eq!(h.anchors(), 3);
     assert_eq!(h.s.kv_stats().free_blocks(), 0);
-    // Its demotion leases its pages, so only the short anchors are
-    // evictable: four pages, while the promotion needs six.
     let demotion = h.s.begin_demotion(&mut h.tier, key(&big, 44)).unwrap();
     h.check();
-    let waiter = RequestId::new(4);
-    h.submit(4, &extended(1, 17, 7, 0));
-    let report = h.admit();
-    assert!(report.ram_waits().is_empty());
-    assert_eq!(report.admitted(), [waiter]);
+    demotion
+}
+
+#[test]
+fn an_exhausted_pool_waits_once_for_an_outstanding_demotion() {
+    for cancelled in [false, true] {
+        let mut h = Harness::new(16, tier(false, 64));
+        let demotion = exhausted(&mut h);
+        let waiter = RequestId::new(4);
+        h.submit(4, &extended(1, 17, 7, 0));
+        // The engine cancels the demotion and admits again.
+        let report = h.admit();
+        assert!(report.admitted().is_empty() && report.ram_waits().is_empty());
+        assert!(report.ram_fallbacks().is_empty());
+        assert_eq!(
+            report.pool_exhausted(),
+            [AdmissionExhaustionV1 {
+                request_id: waiter,
+                allocation: AdmissionAllocationV1::Promotion,
+                needed: ANCHOR_PAGES,
+                free: 0,
+            }]
+        );
+        assert_eq!(h.anchors(), 3, "a failed start evicts nothing");
+        if cancelled {
+            h.complete(demotion, KvTransferStatus::FailedIdle);
+            let report = h.admit();
+            assert_eq!(report.ram_waits().len(), 1, "the retry promotes");
+            assert!(report.ram_fallbacks().is_empty());
+            continue;
+        }
+        // Without the cancel, the next pass falls back to a recomputed GPU
+        // match.
+        let report = h.admit();
+        assert!(report.pool_exhausted().is_empty());
+        assert_eq!(report.admitted(), [waiter]);
+        assert_eq!(
+            report.ram_fallbacks(),
+            [(waiter, PrefixRamFallbackV1::PoolExhausted)]
+        );
+        assert_eq!(h.s.cached_tokens(waiter).unwrap(), 8, "the GPU match stays");
+        h.restore_all();
+        h.complete(demotion, KvTransferStatus::Complete);
+        h.finish(true);
+    }
+}
+
+#[test]
+fn a_capture_without_pages_is_reported_and_retried_once_pages_free() {
+    let mut h = Harness::new(16, tier(false, 64));
+    // A 44-token anchor under demotion holds 12 of 16 pages under its lease.
+    let big = prompt(3, 44);
+    h.run(1, &big);
+    let demotion = h.s.begin_demotion(&mut h.tier, key(&big, 44)).unwrap();
+    // A 16-token prompt takes the four free pages, leaving none for its
+    // snapshot.
+    let tokens = prompt(4, 16);
+    h.submit(2, &tokens);
+    let batch = h.s.next_batch().unwrap().unwrap();
+    let item = batch.items()[0];
+    let outcome = BatchOutcome::success(item.request_id(), item.phase(), 1, true);
+    h.s.commit_batch(batch.id(), &[outcome]).unwrap();
+    let captures = h.s.take_prefix_captures();
+    assert_eq!(captures.len(), 1);
+    let capture = &captures[0];
     assert_eq!(
-        report.ram_fallbacks(),
-        [(waiter, PrefixRamFallbackV1::PoolExhausted)]
+        h.s.start_prefix_capture(capture).unwrap(),
+        PrefixCaptureStartV1::NoPages
     );
-    assert_eq!(h.s.cached_tokens(waiter).unwrap(), 8, "the GPU match stays");
-    assert_eq!(h.anchors(), 3);
-    h.restore_all();
-    h.complete(demotion, KvTransferStatus::Complete);
-    h.finish(true);
+    h.check();
+    assert_eq!(h.anchors(), 1);
+    // Starting it again while no page is free changes nothing.
+    let before = h.s.clone();
+    assert_eq!(h.s.begin_prefix_capture(capture).unwrap(), None);
+    assert_eq!(h.s, before);
+    // Once the demotion's cancel releases its lease, the retry inserts the
+    // anchor once; another start finds it.
+    h.complete(demotion, KvTransferStatus::FailedIdle);
+    let PrefixCaptureStartV1::Pages(pages) = h.s.start_prefix_capture(capture).unwrap() else {
+        panic!("the retry captures");
+    };
+    assert_eq!(pages.len(), 1);
+    assert_eq!(h.anchors(), 1, "the retry evicted the big anchor");
+    assert_eq!(
+        h.s.start_prefix_capture(capture).unwrap(),
+        PrefixCaptureStartV1::Skipped
+    );
+    assert_eq!(h.anchors(), 1);
+    h.s.end_prefix_capture(capture).unwrap();
+    h.check();
+    // A repeat hits the anchor the retry captured.
+    h.submit(3, &extended(4, 16, 3, 0));
+    h.admit();
+    assert_eq!(h.s.cached_tokens(RequestId::new(3)).unwrap(), 16);
+}
+
+#[test]
+fn a_swap_in_without_pages_is_reported_and_admits_once_a_demotion_ends() {
+    let config = SchedulerConfig::new(2, 64, 64, 64, 1)
+        .unwrap()
+        .with_admission(AdmissionPolicy::Optimistic(
+            OptimisticAdmission::new(0, 3)
+                .unwrap()
+                .with_forced_preemption(2)
+                .unwrap(),
+        ))
+        .with_prefix_cache(1)
+        .with_prefix_ram(tier(false, 64));
+    let mut s = Scheduler::new(config, KvGeometry::new(BLOCK, 16).unwrap()).unwrap();
+    s.configure_offload(OffloadConfig {
+        force_host: true,
+        ..offload(1)
+    });
+    let mut tier = s.new_host_tier(32).unwrap();
+    let check = |s: &Scheduler, tier: &HostTier| {
+        s.audit().unwrap();
+        s.audit_host_tier(tier).unwrap();
+    };
+    let submit = |s: &mut Scheduler, id: u64, tokens: &[u32], output: usize| {
+        s.submit_with_prefix(
+            RequestSpec::new(RequestId::new(id), tokens.len(), output).unwrap(),
+            Some(PrefixRequestV1::new(Arc::new(chain(tokens)), true)),
+        )
+        .unwrap();
+    };
+    let step = |s: &mut Scheduler, tier: &HostTier| {
+        let batch = s.next_batch().unwrap().unwrap();
+        let outcomes: Vec<_> = batch
+            .items()
+            .iter()
+            .map(|item| {
+                BatchOutcome::success(
+                    item.request_id(),
+                    item.phase(),
+                    usize::from(item.expects_output()),
+                    false,
+                )
+            })
+            .collect();
+        s.commit_batch(batch.id(), &outcomes).unwrap();
+        for capture in s.take_prefix_captures() {
+            s.begin_prefix_capture(&capture).unwrap();
+            s.end_prefix_capture(&capture).unwrap();
+        }
+        check(s, tier);
+    };
+    // A 40-token anchor takes 11 of the 16 pages.
+    let big = prompt(3, 40);
+    submit(&mut s, 1, &big, 1);
+    step(&mut s, &tier);
+    // A decoding request captures its 8-token prompt end, then is preempted
+    // and swapped out; the forced swap removes its GPU boundary.
+    let swapped = prompt(2, 8);
+    let resume_chain = |_: RequestId, tokens: usize| {
+        let mut all = swapped.clone();
+        all.resize(tokens, 7);
+        Some(PrefixRequestV1::new(Arc::new(chain(&all)), true))
+    };
+    submit(&mut s, 2, &swapped, 6);
+    let capture = loop {
+        if !s.preempt_for_next_step(0, resume_chain).unwrap().is_empty() {
+            break s.take_prefix_captures().pop().unwrap();
+        }
+        step(&mut s, &tier);
+    };
+    assert!(s.begin_prefix_capture(&capture).unwrap().is_some());
+    let out = s.offload_capture(&mut tier, &capture, true).unwrap();
+    s.end_prefix_capture(&capture).unwrap();
+    s.accept_kv_transfer(
+        &mut tier,
+        out.into_submission().completion(KvTransferStatus::Complete),
+    )
+    .unwrap();
+    check(&s, &tier);
+    assert_eq!(s.kv_stats().free_blocks(), 2);
+    // Demotions lease both anchors, so the reload's four pages are not
+    // there although no reservation holds them.
+    let demotions =
+        [key(&big, 40), key(&swapped, 8)].map(|key| s.begin_demotion(&mut tier, key).unwrap());
+    check(&s, &tier);
+    let id = RequestId::new(2);
+    let report = s.admit().unwrap();
+    assert!(report.admitted().is_empty());
+    assert_eq!(
+        report.blocked(),
+        Some(runtime_scheduler::Overload::KvCapacity)
+    );
+    assert_eq!(
+        report.pool_exhausted(),
+        [AdmissionExhaustionV1 {
+            request_id: id,
+            allocation: AdmissionAllocationV1::SwapIn,
+            needed: 4,
+            free: 2,
+        }]
+    );
+    check(&s, &tier);
+    // The engine cancels a demotion and admits again.
+    let [first, second] = demotions;
+    s.accept_kv_transfer(
+        &mut tier,
+        second
+            .into_submission()
+            .completion(KvTransferStatus::FailedIdle),
+    )
+    .unwrap();
+    let report = s.admit().unwrap();
+    assert_eq!(report.admitted(), [id]);
+    assert!(report.pool_exhausted().is_empty());
+    assert_eq!(s.pending_reloads(), [id]);
+    s.accept_kv_transfer(
+        &mut tier,
+        first
+            .into_submission()
+            .completion(KvTransferStatus::Complete),
+    )
+    .unwrap();
+    check(&s, &tier);
 }
 
 /// Moves a 17-token anchor of prompt `salt` to RAM in forced mode, where its
@@ -909,6 +1111,7 @@ fn swaps_keep_priority_over_public_entries() {
     assert_eq!(tier.used_pages(), 4, "the swap evicted the public entry");
     // A swapped request that may resume adds its pages to the bound: three
     // KV pages and a snapshot page.
+    assert_eq!(s.swap_in_pages(), 4);
     assert_eq!(s.step_allocation_bound(), bound + 4);
     // The host tier refuses a demotion that would need the swap's pages.
     assert!(s.begin_demotion(&mut tier, key(&other, 17)).is_err());
@@ -938,13 +1141,24 @@ fn the_step_allocation_bound_adds_its_terms() {
     let off = Harness::new(64, None);
     assert_eq!(off.s.step_allocation_bound(), 16 + 8 + 4 * (2 + 1));
     // A demotion of the only anchor, six pages, starts only while the free
-    // pages cover the bound of 46 beside them.
-    for (pages, headroom) in [(58, true), (57, false)] {
+    // pages cover the engine's F beside them, capped by the bound of 46.
+    for (pages, f_pages, headroom) in [
+        (58, 46, true),
+        (57, 46, false),
+        (57, 45, true),
+        (57, usize::MAX, false),
+        (58, usize::MAX, true),
+    ] {
         let mut h = Harness::new(pages, tier(false, 10));
         let tokens = prompt(1, 17);
         h.run(1, &tokens);
         let key = key(&tokens, 17);
-        assert_eq!(h.s.prefix_demotion_headroom(key), headroom, "{pages}");
+        let case = format!("{pages} pages, F {f_pages}");
+        assert_eq!(
+            h.s.prefix_demotion_headroom(key, f_pages),
+            headroom,
+            "{case}"
+        );
     }
 }
 
@@ -1036,6 +1250,7 @@ fn per_step_allocations_stay_within_the_bound() {
         let mut next_id = 1u64;
         for _ in 0..160 {
             let bound = s.step_allocation_bound();
+            let start = s.kv_allocated_pages();
             let mut allocated = 0usize;
             for plan in transfers.drain(..) {
                 let status = if rng.below(8) == 0 {
@@ -1103,7 +1318,7 @@ fn per_step_allocations_stay_within_the_bound() {
                 && let Some(candidate) = s
                     .prefix_demotion_candidates(8)
                     .into_iter()
-                    .find(|candidate| s.prefix_demotion_headroom(candidate.key))
+                    .find(|candidate| s.prefix_demotion_headroom(candidate.key, bound))
                 && let Ok(plan) = s.begin_demotion(&mut tier, candidate.key)
             {
                 transfers.push(plan);
@@ -1115,6 +1330,9 @@ fn per_step_allocations_stay_within_the_bound() {
             s.audit().unwrap();
             s.audit_host_tier(&tier).unwrap();
             assert!(allocated <= bound, "seed {seed}: {allocated} > {bound}");
+            // The pool's counter takes exactly the pages counted here.
+            let counted = s.kv_allocated_pages() - start;
+            assert_eq!(counted, allocated as u64, "seed {seed}");
         }
     }
     assert!(promoted > 0, "the workload promotes");

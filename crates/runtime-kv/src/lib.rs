@@ -661,6 +661,7 @@ impl KvPool {
     /// order. Configure before creating anchors.
     #[must_use]
     pub fn with_prefix_ancestry(mut self, enabled: bool) -> Self {
+        self.assert_unindexed();
         self.tier_order = enabled;
         self.configure_index()
     }
@@ -670,15 +671,25 @@ impl KvPool {
     /// Configure before creating anchors.
     #[must_use]
     pub fn with_prefix_index(mut self, enabled: bool) -> Self {
+        self.assert_unindexed();
         self.prefix_index = enabled;
         self.configure_index()
     }
 
-    fn configure_index(mut self) -> Self {
+    /// Configuration replaces the ancestry index, so no tier may hold a key
+    /// yet: no GPU anchor, host entry or demotion.
+    fn assert_unindexed(&self) {
         assert!(
             self.anchors.is_empty(),
             "configure eviction before captures"
         );
+        assert!(
+            self.ram.as_ref().is_none_or(PrefixRam::holds_no_key),
+            "configure eviction before demotions"
+        );
+    }
+
+    fn configure_index(mut self) -> Self {
         self.ancestry = (self.tier_order || self.prefix_index || self.ram.is_some())
             .then(PrefixAncestry::default);
         self

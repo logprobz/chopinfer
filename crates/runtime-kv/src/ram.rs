@@ -81,16 +81,20 @@ pub(crate) struct PrefixRam {
     forced: bool,
 }
 
+impl PrefixRam {
+    /// Whether no key is held: no host entry and no demotion in flight.
+    pub(crate) fn holds_no_key(&self) -> bool {
+        self.entries.is_empty() && self.demotions.is_empty()
+    }
+}
+
 impl KvPool {
     /// The RAM prefix tier: public anchors may keep host-resident entries
     /// that one [`HostTier`](crate::HostTier) owns. Implies the ancestry
     /// index. Configure before creating anchors.
     #[must_use]
     pub fn with_prefix_ram(mut self, enabled: bool) -> Self {
-        assert!(
-            self.ram.as_ref().is_none_or(|ram| ram.entries.is_empty()),
-            "configure the RAM tier before demotions"
-        );
+        self.assert_unindexed();
         self.ram = enabled.then(PrefixRam::default);
         self.configure_index()
     }

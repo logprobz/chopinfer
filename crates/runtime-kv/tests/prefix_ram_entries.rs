@@ -394,6 +394,47 @@ fn public_drops_refuse_a_tier_the_entries_are_not_bound_to() {
 }
 
 #[test]
+fn configuration_keeps_an_index_the_host_tier_holds() {
+    type Configure = fn(KvPool) -> KvPool;
+    let builders: [(&str, Configure); 4] = [
+        ("index", |pool| pool.with_prefix_index(true)),
+        ("ancestry", |pool| pool.with_prefix_ancestry(true)),
+        ("ancestry off", |pool| pool.with_prefix_ancestry(false)),
+        ("ram", |pool| pool.with_prefix_ram(true)),
+    ];
+    let refused = |pool: &KvPool, state: &str| {
+        for (name, configure) in builders {
+            let copy = pool.clone();
+            assert!(
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| configure(copy))).is_err(),
+                "{state}: {name}"
+            );
+        }
+    };
+    let prompt = chain(&[1; 8]);
+    let key = prompt.key_at(8).unwrap();
+    let mut pool = ram_pool(32);
+    let mut tier = HostTier::new(&pool, 32).unwrap();
+    // A host-only key leaves no GPU anchor for the capture guard to see.
+    capture(&mut pool, &prompt, &[8]);
+    demote(&mut pool, &mut tier, key);
+    assert!(pool.remove_anchor(key).unwrap());
+    refused(&pool, "host only");
+    assert!(tier.drop_public_entry(&mut pool, key).unwrap());
+    // So does a demotion whose entry was dropped during its copy.
+    capture(&mut pool, &prompt, &[8]);
+    let (_, plan) = tier.begin_offload(&mut pool, key, None).unwrap();
+    assert!(tier.drop_public_entry(&mut pool, key).unwrap());
+    assert!(pool.remove_anchor(key).unwrap());
+    refused(&pool, "demotion");
+    tier.complete_transfer(&mut pool, completed(plan)).unwrap();
+    assert_idle(&pool, &tier);
+    // Once the tier holds nothing, configuration replaces the index.
+    let pool = pool.with_prefix_index(true).with_prefix_ancestry(true);
+    assert_idle(&pool, &tier);
+}
+
+#[test]
 fn demotion_candidates_are_frontiers_in_eviction_order() {
     let interior = chain(&(0..8).collect::<Vec<_>>());
     let (short, plain, shadowed, copying) = (

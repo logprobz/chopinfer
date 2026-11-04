@@ -19,7 +19,7 @@ use bundle_runtime::pipeline::{
 use bundle_runtime::resources::{status, upload_bytes};
 use bundle_runtime::upload::{DeviceInputs, InputLayout};
 use model_deepseek41_contract::geometry::Geometry;
-use model_deepseek41_contract::serving::{DeepSeek, MAX_VERIFY_ROWS, SCORED_ROWS};
+use model_deepseek41_contract::serving::{DeepSeek, MAX_VERIFY_ROWS, PREFILL_TOKENS, SCORED_ROWS};
 use runtime_bundle_abi::{
     BUNDLE_LOGITS_ELEMENT_V1_F32, BundleAbiError, BundleStatusV1, BundleStreamHandleV1,
     ExecuteResultSinkV1,
@@ -53,6 +53,9 @@ pub(crate) mod skip;
 const PREFILL: usize = 0;
 const DECODE: usize = 1;
 pub(super) const VERIFY: usize = 2;
+/// The widest verify phase whose Engram rows a mixed DSpark step gathers
+/// after its prefill (`Instance::admits_mixed_engram`).
+const MIXED_VERIFY_ROWS: u32 = 64;
 
 /// One phase of a step, planned before the step opens.
 pub(super) struct Run {
@@ -820,6 +823,26 @@ impl Instance {
         }
     }
 
+    /// Whether a mixed DSpark step's verify rows take the cycle's prepared
+    /// gathers, begun once its prefill joined its last Engram layer
+    /// (`dspark_mixed_prepared_engram`). Only where the candidate's
+    /// evidence reaches: one text prefill of 512 to 8192 rows with
+    /// prepared gathers on an instance whose upper-skip prefills take DMA,
+    /// beside a graphed verify phase of at most 64 rows. Every other mixed
+    /// step keeps the synchronous gather (`SyncReason::MixedTarget`).
+    pub(super) fn admits_mixed_engram(&self, prefill: &PhaseInputs, verify: &PhaseInputs) -> bool {
+        self.config.execution.dspark_mixed_prepared_engram
+            && self.skip_prefill
+            && self.media.is_none()
+            && !self.taps.text()
+            && self.prefill_engram.is_some()
+            && skip::Plan::dma_admits(self, prefill.request_ids.len())
+            && (512..=PREFILL_TOKENS).contains(&prefill.live_tokens())
+            && verify.verify
+            && verify.live_tokens() <= MIXED_VERIFY_ROWS
+            && matches!(self.phase_of(verify), Ok((_, VERIFY, _, Some(_))))
+    }
+
     /// Plan a legacy DSpark prefill without issuing encoder or gather work.
     /// Execution consumes this plan after the original staging uploads and encode.
     pub(super) fn stage_sync_prefill(
@@ -1477,6 +1500,12 @@ impl Instance {
             self.log(&format!("AR Engram: a failed step's uploads: {error}"));
             return status(error);
         }
+        if let Err(error) = self.settle_mixed_dspark_engram() {
+            self.log(&format!(
+                "DSpark mixed Engram: a failed step's uploads: {error}"
+            ));
+            return status(error);
+        }
         // Taps a failed execute left are removed, never published.
         #[cfg(feature = "diagnostic-taps")]
         if let Err(error) = self.taps.abandon() {
@@ -1605,6 +1634,16 @@ impl Instance {
                 Err(error) => return error,
             }
         }
+        // A mixed step's verify rows wait for its prefill's prepared gathers
+        // (`admits_mixed_engram`).
+        if self.mixed_engram_deferred()
+            && !runs
+                .first()
+                .is_some_and(|run| run.phase.prefill() && run.execution.prefill_engram().is_some())
+        {
+            self.log("DSpark mixed Engram rows have no prepared prefill gathers");
+            return BundleStatusV1::InternalError;
+        }
         // An upper-skip prefill names the anchors its spares keep.
         let kept = runs
             .iter()
@@ -1632,6 +1671,9 @@ impl Instance {
             // ownership; an unmatched collective above must never be waited on.
             if let Err(settle) = self.settle_prefill_engram() {
                 self.log(&format!("prefill Engram cleanup failed: {settle}"));
+            }
+            if let Err(settle) = self.settle_mixed_dspark_engram() {
+                self.log(&format!("DSpark mixed Engram cleanup failed: {settle}"));
             }
             let _ = self.ledger.cancel();
             if let Some(engram) = self.engram.as_mut().filter(|_| self.dspark.is_none()) {

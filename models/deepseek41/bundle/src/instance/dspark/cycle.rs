@@ -1,5 +1,6 @@
 //! Device target tokens and overlapped mapped rows, behind the lifecycle adapter.
 mod graphs;
+mod mixed;
 use super::Instance;
 use crate::dspark::cycle::{Deferred, Early, LayerGather, Pending};
 use crate::dspark::device::{DECODE_BASE, slice};
@@ -453,6 +454,7 @@ impl Instance {
         cycle.deferred = Some(Deferred {
             ids,
             rows: hashed.rows() as u32,
+            mixed: None,
         });
         Ok(true)
     }
@@ -468,6 +470,21 @@ impl Instance {
         let Some(deferred) = &cycle.deferred else {
             return Ok(());
         };
+        if let Some(mixed) = &deferred.mixed {
+            // The prefill run begins them (`begin_mixed_dspark_engram`).
+            if !inputs.decode {
+                return Ok(());
+            }
+            if cycle.gathering
+                || !inputs.verify
+                || inputs.live_tokens() != deferred.rows
+                || mixed.begun.get() != cycle.layers.len()
+            {
+                return Err("DSpark mixed Engram rows differ from the verify phase".into());
+            }
+            cycle.gathering = true;
+            return Ok(());
+        }
         if cycle.gathering || !inputs.decode || inputs.live_tokens() != deferred.rows {
             return Err("DSpark deferred Engram rows differ from the target phase".into());
         }
@@ -491,6 +508,7 @@ impl Instance {
     /// finished: a copy still running refuses the step before any result
     /// is published.
     fn finish_deferred_engram(&mut self) -> Result<(), String> {
+        let diagnostic_logs = self.config.execution.diagnostic_step_logs;
         let Some(device) = self.dspark.as_mut() else {
             return Ok(());
         };
@@ -511,7 +529,7 @@ impl Instance {
             layers.push(ar_engram::layer_trace(layer.layer, &stats));
         }
         cycle.gathering = false;
-        if ar_engram::traced() {
+        if ar_engram::traced() || (diagnostic_logs && deferred.mixed.is_some()) {
             let message = ar_engram::step_trace(sequence, deferred.rows, &layers);
             let _ = self.services.log(message.as_bytes());
         }
@@ -538,11 +556,19 @@ impl Instance {
                 .map(|early| early.gathers.get(layer).copied())
                 .map(|gather| gather.ok_or(BundleAbiError::InvalidRange("DSpark early layer")))
                 .transpose()?;
+            let mixed = device
+                .cycle
+                .deferred
+                .as_ref()
+                .and_then(|deferred| deferred.mixed.as_ref());
             for &(_, _, stream) in &self.ranks {
                 if let Some(early) = early {
                     self.services.wait_mapped_gather(early, stream)?;
                 }
                 gather.join(&self.services, stream)?;
+                if let Some(mixed) = mixed {
+                    mixed.joined.set(mixed.joined.get() + 1);
+                }
             }
         }
         Ok(())

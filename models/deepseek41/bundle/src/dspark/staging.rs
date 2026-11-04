@@ -2,7 +2,9 @@
 //! The mapped-gather host call owns CPU gathering and enqueues its H2D
 //! copy before returning. It runs outside captured target graphs. A target
 //! of undrafted decode rows may hand its ids to the program instead, which
-//! uploads them per layer during the target launch (`Program::defer_engram`).
+//! uploads them per layer during the target launch (`Program::defer_engram`),
+//! and so may a mixed target's decode rows beside a prepared prefill
+//! (`Program::defer_mixed_engram`).
 
 use model_deepseek41_contract::geometry::Geometry;
 use model_deepseek41_contract::own_ops::engram::HashTables;
@@ -73,6 +75,13 @@ pub trait Program {
     /// Retain prefill IDs for target planning. This must not enqueue IO:
     /// the target first validates its consumer boundaries and fallback.
     fn stage_prefill_engram(&mut self, _hashed: &Hashed) -> Result<bool, String> {
+        Ok(false)
+    }
+
+    /// Takes the decode phase's ids of a mixed target whose prefill staged
+    /// its prepared gathers, to gather them once the prefill joined its
+    /// last Engram layer. False keeps the synchronous gather.
+    fn defer_mixed_engram(&mut self, _hashed: &Hashed) -> Result<bool, String> {
         Ok(false)
     }
 
@@ -751,10 +760,19 @@ impl<P: Program> Host for Adapter<'_, P> {
             Ok(true) => Ok(()),
             Ok(false) => {
                 let mut phases = Vec::new();
+                let mut staged = false;
                 for phase in gathered.phases {
                     if phase.prefill
                         && phase.hashed.rows() > 0
                         && self.program.stage_prefill_engram(&phase.hashed)?
+                    {
+                        staged = true;
+                        continue;
+                    }
+                    if staged
+                        && !phase.prefill
+                        && phase.hashed.rows() > 0
+                        && self.program.defer_mixed_engram(&phase.hashed)?
                     {
                         continue;
                     }

@@ -2,7 +2,6 @@
 //! scatter carries the payload of the collective it replaces: F32 partials,
 //! or each rank's partial rounded once to BF16 as the BF16-partial
 //! contract's entries send it.
-use super::Run;
 use crate::instance::Instance;
 use bundle_runtime::acquire::RankHandles;
 use bundle_runtime::dispatch::{self, DispatchError, Resolved};
@@ -426,16 +425,14 @@ impl transport::Arithmetic for Arithmetic<'_> {
     }
 }
 
-pub(super) fn eligible(instance: &Instance, run: &Run) -> bool {
+/// Whether the instance may send a text prefill of `requests` requests
+/// through ordered DMA, before its reductions' own admission.
+pub(super) fn admits(instance: &Instance, requests: usize) -> bool {
     #[cfg(feature = "diagnostic-taps")]
     if instance.taps.text() {
         return false;
     }
-    run.phase.prefill()
-        && instance.dma.len() == 4
-        && instance.ops.prefill_dma.enabled()
-        && run.media.is_none()
-        && run.inputs.request_ids.len() == 1
+    instance.dma.len() == 4 && instance.ops.prefill_dma.enabled() && requests == 1
 }
 
 mod consume;

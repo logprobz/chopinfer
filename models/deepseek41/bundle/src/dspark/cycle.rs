@@ -27,7 +27,9 @@ pub(crate) struct Cycle {
     pub diagnostics: Option<DeviceBufferSpanV1>,
     pub layers: Vec<LayerGather>,
     pub gathering: bool,
-    /// An undrafted decode step's ids, hashed and awaiting its target launch.
+    /// An undrafted decode step's ids, hashed and awaiting its target
+    /// launch, or a mixed step's verify ids awaiting its prefill's last
+    /// Engram join.
     pub deferred: Option<Deferred>,
     pub draft_done: Vec<runtime_bundle_abi::BundleEventHandleV1>,
     pub draft_joined: Option<runtime_bundle_abi::BundleEventHandleV1>,
@@ -46,6 +48,19 @@ pub(crate) struct Cycle {
 pub(crate) struct Deferred {
     pub ids: Vec<u8>,
     pub rows: u32,
+    /// The gathers of a mixed step's verify rows; none for an undrafted
+    /// decode step, whose target launch begins them.
+    pub mixed: Option<Mixed>,
+}
+
+/// A mixed step's verify-row gathers (`dspark_mixed_prepared_engram`),
+/// which its prefill begins after its last Engram join: the layers begun,
+/// and the joins the verify launch made, layer by layer and each layer
+/// rank by rank, so a failed step's settlement makes only the rest.
+#[derive(Default)]
+pub(crate) struct Mixed {
+    pub begun: std::cell::Cell<usize>,
+    pub joined: std::cell::Cell<usize>,
 }
 
 /// A drafted step's early gathers. Each item's first target row (its bonus

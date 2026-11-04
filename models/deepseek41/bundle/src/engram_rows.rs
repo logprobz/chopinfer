@@ -81,16 +81,18 @@ pub(crate) enum PreparedGather {
     DsparkTarget,
     DsparkEarly,
     DsparkUndrafted,
+    DsparkMixedTarget,
 }
 
 impl PreparedGather {
     #[cfg(test)]
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::ArDecode,
         Self::Prefill,
         Self::DsparkTarget,
         Self::DsparkEarly,
         Self::DsparkUndrafted,
+        Self::DsparkMixedTarget,
     ];
 
     fn tag(self) -> kernel_core::route::RouteTag {
@@ -100,6 +102,7 @@ impl PreparedGather {
             Self::DsparkTarget => "engram/prepared/dspark_target",
             Self::DsparkEarly => "engram/prepared/dspark_early",
             Self::DsparkUndrafted => "engram/prepared/dspark_undrafted",
+            Self::DsparkMixedTarget => "engram/prepared/dspark_mixed_target",
         };
         kernel_core::route::RouteTag::new(
             "host.enqueue_mapped_gather",

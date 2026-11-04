@@ -695,6 +695,12 @@ impl Plan {
         dma::applies(instance, run)
     }
 
+    /// Whether a text prefill of `requests` requests may take upper-skip
+    /// DMA (`dma::admits`).
+    pub(super) fn dma_admits(instance: &Instance, requests: usize) -> bool {
+        dma::admits(instance, requests)
+    }
+
     /// Keeps this template's first Engram plan for its later steps
     /// (`engram`).
     pub(super) fn keep_engram(&mut self) {
@@ -743,6 +749,29 @@ impl Plan {
         if let Some(dma) = &self.dma {
             dma.prepare_engram(plan, gathers)?;
             plan.check_dma_collectives(&self.body.0, &self.body.1)?;
+        }
+        // The head and its row copies run beside a mixed step's verify-row
+        // gathers, which begin after the body's last Engram join.
+        let verify = gathers.pending_spans(plan.layer_count());
+        if !verify.is_empty() {
+            for (head, copies) in self.head.0.iter().zip(&self.copies) {
+                crate::shared_overlap::disjoint_copy_spans(&verify, head)?;
+                let aliased = copies
+                    .iter()
+                    .flat_map(|&(to, from)| [to, from])
+                    .any(|span| {
+                        verify.iter().any(|pending| {
+                            pending.buffer == span.buffer
+                                && pending.length != 0
+                                && span.length != 0
+                                && pending.offset < span.offset.saturating_add(span.length)
+                                && span.offset < pending.offset.saturating_add(pending.length)
+                        })
+                    });
+                if aliased {
+                    return Err("a prefill row copy aliases pending verify Engram rows".into());
+                }
+            }
         }
         Ok(())
     }

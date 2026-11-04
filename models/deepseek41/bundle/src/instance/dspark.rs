@@ -164,6 +164,15 @@ impl Program for Work<'_> {
         self.instance.defer_dspark_engram(hashed)
     }
 
+    fn defer_mixed_engram(&mut self, hashed: &crate::engram_rows::Hashed) -> Result<bool, String> {
+        let step = self
+            .step
+            .as_ref()
+            .ok_or("DSpark mixed target has no packed step")?;
+        self.instance
+            .defer_mixed_dspark_engram(&step.prefill, &step.decode, hashed)
+    }
+
     fn stage_prefill_engram(
         &mut self,
         hashed: &crate::engram_rows::Hashed,

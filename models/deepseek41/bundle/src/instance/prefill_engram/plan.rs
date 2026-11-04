@@ -58,6 +58,9 @@ impl Plan {
                 sections.push(start..end);
                 start = end;
             }
+            if !gathers.verify.is_empty() {
+                crate::shared_overlap::disjoint_copy_spans(&gathers.verify, &program[start..])?;
+            }
             sections.push(start..program.len());
             ranges.push(sections);
         }
@@ -130,7 +133,8 @@ impl Plan {
 
     /// The audit `new` makes of rank `rank`'s launches from `at`: a launch
     /// before a layer's consumer touches none of the spans that layer and
-    /// the later layers still have pending.
+    /// the later layers still have pending, and a later launch none of a
+    /// mixed step's verify-row gathers'.
     fn audit(
         &self,
         gathers: &Gathers,
@@ -141,12 +145,13 @@ impl Plan {
         let sections = self.ranges.get(rank).ok_or("prefill Engram rank extent")?;
         for (offset, launch) in launches.iter().enumerate() {
             let index = at + offset;
-            let Some(first) = sections[..gathers.layers.len()]
+            let first = sections[..gathers.layers.len()]
                 .iter()
                 .position(|section| index < section.end)
-            else {
+                .unwrap_or(gathers.layers.len());
+            if first == gathers.layers.len() && gathers.verify.is_empty() {
                 continue;
-            };
+            }
             crate::shared_overlap::disjoint_copy_spans(
                 &gathers.pending_spans(first),
                 std::slice::from_ref(launch),
@@ -249,18 +254,17 @@ impl Plan {
         programs: &[Vec<PreparedLaunch>],
         flags: &[Vec<bool>],
     ) -> Result<(), DispatchError> {
-        let gathers = instance
-            .prefill_engram
-            .as_ref()
-            .ok_or(DispatchError::InvalidPlan)?;
         let streams: Vec<_> = instance.ranks.iter().map(|r| r.2).collect();
-        if programs.len() != streams.len() || flags.len() != streams.len() {
+        if instance.prefill_engram.is_none()
+            || programs.len() != streams.len()
+            || flags.len() != streams.len()
+        {
             return Err(DispatchError::InvalidPlan);
         }
         let executor = Executor::new(instance, &streams);
         executor.run(|| {
             instance.launch_layered_pieces(&streams, &self.ranges, programs, flags, |layer| {
-                gathers.join(&instance.services, &streams, layer)
+                instance.join_prefill_engram(&streams, layer)
             })
         })
     }
@@ -309,6 +313,7 @@ mod tests {
                     graphs: (),
                 })
                 .into(),
+            verify: Vec::new(),
             columns: 24,
             pending: Cell::new(false),
             failed: Cell::new(false),

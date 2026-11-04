@@ -20,6 +20,10 @@ const PINNED_LIMIT: u64 = 256 * 1024 * 1024;
 
 pub(super) struct Gathers {
     layers: Vec<LayerGather>,
+    /// The ids and destinations of a mixed DSpark step's verify-row
+    /// gathers, which begin once the last layer joined
+    /// (`dspark_mixed_prepared_engram`); empty without the candidate.
+    verify: Vec<Span>,
     columns: usize,
     pending: Cell<bool>,
     failed: Cell<bool>,
@@ -109,8 +113,12 @@ impl Gathers {
         Ok(())
     }
 
-    /// All ranks' destinations and immutable IDs still owned by pending reads.
+    /// All ranks' destinations and immutable IDs still owned by pending
+    /// reads: once every layer joined, a mixed step's verify-row gathers'.
     pub(in crate::instance) fn pending_spans(&self, joined: usize) -> Vec<Span> {
+        if joined == self.layers.len() {
+            return self.verify.clone();
+        }
         self.layers[joined..]
             .iter()
             .flat_map(|layer| {
@@ -207,6 +215,25 @@ impl Gathers {
 }
 
 impl Instance {
+    /// Joins prefill Engram layer `at` on every stream, then, after the
+    /// last layer, begins a mixed DSpark step's verify-row gathers
+    /// (`begin_mixed_dspark_engram`).
+    pub(in crate::instance) fn join_prefill_engram(
+        &self,
+        streams: &[BundleStreamHandleV1],
+        at: usize,
+    ) -> Result<(), BundleAbiError> {
+        let gathers = self
+            .prefill_engram
+            .as_ref()
+            .ok_or(BundleAbiError::Status(BundleStatusV1::InvalidState))?;
+        gathers.join(&self.services, streams, at)?;
+        if at + 1 == gathers.layers.len() {
+            self.begin_mixed_dspark_engram()?;
+        }
+        Ok(())
+    }
+
     pub(super) fn settle_prefill_engram(&self) -> Result<(), BundleAbiError> {
         if let Some(gathers) = self
             .prefill_engram
@@ -328,8 +355,25 @@ impl Instance {
         if indices.len() != tables.len() || indices.iter().any(|span| span.length != bytes) {
             return Err(BundleAbiError::InvalidRange("prefill Engram ID storage"));
         }
+        // A mixed step's verify rows gather through the DSpark cycle's
+        // layers, so the prefill's audits keep its launches off them.
+        let verify = self
+            .dspark
+            .as_ref()
+            .filter(|_| self.config.execution.dspark_mixed_prepared_engram)
+            .map_or_else(Vec::new, |device| {
+                device
+                    .cycle
+                    .layers
+                    .iter()
+                    .flat_map(|layer| {
+                        std::iter::once(layer.indices).chain(layer.destinations.iter().copied())
+                    })
+                    .collect()
+            });
         self.prefill_engram = Some(Gathers {
             layers: Vec::new(),
+            verify,
             columns,
             pending: Cell::new(false),
             failed: Cell::new(false),

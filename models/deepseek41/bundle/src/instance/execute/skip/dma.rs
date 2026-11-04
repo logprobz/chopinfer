@@ -315,17 +315,13 @@ impl Plan {
         };
         let compute = |index: usize, spans: &[Range<usize>]| {
             if let Some(plan) = gathers {
-                let pending = instance
-                    .prefill_engram
-                    .as_ref()
-                    .ok_or(bundle_runtime::dispatch::DispatchError::InvalidPlan)?;
                 let pieces = plan
                     .dma
                     .get(index)
                     .ok_or(bundle_runtime::dispatch::DispatchError::InvalidPlan)?;
                 for crate::instance::prefill_engram::DmaPiece { spans, join } in pieces {
                     if let Some(layer) = join {
-                        pending.join(&instance.services, &streams, *layer)?;
+                        instance.join_prefill_engram(&streams, *layer)?;
                     }
                     issue(spans)?;
                 }
@@ -356,11 +352,17 @@ impl Plan {
 /// Whether `run`'s body may take upper-skip DMA; it does when its
 /// reductions admit any call.
 pub(super) fn applies(instance: &Instance, run: &Run) -> bool {
+    run.phase.prefill() && run.media.is_none() && admits(instance, run.inputs.request_ids.len())
+}
+
+/// Whether the instance may send an upper-skip text prefill of `requests`
+/// requests through DMA, before its reductions' own admission.
+pub(super) fn admits(instance: &Instance, requests: usize) -> bool {
     #[cfg(test)]
     if !ENABLED.get() {
         return false;
     }
-    crate::instance::execute::dma::eligible(instance, run)
+    crate::instance::execute::dma::admits(instance, requests)
         && instance.config.kv.storage == KvStorage::Native
 }
 

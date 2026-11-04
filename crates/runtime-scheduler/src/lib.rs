@@ -14,7 +14,9 @@ use runtime_kv::{
 mod offload;
 pub use offload::{OffloadConfig, ResumePlan};
 mod ram;
-pub use ram::PrefixRamConfig;
+pub use ram::{
+    PrefixRamConfig, PrefixRamFallbackV1, PrefixRamHitV1, PrefixRamPromotionV1, PrefixRamSettledV1,
+};
 
 const MAX_TRACKED_REQUESTS: usize = 1 << 20;
 /// Steps a started prompt may go without a chunk on the uncapped prefill
@@ -1260,6 +1262,8 @@ impl Batch {
 pub struct AdmissionReport {
     admitted: Vec<RequestId>,
     blocked: Option<Overload>,
+    ram_waits: Vec<(RequestId, runtime_kv::PendingAnchorId)>,
+    ram_fallbacks: Vec<(RequestId, PrefixRamFallbackV1)>,
 }
 
 impl AdmissionReport {
@@ -1271,6 +1275,20 @@ impl AdmissionReport {
     #[must_use]
     pub const fn blocked(&self) -> Option<Overload> {
         self.blocked
+    }
+
+    /// Requests that began waiting for a promotion, started or joined: the
+    /// RAM tier's admission decision.
+    #[must_use]
+    pub fn ram_waits(&self) -> &[(RequestId, runtime_kv::PendingAnchorId)] {
+        &self.ram_waits
+    }
+
+    /// Admitted requests that preferred a ready host entry and resume from
+    /// the GPU match or cold instead, with the reason.
+    #[must_use]
+    pub fn ram_fallbacks(&self) -> &[(RequestId, PrefixRamFallbackV1)] {
+        &self.ram_fallbacks
     }
 }
 
@@ -1460,6 +1478,7 @@ struct RequestRecord {
     /// more page until the first commit replaces that shared tail: the tail
     /// stays held while every sharer writes its own copy.
     shared_tail: bool,
+    ram: ram::RequestRam,
 }
 
 #[derive(Clone, Debug)]
@@ -1864,6 +1883,7 @@ impl Scheduler {
             own_anchor_transfer: None,
             shared_blocks: Vec::new(),
             shared_tail: false,
+            ram: ram::RequestRam::default(),
         });
         Ok(())
     }
@@ -1962,6 +1982,8 @@ impl Scheduler {
             .try_reserve_exact(self.config.maximum_sequences - self.active_sequences)
             .map_err(|_| ScheduleError::MetadataAllocationFailed)?;
         let mut blocked = None;
+        let mut ram_waits = Vec::new();
+        let mut ram_fallbacks = Vec::new();
         for index in 0..self.requests.len() {
             if self.requests[index].state != RequestState::Queued {
                 continue;
@@ -1973,6 +1995,10 @@ impl Scheduler {
             {
                 // The leader's capture is published after its committed step.
                 // A cancelled leader or a failed capture lets the follower run cold.
+                continue;
+            }
+            if self.requests[index].ram.promotion.is_some() {
+                // Settling the promotion lets it run admission again.
                 continue;
             }
             if self.active_sequences == self.config.maximum_sequences {
@@ -2005,7 +2031,7 @@ impl Scheduler {
                     .and_then(|key| self.kv.anchor_pages(key))
                     .and_then(|(_, pages, _)| pages.last().copied())
                     .is_some_and(|page| self.kv.block_ref_count(page) == Ok(1));
-            let hit_tokens = own_gpu
+            let mut hit_tokens = own_gpu
                 .and_then(|key| self.kv.anchor_pages(key).map(|a| a.0))
                 .or_else(|| host.map(|plan| plan.tokens))
                 .or_else(|| {
@@ -2014,6 +2040,30 @@ impl Scheduler {
                         .and_then(|chain| self.kv.lookup_anchor(chain, target - 1))
                         .map(|(_, tokens)| tokens)
                 });
+            // The RAM tier's host entries come after the request's own
+            // boundaries and before a cold start.
+            if self.config.prefix_ram.is_some()
+                && own_gpu.is_none()
+                && host.is_none()
+                && let Some(chain) = lookup.clone()
+            {
+                match self.choose_prefix_ram(index, &chain, target, hit_tokens.unwrap_or(0))? {
+                    ram::RamChoice::Wait(started) => {
+                        if let Some(id) = started {
+                            ram_waits.push((spec.id, id));
+                        }
+                        continue;
+                    }
+                    // A failed promotion start evicts nothing, but the GPU
+                    // match is looked up again.
+                    ram::RamChoice::Gpu => {
+                        hit_tokens = self
+                            .kv
+                            .lookup_anchor(&chain, target - 1)
+                            .map(|(_, tokens)| tokens);
+                    }
+                }
+            }
             let exact = hit_tokens.is_some_and(|tokens| {
                 Self::restores_decode_boundary(&self.requests[index], tokens)
             });
@@ -2186,6 +2236,20 @@ impl Scheduler {
                         hit_pages(prefilled, pins.len(), own_hit)
                     }
                 });
+            // A prompt-lookup hit on the anchor the request's promotion
+            // published is its RAM hit, counted when the restore completes.
+            let promoted = self.requests[index].ram.promoted.take();
+            self.requests[index].ram.restore = promoted
+                .filter(|key| {
+                    restore.is_some()
+                        && own_gpu.is_none()
+                        && host.is_none()
+                        && lookup.as_ref().and_then(|chain| chain.key_at(prefilled)) == Some(*key)
+                })
+                .map(|key| (key, prefilled));
+            if let Some(reason) = self.requests[index].ram.fallback.take() {
+                ram_fallbacks.push((spec.id, reason));
+            }
             // Recompute admission adds no public capture points. Preemption
             // snapshots are private; abandoning a restore can re-plan prompt
             // captures on a guaranteed grid from a fresh prefill.
@@ -2222,7 +2286,12 @@ impl Scheduler {
             self.reserved_blocks += blocks;
             admitted.push(self.requests[index].spec.id);
         }
-        Ok(AdmissionReport { admitted, blocked })
+        Ok(AdmissionReport {
+            admitted,
+            blocked,
+            ram_waits,
+            ram_fallbacks,
+        })
     }
 
     pub fn next_batch(&mut self) -> Result<Option<Batch>, ScheduleError> {
@@ -3346,6 +3415,7 @@ impl Scheduler {
             self.kv.metrics().prefix_restore_resumed_decoding();
         }
         self.reserved_blocks = reserved;
+        self.finish_prefix_ram_restore(index)?;
         // The sequence now holds the pages; the snapshot has served.
         self.drop_own_anchor(index)
     }
@@ -3376,6 +3446,7 @@ impl Scheduler {
         record.handle = Some(fresh);
         record.reserved_blocks -= released;
         record.shared_tail = false;
+        record.ram.restore = None;
         record.prefilled_tokens = 0;
         if record.preemptions == 0 {
             record.cached_tokens = 0;
@@ -3518,8 +3589,8 @@ impl Scheduler {
         Ok(self.record(id)?.preemptions)
     }
 
-    /// Pages reserved for live requests. Once due captures have ended, every
-    /// page a live sequence holds is within it.
+    /// Pages reserved for live requests and pending promotions. Once due
+    /// captures have ended, every page a live sequence holds is within it.
     #[must_use]
     pub const fn reserved_pages(&self) -> usize {
         self.reserved_blocks
@@ -3956,7 +4027,8 @@ impl Scheduler {
             }
         }
         if active != self.active_sequences
-            || reserved + self.shared_blocks.len() != self.reserved_blocks
+            || reserved + self.shared_blocks.len() + self.ram.reserved_pages()
+                != self.reserved_blocks
             || self.reserved_blocks > self.kv.geometry().block_capacity()
             || self.requests.iter().any(|record| {
                 let live = matches!(
@@ -3996,7 +4068,7 @@ impl Scheduler {
         } else if self.kv.prepared_id().is_some() {
             return Err(ScheduleError::InvariantViolation);
         }
-        Ok(())
+        self.audit_prefix_ram()
     }
 
     fn audit_public_capture(&self, capture: &PrefixCaptureV1) -> Result<(), ScheduleError> {
@@ -4925,6 +4997,9 @@ impl Scheduler {
             self.requests[index].reserved_tokens = 0;
         }
         self.requests[index].state = state;
+        // A cancelled waiter leaves its promotion to publish a normal anchor.
+        let ram = &mut self.requests[index].ram;
+        (ram.promotion, ram.promoted, ram.restore) = (None, None, None);
         self.drop_own_anchor(index)
     }
 

@@ -717,6 +717,54 @@ fn adaptive_caps_price_grid_anchor_tails_with_current_cadence_bounds() {
     }
 }
 
+/// Beside a scored prompt, which has no grid contract, a step keeps no
+/// grid anchor, so its cap and items are those it takes without an
+/// allowance: the fused tail is neither priced nor packed.
+#[test]
+fn adaptive_caps_price_no_grid_anchor_tail_beside_a_scored_prompt() {
+    for (decode, target_ms) in [(1, 200), (1, TARGET_MS), (0, 200)] {
+        let mut runs = Vec::new();
+        for anchors in [8, 0] {
+            let config = SchedulerConfig::new(64, 256, GRID, GRID, 1)
+                .unwrap()
+                .with_prefill_granule(GRANULE)
+                .unwrap()
+                .with_guaranteed_prefill_chunks(GRID)
+                .unwrap()
+                .with_prefix_cache(1)
+                .with_prefill_cuts(true)
+                .with_grid_anchor_items(anchors)
+                .with_prefill_timing_cuts(true)
+                .with_prefill_budget(PrefillBudget::Tbt(
+                    MixedPolicy::new(target_ms, FLOOR, 0).unwrap(),
+                ))
+                .with_adaptive_prefill_budget(true);
+            let mut s = Scheduler::new(config, KvGeometry::new(GRANULE, 65536).unwrap()).unwrap();
+            train(&mut s);
+            decoders(&mut s, decode);
+            submit_prefix(&mut s, 1, (0..703).map(|n| 10_000 + n).collect(), 4);
+            s.submit(
+                RequestSpec::new(RequestId::new(2), 40, 2)
+                    .unwrap()
+                    .with_prompt_scoring(),
+            )
+            .unwrap();
+            let batch = s.next_batch().unwrap().unwrap();
+            let items: Vec<_> = batch
+                .items()
+                .iter()
+                .map(|item| (item.request_id(), item.phase(), item.anchor_tokens()))
+                .collect();
+            assert!(
+                items.contains(&(RequestId::new(1), BatchPhase::Prefill { tokens: 640 }, None)),
+                "{decode} {target_ms} {anchors}: {items:?}"
+            );
+            runs.push((batch.prefill_cap(), items, batch.timing_cuts().cloned()));
+        }
+        assert_eq!(runs[0], runs[1], "{decode} {target_ms}");
+    }
+}
+
 fn owing(decode_steps: u32) -> PrefillBudget {
     PrefillBudget::Tbt(MixedPolicy::new(TARGET_MS, FLOOR, decode_steps).unwrap())
 }

@@ -91,9 +91,12 @@ impl BundlePrefillApiV1 {
 /// cuts. An instance keeps the state of up to `anchor_items` prompt-ending
 /// prefill items per step at the last prefill-granule multiple strictly
 /// inside each (`BATCH_ITEM_FLAG_ANCHOR_V3`), so that anchor needs no chunk
-/// end. This allowance applies only to guaranteed-grid requests and leaves
-/// manifest anchors unchanged. The two per-step allowances add up; a bundle
-/// enabling both must retain state for their sum in one step.
+/// end. This allowance applies only to guaranteed-grid requests, and only
+/// in steps whose prefill items all carry a boundary in the cuts envelope;
+/// a step with a media or other prefill item without one keeps every such
+/// anchor at a chunk end. Manifest anchors are unchanged and go only to
+/// items without a boundary, so a step keeps grid or manifest anchors,
+/// never both.
 /// Zero items keeps every such anchor at a chunk end. A nonzero
 /// allowance requires an enabled cuts policy. Old hosts ignore the export,
 /// and hosts use the manifest value for bundles without it.

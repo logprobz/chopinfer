@@ -68,8 +68,10 @@ pub(super) fn own_process(run: impl FnOnce()) -> bool {
         .name()
         .expect("route sweeps run on a libtest test thread")
         .to_owned();
+    // Quiet output keeps the summary line but not a second `test ... ok`
+    // line, which the CPU gate's inventory would count as another run.
     let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([test.as_str(), "--exact", "--nocapture"])
+        .args([test.as_str(), "--exact", "--nocapture", "--quiet"])
         .env(CHILD, "1")
         .stdin(std::process::Stdio::null())
         .output()

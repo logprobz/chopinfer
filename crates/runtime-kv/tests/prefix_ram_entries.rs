@@ -816,3 +816,41 @@ fn host_evictions_for_room_count_in_the_pool_metrics() {
             .contains("\nchop_prefix_ram_evictions_total 1\n")
     );
 }
+
+#[test]
+fn anchors_a_live_sequence_references_are_no_demotion_candidates() {
+    let prompt = chain(&(0..8).collect::<Vec<_>>());
+    let key = prompt.key_at(8).unwrap();
+    let keys = |pool: &KvPool| {
+        pool.demotion_candidates(usize::MAX, 1)
+            .iter()
+            .map(|candidate| candidate.key)
+            .collect::<Vec<_>>()
+    };
+    for forced in [false, true] {
+        let mut pool = ram_pool(32).with_prefix_ram_forced(forced);
+        // An anchor captured from a live sequence shares its pages: copying
+        // it would lease them all to free one snapshot page. Forced mode
+        // keeps its candidates.
+        let source = pool.create_sequence(12).unwrap();
+        pool.append(source, 8).unwrap();
+        pool.insert_content_anchor(&prompt, source, 8, 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(keys(&pool), if forced { vec![key] } else { vec![] });
+        pool.release(source).unwrap();
+        assert_eq!(keys(&pool), [key]);
+        // So does a sequence that resumed from it.
+        let longer = chain(&(0..12).collect::<Vec<_>>());
+        let resumed = pool.resume_prefix(&longer, 11, 12).unwrap().unwrap();
+        pool.finish_restore(resumed.handle()).unwrap();
+        assert_eq!(keys(&pool), if forced { vec![key] } else { vec![] });
+        pool.release(resumed.handle()).unwrap();
+        assert_eq!(keys(&pool), [key]);
+    }
+    // Pages shared between cached anchors do not exclude one: the end
+    // anchor shares its first page with the interior anchor.
+    let mut pool = ram_pool(32);
+    capture(&mut pool, &prompt, &[4, 8]);
+    assert_eq!(keys(&pool), [key]);
+}

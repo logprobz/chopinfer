@@ -133,7 +133,10 @@ impl KvPool {
     /// demotion may copy, in that order: indexed public frontiers of both
     /// tiers with at least `minimum_tokens` tokens, no host entry and no copy
     /// in flight. The anchor whose demotion is in flight, which eviction
-    /// skips, adds nothing.
+    /// skips, adds nothing. Outside forced mode an anchor whose pages a live
+    /// sequence still references is no candidate: its copy would lease
+    /// every page to free little more than its snapshot. Pages it shares
+    /// with other anchors do not exclude it.
     #[must_use]
     pub fn demotion_candidates(
         &self,
@@ -160,7 +163,13 @@ impl KvPool {
                 .filter(|page| self.blocks[page.index()] == 1)
                 .count();
             covered += freeable_pages;
-            if !anchor.private
+            let live = !ram.forced
+                && anchor.blocks.iter().chain(&anchor.state).any(|page| {
+                    let index = page.index();
+                    self.blocks[index] > self.anchor_refs[index] + self.transfer_refs[index]
+                });
+            if !live
+                && !anchor.private
                 && anchor.indexed
                 && anchor.tokens >= minimum_tokens
                 && !ram.entries.contains_key(key)

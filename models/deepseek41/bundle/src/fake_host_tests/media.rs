@@ -66,6 +66,7 @@ impl MediaHost {
             injected: RefCell::new(None),
             injected_after: Cell::new(0),
             memory: RefCell::new(Memory::default()),
+            read_memory: Cell::new(false),
             layouts: RefCell::new(std::collections::BTreeMap::new()),
             pull_only: Cell::new(false),
             fail_upload: Default::default(),

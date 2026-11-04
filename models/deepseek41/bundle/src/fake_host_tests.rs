@@ -34,6 +34,8 @@ mod head_last;
 mod index_mma;
 mod index_query;
 pub(crate) mod indexer_workloads;
+#[cfg(feature = "diagnostic-taps")]
+mod kv_state;
 mod media;
 mod moe_pipeline;
 mod norm_quantize;
@@ -457,6 +459,11 @@ pub(crate) struct FakeHost {
     /// Device memory as the origins of its bytes: every device copy moves
     /// them, so a test can tell where a span's bytes came from.
     memory: RefCell<Memory>,
+    /// Whether a read back of no upload's span returns the bytes its
+    /// memory origins hold (zero where a byte was never written), so a
+    /// test's stored rows reach the bundle through every device copy;
+    /// otherwise it reads zeros.
+    read_memory: Cell<bool>,
     /// Layout IDs that replace a view's own in every rank index.
     layouts: RefCell<BTreeMap<String, String>>,
     /// Refuse a peer copy on the source's stream, as a host from before
@@ -695,6 +702,7 @@ impl FakeHost {
             injected: RefCell::new(None),
             injected_after: Cell::new(0),
             memory: RefCell::new(Memory::default()),
+            read_memory: Cell::new(false),
             layouts: RefCell::new(BTreeMap::new()),
             pull_only: Cell::new(false),
             fail_upload: Default::default(),
@@ -858,6 +866,19 @@ impl FakePackage for FakeHost {
             .get(&(source.buffer.raw, source.offset))
         {
             Some(bytes) if bytes.len() == destination.len() => destination.copy_from_slice(bytes),
+            _ if self.read_memory.get() => {
+                let mut at = 0;
+                for (length, origin) in self.memory.borrow().read(source) {
+                    let part = &mut destination[at..at + length as usize];
+                    match origin {
+                        Origin::Uploaded(bytes, from) => {
+                            part.copy_from_slice(&bytes[from..from + length as usize])
+                        }
+                        Origin::Held(..) => part.fill(0),
+                    }
+                    at += length as usize;
+                }
+            }
             _ => destination.fill(0),
         }
         Ok(())

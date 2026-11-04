@@ -948,6 +948,26 @@ def module_records(module, model=None):
             module_option(module, 'RUNNER_RECORDS', {}, model))
 
 
+def forced_references(facts, suite):
+    """The pinned references a configuration's forcing file holds beside its
+    exact reference: those the modules of its selected checks name for the
+    forced records they read (RUNNER_FORCED_REFERENCES), in check order."""
+    names = []
+    for check in facts['quick' if suite == 'quick' else 'full']:
+        for name in module_option(facts['checks'][check]['module'], 'RUNNER_FORCED_REFERENCES', [],
+                                  facts['model']):
+            if name not in names:
+                names.append(name)
+    return names
+
+
+def references_command(facts, suite, out):
+    """The command writing a configuration's --debug-reference-tokens file:
+    the exact reference's sequences and each forced reference's."""
+    return [sys.executable, '-B', str(TOOLS / 'verify_exact.py'), 'references', '--out', out,
+            *(word for name in forced_references(facts, suite) for word in ('--reference', name))]
+
+
 def placeholders(check, suite=None):
     """The input names a declared check's arguments, cohort arguments (of
     `suite`, else every cohort's), files and input rules (such as a recorded
@@ -2077,7 +2097,7 @@ def run_configuration(run, name, config, devices=None):
     out = run.out / name
     out.mkdir(parents=True, exist_ok=True)
     if not run.replay:
-        checked([sys.executable, '-B', str(TOOLS / 'verify_exact.py'), 'references', '--out', reference_tokens],
+        checked(references_command(selected_facts, run.args.suite, reference_tokens),
                 directory / 'references.log', STAGE_TIMEOUTS['references'],
                 dict(env, CHOPINFER_QUAL_CONFIG=str(declaration_path)))
     context = {'config_name': name, 'config': config, 'declaration': declaration_path, 'directory': directory,

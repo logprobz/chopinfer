@@ -173,6 +173,25 @@ class RecordArgumentTests(unittest.TestCase):
                          base + runner.ARMS['verify-spec'])
 
 
+class ForcedReferenceTests(unittest.TestCase):
+    """A configuration's --debug-reference-tokens file adds the pinned
+    references its selected checks' modules name for their forced records."""
+
+    def test_selected_checks_add_their_modules_forced_references_once_in_check_order(self):
+        named = {'forcing': ['long_context', 'other'], 'again': ['other', 'long_context'], 'plain': []}
+
+        def option(module, name, default, model=None):
+            return named[module] if name == 'RUNNER_FORCED_REFERENCES' else default
+        facts = dict(runner.model_facts(model()), quick=['plain'], full=['plain', 'forcing', 'again'],
+                     checks={name: {'module': name} for name in named})
+        plain = [sys.executable, '-B', str(runner.TOOLS / 'verify_exact.py'), 'references', '--out', 'out.json']
+        with patch.object(runner, 'module_option', option):
+            self.assertEqual(runner.references_command(facts, 'quick', 'out.json'), plain)
+            self.assertEqual(runner.references_command(facts, 'full', 'out.json'),
+                             [*plain, '--reference', 'long_context', '--reference', 'other'])
+            self.assertEqual(runner.references_command(dict(facts, full=['plain']), 'full', 'out.json'), plain)
+
+
 class PlanTests(unittest.TestCase):
     def test_quick_starts_the_default_arms_with_determinism_first_and_checks_on_the_quick_arms(self):
         for model in MODELS:

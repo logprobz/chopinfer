@@ -552,6 +552,14 @@ class CheckInputs(unittest.TestCase):
                                      'def read():\n    global HERE\n    return HERE.glob("*.py")\n'
                                      'def move(output):\n    global ROOT\n    ROOT = output\n'
                                      'def walk():\n    return ROOT.rglob("*.py")\n',
+        # Equivalent spellings: an annotated assignment, resolve() with an argument, joined
+        # parts, and a pattern held in a module-level name.
+        "tools/listing/forms.py": 'from pathlib import Path\nHERE: Path = Path(__file__).resolve(strict=True).parent\n'
+                                  'PATTERN = "*.py"\nMODULES = HERE.glob(PATTERN)\n'
+                                  'DATA = Path(HERE, "data").glob("*.py")\n'
+                                  'SCRIPTS = HERE.joinpath("deep").rglob(pattern="*.sh")\n',
+        "tools/listing/data/x.py": "",
+        "tools/listing/deep/run.sh": "",
         "tools/listing/listed.py": "import tools.unlisted\n",
         "tools/unlisted.py": "",
         "fixtures/listed/deep/case.py": "",
@@ -648,6 +656,9 @@ class CheckInputs(unittest.TestCase):
         declared = self.scanner().inputs(["python3", "-B", "tools/listing/declared.py"])
         self.assertTrue(declared.covers("tools/listing/listed.py"))
         self.assertFalse(declared.covers("fixtures/other/case.py"))
+        forms = self.scanner().inputs(["python3", "-B", "tools/listing/forms.py"])
+        for path in ("tools/listing/listed.py", "tools/listing/data/added.py", "tools/listing/deep/added.sh"):
+            self.assertTrue(forms.covers(path), path)
 
     def test_the_model_inventory_check_covers_the_ci_modules_its_tests_load(self):
         import cpu

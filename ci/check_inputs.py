@@ -16,12 +16,13 @@ files may be read through a path built from parts and stay covered. Its
 Python and shell files are covered where they are imported, named or
 listed. A glob or rglob call lists the directory its receiver names when
 that is built from `__file__` (`Path(__file__).parent`, `.parents[N]`) or a
-literal and joined with literals by `/`, directly or through a name's one
-module-level assignment where no scope around the call binds that name
-(a parameter or local): what its literal pattern matches there is covered,
-Python and shell files included, but not scanned in turn. A receiver built
-from anything else, such as a parameter, lists nothing, and a call on a
-line that declares its walk (below) keeps the declaration. A
+literal and joined with literals (`/`, `Path(...)`, `joinpath`), directly
+or through a name's one module-level assignment where no scope around the
+call binds that name (a parameter or local): what its literal pattern,
+given the same way, matches there is covered, Python and shell files
+included, but not scanned in turn. A receiver built from anything else,
+such as a parameter, lists nothing, and a call on a line that declares its
+walk (below) keeps the declaration. A
 walk whose line says `check-inputs: walks outside the repository` reads
 only directories outside the tree, such as installs and checkpoints; one
 whose line says `check-inputs: walks DIR, ...` walks only those repository
@@ -138,15 +139,16 @@ def walks(tree, text):
 
 # Calls that list a directory, each with whether it lists every depth.
 LISTINGS = {"glob": False, "rglob": True}
-# Calls whose result names the path they are given, or the one they are called on.
-SAME_PATH = ("Path", "PurePath", "PurePosixPath", "resolve", "absolute")
+# Constructors whose result joins the paths they are given, as joinpath joins its arguments to
+# the path it is called on, and methods whose result names the path they are called on.
+PATH_TYPES = ("Path", "PurePath", "PurePosixPath", "PosixPath")
+SAME_PATH = ("resolve", "absolute")
 
 
 def listing_pattern(call):
-    """The literal pattern of a glob or rglob call, passed by position or as `pattern=`, or None."""
+    """The pattern argument of a glob or rglob call, passed by position or as `pattern=`, or None."""
     given = call.args[:1] or [keyword.value for keyword in call.keywords if keyword.arg == "pattern"]
-    value = given[0].value if given and isinstance(given[0], ast.Constant) else None
-    return value if isinstance(value, str) else None
+    return given[0] if given else None
 
 
 FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
@@ -216,6 +218,9 @@ def scope_bindings(statements):
                     names.append(part.target.id)
                 if not isinstance(part, (*FUNCTIONS, ast.ClassDef)):
                     inner += ast.iter_child_nodes(part)
+        elif isinstance(node, ast.AnnAssign) and node.value is None:
+            # An annotation alone binds nothing.
+            pending.append(node.annotation)
         else:
             names += bound_names(node)
             pending += ast.iter_child_nodes(node)
@@ -230,8 +235,8 @@ def bindings(statements):
 
 
 def assigned_once(tree):
-    """The values of the names a module binds once, by a plain assignment in its body, and
-    that no function or class body declares global and binds."""
+    """The values of the names a module binds once, by a plain or annotated assignment in its
+    body, and that no function or class body declares global and binds."""
     counts = {}
     for name in bindings(tree.body):
         counts[name] = counts.get(name, 0) + 1
@@ -240,10 +245,14 @@ def assigned_once(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             names, outer, _ = scope_bindings(node.body)
             rebound |= outer & set(names)
-    return {target.id: statement.value for statement in tree.body
-            if isinstance(statement, ast.Assign) and len(statement.targets) == 1
-            for target in statement.targets
-            if isinstance(target, ast.Name) and counts.get(target.id) == 1 and target.id not in rebound}
+    values = {}
+    for statement in tree.body:
+        targets = (statement.targets if isinstance(statement, ast.Assign) else
+                   [statement.target] if isinstance(statement, ast.AnnAssign) and statement.value else [])
+        if (len(targets) == 1 and isinstance(targets[0], ast.Name) and counts.get(targets[0].id) == 1
+                and targets[0].id not in rebound):
+            values[targets[0].id] = statement.value
+    return values
 
 
 def scoped_calls(tree):
@@ -274,12 +283,12 @@ def scoped_calls(tree):
 
 
 def listed_directory(node, assigned, path, hidden=frozenset(), expanding=frozenset()):
-    """(anchored, directory) for the receiver of a listing in the file at `path`:
-    anchored, and relative to the root, when it is built from __file__
+    """(anchored, directory) for the receiver of a listing in the file at `path`, or the
+    value of its pattern: anchored, and relative to the root, when it is built from __file__
     (`Path(__file__).parent`, `.parents[N]`); not anchored when it is a literal; either
-    joined with literals by `/`. A name counts through its one module-level assignment
-    (`assigned`) unless a scope around the listing binds it (`hidden`). None for any other
-    receiver, such as a parameter."""
+    joined with literals by `/`, `Path(...)` or `joinpath`. A name counts through its one
+    module-level assignment (`assigned`) unless a scope around the listing binds it
+    (`hidden`). None for any other receiver, such as a parameter."""
     def named(child):
         return listed_directory(child, assigned, path, hidden, expanding)
 
@@ -299,11 +308,15 @@ def listed_directory(node, assigned, path, hidden=frozenset(), expanding=frozens
         return (left[0], os.path.join(left[1], right[1])) if left and right and not right[0] else None
     if isinstance(node, ast.Call):
         name = getattr(node.func, "attr", getattr(node.func, "id", None))
-        if name not in SAME_PATH or node.keywords:
+        method = isinstance(node.func, ast.Attribute)
+        if name in SAME_PATH and method and not node.args:
+            return named(node.func.value)
+        if node.keywords or not (name in PATH_TYPES and node.args or name == "joinpath" and method):
             return None
-        if len(node.args) == 1:
-            return named(node.args[0])
-        return named(node.func.value) if not node.args and isinstance(node.func, ast.Attribute) else None
+        parts = [named(part) for part in ([] if name in PATH_TYPES else [node.func.value]) + node.args]
+        if not all(parts) or any(anchored for anchored, _ in parts[1:]):
+            return None
+        return parts[0][0], os.path.join(*(value for _, value in parts))
     if isinstance(node, ast.Attribute) and node.attr == "parent":
         levels, base = 1, named(node.value)
     elif (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) and node.value.attr == "parents"
@@ -441,19 +454,22 @@ class Scanner:
             # A listing of a repository directory covers what its pattern matches there, now or
             # once added, Python and shell files included; like computed loads, those are not
             # scanned in turn. A literal directory resolves like a named one. Each listing has a
-            # literal pattern, and its line declares nothing about what it walks.
+            # literal pattern, possibly through a name, and its line declares nothing about what
+            # it walks.
             lines, listings = text.splitlines(), []
             for node, hidden in scoped_calls(tree) if lists else ():
                 if isinstance(node.func, ast.Attribute) and node.func.attr in LISTINGS:
-                    pattern = listing_pattern(node)
-                    if pattern is not None and not DECLARED_WALK.search(lines[node.lineno - 1]):
-                        listings.append((node.func.value, pattern, LISTINGS[node.func.attr], hidden))
+                    given = listing_pattern(node)
+                    if given is not None and not DECLARED_WALK.search(lines[node.lineno - 1]):
+                        listings.append((node.func.value, given, LISTINGS[node.func.attr], hidden))
             assigned = assigned_once(tree) if listings else {}
-            for receiver, pattern, recursive, hidden in listings:
+            for receiver, given, recursive, hidden in listings:
                 directory = listed_directory(receiver, assigned, path, hidden)
-                if not directory:
+                pattern = listed_directory(given, assigned, path, hidden)
+                if not directory or not pattern or pattern[0]:
                     continue
                 anchored, value = directory
+                pattern = pattern[1]
                 for base in ["."] if anchored else bases[:2]:
                     listed = os.path.normpath(os.path.join(base, value))
                     glob = os.path.normpath(os.path.join(listed, "**" if recursive else "", pattern))

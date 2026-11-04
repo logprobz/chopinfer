@@ -265,6 +265,9 @@
    "SCHEMA": "str",
    "TOOLS": "number"
   },
+  "module_source": {
+   "TOOLS": "number"
+  },
   "multimodal": {
    "GATE_VARIANT": "str",
    "LARGE_SET_MEAN_LIMIT": "number",

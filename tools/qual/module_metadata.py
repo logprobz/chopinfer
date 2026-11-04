@@ -7,30 +7,18 @@ test_module_metadata.py keeps it current.
     python3 -B tools/qual/module_metadata.py
 """
 
-import ast
 import json
 from pathlib import Path
 import sys
 
+from module_source import module_constants
+
+# Bound here, not imported: ci/check_inputs.py finds the listing in
+# metadata() through this file's own names.
 TOOLS = Path(__file__).parent
 
 SCHEMA = "chopinfer-qual-modules/v1"
 OUTPUT = Path(__file__).with_name("modules.json")
-
-
-def module_constants(module):
-    """A qualification module's top-level names, each with its literal default
-    or None when computed. Read from source; the module is not imported."""
-    constants = {}
-    for node in ast.parse((TOOLS / (module + ".py")).read_text()).body:
-        targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
-        for target in targets:
-            if isinstance(target, ast.Name):
-                try:
-                    constants[target.id] = (ast.literal_eval(node.value),)
-                except ValueError:
-                    constants[target.id] = None
-    return constants
 
 
 def check_module(name):

@@ -146,8 +146,8 @@ def check_command(args):
 def offline_module(module):
     """Whether a check module judges without a server (RUNNER_CHECK_ARM
     "offline"), read from its source without importing it."""
-    import module_metadata
-    return module_metadata.module_constants(module).get("RUNNER_CHECK_ARM") == ("offline",)
+    import module_source
+    return module_source.module_constants(module).get("RUNNER_CHECK_ARM") == ("offline",)
 
 
 def gate_runs(paths):

@@ -891,14 +891,26 @@ class ReferenceServer(PinnedServer):
         return ForcingServer(self.references, lambda position: -1).request(path, body)
 
 
+def long_context_gate():
+    """The first model declaration that pins a long_context reference of one
+    text stored in the repository, which pinned_reference verifies offline."""
+    import declaration
+    for path in sorted(declaration.ROOT.glob("models/*/qual.json")):
+        spec = json.loads(path.read_text()).get("references", {}).get("long_context")
+        if (spec is not None and isinstance(spec["path"], str)
+                and len(json.loads((declaration.ROOT / spec["path"]).read_text())["texts"]) == 1):
+            return path
+    raise AssertionError("no model declaration pins a one-text long_context reference in the repository")
+
+
 class NamedReferenceTests(unittest.TestCase):
-    """--reference adds a pinned reference's texts (here Qwen3.8's pinned
-    32,768-token long-context fixture) to those `references` writes and
+    """--reference adds a pinned reference's texts (a gate's long-context
+    reference stored in the repository) to those `references` writes and
     `record` forces."""
 
     def setUp(self):
-        import declaration
-        selected = mock.patch.dict(os.environ, {"CHOPINFER_QUAL_CONFIG": str(declaration.named("qwen38"))})
+        self.gate = long_context_gate()
+        selected = mock.patch.dict(os.environ, {"CHOPINFER_QUAL_CONFIG": str(self.gate)})
         selected.start()
         self.addCleanup(selected.stop)
         directory = tempfile.TemporaryDirectory()
@@ -962,7 +974,7 @@ class NamedReferenceTests(unittest.TestCase):
         self.assertEqual(code, 0, output)
         recorded = json.loads(Path(json.loads(output.splitlines()[-1])["receipt"]).read_text())
         import declaration
-        pin = declaration.load(declaration.named("qwen38"))["qualification"]["references"]["long_context"]
+        pin = declaration.load(self.gate)["qualification"]["references"]["long_context"]
         self.assertEqual(recorded["references"], {"long_context": pin["sha256"]})
         self.assertEqual([text["name"] for text in recorded["texts"]], ["t", self.long["name"]])
         [short], [long] = (text["passes"] for text in recorded["texts"])
@@ -979,8 +991,9 @@ class NamedReferenceTests(unittest.TestCase):
     def test_a_server_that_cannot_hold_the_long_history_refuses_the_record(self):
         code, _, _ = self.record(context=4096)
         self.assertRegex(str(code), rf"refused: {self.long['name']}: the server did not serve a request of its "
-                                    r"32768-token history \(HTTP 400: .*exceed the context of 4096\); recording "
-                                    "it needs KV capacity and a context that hold every token")
+                                    rf"{len(self.long['prompt_token_ids'])}-token history \(HTTP 400: .*exceed the "
+                                    r"context of 4096\); recording it needs KV capacity and a context that hold every "
+                                    "token")
 
 
 class SmallBucketTests(unittest.TestCase):

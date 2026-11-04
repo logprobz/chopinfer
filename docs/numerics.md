@@ -1127,21 +1127,27 @@ not an experiment: measurements size its defaults and prove it correct but
 do not decide whether it exists. The tier lives in the pinned offload arena
 that request swaps use, with no staging buffer, and copies through the same
 queue: swaps and promotions go first, demotions last. Demotion is
-copy-ahead. At step boundaries the engine
-copies a public frontier anchor near the head of the GPU eviction order into
-the arena, so its later eviction loses nothing and no allocation waits on
-PCIe for it. At most one demotion is outstanding, from its plan to its
-confirmed completion, so its whole-anchor device lease and host pages stay
-bounded by one anchor; it keeps at most 4 copy chunks of up to 8 MiB in
-flight per rank and yields at the next chunk to a waiting swap or promotion.
-A demotion starts only when free and evictable pages cover the anchor and
-the pages one step may allocate, measured over the last 16 steps. An
-allocation that finds only the anchor under demotion left cancels the copy,
-waits for its issued chunks to drain, and evicts the anchor as a counted
-miss. RAM entries keep the time of their anchor's last GPU use and are
-evicted oldest first; a swap may evict any of them, never the reverse. Only
-frontiers are kept: an entry whose prefix gains a resident descendant in
-either tier is dropped.
+copy-ahead. At step boundaries the engine copies a public frontier anchor
+near the head of the GPU eviction order into the arena, so its later
+eviction loses nothing. At most one demotion is outstanding, from its plan
+to its confirmed completion, so its whole-anchor device lease and host pages
+stay bounded by one anchor. It keeps at most 4 copy chunks in flight per
+rank, each about 8 MiB in whole pages and at least one page, and yields at
+the next chunk to a waiting swap or promotion. A demotion starts only when
+free and evictable pages cover the anchor and the pages one step may
+allocate, measured over the last 16 steps. A foreground allocation that
+still needs the pages of the anchor under demotion (a batch, an admission,
+a promotion's pending anchor or a capture) cancels the copy and waits at
+most for its issued chunks to drain; the anchor is then evicted as a counted
+miss. That bound holds only when the issued DMA completes. A cancel still
+pending at the executor's drain timeout counts in
+`chop_prefix_ram_cancel_timeouts_total` and stays an overdue copy that keeps
+its pages leased: past the stall deadline it is reported as a stalled copy
+(the worker's `kv_stalled` state), a capture that needed its pages falls
+back, and requests that need them wait. RAM entries keep the time of their
+anchor's last GPU use and are evicted oldest first; a swap may evict any of
+them, never the reverse. Only frontiers are kept: an entry whose prefix
+gains a resident descendant in either tier is dropped.
 
 A request whose ready RAM match exceeds its GPU match by at least the
 offload minimum and a sixteenth of the RAM match is promoted, not restored

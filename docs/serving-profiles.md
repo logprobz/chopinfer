@@ -377,8 +377,9 @@ tier's entries, and a demotion evicts only entries older than its anchor.
 Its bounds are:
 
 - copies in flight, of every kind, at most 1 GiB per rank;
-- one demotion outstanding at a time, with at most 4 copy chunks of up to
-  8 MiB each (32 MiB) in flight per rank;
+- one demotion outstanding at a time, with at most 4 copy chunks in flight
+  per rank, each about 8 MiB in whole pages and at least one page: pages of
+  16 MiB make four 16 MiB chunks;
 - the promotions one step starts take together at most a sixteenth of the
   pool's pages per rank; a larger single promotion starts alone, with no
   demotion outstanding.

@@ -543,6 +543,15 @@ class CheckInputs(unittest.TestCase):
                                    '    def run(self):\n        return HERE.rglob("*.sh")\n',
         "tools/listing/spaced.py": 'from pathlib import Path\nHERE = Path(__file__).parent\n'
                                    'for path in HERE.glob ("*.py"):\n    pass\n',
+        # A pattern passed by keyword; a global declaration that only reads the name, and one
+        # that rebinds it.
+        "tools/listing/keyword.py": 'from pathlib import Path\nHERE = Path(__file__).parent\n'
+                                    'MODULES = HERE.glob(pattern="*.py")\nSCRIPTS = HERE.rglob(pattern="*.sh")\n',
+        "tools/listing/declared.py": 'from pathlib import Path\nHERE = Path(__file__).parent\n'
+                                     'ROOT = Path(__file__).resolve().parents[2]\n'
+                                     'def read():\n    global HERE\n    return HERE.glob("*.py")\n'
+                                     'def move(output):\n    global ROOT\n    ROOT = output\n'
+                                     'def walk():\n    return ROOT.rglob("*.py")\n',
         "tools/listing/listed.py": "import tools.unlisted\n",
         "tools/unlisted.py": "",
         "fixtures/listed/deep/case.py": "",
@@ -633,6 +642,12 @@ class CheckInputs(unittest.TestCase):
             self.assertTrue(nested.covers(path), path)
         spaced = self.scanner().inputs(["python3", "-B", "tools/listing/spaced.py"])
         self.assertTrue(spaced.covers("tools/listing/listed.py"))
+        keyword = self.scanner().inputs(["python3", "-B", "tools/listing/keyword.py"])
+        for path in ("tools/listing/listed.py", "tools/listing/deep/run.sh"):
+            self.assertTrue(keyword.covers(path), path)
+        declared = self.scanner().inputs(["python3", "-B", "tools/listing/declared.py"])
+        self.assertTrue(declared.covers("tools/listing/listed.py"))
+        self.assertFalse(declared.covers("fixtures/other/case.py"))
 
     def test_the_model_inventory_check_covers_the_ci_modules_its_tests_load(self):
         import cpu

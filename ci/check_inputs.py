@@ -142,6 +142,13 @@ LISTINGS = {"glob": False, "rglob": True}
 SAME_PATH = ("Path", "PurePath", "PurePosixPath", "resolve", "absolute")
 
 
+def listing_pattern(call):
+    """The literal pattern of a glob or rglob call, passed by position or as `pattern=`, or None."""
+    given = call.args[:1] or [keyword.value for keyword in call.keywords if keyword.arg == "pattern"]
+    value = given[0].value if given and isinstance(given[0], ast.Constant) else None
+    return value if isinstance(value, str) else None
+
+
 FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
 
@@ -187,16 +194,16 @@ def comprehension_parts(node):
             *(part for generator in rest for part in (generator.target, generator.iter, *generator.ifs)), *elements]
 
 
-def bindings(statements):
-    """The names code binds in its own scope, once per binding. A nested function or class
-    binds its name here, and its decorators, defaults and bases run here; a nested
-    comprehension's first iterable runs here and its `:=` targets bind here. What their
-    bodies bind does not count, nor do names declared global or nonlocal."""
-    names, declared, pending = [], set(), list(statements)
+def scope_bindings(statements):
+    """(names, global, nonlocal) for code in one scope: the names it binds, once per binding,
+    and those it declares global or nonlocal. A nested function or class binds its name
+    here, and its decorators, defaults and bases run here; a nested comprehension's first
+    iterable runs here and its `:=` targets bind here. What their bodies bind does not count."""
+    names, declared, pending = [], {ast.Global: set(), ast.Nonlocal: set()}, list(statements)
     while pending:
         node = pending.pop()
         if isinstance(node, (ast.Global, ast.Nonlocal)):
-            declared.update(node.names)
+            declared[type(node)].update(node.names)
         elif isinstance(node, (*FUNCTIONS, ast.ClassDef)):
             names += [] if isinstance(node, ast.Lambda) else [node.name]
             pending += outer_parts(node)
@@ -212,16 +219,27 @@ def bindings(statements):
         else:
             names += bound_names(node)
             pending += ast.iter_child_nodes(node)
-    return [name for name in names if name not in declared]
+    return names, declared[ast.Global], declared[ast.Nonlocal]
+
+
+def bindings(statements):
+    """The names code binds in its own scope, once per binding, less those it declares
+    global or nonlocal, which belong to another scope."""
+    names, outer, enclosing = scope_bindings(statements)
+    return [name for name in names if name not in outer | enclosing]
 
 
 def assigned_once(tree):
     """The values of the names a module binds once, by a plain assignment in its body, and
-    that no function rebinds through `global`."""
+    that no function or class body declares global and binds."""
     counts = {}
     for name in bindings(tree.body):
         counts[name] = counts.get(name, 0) + 1
-    rebound = {name for node in ast.walk(tree) if isinstance(node, ast.Global) for name in node.names}
+    rebound = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names, outer, _ = scope_bindings(node.body)
+            rebound |= outer & set(names)
     return {target.id: statement.value for statement in tree.body
             if isinstance(statement, ast.Assign) and len(statement.targets) == 1
             for target in statement.targets
@@ -397,7 +415,7 @@ class Scanner:
                 tree = ast.parse(text)
             except SyntaxError:
                 return found
-            strings, imports, loads, listed = [], [], [], False
+            strings, imports, loads, lists = [], [], [], False
             for node in ast.walk(tree):
                 if isinstance(node, ast.Constant) and isinstance(node.value, str):
                     strings.append(node.value)
@@ -407,7 +425,7 @@ class Scanner:
                     name = getattr(node.func, "attr", getattr(node.func, "id", None))
                     if name in LOADERS and len(node.args) > LOADERS[name]:
                         loads.append(node.args[LOADERS[name]])
-                    listed = listed or name in LISTINGS and isinstance(node.func, ast.Attribute)
+                    lists = lists or name in LISTINGS and isinstance(node.func, ast.Attribute)
             # A path is often joined from parts (ROOT / "tools" / "qual" / "x.py"), so names also
             # resolve against the directories the file names; those may be on its import path too.
             for _ in range(3):
@@ -424,12 +442,12 @@ class Scanner:
             # once added, Python and shell files included; like computed loads, those are not
             # scanned in turn. A literal directory resolves like a named one. Each listing has a
             # literal pattern, and its line declares nothing about what it walks.
-            lines = text.splitlines()
-            listings = [(node.func.value, node.args[0].value, LISTINGS[node.func.attr], hidden)
-                        for node, hidden in (scoped_calls(tree) if listed else ())
-                        if isinstance(node.func, ast.Attribute) and node.func.attr in LISTINGS and node.args
-                        and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)
-                        and not DECLARED_WALK.search(lines[node.lineno - 1])]
+            lines, listings = text.splitlines(), []
+            for node, hidden in scoped_calls(tree) if lists else ():
+                if isinstance(node.func, ast.Attribute) and node.func.attr in LISTINGS:
+                    pattern = listing_pattern(node)
+                    if pattern is not None and not DECLARED_WALK.search(lines[node.lineno - 1]):
+                        listings.append((node.func.value, pattern, LISTINGS[node.func.attr], hidden))
             assigned = assigned_once(tree) if listings else {}
             for receiver, pattern, recursive, hidden in listings:
                 directory = listed_directory(receiver, assigned, path, hidden)

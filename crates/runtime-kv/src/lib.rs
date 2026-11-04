@@ -677,7 +677,7 @@ impl KvPool {
     }
 
     /// Configuration replaces the ancestry index, so no tier may hold a key
-    /// yet: no GPU anchor, host entry or demotion.
+    /// yet: no GPU anchor, host entry, demotion or pending promotion.
     fn assert_unindexed(&self) {
         assert!(
             self.anchors.is_empty(),

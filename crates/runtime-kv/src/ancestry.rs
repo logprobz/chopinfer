@@ -136,13 +136,7 @@ impl PrefixResidency {
 pub(crate) enum PrefixTier {
     Gpu,
     Host,
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "pending anchors hold the key while a promotion copies"
-        )
-    )]
+    /// A pending promotion, which holds the key while it copies.
     Pending,
 }
 

@@ -57,6 +57,16 @@ pub enum PrefixHostInvalidationV1 {
     Descendant,
 }
 
+/// A promotion copying a host entry back into a pending anchor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PendingPromotion {
+    /// The entry's tokens, which stay the node's depth after its drop.
+    tokens: usize,
+    /// The first logical event on the key since the promotion began,
+    /// which forbids its publish.
+    invalidation: Option<PrefixHostInvalidationV1>,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct PrefixRam {
     pub(crate) entries: BTreeMap<PrefixCacheKeyV1, PrefixHostEntryV1>,
@@ -70,6 +80,10 @@ pub(crate) struct PrefixRam {
     pub(crate) demotions: BTreeMap<PrefixCacheKeyV1, (u64, KvTransferId)>,
     /// Entries a logical event made unusable, awaiting their host drop.
     invalidations: BTreeMap<PrefixCacheKeyV1, PrefixHostInvalidationV1>,
+    /// Promotions in flight by key and the serial of the entry each
+    /// copies. Each holds the key's node until it ends, through its
+    /// entry's host eviction.
+    promotions: BTreeMap<(PrefixCacheKeyV1, u64), PendingPromotion>,
     /// Public evictions since the last drain, oldest first.
     evictions: VecDeque<PrefixEvictionV1>,
     /// Evictions the log's bound discarded since the last drain.
@@ -82,9 +96,9 @@ pub(crate) struct PrefixRam {
 }
 
 impl PrefixRam {
-    /// Whether no key is held: no host entry and no demotion in flight.
+    /// Whether no key is held: no host entry, demotion or promotion.
     pub(crate) fn holds_no_key(&self) -> bool {
-        self.entries.is_empty() && self.demotions.is_empty()
+        self.entries.is_empty() && self.demotions.is_empty() && self.promotions.is_empty()
     }
 }
 
@@ -186,6 +200,68 @@ impl KvPool {
                 .filter(|entry| entry.ready && !ram.invalidations.contains_key(key))
                 .map(|entry| entry.tokens)
         })
+    }
+
+    /// Starts a promotion of `key`'s ready, usable host entry and returns
+    /// the entry's serial, which names the promotion. Until it ends it
+    /// holds the key's node, and a logical event on the key invalidates
+    /// it as it does the entry. A publish adds the GPU hold before it ends
+    /// the promotion, so the node keeps its lifetime flags.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "pending anchors start promotions")
+    )]
+    pub(crate) fn begin_pending_promotion(
+        &mut self,
+        key: PrefixCacheKeyV1,
+    ) -> Result<u64, KvError> {
+        let ram = self.ram.as_mut().ok_or(KvError::StaleHandle)?;
+        let entry = ram
+            .entries
+            .get(&key)
+            .filter(|entry| entry.ready && !ram.invalidations.contains_key(&key))
+            .ok_or(KvError::StaleHandle)?;
+        let (serial, tokens) = (entry.serial, entry.tokens);
+        // One promotion per entry; followers wait for its publish.
+        if ram.promotions.contains_key(&(key, serial)) {
+            return Err(KvError::StaleHandle);
+        }
+        ram.promotions.insert(
+            (key, serial),
+            PendingPromotion {
+                tokens,
+                invalidation: None,
+            },
+        );
+        self.ancestry
+            .as_mut()
+            .expect("the RAM tier keeps the index")
+            .add_residency(key, PrefixTier::Pending);
+        Ok(serial)
+    }
+
+    /// Ends the promotion of `key`'s entry `serial`, returning the logical
+    /// event that invalidated it, if any. The key's node goes once no tier
+    /// holds it.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "pending anchors end promotions")
+    )]
+    pub(crate) fn end_pending_promotion(
+        &mut self,
+        key: PrefixCacheKeyV1,
+        serial: u64,
+    ) -> Result<Option<PrefixHostInvalidationV1>, KvError> {
+        let promotion = self
+            .ram
+            .as_mut()
+            .and_then(|ram| ram.promotions.remove(&(key, serial)))
+            .ok_or(KvError::StaleHandle)?;
+        if let Some(index) = &mut self.ancestry {
+            index.release_residency(key, PrefixTier::Pending);
+            self.reclassify_anchors();
+        }
+        Ok(promotion.invalidation)
     }
 
     /// Takes the public evictions logged since the last call, oldest first,
@@ -351,8 +427,9 @@ impl KvPool {
     }
 
     /// A logical event on `key`: its host entry, if any, becomes unusable
-    /// and is reported for its host drop. Forced mode exempts descendants
-    /// and resumes.
+    /// and is reported for its host drop, and every pending promotion of
+    /// the key is invalidated, even after its entry's host eviction.
+    /// Forced mode exempts descendants and resumes.
     pub(crate) fn host_key_event(
         &mut self,
         key: PrefixCacheKeyV1,
@@ -366,6 +443,13 @@ impl KvPool {
         }
         if ram.entries.contains_key(&key) {
             ram.invalidations.entry(key).or_insert(reason);
+        }
+        for promotion in ram
+            .promotions
+            .range_mut((key, 0)..=(key, u64::MAX))
+            .map(|(_, promotion)| promotion)
+        {
+            promotion.invalidation.get_or_insert(reason);
         }
     }
 
@@ -384,37 +468,31 @@ impl KvPool {
     pub(crate) fn expected_residency(
         &self,
     ) -> impl Iterator<Item = (PrefixCacheKeyV1, usize, PrefixResidency)> + '_ {
-        let entries = self.ram.as_ref().map(|ram| &ram.entries);
-        let gpu = self
+        let mut expected: BTreeMap<_, _> = self
             .anchors
             .iter()
             .filter(|(_, anchor)| anchor.indexed)
-            .map(move |(key, anchor)| {
-                let host = entries.is_some_and(|entries| entries.contains_key(key));
-                (
-                    *key,
-                    anchor.tokens,
-                    PrefixResidency {
-                        host,
-                        ..PrefixResidency::GPU
-                    },
-                )
-            });
-        let host_only = entries
+            .map(|(key, anchor)| (*key, (anchor.tokens, PrefixResidency::GPU)))
+            .collect();
+        if let Some(ram) = &self.ram {
+            for (key, entry) in &ram.entries {
+                expected
+                    .entry(*key)
+                    .or_insert((entry.tokens, PrefixResidency::default()))
+                    .1
+                    .host = true;
+            }
+            for ((key, _), promotion) in &ram.promotions {
+                expected
+                    .entry(*key)
+                    .or_insert((promotion.tokens, PrefixResidency::default()))
+                    .1
+                    .pending += 1;
+            }
+        }
+        expected
             .into_iter()
-            .flatten()
-            .filter(|(key, _)| !self.anchors.get(key).is_some_and(|anchor| anchor.indexed))
-            .map(|(key, entry)| {
-                (
-                    *key,
-                    entry.tokens,
-                    PrefixResidency {
-                        host: true,
-                        ..PrefixResidency::default()
-                    },
-                )
-            });
-        gpu.chain(host_only)
+            .map(|(key, (tokens, residency))| (key, tokens, residency))
     }
 
     pub(crate) fn audit_ram(&self) -> Result<(), KvError> {
@@ -463,6 +541,24 @@ impl KvPool {
                 || entry.last_used > self.anchor_clock
                 || !ram.order.contains(&(entry.last_used, *key))
                 || gpu_mismatch
+                || (usable && !ram.forced && index.has_descendant(*key))
+            {
+                return Err(KvError::InvariantViolation);
+            }
+        }
+        // A promotion began from a ready, usable entry, and every logical
+        // event on its key since then invalidated it with the entry.
+        for ((key, serial), promotion) in &ram.promotions {
+            let usable = promotion.invalidation.is_none();
+            let entry = ram.entries.get(key).filter(|entry| entry.serial == *serial);
+            if promotion.tokens == 0
+                || *serial == 0
+                || *serial > ram.serial
+                || entry.is_some_and(|entry| {
+                    entry.tokens != promotion.tokens
+                        || !entry.ready
+                        || (usable && ram.invalidations.contains_key(key))
+                })
                 || (usable && !ram.forced && index.has_descendant(*key))
             {
                 return Err(KvError::InvariantViolation);
@@ -539,6 +635,90 @@ mod tests {
                 Err(KvError::InvariantViolation),
                 "{name}"
             );
+        }
+    }
+
+    #[test]
+    fn a_logical_event_invalidates_a_promotion_after_its_entry_is_evicted() {
+        use PrefixHostInvalidationV1::{Descendant, Recaptured};
+        let chain = PrefixChainV1::new(4, (0..12).collect::<Vec<u32>>().into(), vec![]).unwrap();
+        let key = chain.key_at(8).unwrap();
+        let capture = |pool: &mut KvPool, tokens| {
+            let source = pool.create_sequence(12).unwrap();
+            pool.append(source, 12).unwrap();
+            pool.insert_content_anchor(&chain, source, tokens, 1)
+                .unwrap()
+                .unwrap();
+            pool.release(source).unwrap();
+        };
+        let residency = |pool: &KvPool| pool.ancestry.as_ref().unwrap().residency(key);
+        for (case, forced, expected) in [
+            ("untouched", false, None),
+            ("descendant", false, Some(Descendant)),
+            ("recapture", false, Some(Recaptured)),
+            ("forced descendant", true, None),
+        ] {
+            let mut pool = KvPool::new(KvGeometry::new(4, 16).unwrap(), 2)
+                .unwrap()
+                .with_prefix_ram(true)
+                .with_prefix_ram_forced(forced);
+            let mut tier = HostTier::new(&pool, 16).unwrap();
+            capture(&mut pool, 8);
+            let (_, plan) = tier.begin_offload(&mut pool, key, None).unwrap();
+            tier.complete_transfer(
+                &mut pool,
+                plan.into_submission()
+                    .completion(KvTransferStatus::Complete),
+            )
+            .unwrap();
+            assert!(pool.remove_anchor(key).unwrap());
+            let serial = pool.begin_pending_promotion(key).unwrap();
+            assert_eq!(serial, pool.host_entry(key).unwrap().serial);
+            assert_eq!(pool.begin_pending_promotion(key), Err(KvError::StaleHandle));
+            tier.audit(&pool).unwrap();
+            // The promotion holds the node through its entry's host eviction,
+            // and configuration may not replace it.
+            assert!(tier.drop_public_entry(&mut pool, key).unwrap());
+            let pending = PrefixResidency {
+                pending: 1,
+                ..PrefixResidency::default()
+            };
+            assert_eq!(residency(&pool), Some(pending), "{case}");
+            tier.audit(&pool).unwrap();
+            let copy = pool.clone();
+            assert!(
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    copy.with_prefix_index(true)
+                }))
+                .is_err(),
+                "{case}"
+            );
+            match case {
+                "untouched" => {}
+                "recapture" => capture(&mut pool, 8),
+                _ => capture(&mut pool, 12),
+            }
+            tier.audit(&pool).unwrap();
+            if case == "descendant" {
+                // A usable promotion below a resident descendant is refused.
+                let mut copy = pool.clone();
+                let ram = copy.ram.as_mut().unwrap();
+                ram.promotions.get_mut(&(key, serial)).unwrap().invalidation = None;
+                assert_eq!(copy.audit(), Err(KvError::InvariantViolation));
+            }
+            assert_eq!(
+                pool.end_pending_promotion(key, serial),
+                Ok(expected),
+                "{case}"
+            );
+            assert_eq!(
+                pool.end_pending_promotion(key, serial),
+                Err(KvError::StaleHandle)
+            );
+            // The node stays only while the GPU holds the key.
+            let gpu = (case == "recapture").then_some(PrefixResidency::GPU);
+            assert_eq!(residency(&pool), gpu, "{case}");
+            tier.audit(&pool).unwrap();
         }
     }
 

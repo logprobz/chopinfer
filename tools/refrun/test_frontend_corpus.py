@@ -161,7 +161,7 @@ class ToyModel(corpus.Model):
 
 class Harness(unittest.TestCase):
     def setUp(self):
-        self.directory = Path(tempfile.mkdtemp())
+        self.directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.template = self.directory / "chat_template.jinja"
         self.use_template(TOY)
 
@@ -344,7 +344,7 @@ class PythonEncoderTests(unittest.TestCase):
 
     def test_listed_request_fields_reach_the_reference(self):
         request = {"messages": [user()], "response_format": {"type": "json_object"}}
-        model = ToyModel(Path(tempfile.mkdtemp()))
+        model = ToyModel(Path(self.enterContext(tempfile.TemporaryDirectory())))
         self.assertNotIn("response_format", model.hf_input(request))
         model.cases.INPUT_FIELDS = ("response_format",)
         arguments = model.hf_input(request)
@@ -353,7 +353,7 @@ class PythonEncoderTests(unittest.TestCase):
                          '<sys><user>hi{"type": "json_object"}<asst>')
 
     def test_a_source_pin_names_the_file_and_its_digest(self):
-        directory = Path(tempfile.mkdtemp())
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
         (directory / "encoder.py").write_text(TOY_ENCODER)
         model = ToyModel(directory)
         digest = hashlib.sha256(TOY_ENCODER.encode()).hexdigest()
@@ -487,7 +487,7 @@ class TransportTests(unittest.TestCase):
             self.assertTrue(all(case["request"]["thinking"] == {"type": kind} for case in sent), kind)
 
     def test_the_reference_renders_the_top_level_effort_of_both_controls(self):
-        model = ToyModel(Path(tempfile.mkdtemp()))
+        model = ToyModel(Path(self.enterContext(tempfile.TemporaryDirectory())))
         both = {"messages": [user()], "reasoning_effort": "low", "chat_template_kwargs": {"reasoning_effort": "high"}}
         self.assertEqual(toy_reference().outcome(model.hf_input(both))["rendered_text"], "<sys>low<user>hi<asst>")
 
@@ -570,7 +570,7 @@ class ReferenceDirectoryTests(unittest.TestCase):
         """The toy model's reference directory under ENVIRONMENT's toy variables."""
         kept = {key: value for key, value in os.environ.items() if not key.startswith("TOY_")}
         with unittest.mock.patch.dict(os.environ, {**kept, **environment}, clear=True):
-            return ToyModel(Path(tempfile.mkdtemp())).checkpoint()
+            return ToyModel(Path(self.enterContext(tempfile.TemporaryDirectory()))).checkpoint()
 
     def test_the_tokenizer_directory_serves_without_the_checkpoint(self):
         self.assertEqual(self.checkpoint({"TOY_TOKENIZER_DIR": "/pinned"}), Path("/pinned"))
@@ -1272,7 +1272,7 @@ class EndingRefusalTests(unittest.TestCase):
         self.assertFalse(corpus.yields_no_round_trip(table, [], False))
 
     def test_ending_only_belongs_to_a_refusal(self):
-        path = Path(tempfile.mkdtemp()) / "divergences.json"
+        path = Path(self.enterContext(tempfile.TemporaryDirectory())) / "divergences.json"
         path.write_text(json.dumps({"schema": corpus.DIVERGENCES_SCHEMA, "inputs": [
             {"id": "n", "kind": "no-round-trip", "when": ["x"], "ending_only": True}]}))
         with self.assertRaisesRegex(corpus.CorpusError, "sets ending_only but refuses nothing"):

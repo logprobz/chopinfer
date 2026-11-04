@@ -163,7 +163,7 @@ class RecipeOracleHelpers(unittest.TestCase):
     """recipe_reference.py's own logic, with stand-ins for the recipe package."""
 
     def test_the_installed_digest_covers_the_recorded_files_and_refuses_a_changed_one(self):
-        directory = Path(tempfile.mkdtemp())
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
         (directory / "pkg").mkdir()
         (directory / "pkg/__init__.py").write_bytes(b"x = 1\n")
         info = directory / "pkg-1.0.dist-info"
@@ -257,7 +257,7 @@ class RecipeAttribution(unittest.TestCase):
         if round is not None:
             vector = next(vector for vector in self.rounds if vector["id"] == round)
             record["rounds"][round] = frontend_corpus.round_row(vector, parse)
-        directory = Path(tempfile.mkdtemp())
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
         frontend_corpus.write_json(directory / frontend_corpus.RECIPE_FILE, record)
         return frontend_corpus.check_recipe(self.model, directory, self.vectors, self.rounds, self.coverage,
                                             self.table)

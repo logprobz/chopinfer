@@ -2354,7 +2354,7 @@ class Tuner(unittest.TestCase):
     def test_power_windows_record_clocks_and_the_power_cap_share(self):
         gpus, tune.r.GPUS = tune.r.GPUS, 2
         try:
-            power = tune.Power(Path(tempfile.mkdtemp()), dry=False)
+            power = tune.Power(Path(self.enterContext(tempfile.TemporaryDirectory())), dry=False)
             lines = ['0, 240.0, 1800, 250.00, Active', '1, 200.0, 1900, 250.00, Not Active',
                      '0, 245.0, 1700, 250.00, Active', '1, 210.0, 1950, 250.00, Active',
                      '0, 230.0, 1850, 250.00, Not Active', '1, 205.0, 1900, 250.00, Not Active',

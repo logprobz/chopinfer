@@ -17,6 +17,9 @@ import preflight
 import runner
 import rust_tests
 
+# Unreviewed unsafe Rust fails here rather than only in ci/cpu.sh's lint.
+UNSAFE_AUDIT = ["cargo", "run", "-q", "-p", "xtask", "--locked", "--offline", "--", "check-unsafe"]
+
 
 def affected(metadata, paths):
     return change_scope.Graph(metadata).select(paths)["packages"]
@@ -195,6 +198,7 @@ def check(args, graph, paths, base):
         if history:
             subprocess.run(history, check=True)
         subprocess.run(["cargo", "fmt", "--all", "--check"], check=True)
+        subprocess.run(UNSAFE_AUDIT, check=True)
         if not names and not selection["workspace"] and not checks:
             print("No changed inputs. bash ci/cpu.sh runs every check.")
             return

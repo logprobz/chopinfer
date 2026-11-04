@@ -14,7 +14,8 @@ pub fn run(arguments: impl IntoIterator<Item = String>) -> TaskResult {
         Some("check-portable-build") if arguments.next().is_none() => portable_build(),
         Some("check-portable-lint") if arguments.next().is_none() => portable_lint(),
         Some("check-portable-test") if arguments.next().is_none() => portable_test(),
-        _ => Err("usage: xtask check-portable[-build|-lint|-test]".to_owned()),
+        Some("check-unsafe") if arguments.next().is_none() => check_unsafe(),
+        _ => Err("usage: xtask check-portable[-build|-lint|-test] | check-unsafe".to_owned()),
     }
 }
 
@@ -89,7 +90,8 @@ fn portable_test() -> TaskResult {
     )
 }
 
-fn portable_lint() -> TaskResult {
+/// The unsafe audit alone, which the quick gate runs on every change.
+fn check_unsafe() -> TaskResult {
     let started = Instant::now();
     audit_unsafe(Path::new("crates"))?;
     audit_unsafe(Path::new("models"))?;
@@ -98,6 +100,11 @@ fn portable_lint() -> TaskResult {
         "portable unsafe audit: {:.3}s",
         started.elapsed().as_secs_f64()
     );
+    Ok(())
+}
+
+fn portable_lint() -> TaskResult {
+    check_unsafe()?;
     for (label, program, args) in [
         ("format", "cargo", vec!["fmt", "--all", "--check"]),
         (

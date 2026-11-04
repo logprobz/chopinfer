@@ -52,6 +52,12 @@ bash ci/quick.sh --report # remaining validation obligations, without running
 bash ci/cpu.sh            # full CPU gate on a clean committed HEAD
 ```
 
+Each quick run checks formatting and runs the unsafe audit
+(`cargo run -p xtask -- check-unsafe`). The audit accepts unsafe Rust only in
+a file listed in `REVIEWED_UNSAFE_FILES` (`crates/xtask/src/lib.rs`), with a
+`// SAFETY-REVIEWED:` comment starting at most three lines above each unsafe
+line.
+
 `--base REF` selects a comparison point; `--all` selects the whole workspace.
 `bash ci/cpu.sh --only STEP` runs the named steps and the setup they need.
 It refuses a step that reads another step's outputs, such as the kernel
@@ -84,6 +90,8 @@ A change lands when these pass. The CPU checks run on its final tip:
   shell checks the change affects (`bash ci/quick.sh --base REF` selects
   them against the landing base);
 - `cargo check --locked --offline --workspace --tests --keep-going`;
+- the unsafe audit, `cargo run --locked --offline -p xtask -- check-unsafe`,
+  which `bash ci/quick.sh` runs;
 - `python3 -B tests/leak_guard.py`, `bash tests/bundle-boundary.sh` and
   `bash tests/model-neutral-host.sh`;
 - the pre-push leak check over the change's commits, every file version

@@ -304,7 +304,9 @@ class History(unittest.TestCase):
     def test_the_leak_check_runs_first(self):
         calls, stdout, error = self.check(["runtime-kv"])
         self.assertIsNone(error)
-        self.assertEqual([argv[:2] for argv in calls], [["python3", "-B"], ["cargo", "fmt"], ["cargo", "clippy"]])
+        self.assertEqual([argv[:2] for argv in calls],
+                         [["python3", "-B"], ["cargo", "fmt"], ["cargo", "run"], ["cargo", "clippy"]])
+        self.assertEqual(calls[2], quick.UNSAFE_AUDIT)
         self.assertEqual(calls[0], HISTORY)
         self.assertIn(f"quick history: leak guard over 2 commits since {BASE[:12]}", stdout)
 
@@ -327,7 +329,7 @@ class History(unittest.TestCase):
     def test_commits_without_changed_inputs_are_still_checked(self):
         calls, stdout, error = self.check([])
         self.assertIsNone(error)
-        self.assertEqual(calls, [HISTORY, ["cargo", "fmt", "--all", "--check"]])
+        self.assertEqual(calls, [HISTORY, ["cargo", "fmt", "--all", "--check"], quick.UNSAFE_AUDIT])
         self.assertIn("No changed inputs", stdout)
 
 

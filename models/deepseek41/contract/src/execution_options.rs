@@ -45,6 +45,11 @@ pub const DSPARK_MOE_DIRECT: &str = "dspark_moe_direct";
 /// the drafter table (`hc.draft_admit.verify`), so their stage boundaries
 /// fuse as the measured rows' do.
 pub const DSPARK_HC_DRAFT_ROWS: &str = "dspark_hc_draft_rows";
+/// Candidate: a mixed DSpark step whose prefill takes the prepared-gather
+/// DMA route gathers its graphed verify rows' Engram through the cycle's
+/// prepared layer gathers, begun after the prefill's last Engram join,
+/// instead of synchronously before the step.
+pub const DSPARK_MIXED_PREPARED_ENGRAM: &str = "dspark_mixed_prepared_engram";
 /// Maximum prompt-ending items whose interior grid anchor one step retains.
 pub const MAX_ANCHOR_ITEMS: u32 = 8;
 pub const DEFAULT_PLANS: usize = 16;
@@ -67,9 +72,10 @@ pub struct Options {
     pub dspark_confidence_staged: bool,
     pub dspark_moe_direct: bool,
     pub dspark_hc_draft_rows: bool,
+    pub dspark_mixed_prepared_engram: bool,
 }
 
-pub fn declarations() -> [ModelOptionV1; 13] {
+pub fn declarations() -> [ModelOptionV1; 14] {
     [
         (
             DIAGNOSTIC_STEP_LOGS,
@@ -97,6 +103,10 @@ pub fn declarations() -> [ModelOptionV1; 13] {
         ),
         (
             DSPARK_MARKOV_STAGED,
+            OptionDefinitionV1::Boolean { default: false },
+        ),
+        (
+            DSPARK_MIXED_PREPARED_ENGRAM,
             OptionDefinitionV1::Boolean { default: false },
         ),
         (
@@ -185,6 +195,7 @@ impl Options {
             dspark_confidence_staged: flag(DSPARK_CONFIDENCE_STAGED),
             dspark_hc_fusion: flag(DSPARK_HC_FUSION),
             dspark_markov_staged: flag(DSPARK_MARKOV_STAGED),
+            dspark_mixed_prepared_engram: flag(DSPARK_MIXED_PREPARED_ENGRAM),
         })
     }
 }
@@ -304,6 +315,7 @@ mod tests {
             dspark_confidence_staged: false,
             dspark_hc_fusion: false,
             dspark_markov_staged: false,
+            dspark_mixed_prepared_engram: false,
         };
         assert_eq!(Options::read(&defaults).unwrap(), expected);
         assert_eq!(Options::read(&BTreeMap::new()).unwrap(), expected);
@@ -327,6 +339,7 @@ mod tests {
             (DSPARK_CONFIDENCE_STAGED.into(), "true".into()),
             (DSPARK_HC_FUSION.into(), "true".into()),
             (DSPARK_MARKOV_STAGED.into(), "true".into()),
+            (DSPARK_MIXED_PREPARED_ENGRAM.into(), "true".into()),
         ]);
         let resolved = declaration.resolve(&overrides).unwrap();
         assert_eq!(
@@ -345,6 +358,7 @@ mod tests {
                 dspark_confidence_staged: true,
                 dspark_hc_fusion: true,
                 dspark_markov_staged: true,
+                dspark_mixed_prepared_engram: true,
             }
         );
         assert!(!declaration.is_qualified(&resolved));
@@ -369,6 +383,7 @@ mod tests {
             (DSPARK_CONFIDENCE_STAGED, "1"),
             (DSPARK_HC_FUSION, "1"),
             (DSPARK_MARKOV_STAGED, "1"),
+            (DSPARK_MIXED_PREPARED_ENGRAM, "1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "-1"),
             (DSPARK_GRAPH_HANDLES_PER_RANK, "9223372036854775808"),
         ] {

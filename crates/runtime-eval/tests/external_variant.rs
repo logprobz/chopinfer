@@ -408,6 +408,82 @@ fn an_external_variant_only_narrows_the_base_capabilities() {
     assert!(error.to_string().contains("capabilities.text"), "{error}");
 }
 
+/// A base declaring a reason for the capability it does not serve, and a
+/// check that admits an overlay of it as an external variant.
+fn unserved_base() -> (Value, impl Fn(&Value, &Value)) {
+    let mut base = base();
+    base["capabilities"] = json!({"text": true, "frontend": false, "api": true, "structured": false,
+                                  "prefix_cache": false, "preemption": false, "long_context": false,
+                                  "stability": false, "media": [], "speculation": "none",
+                                  "kv_offload": false, "not_served": {"kv_offload": UNSERVED}});
+    let modules = declaration::Modules::read(&root()).unwrap();
+    let admitted = move |base: &Value, overlay: &Value| {
+        let expanded = declaration::external(base, "requant", overlay, &"0".repeat(64)).unwrap();
+        declaration::validate(&expanded, &modules).unwrap();
+    };
+    (base, admitted)
+}
+
+const UNSERVED: &str = "The bundle declares no KV offload capability.";
+
+/// `not_served` is metadata, not a capability: an overlay need not restate
+/// the base's reasons.
+#[test]
+fn an_external_variant_may_omit_the_base_s_unserved_reasons() {
+    let scratch = Scratch::new("unserved-omitted");
+    let (base, admitted) = unserved_base();
+    let mut overlay = scratch.overlay();
+    overlay["capabilities"] = base["capabilities"].clone();
+    overlay["capabilities"]
+        .as_object_mut()
+        .unwrap()
+        .shift_remove("not_served");
+    admitted(&base, &overlay);
+}
+
+/// The reasons an overlay states are its own: each names a boolean
+/// capability it declares false, with its reason, whatever the base states.
+#[test]
+fn an_external_variant_states_reasons_for_what_it_turns_off() {
+    let scratch = Scratch::new("unserved-own");
+    let (base, admitted) = unserved_base();
+    let mut overlay = scratch.overlay();
+    overlay["capabilities"] = base["capabilities"].clone();
+    overlay["capabilities"]["api"] = json!(false);
+    let reason = "This checkpoint's frontend serves no API surface.";
+    for not_served in [
+        json!({"kv_offload": UNSERVED, "api": reason}),
+        json!({"api": reason}),
+    ] {
+        overlay["capabilities"]["not_served"] = not_served;
+        admitted(&base, &overlay);
+    }
+    let mut plain = base.clone();
+    plain["capabilities"]
+        .as_object_mut()
+        .unwrap()
+        .shift_remove("not_served");
+    admitted(&plain, &overlay);
+    for (not_served, refusal) in [
+        (
+            json!({"text": reason}),
+            "capabilities.not_served.text: must name a capability declared false",
+        ),
+        (
+            json!({"api": " "}),
+            "capabilities.not_served.api: must be a nonempty string",
+        ),
+        (
+            json!({"media": reason}),
+            "capabilities.not_served.media: must name a boolean capability",
+        ),
+    ] {
+        overlay["capabilities"]["not_served"] = not_served;
+        let error = declaration::external(&base, "requant", &overlay, &"0".repeat(64)).unwrap_err();
+        assert!(error.to_string().contains(refusal), "{error}");
+    }
+}
+
 #[test]
 fn an_external_variant_cannot_take_a_name_the_tree_declares() {
     let scratch = Scratch::new("names");

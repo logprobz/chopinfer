@@ -1188,22 +1188,45 @@ fn coverage_contract(check: &Value, module: &str, args: &[&str]) -> bool {
     })
 }
 
+/// Each boolean capability that needs a hard check of its module in the
+/// full cohort when declared true (`kv_offload` is the other boolean).
+const OBLIGATIONS: [(&str, &str); 8] = [
+    ("text", "teacher"),
+    ("frontend", "frontend_goldens"),
+    ("api", "api"),
+    ("structured", "structured"),
+    ("prefix_cache", "prefix_exact"),
+    ("preemption", "preempt_compare"),
+    ("long_context", "needle"),
+    ("stability", "soak"),
+];
+
+/// Refuses a `not_served` entry of `declared` (a capabilities object) that
+/// names no boolean capability it declares false, or that gives no reason.
+fn not_served(declared: &Map<String, Value>) -> Checked<()> {
+    let Some(not_served) = declared.get("not_served") else {
+        return Ok(());
+    };
+    for (name, reason) in object(not_served, "capabilities.not_served")? {
+        let field = format!("capabilities.not_served.{name}");
+        if !OBLIGATIONS.iter().any(|(own, _)| own == name) && name != "kv_offload" {
+            return fail(&field, "must name a boolean capability");
+        }
+        let served = declared.get(name).unwrap_or(&Value::Null);
+        if boolean(served, &format!("capabilities.{name}"))? {
+            return fail(&field, "must name a capability declared false");
+        }
+        text(reason, &field)?;
+    }
+    Ok(())
+}
+
 /// Feature coverage uses shared modules, so check IDs remain model-local.
 fn capabilities(value: &Value) -> Checked<()> {
     let Some(declared) = value.get("capabilities") else {
         return Ok(());
     };
-    let obligations = [
-        ("text", "teacher"),
-        ("frontend", "frontend_goldens"),
-        ("api", "api"),
-        ("structured", "structured"),
-        ("prefix_cache", "prefix_exact"),
-        ("preemption", "preempt_compare"),
-        ("long_context", "needle"),
-        ("stability", "soak"),
-    ];
-    let mut required: Vec<_> = obligations.iter().map(|(name, _)| *name).collect();
+    let mut required: Vec<_> = OBLIGATIONS.iter().map(|(name, _)| *name).collect();
     required.extend(["media", "speculation", "kv_offload"]);
     let declared = fields(
         declared,
@@ -1212,7 +1235,7 @@ fn capabilities(value: &Value) -> Checked<()> {
         &["unqualified_media", "not_served"],
     )?;
     let mut needed = Vec::new();
-    for (name, module) in obligations {
+    for (name, module) in OBLIGATIONS {
         if boolean(&declared[name], &format!("capabilities.{name}"))? {
             needed.push((name, module));
         }
@@ -1252,18 +1275,7 @@ fn capabilities(value: &Value) -> Checked<()> {
     }
     // A boolean capability the model does not serve is declared false, and
     // here with its reason.
-    if let Some(not_served) = declared.get("not_served") {
-        for (name, reason) in object(not_served, "capabilities.not_served")? {
-            let field = format!("capabilities.not_served.{name}");
-            if !obligations.iter().any(|(own, _)| own == name) && name != "kv_offload" {
-                return fail(&field, "must name a boolean capability");
-            }
-            if boolean(&declared[name], &format!("capabilities.{name}"))? {
-                return fail(&field, "must name a capability declared false");
-            }
-            text(reason, &field)?;
-        }
-    }
+    not_served(declared)?;
     if !media.is_empty() {
         let policy = &value["qualification"]["media"];
         let supported: Vec<&str> = if policy["format"] == "image-probes" {
@@ -2232,7 +2244,9 @@ fn variant_input(path: String) -> Value {
 /// Refuses a capability an external variant claims beyond the base's: it
 /// may only narrow what the base declares (a modality fewer, speculation
 /// `none`, a capability turned off), so the checks it selects must still
-/// cover each one it keeps.
+/// cover each one it keeps. `not_served` claims no capability: the variant
+/// may omit it, and the reasons it states are its own, each naming a
+/// boolean capability the variant declares false.
 fn narrowed(base: &Value, claimed: &Value) -> Checked<()> {
     let field = "capabilities";
     let Some(base) = base.as_object() else {
@@ -2240,11 +2254,14 @@ fn narrowed(base: &Value, claimed: &Value) -> Checked<()> {
     };
     let claimed = object(claimed, field)?;
     for key in claimed.keys() {
-        if !base.contains_key(key) {
+        if !base.contains_key(key) && key != "not_served" {
             return fail(&format!("{field}.{key}"), "is not a capability of the base");
         }
     }
     for (key, value) in base {
+        if key == "not_served" {
+            continue;
+        }
         let at = format!("{field}.{key}");
         let Some(own) = claimed.get(key) else {
             if key == "unqualified_media" {
@@ -2267,7 +2284,7 @@ fn narrowed(base: &Value, claimed: &Value) -> Checked<()> {
             return fail(&at, "must not claim more than the base declares");
         }
     }
-    Ok(())
+    not_served(claimed)
 }
 
 /// The declaration of the external variant `name` of the model declared by

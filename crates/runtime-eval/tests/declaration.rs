@@ -401,6 +401,11 @@ fn configurations_refuse_what_they_cannot_state() {
     value["configurations"]["dcp2"]["unknown"] = json!(1);
     refused(&value, "configurations.dcp2.unknown: unknown field");
     let mut value = base.clone();
+    value["configurations"]["dcp2"]["opt_in"] = json!("yes");
+    refused(&value, "configurations.dcp2.opt_in: must be true or false");
+    value["configurations"]["dcp2"]["opt_in"] = json!(true);
+    declaration::validate(&value, &modules()).unwrap();
+    let mut value = base.clone();
     value["configurations"]["dcp2"]["checks"] = json!(["no_such_check"]);
     refused(&value, "names undeclared check no_such_check");
     let mut value = base.clone();

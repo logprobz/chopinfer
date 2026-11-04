@@ -1778,10 +1778,12 @@ pub fn load_variant(model: &Path, variant: Option<&str>) -> Checked<Loaded> {
 }
 
 /// The fields of a configuration (`configurations.NAME`). The runner reads
-/// the first group (how the configuration is served); [`expand`] applies the
-/// rest to the base declaration.
-const CONFIGURATION_FIELDS: [&str; 24] = [
+/// the first group (how the configuration is served, and `opt_in`: whether
+/// it runs only when selected by name); [`expand`] applies the rest to the
+/// base declaration.
+const CONFIGURATION_FIELDS: [&str; 25] = [
     "experimental",
+    "opt_in",
     "checkpoint",
     "install_features",
     "tensor_parallel_size",
@@ -1860,6 +1862,9 @@ pub fn expand(base: &Value, name: &str) -> Checked<Value> {
         if !CONFIGURATION_FIELDS.contains(&key.as_str()) {
             return fail(&format!("{field}.{key}"), "unknown field");
         }
+    }
+    if let Some(value) = spec.get("opt_in") {
+        boolean(value, &format!("{field}.opt_in"))?;
     }
     let base_checks = object(&base["checks"], "checks")?;
     let ids = strings(&spec["checks"], &format!("{field}.checks"), true)?;

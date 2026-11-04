@@ -47,7 +47,10 @@ A different topology, KV format, draft depth, checkpoint or build needs its
 own configuration and server. The configuration selects checks and overrides
 declared serving facts, pins and rules. Its waivers are its own, not inherited
 permission to waive the default's failures. Locks preserve member scopes;
-an unbound declaration cannot vouch for another declaration's inputs.
+an unbound declaration cannot vouch for another declaration's inputs. A
+configuration declared `"opt_in": true` runs only when selected with
+`--config NAME`: a full run without `--config` leaves it out, and last good
+does not require it.
 
 ### External variants
 

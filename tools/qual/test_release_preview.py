@@ -28,6 +28,9 @@ QUALIFICATION_RUNS_ONCE = "runner orchestration with fake servers and children o
 MODELS = sorted(runner.declaration.previewed(runner.ROOT))
 # A value input's value, as another run's check run ID looks.
 VALUE = '20261014T000000000000Z-0123abcd'
+# The shipped opt-in configurations: every other one (GLM's experimental k5
+# included) is selected by a full run and required by last good.
+OPT_IN = set()
 
 
 def model(predicate=lambda facts: True):
@@ -367,10 +370,15 @@ class PlanTests(unittest.TestCase):
             declared = runner.configurations(name)
             self.assertEqual(declared['default']['profile'], facts['profile'])
             self.assertEqual(list(runner.selected_configurations(name, [], 'quick')), ['default'])
-            self.assertEqual(list(runner.selected_configurations(name, [], 'full')), list(declared))
+            required = [config for config in declared if (name, config) not in OPT_IN]
+            self.assertEqual(runner.required_configurations(name), required)
+            self.assertEqual(list(runner.selected_configurations(name, [], 'full')), required)
+            self.assertFalse(declared['default']['opt_in'])
             for config, spec in declaration.configurations(name).items():
                 with self.subTest(model=name, config=config):
                     served = declared[config]
+                    self.assertEqual(served['opt_in'], (name, config) in OPT_IN)
+                    self.assertEqual(list(runner.selected_configurations(name, [config], 'full')), [config])
                     self.assertEqual(served['serve'], spec.get('serve', []))
                     self.assertEqual(served['tensor_parallel_size'], spec.get('tensor_parallel_size', 4))
                     self.assertFalse(served['screens'])
@@ -3137,6 +3145,82 @@ class PromotionTests(FakeRunTests):
             self.assertEqual({row['id'].split('/')[0] for row in result['rows']}, {'default'})
             self.assertFalse(runner.Store('last-good', name).root.exists())
             self.assertEqual(result['configurations'], ['default'])
+
+    def test_last_good_requires_every_configuration_but_the_opt_in_ones(self):
+        def result(name, configs):
+            return {'model': name, 'suite': 'full', 'passed': True, 'selected_checks': [], 'external_variants': [],
+                    'configurations': sorted(configs),
+                    'rows': [{'id': f'{config}/spec/check', 'status': 'pass'} for config in configs]}
+
+        for name in MODELS:
+            with self.subTest(model=name):
+                declared = list(runner.configurations(name))
+                required = runner.required_configurations(name)
+                self.assertTrue(runner.whole_model_full_pass(result(name, required), name))
+                self.assertTrue(runner.whole_model_full_pass(result(name, declared), name))
+                for missing in required:
+                    self.assertFalse(runner.whole_model_full_pass(
+                        result(name, [config for config in declared if config != missing]), name), missing)
+                unobserved = result(name, declared)
+                unobserved['rows'] = unobserved['rows'][1:]
+                self.assertFalse(runner.whole_model_full_pass(unobserved, name))
+                self.assertFalse(runner.whole_model_full_pass(result(name, [*declared, 'external']), name))
+                self.assertFalse(runner.whole_model_full_pass(
+                    dict(result(name, declared), configurations=[*declared, declared[0]]), name))
+        self.assertIn('k5', runner.required_configurations('glm5next'))
+
+    def test_an_opt_in_configuration_runs_only_when_named_and_never_gates_last_good(self):
+        clean = FakeRun.identity()
+        name = 'mimo26'
+        declared = list(runner.configurations(name))
+        optional = declared[-1]
+        self.assertNotEqual(optional, 'default')
+        original = runner.configurations
+
+        def configurations(model):
+            result = original(model)
+            if model == name:
+                result[optional] = dict(result[optional], opt_in=True)
+            return result
+
+        with patch.object(runner, 'configurations', configurations):
+            required = [config for config in declared if config != optional]
+            self.assertEqual(list(runner.selected_configurations(name, [], 'full')), required)
+            self.assertEqual(list(runner.selected_configurations(name, [], 'quick')), ['default'])
+            self.assertEqual(list(runner.selected_configurations(name, [optional], 'full')), [optional])
+            # A full run without --config leaves it out and still moves last good.
+            with tempfile.TemporaryDirectory() as temporary, \
+                    patch.object(runner, 'VALIDATION', Path(temporary) / 'validation'):
+                _, code, result = self.full_pass(Path(temporary), clean, clean, {clean['commit']}, name=name)
+                self.assertEqual((code, result['passed']), (0, True),
+                                 [row for row in result['rows'] if row['status'] not in runner.PASSING])
+                self.assertEqual(result['configurations'], sorted(required))
+                self.assertNotIn(optional, {row['id'].split('/')[0] for row in result['rows']})
+                self.assertTrue(runner.whole_model_full_pass(result, name))
+                self.assertIsNotNone(runner.Store('last-good', name).result('default'))
+            without = result
+            # Named, it runs; beside every required one the pass still counts.
+            with tempfile.TemporaryDirectory() as temporary, \
+                    patch.object(runner, 'VALIDATION', Path(temporary) / 'validation'):
+                _, code, result = self.full_pass(Path(temporary), clean, clean, {clean['commit']}, declared,
+                                                 name=name)
+                self.assertEqual((code, result['passed']), (0, True),
+                                 [row for row in result['rows'] if row['status'] not in runner.PASSING])
+                self.assertEqual(result['configurations'], sorted(declared))
+                self.assertIn(optional, {row['id'].split('/')[0] for row in result['rows']})
+                self.assertTrue(runner.whole_model_full_pass(result, name))
+                self.assertIsNotNone(runner.Store('last-good', name).result('default'))
+            # Alone, it is a focused run that moves nothing.
+            with tempfile.TemporaryDirectory() as temporary, \
+                    patch.object(runner, 'VALIDATION', Path(temporary) / 'validation'):
+                _, code, result = self.full_pass(Path(temporary), clean, clean, {clean['commit']}, [optional],
+                                                 name=name)
+                self.assertEqual((code, result['configurations']), (0, [optional]))
+                self.assertFalse(runner.whole_model_full_pass(result, name))
+                self.assertFalse(runner.Store('last-good', name).root.exists())
+        # Without the flag the configuration is required again.
+        self.assertFalse(runner.whole_model_full_pass(without, name))
+        self.assertEqual(list(runner.selected_configurations(name, [], 'full')), declared)
 
     def test_a_check_subset_runs_on_every_selected_configuration_and_never_promotes(self):
         clean = FakeRun.identity()

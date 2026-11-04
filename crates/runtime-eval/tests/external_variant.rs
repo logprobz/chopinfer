@@ -288,6 +288,7 @@ fn an_external_variant_cannot_change_rules_waivers_or_serving() {
         "screens",
         "source",
         "experimental",
+        "opt_in",
         "change_classes",
         "anything",
     ] {

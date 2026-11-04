@@ -1306,7 +1306,8 @@ checkpoint binding, recomputes absolute errors from both arms' served rows,
 reports a candidate absolute numerical failure as `fail`, and makes a
 failing accepted arm `insufficient`. The paired check's constants cannot
 loosen the shipped teacher policy. Last good moves only on a passing
-full run of every declared configuration; the seed only through
+full run of every declared configuration that is not opt-in (an opt-in
+configuration runs only when named with `--config`); the seed only through
 `baseline reseed` with a recorded reason.
 
 ```sh

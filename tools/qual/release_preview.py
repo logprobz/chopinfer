@@ -224,12 +224,13 @@ def configurations(model):
     install features, tensor-parallel size (a configuration at 2 or fewer runs
     beside another on its own GPU pair), the checkpoint's environment
     variable and registry manifest, the served profile and speculation depth,
-    and whether the runner's screens run there (only on `default`; another
-    configuration runs its declared checks)."""
+    whether the runner's screens run there (only on `default`; another
+    configuration runs its declared checks) and whether it is opt-in (runs
+    only when selected by name)."""
     facts = model_facts(model)
     result = {'default': {'serve': [], 'environment': {}, 'features': [], 'tensor_parallel_size': 4,
-                          'screens': True, 'checkpoint': facts['checkpoint'], 'manifest': facts['manifest'],
-                          'profile': facts['profile'], 'depth': facts['depth']}}
+                          'screens': True, 'opt_in': False, 'checkpoint': facts['checkpoint'],
+                          'manifest': facts['manifest'], 'profile': facts['profile'], 'depth': facts['depth']}}
     for name, spec in declaration.configurations(model).items():
         serving = spec.get('serving', {})
         pin = (spec.get('qualification') or {}).get('checkpoint')
@@ -237,6 +238,7 @@ def configurations(model):
             'serve': list(spec.get('serve', [])), 'environment': dict(spec.get('environment', {})),
             'features': list(spec.get('install_features', [])),
             'tensor_parallel_size': spec.get('tensor_parallel_size', 4), 'screens': spec.get('screens', False),
+            'opt_in': spec.get('opt_in', False),
             'checkpoint': f"CHOPINFER_{spec['checkpoint']}_CHECKPOINT" if 'checkpoint' in spec else facts['checkpoint'],
             'manifest': checkpoint_manifest(pin) if pin else facts['manifest'],
             'profile': serving.get('profile_name', facts['profile']),
@@ -257,7 +259,7 @@ def external_configuration(model, name):
     value = read(declaration.named(declaration_name(model, name)))
     spec, root = read(file), declaration.require_variant_root(value)
     return {'serve': [], 'environment': {}, 'features': [], 'tensor_parallel_size': 4, 'screens': False,
-            'checkpoint': f"CHOPINFER_{spec['checkpoint']}_CHECKPOINT",
+            'opt_in': False, 'checkpoint': f"CHOPINFER_{spec['checkpoint']}_CHECKPOINT",
             'manifest': str(root / value['qualification']['checkpoint']['lock']),
             'profile': spec.get('serving', {}).get('profile_name', facts['profile']),
             'depth': facts['depth'], 'producer': None, 'external': True}
@@ -905,12 +907,19 @@ def prepare(args):
 
 # Planning ------------------------------------------------------------------
 
+def required_configurations(model):
+    """The configurations a full run selects by default and last good
+    requires: every declared one but the opt-in ones."""
+    return [name for name, config in configurations(model).items() if not config['opt_in']]
+
+
 def selected_configurations(model, names, suite='quick'):
     """The named configurations; by default `default` for quick and every
-    declared one for full. A name the model does not declare is an external
-    variant under the selected variant root (`external_configuration`)."""
+    required one for full (an opt-in configuration runs only when named). A
+    name the model does not declare is an external variant under the
+    selected variant root (`external_configuration`)."""
     declared = configurations(model)
-    names = names or (['default'] if suite == 'quick' else list(declared))
+    names = names or (['default'] if suite == 'quick' else required_configurations(model))
     unknown = [name for name in names if name not in declared and declaration.overlay(model, name) is None]
     require(not unknown, f'{model} declares no configuration {", ".join(unknown)}; it declares {sorted(declared)}'
             + (f', and {declaration.VARIANTS_ENV} holds no such variant' if declaration.variant_root() else ''))
@@ -2224,20 +2233,22 @@ def run_command(args):
 
 
 def whole_model_full_pass(result, model):
-    """Admission requires every declared configuration selected and observed.
-    A focused full run or a selected check subset can pass its checks without
-    qualifying the model."""
+    """Admission requires every required configuration selected and observed;
+    an opt-in one may run beside them but is never required. A focused full
+    run or a selected check subset can pass its checks without qualifying
+    the model."""
     declared = set(configurations(model))
+    required = set(required_configurations(model))
     selected = result.get('configurations')
     rows = result.get('rows')
     return (result.get('model') == model and result.get('suite') == 'full' and result.get('passed') is True
             and not result.get('selected_checks') and not result.get('external_variants')
             and isinstance(selected, list) and all(isinstance(name, str) for name in selected)
-            and len(selected) == len(declared) and set(selected) == declared
+            and len(selected) == len(set(selected)) and required <= set(selected) <= declared
             and isinstance(rows, list) and bool(rows)
             and all(isinstance(row, dict) and isinstance(row.get('id'), str)
                     and row.get('status') in PASSING for row in rows)
-            and {row['id'].split('/', 1)[0] for row in rows} == declared)
+            and {row['id'].split('/', 1)[0] for row in rows} == set(selected))
 
 
 def finish(run):

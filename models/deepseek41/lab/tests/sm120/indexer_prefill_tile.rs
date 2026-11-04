@@ -3,6 +3,8 @@
 mod early;
 #[path = "indexer_prefill_tile_fixture.rs"]
 mod fixture;
+#[path = "indexer_prefill_long.rs"]
+mod long;
 #[path = "indexer_prefill_publish.rs"]
 mod publish;
 use super::*;

@@ -1119,6 +1119,34 @@ class ModelTests(unittest.TestCase):
             with self.subTest(live=live), self.assertRaisesRegex(Refusal, r'health\.model_options\.prefill_chunk_tokens'):
                 model.check_options({'prefill_chunk_tokens': '8192'}, live)
 
+    def test_the_offload_arena_and_ram_prefix_tier_are_passed_as_flags(self):
+        base = dict(tensor_parallel=1, max_sequences=32, prefix_cache=True)
+        for fields, expected in [
+            (dict(kv_offload_gib=64, kv_offload_prefix=True),
+             ['--kv-offload-gib', '64', '--kv-offload-prefix', 'on']),
+            (dict(kv_offload_gib=0, kv_offload_prefix=False),
+             ['--kv-offload-gib', '0', '--kv-offload-prefix', 'off']),
+            (dict(kv_offload_prefix=False), ['--kv-offload-prefix', 'off']),
+            (dict(kv_offload_gib=16), ['--kv-offload-gib', '16']),
+        ]:
+            with self.subTest(fields=fields):
+                args, expect = model.serving('test', dict(base, **fields))
+                offload = [word for index, word in enumerate(args) if word.startswith('--kv-offload')
+                           or index and args[index - 1].startswith('--kv-offload')]
+                self.assertEqual(offload, expected)
+                self.assertEqual(expect, dict(profile=dict(tensor_parallel_size=1, max_sequences=32,
+                                                            prefix_cache=True)))
+        for field, value, message in [
+            ('kv_offload_prefix', 'on', 'kv_offload_prefix must be true or false'),
+            ('kv_offload_prefix', 1, 'kv_offload_prefix must be true or false'),
+            ('kv_offload_gib', True, 'kv_offload_gib must be a whole number of GiB'),
+            ('kv_offload_gib', -1, 'kv_offload_gib must be a whole number of GiB'),
+            ('kv_offload_gib', 1.5, 'kv_offload_gib must be a whole number of GiB'),
+            ('kv_offload_gib', '64', 'kv_offload_gib must be a whole number of GiB'),
+        ]:
+            with self.subTest(field=field, value=value), self.assertRaisesRegex(Refusal, message):
+                model.serving('test', dict(base, **{field: value}))
+
     def test_two_bundle_ids_refused(self):
         with tempfile.TemporaryDirectory() as name:
             root = models(Path(name)); path = root / 'stub/profiles.json'

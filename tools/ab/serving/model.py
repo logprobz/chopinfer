@@ -45,9 +45,12 @@ OPTIONS = [('tensor_parallel', '--tensor-parallel-size'), ('max_sequences', '--m
            ('max_batch_tokens', '--max-batch-tokens'), ('prefill_chunk_tokens', '--prefill-chunk-tokens'),
            ('gpu_memory_utilization', '--gpu-memory-utilization'),
            ('graph_memory_reserve_mib', '--graph-memory-reserve-mib'), ('kv_cache_dtype', '--kv-cache-dtype'),
-           ('prefix_cache', '--prefix-cache'), ('queue_depth', '--queue-depth'),
+           ('prefix_cache', '--prefix-cache'), ('kv_offload_gib', '--kv-offload-gib'),
+           ('kv_offload_prefix', '--kv-offload-prefix'), ('queue_depth', '--queue-depth'),
            ('context_parallel_size', '--context-parallel-size'), ('prefill_policy', '--prefill-policy'),
            ('decode_tbt_target_ms', '--decode-tbt-target-ms')]
+# Boolean profile fields, which their flags take as on or off.
+SWITCHES = {'prefix_cache', 'kv_offload_prefix'}
 DESCRIPTIVE = {'bundle_id', 'topology', 'devices_required', 'devices', 'speculation', 'model_options',
                'qualified_max_sequences', 'qualification', 'status', 'evidence'}
 
@@ -81,9 +84,11 @@ def serving(name, profile):
         value = profile.get(key)
         if value is None:
             continue
-        if key == 'prefix_cache':
-            need(type(value) is bool, f'profile {name}: prefix_cache must be true or false')
+        if key in SWITCHES:
+            need(type(value) is bool, f'profile {name}: {key} must be true or false')
             value = 'on' if value else 'off'
+        if key == 'kv_offload_gib':
+            need(type(value) is int and value >= 0, f'profile {name}: kv_offload_gib must be a whole number of GiB')
         need(type(value) in (str, int, float), f'profile {name}: {key} must be a scalar')
         args += [flag, str(value)]
     speculation = profile.get('speculation') or {}

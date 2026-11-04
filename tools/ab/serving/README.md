@@ -40,7 +40,8 @@ resolve against the run file; path strings expand environment variables and
 - `port`, `gpus` (indices or UUIDs the queue admitted).
 - `serve_profile`: optional; a profile of the model's `profiles.json`. Its
   options (tensor-parallel and context-parallel sizes, limits, KV dtype,
-  prefix cache, scheduling, draft cost and model options) are passed to both
+  prefix cache, KV offload arena and RAM prefix tier, scheduling, draft cost
+  and model options) are passed to both
   installs explicitly, as the host expands a profile (`serve --model`
   refuses `--profile`); the variant sets speculation. `/health` must report
   the profile's tensor-parallel size, sequence limit, prefix cache, explicit

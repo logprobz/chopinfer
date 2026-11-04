@@ -492,10 +492,14 @@ and the check fails.
 
 Each pair must name one checkpoint, metadata, source commit, bundle,
 version, served model, effective profile and complete `model_options` map,
-compared with their JSON types, and each forced record must be live-bound
-to the gate's checkpoint pin and match its layout's determinism record in
-those fields and its package. The package identity may vary with the
-layout and is reported. The layout fields are validated, not compared:
+compared with their JSON types. Each forced record must be live-bound to
+the gate's checkpoint pin and equal its layout's determinism record in
+every identity, option and profile field, its package included, but
+`FORCED_ARM_FIELDS`: the startup nonce of its own process (forcing
+reference tokens reports nothing in `/health`). A field one side holds,
+even as null, and the other lacks is a difference. The package identity
+may vary with the layout and is reported. The layout fields are validated,
+not compared:
 each `kv_cache_dtype` is `bf16`, `fp8` or `mixed`, `kv_cache_planes` is
 present exactly when it is `mixed`
 ([serving identity](../../docs/operations-observability.md#serving-identity)),
@@ -515,7 +519,8 @@ per 16, index E2M1 with a UE8M0 scale per 32, as `kernel_core` decodes
 them); a product that is not exactly a finite BF16 is refused, never
 rounded, and the comparison capture holds no raw taps. It refuses captures
 that differ in prompts, steps, serving identity, profile or `model_options`
-(compared with their JSON types), apart from the startup nonce, the package
+(compared with their JSON types, a field one capture lacks being a
+difference), apart from the startup nonce, the package
 identity and the KV layout fields: each `kv_cache_dtype` must be `bf16`,
 `fp8` or `mixed`, `kv_cache_planes` must be present exactly when it is
 `mixed`, the native planes must equal PLANES (as `NATIVE_PLANES`

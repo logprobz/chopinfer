@@ -448,13 +448,55 @@ cohorts as `kv_offload_prefix_pressure`.
 
 ## KV layout equality
 
-A comparison layout storing exactly the values the native KV formats decode
-to must serve the same bits. Compare determinism records from the native and
-comparison layouts in one full run and build, with matching checkpoint,
-metadata, bundle, version, model and effective profile except KV dtype.
-Every request's text, finish reason, token IDs, tokens and selected/top
-logprobs must be bit-identical. A package identity may vary with layout and
-must be reported. This full-suite comparison is not a quick-cohort check.
+A comparison KV layout that stores exactly the values the native formats
+decode to must serve the same bits. Bitwise equality of native against BF16
+storage is required in a model's comparison configuration (DeepSeek 4.1's
+`kv-bf16`) on the determinism records, on forced records and on the
+decoded KV-state taps of a `diagnostic-taps` build. The BF16 layout matches
+the native layout's stored values (each decoded value, held exactly in
+BF16) and its production prefill partials, so the comparison isolates KV
+storage. Routes the native layout alone takes are compared as served: on
+DeepSeek 4.1's Flash TP4 the native server runs the served prefill
+attention with its decoded BF16 cache, indexer MMA scoring of FP4 index
+keys (the eager prefill tile and the host-selected decode schedules) and
+the device-results AR bridge, where the BF16 server runs its admitted
+paths, and the bits must still be equal. BF16 KV serves autoregressive
+decoding only, so both layouts run without speculation. The check does not
+qualify production accuracy: the default configuration's teacher, chat,
+long_context, multimodal, `verify_exact` pairs, greedy AR versus DSpark and
+determinism gates do.
+
+`kv_layout_equality.py compare NATIVE COMPARISON --native-forced NATIVE_FORCED
+--comparison-forced COMPARISON_FORCED` reads, from one full run and build,
+both layouts' determinism records and a forced record of each
+(`verify_exact.py record --k 0 --require-row-shapes --reference
+long_context`, on the runner's `kv-native-forced` arm and the
+configuration's forced `prefix` arm). Every request's text, finish reason,
+token IDs, tokens and selected and top logprobs must be bit-identical. The
+forced records must hold the same positions, those the gate's pinned exact
+and long-context references define, with bit-identical logprobs and top-5
+at every forced position and bit-identical prefill rows; the first
+differing text and position is named. The long-context text (DeepSeek
+4.1's `long_128k`, 131,072 tokens) is forced through a 130,048-token
+prefill and then decoded for 1,024 forced positions, which reaches
+multi-chunk prefill, the decoded cache and decode-time indexer selection
+over thousands of candidates; the runner adds it to the configuration's
+forcing file (`RUNNER_FORCED_REFERENCES`). A teacher capture cannot stand
+in for it, since the teacher scores prefill rows only. A server that cannot
+hold the long history refuses the record, naming the KV capacity it needs,
+and the check fails.
+
+Each pair must name one checkpoint, metadata, source commit, bundle,
+version, served model, effective profile and complete `model_options` map,
+compared with their JSON types, and each forced record must be live-bound
+to the gate's checkpoint pin and match its layout's determinism record in
+those fields and its package. The package identity may vary with the
+layout and is reported. The layout fields are validated, not compared:
+each `kv_cache_dtype` is `bf16`, `fp8` or `mixed`, `kv_cache_planes` is
+present exactly when it is `mixed`
+([serving identity](../../docs/operations-observability.md#serving-identity)),
+the native planes equal the declared `NATIVE_PLANES` and the comparison
+arm reports none. This full-suite comparison is not a quick-cohort check.
 
 `kv_layout_equality.py taps NATIVE COMPARISON --native-planes PLANES.json`
 compares two [tap captures](#tap-captures) of the same requests, one from a
@@ -472,8 +514,8 @@ that differ in prompts, steps, serving identity, profile or `model_options`
 (compared with their JSON types), apart from the startup nonce, the package
 identity and the KV layout fields: each `kv_cache_dtype` must be `bf16`,
 `fp8` or `mixed`, `kv_cache_planes` must be present exactly when it is
-`mixed`, the native planes must equal PLANES, and the comparison arm must
-report none.
+`mixed`, the native planes must equal PLANES (as `NATIVE_PLANES`
+declares them), and the comparison arm must report none.
 It also refuses a row no position or item names, an index entry whose
 dtype, columns or rows differ from the step's `capture.json` declaration,
 and a comparison that compared no text rows or no KV-state rows of a plane or phase (a restore
@@ -499,7 +541,11 @@ actual startup identities for each arm. Supply missing files with `--input`
 and literal input values with `--input-value`; every declared input must exist.
 
 The full suite records the declared AR/speculative, determinism, prefix,
-preemption, offload and media evidence. A check counts only with a passing
+preemption, offload and media evidence. Forced arms serve the
+configuration's `--debug-reference-tokens` file: the exact reference's
+sequences (`verify_exact.py references`) and those of each pinned reference
+a selected check's module names for its forced records
+(`RUNNER_FORCED_REFERENCES`, `verify_exact.py --reference`). A check counts only with a passing
 row and readable receipt. Baselines advance only after a full passing run of
 all required configurations; reseeding requires a recorded reason. External
 variants never advance in-tree baselines. Missing captures are not passes.

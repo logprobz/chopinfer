@@ -3,21 +3,48 @@
 
 A model whose comparison KV layout stores the same values as its served one
 (BF16 pages holding exactly what the native formats decode to) must serve
-the same bits from both. The correctness runner records the determinism
-request set (tools/qual/determinism.py: C1 greedy, 48 output tokens with
-top-5 logprobs, a long prompt over two prefill chunks, token-ID sends and
-prefix hits) on two servers of one configuration that differ only in
-`--kv-cache-dtype`: the configuration's own server (`spec`, serving its
-comparison layout) and a `kv-native` server, which serves `auto`, the
-package's preferred layout. `compare` requires every request's text, finish
-reason, token IDs, tokens and selected and top logprobs to be bit-identical
-across the two records, and names the first differing request, field and
-position.
+the same bits from both. Bitwise equality of native against BF16 storage is
+required in the model's comparison configuration (DeepSeek 4.1's kv-bf16)
+on the determinism records, on forced records (`compare`) and on the decoded
+KV-state taps of a diagnostic-taps build (`taps`). The BF16 layout matches
+the native layout's stored values and production prefill partials, so the
+comparison isolates KV storage; routes only the native layout takes (on
+DeepSeek 4.1's Flash TP4 the served prefill attention with its decoded BF16
+cache, indexer MMA scoring of FP4 index keys and the device-results AR
+bridge) are compared as served against the BF16 layout's admitted paths.
+Both layouts run without speculation. Production accuracy is qualified
+separately, by the default configuration's teacher, chat, long_context,
+multimodal, verify_exact pairs, greedy AR versus DSpark and determinism
+gates.
 
-Both records must come from one run and one build: the same checkpoint,
-metadata, source commit, bundle, version and served model, and the same
-effective profile in every field but `kv_cache_dtype`, which must differ.
-The package identity may differ with the KV layout; both are reported.
+The correctness runner records, on servers of one configuration that differ
+only in `--kv-cache-dtype`, the determinism request set
+(tools/qual/determinism.py: C1 greedy, 48 output tokens with top-5
+logprobs, a long prompt over two prefill chunks, token-ID sends and prefix
+hits) on the configuration's own server (`spec`, its comparison layout) and
+a `kv-native` server, which serves `auto`, the package's preferred layout;
+and a forced record of each layout (verify_exact.py record --k 0
+--require-row-shapes --reference long_context, on the forced `prefix` arm
+and a `kv-native-forced` arm), which teacher-forces the exact reference's
+texts and the pinned long-context text: DeepSeek 4.1's long_128k, a
+130,048-token forced prefill and 1,024 forced decode positions, which no
+teacher capture can stand in for since it scores prefill rows only. The
+runner adds RUNNER_FORCED_REFERENCES to the configuration's forcing file.
+`compare` requires every request's text, finish reason, token IDs, tokens
+and selected and top logprobs to be bit-identical across the determinism
+records, naming the first differing request, field and position; and the
+forced records to hold the same positions, those the gate's pinned
+references define, with bit-identical logprobs and top-5 at every forced
+position and bit-identical prefill rows, naming the first differing text
+and position.
+
+Both pairs must name one checkpoint, metadata, source commit, bundle,
+version, served model, effective profile and complete `model_options` map,
+compared with their JSON types (the determinism records from one run); the
+forced records must be live-bound to the gate's checkpoint pin and match
+their layout's determinism record in those fields and its package. The
+package identity may differ with the KV layout; both are reported. The
+layout fields are validated by `layout_errors` against NATIVE_PLANES.
 
 `taps` compares the two layouts' diagnostic taps instead: two captures from
 tools/qual/tap_binding.py capture, one from a diagnostic-taps server of each

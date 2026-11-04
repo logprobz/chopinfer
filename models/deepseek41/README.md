@@ -788,6 +788,33 @@ table, rows, graph rows and widths stay and both options stay off. Every
 sweep window matched its reference bitwise, with no major faults,
 preemptions or prefix-cache evictions.
 
+On 2026-11-04, on main 03adb3e251 at 300 W, a served A/B screened the fixed
+step-cost table mode (`--speculation table`) against the profile's balanced
+plans. Both arms ran at 64 verify and graph rows on the same workload, with
+sampled coding prompts at temperature 1.0, 256 output tokens, the fixed test
+KV pool and the prefix cache off. Salted closed-loop requests fill that pool
+through prefix retention. The table, fitted from the 2026-11-02 sweeps, was
+`8:13918:0:847:336,16:20878:0:327:395,32:28240:0:412:296`. The screen has no
+verdict. One table visit took 1,111 major faults in its measured windows,
+over the 1,000 limit, with the Engram tables 85% resident, and the last
+balanced visit did not run. The three completed visits are diagnostic only,
+and their major faults rose with each visit.
+
+At C32 the table chose selective plans, most often 7 to 9 drafting items
+holding 32 drafts at about 43 ms a step. Its full-concurrency rate was 1,174
+and 1,148 tok/s against 1,114 for balanced plain decode. Its request rate was
+725 and 656 tok/s against 810. Requests drafting at different depths finish at
+different steps, so their replacements arrive apart. The table visits ran 28 to
+30 mixed prefill steps per window against balanced's 10 batched ones, and spent
+about 7 of the 15 seconds in them against 4.5. At C16 the table drafted 4 to 7
+of the 16 items and lost to balanced plans with confidence: 897 and 925
+full-concurrency tok/s against 962, and 532 and 555 request tok/s against 548.
+
+The 32-item steps fit a drafting step at about 1.9 ms, plus 0.19 ms per drafting
+item and 0.37 ms per draft row, over the 28.4 ms plain step. `tp4-dspark` keeps
+balanced plans. Another table comparison would need stateful traffic with
+spread-out arrivals and a table that does not under-draft at C16.
+
 The drafter cost candidates merged into this branch with every existing
 journal identical ([merge note](journal-changes/wide-verify-merge-drafter.md)).
 At the merged tip every profile's quick route sweep passed, and the drafter

@@ -2,7 +2,14 @@ use super::*;
 use runtime_bundle_abi::MappedGatherPlaneV1;
 use runtime_host::HostDeviceBackendV1;
 
-fn exercise<D: HostDeviceBackendV1 + 'static>(device: D, delayed: bool, label: &str) {
+/// `synchronizations` counts the driver's stream synchronizations; the fake
+/// device counts its own in `exposed_wait.rs`.
+fn exercise<D: HostDeviceBackendV1 + 'static>(
+    device: D,
+    delayed: bool,
+    label: &str,
+    synchronizations: fn() -> usize,
+) {
     let root = temp(label);
     write_checkpoint(&root.0);
     let image = planned(&root.0, (0..2).map(|rank| plan(2, rank)).collect()).unwrap();
@@ -148,7 +155,17 @@ fn exercise<D: HostDeviceBackendV1 + 'static>(device: D, delayed: bool, label: &
             assert_eq!(&actual[32..32 + picked.len()], expected_scales);
             assert!(actual[32 + picked.len()..].iter().all(|&byte| byte == 0xa5));
         }
-        assert!(complete(gather).unwrap().is_some());
+        // A traced step records the completed gather's reported wait and
+        // synchronizes nothing more to do so.
+        let before = synchronizations();
+        let step = runtime_engine::profile::TraceTotals::begin();
+        let stats = complete(gather).unwrap().expect("completed gather");
+        assert_eq!(
+            runtime_engine::profile::mapped_gather_exposed_nanoseconds(),
+            stats.exposed_nanoseconds
+        );
+        drop(step);
+        assert_eq!(synchronizations(), before);
     }
     // Device indices past a plane's bound fail at completion, never publish success.
     let mut bad = [0; 32];
@@ -192,7 +209,7 @@ fn exercise<D: HostDeviceBackendV1 + 'static>(device: D, delayed: bool, label: &
 
 #[test]
 fn async_gather_waits_for_consumers_reuses_staging_and_refuses_bad_device_ids() {
-    exercise(FakeHostDeviceV1::new(), true, "async-fake");
+    exercise(FakeHostDeviceV1::new(), true, "async-fake", || 0);
 }
 
 #[cfg(feature = "cuda-fake-driver-tests")]
@@ -203,6 +220,8 @@ fn async_gather_uses_event_ordered_cuda_transfers_and_releases_pinned_storage() 
         runtime_host::cuda::CudaHostDeviceV1::new().unwrap(),
         false,
         "async-driver",
+        // cuStreamSynchronize in the synthetic driver.
+        || runtime_cuda::fake_driver::call_count(5),
     );
     assert_eq!(runtime_cuda::fake_driver::ordering_violations(), 0);
 }
@@ -226,6 +245,7 @@ fn async_gather_gpu_preserves_bytes_across_two_ranks_and_pending_release() {
         runtime_host::cuda::CudaHostDeviceV1::new().unwrap(),
         false,
         "async-gpu",
+        || 0,
     );
     println!("async gather GPU byte parity, bounds, reuse and pending release passed");
 }

@@ -639,6 +639,8 @@ fn mapping_refuses_replaced_files_and_links() {
 
 #[path = "host_mapped_rows/async_gather.rs"]
 mod async_gather;
+#[path = "host_mapped_rows/exposed_wait.rs"]
+mod exposed_wait;
 #[path = "host_mapped_rows/layer_gathers.rs"]
 mod layer_gathers;
 

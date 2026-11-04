@@ -7,6 +7,8 @@ pub(super) struct Gather {
     plan: MappedGatherPlanV1,
     pending: Option<Vec<(DeviceObjectV1, DeviceRangeV1, Vec<u8>)>>,
     waited: BTreeSet<u64>,
+    /// The longest consumer-stream wait of the pending enqueue.
+    exposed: u64,
     failed: bool,
 }
 
@@ -29,6 +31,7 @@ impl FakeHostDeviceV1 {
                 plan,
                 pending: None,
                 waited: BTreeSet::new(),
+                exposed: 0,
                 failed: false,
             },
         );
@@ -87,6 +90,7 @@ impl FakeHostDeviceV1 {
             .expect("retained gather");
         gather.pending = Some(pending);
         gather.waited.clear();
+        gather.exposed = 0;
         gather.failed = failed;
         Ok(())
     }
@@ -110,6 +114,9 @@ impl FakeHostDeviceV1 {
         if !gather.waited.insert(stream.get()) {
             return Err(BundleStatusV1::InvalidState);
         }
+        gather.exposed = gather
+            .exposed
+            .max(self.gather_waits.pop_front().unwrap_or(0));
         let copies = pending
             .iter()
             .filter(|(owner, _, _)| *owner == stream)
@@ -143,7 +150,10 @@ impl FakeHostDeviceV1 {
             return Err(BundleStatusV1::HostError);
         }
         gather.pending = None;
-        Ok(Some(MappedGatherStatsV1::default()))
+        Ok(Some(MappedGatherStatsV1 {
+            exposed_nanoseconds: gather.exposed,
+            ..MappedGatherStatsV1::default()
+        }))
     }
 
     pub(super) fn release_gather(&mut self, object: DeviceObjectV1) -> HostDeviceResultV1<()> {

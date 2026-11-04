@@ -4715,7 +4715,12 @@ impl<D: HostDeviceBackendV1> HostServicesBackendV1 for HostServicesV1Backend<D> 
             state.refuse_during_capture(state.streams.get(stream)?.context)?;
         }
         let object = record.object;
-        state.device.complete_mapped_gather(object)
+        let stats = state.device.complete_mapped_gather(object)?;
+        // The step whose execution completes a gather is charged its wait.
+        if let Some(stats) = stats {
+            runtime_engine::profile::record_mapped_gather_exposed(stats.exposed_nanoseconds);
+        }
+        Ok(stats)
     }
 
     fn release_mapped_gather(

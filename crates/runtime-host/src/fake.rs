@@ -146,6 +146,9 @@ struct FakeOffloadArena {
 /// A complete device backend backed by host memory.
 pub struct FakeHostDeviceV1 {
     mapped_gathers: BTreeMap<u64, mapped_gather::Gather>,
+    /// The consumer-stream waits, in nanoseconds, the next prepared-gather
+    /// waits report, in order; a wait past the last reports none.
+    gather_waits: std::collections::VecDeque<u64>,
     offload: BTreeMap<u64, FakeOffloadArena>,
     objects: BTreeMap<u64, FakeObjectV1>,
     next_identity: u64,
@@ -267,6 +270,7 @@ impl FakeHostDeviceV1 {
     pub const fn new() -> Self {
         Self {
             mapped_gathers: BTreeMap::new(),
+            gather_waits: std::collections::VecDeque::new(),
             offload: BTreeMap::new(),
             objects: BTreeMap::new(),
             next_identity: 1,
@@ -556,6 +560,13 @@ impl FakeHostDeviceV1 {
     /// Refuses one operation once, after `allowed` more of them succeed.
     pub fn refuse_after(&mut self, refusal: FakeRefusalV1, allowed: usize) {
         self.deferred_refusals.get_mut().insert(refusal, allowed);
+    }
+
+    /// Each later prepared-gather wait, in call order, takes the next of these
+    /// as its consumer stream's exposed nanoseconds. A gather completes with
+    /// the largest of its waits, as a device reports its slowest consumer.
+    pub fn set_gather_waits(&mut self, nanoseconds: Vec<u64>) {
+        self.gather_waits = nanoseconds.into();
     }
 
     /// How many stream waits this backend has been asked to perform.

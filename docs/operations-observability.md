@@ -980,6 +980,22 @@ Step and request logs are not replay inputs; they omit token contents.
   after execute, so it is not wholly contained in `commit_us`.
   The new scopes read clocks only while step tracing is enabled. They add
   no device synchronization and do not change tokens or event order.
+- `host.mapped_gather_us` is the host time of synchronous mapped-row
+  gathers. `host.mapped_gather_exposed_us` is the device-measured wait on
+  prepared ones: for each prepared gather the step's execution completed,
+  the longest time one of its consumer streams waited for it after the
+  stream's earlier work, summed over those gathers. A gather counts in the
+  step whose execution completes it, which for in-tree callers is the step
+  that joined it; a refused step's gathers count in the next step. Waits
+  on one stream never overlap, but a sum over gathers whose longest waits
+  fall on different ranks can, so the field bounds the critical-path wait
+  from above. It is 0 when no prepared gather completes. Recording reads
+  the stats completion already returns and adds no synchronization.
+- The Engram-adjusted step time is
+  `execution_us - mapped_gather_us - mapped_gather_exposed_us`. It removes
+  only the Engram wait on the step's critical path, not the CPU or I/O
+  contention that page faults cause, and it is invalid for a change that
+  alters Engram timing itself; judge those on raw time.
 
 In DeepSeek's DSpark phase timings in `chopinfer.step.v1`, legacy prefill
 planning is now charged to `upload` instead of `target_lower` because it

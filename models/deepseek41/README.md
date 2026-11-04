@@ -1069,6 +1069,32 @@ and [serving profiles](../../docs/serving-profiles.md) describe the shared
 acceptance rules. Store captures, qualification receipts and timings outside
 the repository under `CHOPINFER_DATA`.
 
+### Diagnostic taps
+
+A bundle built with the `diagnostic-taps` feature and served with
+`CHOPINFER_TAPS_DIR` writes the taps [`taps.json`](taps.json) declares,
+through the shared tap writer; `tools/qual/tap_binding.py capture` binds
+them to the serving process and request. Besides each prefill's per-layer
+text taps (rank 0, after each stage), two families of detail taps, kept
+only in the layers `CHOPINFER_TAPS_LAYERS` names, attribute a divergence
+between KV layouts:
+
+- reduction inputs: each sublayer's completed local F32 partial on every
+  rank (`L<nn>.x.attn.partial`, `L<nn>.x.mlp.partial`), read before its
+  all-reduce, which may round it in place;
+- KV state: a request's window rings, compressed latents and index keys on
+  every rank (`L<nn>.x.kv.window`, `L<nn>.x.kv.compressed`,
+  `L<nn>.x.kv.index`), as the logical BF16 values the attention reads,
+  after each prefill chunk and decode step and before the first step of a
+  request restored from a prefix hit. The native layout also writes its
+  stored codes and scales (`.codes`, `.scales`).
+
+`taps.json` states their files, shapes and row positions, and the coverage
+they leave unresolved: verify steps, instances with the DSpark drafter
+loaded, ring cells outside the window and the compressors' open groups.
+Serving builds have no taps, and a serving bundle refuses to create while a
+taps variable is set.
+
 ### DSpark qualification
 
 `tp4-dspark` requires AR and speculative arms, exact greedy equality, the

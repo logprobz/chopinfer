@@ -27,8 +27,8 @@ const GIB: u64 = 1024 * 1024 * 1024;
 
 #[test]
 fn the_startup_line_gives_the_bounds_or_why_the_tier_is_off() {
-    // GLM tp4-mtp: 454,656-byte pages per rank, a 64 GiB arena over four
-    // ranks and a pool of 14,249 pages per rank.
+    // 454,656-byte pages per rank, a 64 GiB arena over four ranks and a
+    // pool of 14,249 pages per rank.
     let plan = HostArenaPlanV1::new(64 * GIB, 256 * GIB, 454_656, 4).unwrap();
     let tier = prefix_ram_config_v1(false, 14_249);
     let line = |status| prefix_ram_startup_line_v1(status, Some(plan), 64, tier, true);

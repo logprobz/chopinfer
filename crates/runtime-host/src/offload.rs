@@ -704,7 +704,7 @@ mod tests {
     fn chunks_and_the_demotion_window_follow_the_page_size() {
         const MIB: usize = 1024 * 1024;
         for (page_bytes, chunk_pages, window) in [
-            // A GLM page: 18 pages fill one chunk.
+            // 18 pages of 454,656 bytes fill one chunk.
             (454_656, 18, 32_735_232),
             (2 * MIB, 4, 32 * MIB),
             (8 * MIB, 1, 32 * MIB),

@@ -239,7 +239,8 @@ impl PrefixRamDriver {
     }
 
     /// Whether a deferred promotion larger than the step's budget waits for
-    /// no demotion to be outstanding.
+    /// no demotion to be outstanding. Its request keeps the deferral until
+    /// admission reaches it again, so no demotion starts meanwhile.
     fn promotion_starved(&self, scheduler: &Scheduler) -> bool {
         scheduler.deferred_promotion_pages() > self.config.promotion_budget_pages
     }

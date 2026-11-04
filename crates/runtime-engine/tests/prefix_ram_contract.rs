@@ -341,8 +341,18 @@ fn config_with(
     chunk: usize,
     tier: Option<PrefixRamConfig>,
 ) -> EngineConfig {
+    config_sequences(pages, 4, budget, chunk, tier)
+}
+
+fn config_sequences(
+    pages: usize,
+    sequences: usize,
+    budget: usize,
+    chunk: usize,
+    tier: Option<PrefixRamConfig>,
+) -> EngineConfig {
     let config = EngineConfig::new(
-        SchedulerConfig::new(4, 64, budget, chunk, 1).unwrap(),
+        SchedulerConfig::new(sequences, 64, budget, chunk, 1).unwrap(),
         KvGeometry::new(BLOCK, pages).unwrap(),
         ModelVocabulary::new(VOCABULARY).unwrap(),
         (pages * BLOCK).min(320),
@@ -960,6 +970,52 @@ fn a_promotion_over_the_budget_cancels_a_demotion_that_makes_no_progress() {
         .map(|(class, _)| *class)
         .collect();
     assert_eq!(after.first(), Some(&KvTransferClass::Promotion));
+    assert_eq!(
+        metric(&prometheus(&engine), "chop_prefix_cache_ram_hits_total"),
+        1
+    );
+}
+
+#[test]
+fn a_promotion_over_the_budget_suppresses_demotions_until_it_starts() {
+    // H's 16-token anchor is demoted, then evicted by R. X's anchor is
+    // under a demotion that never finishes unless cancelled.
+    let h = prompt(1, 16);
+    let mut engine = engine_from(
+        config_sequences(32, 2, 16, 8, Some(tier(false, 4))),
+        model(),
+    );
+    run(&mut engine, &[(1, &h, 1)]);
+    settle(&mut engine);
+    engine.executor_mut().held = vec![KvTransferClass::Demotion];
+    run(&mut engine, &[(2, &prompt(2, 112), 1)]);
+    run(&mut engine, &[(3, &prompt(3, 4), 1)]);
+    assert_eq!(
+        engine.executor().pending_copies(KvTransferClass::Demotion),
+        1
+    );
+    let before = engine.executor().submitted.len();
+    // B prefers H's host entry: a five-page promotion over the four-page
+    // budget, which waits for no demotion to be outstanding. C and D take
+    // both sequence slots, so admission does not reach B again until one
+    // ends.
+    let b = extended(&h, 4, 4);
+    let outputs = run(
+        &mut engine,
+        &[(4, &b, 1), (5, &prompt(5, 4), 6), (6, &prompt(6, 4), 6)],
+    );
+    assert_eq!(outputs[&RequestId::new(4)].cached, Some(16));
+    assert_eq!(engine.executor().cancels.len(), 1);
+    // No demotion started while B waited: its promotion came next.
+    let after: Vec<_> = engine.executor().submitted[before..]
+        .iter()
+        .map(|(class, _)| *class)
+        .collect();
+    assert_eq!(
+        after.first(),
+        Some(&KvTransferClass::Promotion),
+        "{after:?}"
+    );
     assert_eq!(
         metric(&prometheus(&engine), "chop_prefix_cache_ram_hits_total"),
         1

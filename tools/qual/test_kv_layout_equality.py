@@ -120,6 +120,8 @@ TEXT_COLS = 8
 # a prefix hit restoring 4 tokens, prefilling 5 and decoding once: (name,
 # prompt tokens, cached tokens, primer, prefill chunks, decode steps).
 REQUESTS = (("primer", 6, 0, None, ((0, 4), (4, 6)), 2), ("hit", 9, 4, "primer", ((4, 9),), 1))
+# A longer pair, whose restore readback keeps rows from token 4 on.
+LONGER = (("primer", 8, 0, None, ((0, 4), (4, 8)), 2), ("hit", 11, 6, "primer", ((6, 11),), 1))
 NATIVE_PLANES = [{"name": "compressed", "code": "fp4_e2m1", "scale": {"format": "e4m3", "block": 16},
                   "bytes_per_token": 18},
                  {"name": "index", "code": "fp4_e2m1", "scale": {"format": "ue8m0", "block": 32},
@@ -169,10 +171,10 @@ def logical(plane, codes, scales):
     return b"".join(values)
 
 
-def readbacks():
+def readbacks(requests=REQUESTS):
     """(request, phase, state end) of every readback, in capture order."""
     found = []
-    for name, prompt, cached, _, chunks, decodes in REQUESTS:
+    for name, prompt, cached, _, chunks, decodes in requests:
         found += [(name, "restore", cached)] if cached else []
         found += [(name, "prefill", end) for _, end in chunks]
         found += [(name, "decode", prompt + step + 1) for step in range(decodes)]
@@ -441,21 +443,23 @@ class TapsTests(unittest.TestCase):
         self.assertTrue(self.compare(native=bare)["passed"])
 
     def test_rows_kept_from_a_position_compare_at_their_positions_and_steps_that_kept_none_pair(self):
-        # From token 5 on: the primer's first chunk keeps no row and writes
+        # From token 4 on: the primer's first chunk keeps no row and writes
         # no tensor, and its first readback no KV step.
-        native, comparison = (self.capture(layout, f"{layout}-from", taps_from=5) for layout in ("native", "bf16"))
+        native, comparison = (self.capture(layout, f"{layout}-from", taps_from=4, requests=LONGER)
+                              for layout in ("native", "bf16"))
         empty = json.loads((native / tap_binding.STEPS / "step0000" / "completion.json").read_text())
         self.assertEqual((empty["completion"], empty["reason"]), ("incomplete", "no selected live tensors"))
         result = self.compare(native, comparison)
         self.assertTrue(result["passed"], result["errors"])
-        self.assertEqual(result["kv_readbacks"], {"prefill": 2, "decode": 3})
+        self.assertEqual(result["kv_readbacks"], {"prefill": 2, "decode": 3, "restore": 1})
         # A compressed position kept from its readbacks' fourth row on.
-        corrupted = self.capture("bf16", "corrupted-from", taps_from=5, corrupt=("kv", 2, "compressed", 3, 0))
-        expected = {(request, phase, end, 2, "compressed", 3, 0) for request, phase, end in readbacks()
+        corrupted = self.capture("bf16", "corrupted-from", taps_from=4, requests=LONGER,
+                                 corrupt=("kv", 2, "compressed", 3, 0))
+        expected = {(request, phase, end, 2, "compressed", 3, 0) for request, phase, end in readbacks(LONGER)
                     if 3 < end // RATIO}
         self.assertEqual(self.keys(self.compare(native, corrupted)), expected)
         # A step that kept a row but wrote no tensor is incomplete.
-        broken = self.capture("bf16", "broken-from", taps_from=5)
+        broken = self.capture("bf16", "broken-from", taps_from=4, requests=LONGER)
         step = broken / tap_binding.STEPS / "step0001"
         for tap in step.glob("*.bin"):
             tap.unlink()
@@ -464,6 +468,30 @@ class TapsTests(unittest.TestCase):
                                                           "reason": "no selected live tensors"}))
         with self.assertRaisesRegex(tap_binding.Unbound, "step0001 is incomplete: no selected live tensors"):
             self.compare(native, reseal(broken))
+
+    def test_a_comparison_without_rows_of_each_plane_and_phase_is_insufficient(self):
+        nothing = ["no text tap rows were compared", "no KV-state rows were compared",
+                   *(f"no KV-state rows of plane {plane} were compared" for plane in kv_layout_equality.KV_PLANES),
+                   *(f"no KV-state rows of phase {phase} were compared" for phase in ("prefill", "decode"))]
+        for name, change, errors in (
+                ("no requests", {"requests": ()}, nothing),
+                ("filtered", {"taps_from": 100}, [*nothing, "no KV-state rows of phase restore were compared"]),
+                ("no index keys", {"omit": [(f"L02.x.kv.index{part}", rank) for part in ("", ".codes", ".scales")
+                                            for rank in range(RANKS)]},
+                 ["no KV-state rows of plane index were compared"]),
+                # The default pair's restore holds tokens 0 .. 3 alone.
+                ("no restore", {"taps_from": 5}, ["no KV-state rows of phase restore were compared"]),
+                ("no decode", {"requests": tuple(request[:-1] + (0,) for request in REQUESTS)},
+                 ["no KV-state rows of phase decode were compared"])):
+            with self.subTest(name):
+                native, comparison = (self.capture(layout, f"{layout}-{name}", **change) for layout in ("native", "bf16"))
+                result = self.compare(native, comparison)
+                self.assertFalse(result["passed"])
+                self.assertEqual(result["errors"], [f"insufficient evidence: {error}" for error in errors])
+        # Without a prefix-hit pair, no restore readback is owed.
+        alone = {"requests": REQUESTS[:1]}
+        result = self.compare(*(self.capture(layout, f"{layout}-alone", **alone) for layout in ("native", "bf16")))
+        self.assertTrue(result["passed"], result["errors"])
 
     def test_rows_no_position_or_item_names_are_refused_not_dropped(self):
         def moved(name, step, change, corrupt=False):

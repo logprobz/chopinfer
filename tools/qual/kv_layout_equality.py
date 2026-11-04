@@ -47,7 +47,11 @@ keyed by name, request, position (or encoder row) and rank. A row one
 capture holds and the other lacks is a difference. The result names the
 first difference in the native capture's order (requests, steps, taps in
 program order, positions), lists up to SHOWN differences and counts the
-differing rows of each tap.
+differing rows of each tap. A comparison is insufficient evidence, and
+fails, unless it compared text tap rows and KV-state rows of every plane
+in KV_PLANES and every phase in KV_PHASES, and of a restore when the
+captures hold a prefix-hit pair. A step that wrote no tap (one that kept
+no row, or a verify step) compares as empty.
 
     python3 tools/qual/kv_layout_equality.py compare NATIVE_RECORD COMPARISON_RECORD
     python3 tools/qual/kv_layout_equality.py taps NATIVE_CAPTURE COMPARISON_CAPTURE \\
@@ -96,6 +100,11 @@ TAP_BYTES = {"bf16": 2, "f32": 4, "f64": 8, "u32": 4, "u8": 1}
 SHOWN = 32
 # The bytes of each tap file read at once.
 BLOCK_BYTES = 16 << 20
+# The KV-state planes and readback phases a taps comparison must compare
+# rows of; a restore is owed only by captures holding a prefix-hit pair.
+KV_PLANES = ("window", "compressed", "index")
+KV_PHASES = ("prefill", "decode")
+RESTORE_PHASE = "restore"
 # The completion reason of a step that wrote no tensor (runtime_bundle_sdk
 # taps): with CHOPINFER_TAPS_FROM past its rows, or no tap declared.
 NOTHING_SELECTED = "no selected live tensors"
@@ -394,7 +403,7 @@ def compare_steps(native_dir, native, comparison_dir, comparison):
         unique_rows(pair[side] for pair in pairs)
     shown, taps, raw = [], {}, {side: 0 for side in SIDES}
     compared = {"requests": len(native["requests"]), "steps": len(pairs), "kv_rows": 0, "text_rows": 0}
-    readbacks = {}
+    readbacks, planes, phases = {}, dict.fromkeys(KV_PLANES, 0), {}
     for pair in pairs:
         if pair[0].kv is not None:
             readbacks.setdefault(pair[0].kv.get("phase"), set()).add((pair[0].request, pair[0].kv.get("end")))
@@ -420,6 +429,9 @@ def compare_steps(native_dir, native, comparison_dir, comparison):
                 entry, present = found[0], 0
                 labels = pair[0].labels(entry)
                 compared["kv_rows" if kv else "text_rows"] += len(labels)
+                if kv:
+                    planes[kv[1]] = planes.get(kv[1], 0) + len(labels)
+                    phases[pair[0].kv.get("phase")] = phases.get(pair[0].kv.get("phase"), 0) + len(labels)
                 paths = [step.dir / f"{key[0]}.r{key[1]}.bin" for step in pair]
                 differ = differing_rows(*paths, entry["cols"] * TAP_BYTES[entry["dtype"]], entry["rows"])
                 rows = [(row, labels[row]) for row in differ]
@@ -431,10 +443,18 @@ def compare_steps(native_dir, native, comparison_dir, comparison):
     if errors:
         return errors, None
     total = sum(taps.values())
+    owed = [*KV_PHASES, *([RESTORE_PHASE] if any(record.get("primer") for record in native["requests"]) else [])]
+    insufficient = [what for what, rows in (("text tap rows", compared["text_rows"]),
+                                            ("KV-state rows", compared["kv_rows"]),
+                                            *((f"KV-state rows of plane {plane}", planes[plane])
+                                              for plane in KV_PLANES),
+                                            *((f"KV-state rows of phase {phase}", phases.get(phase, 0))
+                                              for phase in owed)) if not rows]
     return [], {"equal": total == 0, "first_difference": shown[0] if shown else None, "differences": shown,
                 "differing_rows": total, "differing_taps": [[tap, rows] for tap, rows in taps.items()],
                 "compared": compared, "kv_readbacks": {phase: len(held) for phase, held in readbacks.items()},
-                "raw_rows": raw}
+                "kv_planes": planes, "kv_phases": phases, "raw_rows": raw,
+                "insufficient": [f"insufficient evidence: no {what} were compared" for what in insufficient]}
 
 
 def describe_taps(result):
@@ -464,6 +484,7 @@ def compare_taps(native, comparison, native_planes, experimental=False):
             result |= compared
             if not compared["equal"]:
                 errors.append(describe_taps(compared))
+            errors += compared["insufficient"]
     return dict(result, passed=not errors, errors=errors)
 
 

@@ -1,17 +1,17 @@
 //! Scheduler admission for the RAM prefix tier: the GPU match against the
-//! ready host match, promotions with their reservations and waiters, and
-//! the engine entry points.
+//! ready host match, promotions with their reservations and waiters, the
+//! engine entry points, and the per-step allocation bound.
 
 use std::sync::Arc;
 
 use runtime_kv::{
-    HostTier, KvGeometry, KvTransferPlan, KvTransferStatus, PrefixCacheKeyV1, PrefixChainV1,
-    PrefixEvictionV1, PrefixHostInvalidationV1, PrefixPublishV1,
+    HostTier, KvError, KvGeometry, KvTransferPlan, KvTransferStatus, PrefixCacheKeyV1,
+    PrefixChainV1, PrefixEvictionV1, PrefixHostInvalidationV1, PrefixPublishV1,
 };
 use runtime_scheduler::{
     AdmissionPolicy, AdmissionReport, BatchOutcome, OffloadConfig, OptimisticAdmission,
     PrefixRamConfig, PrefixRamFallbackV1, PrefixRamHitV1, PrefixRequestV1, RequestId, RequestSpec,
-    RequestState, Scheduler, SchedulerConfig,
+    RequestState, ScheduleError, Scheduler, SchedulerConfig,
 };
 
 const BLOCK: usize = 4;
@@ -774,6 +774,7 @@ fn swaps_keep_priority_over_public_entries() {
         Some(PrefixRequestV1::new(Arc::new(chain(&all)), true))
     };
     submit(&mut s, 2, &swapped, 6);
+    let bound = s.step_allocation_bound();
     let capture = loop {
         let victims = s.preempt_for_next_step(0, resume_chain).unwrap();
         if !victims.is_empty() {
@@ -793,6 +794,9 @@ fn swaps_keep_priority_over_public_entries() {
     .unwrap();
     check(&s, &tier);
     assert_eq!(tier.used_pages(), 4, "the swap evicted the public entry");
+    // A swapped request that may resume adds its pages to the bound: three
+    // KV pages and a snapshot page.
+    assert_eq!(s.step_allocation_bound(), bound + 4);
     // The host tier refuses a demotion that would need the swap's pages.
     assert!(s.begin_demotion(&mut tier, key(&other, 17)).is_err());
     assert_eq!(s.outstanding_demotions(), 0);
@@ -805,4 +809,200 @@ fn swaps_keep_priority_over_public_entries() {
     s.complete_prefix_restore(RequestId::new(2)).unwrap();
     s.release_unused_swaps(&mut tier).unwrap();
     check(&s, &tier);
+}
+#[test]
+fn the_step_allocation_bound_adds_its_terms() {
+    // 64 budget tokens are 16 pages; four sequences add 8 pages of rounding
+    // and tail copies, 8 public and 4 private snapshot pages, and the
+    // promotion budget adds 10.
+    let h = Harness::new(64, tier(false, 10));
+    assert_eq!(h.s.step_allocation_bound(), 16 + 8 + 4 * (2 + 1) + 10);
+    // Reserved admission never preempts.
+    let reserved = Harness::with_config(64, tier(false, 10), |config| {
+        config.with_admission(AdmissionPolicy::Reserved)
+    });
+    assert_eq!(reserved.s.step_allocation_bound(), 16 + 8 + 4 * 2 + 10);
+    let off = Harness::new(64, None);
+    assert_eq!(off.s.step_allocation_bound(), 16 + 8 + 4 * (2 + 1));
+    // A demotion of the only anchor, six pages, starts only while the free
+    // pages cover the bound of 46 beside them.
+    for (pages, headroom) in [(58, true), (57, false)] {
+        let mut h = Harness::new(pages, tier(false, 10));
+        let tokens = prompt(1, 17);
+        h.run(1, &tokens);
+        let key = key(&tokens, 17);
+        assert_eq!(h.s.prefix_demotion_headroom(key), headroom, "{pages}");
+    }
+}
+
+/// A small deterministic generator for the seeded workload.
+struct Lcg(u64);
+
+impl Lcg {
+    fn below(&mut self, bound: usize) -> usize {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        ((self.0 >> 33) % bound as u64) as usize
+    }
+}
+
+/// Runs the due captures as the engine does, swapping out a preemption's
+/// boundary, and returns the snapshot pages they allocated.
+fn run_captures(
+    s: &mut Scheduler,
+    tier: &mut HostTier,
+    transfers: &mut Vec<KvTransferPlan>,
+) -> usize {
+    let mut allocated = 0;
+    for due in s.take_prefix_captures() {
+        let pages = s.begin_prefix_capture(&due).unwrap();
+        allocated += pages.as_ref().map_or(0, Vec::len);
+        if s.capture_swaps(&due) && s.has_capture_anchor(&due) {
+            match s.offload_capture(tier, &due, pages.is_some()) {
+                Ok(plan) => transfers.push(plan),
+                Err(ScheduleError::Kv(KvError::PoolExhausted { .. })) => {}
+                Err(error) => panic!("{error}"),
+            }
+        }
+        s.end_prefix_capture(&due).unwrap();
+    }
+    allocated
+}
+
+/// Submits the copies admission allocated pages for, promotions and
+/// swap-ins, and returns the pages not counted before.
+fn start_copies(
+    s: &mut Scheduler,
+    tier: &mut HostTier,
+    transfers: &mut Vec<KvTransferPlan>,
+    seen: &mut std::collections::BTreeSet<runtime_kv::PendingAnchorId>,
+) -> usize {
+    let mut allocated = 0;
+    for promotion in s.pending_promotions() {
+        if seen.insert(promotion.id) {
+            allocated += promotion.pages;
+        }
+        transfers.push(s.begin_promotion(tier, promotion.id).unwrap());
+    }
+    for id in s.pending_reloads() {
+        let plan = s.begin_reload(tier, id).unwrap();
+        allocated += plan.pages().len();
+        transfers.push(plan);
+    }
+    allocated
+}
+
+/// Drives a seeded workload of shared prompts through preemption, swaps,
+/// demotions and promotions, as the engine would, and counts every page
+/// each step takes from the pool: preemption and post-commit snapshots,
+/// promotions, swap-ins and the batch's appends. No step exceeds the bound
+/// read at its start.
+#[test]
+fn per_step_allocations_stay_within_the_bound() {
+    let mut promoted = 0;
+    for seed in 1..=24u64 {
+        let mut rng = Lcg(seed);
+        let config = SchedulerConfig::new(4, 64, 32, 16, 1)
+            .unwrap()
+            .with_admission(AdmissionPolicy::Optimistic(
+                OptimisticAdmission::new(0, 2)
+                    .unwrap()
+                    .with_forced_preemption(3)
+                    .unwrap(),
+            ))
+            .with_prefix_cache(1)
+            .with_prefix_ram(tier(false, 16));
+        let mut s = Scheduler::new(config, KvGeometry::new(BLOCK, 96).unwrap()).unwrap();
+        s.configure_offload(offload(1));
+        let mut tier = s.new_host_tier(64).unwrap();
+        let mut transfers: Vec<KvTransferPlan> = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut prompts = std::collections::BTreeMap::new();
+        let mut next_id = 1u64;
+        for _ in 0..160 {
+            let bound = s.step_allocation_bound();
+            let mut allocated = 0usize;
+            for plan in transfers.drain(..) {
+                let status = if rng.below(8) == 0 {
+                    KvTransferStatus::FailedIdle
+                } else {
+                    KvTransferStatus::Complete
+                };
+                s.accept_kv_transfer(&mut tier, plan.into_submission().completion(status))
+                    .unwrap();
+            }
+            s.begin_prefix_ram_step().unwrap();
+            if rng.below(2) == 0 {
+                let salt = rng.below(3) as u32;
+                let length = 6 + rng.below(30);
+                let tokens = prompt(salt, length);
+                let output = 1 + rng.below(6);
+                s.submit_with_prefix(
+                    RequestSpec::new(RequestId::new(next_id), length, output).unwrap(),
+                    Some(PrefixRequestV1::new(Arc::new(chain(&tokens)), true)),
+                )
+                .unwrap();
+                prompts.insert(next_id, tokens);
+                next_id += 1;
+            }
+            let resume = |id: RequestId, length: usize| {
+                let mut tokens = prompts[&id.get()].clone();
+                tokens.resize(length, 3);
+                Some(PrefixRequestV1::new(Arc::new(chain(&tokens)), true))
+            };
+            s.preempt_for_next_step(0, resume).unwrap();
+            allocated += run_captures(&mut s, &mut tier, &mut transfers);
+            // Promotions and swap-ins allocate at admission; the batch's own
+            // admission pass may start more of them.
+            promoted += s.admit().unwrap().ram_waits().len();
+            allocated += start_copies(&mut s, &mut tier, &mut transfers, &mut seen);
+            s.release_unused_swaps(&mut tier).unwrap();
+            for restore in s.pending_prefix_restores() {
+                s.complete_prefix_restore(restore.request_id()).unwrap();
+            }
+            if let Some(batch) = s.next_batch().unwrap() {
+                allocated += batch
+                    .kv_plan()
+                    .appends()
+                    .iter()
+                    .map(|append| append.allocated().len())
+                    .sum::<usize>();
+                let outcomes: Vec<_> = batch
+                    .items()
+                    .iter()
+                    .map(|item| {
+                        BatchOutcome::success(
+                            item.request_id(),
+                            item.phase(),
+                            usize::from(item.expects_output()),
+                            false,
+                        )
+                    })
+                    .collect();
+                s.commit_batch(batch.id(), &outcomes).unwrap();
+                allocated += run_captures(&mut s, &mut tier, &mut transfers);
+            }
+            allocated += start_copies(&mut s, &mut tier, &mut transfers, &mut seen);
+            s.release_unused_swaps(&mut tier).unwrap();
+            if s.outstanding_demotions() == 0
+                && let Some(candidate) = s
+                    .prefix_demotion_candidates(8)
+                    .into_iter()
+                    .find(|candidate| s.prefix_demotion_headroom(candidate.key))
+                && let Ok(plan) = s.begin_demotion(&mut tier, candidate.key)
+            {
+                transfers.push(plan);
+            }
+            s.drop_invalidated_host_entries(&mut tier).unwrap();
+            for id in s.reap_terminal(usize::MAX).unwrap() {
+                prompts.remove(&id.get());
+            }
+            s.audit().unwrap();
+            s.audit_host_tier(&tier).unwrap();
+            assert!(allocated <= bound, "seed {seed}: {allocated} > {bound}");
+        }
+    }
+    assert!(promoted > 0, "the workload promotes");
 }

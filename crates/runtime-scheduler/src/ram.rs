@@ -1,6 +1,7 @@
 //! Scheduler side of the RAM prefix tier: the choice between a GPU match and
 //! a ready host entry, the promotions admission starts and the requests that
-//! wait for them, and the demotions the engine begins.
+//! wait for them, the demotions the engine begins, and the per-step
+//! allocation bound a demotion's start rule uses.
 //!
 //! A promotion copies a public host entry into a pending GPU anchor. Its
 //! pages count in the scheduler's reservation from its start until it is
@@ -161,6 +162,59 @@ impl Scheduler {
         self.config
             .prefix_ram
             .filter(|_| self.offload.is_some_and(|config| config.enabled))
+    }
+
+    /// One step's allocation bound F, in pages: no engine step takes more
+    /// pages from the pool than this, which the start rule of a demotion
+    /// ([`Self::prefix_demotion_headroom`]) keeps free or evictable. It is
+    /// a worst-case bound from the configuration and the resume plans:
+    ///
+    /// - the batch: a step appends at most the token budget's tokens, since
+    ///   every item costs at least as many budget tokens as it appends; an
+    ///   append may start a partly used page and copy a shared tail page, so
+    ///   each schedulable sequence adds two pages;
+    /// - captures: each batch item captures at most twice (an interior anchor
+    ///   and its chunk end) with the public snapshot pages, and under
+    ///   optimistic admission each sequence may be preempted once before the
+    ///   batch, capturing a private boundary with the swap snapshot pages;
+    /// - the promotion page budget;
+    /// - each swapped request that may resume next step, which allocates its
+    ///   boundary's pages and snapshot pages before the batch.
+    ///
+    /// A single promotion larger than the budget starts only with no
+    /// demotion outstanding, so it never meets a demotion's start rule.
+    #[must_use]
+    pub fn step_allocation_bound(&self) -> usize {
+        let geometry = self.kv.geometry();
+        let pages = |tokens: usize| tokens.div_ceil(geometry.block_tokens());
+        let sequences = self.config.maximum_sequences;
+        let public = self.config.prefix_state_pages.unwrap_or(0);
+        let swap_state = self
+            .offload
+            .map(|config| config.snapshot_pages)
+            .or(self.config.prefix_state_pages)
+            .unwrap_or(0);
+        let private = match self.config.admission {
+            AdmissionPolicy::Reserved => 0,
+            AdmissionPolicy::Optimistic(_) => swap_state,
+        };
+        let promotions = self
+            .config
+            .prefix_ram
+            .map_or(0, |config| config.promotion_budget_pages);
+        let resumes = self
+            .resumes
+            .values()
+            .filter(|plan| plan.host.is_some() && plan.destination.is_none())
+            .map(|plan| pages(plan.tokens).saturating_add(swap_state))
+            .fold(0usize, usize::saturating_add);
+        pages(self.config.scheduled_token_budget)
+            .saturating_add(sequences.saturating_mul(2))
+            .saturating_add(
+                sequences.saturating_mul(public.saturating_mul(2).saturating_add(private)),
+            )
+            .saturating_add(promotions)
+            .saturating_add(resumes)
     }
 
     /// Starts a step of the tier: settles every promotion whose copy ended
@@ -325,6 +379,13 @@ impl Scheduler {
                 .demotion_candidates(lead_pages, offload.minimum_tokens),
             _ => Vec::new(),
         }
+    }
+
+    /// The start rule of a demotion of `key` under
+    /// [`Self::step_allocation_bound`].
+    #[must_use]
+    pub fn prefix_demotion_headroom(&self, key: PrefixCacheKeyV1) -> bool {
+        self.kv.demotion_headroom(key, self.step_allocation_bound())
     }
 
     /// The largest promotion this step deferred because the step's budget

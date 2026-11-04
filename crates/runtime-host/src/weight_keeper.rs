@@ -588,6 +588,9 @@ struct KeeperStateV1 {
     last_lease_end_unix: u64,
     /// Why the keeper no longer lends, once its checkpoint changed.
     stale: Option<String>,
+    /// Set once the keeper removed its socket and registry; a lease that
+    /// ends afterwards writes no registry back.
+    closed: bool,
 }
 
 struct SharedV1 {
@@ -639,8 +642,11 @@ impl SharedV1 {
         registry
     }
 
-    /// Replaces the registry file in one rename.
+    /// Replaces the registry file in one rename, until the keeper closed.
     fn write_registry(&self, state: &KeeperStateV1) -> Result<(), String> {
+        if state.closed {
+            return Ok(());
+        }
         let directory = &self.keeper.directory;
         let temporary = directory.join(format!(".{REGISTRY_NAME_V1}.{}", std::process::id()));
         let _ = std::fs::remove_file(&temporary);
@@ -980,8 +986,12 @@ pub(crate) fn serve_v1(keeper: KeeperV1) -> Result<KeeperExitedV1, String> {
             Err(error) => return Err(format!("keeper socket: {error}")),
         }
     };
+    // Under the state lock, so no registry write is in flight or follows.
+    let mut state = shared.state();
+    state.closed = true;
     let _ = std::fs::remove_file(&socket);
     let _ = std::fs::remove_file(directory.join(REGISTRY_NAME_V1));
+    drop(state);
     // The images, and the memory they hold, go before the caller answers
     // whoever waits for that: connection threads still finishing hold them,
     // so wait for those, but not for open leases, whose borrowers map the

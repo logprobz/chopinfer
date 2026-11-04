@@ -223,6 +223,17 @@ fn a_stop_ends_the_keeper_while_a_lease_keeps_its_descriptors() {
     let read = fds::read_anonymous_file(lent.fd.as_fd(), 4096, lent.image.byte_length).unwrap();
     assert_eq!(read, bytes(1));
     assert!(lease_v1(&directory.0, checkpoint(), vec![image(1)]).is_err());
+    // The lease that outlived the keeper ends without writing its registry
+    // back into the stopped keeper's directory.
+    drop(lease);
+    for _ in 0..50 {
+        let left: Vec<_> = std::fs::read_dir(&directory.0)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert!(left.is_empty(), "{left:?}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[test]

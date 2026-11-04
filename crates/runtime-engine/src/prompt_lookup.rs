@@ -161,6 +161,9 @@ impl<E: ModelExecutor> ModelExecutor for PromptLookupExecutor<E> {
     fn drain_kv_transfers_v1(&mut self) -> Result<(), ExecutorError> {
         self.inner.drain_kv_transfers_v1()
     }
+    fn kv_offload_page_bytes_v1(&self) -> u64 {
+        self.inner.kv_offload_page_bytes_v1()
+    }
     fn kv_transfer_cancel_v1_supported(&self) -> bool {
         self.inner.kv_transfer_cancel_v1_supported()
     }
@@ -259,6 +262,37 @@ mod tests {
         let history = [5, 6, 9, 0, 0, 0, 0, 0, 0, 5, 6];
         assert_eq!(lookup(2, 2, 64).propose(&history, 1), [9]);
         assert!(lookup(2, 2, 8).propose(&history, 1).is_empty());
+    }
+
+    #[test]
+    fn the_wrapper_forwards_the_copy_queue_capabilities() {
+        struct Copies;
+        impl ModelExecutor for Copies {
+            type TransactionState<'a> = crate::NoopModelTransactionState;
+            fn kv_offload_page_bytes_v1(&self) -> u64 {
+                100
+            }
+            fn kv_transfer_cancel_v1_supported(&self) -> bool {
+                true
+            }
+            fn kv_transfer_drain_timeout_v1(&self) -> std::time::Duration {
+                std::time::Duration::from_secs(77)
+            }
+            fn execute<'a>(
+                &'a mut self,
+                _: &[ModelBatchItem],
+                _: &PreparedAppendBatch,
+            ) -> Result<ModelTransaction<Self::TransactionState<'a>>, ExecutorError> {
+                unreachable!("no step runs")
+            }
+        }
+        let executor = PromptLookupExecutor::new(Copies, PromptLookupConfig::default());
+        assert_eq!(executor.kv_offload_page_bytes_v1(), 100);
+        assert!(executor.kv_transfer_cancel_v1_supported());
+        assert_eq!(
+            executor.kv_transfer_drain_timeout_v1(),
+            std::time::Duration::from_secs(77)
+        );
     }
 
     #[test]

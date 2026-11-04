@@ -4296,6 +4296,9 @@ impl<E: BundleExecutionV1> ModelExecutor for ServedExecutorV1<E> {
     fn drain_kv_transfers_v1(&mut self) -> Result<(), ExecutorError> {
         self.executor.drain_kv_transfers_v1()
     }
+    fn kv_offload_page_bytes_v1(&self) -> u64 {
+        self.executor.kv_offload_page_bytes_v1()
+    }
     fn kv_transfer_cancel_v1_supported(&self) -> bool {
         self.executor.kv_transfer_cancel_v1_supported()
     }

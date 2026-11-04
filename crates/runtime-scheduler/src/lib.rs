@@ -1414,6 +1414,13 @@ impl PrefixCaptureV1 {
     pub const fn tokens(&self) -> usize {
         self.tokens
     }
+
+    /// The key of the public anchor the capture inserts, or `None` for a
+    /// request's private boundary.
+    #[must_use]
+    pub const fn public_key(&self) -> Option<PrefixCacheKeyV1> {
+        if self.private { None } else { Some(self.key) }
+    }
 }
 
 /// What starting a due capture did.
@@ -4039,6 +4046,13 @@ impl Scheduler {
     #[must_use]
     pub const fn kv_allocated_pages(&self) -> u64 {
         self.kv.allocated_pages()
+    }
+
+    /// Pages anchor evictions have returned to the pool's free list. The
+    /// difference of two reads is what eviction freed between them.
+    #[must_use]
+    pub const fn kv_evicted_pages(&self) -> u64 {
+        self.kv.evicted_pages()
     }
 
     #[must_use]

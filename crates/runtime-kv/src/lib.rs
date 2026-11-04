@@ -490,6 +490,9 @@ pub struct KvPool {
     /// Pages allocations took from the free list; see
     /// [`KvPool::allocated_pages`]. Telemetry, outside the pool's equality.
     allocated_pages: u64,
+    /// Pages anchor evictions returned to the free list; see
+    /// [`KvPool::evicted_pages`]. Telemetry, outside the pool's equality.
+    evicted_pages: u64,
     /// Whether an append may rewrite committed rows of the sequence's last
     /// page (drafter rows that need later tokens), so a shared last page is
     /// copied even when full.
@@ -530,6 +533,7 @@ impl Clone for KvPool {
             prepared: self.prepared.clone(),
             next_prepared_id: self.next_prepared_id,
             allocated_pages: self.allocated_pages,
+            evicted_pages: self.evicted_pages,
             rewrites_last_page: self.rewrites_last_page,
             metrics: self.metrics.detached_clone(),
         }
@@ -658,6 +662,7 @@ impl KvPool {
             prepared: None,
             next_prepared_id: 1,
             allocated_pages: 0,
+            evicted_pages: 0,
             rewrites_last_page: false,
             metrics,
         })
@@ -728,6 +733,14 @@ impl KvPool {
     #[must_use]
     pub const fn allocated_pages(&self) -> u64 {
         self.allocated_pages
+    }
+
+    /// Pages anchor evictions, public and private, have returned to the free
+    /// list since the pool was created. The difference of two reads is what
+    /// eviction freed between them.
+    #[must_use]
+    pub const fn evicted_pages(&self) -> u64 {
+        self.evicted_pages
     }
 
     #[must_use]
@@ -1338,9 +1351,10 @@ impl KvPool {
             let free = self.free_blocks.len();
             let logged = self.eviction_record(key);
             self.drop_anchor(key);
+            let freed = self.free_blocks.len() - free;
+            self.evicted_pages += freed as u64;
             if public {
-                self.metrics
-                    .prefix_eviction(class, self.free_blocks.len() - free, age);
+                self.metrics.prefix_eviction(class, freed, age);
             }
             if let Some(record) = logged {
                 self.log_eviction(record);

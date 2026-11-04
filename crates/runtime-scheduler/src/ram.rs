@@ -413,6 +413,13 @@ impl Scheduler {
         Ok(plan)
     }
 
+    /// Whether [`Self::begin_demotion`] may demote `key` into `tier` while
+    /// the tier can promote.
+    #[must_use]
+    pub fn prefix_demotable(&self, tier: &HostTier, key: PrefixCacheKeyV1) -> bool {
+        self.prefix_ram_active().is_some() && tier.demotable(&self.kv, key)
+    }
+
     /// Demotions begun and not yet confirmed complete.
     #[must_use]
     pub fn outstanding_demotions(&self) -> usize {

@@ -767,3 +767,27 @@ fn the_allocation_counter_adds_every_page_taken_from_the_free_list() {
     );
     tier.audit(&pool).unwrap();
 }
+
+#[test]
+fn the_eviction_counter_adds_the_pages_each_eviction_frees() {
+    let mut pool = ram_pool(8);
+    let tier = HostTier::new(&pool, 8).unwrap();
+    let prompt = chain(&(0..8).collect::<Vec<_>>());
+    capture(&mut pool, &prompt, &[8]);
+    let key = prompt.key_at(8).unwrap();
+    assert!(tier.demotable(&pool, key));
+    assert_eq!(pool.evicted_pages(), 0);
+    // Releasing a sequence frees pages without an eviction.
+    let other = pool.create_sequence(4).unwrap();
+    pool.append(other, 4).unwrap();
+    pool.release(other).unwrap();
+    assert_eq!(pool.evicted_pages(), 0);
+    // A sequence that needs every page evicts the anchor: two prompt pages
+    // and its snapshot.
+    let filler = pool.create_sequence(32).unwrap();
+    pool.append(filler, 32).unwrap();
+    assert_eq!(pool.evicted_pages(), 3);
+    assert!(!tier.demotable(&pool, key));
+    pool.release(filler).unwrap();
+    assert_eq!(pool.evicted_pages(), 3);
+}

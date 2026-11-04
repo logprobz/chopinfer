@@ -420,6 +420,13 @@ impl HostTier {
     pub fn anchor(&self, id: HostAnchorId) -> Option<&HostAnchor> {
         self.anchors.get(&id)
     }
+    /// Whether [`Self::begin_offload`] may demote `key` into this tier: an
+    /// indexed public anchor without a host entry or a demotion in flight,
+    /// and a frontier unless the pool's tier is in forced mode.
+    #[must_use]
+    pub fn demotable(&self, pool: &KvPool, key: PrefixCacheKeyV1) -> bool {
+        self.check_pool(pool).is_ok() && pool.check_demotion(key, self.tier).is_ok()
+    }
     fn check_pool(&self, pool: &KvPool) -> Result<(), KvError> {
         if Arc::ptr_eq(&self.identity, &pool.identity) {
             Ok(())

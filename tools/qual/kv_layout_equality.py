@@ -281,8 +281,38 @@ class Step:
             for entry in self.index:
                 if not re.fullmatch(KV_TAP, entry["name"]):
                     raise tap_binding.Unbound(f"{directory}: KV step holds {entry['name']}, not a KV-state tap")
+        for entry in self.index:
+            self.check(entry, capture)
         self.shape = {"capture": {key: value for key, value in capture.items() if key not in PROCESS_STEP_FIELDS},
                       "items": named}
+
+    def check(self, entry, capture):
+        """Refuses an index entry with malformed descriptors, or a row the
+        step does not name: a sequence tap's rows lie within the rows the
+        step kept, a KV-state tap's within its positions, and a text tap's
+        are each owned by an item; an encoder tap's are each mapped by a
+        segment."""
+        where = f"{self.dir}: {entry.get('name')} rank {entry.get('rank')}"
+        if (not all(type(entry.get(key)) is int for key in ("rank", "first_row", "rows", "cols"))
+                or entry["first_row"] < 0 or entry["rows"] < 1 or entry["cols"] < 1
+                or entry.get("dtype") not in TAP_BYTES or entry.get("axis") not in (None, "encoder")):
+            raise tap_binding.Unbound(f"{where} has malformed row descriptors")
+        first, end = entry["first_row"], entry["first_row"] + entry["rows"]
+        if entry.get("axis") == "encoder":
+            if unmapped := [row for row in range(first, end) if row not in self.encoder.get(entry["name"], {})]:
+                raise tap_binding.Unbound(f"{where} holds encoder row {unmapped[0]}, which no segment maps")
+            return
+        kept = capture.get("first_row"), capture.get("captured_rows")
+        if not all(type(value) is int for value in kept):
+            raise tap_binding.Unbound(f"{self.dir}: capture.json names no rows kept")
+        if first < kept[0] or end > kept[0] + kept[1]:
+            raise tap_binding.Unbound(f"{where} holds rows {first} .. {end - 1}, past its rows {kept[0]} .. "
+                                      f"{kept[0] + kept[1] - 1}")
+        if self.kv is not None:
+            if end > len(self.kv.get("positions") or []):
+                raise tap_binding.Unbound(f"{where} holds rows {first} .. {end - 1}, past its KV positions")
+        elif unowned := [row for row in range(first, end) if row not in self.positions]:
+            raise tap_binding.Unbound(f"{where} holds row {unowned[0]}, which no item owns")
 
     def kv_tap(self, name):
         """(layer, plane, raw part or None) of a KV step's tap, else None."""
@@ -291,15 +321,14 @@ class Step:
 
     def labels(self, entry):
         """Each tensor row's position (a KV step's state or compressed
-        position, a text tap's token position) or encoder row, or None for a
-        row of no item."""
+        position, a text tap's token position) or encoder row; `check`
+        refused an entry with a row that has none."""
         rows = range(entry["first_row"], entry["first_row"] + entry["rows"])
         if self.kv is not None:
-            positions = self.kv.get("positions") or []
-            return [positions[row] if 0 <= row < len(positions) else None for row in rows]
+            return [self.kv["positions"][row] for row in rows]
         if entry.get("axis") == "encoder":
-            return [self.encoder.get(entry["name"], {}).get(row) for row in rows]
-        return [self.positions.get(row) for row in rows]
+            return [self.encoder[entry["name"]][row] for row in rows]
+        return [self.positions[row] for row in rows]
 
     def where(self, entry, label):
         """A row's key: its request, tap, rank and position, and a KV-state
@@ -335,8 +364,7 @@ def unique_rows(steps):
             if kv is not None:
                 keys = [(step.request, step.kv.get("phase"), step.kv.get("end"), entry["name"], entry["rank"])]
             else:
-                keys = [(step.request, entry["name"], entry["rank"], json.dumps(label))
-                        for label in step.labels(entry) if label is not None]
+                keys = [(step.request, entry["name"], entry["rank"], json.dumps(label)) for label in step.labels(entry)]
             for key in keys:
                 if key in seen:
                     raise tap_binding.Unbound(f"{step.dir}: {entry['name']} rank {entry['rank']} holds a row "
@@ -381,23 +409,20 @@ def compare_steps(native_dir, native, comparison_dir, comparison):
             if None in found:
                 lacking = SIDES[found.index(None)]
                 present = 1 - found.index(None)
-                rows = [(row, label) for row, label in enumerate(pair[present].labels(found[present]))
-                        if label is not None]
+                rows = list(enumerate(pair[present].labels(found[present])))
                 what = f"missing from the {lacking} capture"
             else:
-                if any(found[0][field] != found[1][field] for field in ("dtype", "cols", "first_row", "rows")):
+                if any(found[0].get(field) != found[1].get(field)
+                       for field in ("dtype", "cols", "first_row", "rows", "axis")):
                     errors.append(f"request {pair[0].request} {pair[0].dir.name} tap {key[0]} rank {key[1]} has "
                                   "another dtype, width or rows in the comparison capture")
                     continue
                 entry, present = found[0], 0
-                if entry["dtype"] not in TAP_BYTES:
-                    errors.append(f"{pair[0].dir}: {key[0]} has dtype {entry['dtype']}")
-                    continue
                 labels = pair[0].labels(entry)
-                compared["kv_rows" if kv else "text_rows"] += sum(label is not None for label in labels)
+                compared["kv_rows" if kv else "text_rows"] += len(labels)
                 paths = [step.dir / f"{key[0]}.r{key[1]}.bin" for step in pair]
                 differ = differing_rows(*paths, entry["cols"] * TAP_BYTES[entry["dtype"]], entry["rows"])
-                rows = [(row, labels[row]) for row in differ if labels[row] is not None]
+                rows = [(row, labels[row]) for row in differ]
                 what = "differs"
             if rows:
                 taps[key[0]] = taps.get(key[0], 0) + len(rows)

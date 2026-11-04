@@ -465,6 +465,38 @@ class TapsTests(unittest.TestCase):
         with self.assertRaisesRegex(tap_binding.Unbound, "step0001 is incomplete: no selected live tensors"):
             self.compare(native, reseal(broken))
 
+    def test_rows_no_position_or_item_names_are_refused_not_dropped(self):
+        def moved(name, step, change, corrupt=False):
+            """Captures of both layouts with `change` applied to `step`'s
+            files, and one value of the comparison's changed."""
+            roots = [self.capture(layout, f"{layout}-{name}") for layout in ("native", "bf16")]
+            for root in roots:
+                change(root / tap_binding.STEPS / step)
+            if corrupt:
+                tap = roots[1] / tap_binding.STEPS / step / "L00.x.kv.window.r0.bin"
+                tap.write_bytes(bytes([tap.read_bytes()[0] ^ 1]) + tap.read_bytes()[1:])
+            return [reseal(root) for root in roots]
+
+        def past_positions(directory):
+            # The primer's first window readback holds positions 0 .. 3.
+            for name in ("index.jsonl", "capture.json"):
+                text = (directory / name).read_text()
+                entry = '"name": "L00.x.kv.window", "rank": 0, "first_row": '
+                self.assertIn(entry + "0", text)
+                (directory / name).write_text(text.replace(entry + "0", entry + "4"))
+
+        def unowned(directory):
+            # The primer's first text step: its item no longer owns row 3.
+            items = json.loads((directory / "items.json").read_text())
+            items["items"][0]["positions"] = items["items"][0]["positions"][:3]
+            (directory / "items.json").write_text(json.dumps(items))
+        for name, step, change, corrupt, error in (
+                ("past", "step0001", past_positions, True,
+                 r"L00\.x\.kv\.window rank 0 holds rows 4 \.\. 7, past its rows 0 \.\. 3"),
+                ("unowned", "step0000", unowned, False, r"L00\.attn\.out rank 0 holds row 3, which no item owns")):
+            with self.subTest(name), self.assertRaisesRegex(tap_binding.Unbound, error):
+                self.compare(*moved(name, step, change, corrupt))
+
     def test_captures_that_differ_in_identity_options_or_layout_are_refused(self):
         for change, error in (
                 (lambda m: m["server"].update(source_commit="9" * 40),

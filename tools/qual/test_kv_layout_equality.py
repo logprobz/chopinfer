@@ -22,6 +22,7 @@ import tap_binding
 from test_determinism import recorded
 
 QUAL = Path(__file__).resolve().parent
+SIDES = kv_layout_equality.SIDES
 
 
 def gate():
@@ -89,11 +90,11 @@ def forced(native_dtype="mixed"):
     """A native and a comparison forced record of the same rows at every
     position the gate's pinned references define (verify_exact.py record
     --k 0 --reference long_context)."""
-    digest, references, expected = kv_layout_equality.forced_expectation()
+    digest, references, expected, _ = kv_layout_equality.forced_expectation()
     texts, prefill = [], {}
-    for name, positions, scored in expected:
+    for name, positions, kinds, scored in expected:
         rows = {str(position): {"logprob": -1.0 - position / 4096, "top": {"x": -0.5, "y": -1.0 - position / 8192},
-                                "row": "decode"} for position in positions}
+                                "row": kind} for position, kind in zip(positions, kinds)}
         texts.append({"name": name, "category": "c", "passes": [{"phase": 0, "requests": [], "positions": rows}]})
         prefill[name] = {str(position): {"logprob": -2.0 - position / 4096, "top1": position % 7} for position in scored}
     value = {"passed": True, "arm": "kv-native-forced", "k": 0, "pooled_decode": False, "concurrency": 1,
@@ -126,13 +127,19 @@ class CompareTests(unittest.TestCase):
         pins = declaration.load(gate())["qualification"]["references"]
         self.assertEqual(forced_result["references"], {"long_context": pins["long_context"]["sha256"]})
         # The exact reference's texts and then the long-context text, every
-        # position of which, after a long forced prefill, is forced.
-        _, _, expected = kv_layout_equality.forced_expectation()
+        # position of which, after a long forced prefill, is forced: one
+        # request whose first output comes from the prompt's last prefill
+        # row and every later one from a decode row.
+        _, _, expected, _ = kv_layout_equality.forced_expectation()
         self.assertEqual(forced_result["texts"], len(expected))
-        _, positions, scored = expected[-1]
+        long, positions, kinds, scored = expected[-1]
         self.assertEqual(positions, scored)
         self.assertGreater(positions[0], 8192)
-        self.assertEqual(forced_result["positions"], sum(len(positions) for _, positions, _ in expected))
+        self.assertEqual(kinds, ["prefill"] + ["decode"] * (len(positions) - 1))
+        self.assertEqual(forced_result["forced_references"], {"long_context": [
+            {"text": long, "requests": [{"prompt_tokens": positions[0], "forced_outputs": len(positions)}],
+             "prefill_rows": 1, "decode_rows": len(positions) - 1}]})
+        self.assertEqual(forced_result["positions"], sum(len(positions) for _, positions, _, _ in expected))
 
     def test_one_ulp_logprob_difference_fails_at_its_request_and_position(self):
         native, comparison = records()
@@ -163,8 +170,8 @@ class CompareTests(unittest.TestCase):
                 row["top"]["y"] = math.nextafter(row["top"]["y"], 0.0)
             else:
                 row[field] = math.nextafter(row[field], 0.0)
-        _, _, expected = kv_layout_equality.forced_expectation()
-        (short, _, scored), (long, positions, _) = expected[1], expected[-1]
+        _, _, expected, _ = kv_layout_equality.forced_expectation()
+        (short, _, _, scored), (long, positions, _, _) = expected[1], expected[-1]
         for text, position, kind, field in ((long, positions[len(positions) // 2], "forced", "logprob"),
                                             (long, positions[0], "forced", "top"),
                                             (short, scored[-1], "prefill", "logprob")):
@@ -339,6 +346,38 @@ class CompareTests(unittest.TestCase):
                 self.assertIn(error, result["errors"])
                 self.assertNotIn("equal", result["forced"])
 
+    def test_the_long_text_is_one_request_of_one_prefill_and_the_rest_decode_rows(self):
+        # A record whose long-context text scores fewer decode rows, or
+        # labels them otherwise, is refused on either side, even when both
+        # sides agree.
+        _, _, expected, _ = kv_layout_equality.forced_expectation()
+        long, positions, _, _ = expected[-1]
+        decode = len(positions) - 1
+
+        def relabel(record, position, kind):
+            record["texts"][-1]["passes"][0]["positions"][str(position)]["row"] = kind
+        for name, sides, change, error in (
+                ("a second prefill row", ("comparison",),
+                 lambda record: relabel(record, positions[len(positions) // 2], "prefill"),
+                 f"the comparison forced record scores {long} with 2 prefill and {decode - 1} decode rows, not the 1 "
+                 f"and {decode} its references define"),
+                ("two requests on both sides", ("native", "comparison"),
+                 lambda record: relabel(record, positions[512], "prefill"),
+                 f"the native forced record scores {long} with 2 prefill and {decode - 1} decode rows"),
+                ("no prefill row", ("native",), lambda record: relabel(record, positions[0], "decode"),
+                 f"the native forced record scores {long} with 0 prefill and {decode + 1} decode rows"),
+                ("prefill row moved", ("comparison",),
+                 lambda record: [relabel(record, positions[0], "decode"), relabel(record, positions[3], "prefill")],
+                 f"the comparison forced record labels {long} position {positions[0]} decode, not prefill")):
+            with self.subTest(name):
+                records = dict(zip(SIDES, forced()))
+                for side in sides:
+                    change(records[side])
+                result = compared(forced_records=(records["native"], records["comparison"]))
+                self.assertFalse(result["passed"])
+                self.assertTrue(any(message.startswith(error) for message in result["errors"]), result["errors"])
+                self.assertNotIn("equal", result["forced"])
+
     def test_forced_position_sets_must_be_equal_and_the_ones_the_references_define(self):
         def drop(record, text, position, kind="forced"):
             if kind == "forced":
@@ -346,8 +385,8 @@ class CompareTests(unittest.TestCase):
                 del entry["passes"][0]["positions"][str(position)]
             else:
                 del record["prefill"][text][str(position)]
-        _, _, expected = kv_layout_equality.forced_expectation()
-        (first, _, _), (short, _, scored), (long, positions, _) = expected[0], expected[1], expected[-1]
+        _, _, expected, _ = kv_layout_equality.forced_expectation()
+        (first, *_), (short, _, _, scored), (long, positions, _, _) = expected[0], expected[1], expected[-1]
         native, comparison = forced()
         drop(comparison, long, positions[-1])
         result = compared(forced_records=(native, comparison))
@@ -1068,7 +1107,7 @@ class CommandTests(unittest.TestCase):
         # layout reports no planes.
         with patch.dict(os.environ, {"CHOPINFER_QUAL_CONFIG": str(gate())}):
             (native, comparison), (native_forced, comparison_forced) = records("fp8"), forced("fp8")
-            long, positions, _ = kv_layout_equality.forced_expectation()[2][-1]
+            long, positions, _, _ = kv_layout_equality.forced_expectation()[2][-1]
         failing = copy.deepcopy(comparison_forced)
         failing["texts"][-1]["passes"][0]["positions"][str(positions[1])]["logprob"] += 1.0
         with tempfile.TemporaryDirectory() as directory:

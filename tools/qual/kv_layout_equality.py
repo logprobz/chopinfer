@@ -263,24 +263,33 @@ def layout_errors(native, comparison, native_planes):
 
 def forced_expectation():
     """(exact reference digest, {forced reference: digest}, [(text, forced
-    positions, prefill positions)]) the gate's pinned references define for
-    a forced record (verify_exact.py record --k 0 --reference ...): each
-    text of the exact reference and of RUNNER_FORCED_REFERENCES, every
-    position forcing reaches from its score_from (agreement read over every
-    forced text) and every scored prefill row."""
+    positions, their row kinds, prefill positions)], {forced reference:
+    [each text's requests and row counts]}) the gate's pinned references
+    define for a forced record (verify_exact.py record --k 0 --reference
+    ...): each text of the exact reference and of RUNNER_FORCED_REFERENCES,
+    every position forcing reaches from its score_from (agreement read over
+    every forced text), one request per forced run, whose first output
+    comes from its prompt's last prefill row and every later one from a
+    decode row, and every scored prefill row. A long-context text of
+    131,072 tokens scored from 130,048 is one request of a 130,048-token
+    prompt and 1,024 forced outputs: 1 prefill and 1,023 decode rows."""
     path = verify_exact.exact_path(None)
     exact = verify_exact.load_exact(path)
     named = verify_exact.named_references(RUNNER_FORCED_REFERENCES)
     texts = verify_exact.forced_texts(exact, named)
-    expected = []
+    expected, requests = [], {}
     for text in texts:
         ids = text["prompt_token_ids"]
         agreed = verify_exact.agreed_continuations(texts, ids)
-        forced = [start + offset for start, count in verify_exact.forced_runs(agreed, text["score_from"], len(ids))
-                  for offset in range(count)]
-        expected.append((text["name"], forced, list(range(text["score_from"], len(ids)))))
+        runs = list(verify_exact.forced_runs(agreed, text["score_from"], len(ids)))
+        forced = [start + offset for start, count in runs for offset in range(count)]
+        kinds = [label["row"] for _, count in runs for label in verify_exact.row_labels(0, count)]
+        expected.append((text["name"], forced, kinds, list(range(text["score_from"], len(ids)))))
+        requests[text["name"]] = {"text": text["name"],
+                                  "requests": [{"prompt_tokens": start, "forced_outputs": count} for start, count in runs],
+                                  "prefill_rows": kinds.count("prefill"), "decode_rows": kinds.count("decode")}
     return (hashlib.sha256(path.read_bytes()).hexdigest(), {name: digest for name, (digest, _) in named.items()},
-            expected)
+            expected, {name: [requests[text["name"]] for text in value["texts"]] for name, (_, value) in named.items()})
 
 
 def finite(value):
@@ -378,9 +387,9 @@ def compare_forced(native, comparison, served):
                    for key in LAYOUT_PROFILE]
         errors += [f"the {side} forced record differs from its determinism record in {key}"
                    for key, forced, recorded in fields if not same(forced, recorded)]
-    digest, references, expected = forced_expectation()
+    digest, references, expected, requests = forced_expectation()
     result = {"kv_cache_dtypes": [identity["profile"].get("kv_cache_dtype") for identity in identities_of],
-              "references": references, "texts": len(expected)}
+              "references": references, "texts": len(expected), "forced_references": requests}
     rows = []
     for side, record in zip(SIDES, (native, comparison)):
         if record.get("reference_sha256") != digest:
@@ -393,7 +402,7 @@ def compare_forced(native, comparison, served):
         rows.append((forced, prefill))
     if errors:
         return result, errors
-    for name, positions, scored in expected:
+    for name, positions, _, scored in expected:
         held = [({*forced.get(name, {})}, {*prefill.get(name, {})}) for forced, prefill in rows]
         if held[0] != held[1]:
             for kind, index in (("forced", 0), ("prefill", 1)):
@@ -408,12 +417,27 @@ def compare_forced(native, comparison, served):
                 errors.append(f"the forced records hold other {kind} positions of {name} than its references "
                               f"define: missing {missing}, extra {extra}")
     named = {name for forced, _ in rows for name in forced} | {name for _, prefill in rows for name in prefill}
-    if unexpected := sorted(named - {name for name, _, _ in expected}):
+    if unexpected := sorted(named - {name for name, _, _, _ in expected}):
         errors.append(f"the forced records hold texts no pinned reference names: {unexpected}")
     if errors:
         return result, errors
+    # Each forced position's row kind is the one its request gives it: a
+    # record that scored a text in other requests, or fewer decode rows, is
+    # refused.
+    for name, positions, kinds, _ in expected:
+        for side, (forced, _) in zip(SIDES, rows):
+            held = [forced[name][position]["row"] for position in positions]
+            if held.count("prefill") != kinds.count("prefill") or held.count("decode") != kinds.count("decode"):
+                errors.append(f"the {side} forced record scores {name} with {held.count('prefill')} prefill and "
+                              f"{held.count('decode')} decode rows, not the {kinds.count('prefill')} and "
+                              f"{kinds.count('decode')} its references define")
+            elif (at := next((index for index, kind in enumerate(kinds) if held[index] != kind), None)) is not None:
+                errors.append(f"the {side} forced record labels {name} position {positions[at]} {held[at]}, not "
+                              f"{kinds[at]}")
+    if errors:
+        return result, errors
     differences, first = 0, None
-    for name, positions, scored in expected:
+    for name, positions, _, scored in expected:
         cells = [(position, "forced", 0, field) for position in positions for field in ("logprob", "top")]
         cells += [(position, "prefill", 1, field) for position in scored for field in ("logprob", "top1")]
         differing = set()
@@ -425,8 +449,8 @@ def compare_forced(native, comparison, served):
                     first = {"text": name, "position": position, "row": kind, "field": field,
                              "native": values[0], "comparison": values[1]}
         differences += len(differing)
-    result |= {"positions": sum(len(positions) for _, positions, _ in expected),
-               "prefill_rows": sum(len(scored) for _, _, scored in expected),
+    result |= {"positions": sum(len(positions) for _, positions, _, _ in expected),
+               "prefill_rows": sum(len(scored) for _, _, _, scored in expected),
                "equal": first is None, "first_difference": first, "differing_positions": differences}
     if first is not None:
         errors.append(f"the forced records differ at {first['text']} position {first['position']} "

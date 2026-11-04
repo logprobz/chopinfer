@@ -251,7 +251,6 @@ pub struct HostAnchor {
     /// The request a swap belongs to; a public entry has none.
     pub owner: Option<u64>,
     pub ready: bool,
-    last_used: u64,
 }
 #[derive(Debug)]
 struct Transfer {
@@ -371,8 +370,9 @@ impl KvTransferPoll {
 
 /// One tier belongs to one logical pool. Host IDs address symmetric pages on
 /// every rank. Owned anchors are swaps and are never evicted. Unowned
-/// anchors are the pool's public host entries: the tier updates the pool's
-/// host maps in the same call as every drop of one.
+/// anchors are the pool's public host entries, evicted by the last GPU use
+/// the pool records: the tier updates the pool's host maps in the same call
+/// as every drop of one.
 #[derive(Debug)]
 pub struct HostTier {
     identity: Arc<()>,
@@ -491,6 +491,45 @@ impl HostTier {
             .map(|(key, _, reason)| (key, reason))
             .collect())
     }
+    /// Frees host pages for a copy of `needed` pages by evicting public
+    /// entries, the oldest last GPU use first. A demotion of an anchor last
+    /// used at `older_than` evicts only entries older than itself; a swap may
+    /// evict any. Nothing is evicted unless the evictions make the copy fit.
+    fn make_room(
+        &mut self,
+        pool: &mut KvPool,
+        needed: usize,
+        older_than: Option<u64>,
+    ) -> Result<(), KvError> {
+        let free = self.free.len();
+        if free >= needed {
+            return Ok(());
+        }
+        // Pages a transfer names stay held until it completes.
+        let busy: std::collections::BTreeSet<_> =
+            self.transfers.values().map(|t| t.anchor).collect();
+        let mut victims = Vec::new();
+        let mut freed = 0usize;
+        if let Some(ram) = pool.ram.as_ref().filter(|ram| ram.tier == Some(self.tier)) {
+            for (last_used, key) in &ram.order {
+                if free + freed >= needed || older_than.is_some_and(|limit| *last_used >= limit) {
+                    break;
+                }
+                let host = ram.entries[key].host;
+                if let Some(anchor) = self.anchors.get(&host).filter(|_| !busy.contains(&host)) {
+                    freed += anchor.blocks.len() + anchor.state.len();
+                    victims.push(host);
+                }
+            }
+        }
+        if free + freed < needed {
+            return Err(KvError::PoolExhausted { needed, free });
+        }
+        for host in victims {
+            self.release_anchor(pool, host)?;
+        }
+        Ok(())
+    }
     /// Capture must have completed its device writes before this call. Reserve
     /// references before submitting the returned plan to the executor.
     ///
@@ -529,22 +568,12 @@ impl HostTier {
         // tail, so a later append or last-page rewrite changes its bytes
         // under the same allocation while an older host copy keeps the old.
         let needed = allocations.len();
-        while self.free.len() < needed {
-            let candidate = self
-                .anchors
-                .iter()
-                .filter(|(_, a)| a.owner.is_none() && a.ready)
-                .min_by_key(|(_, a)| a.last_used)
-                .map(|(id, _)| *id);
-            let Some(id) = candidate else { break };
-            self.release_anchor(pool, id)?;
-        }
-        if self.free.len() < needed {
-            return Err(KvError::PoolExhausted {
-                needed,
-                free: self.free.len(),
-            });
-        }
+        let older_than = pool
+            .anchors
+            .get(&key)
+            .map(|anchor| anchor.last_used)
+            .filter(|_| owner.is_none());
+        self.make_room(pool, needed, older_than)?;
         let lease = pool.retain_transfer_pages(&allocations)?;
         let mut hosts = Vec::with_capacity(needed);
         let mut pairs = Vec::with_capacity(needed);
@@ -575,7 +604,6 @@ impl HostTier {
                 state: hosts[blocks.len()..].to_vec(),
                 owner,
                 ready: false,
-                last_used: id.0,
             },
         );
         self.transfers.insert(
@@ -664,10 +692,6 @@ impl HostTier {
             .collect();
         let receipt = Arc::new(AtomicBool::new(false));
         self.next = next;
-        self.anchors
-            .get_mut(&anchor)
-            .expect("anchor checked")
-            .last_used = id.0;
         self.transfers.insert(
             id,
             Transfer {

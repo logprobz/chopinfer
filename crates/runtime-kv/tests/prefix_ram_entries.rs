@@ -513,3 +513,64 @@ fn the_eviction_log_keeps_its_newest_records() {
     assert_eq!(pool.drain_prefix_evictions(), (Vec::new(), 0));
     pool.audit().unwrap();
 }
+
+#[test]
+fn host_tier_evicts_public_entries_by_last_gpu_use_after_a_fit_check() {
+    let prompts: Vec<_> = (1..=6).map(|n| chain(&[n; 8])).collect();
+    let keys: Vec<_> = prompts.iter().map(|c| c.key_at(8).unwrap()).collect();
+    let big = chain(&[7; 28]);
+    let mut pool = ram_pool(64);
+    // Room for three anchors of three pages.
+    let mut tier = HostTier::new(&pool, 9).unwrap();
+    for prompt in &prompts {
+        capture(&mut pool, prompt, &[8]);
+    }
+    capture(&mut pool, &big, &[28]);
+    let swap = |pool: &mut KvPool, tier: &mut HostTier, owner: u64, tokens: usize| {
+        let key = PrefixCacheKeyV1::new([owner as u8; 32]);
+        let source = pool.create_sequence(tokens).unwrap();
+        pool.append(source, tokens).unwrap();
+        pool.insert_private_anchor(key, source, 1).unwrap().unwrap();
+        pool.release(source).unwrap();
+        let result = tier.begin_offload(pool, key, Some(owner));
+        assert!(pool.remove_anchor(key).unwrap());
+        result.map(|(_, plan)| tier.complete_transfer(pool, completed(plan)).unwrap())
+    };
+    let held = |pool: &KvPool| {
+        keys.iter()
+            .map(|key| pool.host_entry(*key).is_some())
+            .collect::<Vec<_>>()
+    };
+    // The demotion order differs from the order of last GPU use.
+    for index in [2, 1, 3] {
+        demote(&mut pool, &mut tier, keys[index]);
+    }
+    // A newer demotion evicts the entry used longest ago, not the first
+    // demoted.
+    demote(&mut pool, &mut tier, keys[4]);
+    assert_eq!(held(&pool), [false, false, true, true, true, false]);
+    // A demotion older than every entry evicts nothing and fails.
+    assert!(matches!(
+        tier.begin_offload(&mut pool, keys[0], None),
+        Err(KvError::PoolExhausted { .. })
+    ));
+    assert_eq!(held(&pool), [false, false, true, true, true, false]);
+    // A copy in flight holds its pages, so a demotion that cannot fit
+    // without them evicts nothing.
+    let (_, plan) = tier.begin_offload(&mut pool, keys[5], None).unwrap();
+    assert_eq!(held(&pool), [false, false, false, true, true, true]);
+    assert!(
+        tier.begin_offload(&mut pool, big.key_at(28).unwrap(), None)
+            .is_err()
+    );
+    assert_eq!(held(&pool), [false, false, false, true, true, true]);
+    tier.complete_transfer(&mut pool, completed(plan)).unwrap();
+    tier.audit(&pool).unwrap();
+    // A swap evicts the oldest entries whatever its own age, but only when
+    // that makes it fit.
+    swap(&mut pool, &mut tier, 1, 8).unwrap();
+    assert_eq!(held(&pool), [false, false, false, false, true, true]);
+    assert!(swap(&mut pool, &mut tier, 2, 28).is_err());
+    assert_eq!(held(&pool), [false, false, false, false, true, true]);
+    tier.audit(&pool).unwrap();
+}

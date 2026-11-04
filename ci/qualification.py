@@ -259,12 +259,10 @@ def report(root, planned, results, log, run_once, matrix, selected):
             print(f"qualification {label} skips: {number} {reason}")
     if run_once and len(matrix) > 1:
         print(f"qualification: {len(run_once)} modules that declare {MARKER} ran once under {matrix[0][1]}")
+    # runner._report already echoed each failed cell's log; a second copy
+    # would count its tests twice in the CPU gate's inventory.
     for error in errors:
         print("qualification failed: " + error, file=sys.stderr)
-    for label, path, module in planned:
-        result = by_name[f"{label}/{module or 'discover'}"]
-        if result.status != "ok" and result.log:
-            sys.stderr.write(f"==> {result.name}\n{pathlib.Path(result.log).read_text(errors='replace')}\n")
     return 1 if errors else 0
 
 

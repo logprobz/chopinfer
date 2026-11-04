@@ -645,8 +645,11 @@ impl SchedulerConfig {
     /// Prompt-ending anchor items per step on a guaranteed grid with cuts,
     /// separate from the manifest's allowance ([`Self::with_anchor_items`]).
     /// A nonzero allowance lets an item run past its prompt-end anchor and
-    /// capture both the anchor and prompt end after the step. Grid ends and
-    /// other cuts are unchanged. A host sets the value its instance declares.
+    /// capture both the anchor and prompt end after the step. It applies
+    /// only to steps whose prefill candidates all have grid contracts; beside
+    /// a media or scored request a grid chunk ends at its anchor. Grid ends
+    /// and other cuts are unchanged. A host sets the value its instance
+    /// declares.
     #[must_use]
     pub const fn with_grid_anchor_items(mut self, items: usize) -> Self {
         self.grid_anchor_items = items;
@@ -2349,7 +2352,7 @@ impl Scheduler {
                             let (mut tokens, mut mixed, mut longest, mut alone) =
                                 (0usize, 0usize, 0usize, 0usize);
                             let mut manifest_anchors = self.config.anchor_items;
-                            let mut grid_anchors = self.config.grid_anchor_items;
+                            let mut grid_anchors = self.grid_anchor_items(&prefill);
                             for &index in &prefill {
                                 let record = &self.requests[index];
                                 let chunk = Self::chunk_tokens(
@@ -2568,7 +2571,7 @@ impl Scheduler {
         // A prompt-ending chunk that reaches its prompt-end anchor runs past
         // it while the bundle's anchor items last (`push_prefill`).
         let mut anchors = self.config.anchor_items;
-        let mut grid_anchors = self.config.grid_anchor_items;
+        let mut grid_anchors = self.grid_anchor_items(&prefill);
         let media_arena = self.config.media_pages;
         let mut media_budget = media_arena;
 
@@ -4006,6 +4009,22 @@ impl Scheduler {
     /// The pending token follows this request's committed output boundary.
     const fn restores_decode_boundary(record: &RequestRecord, tokens: usize) -> bool {
         record.emitted_tokens > 0 && tokens == record.spec.prompt_tokens + record.emitted_tokens - 1
+    }
+
+    /// The grid anchor items a step with the prefill candidates `prefill`
+    /// may keep. The instance's allowance holds only for steps whose prefill
+    /// items all have grid contracts, so it is zero while a candidate
+    /// without one (a media or scored request) may join the step. Grid
+    /// chunks then end at their anchors, as when the allowance is spent.
+    fn grid_anchor_items(&self, prefill: &[usize]) -> usize {
+        if prefill
+            .iter()
+            .all(|&index| self.requests[index].guaranteed_prefill_chunks.is_some())
+        {
+            self.config.grid_anchor_items
+        } else {
+            0
+        }
     }
 
     /// The prompt-end anchor the request's next chunk can run past: the

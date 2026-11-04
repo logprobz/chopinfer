@@ -2005,12 +2005,15 @@ const chop_bundle_prefill_table_v1 *chop_bundle_prefill_cuts_api_v1(void);
  * prefill items per step at the last prefill-granule multiple strictly
  * inside each (the V3 batch item anchor flag), so that anchor needs no
  * chunk end; such items arrive in the cuts envelope. When the export is
- * present its allowance applies only to grid requests; manifest anchors stay
- * unchanged. The two per-step allowances add up; a bundle enabling both
- * must retain state for their sum in one step. An anchor_items value of zero
- * keeps every such anchor at a chunk end. A nonzero allowance needs an
- * enabled cuts policy. Old hosts ignore this export; hosts use the manifest
- * value for bundles without it. Queries leave request state unchanged. */
+ * present its allowance applies only to grid requests, and only in steps
+ * whose prefill items all carry a boundary in the cuts envelope; a step
+ * with a media or other prefill item without one keeps every such anchor at
+ * a chunk end. Manifest anchors stay unchanged and go only to items without
+ * a boundary, so a step keeps grid or manifest anchors, never both. An
+ * anchor_items value of zero keeps every such anchor at a chunk end. A
+ * nonzero allowance needs an enabled cuts policy. Old hosts ignore this
+ * export; hosts use the manifest value for bundles without it. Queries
+ * leave request state unchanged. */
 typedef struct chop_bundle_prefill_anchors_v2 {
   uint32_t struct_size;
   chop_bundle_status_v1 status;

@@ -890,6 +890,40 @@ fn grid_anchor_items_fit_restored_remainders_up_to_the_exact_cap() {
     }
 }
 
+/// Beside a scored prefill, which has no grid contract, a grid item keeps
+/// no anchor: its timed chunk ends at the anchor as a capture and the tail
+/// follows, the schedule the step takes without an allowance.
+#[test]
+fn grid_anchor_items_end_at_the_anchor_beside_a_scored_prefill() {
+    let mut runs = Vec::new();
+    for grid_anchors in [8, 0] {
+        let mut s = scheduler(Setup {
+            grid_anchors,
+            ..on(tbt(512))
+        });
+        decoders(&mut s, 1);
+        submit(&mut s, 1, 300, 4);
+        submit_tokens(&mut s, 2, &tokens(2, 40), 1, true);
+        let steps = prefill(&mut s, 1, 4);
+        assert_eq!(chunks(&steps, 1), [(0, 256), (256, 44)], "{grid_anchors}");
+        assert_eq!(chunks(&steps[..1], 2), [(0, 40)], "{grid_anchors}");
+        assert!(steps.iter().all(|step| step.anchors.is_empty()));
+        assert_eq!(captures(&steps, 1), [256, 300]);
+        let chunk = &steps[0].cuts.as_ref().unwrap().chunks()[0];
+        assert_eq!(
+            (
+                chunk.request_id(),
+                chunk.end(),
+                chunk.reason(),
+                chunk.forced()
+            ),
+            (RequestId::new(1), 256, PrefillEnd::Capture, false)
+        );
+        runs.push(steps);
+    }
+    assert_eq!(runs[0], runs[1]);
+}
+
 #[test]
 fn grid_anchor_items_share_the_cap_with_other_prefills() {
     for (first, second, expected, anchor) in [

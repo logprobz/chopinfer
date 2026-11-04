@@ -424,7 +424,9 @@ Flash TP4 with upper skip and scheduler cuts declares in-step prompt-end
 anchors through `chop_bundle_prefill_anchors_api_v2`, up to eight per step
 and at most the served sequence count. Continuations may start anywhere,
 with no minimum row count. Other topologies and configurations without upper
-skip declare none and keep the separate tail step. An earlier candidate
+skip declare none and keep the separate tail step. A step that also
+prefills an image or a scored prompt keeps no anchors, so while one waits
+the scheduler keeps the separate tail step too. An earlier candidate
 failed its 2026-10-29 gate because fused unaligned steps took split-tail
 dense routes; with the tail folds the fused schedule was adopted on
 2026-11-02. The measured tail cost, exactness results and acceptance

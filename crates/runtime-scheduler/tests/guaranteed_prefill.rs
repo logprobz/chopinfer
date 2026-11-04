@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use runtime_kv::{KvGeometry, PrefixChainV1};
 use runtime_scheduler::{
-    BatchOutcome, BatchPhase, PrefixRequestV1, RequestId, RequestSpec, RequestState, Scheduler,
-    SchedulerConfig,
+    BatchOutcome, BatchPhase, ChunkMedia, DraftLimits, PrefixRequestV1, RequestId, RequestSpec,
+    RequestState, Scheduler, SchedulerConfig,
 };
 
 fn scheduler(chunk: usize, guaranteed: bool) -> Scheduler {
@@ -570,7 +570,26 @@ fn scheduler_with_grid_anchors(
 
 /// Each prefill item of the next batch: (request, start, tokens, anchor).
 fn anchored_step(s: &mut Scheduler) -> Vec<(u64, usize, usize, Option<usize>)> {
-    let batch = s.next_batch().unwrap().unwrap();
+    anchored_media_step(s, &[])
+}
+
+/// [`anchored_step`] where every chunk of the requests `media` covers one
+/// media arena page.
+fn anchored_media_step(
+    s: &mut Scheduler,
+    media: &[u64],
+) -> Vec<(u64, usize, usize, Option<usize>)> {
+    let batch = s
+        .next_batch_planned(
+            DraftLimits::NONE,
+            |id, _, _| ChunkMedia {
+                encode_cost: 0,
+                pages: usize::from(media.contains(&id.get())),
+            },
+            |_, _| Vec::new(),
+        )
+        .unwrap()
+        .unwrap();
     let items = batch
         .items()
         .iter()
@@ -975,22 +994,49 @@ fn grid_anchor_items_reinstate_the_allowance_after_an_abandoned_restore() {
     }
 }
 
+/// Grid and manifest items spend separate allowances. A scored item, which
+/// has no grid contract, spends only the manifest allowance, and a grid
+/// item beside it keeps no anchor whatever the grid allowance: an instance
+/// keeps grid anchors only in steps whose prefill items all have grid
+/// contracts. In such a step the manifest allowance adds no grid anchors.
 #[test]
 fn grid_and_manifest_items_spend_separate_step_allowances() {
     for (grid, manifest) in [(1, 1), (1, 0), (0, 1)] {
-        let config = SchedulerConfig::new(4, 64, 8192, 8192, 1)
-            .unwrap()
-            .with_prefill_granule(64)
-            .unwrap()
-            .with_prefix_cache(1)
-            .with_prefill_cuts(true)
-            .with_guaranteed_prefill_chunks(8192)
-            .unwrap()
-            .with_grid_anchor_items(grid)
-            .with_anchor_items(manifest);
-        let mut s = Scheduler::new(config, KvGeometry::new(64, 8192).unwrap()).unwrap();
+        let scheduler = || {
+            let config = SchedulerConfig::new(4, 64, 8192, 8192, 1)
+                .unwrap()
+                .with_prefill_granule(64)
+                .unwrap()
+                .with_prefix_cache(1)
+                .with_prefill_cuts(true)
+                .with_guaranteed_prefill_chunks(8192)
+                .unwrap()
+                .with_grid_anchor_items(grid)
+                .with_anchor_items(manifest);
+            Scheduler::new(config, KvGeometry::new(64, 8192).unwrap()).unwrap()
+        };
+        let mut s = scheduler();
         submit(&mut s, 1, &(0..789).collect::<Vec<_>>(), false);
         submit(&mut s, 2, &(1000..1789).collect::<Vec<_>>(), true);
+        submit(&mut s, 3, &(2000..2789).collect::<Vec<_>>(), false);
+        let mut actual = anchored_step(&mut s);
+        actual.sort_unstable();
+        assert_eq!(
+            actual,
+            [
+                (1, 0, 768, None),
+                (
+                    2,
+                    0,
+                    if manifest > 0 { 789 } else { 768 },
+                    (manifest > 0).then_some(768)
+                ),
+                (3, 0, 768, None),
+            ],
+            "grid={grid} manifest={manifest}"
+        );
+        let mut s = scheduler();
+        submit(&mut s, 1, &(0..789).collect::<Vec<_>>(), false);
         submit(&mut s, 3, &(2000..2789).collect::<Vec<_>>(), false);
         let mut actual = anchored_step(&mut s);
         actual.sort_unstable();
@@ -1003,16 +1049,173 @@ fn grid_and_manifest_items_spend_separate_step_allowances() {
                     if grid > 0 { 789 } else { 768 },
                     (grid > 0).then_some(768)
                 ),
-                (
-                    2,
-                    0,
-                    if manifest > 0 { 789 } else { 768 },
-                    (manifest > 0).then_some(768)
-                ),
                 (3, 0, 768, None),
-            ]
+            ],
+            "grid={grid} manifest={manifest}"
         );
     }
+}
+
+/// The served grid: 8192-token chunks with cuts, a 64-token granule, 64
+/// scored rows, the prefix cache, a media arena and `grid` anchor items.
+fn served_grid(grid: usize) -> Scheduler {
+    let config = SchedulerConfig::new(32, 64, 8192, 8192, 1)
+        .unwrap()
+        .with_prefill_granule(64)
+        .unwrap()
+        .with_maximum_scored_rows(64)
+        .unwrap()
+        .with_prefix_cache(1)
+        .with_media_pages(8)
+        .with_prefill_cuts(true)
+        .with_guaranteed_prefill_chunks(8192)
+        .unwrap()
+        .with_grid_anchor_items(grid);
+    Scheduler::new(config, KvGeometry::new(64, 8192).unwrap()).unwrap()
+}
+
+/// Submits request `id`, which has no grid contract: a 13-token media
+/// prompt when `media`, otherwise a 40-token scored prompt. Returns its
+/// prompt length.
+fn submit_without_contract(s: &mut Scheduler, id: u64, media: bool) -> usize {
+    if media {
+        let tokens: Vec<u32> = (100_000..100_013).collect();
+        let spec = RequestSpec::new(RequestId::new(id), tokens.len(), 1)
+            .unwrap()
+            .with_media_pages(1);
+        let chain = PrefixChainV1::new(64, Arc::from(tokens), Vec::new()).unwrap();
+        s.submit_with_prefix(spec, Some(PrefixRequestV1::new(Arc::new(chain), true)))
+            .unwrap();
+    } else {
+        submit(s, id, &(200_000..200_040).collect::<Vec<_>>(), true);
+    }
+    assert_eq!(
+        s.prefill_boundary_contract(RequestId::new(id)).unwrap(),
+        None
+    );
+    if media { 13 } else { 40 }
+}
+
+/// A step whose prefill candidates include a media or scored prompt keeps
+/// no grid anchor, since such a prompt has no boundary and turns off the
+/// path an instance keeps its grid anchors on. The grid chunk ends at its
+/// anchor beside it, as when the allowance is spent, and the tail follows
+/// in the next step, which keeps grid anchors again.
+#[test]
+fn grid_anchor_items_end_at_the_anchor_beside_a_prefill_without_a_contract() {
+    for media in [true, false] {
+        let mut s = served_grid(8);
+        submit(&mut s, 1, &(0..789).collect::<Vec<_>>(), false);
+        let other = submit_without_contract(&mut s, 2, media);
+        assert!(
+            s.prefill_boundary_contract(RequestId::new(1))
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            anchored_media_step(&mut s, &[2]),
+            [(1, 0, 768, None), (2, 0, other, None)],
+            "media={media}"
+        );
+        submit(&mut s, 3, &(5000..5789).collect::<Vec<_>>(), false);
+        assert_eq!(
+            anchored_step(&mut s),
+            [(3, 0, 789, Some(768)), (1, 768, 21, None)],
+            "media={media}"
+        );
+        assert!(s.next_batch().unwrap().is_none());
+        s.audit().unwrap();
+    }
+}
+
+/// The same holds when the media or scored prompt arrives after the grid
+/// prompt started prefilling and sorts ahead of its last chunk.
+#[test]
+fn grid_anchor_items_end_at_the_anchor_beside_a_later_prefill_without_a_contract() {
+    for media in [true, false] {
+        let mut s = served_grid(8);
+        submit(&mut s, 1, &(0..8192 + 789).collect::<Vec<_>>(), false);
+        assert_eq!(anchored_step(&mut s), [(1, 0, 8192, None)]);
+        let other = submit_without_contract(&mut s, 2, media);
+        assert_eq!(
+            anchored_media_step(&mut s, &[2]),
+            [(2, 0, other, None), (1, 8192, 768, None)],
+            "media={media}"
+        );
+        assert_eq!(
+            anchored_step(&mut s),
+            [(1, 8960, 21, None)],
+            "media={media}"
+        );
+        assert!(s.next_batch().unwrap().is_none());
+        s.audit().unwrap();
+    }
+}
+
+/// Pins: with a 64-row scored limit, a 64-row scored prompt now shares the
+/// step with a 789-token grid prompt, whose chunk ends at its anchor at 768
+/// and takes no logits row. Before, the anchored 789-token chunk took its
+/// prompt-end row and the scored prompt waited for the next step.
+#[test]
+fn a_scored_prompt_takes_the_rows_beside_a_grid_chunk_ending_at_its_anchor() {
+    let mut s = served_grid(8);
+    submit(&mut s, 1, &(0..789).collect::<Vec<_>>(), false);
+    submit(&mut s, 2, &(200_000..200_064).collect::<Vec<_>>(), true);
+    assert_eq!(anchored_step(&mut s), [(1, 0, 768, None), (2, 0, 64, None)]);
+    assert_eq!(anchored_step(&mut s), [(1, 768, 21, None)]);
+}
+
+/// Pins: beside a decoding request and a one-token scored prompt, an
+/// 8191-token grid prompt's chunk now ends at its anchor at 8128, which
+/// leaves room in the 8192-token step for the scored prompt and a
+/// five-draft verify. Before, a plain decode and the anchored 8191-token
+/// chunk took the whole budget.
+#[test]
+fn a_grid_chunk_ending_at_its_anchor_leaves_room_for_drafts() {
+    let mut s = served_grid(8);
+    s.submit(RequestSpec::new(RequestId::new(9), 1, 1000).unwrap())
+        .unwrap();
+    let batch = s.next_batch().unwrap().unwrap();
+    let outcomes = [BatchOutcome::success(
+        RequestId::new(9),
+        BatchPhase::Prefill { tokens: 1 },
+        1,
+        false,
+    )];
+    s.commit_batch(batch.id(), &outcomes).unwrap();
+    assert_eq!(
+        s.request_state(RequestId::new(9)),
+        Ok(RequestState::Decoding)
+    );
+    submit(&mut s, 1, &(0..8191).collect::<Vec<_>>(), false);
+    submit(&mut s, 2, &(200_000..200_001).collect::<Vec<_>>(), true);
+    let batch = s
+        .next_batch_with_drafts(DraftLimits::new(5, 64), |candidates, budget| {
+            candidates
+                .iter()
+                .map(|candidate| {
+                    candidate
+                        .maximum_draft_tokens()
+                        .min(budget.spare_draft_tokens())
+                        .min(budget.spare_rows())
+                })
+                .collect()
+        })
+        .unwrap()
+        .unwrap();
+    let items: Vec<_> = batch
+        .items()
+        .iter()
+        .map(|item| (item.request_id().get(), item.phase(), item.anchor_tokens()))
+        .collect();
+    assert_eq!(
+        items,
+        [
+            (9, BatchPhase::Verify { draft_tokens: 5 }, None),
+            (1, BatchPhase::Prefill { tokens: 8128 }, None),
+            (2, BatchPhase::Prefill { tokens: 1 }, None),
+        ]
+    );
 }
 
 #[test]

@@ -362,11 +362,9 @@ impl BundleLibraryV1 {
                     crate::device_results::BundleGetDeviceResultsApiFnV1,
                 >(symbol)
             });
+        let mapped_name = crate::device_results::MAPPED_DEVICE_RESULTS_API_SYMBOL_V1;
         // SAFETY-REVIEWED: the optional export is resolved by its exact name and C signature.
-        let mapped_device_results = optional(
-            crate::device_results::MAPPED_DEVICE_RESULTS_API_SYMBOL_V1,
-        )
-        .map(|symbol| unsafe {
+        let mapped_device_results = optional(mapped_name).map(|symbol| unsafe {
             std::mem::transmute::<
                 *mut c_void,
                 crate::device_results::BundleGetMappedDeviceResultsApiFnV1,

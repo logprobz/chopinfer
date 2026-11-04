@@ -647,6 +647,21 @@ class ReferencePrerequisites(unittest.TestCase):
         # The reader followed portable through the unselected fixture builds.
         self.assertEqual(set(steps["kernel-report-integration"].after), {"portable-test", "external-model-smoke"})
 
+    def test_the_report_reader_follows_the_feature_variant_builds(self):
+        # The reports name target/debug/deps as a compiler search directory,
+        # and these steps build into that target after the fixtures, as the
+        # reader did.
+        with tempfile.TemporaryDirectory() as directory:
+            shared, independent = cpu.steps(pathlib.Path(directory) / "target", pathlib.Path(directory), 8, 8)
+        steps = {item.name: item for item in cpu.order(shared, independent)}
+
+        def before(name):
+            return {earlier for step in steps[name].after for earlier in (step, *before(step))}
+
+        self.assertLessEqual({"recurrent-fixture", "tp4-fixture", "runtime-metrics", "cuda-fake-contracts",
+                              "cuda-launch-arguments", "bundle-abi-contract", "host-cuda-fake-driver"},
+                             before("kernel-report-integration"))
+
     def test_every_producer_precedes_its_reader_in_the_gate(self):
         with tempfile.TemporaryDirectory() as directory:
             shared, independent = cpu.steps(pathlib.Path(directory) / "target", pathlib.Path(directory), 8, 8)
@@ -767,8 +782,26 @@ class Qualification(unittest.TestCase):
         self.assertEqual(status, 1)
         for config in ("alpha", "beta", "mechanics"):
             self.assertIn(f"qualification failed: {config}/test_broken", stderr)
-        self.assertIn("AssertionError: first", stderr)
-        self.assertIn("RuntimeError: second", stderr)
+            # The runner echoes each failed cell's log once.
+            self.assertEqual(stdout.count(f"==> {config}/test_broken (failed)"), 1)
+        for failure in ("AssertionError: first", "RuntimeError: second"):
+            self.assertEqual(stdout.count(failure), 3)
+            self.assertNotIn(failure, stderr)
+
+    def test_a_failed_cell_keeps_the_inventory_counts(self):
+        self.module("test_broken", "", "    def test_a(self):\n        self.fail('first')\n\n"
+                                       "    def test_b(self):\n        self.skipTest('optional')")
+        status, stdout, stderr, _ = self.run_main()
+        self.assertEqual(status, 1)
+        _, _, recorded = test_inventory.log_records("release-gate-clean", stdout + stderr)
+        summaries = re.findall(r"^qualification \S+: \d+ cells, (\d+) tests, (\d+) skipped$", stdout, re.M)
+        self.assertEqual(recorded["ran"], sum(int(tests) for tests, _ in summaries))
+        self.assertEqual(recorded["skipped"], sum(int(skipped) for _, skipped in summaries))
+        self.assertEqual(recorded["skipped"], 3)
+        self.assertEqual(recorded["verdicts"], ["FAILED"])
+        self.assertTrue(recorded["complete_names"])
+        names = [case["name"] for case in recorded["tests"]]
+        self.assertEqual(len(names), len(set(names)))
 
     def test_a_module_that_runs_no_tests_fails(self):
         (self.root / "tools/qual/test_empty.py").write_text("import unittest\n")
@@ -778,9 +811,10 @@ class Qualification(unittest.TestCase):
 
     def test_a_module_that_cannot_import_fails(self):
         (self.root / "tools/qual/test_import.py").write_text("raise ImportError('broken import')\n")
-        status, _, stderr, _ = self.run_main()
+        status, stdout, stderr, _ = self.run_main()
         self.assertEqual(status, 1)
-        self.assertIn("broken import", stderr)
+        self.assertIn("qualification failed: alpha/test_import", stderr)
+        self.assertIn("broken import", stdout)
 
     def test_without_a_config_every_module_runs_once_without_the_variable(self):
         status, stdout, stderr, log = self.run_main("--no-config")

@@ -181,6 +181,17 @@ chop_decode_future_seconds_sum 0.2
         # Another model's canonical series cannot identify this server.
         self.assertIsNone(evidence('', (gauge % 'adaptive').replace('model_name="M"', 'model_name="other"'))['mode'])
 
+    def test_historical_policy_metrics_accept_their_declared_override(self):
+        # modules.json advertises POLICY_METRICS as a dict, so a declaration
+        # may override it with JSON lists in place of the tuples.
+        import agentic_legacy_policy
+        metrics = json.loads(json.dumps(agentic_legacy_policy.POLICY_METRICS))
+        text = {'text': 'chop_mixed_step_seconds_count{model_name="M"} 3\n'}
+        with patch.object(agentic_legacy_policy, 'POLICY_METRICS', metrics):
+            evidence = agentic_legacy_policy.historical_mode_evidence(text, text, 'M')
+        self.assertEqual(evidence['mode'], 'tbt')
+        self.assertEqual({claim['source'] for claim in evidence['claims']}, {'policy-specific metrics'})
+
     def test_request_seed_and_slot_assignment(self):
         import threading
         from agentic_mixed import run_level, request_seed

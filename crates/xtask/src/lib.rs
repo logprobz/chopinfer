@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::fs;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
@@ -14,7 +14,8 @@ pub fn run(arguments: impl IntoIterator<Item = String>) -> TaskResult {
         Some("check-portable-build") if arguments.next().is_none() => portable_build(),
         Some("check-portable-lint") if arguments.next().is_none() => portable_lint(),
         Some("check-portable-test") if arguments.next().is_none() => portable_test(),
-        _ => Err("usage: xtask check-portable[-build|-lint|-test]".to_owned()),
+        Some("check-unsafe") if arguments.next().is_none() => check_unsafe(),
+        _ => Err("usage: xtask check-portable[-build|-lint|-test] | check-unsafe".to_owned()),
     }
 }
 
@@ -29,6 +30,7 @@ const REVIEWED_UNSAFE_FILES: &[&str] = &[
     "crates/runtime-host/src/generation/heap.rs",
     "crates/runtime-host/src/direct/plan_cache/files.rs",
     "crates/runtime-host/src/signals.rs",
+    "crates/runtime-host/src/profile_ranges.rs",
     "crates/runtime-host/src/host_rows.rs",
     "crates/runtime-host/src/weight_keeper/fds.rs",
     // SAFETY-REVIEWED: private anonymous mappings owned by mutex-protected shards.
@@ -40,6 +42,7 @@ const REVIEWED_UNSAFE_FILES: &[&str] = &[
     "crates/runtime-bundle-abi/src/loader.rs",
     "crates/runtime-bundle-abi/src/prefill.rs",
     "crates/runtime-bundle-abi/src/device_results/sink.rs",
+    "crates/runtime-bundle-abi/src/device_results/mapped.rs",
     "crates/runtime-bundle-abi/src/trampoline.rs",
     "crates/runtime-bundle-abi/tests/native_loader.rs",
     "crates/runtime-bundle-abi/tests/abi_contract.rs",
@@ -49,6 +52,11 @@ const REVIEWED_UNSAFE_FILES: &[&str] = &[
     "crates/runtime-grammar/tests/retained_bytes.rs",
     "crates/runtime-media/tests/decode_bounds.rs",
 ];
+
+/// A model registers its reviewed unsafe files in its own directory, one path
+/// relative to that directory per line, so the shared list above names no
+/// model.
+const MODEL_REVIEWED_UNSAFE: &str = "reviewed-unsafe.txt";
 
 fn check_portable() -> TaskResult {
     portable_build()?;
@@ -85,15 +93,22 @@ fn portable_test() -> TaskResult {
     )
 }
 
-fn portable_lint() -> TaskResult {
+/// The unsafe audit alone, which the quick gate runs on every change.
+fn check_unsafe() -> TaskResult {
     let started = Instant::now();
-    audit_unsafe(Path::new("crates"))?;
-    audit_unsafe(Path::new("models"))?;
+    let models = model_reviewed_unsafe(Path::new("models"))?;
+    audit_unsafe(Path::new("crates"), &models)?;
+    audit_unsafe(Path::new("models"), &models)?;
     eprintln!("unsafe source roots: crates/, models/");
     eprintln!(
         "portable unsafe audit: {:.3}s",
         started.elapsed().as_secs_f64()
     );
+    Ok(())
+}
+
+fn portable_lint() -> TaskResult {
+    check_unsafe()?;
     for (label, program, args) in [
         ("format", "cargo", vec!["fmt", "--all", "--check"]),
         (
@@ -121,34 +136,74 @@ fn portable_lint() -> TaskResult {
     Ok(())
 }
 
-fn audit_unsafe(root: &Path) -> TaskResult {
+/// The files each model under `models` registers in its
+/// `MODEL_REVIEWED_UNSAFE`, as paths below `models`. An entry must name an
+/// existing Rust file inside its model's directory.
+fn model_reviewed_unsafe(models: &Path) -> TaskResult<Vec<PathBuf>> {
+    let mut reviewed = Vec::new();
+    for entry in fs::read_dir(models).map_err(|error| format!("{}: {error}", models.display()))? {
+        let directory = entry.map_err(|error| error.to_string())?.path();
+        let list = directory.join(MODEL_REVIEWED_UNSAFE);
+        if !list.is_file() {
+            continue;
+        }
+        let text =
+            fs::read_to_string(&list).map_err(|error| format!("{}: {error}", list.display()))?;
+        for line in text.lines().map(str::trim) {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let relative = Path::new(line);
+            let path = directory.join(relative);
+            let inside = relative
+                .components()
+                .all(|component| matches!(component, Component::Normal(_)));
+            if !inside || relative.extension().is_none_or(|e| e != "rs") || !path.is_file() {
+                return Err(format!(
+                    "{}: {line} is not a Rust file of this model",
+                    list.display()
+                ));
+            }
+            reviewed.push(path);
+        }
+    }
+    Ok(reviewed)
+}
+
+fn audit_unsafe(root: &Path, models: &[PathBuf]) -> TaskResult {
     for entry in fs::read_dir(root).map_err(|error| format!("{}: {error}", root.display()))? {
         let path = entry.map_err(|error| error.to_string())?.path();
         if path.is_dir() {
-            audit_unsafe(&path)?;
+            audit_unsafe(&path, models)?;
             continue;
         }
         if path.extension().is_none_or(|extension| extension != "rs") {
             continue;
         }
-        audit_unsafe_file(&path)?;
+        audit_unsafe_file(&path, models)?;
     }
     Ok(())
 }
 
-fn audit_unsafe_file(path: &Path) -> TaskResult {
+fn audit_unsafe_file(path: &Path, models: &[PathBuf]) -> TaskResult {
     // The compiler enforces this file's crate-level unsafe prohibition.
     if path == Path::new("crates/xtask/src/lib.rs") {
         return Ok(());
     }
     let source =
         fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    audit_unsafe_source(path, &source)
+    let reviewed = listed(path) || models.iter().any(|model| model == path);
+    audit_reviewed_source(path, &source, reviewed)
 }
 
-fn audit_unsafe_source(path: &Path, source: &str) -> TaskResult {
+fn listed(path: &Path) -> bool {
     let path_text = path.to_string_lossy();
-    let reviewed = REVIEWED_UNSAFE_FILES.iter().any(|item| *item == path_text);
+    REVIEWED_UNSAFE_FILES.iter().any(|item| *item == path_text)
+}
+
+/// Refuses an unsafe line of `path` unless the file is `reviewed` and a
+/// `// SAFETY-REVIEWED:` comment starts within the three lines above it.
+fn audit_reviewed_source(path: &Path, source: &str, reviewed: bool) -> TaskResult {
     let lines: Vec<_> = source.lines().collect();
     for (index, line) in lines.iter().enumerate() {
         let trimmed = line.trim_start();
@@ -187,6 +242,10 @@ fn audit_unsafe_source(path: &Path, source: &str) -> TaskResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn audit_unsafe_source(path: &Path, source: &str) -> TaskResult {
+        audit_reviewed_source(path, source, listed(path))
+    }
 
     #[test]
     fn weight_document_dispatch_has_reviewed_contracts() {
@@ -241,6 +300,17 @@ mod tests {
     }
 
     #[test]
+    fn profile_range_helper_has_reviewed_contracts() {
+        let path = Path::new("crates/runtime-host/src/profile_ranges.rs");
+        audit_unsafe_source(
+            path,
+            include_str!("../../runtime-host/src/profile_ranges.rs"),
+        )
+        .unwrap();
+        assert!(audit_unsafe_source(path, "unsafe { call() }").is_err());
+    }
+
+    #[test]
     fn optional_abi_callbacks_have_reviewed_contracts() {
         for (path, source) in [
             (
@@ -251,9 +321,54 @@ mod tests {
                 "crates/runtime-bundle-abi/src/device_results/sink.rs",
                 include_str!("../../runtime-bundle-abi/src/device_results/sink.rs"),
             ),
+            (
+                "crates/runtime-bundle-abi/src/device_results/mapped.rs",
+                include_str!("../../runtime-bundle-abi/src/device_results/mapped.rs"),
+            ),
+            (
+                "crates/runtime-bundle-abi/src/loader.rs",
+                include_str!("../../runtime-bundle-abi/src/loader.rs"),
+            ),
         ] {
             audit_unsafe_source(Path::new(path), source).unwrap();
         }
+    }
+
+    #[test]
+    fn model_registered_files_have_reviewed_contracts() {
+        let models = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../models");
+        for path in model_reviewed_unsafe(&models).unwrap() {
+            let source = fs::read_to_string(&path).unwrap();
+            audit_reviewed_source(&path, &source, true).unwrap();
+            assert!(audit_reviewed_source(&path, "unsafe { call() }", true).is_err());
+        }
+    }
+
+    #[test]
+    fn model_registrations_name_files_inside_their_model() {
+        let models = std::env::temp_dir().join(format!("xtask-models-{}", std::process::id()));
+        let model = models.join("m");
+        fs::create_dir_all(model.join("src")).unwrap();
+        fs::write(model.join("src/lib.rs"), "").unwrap();
+        fs::write(model.join("src/notes.txt"), "").unwrap();
+        let registered = |list: &str| {
+            fs::write(model.join(MODEL_REVIEWED_UNSAFE), list).unwrap();
+            model_reviewed_unsafe(&models)
+        };
+        assert_eq!(
+            registered("# reviewed\n\nsrc/lib.rs\n").unwrap(),
+            [model.join("src/lib.rs")]
+        );
+        for refused in [
+            "src/missing.rs",
+            "src/notes.txt",
+            "../m/src/lib.rs",
+            "/src/lib.rs",
+            "./src/lib.rs",
+        ] {
+            assert!(registered(refused).is_err(), "{refused}");
+        }
+        fs::remove_dir_all(&models).unwrap();
     }
 
     #[test]

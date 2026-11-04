@@ -42,8 +42,12 @@ fn commit_trace_separates_scheduler_and_model_scopes() {
     assert_eq!(timing.publication, 0);
 }
 
+/// Samples token 7 for every row. Each execute reports the next queued
+/// prepared-gather wait, as a host completing its gathers would.
 #[derive(Default)]
-struct SampledExecutor;
+struct SampledExecutor {
+    gather_waits: std::collections::VecDeque<u64>,
+}
 
 impl ModelExecutor for SampledExecutor {
     type TransactionState<'a> = NoopModelTransactionState;
@@ -53,6 +57,9 @@ impl ModelExecutor for SampledExecutor {
         items: &[ModelBatchItem],
         _: &PreparedAppendBatch,
     ) -> Result<ModelTransaction<Self::TransactionState<'a>>, ExecutorError> {
+        if let Some(nanoseconds) = self.gather_waits.pop_front() {
+            profile::record_mapped_gather_exposed(nanoseconds);
+        }
         let mut sampled = Vec::new();
         let mut drafts = Vec::new();
         for item in items.iter().filter(|item| item.expects_logits()) {
@@ -86,7 +93,7 @@ fn engine(concurrency: usize, drafts: usize, trace: bool) -> Engine<SampledExecu
                 .unwrap(),
         );
     }
-    let mut engine = Engine::new(config, SampledExecutor).unwrap();
+    let mut engine = Engine::new(config, SampledExecutor::default()).unwrap();
     engine.step_trace = trace;
     engine
         .metrics
@@ -160,6 +167,26 @@ fn host_trace_preserves_sampled_events_and_is_disabled_without_tracing() {
         };
         assert_eq!(run(false), run(true));
     }
+}
+
+#[test]
+fn traced_steps_report_the_prepared_gather_waits_their_execution_completed() {
+    let mut engine = engine(4, 0, true);
+    // No prepared gather, then 2.5 us, then none again.
+    engine.executor.gather_waits = [0, 2_500, 0].into();
+    let mut exposed = Vec::new();
+    for _ in 0..4 {
+        let _totals = profile::TraceTotals::begin();
+        engine.host_clock.step_entered();
+        assert_eq!(
+            engine.step_scheduled_batch(&mut |_| {}).unwrap(),
+            StepStatus::Progressed
+        );
+        let record = engine.pending_step_trace.take().unwrap();
+        exposed.push(record.host.mapped_gather_exposed);
+        engine.drain_events();
+    }
+    assert_eq!(exposed, [0, 2, 0, 0]);
 }
 
 #[test]

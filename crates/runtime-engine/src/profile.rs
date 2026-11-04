@@ -41,6 +41,9 @@ thread_local! {
     static TOTALS: Cell<[u64; PHASES]> = const { Cell::new([0; PHASES]) };
     /// When the step's first device wait started and its last one ended.
     static WAITS: Cell<(Option<Instant>, Option<Instant>)> = const { Cell::new((None, None)) };
+    /// Device-measured nanoseconds consumer streams waited on the step's
+    /// completed prepared mapped gathers.
+    static MAPPED_GATHER_EXPOSED: Cell<u64> = const { Cell::new(0) };
 }
 
 /// Whether the current engine step requested routine trace diagnostics.
@@ -65,6 +68,21 @@ pub fn record_duration(phase: StepPhase, elapsed: std::time::Duration) {
     }
 }
 
+/// Add a completed prepared mapped gather's longest consumer-stream wait,
+/// measured on the device, to the current step. Reads no clock and waits on
+/// nothing.
+pub fn record_mapped_gather_exposed(nanoseconds: u64) {
+    if ACTIVE.get() {
+        MAPPED_GATHER_EXPOSED.set(MAPPED_GATHER_EXPOSED.get().saturating_add(nanoseconds));
+    }
+}
+
+/// The current step's prepared mapped-gather waits so far, in nanoseconds.
+#[must_use]
+pub fn mapped_gather_exposed_nanoseconds() -> u64 {
+    MAPPED_GATHER_EXPOSED.get()
+}
+
 /// Starts accumulating phase totals for one step unless a sampled profile
 /// already does; returns whether this call started them.
 fn begin_totals() -> bool {
@@ -74,6 +92,7 @@ fn begin_totals() -> bool {
     ACTIVE.set(true);
     TOTALS.set([0; PHASES]);
     WAITS.set((None, None));
+    MAPPED_GATHER_EXPOSED.set(0);
     true
 }
 
@@ -92,6 +111,7 @@ pub(crate) struct PhaseSnapshot {
     pub(crate) totals: [u64; PHASES],
     pub(crate) first_wait_started: Option<Instant>,
     pub(crate) last_wait_ended: Option<Instant>,
+    pub(crate) mapped_gather_exposed_nanoseconds: u64,
 }
 
 pub(crate) fn snapshot() -> PhaseSnapshot {
@@ -100,18 +120,20 @@ pub(crate) fn snapshot() -> PhaseSnapshot {
         totals: TOTALS.get(),
         first_wait_started,
         last_wait_ended,
+        mapped_gather_exposed_nanoseconds: MAPPED_GATHER_EXPOSED.get(),
     }
 }
 
 /// Accumulates phase totals for the step trace, alongside or without a
 /// sampled profile. The guard must stay on the thread where it was created.
-pub(crate) struct TraceTotals {
+pub struct TraceTotals {
     owns: bool,
     _thread: std::marker::PhantomData<std::rc::Rc<()>>,
 }
 
 impl TraceTotals {
-    pub(crate) fn begin() -> Self {
+    #[must_use]
+    pub fn begin() -> Self {
         TRACING.set(true);
         Self {
             owns: begin_totals(),
@@ -313,6 +335,23 @@ impl Drop for StepTimer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mapped_gather_waits_sum_within_a_step_and_reset_at_the_next() {
+        record_mapped_gather_exposed(7_000);
+        assert_eq!(mapped_gather_exposed_nanoseconds(), 0, "no step is active");
+        let trace = TraceTotals::begin();
+        record_mapped_gather_exposed(5_000);
+        record_mapped_gather_exposed(4_500);
+        assert_eq!(snapshot().mapped_gather_exposed_nanoseconds, 9_500);
+        record_mapped_gather_exposed(u64::MAX);
+        assert_eq!(mapped_gather_exposed_nanoseconds(), u64::MAX);
+        drop(trace);
+        record_mapped_gather_exposed(1);
+        let next = TraceTotals::begin();
+        assert_eq!(mapped_gather_exposed_nanoseconds(), 0);
+        drop(next);
+    }
 
     #[test]
     fn upload_subphases_fit_the_total_and_ignore_disabled_steps() {

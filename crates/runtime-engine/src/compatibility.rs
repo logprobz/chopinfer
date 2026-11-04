@@ -967,6 +967,9 @@ pub(crate) struct HostTiming {
     pub(crate) device_wait: u64,
     pub(crate) upload: u64,
     pub(crate) mapped_gather: u64,
+    /// Device-measured: each completed prepared mapped gather's longest
+    /// consumer-stream wait, summed over the step's gathers.
+    pub(crate) mapped_gather_exposed: u64,
     pub(crate) upload_copy: u64,
     pub(crate) upload_backpressure: u64,
     pub(crate) launch: u64,
@@ -1000,6 +1003,7 @@ impl HostTiming {
             "device_wait_us": self.device_wait,
             "upload_us": self.upload,
             "mapped_gather_us": self.mapped_gather,
+            "mapped_gather_exposed_us": self.mapped_gather_exposed,
             "upload_copy_us": self.upload_copy,
             "upload_backpressure_us": self.upload_backpressure,
             "launch_us": self.launch,
@@ -1080,6 +1084,7 @@ impl HostClock {
             device_wait: phases.totals[crate::profile::StepPhase::DeviceWait as usize],
             upload: phases.totals[crate::profile::StepPhase::Upload as usize],
             mapped_gather: phases.totals[crate::profile::StepPhase::MappedGather as usize],
+            mapped_gather_exposed: phases.mapped_gather_exposed_nanoseconds / 1_000,
             upload_copy: phases.totals[crate::profile::StepPhase::UploadCopy as usize],
             upload_backpressure: phases.totals
                 [crate::profile::StepPhase::UploadBackpressure as usize],
@@ -1220,6 +1225,7 @@ mod tests {
                 bundle_log: 12,
                 upload: 50,
                 mapped_gather: 15,
+                mapped_gather_exposed: 640,
                 upload_copy: 20,
                 upload_backpressure: 10,
                 ..HostTiming::default()
@@ -1258,8 +1264,9 @@ mod tests {
         ] {
             assert_eq!(parsed["host"][field], expected);
         }
+        assert_eq!(parsed["host"]["mapped_gather_exposed_us"], 640);
         assert!(parsed["host"]["period_us"].is_null());
-        assert_eq!(parsed["host"].as_object().unwrap().len(), 23);
+        assert_eq!(parsed["host"].as_object().unwrap().len(), 24);
         assert_eq!(parsed["live_rows"], 31);
         assert_eq!(parsed["verify_rows"], 0);
         assert!(parsed["row_capacity"].is_null());

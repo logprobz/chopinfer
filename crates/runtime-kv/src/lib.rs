@@ -460,7 +460,12 @@ pub struct KvPool {
     anchor_chains: BTreeMap<PrefixCacheKeyV1, std::collections::BTreeSet<PrefixCacheKeyV1>>,
     /// Anchor keys by eviction tier, then last use, oldest first.
     anchor_order: BTreeMap<(PrefixEvictionTierV1, u64, PrefixCacheKeyV1), PrefixCacheKeyV1>,
+    /// Present when any configured feature needs the content index.
     ancestry: Option<PrefixAncestry>,
+    /// Ancestry ranks order eviction; otherwise every anchor stays live.
+    tier_order: bool,
+    /// The content index is maintained even without tier order.
+    prefix_index: bool,
     anchor_clock: u64,
     anchor_serial: u64,
     /// Anchor page references taken and released; observability only.
@@ -500,6 +505,8 @@ impl Clone for KvPool {
             anchor_chains: self.anchor_chains.clone(),
             anchor_order: self.anchor_order.clone(),
             ancestry: self.ancestry.clone(),
+            tier_order: self.tier_order,
+            prefix_index: self.prefix_index,
             anchor_clock: self.anchor_clock,
             anchor_serial: self.anchor_serial,
             anchor_page_work: self.anchor_page_work,
@@ -532,6 +539,8 @@ impl PartialEq for KvPool {
             && self.anchors == other.anchors
             && self.anchor_refs == other.anchor_refs
             && self.ancestry == other.ancestry
+            && self.tier_order == other.tier_order
+            && self.prefix_index == other.prefix_index
             && self.anchor_order == other.anchor_order
             && self.anchor_clock == other.anchor_clock
             && self.anchor_serial == other.anchor_serial
@@ -621,6 +630,8 @@ impl KvPool {
             anchor_chains: BTreeMap::new(),
             anchor_order: BTreeMap::new(),
             ancestry: None,
+            tier_order: false,
+            prefix_index: false,
             anchor_clock: 0,
             anchor_serial: 0,
             anchor_page_work: 0,
@@ -635,19 +646,41 @@ impl KvPool {
         })
     }
 
-    /// Default-off eviction candidate. Configure before creating anchors.
+    /// Default-off eviction candidate: the ancestry index and its tier
+    /// order. Configure before creating anchors.
     #[must_use]
     pub fn with_prefix_ancestry(mut self, enabled: bool) -> Self {
+        self.tier_order = enabled;
+        self.configure_index()
+    }
+
+    /// Maintains the ancestry index while eviction stays global LRU: every
+    /// anchor keeps the live tier and no capture replaces a frontier first.
+    /// Configure before creating anchors.
+    #[must_use]
+    pub fn with_prefix_index(mut self, enabled: bool) -> Self {
+        self.prefix_index = enabled;
+        self.configure_index()
+    }
+
+    fn configure_index(mut self) -> Self {
         assert!(
             self.anchors.is_empty(),
             "configure eviction before captures"
         );
-        self.ancestry = enabled.then(PrefixAncestry::default);
+        self.ancestry = (self.tier_order || self.prefix_index).then(PrefixAncestry::default);
         self
     }
 
+    /// Whether ancestry ranks order eviction.
     #[must_use]
-    pub fn prefix_ancestry_enabled(&self) -> bool {
+    pub const fn prefix_ancestry_enabled(&self) -> bool {
+        self.tier_order
+    }
+
+    /// Whether public content captures enter the ancestry index.
+    #[must_use]
+    pub const fn prefix_index_enabled(&self) -> bool {
         self.ancestry.is_some()
     }
 
@@ -1204,7 +1237,7 @@ impl KvPool {
         tokens: usize,
     ) -> Option<PrefixCacheKeyV1> {
         let (key, serial) = self.sequences[slot].ancestry.extended_from?;
-        let index = self.ancestry.as_ref()?;
+        let index = self.ancestry.as_ref().filter(|_| self.tier_order)?;
         let anchor = self.anchors.get(&key)?;
         (anchor.serial == serial
             && anchor.tokens < tokens
@@ -1250,7 +1283,15 @@ impl KvPool {
             .map(PrefixAncestry::changes)
             .unwrap_or_default();
         for (key, class, tier) in changes {
-            let anchor = self.anchors.get_mut(&key).expect("indexed anchor exists");
+            // Without tier order every anchor keeps the maximal class and
+            // the live tier, as with the index off.
+            let Some(anchor) = self
+                .anchors
+                .get_mut(&key)
+                .filter(|anchor| self.tier_order && anchor.indexed)
+            else {
+                continue;
+            };
             if anchor.class != class {
                 self.metrics
                     .anchor_reclassified(anchor.class, class, anchor.state.len());
@@ -2077,8 +2118,16 @@ impl KvPool {
                 || anchor.serial == 0
                 || anchor.serial > self.anchor_serial
                 || if anchor.indexed {
-                    self.ancestry.as_ref().and_then(|index| index.rank(*key))
-                        != Some((anchor.class, anchor.tier))
+                    // The computed rank is the stored eviction tier only
+                    // under tier order.
+                    let rank = self.ancestry.as_ref().and_then(|index| index.rank(*key));
+                    if self.tier_order {
+                        rank != Some((anchor.class, anchor.tier))
+                    } else {
+                        rank.is_none()
+                            || anchor.class != PrefixAnchorClassV1::Maximal
+                            || anchor.tier != PrefixEvictionTierV1::Live
+                    }
                 } else {
                     anchor.class != PrefixAnchorClassV1::Maximal
                         || anchor.tier != PrefixEvictionTierV1::Live

@@ -1157,6 +1157,54 @@ mod audit_tests {
     }
 
     #[test]
+    fn index_without_tier_order_keeps_stored_tiers_live() {
+        use PrefixAnchorClassV1::{Maximal, Superseded};
+        use PrefixEvictionTierV1::Live;
+        let chain = PrefixChainV1::new(4, (0..24).collect::<Vec<u32>>().into(), vec![]).unwrap();
+        let passed = chain.key_at(20).unwrap();
+        for tier_order in [false, true] {
+            let mut pool = KvPool::new(KvGeometry::new(4, 16).unwrap(), 2)
+                .unwrap()
+                .with_prefix_ancestry(tier_order)
+                .with_prefix_index(true);
+            let source = pool.create_sequence(24).unwrap();
+            pool.append(source, 24).unwrap();
+            for depth in [4, 20, 24] {
+                pool.insert_content_anchor(&chain, source, depth, 1)
+                    .unwrap()
+                    .unwrap();
+            }
+            pool.release(source).unwrap();
+            let hit = pool.resume_anchor(chain.key_at(24).unwrap(), 24).unwrap();
+            pool.finish_restore(hit.handle()).unwrap();
+            pool.release(hit.handle()).unwrap();
+            // The extension restore moved past the anchor at 20.
+            let rank = pool.ancestry.as_ref().unwrap().rank(passed);
+            assert_eq!(rank, Some((Superseded, PrefixEvictionTierV1::Superseded)));
+            let stored = (
+                pool.anchor_class(passed).unwrap(),
+                pool.anchor_tier(passed).unwrap(),
+            );
+            assert_eq!(stored == rank.unwrap(), tier_order);
+            pool.audit().unwrap();
+            // Each mode rejects the other's stored tier.
+            let anchor = pool.anchors.get_mut(&passed).unwrap();
+            let (class, tier) = if tier_order {
+                (Maximal, Live)
+            } else {
+                rank.unwrap()
+            };
+            pool.anchor_order
+                .remove(&(anchor.tier, anchor.last_used, passed));
+            anchor.class = class;
+            anchor.tier = tier;
+            pool.anchor_order
+                .insert((tier, anchor.last_used, passed), passed);
+            assert_eq!(pool.audit(), Err(KvError::InvariantViolation));
+        }
+    }
+
+    #[test]
     fn audit_rejects_missing_ancestry_membership() {
         let (mut pool, _, _) = fixture();
         pool.ancestry = Some(PrefixAncestry::default());

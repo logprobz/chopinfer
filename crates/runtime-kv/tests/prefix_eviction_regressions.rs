@@ -15,6 +15,19 @@ fn pool(pages: usize, ancestry: bool) -> KvPool {
         .with_prefix_ancestry(ancestry)
 }
 
+/// Global LRU, the ancestry index alone, or the index with its tier order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Order {
+    Lru,
+    Index,
+    Ancestry,
+}
+
+fn ordered(pool: KvPool, order: Order) -> KvPool {
+    pool.with_prefix_ancestry(order == Order::Ancestry)
+        .with_prefix_index(order == Order::Index)
+}
+
 fn cold_capture(pool: &mut KvPool, chain: &PrefixChainV1, depth: usize) {
     let source = pool.create_sequence(depth).unwrap();
     pool.append(source, depth).unwrap();
@@ -262,16 +275,17 @@ fn scheduler_turn(
     hit
 }
 
-fn scheduler_pool(ancestry: bool) -> KvPool {
-    KvPool::new(KvGeometry::new(64, 2048).unwrap(), 8)
-        .unwrap()
-        .with_prefix_ancestry(ancestry)
+fn scheduler_pool(order: Order) -> KvPool {
+    ordered(
+        KvPool::new(KvGeometry::new(64, 2048).unwrap(), 8).unwrap(),
+        order,
+    )
 }
 
 /// API-style traffic: 64 shared 256-token prefixes, each request a one-off
 /// tail with no follow-up. Returns reused and prompt tokens.
-fn shared_one_off(ancestry: bool) -> (usize, usize) {
-    let mut pool = scheduler_pool(ancestry);
+fn shared_one_off(order: Order) -> (usize, usize) {
+    let mut pool = scheduler_pool(order);
     let mut rng = Xorshift(11);
     let (mut reused, mut prompts) = (0, 0);
     for request in 0..2000u32 {
@@ -291,8 +305,8 @@ fn shared_one_off(ancestry: bool) -> (usize, usize) {
 /// Default thinking removal: every prompt drops the previous generation
 /// prompt token, so the useful anchor is the shared-page point below each
 /// prompt end. Eight salted conversations, five turns, six episodes.
-fn default_thinking(ancestry: bool) -> (usize, usize) {
-    let mut pool = scheduler_pool(ancestry);
+fn default_thinking(order: Order) -> (usize, usize) {
+    let mut pool = scheduler_pool(order);
     let (mut reused, mut prompts) = (0, 0);
     let mut fresh = 10_000_000u32;
     let mut token = || {
@@ -323,8 +337,8 @@ fn default_thinking(ancestry: bool) -> (usize, usize) {
 
 #[test]
 fn shared_one_off_traffic_reuses_at_least_what_lru_reuses() {
-    let lru = shared_one_off(false);
-    let ancestry = shared_one_off(true);
+    let lru = shared_one_off(Order::Lru);
+    let ancestry = shared_one_off(Order::Ancestry);
     println!("shared one-off reused/prompt tokens: LRU {lru:?}, ancestry {ancestry:?}");
     assert_eq!(lru, (119_296, 577_204));
     assert!(ancestry.0 >= lru.0, "{ancestry:?} < {lru:?}");
@@ -332,9 +346,91 @@ fn shared_one_off_traffic_reuses_at_least_what_lru_reuses() {
 
 #[test]
 fn default_thinking_reuses_at_least_what_lru_reuses() {
-    let lru = default_thinking(false);
-    let ancestry = default_thinking(true);
+    let lru = default_thinking(Order::Lru);
+    let ancestry = default_thinking(Order::Ancestry);
     println!("default thinking reused/prompt tokens: LRU {lru:?}, ancestry {ancestry:?}");
     assert_eq!(lru, (64_512, 184_320));
     assert!(ancestry.0 >= lru.0, "{ancestry:?} < {lru:?}");
+}
+
+/// The RAM tier indexes every public anchor while eviction keeps global
+/// LRU: the index alone changes no reuse.
+#[test]
+fn index_without_tier_order_reuses_what_lru_reuses() {
+    assert_eq!(shared_one_off(Order::Index), (119_296, 577_204));
+    assert_eq!(default_thinking(Order::Index), (64_512, 184_320));
+}
+
+/// Conversations that branch, repeat and continue under pressure, run on
+/// three pools in lockstep. The index-only pool matches LRU in every hit,
+/// victim, page count and metric; the ancestry pool shows the traffic
+/// separates the two orders.
+#[test]
+fn index_without_tier_order_evicts_exactly_as_lru() {
+    let orders = [Order::Lru, Order::Index, Order::Ancestry];
+    let mut pools = orders.map(|order| {
+        ordered(
+            KvPool::new(KvGeometry::new(4, 48).unwrap(), 8).unwrap(),
+            order,
+        )
+    });
+    let mut rng = Xorshift(7);
+    let mut histories: Vec<Vec<u32>> = (0..6).map(|c| vec![1000 * (c + 1); 4]).collect();
+    let mut seen = Vec::new();
+    let mut diverged = false;
+    for step in 0..3000u32 {
+        let index = (rng.next() % 6) as usize;
+        let pressure_pages = match rng.next() % 8 {
+            0..=4 => {
+                let tokens = 1 + (rng.next() % 6) as usize;
+                histories[index].extend((0..tokens as u32).map(|t| step * 8 + t));
+                0
+            }
+            5 => {
+                // Branch from another conversation's history.
+                let other = histories[(rng.next() % 6) as usize].clone();
+                let keep = 4 + (rng.next() as usize) % (other.len() - 3);
+                histories[index] = other[..keep].to_vec();
+                histories[index].push(step * 8 + 7);
+                0
+            }
+            6 => 0,
+            _ => 1 + (rng.next() % 8) as usize,
+        };
+        if histories[index].len() > 72 {
+            histories[index] = vec![1000 * (index as u32 + 1) + step; 4];
+        }
+        let prompt = chain(&histories[index]);
+        let mut outcomes = Vec::new();
+        for pool in &mut pools {
+            let hit = if pressure_pages > 0 {
+                pressure(pool, pressure_pages);
+                0
+            } else {
+                request(pool, &prompt)
+            };
+            outcomes.push((hit, pool.stats(), pool.metrics().snapshot()));
+        }
+        if pressure_pages == 0 {
+            seen.push(prompt.key_at(prompt.tokens().len()).unwrap());
+        }
+        assert_eq!(outcomes[1], outcomes[0], "step {step}");
+        diverged |= outcomes[2].0 != outcomes[0].0;
+        if step % 25 == 0 {
+            let present = |pool: &KvPool| {
+                seen.iter()
+                    .map(|key| pool.has_anchor(*key))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(present(&pools[1]), present(&pools[0]), "step {step}");
+            diverged |= present(&pools[2]) != present(&pools[0]);
+            for pool in &pools {
+                pool.audit().unwrap();
+            }
+        }
+    }
+    for pool in &pools {
+        pool.audit().unwrap();
+    }
+    assert!(diverged, "the traffic never separated ancestry from LRU");
 }

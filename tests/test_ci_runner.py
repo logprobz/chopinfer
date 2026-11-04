@@ -647,6 +647,21 @@ class ReferencePrerequisites(unittest.TestCase):
         # The reader followed portable through the unselected fixture builds.
         self.assertEqual(set(steps["kernel-report-integration"].after), {"portable-test", "external-model-smoke"})
 
+    def test_the_report_reader_follows_the_feature_variant_builds(self):
+        # The reports name target/debug/deps as a compiler search directory,
+        # and these steps build into that target after the fixtures, as the
+        # reader did.
+        with tempfile.TemporaryDirectory() as directory:
+            shared, independent = cpu.steps(pathlib.Path(directory) / "target", pathlib.Path(directory), 8, 8)
+        steps = {item.name: item for item in cpu.order(shared, independent)}
+
+        def before(name):
+            return {earlier for step in steps[name].after for earlier in (step, *before(step))}
+
+        self.assertLessEqual({"recurrent-fixture", "tp4-fixture", "runtime-metrics", "cuda-fake-contracts",
+                              "cuda-launch-arguments", "bundle-abi-contract", "host-cuda-fake-driver"},
+                             before("kernel-report-integration"))
+
     def test_every_producer_precedes_its_reader_in_the_gate(self):
         with tempfile.TemporaryDirectory() as directory:
             shared, independent = cpu.steps(pathlib.Path(directory) / "target", pathlib.Path(directory), 8, 8)

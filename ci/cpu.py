@@ -262,9 +262,12 @@ def steps(target, work, jobs, test_threads, exhaustive=False):
                                    "fake-host-services", *LOCKED], ("high-memory-tests",), weight=4),
         step("tp4-fixture", ["cargo", "test", "-p", "bundle-tp4-fixture", "--features", "fake-host-services",
                              *LOCKED], ("high-memory-tests",), weight=4),
-        # Reads the kernel build reports in the shared target directory.
+        # Reads the kernel build reports in the shared target directory. The
+        # reports name target/debug/deps as a compiler search directory, which
+        # must not change while they are read, so the feature variant builds
+        # into that target finish first.
         step("kernel-report-integration", PY + ["tests/test_kernel_report_integration.py"],
-             fixtures + ("external-model-smoke",), CHOPINFER_KERNEL_REPORT_TARGET=str(target),
+             fixtures + test_variants + ("external-model-smoke",), CHOPINFER_KERNEL_REPORT_TARGET=str(target),
              CHOPINFER_SDK_REPORT_TARGET=str(smoke / "smoke/target"),
              CHOPINFER_SDK_REPORT_WORKSPACE=str(smoke / "smoke/model")),
         # Feature variants of packages without binaries build only hashed test

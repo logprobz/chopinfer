@@ -448,3 +448,30 @@ fn retained_host_copy_does_not_survive_an_append_after_a_shorter_prefix() {
         }
     }
 }
+
+#[test]
+fn every_plan_carries_its_transfer_class() {
+    let mut p = pool();
+    let mut h = HostTier::new(&p, 16).unwrap();
+    let seq = p.create_sequence(12).unwrap();
+    p.append(seq, 5).unwrap();
+    p.insert_private_anchor(key(1), seq, 1).unwrap();
+    let (a, out) = h.begin_offload(&mut p, key(1), Some(1)).unwrap();
+    assert_eq!(out.class(), KvTransferClass::SwapOut);
+    let out = out.into_submission();
+    assert_eq!(out.class(), KvTransferClass::SwapOut);
+    h.complete_transfer(&mut p, out.completion(KvTransferStatus::Complete))
+        .unwrap();
+    let dest = p.create_initialized_sequence(5, 12, 1).unwrap();
+    let reload = h.begin_reload(&mut p, a, &dest).unwrap();
+    assert_eq!(reload.class(), KvTransferClass::SwapIn);
+    assert_eq!(reload.direction(), KvTransferDirection::In);
+    h.complete_transfer(&mut p, completed(reload)).unwrap();
+    p.finish_initialized_restore(dest.handle()).unwrap();
+    h.drop_anchor(a).unwrap();
+    p.remove_anchor(key(1)).unwrap();
+    p.release(seq).unwrap();
+    p.release(dest.handle()).unwrap();
+    h.audit(&p).unwrap();
+    assert_eq!(p.stats().free_blocks(), 32);
+}

@@ -224,6 +224,18 @@ pub enum KvTransferDirection {
     Out,
     In,
 }
+/// What a transfer is for, which orders the copy queue.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum KvTransferClass {
+    /// A public host entry copied back into a pending GPU anchor.
+    Promotion,
+    /// A swapped request's own boundary copied back for its restore.
+    SwapIn,
+    /// A preempted request's own boundary copied to the host.
+    SwapOut,
+    /// A public GPU anchor copied ahead of its eviction; never owned.
+    Demotion,
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct KvPagePair {
     pub device: BlockId,
@@ -262,6 +274,7 @@ pub enum KvTransferStatus {
 pub struct KvTransferPlan {
     id: KvTransferId,
     direction: KvTransferDirection,
+    class: KvTransferClass,
     pages: Vec<KvPagePair>,
     receipt: Arc<AtomicBool>,
 }
@@ -271,6 +284,9 @@ impl KvTransferPlan {
     }
     pub fn direction(&self) -> KvTransferDirection {
         self.direction
+    }
+    pub fn class(&self) -> KvTransferClass {
+        self.class
     }
     pub fn pages(&self) -> &[KvPagePair] {
         &self.pages
@@ -293,6 +309,9 @@ impl KvTransferSubmission {
     }
     pub fn direction(&self) -> KvTransferDirection {
         self.0.direction
+    }
+    pub fn class(&self) -> KvTransferClass {
+        self.0.class
     }
     pub fn pages(&self) -> &[KvPagePair] {
         &self.0.pages
@@ -470,6 +489,11 @@ impl HostTier {
         }
         let anchor = HostAnchorId(self.next);
         let receipt = Arc::new(AtomicBool::new(false));
+        let class = if owner.is_some() {
+            KvTransferClass::SwapOut
+        } else {
+            KvTransferClass::Demotion
+        };
         self.next = next;
         self.anchors.insert(
             anchor,
@@ -500,6 +524,7 @@ impl HostTier {
             KvTransferPlan {
                 id,
                 direction: KvTransferDirection::Out,
+                class,
                 pages: pairs,
                 receipt,
             },
@@ -578,6 +603,7 @@ impl HostTier {
         Ok(KvTransferPlan {
             id,
             direction: KvTransferDirection::In,
+            class: KvTransferClass::SwapIn,
             pages,
             receipt,
         })

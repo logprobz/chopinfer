@@ -461,11 +461,15 @@ representation: KV-state taps by readback (request, phase, state end),
 layer, plane, position and rank, and text taps by name, position and rank.
 A row one capture lacks is a difference; a native layout's raw stored codes
 and scales are counted, not compared. It refuses captures that differ in
-prompts, steps, serving identity, profile or `model_options`, apart from the
-package identity and the KV layout fields: `kv_cache_planes` must be present
-exactly when `kv_cache_dtype` is `mixed`, the native planes must equal
-PLANES, and the comparison arm must report none. Experimental captures
-compare only with `--experimental` and never qualify.
+prompts, steps, serving identity, profile or `model_options` (compared with
+their JSON types), apart from the startup nonce, the package identity and
+the KV layout fields: each `kv_cache_dtype` must be `bf16`, `fp8` or
+`mixed`, `kv_cache_planes` must be present exactly when it is `mixed`, the
+native planes must equal PLANES, and the comparison arm must report none.
+It also refuses a row no position or item names, and a comparison that
+compared no text rows or no KV-state rows of a plane or phase (a restore
+when the captures hold a prefix-hit pair). Experimental captures compare
+only with `--experimental` and never qualify.
 
 ## Correctness runner
 

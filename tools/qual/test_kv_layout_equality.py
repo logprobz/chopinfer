@@ -555,6 +555,48 @@ class TapsTests(unittest.TestCase):
                       kv_layout_equality.compare_taps(self.capture("native"), same, NATIVE_PLANES)["errors"])
         # The package identity follows the layout and may differ: the clean pair passes.
 
+    def test_provenance_fields_must_be_typed_valid_and_present(self):
+        def both(name, change):
+            roots = [self.capture(layout, f"{layout}-{name}") for layout in ("native", "bf16")]
+            for root in roots:
+                edit_manifest(root, lambda m: change(m, root.name.startswith("native")))
+            return self.compare(*roots)
+
+        def records(field, value=None):
+            return lambda m, _: [record.pop(field) if value is None else record.update({field: value})
+                                 for record in m["requests"]]
+        for name, change, error in (
+                ("no comparison dtype", lambda m, native: native or m["server"]["profile"].pop("kv_cache_dtype"),
+                 "the comparison profile reports KV dtype None, not one of bf16, fp8, mixed"),
+                ("auto dtype", lambda m, native: native or m["server"]["profile"].update(kv_cache_dtype="auto"),
+                 "the comparison profile reports KV dtype 'auto', not one of bf16, fp8, mixed"),
+                ("typed options", lambda m, native: native or m["server"]["model_options"].update(fast_route=1),
+                 "the captures differ in model_options"),
+                ("typed profile", lambda m, native: native or m["server"]["profile"].update(prefix_cache=1),
+                 "the captures differ in profile prefix_cache"),
+                ("no path", records("path"), "the native capture's request primer records no valid path"),
+                ("no prompt tokens", records("prompt_tokens"),
+                 "the native capture's request primer records no valid prompt_tokens"),
+                ("no cached tokens", records("cached_tokens"),
+                 "the native capture's request primer records no valid cached_tokens"),
+                ("boolean prompt tokens", records("prompt_tokens", True),
+                 "the native capture's request primer records no valid prompt_tokens"),
+                ("upper-case digest", records("body_sha256", "A" * 64),
+                 "the native capture's request primer records no valid body_sha256"),
+                ("short digest", records("body_sha256", "0" * 63),
+                 "the native capture's request primer records no valid body_sha256")):
+            with self.subTest(name):
+                result = both(name, change)
+                self.assertFalse(result["passed"])
+                self.assertIn(error, result["errors"])
+                self.assertNotIn("equal", result)
+        # Paired steps' metadata is compared with its types too.
+        roots = [self.capture(layout, f"{layout}-typed-step") for layout in ("native", "bf16")]
+        items = roots[1] / tap_binding.STEPS / "step0002" / "items.json"
+        items.write_text(items.read_text().replace('"ratio": 2', '"ratio": 2.0'))
+        self.assertIn("request primer step 2 (step0002 and step0002) differs in items.kv.ratio",
+                      self.compare(roots[0], reseal(roots[1]))["errors"])
+
     def test_captures_that_differ_in_prompts_or_steps_or_break_the_cache_rules_are_refused(self):
         def hit(change):
             return lambda m: change(next(record for record in m["requests"] if record["name"] == "hit"))
@@ -567,7 +609,7 @@ class TapsTests(unittest.TestCase):
                  "the comparison capture: hit: a prefix hit requires reported 0 < cached_tokens <= 6 (the prompt "
                  "tokens of its primer primer), got 0"),
                 (lambda m: [record.pop("body_sha256") for record in m["requests"]],
-                 "the comparison capture records no request body digests")):
+                 "the comparison capture's request primer records no valid body_sha256")):
             with self.subTest(error=error):
                 comparison = self.capture("bf16", error)
                 edit_manifest(comparison, change)

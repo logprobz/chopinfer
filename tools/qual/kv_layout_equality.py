@@ -88,6 +88,8 @@ LAYOUT_FIELDS = ("package_identity",)
 # validates instead of requiring them equal.
 LAYOUT_PROFILE = ("kv_cache_dtype", "kv_cache_planes")
 SIDES = ("native", "comparison")
+# The KV elements a serving profile resolves (`kv_cache_dtype`).
+KV_DTYPES = ("bf16", "fp8", "mixed")
 # A capture request's fields both captures must share, beside its name.
 REQUEST_FIELDS = ("path", "body_sha256", "primer", "prompt_tokens", "cached_tokens")
 # The capture.json fields of a step that name its process or follow its KV
@@ -130,25 +132,35 @@ def identities(native, comparison):
     return {"native": left, "comparison": right, "kv_cache_dtypes": dtypes}, errors
 
 
+def same(left, right):
+    """Whether two JSON values are equal with their types: `true` is not
+    `1`, nor `2` `2.0`."""
+    return wire.canonical(left) == wire.canonical(right)
+
+
 def layout_errors(native, comparison, native_planes):
     """Why two effective profiles are not one native and one comparison KV
     layout: `kv_cache_planes` is present exactly when `kv_cache_dtype` is
     `mixed` (docs/operations-observability.md, "Serving identity"), the
     native planes equal `native_planes` (the declared NATIVE_PLANES), the
-    comparison reports none, and the two serve different KV dtypes."""
+    comparison reports none, and the two serve different KV dtypes, each
+    one of KV_DTYPES."""
     if not isinstance(native_planes, list):
         return ["no native planes are declared (NATIVE_PLANES)"]
     errors = []
     for side, profile in zip(SIDES, (native, comparison)):
+        if not any(same(profile.get("kv_cache_dtype"), dtype) for dtype in KV_DTYPES):
+            errors.append(f"the {side} profile reports KV dtype {profile.get('kv_cache_dtype')!r}, not one of "
+                          f"{', '.join(KV_DTYPES)}")
         if profile.get("kv_cache_dtype") == "mixed" and "kv_cache_planes" not in profile:
             errors.append(f"the {side} profile serves KV dtype mixed without kv_cache_planes")
     if "kv_cache_planes" in native and native.get("kv_cache_dtype") != "mixed":
         errors.append(f"the native profile reports kv_cache_planes for KV dtype {native.get('kv_cache_dtype')}")
     if "kv_cache_planes" in comparison:
         errors.append("the comparison profile reports kv_cache_planes")
-    if native.get("kv_cache_planes", []) != native_planes:
+    if not same(native.get("kv_cache_planes", []), native_planes):
         errors.append("the native profile's kv_cache_planes differ from NATIVE_PLANES")
-    if native.get("kv_cache_dtype") == comparison.get("kv_cache_dtype"):
+    if same(native.get("kv_cache_dtype"), comparison.get("kv_cache_dtype")):
         errors.append(f"both serve KV dtype {native.get('kv_cache_dtype')}")
     return errors
 
@@ -176,11 +188,11 @@ def capture_identities(native, comparison, native_planes, experimental=False):
     errors = []
     excluded = {"profile", "startup_nonce", *LAYOUT_FIELDS, *tap_binding.OPTIONS}
     for key in sorted((servers[0].keys() | servers[1].keys()) - excluded):
-        if servers[0].get(key) != servers[1].get(key):
+        if not same(servers[0].get(key), servers[1].get(key)):
             errors.append(f"the captures differ in serving identity {key}")
     profiles = servers[0]["profile"], servers[1]["profile"]
     for key in sorted((profiles[0].keys() | profiles[1].keys()) - set(LAYOUT_PROFILE)):
-        if profiles[0].get(key) != profiles[1].get(key):
+        if not same(profiles[0].get(key), profiles[1].get(key)):
             errors.append(f"the captures differ in profile {key}")
     errors += layout_errors(*profiles, native_planes)
     for side, server in zip(SIDES, servers):
@@ -188,7 +200,7 @@ def capture_identities(native, comparison, native_planes, experimental=False):
                 and type(server.get("model_options_qualified")) is bool):
             errors.append(f"the {side} capture records no complete model_options and model_options_qualified")
     for key in tap_binding.OPTIONS:
-        if servers[0].get(key) != servers[1].get(key):
+        if not same(servers[0].get(key), servers[1].get(key)):
             errors.append(f"the captures differ in {key}")
     markers = []
     for side, manifest in zip(SIDES, (native, comparison)):
@@ -209,24 +221,31 @@ def capture_identities(native, comparison, native_planes, experimental=False):
 
 def request_errors(native, comparison):
     """Why the two captures do not hold the same prompts under the same
-    cache rules."""
+    cache rules: every record names its path, reported prompt and cached
+    tokens and the 64-hex-digit digest of its body, and both captures'
+    records agree in their types."""
     errors = []
+    valid = {"path": lambda value: isinstance(value, str) and value != "",
+             "prompt_tokens": lambda value: type(value) is int and value > 0,
+             "cached_tokens": lambda value: type(value) is int and value >= 0,
+             "body_sha256": lambda value: isinstance(value, str) and re.fullmatch("[0-9a-f]{64}", value)}
     for side, manifest in zip(SIDES, (native, comparison)):
         try:
             tap_binding.check_requests(manifest["requests"])
         except tap_binding.Unbound as error:
             errors.append(f"the {side} capture: {error}")
-        if not all(isinstance(record.get("body_sha256"), str) for record in manifest["requests"]):
-            errors.append(f"the {side} capture records no request body digests")
+        errors += [f"the {side} capture's request {record.get('name')} records no valid {field}"
+                   for record in manifest["requests"] for field, check in valid.items()
+                   if not check(record.get(field))]
     names = [[record["name"] for record in manifest["requests"]] for manifest in (native, comparison)]
-    if names[0] != names[1]:
+    if not same(*names):
         errors.append(f"the captures hold requests {names[0]} and {names[1]}")
     elif len(set(names[0])) != len(names[0]):
         errors.append(f"the captures name two requests alike: {names[0]}")
     else:
         for left, right in zip(native["requests"], comparison["requests"]):
             errors += [f"the captures differ in request {left['name']} {key}"
-                       for key in REQUEST_FIELDS if left.get(key) != right.get(key)]
+                       for key in REQUEST_FIELDS if not same(left.get(key), right.get(key))]
     return errors
 
 
@@ -243,7 +262,7 @@ def differing_field(left, right, path=""):
     if isinstance(left, list) and isinstance(right, list) and len(left) == len(right):
         return next((found for at, (a, b) in enumerate(zip(left, right))
                      if (found := differing_field(a, b, f"{path}{at}."))), None)
-    return None if left == right else path.rstrip(".") or "value"
+    return None if same(left, right) else path.rstrip(".") or "value"
 
 
 class Step:

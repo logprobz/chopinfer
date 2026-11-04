@@ -284,7 +284,9 @@ python3 tools/qual/tap_binding.py capture --url URL --server-log LOG \
 
 It sends each request once under a fresh `X-Client-Request-Id` and cache
 salt and copies only the new steps that name the live startup nonce and that
-request (`OUT/engine`, `OUT/tap-capture.json`). `--prefix-hit
+request (`OUT/engine`, `OUT/tap-capture.json`). The trace, the steps'
+`items.json` and the manifest must name it by its integer engine request ID;
+`true` is not request 1. `--prefix-hit
 NAME=PRIMER=PATH=BODY.json` sends the continuation of an earlier
 `--request PRIMER` under the primer's salt (serve with prefix caching on
 for it): the primer must report 0 cached tokens and the continuation

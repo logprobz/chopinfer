@@ -146,20 +146,29 @@ def step_files(step):
     return files
 
 
+def engine_id(value, where):
+    """`value` as an engine request ID: the scheduler's unsigned integer, never
+    a boolean, which Python compares equal to 0 or 1."""
+    if type(value) is not int or value < 0:
+        raise Unbound(f"{where} names engine request {value!r}, not an integer ID")
+    return value
+
+
 def producer(step):
     """(startup nonce, engine request IDs) a step's own metadata names."""
     capture = wire.read_json(step / "capture.json")
     items = wire.read_json(step / "items.json")["items"]
     nonce = (capture.get("producer") or {}).get("startup_nonce")
-    return nonce, {item["request"] for item in items}
+    return nonce, {engine_id(item.get("request"), f"{step}/items.json") for item in items}
 
 
 def verify_step(step, nonce, requests):
     """Refuses a step another process, or another request, wrote."""
     written, ids = producer(step)
+    requests = {engine_id(request, f"the record of {step}") for request in requests}
     if written != nonce:
         raise Unbound(f"{step} was written by process {written}, not {nonce}")
-    if not ids or not ids <= set(requests):
+    if not ids or not ids <= requests:
         raise Unbound(f"{step} holds engine requests {sorted(ids)}, not {sorted(requests)}")
 
 
@@ -177,7 +186,7 @@ def engine_requests(log, url, challenge, nonce):
                 continue
             record = json.loads(line[line.index("{"):])
             if record.get("schema") == TRACE and record.get("request_id") == challenge:
-                found.add(record["engine_request_id"])
+                found.add(engine_id(record.get("engine_request_id"), f"{log}'s trace of {challenge}"))
         if found or time.monotonic() > deadline:
             break
         time.sleep(0.2)

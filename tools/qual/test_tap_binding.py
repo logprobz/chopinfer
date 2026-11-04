@@ -424,6 +424,34 @@ class TapBindingTests(unittest.TestCase):
         with self.assertRaisesRegex(tap_binding.Unbound, r"engine requests \[1\], not \[2\]"):
             self.pair("borrowed", [self.pairs()[0], self.pairs()[2]], prefix_cache=4, steps_of=steps_of)
 
+    def test_engine_request_ids_are_integers_wherever_they_are_read(self):
+        # true equals 1 in Python; it names no engine request.
+        boolean = lambda engine, body: [([item(True, 0, list(range(len(self.tokens))), self.tokens)],  # noqa: E731
+                                         self.tensors, None)]
+        with self.assertRaisesRegex(tap_binding.Unbound, "names engine request True, not an integer ID"):
+            self.capture("boolean-item", steps_of=boolean)
+        traced = FakeServer.request
+
+        def request(fake, path, body, headers=None):
+            # The trace record names the request as true.
+            response = traced(fake, path, body, headers)
+            fake.log.write_text(fake.log.read_text().replace('"engine_request_id": 1}', '"engine_request_id": true}'))
+            return response
+        with patch.object(FakeServer, "request", request), \
+                self.assertRaisesRegex(tap_binding.Unbound, "names engine request True, not an integer ID"):
+            self.capture("boolean-trace")
+        # A manifest that records true for its steps' request 1, read by a
+        # gate or offline.
+        self.capture(serving=SERVING | OPTIONS)
+        path = self.root / "cap" / tap_binding.MANIFEST
+        manifest = json.loads(path.read_text())
+        manifest["requests"][0]["engine_request_id"] = True
+        path.write_text(json.dumps(manifest))
+        for read in (lambda: self.admit(self.root / "cap", SERVING | OPTIONS),
+                     lambda: tap_binding.recorded(self.root / "cap")):
+            with self.assertRaisesRegex(tap_binding.Unbound, "names engine request True, not an integer ID"):
+                read()
+
     def test_the_command_sends_prefix_hits_in_order_after_their_primers(self):
         bodies = {}
         for name, prompt in (("short", self.tokens[:8]), ("long", self.tokens)):

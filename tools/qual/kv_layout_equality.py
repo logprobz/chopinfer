@@ -288,6 +288,7 @@ class Step:
 
     def __init__(self, directory, request, engine):
         self.dir, self.request = directory, request
+        engine = tap_binding.engine_id(engine, f"the record of {directory}")
         capture = wire.read_json(directory / "capture.json")
         items = wire.read_json(directory / "items.json")
         completion = wire.read_json(directory / "completion.json")
@@ -306,13 +307,13 @@ class Step:
         self.positions, self.encoder = {}, {}
         for item in named["items"]:
             item.pop("slot", None)
-            if item.get("request") == engine:
+            if tap_binding.engine_id(item.get("request"), f"{directory}/items.json") == engine:
                 item["request"] = request
                 for offset, position in enumerate(item.get("positions") or []):
                     self.positions[item["start"] + offset] = position
         for tap, segments in (named.get("encoder") or {}).items():
             for segment in segments:
-                if segment.get("request") == engine:
+                if tap_binding.engine_id(segment.get("request"), f"{directory}/items.json {tap}") == engine:
                     segment["request"] = request
                     for offset in range(segment["rows"]):
                         self.encoder.setdefault(tap, {})[segment["start"] + offset] = [

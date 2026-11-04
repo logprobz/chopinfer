@@ -491,6 +491,24 @@ class TapsTests(unittest.TestCase):
                                                          r"L00\.x\.kv\.window\.codes rank 0"):
             self.compare(comparison=relabeled)
 
+    def test_engine_request_ids_must_be_integers(self):
+        # true equals 1 in Python; it names no engine request.
+        def boolean(root, manifest_too):
+            manifest = json.loads((root / tap_binding.MANIFEST).read_text())
+            if manifest_too:
+                edit_manifest(root, lambda m: m["requests"][0].update(engine_request_id=True))
+            for name in manifest["requests"][0]["steps"]:
+                items = root / tap_binding.STEPS / name / "items.json"
+                value = json.loads(items.read_text())
+                for entry in value["items"]:
+                    entry["request"] = True
+                items.write_text(json.dumps(value))
+            return reseal(root)
+        for name, manifest_too in (("boolean items", False), ("boolean manifest and items", True)):
+            with self.subTest(name), self.assertRaisesRegex(tap_binding.Unbound,
+                                                            "names engine request True, not an integer ID"):
+                self.compare(comparison=boolean(self.capture("bf16", name), manifest_too))
+
     def test_logical_kv_values_must_be_bf16_rows(self):
         # Both captures declare L00.x.kv.window rank 0 of the primer's first
         # window readback F32, each row its BF16 bytes followed by others.

@@ -26,6 +26,8 @@ pub mod listing;
 pub mod loader;
 pub mod poll;
 pub mod prometheus;
+#[cfg(test)]
+mod scratch;
 pub mod stats;
 pub mod targets;
 pub mod tui;

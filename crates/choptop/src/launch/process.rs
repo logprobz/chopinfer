@@ -277,6 +277,7 @@ pub fn stamp(unix: u64) -> String {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::scratch::Scratch;
     use std::time::{Duration, Instant};
 
     /// The start of every fake: it closes descriptors it inherited above
@@ -299,12 +300,8 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn scratch(name: &str) -> PathBuf {
-        let root =
-            std::env::temp_dir().join(format!("choptop-launch-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        root
+    pub(crate) fn scratch(name: &str) -> Scratch {
+        Scratch::new(&format!("choptop-launch-{name}"))
     }
 
     /// Writes an executable file from another process, so no child another

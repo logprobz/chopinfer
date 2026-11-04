@@ -1653,6 +1653,7 @@ impl Catalog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch::Scratch;
 
     const SERVE_OPTIONS: &str = include_str!("../tests/fixtures/contracts/serve-options.json");
     const MODELS: &str = include_str!("../tests/fixtures/contracts/models.json");
@@ -1661,12 +1662,8 @@ mod tests {
     const CHECK: &str = include_str!("../tests/fixtures/contracts/serve-check.json");
     const PACKAGE: &str = include_str!("../tests/fixtures/contracts/list-model-options.json");
 
-    fn scratch(name: &str) -> PathBuf {
-        let root =
-            std::env::temp_dir().join(format!("choptop-catalog-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        root
+    fn scratch(name: &str) -> Scratch {
+        Scratch::new(&format!("choptop-catalog-{name}"))
     }
 
     #[test]
@@ -2189,7 +2186,7 @@ mod tests {
         let registry = children.clone();
         let environment = vec![("ROOT".to_owned(), root.display().to_string())];
         let mut draining = Draining {
-            root: root.clone(),
+            root: root.to_path_buf(),
             task: Some(thread::spawn(move || {
                 run(
                     &script,
@@ -2302,7 +2299,8 @@ mod tests {
         fs::write(&program, "#!/bin/sh\n").unwrap();
         fs::write(root.join("chopinfer"), "not runnable").unwrap();
         let path =
-            std::env::join_paths([root.clone(), PathBuf::from("relative"), bin.clone()]).unwrap();
+            std::env::join_paths([root.to_path_buf(), PathBuf::from("relative"), bin.clone()])
+                .unwrap();
         assert!(find_binary(None, Some(&path)).is_err());
         fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(find_binary(None, Some(&path)).unwrap(), program);

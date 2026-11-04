@@ -191,6 +191,7 @@ mod tests {
     use crate::discover::docker::ServeContainer;
     use crate::discover::proc::ServeProcess;
     use crate::instances::Registry;
+    use crate::scratch::Scratch;
     use std::path::Path;
 
     const ID: &str = "3f1c9a2b4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8";
@@ -222,12 +223,8 @@ mod tests {
         fs::write(directory.join("cgroup"), cgroup).unwrap();
     }
 
-    fn scratch(name: &str) -> PathBuf {
-        let root =
-            std::env::temp_dir().join(format!("choptop-owners-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        root
+    fn scratch(name: &str) -> Scratch {
+        Scratch::new(&format!("choptop-owners-{name}"))
     }
 
     #[test]
@@ -240,7 +237,7 @@ mod tests {
             100,
             "0::/\n",
         );
-        let mut owners = Owners::new(&root);
+        let mut owners = Owners::new(root.to_path_buf());
         let first = owners.resolve(41);
         assert_eq!(first.start_ticks, Some(100));
         assert_eq!(first.listen.as_deref(), Some("0.0.0.0:8311"));
@@ -357,7 +354,7 @@ mod tests {
             .find(|instance| instance.source.kind() == "docker")
             .unwrap();
         container.alias_of = Some(target);
-        let mut owners = Owners::new(&root);
+        let mut owners = Owners::new(root.to_path_buf());
         let before = gpu_process(500, owners.resolve(500));
         assert_eq!(row(&registry.instances, &before), Some(target));
         // serve restarts inside the container under a new pid; nothing about
@@ -391,7 +388,7 @@ mod tests {
         // An executable replaced on disk is still chopinfer.
         process(&root, 33, &["chopinfer", "serve"], 1, "0::/\n");
         std::os::unix::fs::symlink("/usr/bin/chopinfer (deleted)", root.join("33/exe")).unwrap();
-        let mut owners = Owners::new(&root);
+        let mut owners = Owners::new(root.to_path_buf());
         assert_eq!(owners.resolve(30).listen, None);
         assert_eq!(owners.resolve(31).listen, None);
         assert_eq!(owners.resolve(32).listen.as_deref(), Some("127.0.0.1:8310"));
@@ -415,7 +412,7 @@ mod tests {
                 std::os::unix::fs::symlink(namespace, root.join(format!("{pid}/ns/net"))).unwrap();
             }
         }
-        let mut owners = Owners::new(&root);
+        let mut owners = Owners::new(root.to_path_buf());
         assert_eq!(owners.resolve(40).host_network, Some(true));
         assert_eq!(owners.resolve(41).host_network, Some(false));
         assert_eq!(owners.resolve(42).host_network, None);
